@@ -773,7 +773,6 @@ pub(super) struct Passes {
     /// which it does at its start, after each pass and where `stale` says the
     /// settings may have changed.
     every: Option<Duration>,
-    /// The paths events named, where the passes are to look at those alone.
     touched: Option<Touched>,
     /// Whether the settings may have changed since they were read.
     stale: bool,
@@ -811,8 +810,7 @@ impl Passes {
         passed
     }
 
-    /// Runs a quick pass as one that heard events naming `paths`, which
-    /// looks at those alone.
+    /// Runs a quick pass as one that heard events naming `paths`.
     pub(super) fn touching(&mut self, folder: &Folder, paths: &[&Path]) -> Result<(), CoreError> {
         let events: Vec<notify::Event> = paths
             .iter()

@@ -59,7 +59,6 @@ struct ScanStart {
     /// The registry, where the copy's own folder was lost from it.
     doubt: Option<String>,
     settings: Settings,
-    /// What a later pass's reading of the folder rests on.
     guard: Guard,
     catalog: Catalog,
     edge_types: EdgeTypes,
@@ -77,10 +76,7 @@ struct ScanState {
     began: std::time::SystemTime,
     full: bool,
     guard: Guard,
-    /// Set where the pass looked only at the paths events named.
     scope: Option<Scoping>,
-    /// Files the pass counted as skipped: nothing sends them and no embed
-    /// names them.
     skipped_keys: Vec<String>,
     /// Whether this pass reads every document's edges again
     /// (`EMBEDS_REREAD`).
@@ -121,12 +117,10 @@ struct ScanState {
     stale: HashMap<String, String>,
 }
 
-/// What a pass that looked only at the paths events named keeps for its end.
+/// What a pass that looked only at named paths keeps for its end.
 struct Scoping {
-    /// What the last pass found, without its keys, which the pass holds as
-    /// `seen`.
+    /// The last pass's inventory, its keys held in `seen`.
     inventory: Inventory,
-    /// Files the last pass found that are gone.
     vanished: Vec<String>,
 }
 
@@ -261,9 +255,7 @@ impl Folder {
         self.scan_watching_within(full, settle, Reading::Walk)
     }
 
-    /// `scan_watching`, where `reading` says whether a quick pass may look at
-    /// the paths the events a watch heard named, and leave what it finds for
-    /// one that does.
+    /// `scan_watching`, where `reading` says how a quick pass finds its files.
     pub(super) fn scan_watching_within(
         &self,
         full: bool,
@@ -288,12 +280,10 @@ impl Folder {
         // The first pass under the rule reads every file, so no document
         // is skipped as unchanged.
         let reread_embeds = crate::store::meta_get(&*self.core.conn()?, EMBEDS_REREAD)?.is_none();
-        // A watch's quick pass over a folder it holds the inventory of looks
-        // at what events named; any other pass walks.
         let watching = !full && !reread_embeds && mode == Files::Write && settle.is_some();
         let plan = match reading {
-            Reading::Named(touched) if watching => {
-                self.plan_scoped(&start.settings, &start.lists, touched)?
+            Reading::Named(scope) if watching => {
+                self.plan_scoped(&start.settings, &start.lists, scope)?
             }
             _ => {
                 self.forget_inventory();
@@ -307,7 +297,7 @@ impl Folder {
         };
         scan.reread_embeds = reread_embeds;
         if self.read_unchanged_and_documents(&mut scan)?.is_break() {
-            // Only a walk will do, and nothing has been written yet.
+            // Nothing has been written yet, so a walk can take over.
             let again = if keep {
                 Reading::Keeping
             } else {
@@ -350,9 +340,8 @@ impl Folder {
         Ok(scan.report)
     }
 
-    /// Keeps what the pass found for the next quick pass: every file, and
-    /// which of them it must judge again. Nothing is kept where the pass
-    /// set a save aside or folded a name, which only a walk can follow.
+    /// Keeps what the pass found for the next quick pass, but not where it set
+    /// a save aside or folded a name, which only a walk follows.
     fn leave_inventory(&self, scan: &mut ScanState) {
         if !scan.stale.is_empty()
             || scan.files.iter().any(|file| file.folded)
@@ -601,9 +590,8 @@ impl Folder {
     /// and identity are as the last read left them, and reads the Markdown
     /// files first, so a file only an embed names is sent too. A file
     /// carrying the item id of a skipped file is read, and so is the skipped
-    /// file, until no skipped file's item is named. Where the pass looks only
-    /// at the paths events named, a file outside them that is so named is
-    /// looked at too; `Break` says one cannot be, and only a walk will do.
+    /// file, until no skipped file's item is named. A quick pass over named
+    /// paths looks at such a file outside them too, or breaks where it cannot.
     fn read_unchanged_and_documents(&self, scan: &mut ScanState) -> Result<ControlFlow<()>> {
         let full = scan.full;
         let by_path = bound_by_path(&scan.snapshot);
@@ -733,8 +721,7 @@ impl Folder {
                 unchanged.remove(&keys[*at]);
             }
             if let Some(scoping) = scope.as_ref() {
-                // A file the pass did not look at that a file read names: its
-                // item's file, or a file an embed names that nothing sends.
+                // Files outside the pass that a file read names.
                 let outside = named
                     .iter()
                     .filter_map(|id| by_item.get(id.as_str()).copied())
@@ -775,8 +762,7 @@ impl Folder {
     }
 
     /// Counts the files left unread as unchanged, or as waiting where the
-    /// server has not answered their item's write. Where the pass looked only
-    /// at some files, the others are counted as the last pass left them.
+    /// server has not answered their item's write.
     fn count_unchanged(&self, scan: &mut ScanState) {
         let by_path = bound_by_path(&scan.snapshot);
         let unanswered = &scan.unanswered;
@@ -1344,6 +1330,10 @@ impl Folder {
                     // Where the title line was not rewritten, the title goes
                     // beside the file's bytes.
                     let sent_title = retitle.as_ref().filter(|_| rewritten.is_none());
+                    // The title line it now says is not what this pass read.
+                    if rewritten.is_some() {
+                        unsettled.insert(file.key.clone());
+                    }
                     let file = rewritten.as_ref().unwrap_or(file);
                     if self.queue_update(
                         &item_id,
@@ -1558,8 +1548,6 @@ impl Folder {
         for (path, item_id) in bound {
             let held = journaled.contains(&(path.clone(), item_id.clone()));
             let stands = seen.contains(&path);
-            // The root is looked at only where a row is acted on: most rows are
-            // files that stand and were not journaled.
             if stands && !held {
                 continue;
             }

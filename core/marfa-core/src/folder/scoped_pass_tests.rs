@@ -144,7 +144,7 @@ fn finds_what_a_walk_finds(change: impl Fn(&Path) -> Vec<notify::Event>, looks: 
         let (captured, _) = counted();
         match looks {
             Looks::Few => assert!(captured < 6, "took the metadata of {captured} files"),
-            Looks::All => assert!(captured >= 13, "took the metadata of {captured} files"),
+            Looks::All => assert!(captured >= 12, "took the metadata of {captured} files"),
         }
         (kept(&folder), format!("{ran:?}"))
     };
@@ -192,13 +192,13 @@ fn an_edit_and_a_new_file_are_both_sent() {
 }
 
 #[test]
-fn a_delete_is_found() {
+fn a_delete_is_found_by_a_walk() {
     finds_what_a_walk_finds(
         |dir| {
             std::fs::remove_file(dir.join("n002.md")).unwrap();
             vec![data(dir.join("n002.md"))]
         },
-        Looks::Few,
+        Looks::All,
     );
 }
 
@@ -244,4 +244,208 @@ fn events_that_overflowed_are_found_by_a_walk() {
         },
         Looks::All,
     );
+}
+
+fn named_by_one_half(kind: notify::event::RenameMode, path: PathBuf) -> notify::Event {
+    notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Name(
+        kind,
+    )))
+    .add_path(path)
+}
+
+#[test]
+fn a_rename_that_names_both_paths_one_at_a_time_is_found() {
+    finds_what_a_walk_finds(
+        |dir| {
+            std::fs::rename(dir.join("n003.md"), dir.join("moved.md")).unwrap();
+            vec![
+                named_by_one_half(notify::event::RenameMode::Any, dir.join("n003.md")),
+                named_by_one_half(notify::event::RenameMode::Any, dir.join("moved.md")),
+            ]
+        },
+        Looks::Few,
+    );
+}
+
+#[test]
+fn a_rename_that_names_only_its_old_path_is_found_by_a_walk() {
+    finds_what_a_walk_finds(
+        |dir| {
+            std::fs::rename(dir.join("n003.md"), dir.join("moved.md")).unwrap();
+            vec![named_by_one_half(
+                notify::event::RenameMode::From,
+                dir.join("n003.md"),
+            )]
+        },
+        Looks::All,
+    );
+}
+
+#[test]
+fn a_rename_that_names_only_its_new_path_is_found() {
+    finds_what_a_walk_finds(
+        |dir| {
+            std::fs::rename(dir.join("n003.md"), dir.join("moved.md")).unwrap();
+            vec![named_by_one_half(
+                notify::event::RenameMode::To,
+                dir.join("moved.md"),
+            )]
+        },
+        Looks::Few,
+    );
+}
+
+#[test]
+fn a_case_only_rename_that_names_only_its_old_name_is_found_by_a_walk() {
+    finds_what_a_walk_finds(
+        |dir| {
+            std::fs::rename(dir.join("n003.md"), dir.join("N003.md")).unwrap();
+            vec![named_by_one_half(
+                notify::event::RenameMode::Any,
+                dir.join("n003.md"),
+            )]
+        },
+        Looks::All,
+    );
+}
+
+#[test]
+fn a_path_that_leaves_the_folder_is_found_by_a_walk() {
+    finds_what_a_walk_finds(
+        |dir| {
+            edit(dir, "n001.md");
+            vec![
+                data(dir.join("..").join("elsewhere.md")),
+                data(dir.join("n001.md")),
+            ]
+        },
+        Looks::All,
+    );
+}
+
+#[test]
+fn a_new_file_is_kept_under_the_name_the_folder_gives_it() {
+    let composed = "caf\u{e9}.md";
+    let decomposed = "cafe\u{301}.md";
+    finds_what_a_walk_finds(
+        |dir| {
+            std::fs::write(dir.join(composed), "---\ntitle: cafe\n---\nnew\n").unwrap();
+            vec![data(dir.join(decomposed))]
+        },
+        Looks::Few,
+    );
+}
+
+fn journaled(folder: &Folder) -> Vec<String> {
+    kept(folder).1
+}
+
+#[test]
+fn a_file_that_returns_with_no_event_the_watch_acts_on_leaves_no_journal_row() {
+    let (dir, folder, _server, mut passes) = watched(&names(6));
+    let path = dir.path().join("n002.md");
+    let aside = dir.path().join(".away.md");
+    std::fs::rename(&path, &aside).unwrap();
+    passes.touching(&folder, &[&path]).unwrap();
+    assert_eq!(
+        journaled(&folder),
+        ["n002.md"],
+        "the witness: it was missed"
+    );
+
+    // Back as it was, so the watch passes its event over and the next pass
+    // names nothing.
+    std::fs::rename(&aside, &path).unwrap();
+    passes.hearing(&folder, &[]).unwrap();
+    assert!(journaled(&folder).is_empty(), "{:?}", journaled(&folder));
+}
+
+#[test]
+fn a_file_whose_item_the_copy_lost_is_judged_by_a_pass_that_names_nothing() {
+    let (_dir, folder, _server, _passes) = watched(&names(6));
+    let id = state::bound_at(&folder.core.conn().unwrap(), "n002.md")
+        .unwrap()
+        .unwrap()
+        .item_id;
+    folder
+        .core
+        .conn()
+        .unwrap()
+        .execute("DELETE FROM items WHERE id = ?1", [&id])
+        .unwrap();
+    let quick = Duration::from_millis(250);
+    let named = folder
+        .scan_watching_within(
+            false,
+            quick,
+            scoped::Reading::Named(&scoped::Scope::default()),
+        )
+        .unwrap();
+    let walked = folder
+        .scan_watching_within(false, quick, scoped::Reading::Walk)
+        .unwrap();
+    assert_eq!(walked.lost, 1, "the witness: a walk judges it, {walked:?}");
+    assert_eq!(named.lost, walked.lost, "{named:?}");
+}
+
+/// Every file the status would take as the scan read it holds the bytes the
+/// scan read.
+fn only_what_the_files_hold(folder: &Folder, dir: &Path) {
+    let last = folder.last_reads.lock().unwrap();
+    assert!(!last.is_empty(), "the witness: the scan kept what it read");
+    for (key, read) in last.iter() {
+        let Ok(bytes) = std::fs::read(dir.join(key)) else {
+            continue;
+        };
+        assert_eq!(
+            read.hash,
+            state::hash(&bytes),
+            "{key} is not as the scan read it"
+        );
+    }
+}
+
+#[test]
+fn a_status_after_a_server_edit_is_what_a_walk_finds() {
+    let (dir, folder, _server, mut passes) = watched(&names(6));
+    let id = state::bound_at(&folder.core.conn().unwrap(), "n002.md")
+        .unwrap()
+        .unwrap()
+        .item_id;
+    super::tests::changed_elsewhere(&folder, &id, "words from another device\n");
+    passes
+        .touching(&folder, &[&dir.path().join("n001.md")])
+        .unwrap();
+    assert!(
+        std::fs::read_to_string(dir.path().join("n002.md"))
+            .unwrap()
+            .contains("words from another device"),
+        "the witness: the pass wrote the file"
+    );
+    only_what_the_files_hold(&folder, dir.path());
+    let (scoped, walked) =
+        super::health::tests::status_both_ways(&folder).expect("the pass left an inventory");
+    assert_eq!(scoped, walked);
+}
+
+#[test]
+fn a_rename_that_retitles_leaves_what_the_scan_read_true() {
+    let (dir, folder, _server, mut passes) = watched(&names(6));
+    std::fs::rename(dir.path().join("n003.md"), dir.path().join("Moved.md")).unwrap();
+    passes
+        .hearing(
+            &folder,
+            &[renamed(
+                dir.path().join("n003.md"),
+                dir.path().join("Moved.md"),
+            )],
+        )
+        .unwrap();
+    assert!(
+        std::fs::read_to_string(dir.path().join("Moved.md"))
+            .unwrap()
+            .contains("title: Moved"),
+        "the witness: the pass rewrote the title line"
+    );
+    only_what_the_files_hold(&folder, dir.path());
 }

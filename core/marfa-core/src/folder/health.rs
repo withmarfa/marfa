@@ -694,9 +694,7 @@ impl Folder {
         if !reuse {
             return compute(None, None);
         }
-        // A quick pass that looked at the files its events named has no
-        // use for the memo of a walk of them all, and takes the metadata of
-        // no other.
+        // No memo: it is of a walk of every file.
         if let Some(walked) = self.inventory_walked() {
             *self.health_status.lock().expect("health status lock") = None;
             return compute(None, Some(walked));
@@ -753,6 +751,12 @@ impl Folder {
             Found::of(self, key, captured).digest()
         })?;
         Some((Inputs { store, disk }, walked))
+    }
+
+    /// Drops what a scan kept of its read of `key`, which a write to the file
+    /// has made untrue.
+    pub(super) fn forget_read(&self, key: &str) {
+        self.last_reads.lock().expect("last reads lock").remove(key);
     }
 
     /// The hash the scan last read `key` at, where the file is still as it
@@ -988,6 +992,16 @@ pub(in crate::folder) mod tests {
 
     fn files_read() -> usize {
         FILES_READ.with(|read| read.replace(0))
+    }
+
+    /// What a status that takes the files of the last quick pass as they
+    /// stood finds, and what a walk of the folder finds. `None` where there is
+    /// no inventory to take them from.
+    pub(in crate::folder) fn status_both_ways(folder: &Folder) -> Option<(String, String)> {
+        folder.inventory_walked()?;
+        let scoped = folder.health_status(true).0.unwrap();
+        let walked = folder.health_status(false).0.unwrap();
+        Some((format!("{scoped:?}"), format!("{walked:?}")))
     }
 
     /// Gives the file a modification time a minute back, as one the scan did

@@ -303,8 +303,6 @@ impl Folder {
         self.pull_with(Some(selection))
     }
 
-    /// A pull that adds, moves or takes away a file, or fails part way,
-    /// leaves a watch's inventory of the folder out of date.
     fn pull_with(&self, selection: Option<&mut Selection>) -> Result<PullReport> {
         let pulled = self.pull_writing(selection);
         if !pulled.as_ref().is_ok_and(super::scoped::keeps_the_files) {
@@ -1397,6 +1395,7 @@ impl Folder {
         // Landed: the old bytes are no longer the folder's own.
         rendering.bind(&conn, &binding(None))?;
         drop(conn);
+        self.forget_read(&want);
         if let Some(blob) = bytes_of(item, catalog) {
             self.core.let_go_blob(blob);
         }

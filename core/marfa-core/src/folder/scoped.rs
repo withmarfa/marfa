@@ -1,18 +1,13 @@
-//! A quick pass that looks only at what events named.
-//!
-//! A watch hears which paths changed. Where it can trust that, a quick pass
-//! has no need to walk a folder of any size to find the one file a person
-//! saved: it looks at the paths the events named, and at the few files a pass
-//! always judges again (a held or refused file, and a new file not yet sent).
-//! Everything else stands as the last pass left it, which is what a quick pass
-//! over a folder nothing touched finds in any case, and a full pass still
-//! reads every file.
+//! A quick pass that looks only at the paths the watch's events named, and at
+//! the few files every pass judges again. Everything else stands as the last
+//! pass left it; a full pass still reads every file.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use notify::EventKind;
 use notify::event::{ModifyKind, RenameMode};
+use unicode_normalization::UnicodeNormalization;
 
 use super::pull::PullReport;
 use super::settings::Settings;
@@ -21,26 +16,31 @@ use super::{
     identity, landing, lists, state, take_file,
 };
 
-/// The most paths one quick pass looks at by name. A burst of changes, a
-/// checkout or a copy of a directory, is read as a walk reads it.
+/// The most paths one quick pass looks at by name; beyond that a walk is no dearer.
 pub(super) const MOST_TOUCHED: usize = 256;
 
-/// The paths the events heard since the last pass named, or that events
-/// cannot be trusted to have named them all.
+/// The paths the events heard since the last pass named.
 #[derive(Debug, Clone, Default)]
 pub(super) struct Touched {
-    keys: BTreeSet<String>,
-    /// The watcher lost events or named something no path says, so the next
-    /// pass walks the folder as it always did.
+    scope: Scope,
+    /// The next pass walks.
     untrusted: bool,
+}
+
+/// The paths a quick pass looks at.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(super) struct Scope {
+    pub(super) keys: BTreeSet<String>,
+    /// The paths a rename event named.
+    pub(super) renamed: BTreeSet<String>,
 }
 
 impl Touched {
     /// A watch before its first pass has heard nothing it can trust.
     pub(super) fn untrusted() -> Touched {
         Touched {
-            keys: BTreeSet::new(),
             untrusted: true,
+            ..Touched::default()
         }
     }
 
@@ -50,8 +50,7 @@ impl Touched {
             self.distrust();
             return;
         }
-        // A rename between directories is two changes a pass would have to
-        // match up: the walk does that.
+        // A rename between directories is two changes the walk matches up.
         if let EventKind::Modify(ModifyKind::Name(RenameMode::Both)) = event.kind
             && let [from, to] = event.paths.as_slice()
             && from.parent() != to.parent()
@@ -59,22 +58,29 @@ impl Touched {
             self.distrust();
             return;
         }
+        let renaming = matches!(event.kind, EventKind::Modify(ModifyKind::Name(_)));
         for path in &event.paths {
             let Ok(relative) = path.strip_prefix(root) else {
                 self.distrust();
                 return;
             };
-            if relative.as_os_str().is_empty() {
+            if relative.as_os_str().is_empty()
+                || !relative
+                    .components()
+                    .all(|part| matches!(part, Component::Normal(_)))
+            {
                 self.distrust();
                 return;
             }
-            // The folder's own state is no file of the folder's.
             if relative.starts_with(STATE_DIR) {
                 continue;
             }
             match identity::relative(root, path) {
                 Ok(key) => {
-                    self.keys.insert(key);
+                    if renaming {
+                        self.scope.renamed.insert(key.clone());
+                    }
+                    self.scope.keys.insert(key);
                 }
                 Err(_) => {
                     self.distrust();
@@ -82,7 +88,7 @@ impl Touched {
                 }
             }
         }
-        if self.keys.len() > MOST_TOUCHED {
+        if self.scope.keys.len() > MOST_TOUCHED {
             self.distrust();
         }
     }
@@ -90,47 +96,40 @@ impl Touched {
     /// Says the paths cannot be trusted to be all that changed.
     pub(super) fn distrust(&mut self) {
         self.untrusted = true;
-        self.keys.clear();
+        self.scope = Scope::default();
     }
 
     /// The paths to look at, or `None` where only a walk will do.
-    pub(super) fn scope(&self) -> Option<Vec<String>> {
-        (!self.untrusted).then(|| self.keys.iter().cloned().collect())
+    pub(super) fn scope(&self) -> Option<Scope> {
+        (!self.untrusted).then(|| self.scope.clone())
     }
 
     /// Forgets what a pass that ran to its end took in.
     pub(super) fn taken(&mut self) {
-        self.keys.clear();
+        self.scope = Scope::default();
         self.untrusted = false;
     }
 }
 
-/// The most files one quick pass looks at without a walk: those the events
-/// named and those it always judges again. Beyond that a walk is no dearer.
+/// The most files one quick pass looks at without a walk.
 const MOST_ACTIVE: usize = 1024;
 
-/// What a quick pass's reading of the folder rests on. A pass that finds it
-/// changed walks, since the lists or the types decide which files are taken
-/// and which are pushed.
+/// What a quick pass's reading of the folder rests on; a pass that finds it
+/// changed walks.
 #[derive(Debug, Clone, PartialEq)]
 pub(super) struct Guard {
     pub(super) settings: Settings,
     pub(super) catalog: Option<u64>,
 }
 
-/// What the last quick pass found in the folder, held for the next.
 pub(super) struct Inventory {
     pub(super) guard: Guard,
     /// Every file the walk found.
     pub(super) keys: HashSet<String>,
-    /// The same files, indexed for resolving embeds and telling a name a new
-    /// file would share with one of them.
     pub(super) index: embeds::Files,
-    /// The files the last pass read or judged, which this one judges again:
-    /// every other file stood as the last read left it.
+    /// The files the last pass read or judged, which this one judges again.
     pub(super) dirty: HashSet<String>,
-    /// Files nothing sends and no embed names, which stand unread until an
-    /// event names one.
+    /// Files nothing sends and no embed names.
     pub(super) skipped: HashSet<String>,
     pub(super) directories: Vec<Flagged>,
     pub(super) secrets: Vec<String>,
@@ -145,7 +144,6 @@ pub(super) struct Plan {
     /// The files to look at that stand, in path order.
     pub(super) found: Vec<(PathBuf, String)>,
     pub(super) opened: HashMap<PathBuf, Captured>,
-    /// Files the pass looked for that the last walk found and are gone.
     pub(super) vanished: Vec<String>,
 }
 
@@ -158,8 +156,7 @@ pub(super) enum Looked {
     File(PathBuf, Box<Captured>),
 }
 
-/// Whether a pull left every file where the last pass found it, though it may
-/// have changed what some hold.
+/// Whether a pull left every file where the last pass found it.
 pub(super) fn keeps_the_files(pull: &PullReport) -> bool {
     pull.written
         + pull.moved
@@ -194,41 +191,45 @@ impl Folder {
         })
     }
 
-    /// The files a quick pass is to look at, taken from what the last pass
-    /// found and the paths events named, or `None` where only a walk will do.
-    /// The last pass's inventory is taken either way: a pass that ends well
-    /// puts back what it found, and any other leaves none.
+    /// The files a quick pass is to look at, or `None` where only a walk will
+    /// do. The inventory is taken either way; only a pass that ends well puts
+    /// one back.
     pub(super) fn plan_scoped(
         &self,
         settings: &Settings,
         lists: &Lists,
-        touched: &[String],
+        scope: &Scope,
     ) -> Result<Option<Plan>> {
         let Some(mut inventory) = self.inventory.lock().expect("inventory lock").take() else {
             return Ok(None);
         };
         let began = std::time::SystemTime::now();
-        let (kept, snapshot) = {
+        let (snapshot, journaled, lost) = {
             let conn = self.core.conn()?;
             // A save set aside by a pull is judged by the walk that moved it.
             if !state::moved_from(&conn)?.is_empty() || !state::stale_waits(&conn)?.is_empty() {
                 return Ok(None);
             }
+            let kept = inventory.guard
+                == Guard {
+                    settings: settings.clone(),
+                    catalog: crate::store::catalog_version(&conn)?,
+                };
+            if !kept {
+                return Ok(None);
+            }
             (
-                inventory.guard
-                    == Guard {
-                        settings: settings.clone(),
-                        catalog: crate::store::catalog_version(&conn)?,
-                    },
                 state::every_bound(&conn)?,
+                state::journaled(&conn)?,
+                state::bound_to_lost_items(&conn)?,
             )
         };
-        if !kept {
-            return Ok(None);
-        }
-        let mut active: BTreeSet<String> = touched.iter().cloned().collect();
+        let (named, mut gone) = self.spelled(&inventory, scope);
+        let mut active: BTreeSet<String> = named;
         active.extend(inventory.dirty.iter().cloned());
-        // What the folder judges again whatever the file's bytes say.
+        // What the folder judges again whatever the file's bytes say, and each
+        // file missing, which no event may say has returned.
+        active.extend(journaled.into_iter().map(|row| row.path));
         active.extend(
             snapshot
                 .iter()
@@ -239,27 +240,72 @@ impl Folder {
                             || row.identity.is_none()
                             || state::untaken_read_version(&row.content_hash).is_some())
                 })
-                .map(|row| row.path.clone()),
+                .map(|row| row.path.clone())
+                .chain(
+                    lost.into_iter()
+                        .filter(|path| inventory.keys.contains(path)),
+                ),
         );
         if active.len() > MOST_ACTIVE {
             return Ok(None);
         }
-        let (mut found, mut opened, mut vanished) = (Vec::new(), HashMap::new(), Vec::new());
-        for key in &active {
-            match self.look_at(lists, &inventory, key) {
+        let by_identity: HashMap<&str, &str> = snapshot
+            .iter()
+            .filter_map(|row| Some((row.identity.as_deref()?, row.path.as_str())))
+            .collect();
+        let (mut found, mut opened) = (Vec::new(), HashMap::new());
+        let mut vanished = Vec::new();
+        let mut looked: BTreeSet<String> = BTreeSet::new();
+        let mut queue: Vec<String> = active.into_iter().collect();
+        while let Some(key) = queue.pop() {
+            if !looked.insert(key.clone()) {
+                continue;
+            }
+            let looking = if gone.remove(&key) {
+                Some(Looked::Gone)
+            } else {
+                self.look_at(lists, &inventory, &key)
+            };
+            match looking {
                 None => return Ok(None),
-                Some(Looked::Gone) => vanished.push(key.clone()),
+                Some(Looked::Gone) => vanished.push(key),
                 Some(Looked::Ignored) => {}
                 Some(Looked::Secret) => {
-                    if !inventory.secrets.contains(key) {
+                    if !inventory.secrets.contains(&key) {
                         return Ok(None);
                     }
                 }
                 Some(Looked::File(path, captured)) => {
+                    // The other half of a rename an event named one half of.
+                    if let Some(old) = identity::of(&captured.metadata.borrow())
+                        .and_then(|found| by_identity.get(found.key().as_str()).copied())
+                        && old != key
+                        && inventory.keys.contains(old)
+                    {
+                        queue.push(old.to_string());
+                    }
                     opened.insert(path.clone(), *captured);
-                    found.push((path, key.clone()));
+                    found.push((path, key));
                 }
             }
+        }
+        // A file that is gone is a delete or half a rename; only one that
+        // turned up elsewhere is a move this pass sees whole.
+        let turned_up: HashSet<String> = opened
+            .values()
+            .filter_map(|captured| identity::of(&captured.metadata.borrow()))
+            .map(|found| found.key())
+            .collect();
+        let at: HashMap<&str, &state::Bound> = snapshot
+            .iter()
+            .map(|row| (row.path.as_str(), row))
+            .collect();
+        if vanished.iter().any(|key| {
+            !at.get(key.as_str())
+                .and_then(|row| row.identity.as_ref())
+                .is_some_and(|identity| turned_up.contains(identity))
+        }) {
+            return Ok(None);
         }
         // A name a file left is free for one that took it in the same pass.
         for key in &vanished {
@@ -286,10 +332,80 @@ impl Folder {
         }))
     }
 
-    /// The folder as the last quick pass left it, for a status that has no
-    /// need to take the metadata of every file again: a file the scan read and
-    /// no event has named since stands as it read it, and any other is looked
-    /// at. `None` where only a walk will do.
+    /// The paths events named as their directories spell them, which an event
+    /// may spell in another Unicode form or case, and those gone under the
+    /// name an event gave. Only a new path or a renamed one can differ, so no
+    /// other costs a read of its directory.
+    fn spelled(&self, inventory: &Inventory, scope: &Scope) -> (BTreeSet<String>, HashSet<String>) {
+        let mut named = BTreeSet::new();
+        let mut gone = HashSet::new();
+        let mut listings: HashMap<String, Option<Vec<String>>> = HashMap::new();
+        for key in &scope.keys {
+            let known = inventory.keys.contains(key);
+            if known && !scope.renamed.contains(key) {
+                named.insert(key.clone());
+                continue;
+            }
+            let mut spelt = String::new();
+            let mut exact = true;
+            let mut parts = key.split('/').peekable();
+            while let Some(part) = parts.next() {
+                let names = listings
+                    .entry(spelt.clone())
+                    .or_insert_with(|| self.names_in(&spelt));
+                let Some(names) = names else {
+                    // Where it cannot be listed, the look at the path says.
+                    spelt = key.clone();
+                    break;
+                };
+                if !spelt.is_empty() {
+                    spelt.push('/');
+                }
+                match names.iter().find(|held| held.as_str() == part) {
+                    Some(_) => spelt.push_str(part),
+                    None => {
+                        exact = false;
+                        match names.iter().find(|held| same_name(held, part)) {
+                            Some(held) if !known => spelt.push_str(held),
+                            _ => {
+                                spelt.push_str(part);
+                                for rest in parts.by_ref() {
+                                    spelt.push('/');
+                                    spelt.push_str(rest);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if known && !exact {
+                gone.insert(key.clone());
+            }
+            named.insert(spelt);
+        }
+        (named, gone)
+    }
+
+    /// The names in the directory at `relative`, where it can be listed.
+    fn names_in(&self, relative: &str) -> Option<Vec<String>> {
+        let directory = if relative.is_empty() {
+            self.root_dir.clone()
+        } else {
+            self.root_dir.child(Path::new(relative), false).ok()?
+        };
+        let names = directory.entries().ok()?;
+        Some(
+            names
+                .into_iter()
+                .map(|name| name.to_string_lossy().into_owned())
+                .collect(),
+        )
+    }
+
+    /// The folder as the last quick pass left it, for a status that takes the
+    /// metadata of no file the scan read and no event has named since. `None`
+    /// where only a walk will do.
     pub(super) fn inventory_walked(&self) -> Option<Walked> {
         let lists = self.settings().ok()?.lists().ok()?;
         let guard = self.inventory.lock().expect("inventory lock");
@@ -331,8 +447,7 @@ impl Folder {
         Some(walked)
     }
 
-    /// The bytes of a file a status trusted unchanged, which it needed after
-    /// all.
+    /// The bytes of a file a status trusted unchanged.
     pub(super) fn read_unchanged(&self, key: &str) -> Option<std::io::Result<Vec<u8>>> {
         let lists = self.settings().ok()?.lists().ok()?;
         let looked = {
@@ -346,8 +461,7 @@ impl Folder {
     }
 
     /// What the path `key` is now, as a walk would find it, or `None` where
-    /// something about it only a walk can settle: a directory, a link on the
-    /// way, a package, a file the walk could not read or would clear.
+    /// only a walk can settle it.
     pub(super) fn look_at(
         &self,
         lists: &Lists,
@@ -377,15 +491,16 @@ impl Folder {
                     return None;
                 }
             }
-            // A link or another kind the walk passes over, or a path it
-            // cannot read: a file it found there is lost to it, which only a
-            // walk can say.
-            Ok(_) | Err(_) => {
+            // A link or another kind the walk passes over: a file it found
+            // there is lost to it, which only a walk can say.
+            Ok(_) => {
                 if known {
                     return None;
                 }
                 Looked::Ignored
             }
+            // A path this cannot place, such as one with `..` in it.
+            Err(_) => return None,
         };
         // A secret that went, or stopped being one, changes what the pass says.
         (!secret || matches!(looked, Looked::Secret)).then_some(looked)
@@ -404,7 +519,7 @@ impl Folder {
         }
     }
 
-    /// The file at `key`, which stands, walked to through the directories the
+    /// The file at `key`, which stands, reached through the directories the
     /// walk enters.
     fn look_at_file(&self, lists: &Lists, known: bool, key: &str) -> Option<Looked> {
         let ignored = || (!known).then_some(Looked::Ignored);
@@ -471,6 +586,13 @@ impl Folder {
     }
 }
 
+/// Whether two spellings are one name to a volume that ignores case or Unicode
+/// form.
+fn same_name(one: &str, other: &str) -> bool {
+    let fold = |name: &str| name.nfc().collect::<String>().to_lowercase();
+    fold(one) == fold(other)
+}
+
 #[cfg(unix)]
 fn linked_elsewhere(metadata: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -491,11 +613,11 @@ pub(super) enum Reading<'a> {
     /// at the paths events named.
     Keeping,
     /// Looks at the paths events named, where the last pass left what it found.
-    Named(&'a [String]),
+    Named(&'a Scope),
 }
 
 impl Touched {
-    pub(super) fn reading(scope: &Option<Vec<String>>) -> Reading<'_> {
-        scope.as_deref().map_or(Reading::Keeping, Reading::Named)
+    pub(super) fn reading(scope: &Option<Scope>) -> Reading<'_> {
+        scope.as_ref().map_or(Reading::Keeping, Reading::Named)
     }
 }
