@@ -36,6 +36,7 @@ import {
   ownObjectStore,
   replicateUntilCaughtUp,
   runJob,
+  storeByName,
   whenCopied,
 } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
@@ -1160,7 +1161,10 @@ describe("a stored store setting that does not read", () => {
   it(
     "attaches no object store over a stored endpoint whose host holds an empty label or ends in more than one dot, and takes the longest host with one dot at its end",
     async () => {
-      const server = await bootFreshServer("destination-host-dots", DISK);
+      const server = await bootFreshServer("destination-host-dots", {
+        ...ownObjectStore(),
+        MARFA_BACKUP_INTERVAL_SECONDS: "0",
+      });
       try {
         const labels = ["c", "d", "e"].map((letter) => letter.repeat(63));
         // With "b." before it, 253 characters and the dot that names the root.
@@ -1206,6 +1210,41 @@ describe("a stored store setting that does not read", () => {
             "object_store_path_style",
           );
         }
+
+        // The witness that a valid host attaches: the run's own store, reached
+        // at the name its bucket is served under. The store serves no name
+        // with a dot at its end, so that one is judged by the cases above. The
+        // lookup is scripted once the server is up, as a start clears faults.
+        const run = new URL(process.env.MARFA_OBJECT_STORE_ENDPOINT!);
+        const named = new URL(storeByName(run.toString())).hostname;
+        const bucket = process.env.MARFA_OBJECT_STORE_BUCKET!;
+        await server.restart(() => {
+          storeSettingRow(server.sqlitePath, "object_store_bucket", bucket);
+          storeSettingRow(
+            server.sqlitePath,
+            "object_store_endpoint",
+            `http://${named}:${run.port}`,
+          );
+          storeSettingRow(
+            server.sqlitePath,
+            "object_store_path_style",
+            "false",
+          );
+        });
+        await server.setFault(`resolve:${bucket}.${named}=127.0.0.1`);
+        const { operator } = clientsFor(server);
+        const set = await operator.patchConfig({
+          object_store_prefix: `fixture-${randomUUID()}`,
+        });
+        expect(set.status, JSON.stringify(set.error)).toBe(200);
+        await waitFor("the object store to be in use", async () => {
+          const said = await backups(server);
+          return said.destination === "bucket" &&
+            said.reason !== "destination_unusable"
+            ? true
+            : undefined;
+        });
+        expect(await storeConcerns(server)).toEqual([]);
       } finally {
         await server.stop();
       }

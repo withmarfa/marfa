@@ -3478,9 +3478,9 @@ Where `allow_private_addresses` is `false`, if the host of `error_webhook_url` i
 
 ### `instance/object-store-private-unusable`
 
-Where `allow_private_addresses` is `false`, if the server has never attached an object store at the stored `object_store_bucket` and `object_store_prefix`, and the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, then the server MUST answer `GET /health` with `backups.reason` `destination_unusable`.
+Where `allow_private_addresses` is `false`, when the server has finished its attempt to attach the object store the stored settings name, if the host the object store is addressed at, the endpoint's own or the one `instance/object-store-virtual-host` makes, is a name whose lookup finds any address that is not public, then the server MUST answer `GET /health` with `backups.reason` `destination_unusable`.
 
-**Reason:** the object store is never reached, so it cannot be used, and the owner sees why where every other unusable destination is reported (`instance/backup-health-unusable`).
+**Reason:** the object store is never reached, so it cannot be used, and the owner sees why where every other unusable destination is reported (`instance/backup-health-unusable`). The attempt runs after a write to `/config` has been answered, so until it finishes `GET /health` can still answer for the destination the server had before.
 
 **Tests:** `compliance/destination-addresses.test.ts › takes an object store on a private address once the private local process turns the switch on, and not before`, `› reaches an object store by virtual host at the bucket before the endpoint's host, and not while that host leads to a private address`.
 
