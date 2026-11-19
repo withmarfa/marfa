@@ -82,17 +82,55 @@ When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mc
 
 ### `mcp/tools-for-admin`
 
-When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, and `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`.
+When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge_trash` while it holds `items.purge`, `marfa_apps` and `marfa_manage_app` while it holds `grants.manage`, `marfa_backups` and `marfa_manage_backups` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors` and `marfa_manage_connector` while it holds `connectors.manage`, `marfa_files` and `marfa_drop_file_copy` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_manage_sign_in` while it holds `sign_ins.manage`.
+
+**Reason:** a credential that holds a permission can do the owner task it opens through the API, so an agent holding it does the same from MCP.
 
 **Tests:** `compliance/mcp.test.ts › lists each admin tool at /mcp/admin only to a credential that holds its permission`, `› lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists each admin tool at /mcp/admin to a credential that holds only one of the permissions that opens it`.
 
+### `mcp/health-instance-read`
+
+While a credential holds `instance.read`, the server MUST add to the answer of `marfa_health` what needs the owner's attention, the housekeeping jobs, the metrics and the file storage diagnostics, and the status of the bulk job a `job_id` names.
+
+**Reason:** these are the reads `instance.read` opens at the API, so the tool answers what the credential may read there.
+
+**Tests:** `compliance/owner-tasks.test.ts › adds what instance.read opens to the health tool, and only for a credential that holds it`.
+
 ### `mcp/tools-withheld`
 
-The server MUST NOT list at any MCP endpoint a tool that purges items, exports the instance, restores a backup, claims the instance, changes the instance's settings, manages the owner, passkeys or sign-ins, manages file storage or runs housekeeping.
+The server MUST NOT list at any MCP endpoint a tool that restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
 
-**Reason:** each of these can lose what the owner keeps or lock the owner out, and the owner does them from the command line, not through an agent.
+**Reason:** a restore needs a recent sign-in, claiming and recovering a password start where the server runs, adding a passkey needs a browser, and an update or a clock confirmation changes the server itself; the owner does each from the command line or from an app after a recent sign-in. An export is a file, which a tool answer cannot carry.
 
 **Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`.
+
+### `mcp/settings-step-up-withheld`
+
+If a `marfa_change_settings` call names `sign_in_address`, `allow_private_addresses`, `object_store_bucket`, `object_store_endpoint`, `object_store_region`, `object_store_path_style`, `object_store_prefix` or `backup_path`, then the server MUST answer the call with the tool error code `app_sign_in_required` and change no setting.
+
+**Reason:** the owner changes where people sign in, whether the server reaches private addresses and where it keeps files and backups from the command line or after a recent sign-in, never on a key's say-so. A setting that is not one of these changes through the tool as it does through `PATCH /config`.
+
+**Tests:** `compliance/owner-tasks.test.ts › refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes`.
+
+### `mcp/owner-preview`
+
+When a call to `marfa_purge_trash` or `marfa_drop_file_copy`, or a call to `marfa_manage_app` with the action `revoke`, to `marfa_manage_backups` with `adopt_folder`, to `marfa_manage_connector` with `delete`, `clear_state` or `retire_endpoint`, or to `marfa_manage_sign_in` with `end_sign_in` or `remove_passkey`, carries no `confirm`, the server MUST answer a preview that carries a `confirm` token.
+
+**Reason:** these remove what the owner keeps or end what another app or sign-in holds, and a person sees what goes before it goes.
+
+**Tests:** `compliance/owner-tasks.test.ts › previews a purge, purges only on its confirmation, and refuses another credential's`, `› empties only the bin's items of the types a credential writes through the tool, page by page, each page on its confirmation`, `› lists, narrows and revokes an app's grant through the tools, a revoke on its confirmation`, `› lists, renames and ends a sign-in through the tools, an end on its confirmation`, `› lists a connector, and deletes it only on its confirmation, refusing as the API does`, `› lists backups, takes one now and adopts the folder only on its confirmation, with the API's answers`, `› lists a file's copies, drops one only on its confirmation and refuses as the API does`.
+
+### `mcp/owner-unconfirmed-unchanged`
+
+When a call to `marfa_purge_trash` or `marfa_drop_file_copy`, or a call to `marfa_manage_app` with the action `revoke`, to `marfa_manage_backups` with `adopt_folder`, to `marfa_manage_connector` with `delete`, `clear_state` or `retire_endpoint`, or to `marfa_manage_sign_in` with `end_sign_in` or `remove_passkey`, carries no `confirm`, the server MUST NOT change what the call names.
+
+**Tests:** `compliance/owner-tasks.test.ts › previews a purge, purges only on its confirmation, and refuses another credential's`, `› empties only the bin's items of the types a credential writes through the tool, page by page, each page on its confirmation`, `› lists, narrows and revokes an app's grant through the tools, a revoke on its confirmation`, `› lists, renames and ends a sign-in through the tools, an end on its confirmation`, `› lists a connector, and deletes it only on its confirmation, refusing as the API does`, `› lists backups, takes one now and adopts the folder only on its confirmation, with the API's answers`, `› lists a file's copies, drops one only on its confirmation and refuses as the API does`.
+
+### `mcp/owner-confirmation-stale`
+
+If a call that `mcp/owner-preview` names carries a `confirm` token that another credential's preview gave, or one for other arguments, then the server MUST answer the tool error code `confirmation_stale` and change nothing.
+
+**Tests:** `compliance/owner-tasks.test.ts › previews a purge, purges only on its confirmation, and refuses another credential's`.
 
 ### `mcp/open-world-hint`
 
@@ -110,7 +148,7 @@ When a tool call reads or writes, the server MUST apply the permissions, refusal
 
 **Reason:** a tool is another door to what the API guards, so a credential the API refuses is refused by the tool with the same `code`, and no tool is a way round a rule the API holds.
 
-**Tests:** `compliance/mcp.test.ts › refuses marfa_create for a type the credential only reads, as POST /items does`, `› refuses a change that needs schema.write at /mcp/schema, as PUT /types/{id} does`, `› refuses marfa_revoke_key for a key beyond its credential's reach, as DELETE /keys/{id} does`.
+**Tests:** `compliance/mcp.test.ts › refuses marfa_create for a type the credential only reads, as POST /items does`, `› refuses a change that needs schema.write at /mcp/schema, as PUT /types/{id} does`, `› refuses marfa_revoke_key for a key beyond its credential's reach, as DELETE /keys/{id} does`, `compliance/owner-tasks.test.ts › refuses a setting that does not exist in the settings tool, as the API does`, `› refuses a purge the API refuses, with the API's code, at the confirmed call`, `› refuses an app task the API refuses, with the API's code`, `› refuses a sign-in or passkey task the API refuses, with the API's code`, `› runs housekeeping and cancels a job through the maintenance tool, refusing as the API does`.
 
 ### `mcp/unknown-argument`
 

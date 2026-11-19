@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { v7 as uuidv7 } from "uuid";
 import {
   approvedApp,
   bootFreshServer,
@@ -9,7 +10,16 @@ import {
 } from "../../utils/fresh-server.js";
 import { controlRequest } from "../../utils/control-request.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import {
+  callTool,
+  connectMcp,
+  toolError,
+  toolResult,
+  type McpConnection,
+  type ToolAnswer,
+} from "../../utils/mcp.js";
 import { tempFolder } from "../../utils/temp-folder.js";
+import { waitFor } from "../../utils/wait.js";
 
 /**
  * The owner's tasks, open to any credential that holds the permission each
@@ -31,7 +41,10 @@ beforeAll(async () => {
   });
 }, FRESH_SERVER_TIMEOUT_MS);
 
+const connections: McpConnection[] = [];
+
 afterAll(async () => {
+  await Promise.all(connections.map((connection) => connection.close()));
   await server.stop();
   rmSync(backups, { recursive: true, force: true });
 }, FRESH_SERVER_TIMEOUT_MS);
@@ -607,5 +620,656 @@ describe("owner tasks", () => {
         `${method} ${path} ${JSON.stringify(answer.body)}`,
       ).toBe(200);
     }
+  });
+});
+
+async function admin(credential: string): Promise<McpConnection> {
+  const connection = await connectMcp(
+    server.apiUrl,
+    credential,
+    "2026-07-28",
+    "/mcp/admin",
+  );
+  connections.push(connection);
+  return connection;
+}
+
+/** A destructive call: the preview first, then the same call with its confirm. */
+async function confirmed(
+  connection: McpConnection,
+  name: string,
+  args: Record<string, unknown>,
+): Promise<ToolAnswer> {
+  const preview = toolResult(await callTool(connection, name, args));
+  expect(typeof preview.confirm, JSON.stringify(preview)).toBe("string");
+  return callTool(connection, name, { ...args, confirm: preview.confirm });
+}
+
+/** The tool refused with the code the API refused the same request with. */
+function expectSameRefusal(
+  api: { status: number; body: Record<string, unknown> },
+  answer: ToolAnswer,
+  label: string,
+) {
+  expect(api.status, `${label} ${JSON.stringify(api.body)}`).toBeGreaterThan(
+    399,
+  );
+  expect(toolError(answer).code, label).toBe(
+    (api.body.error as { code: string }).code,
+  );
+}
+
+/** What each step-up setting is set to by a request a key makes. */
+const STEP_UP_SETTINGS: Record<string, unknown> = {
+  sign_in_address: "https://elsewhere.example",
+  allow_private_addresses: true,
+  object_store_bucket: "another-bucket",
+  object_store_endpoint: "https://store.example",
+  object_store_region: "eu-west-1",
+  object_store_path_style: false,
+  object_store_prefix: "elsewhere",
+  backup_path: "/tmp/elsewhere",
+};
+
+describe("the owner tasks at /mcp/admin", () => {
+  it("refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes", async () => {
+    const { key } = await mint({ permissions: ["config.manage"] });
+    const connection = await admin(key);
+    const before = await call(key, "GET", "/config/settings");
+    expect(before.status, JSON.stringify(before.body)).toBe(200);
+    for (const [name, value] of Object.entries(STEP_UP_SETTINGS)) {
+      const refused = toolError(
+        await callTool(connection, "marfa_change_settings", {
+          settings: { [name]: value },
+        }),
+      );
+      expect(refused.code, name).toBe("app_sign_in_required");
+      expect(String(refused.message), name).toContain(name);
+    }
+    const after = await call(key, "GET", "/config/settings");
+    expect(after.body).toEqual(before.body);
+    // The API refuses a key the same way.
+    const api = await call(key, "PATCH", "/config", {
+      sign_in_address: STEP_UP_SETTINGS.sign_in_address,
+    });
+    expect(api.status).toBe(403);
+    expect((api.body.error as { code: string }).code).toBe(
+      "app_sign_in_required",
+    );
+    // The witness: a setting that is not a step-up act changes, and returns.
+    const changed = toolResult(
+      await callTool(connection, "marfa_change_settings", {
+        name: "Named by a tool",
+        settings: { trash_retention_days: 61 },
+      }),
+    );
+    expect(changed.name).toBe("Named by a tool");
+    const read = toolResult(
+      await callTool(connection, "marfa_settings", {}),
+    ) as { name: string; settings: { key: string; value: unknown }[] };
+    expect(read.name).toBe("Named by a tool");
+    expect(
+      read.settings.find((line) => line.key === "trash_retention_days")?.value,
+    ).toBe(61);
+    toolResult(
+      await callTool(connection, "marfa_change_settings", {
+        name: null,
+        settings: { trash_retention_days: null },
+      }),
+    );
+    expect((await call(key, "GET", "/config/settings")).body).toEqual(
+      before.body,
+    );
+  });
+
+  it("refuses a setting that does not exist in the settings tool, as the API does", async () => {
+    const { key } = await mint({ permissions: ["config.manage"] });
+    const connection = await admin(key);
+    const answer = await callTool(connection, "marfa_change_settings", {
+      settings: { no_such_setting: 1 },
+    });
+    expect(toolError(answer).code).toBe("validation_error");
+    const api = await call(key, "PATCH", "/config", { no_such_setting: 1 });
+    expectSameRefusal(api, answer, "no_such_setting");
+  });
+
+  it("previews a purge, purges only on its confirmation, and refuses another credential's", async () => {
+    const run = randomUUID();
+    const writer = await mint({ ...EVERY_TYPE });
+    const made = await call(writer.key, "POST", "/items", {
+      type: "core.note",
+      properties: { title: `purged by a tool ${run}` },
+    });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    const id = (made.body.item as { id: string }).id;
+    expect((await call(writer.key, "DELETE", `/items/${id}`)).status).toBe(200);
+    const purger = await mint({
+      permissions: ["items.purge"],
+      type_permissions: { "core.note": "write" },
+    });
+    const other = await mint({
+      permissions: ["items.purge"],
+      type_permissions: { "core.note": "write" },
+    });
+    const connection = await admin(purger.key);
+    const listed = toolResult(
+      await callTool(connection, "marfa_trash", { q: run }),
+    ) as { items: { id: string; version: number }[] };
+    expect(listed.items.map((row) => row.id)).toEqual([id]);
+    const args = { action: "purge", id, version: listed.items[0]!.version };
+    const preview = toolResult(
+      await callTool(connection, "marfa_purge_trash", args),
+    );
+    expect(typeof preview.confirm).toBe("string");
+    expect((await local("GET", `/trash?q=${run}`)).body.data).toHaveLength(1);
+    // Another credential's confirmation, and one for other arguments.
+    const elsewhere = await admin(other.key);
+    const theirs = toolResult(
+      await callTool(elsewhere, "marfa_purge_trash", args),
+    );
+    const stale = toolError(
+      await callTool(connection, "marfa_purge_trash", {
+        ...args,
+        confirm: theirs.confirm,
+      }),
+    );
+    expect(stale.code).toBe("confirmation_stale");
+    expect(typeof stale.confirm).toBe("string");
+    const forOther = toolError(
+      await callTool(connection, "marfa_purge_trash", {
+        ...args,
+        version: args.version + 1,
+        confirm: preview.confirm,
+      }),
+    );
+    expect(forOther.code).toBe("confirmation_stale");
+    expect((await local("GET", `/trash?q=${run}`)).body.data).toHaveLength(1);
+    const purged = toolResult(
+      await callTool(connection, "marfa_purge_trash", {
+        ...args,
+        confirm: preview.confirm,
+      }),
+    );
+    expect(purged.purged).toBe(1);
+    expect((await local("GET", `/trash?q=${run}`)).body.data).toHaveLength(0);
+  });
+
+  it("empties only the bin's items of the types a credential writes through the tool, page by page, each page on its confirmation", async () => {
+    const run = randomUUID();
+    const writer = await mint({ ...EVERY_TYPE });
+    const binned: Record<string, string> = {};
+    for (const type of ["core.note", "core.task"]) {
+      const made = await call(writer.key, "POST", "/items", {
+        type,
+        properties: { title: `emptied by a tool ${type} ${run}` },
+      });
+      expect(made.status, JSON.stringify(made.body)).toBe(201);
+      binned[type] = (made.body.item as { id: string }).id;
+      await call(writer.key, "DELETE", `/items/${binned[type]}`);
+    }
+    const purger = await mint({
+      permissions: ["items.purge"],
+      type_permissions: { "core.note": "write", "core.task": "read" },
+    });
+    const connection = await admin(purger.key);
+    const preview = toolResult(
+      await callTool(connection, "marfa_purge_trash", { action: "empty" }),
+    ) as { preview: { items: number } };
+    expect(preview.preview.items).toBeGreaterThanOrEqual(1);
+    expect(
+      (await local("GET", `/trash?q=${run}`)).body.data as unknown[],
+    ).toHaveLength(2);
+    let cursor: string | null = null;
+    do {
+      const args: Record<string, unknown> = { action: "empty" };
+      if (cursor !== null) args.cursor = cursor;
+      const page = toolResult(
+        await confirmed(connection, "marfa_purge_trash", args),
+      );
+      expect(page.failures).toEqual([]);
+      cursor = page.next_cursor as string | null;
+    } while (cursor !== null);
+    const left = await local("GET", `/trash?q=${run}`);
+    expect((left.body.data as { id: string }[]).map((row) => row.id)).toEqual([
+      binned["core.task"],
+    ]);
+  });
+
+  it("refuses a purge the API refuses, with the API's code, at the confirmed call", async () => {
+    const writer = await mint({ ...EVERY_TYPE });
+    const made = await call(writer.key, "POST", "/items", {
+      type: "core.task",
+      properties: { title: `read only in the bin ${randomUUID()}` },
+    });
+    const id = (made.body.item as { id: string }).id;
+    await call(writer.key, "DELETE", `/items/${id}`);
+    const reader = await mint({
+      permissions: ["items.purge"],
+      type_permissions: { "core.task": "read" },
+    });
+    const connection = await admin(reader.key);
+    for (const target of [id, uuidv7()]) {
+      const api = await call(
+        reader.key,
+        "POST",
+        `/items/${target}/purge?version=1`,
+      );
+      const answer = await confirmed(connection, "marfa_purge_trash", {
+        action: "purge",
+        id: target,
+        version: 1,
+      });
+      expectSameRefusal(api, answer, target);
+    }
+    // The witness: the item stands, and the key that writes its type purges it.
+    expect((await local("GET", "/trash")).body.data).toBeDefined();
+    const trashed = (await local("GET", `/trash?q=read%20only`)).body.data as {
+      id: string;
+      version: number;
+    }[];
+    expect(trashed.map((row) => row.id)).toContain(id);
+  });
+
+  it("lists, narrows and revokes an app's grant through the tools, a revoke on its confirmation", async () => {
+    const app = await approvedApp(server, ["core.note:write"]);
+    const { key } = await mint({ permissions: ["grants.manage"] });
+    const connection = await admin(key);
+    const listed = toolResult(await callTool(connection, "marfa_apps", {})) as {
+      apps: { id: string; client_id: string; scopes: string[] }[];
+    };
+    const grant = listed.apps.find((row) => row.client_id === app.clientId)!;
+    expect(grant, JSON.stringify(listed)).toBeDefined();
+    const stale = await callTool(connection, "marfa_manage_app", {
+      action: "narrow",
+      id: grant.id,
+      scopes: ["core.note:read"],
+      expected_scopes: ["core.note:read"],
+    });
+    expectSameRefusal(
+      await call(key, "PATCH", `/grants/${grant.id}`, {
+        scopes: ["core.note:read"],
+        expected_scopes: ["core.note:read"],
+      }),
+      stale,
+      "a stale expectation",
+    );
+    const writes = () =>
+      call(app.token, "GET", "/items?type=core.note&limit=1");
+    expect((await writes()).status).toBe(200);
+    const done = toolResult(
+      await callTool(connection, "marfa_manage_app", {
+        action: "narrow",
+        id: grant.id,
+        scopes: ["core.note:read"],
+        expected_scopes: grant.scopes,
+      }),
+    );
+    expect(done.scopes).toEqual(["core.note:read"]);
+    expect((await writes()).status).toBe(401);
+    const read = (await call(key, "GET", "/grants")).body.data as {
+      id: string;
+      scopes: string[];
+    }[];
+    expect(read.find((row) => row.id === grant.id)?.scopes).toEqual([
+      "core.note:read",
+    ]);
+    const args = { action: "revoke", id: grant.id };
+    const preview = toolResult(
+      await callTool(connection, "marfa_manage_app", args),
+    );
+    expect(typeof preview.confirm).toBe("string");
+    const stands = (await call(key, "GET", "/grants")).body.data as {
+      id: string;
+    }[];
+    expect(stands.map((row) => row.id)).toContain(grant.id);
+    const gone = toolResult(
+      await callTool(connection, "marfa_manage_app", {
+        ...args,
+        confirm: preview.confirm,
+      }),
+    );
+    expect(gone.revoked).toBe(grant.id);
+    const left = (await call(key, "GET", "/grants")).body.data as {
+      id: string;
+    }[];
+    expect(left.map((row) => row.id)).not.toContain(grant.id);
+  });
+
+  it("refuses an app task the API refuses, with the API's code", async () => {
+    const { key } = await mint({ permissions: ["grants.manage"] });
+    const connection = await admin(key);
+    const narrow = await callTool(connection, "marfa_manage_app", {
+      action: "narrow",
+      id: "no-such-grant",
+      scopes: [],
+      expected_scopes: [],
+    });
+    expectSameRefusal(
+      await call(key, "PATCH", "/grants/no-such-grant", {
+        scopes: [],
+        expected_scopes: [],
+      }),
+      narrow,
+      "narrow",
+    );
+    const revoke = await callTool(connection, "marfa_manage_app", {
+      action: "revoke",
+      id: "no-such-grant",
+    });
+    expectSameRefusal(
+      await call(key, "DELETE", "/grants/no-such-grant"),
+      revoke,
+      "revoke",
+    );
+  });
+
+  it("lists, renames and ends a sign-in through the tools, an end on its confirmation", async () => {
+    const other = await mint({});
+    const { key } = await mint({ permissions: ["sign_ins.manage"] });
+    const connection = await admin(key);
+    const listed = toolResult(
+      await callTool(connection, "marfa_sign_ins", {}),
+    ) as { sign_ins: { id: string }[]; passkeys: unknown[] };
+    expect(listed.sign_ins.map((row) => row.id)).toContain(other.id);
+    const renamed = toolResult(
+      await callTool(connection, "marfa_manage_sign_in", {
+        action: "rename_sign_in",
+        id: other.id,
+        name: "Renamed by a tool",
+      }),
+    );
+    expect((renamed.sign_in as { name: string }).name).toBe(
+      "Renamed by a tool",
+    );
+    const args = { action: "end_sign_in", id: other.id };
+    const preview = toolResult(
+      await callTool(connection, "marfa_manage_sign_in", args),
+    );
+    expect(typeof preview.confirm).toBe("string");
+    expect((await call(other.key, "GET", "/keys/current")).status).toBe(200);
+    const ended = toolResult(
+      await callTool(connection, "marfa_manage_sign_in", {
+        ...args,
+        confirm: preview.confirm,
+      }),
+    );
+    expect(ended.ended).toBe(other.id);
+    expect((await call(other.key, "GET", "/keys/current")).status).toBe(401);
+  });
+
+  it("refuses a sign-in or passkey task the API refuses, with the API's code", async () => {
+    const { key } = await mint({ permissions: ["sign_ins.manage"] });
+    const connection = await admin(key);
+    const passkeys = toolResult(
+      await callTool(connection, "marfa_sign_ins", {}),
+    ).passkeys;
+    expect(Array.isArray(passkeys)).toBe(true);
+    expectSameRefusal(
+      await call(key, "PATCH", "/owner/sign-ins/no-such-sign-in", {
+        name: "Renamed",
+      }),
+      await callTool(connection, "marfa_manage_sign_in", {
+        action: "rename_sign_in",
+        id: "no-such-sign-in",
+        name: "Renamed",
+      }),
+      "rename a sign-in",
+    );
+    expectSameRefusal(
+      await call(key, "DELETE", "/owner/sign-ins/no-such-sign-in"),
+      await confirmed(connection, "marfa_manage_sign_in", {
+        action: "end_sign_in",
+        id: "no-such-sign-in",
+      }),
+      "end a sign-in",
+    );
+    expectSameRefusal(
+      await call(key, "PATCH", "/owner/passkeys/no-such-passkey", {
+        name: "Renamed",
+      }),
+      await callTool(connection, "marfa_manage_sign_in", {
+        action: "rename_passkey",
+        id: "no-such-passkey",
+        name: "Renamed",
+      }),
+      "rename a passkey",
+    );
+    expectSameRefusal(
+      await call(key, "DELETE", "/owner/passkeys/no-such-passkey"),
+      await confirmed(connection, "marfa_manage_sign_in", {
+        action: "remove_passkey",
+        id: "no-such-passkey",
+      }),
+      "remove a passkey",
+    );
+  });
+
+  it("lists backups, takes one now and adopts the folder only on its confirmation, with the API's answers", async () => {
+    const { key } = await mint({ permissions: ["backups.manage"] });
+    const connection = await admin(key);
+    const before = toolResult(
+      await callTool(connection, "marfa_backups", {}),
+    ) as { backups: unknown[] };
+    const api = await call(key, "GET", "/backups");
+    expect(before.backups).toHaveLength((api.body.data as unknown[]).length);
+    const taken = toolResult(
+      await callTool(connection, "marfa_manage_backups", { action: "take" }),
+    );
+    expect(taken.backup).toBeDefined();
+    const after = toolResult(
+      await callTool(connection, "marfa_backups", {}),
+    ) as { backups: unknown[] };
+    expect(after.backups.length).toBeGreaterThan(before.backups.length);
+    // The folder holds the store's marker already, so adopting it is refused
+    // past the access check, with the code the API gives.
+    const adopt = await confirmed(connection, "marfa_manage_backups", {
+      action: "adopt_folder",
+    });
+    expectSameRefusal(
+      await call(key, "POST", "/backups/folder/adopt"),
+      adopt,
+      "adopt",
+    );
+    const preview = toolResult(
+      await callTool(connection, "marfa_manage_backups", {
+        action: "adopt_folder",
+      }),
+    );
+    expect(typeof preview.confirm).toBe("string");
+  });
+
+  it("runs housekeeping and cancels a job through the maintenance tool, refusing as the API does", async () => {
+    const { key } = await mint({ permissions: ["instance.maintain"] });
+    const connection = await admin(key);
+    const unknown = await callTool(connection, "marfa_maintain", {
+      action: "run_housekeeping",
+      name: "no-such-job",
+    });
+    expectSameRefusal(
+      await call(key, "POST", "/housekeeping/no-such-job/run"),
+      unknown,
+      "unknown housekeeping",
+    );
+    const id = uuidv7();
+    expectSameRefusal(
+      await call(key, "POST", `/items/bulk-actions/jobs/${id}/cancel`),
+      await callTool(connection, "marfa_maintain", {
+        action: "cancel_job",
+        id,
+      }),
+      "cancel a job",
+    );
+    const reader = await mint({ permissions: ["instance.read"] });
+    const listed = (await call(reader.key, "GET", "/housekeeping")).body
+      .data as { name: string }[];
+    expect(listed.length).toBeGreaterThan(0);
+    const named = listed[0]!.name;
+    const maintainer = await mint({ permissions: ["instance.maintain"] });
+    const api = await call(
+      maintainer.key,
+      "POST",
+      `/housekeeping/${named}/run`,
+    );
+    const run = await callTool(connection, "marfa_maintain", {
+      action: "run_housekeeping",
+      name: named,
+    });
+    expect(run.isError, JSON.stringify(run.body)).toBe(api.status >= 400);
+  });
+
+  it("adds what instance.read opens to the health tool, and only for a credential that holds it", async () => {
+    const reader = await mint({ permissions: ["instance.read"] });
+    const read = toolResult(
+      await callTool(await admin(reader.key), "marfa_health", {}),
+    );
+    for (const name of [
+      "attention",
+      "housekeeping_jobs",
+      "metrics",
+      "storage",
+    ]) {
+      expect(read[name], name).toBeDefined();
+    }
+    // A bulk job that does not exist is refused with the API's code.
+    const missing = uuidv7();
+    const job = toolResult(
+      await callTool(await admin(reader.key), "marfa_health", {
+        job_id: missing,
+      }),
+    ) as { unread: { read: string; code: string }[] };
+    const api = await call(
+      reader.key,
+      "GET",
+      `/items/bulk-actions/jobs/${missing}`,
+    );
+    expect(api.status).toBeGreaterThan(399);
+    expect(job.unread.map((entry) => entry.code)).toContain(
+      (api.body.error as { code: string }).code,
+    );
+    // The witness: another permission that lists the tool does not add them.
+    const connectors = await mint({ permissions: ["connectors.manage"] });
+    const plain = toolResult(
+      await callTool(await admin(connectors.key), "marfa_health", {}),
+    );
+    expect(plain.health).toBeDefined();
+    for (const name of [
+      "attention",
+      "housekeeping_jobs",
+      "metrics",
+      "storage",
+    ]) {
+      expect(plain[name], name).toBeUndefined();
+    }
+  });
+
+  it("lists a connector, and deletes it only on its confirmation, refusing as the API does", async () => {
+    const owner = await mint({ permissions: ["connectors.manage"] });
+    const registered = await call(owner.key, "POST", "/connectors", {
+      name: "Read through a tool",
+    });
+    expect(registered.status, JSON.stringify(registered.body)).toBe(201);
+    const id = registered.body.id as string;
+    const connection = await admin(owner.key);
+    const listed = toolResult(
+      await callTool(connection, "marfa_connectors", {}),
+    ) as { connectors: { id: string }[] };
+    expect(listed.connectors.map((row) => row.id)).toContain(id);
+    const missing = uuidv7();
+    expectSameRefusal(
+      await call(owner.key, "GET", `/connectors/${missing}`),
+      await callTool(connection, "marfa_connectors", { id: missing }),
+      "read",
+    );
+    expectSameRefusal(
+      await call(owner.key, "DELETE", `/connectors/${missing}`),
+      await confirmed(connection, "marfa_manage_connector", {
+        action: "delete",
+        id: missing,
+      }),
+      "delete",
+    );
+    const args = { action: "delete", id };
+    const preview = toolResult(
+      await callTool(connection, "marfa_manage_connector", args),
+    );
+    expect(typeof preview.confirm).toBe("string");
+    expect((await call(owner.key, "GET", `/connectors/${id}`)).status).toBe(
+      200,
+    );
+    const deleted = toolResult(
+      await callTool(connection, "marfa_manage_connector", {
+        ...args,
+        confirm: preview.confirm,
+      }),
+    );
+    expect(deleted.deleted).toBe(id);
+    expect((await call(owner.key, "GET", `/connectors/${id}`)).status).toBe(
+      404,
+    );
+  });
+
+  it("lists a file's copies, drops one only on its confirmation and refuses as the API does", async () => {
+    const { key } = await mint({
+      ...EVERY_TYPE,
+      permissions: ["blobs.manage"],
+    });
+    const connection = await admin(key);
+    const upload = await fetch(`${server.apiUrl}/blobs`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "text/plain",
+      },
+      body: `a file whose copy is kept ${randomUUID()}`,
+    });
+    expect(upload.status, await upload.clone().text()).toBeLessThan(300);
+    const hash = ((await upload.json()) as { hash: string }).hash;
+    const copiesOf = async () =>
+      (await call(key, "GET", `/blobs/${hash}/copies`)).body.data as {
+        store_id: string;
+        kind: string;
+      }[];
+    // The upload wakes replication, which places the backup folder's copy
+    // on its own clock: read once both stores hold one.
+    const settled = await waitFor("the backup folder's copy", async () => {
+      const copies = await copiesOf();
+      return copies.some((copy) => copy.kind === "folder") ? copies : undefined;
+    });
+    const listed = toolResult(
+      await callTool(connection, "marfa_files", { hash }),
+    ) as { copies: { store_id: string }[] };
+    expect(listed.copies.map((copy) => copy.store_id).sort()).toEqual(
+      settled.map((copy) => copy.store_id).sort(),
+    );
+    const folder = settled.find((copy) => copy.kind === "folder")!.store_id;
+
+    expectSameRefusal(
+      await call(key, "DELETE", `/blobs/${hash}/copies/${randomUUID()}`),
+      await confirmed(connection, "marfa_drop_file_copy", {
+        hash,
+        store_id: "no-such-store",
+      }),
+      "a store that holds no copy",
+    );
+
+    const preview = toolResult(
+      await callTool(connection, "marfa_drop_file_copy", {
+        hash,
+        store_id: folder,
+      }),
+    );
+    expect(typeof preview.confirm).toBe("string");
+    expect(
+      (await copiesOf()).some((copy) => copy.store_id === folder),
+      "a preview drops nothing",
+    ).toBe(true);
+    const dropped = toolResult(
+      await callTool(connection, "marfa_drop_file_copy", {
+        hash,
+        store_id: folder,
+        confirm: preview.confirm,
+      }),
+    );
+    expect(dropped.dropped).toEqual({ hash, store_id: folder });
   });
 });
