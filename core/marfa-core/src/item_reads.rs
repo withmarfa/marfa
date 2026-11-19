@@ -387,9 +387,9 @@ impl Core {
     /// nowhere in the copy (`device/bin-read`, `device/bin-unheld` and `device/bin-offline`). Refused with what was met
     /// where the server cannot be read, and `NoServer` for a copy with none.
     pub fn bin(&self, r#type: Option<&str>, cursor: Option<&str>, limit: u32) -> Result<BinPage> {
-        let page = self
-            .http()?
-            .bin_page(r#type, None, cursor, limit.clamp(1, 100))?;
+        let page = crate::catch_up::read_confirming(self, self.http()?, |http| {
+            http.bin_page(r#type, None, cursor, limit.clamp(1, 100))
+        })?;
         let catalog = crate::catalog::load(&*self.conn()?)?;
         let mut items = Vec::with_capacity(page.data.len());
         for row in page.data {

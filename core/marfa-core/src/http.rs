@@ -174,6 +174,7 @@ pub struct Http {
     /// The instance a write names (`X-Marfa-Instance-Id`), so another
     /// instance at the address refuses it rather than writing it.
     instance: Option<String>,
+    confirmation: Option<Arc<Confirmation>>,
     call_budget: Option<Duration>,
     /// How long a streamed call waits for the answer to begin, in place of the
     /// agent's response budget.
@@ -205,6 +206,52 @@ struct Relocation {
     expected_instance: Option<String>,
     keep: KeepOrigin,
     verified: bool,
+}
+
+/// The instance one operation's requests are for. The server's root is read
+/// before the operation's first credentialed request and again whenever the
+/// credential has changed since, so nothing the copy holds is sent to another
+/// instance that answers at its address. Not kept past the operation.
+pub(crate) struct Confirmation {
+    instance: String,
+    /// A digest of the authorization the instance was last confirmed under.
+    confirmed_under: Mutex<Option<u64>>,
+}
+
+impl std::fmt::Debug for Confirmation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Confirmation")
+            .field("instance", &self.instance)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Confirmation {
+    pub(crate) fn new(instance: &str) -> Arc<Self> {
+        Arc::new(Self {
+            instance: instance.into(),
+            confirmed_under: Mutex::new(None),
+        })
+    }
+
+    pub(crate) fn instance(&self) -> &str {
+        &self.instance
+    }
+
+    /// The next request reads the root again.
+    pub(crate) fn owe(&self) {
+        *self
+            .confirmed_under
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+    }
+}
+
+fn digest(authorization: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    authorization.hash(&mut hasher);
+    hasher.finish()
 }
 
 type StreamAgent = Arc<dyn Fn(Arc<RwLock<Option<std::time::Instant>>>) -> Agent + Send + Sync>;
@@ -721,6 +768,7 @@ impl Http {
             keeps: None,
             reach: None,
             instance: None,
+            confirmation: None,
             call_budget: None,
             stream_wait: None,
             working: None,
@@ -803,6 +851,86 @@ impl Http {
             reach: Some(fence.into()),
             ..self.clone()
         }
+    }
+
+    /// This transport for one operation's requests, each sent only once the
+    /// server's root names the instance `confirmation` is for.
+    pub(crate) fn confirming(&self, confirmation: &Arc<Confirmation>) -> Self {
+        Self {
+            confirmation: Some(Arc::clone(confirmation)),
+            ..self.clone()
+        }
+    }
+
+    /// Reads the root now, whether or not the instance was confirmed under
+    /// this credential.
+    pub(crate) fn confirm_again(&self) -> Result<(), CoreError> {
+        let Some(confirmation) = &self.confirmation else {
+            return Ok(());
+        };
+        confirmation.owe();
+        self.confirm_instance()
+    }
+
+    pub(crate) fn confirmation(&self) -> Option<&Arc<Confirmation>> {
+        self.confirmation.as_ref()
+    }
+
+    /// The next request reads the root again.
+    pub(crate) fn owe_confirmation(&self) {
+        if let Some(confirmation) = &self.confirmation {
+            confirmation.owe();
+        }
+    }
+
+    /// Takes `instance`, named by a root or a log head just read under this
+    /// credential, as the confirmation, so it is read no second time.
+    pub(crate) fn admit(&self, instance: &str) -> Result<(), CoreError> {
+        let Some(confirmation) = &self.confirmation else {
+            return Ok(());
+        };
+        if instance != confirmation.instance {
+            return Err(CoreError::CopyExpired {
+                reason: INSTANCE_CHANGED.into(),
+                server: None,
+            });
+        }
+        *confirmation
+            .confirmed_under
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some(digest(&self.authorization()));
+        Ok(())
+    }
+
+    fn confirm_instance(&self) -> Result<(), CoreError> {
+        let Some(confirmation) = &self.confirmation else {
+            return Ok(());
+        };
+        let mut confirmed = loop {
+            self.refuse_if_let_go()?;
+            match confirmation.confirmed_under.try_lock() {
+                Ok(held) => break held,
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(std::sync::TryLockError::Poisoned(poisoned)) => break poisoned.into_inner(),
+            }
+        };
+        let under = digest(&self.authorization());
+        if *confirmed == Some(under) {
+            return Ok(());
+        }
+        let served = self.served()?;
+        self.refuse_if_let_go()?;
+        if served.instance_id != confirmation.instance {
+            return Err(CoreError::CopyExpired {
+                reason: INSTANCE_CHANGED.into(),
+                server: None,
+            });
+        }
+        *confirmed = Some(under);
+        Ok(())
     }
 
     /// This transport for writes that name `instance`: every request but a
@@ -995,6 +1123,7 @@ impl Http {
     ) -> Result<Response, CoreError> {
         self.confirm_origin()?;
         self.refuse_if_let_go()?;
+        self.confirm_instance()?;
         if let Some(before) = before {
             before(Stage::Attempt)?;
             // The check can wait on a request of its own.
@@ -1013,6 +1142,7 @@ impl Http {
             }
             if let Some(fresh) = self.renewed(&sent, before)? {
                 self.refuse_if_let_go()?;
+                self.confirm_instance()?;
                 if let Some(before) = before {
                     before(Stage::Attempt)?;
                     self.refuse_if_let_go()?;
@@ -2090,6 +2220,9 @@ impl Http {
         };
         let response = match call.body {
             CallBody::Reader(reader) => {
+                if call.credential {
+                    self.confirm_instance()?;
+                }
                 let sent = call.credential.then(|| self.authorization());
                 let response = self
                     .dispatch(

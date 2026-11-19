@@ -15,10 +15,10 @@ use crate::catch_up::ask_unless_stopped;
 use crate::error::CoreError;
 use crate::http::Answer;
 use crate::model::{BlockedReason, QueuedWrite, Refusal, RowConflict, Subject, Verdict, WriteKind};
+use crate::store;
 use crate::telemetry;
 use crate::wire::{WireEdgeAnswer, WireItem, WireWriteAnswer};
 use crate::{Core, Result};
-use crate::{reach, store};
 
 pub(super) struct AnsweredAt<'a> {
     pub(super) version: i64,
@@ -634,7 +634,7 @@ pub(super) fn settle_success(
         // left owed, for the read before the next pass sends anything. One no
         // later read gets past ends the pass, as `read_owed_backs` does, after
         // the caller has reported the committed verdict.
-        match create_edges::read(core, stop, &parsed.item.id) {
+        match create_edges::read(core, pass, stop, &parsed.item.id) {
             Ok(()) => {}
             Err(error) if ends_the_pass(&error) => return Err(error),
             Err(error) if error.is_environmental() => {
@@ -987,7 +987,7 @@ fn settle_delivered(
         // answered the same way once the copy is built again.
         Some(_) if pass.changed() => return Ok(Settled::plain(None, None, row.refusals)),
         Some((collection, id)) => {
-            let context = reach::Context::capture(&*core.conn()?)?;
+            let context = pass.context(&*core.conn()?)?;
             let http = context.http(core.http()?);
             let (collection, id) = (collection.to_string(), id.to_string());
             match ask_unless_stopped(stop, &http, move |http| {

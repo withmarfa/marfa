@@ -438,8 +438,9 @@ fn take(
             behind: true,
         });
     }
-    // A held stream spans ordinary pin changes. Snapshot pins for this event's
-    // awaited reads, while retaining the stream's copy and authority guard.
+    // A held stream spans ordinary pin changes and can hold for hours, so each
+    // event's reads take the pins as they are now and confirm the instance
+    // afresh, on the stream's copy.
     let operation = {
         let conn = core.conn()?;
         context.same_copy(&conn)?;
@@ -590,6 +591,17 @@ pub(crate) fn last_carried(
             store::meta_get(&conn, store::META_EVENT_CURSOR)?.ok_or_else(reach::invalid)?;
         (context, cursor)
     };
+    let carried = head_of(&context, http, cursor, deadline, stop);
+    expiring_for_another_instance(core, context.generation, carried)
+}
+
+fn head_of(
+    context: &Context,
+    http: &Http,
+    cursor: String,
+    deadline: Instant,
+    stop: &AtomicBool,
+) -> Result<Option<u64>> {
     let bound = deadline.saturating_duration_since(Instant::now());
     let frames = ask_unless_stopped(stop, &context.http(http), move |http| {
         open(http, &cursor, bound)
@@ -675,11 +687,13 @@ pub(crate) fn catch_up(
 ) -> Result<CatchUpReport> {
     refuse_if_stopped(stop)?;
     start(core)?;
-    refuse_an_old_server(http, stop)?;
+    let served = refuse_an_old_server(http, stop)?;
     let tables_before = store::last_table_change(&*core.conn()?)?;
     let context = Context::capture(&*core.conn()?)?;
     let scoped = context.http(http);
-    let result = replay_build(core, &scoped, &context, idle, stop, catalog_changed)
+    let result = scoped
+        .admit(&served.instance_id)
+        .and_then(|()| replay_build(core, &scoped, &context, idle, stop, catalog_changed))
         .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error));
     let mut report = unless_stopped(result, stop)?;
     mark_synced_if_same(core, &context)?;
@@ -1000,13 +1014,15 @@ pub(crate) fn divergence(reason: &str) -> Option<crate::model::HydrateRestart> {
 /// which a catch-up sends it to. A server that cannot be asked is an error
 /// like any other, so nothing is sent while the instance is unconfirmed.
 /// A reading handle refuses another instance without expiring the copy and
-/// stores nothing; the writer expires it on its own next call.
-pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<()> {
+/// stores nothing; the writer expires it on its own next call. Answers
+/// `http` holding that confirmation, so the call's later requests read the
+/// root again only after a credential renewal.
+pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<Http> {
     refuse_another_instance_until(core, http, &crate::NEVER_STOPPED)
 }
 
-pub(crate) fn refuse_an_old_server(http: &Http, stop: &AtomicBool) -> Result<()> {
-    ask_unless_stopped(stop, http, Http::served).map(drop)
+pub(crate) fn refuse_an_old_server(http: &Http, stop: &AtomicBool) -> Result<crate::http::Served> {
+    ask_unless_stopped(stop, http, Http::served)
 }
 
 /// The instance may change during credential renewal: before each attempt the
@@ -1047,14 +1063,13 @@ pub(crate) fn item_checked_unless_stopped(
             Stage::Attempt => {
                 let served = http.served()?;
                 let same = served.instance_id == held;
-                let reason = format!("the server's instance is {}", served.instance_id);
                 if let Ok(mut last) = seen.lock() {
                     *last = Some(served);
                 }
                 if same {
                     Ok(())
                 } else {
-                    Err(CoreError::expired(reason))
+                    Err(CoreError::expired(crate::http::INSTANCE_CHANGED))
                 }
             }
             Stage::Renewal => Ok(()),
@@ -1077,12 +1092,18 @@ pub(crate) fn refuse_another_instance_until(
     core: &Core,
     http: &Http,
     stop: &AtomicBool,
-) -> Result<()> {
+) -> Result<Http> {
     let Some(generation) = held_generation(core)? else {
-        return Ok(());
+        return Ok(http.clone());
     };
     let served = ask_unless_stopped(stop, http, Http::served)?;
-    confirm_served(core, &served, generation)
+    confirm_served(core, &served, generation)?;
+    let confirmed = match http.confirmation() {
+        Some(_) => http.clone(),
+        None => http.confirming(&crate::http::Confirmation::new(&served.instance_id)),
+    };
+    confirmed.admit(&served.instance_id)?;
+    Ok(confirmed)
 }
 
 /// The generation of a copy that names its instance.
@@ -1186,7 +1207,12 @@ pub(crate) fn naming_instance(core: &Core, http: &Http) -> Result<(Http, u64)> {
     let conn = core.conn()?;
     let generation = reach::generation(&conn)?;
     let named = match store::meta_get(&conn, store::META_INSTANCE_ID)? {
-        Some(instance) if !instance.is_empty() => http.naming(&instance),
+        Some(instance) if !instance.is_empty() => match http.confirmation() {
+            Some(_) => http.naming(&instance),
+            None => http
+                .naming(&instance)
+                .confirming(&crate::http::Confirmation::new(&instance)),
+        },
         _ => http.clone(),
     };
     Ok((named, generation))
@@ -1222,7 +1248,17 @@ pub(crate) fn write_naming_instance<T>(
     write: impl FnOnce(&Http) -> Result<T>,
 ) -> Result<T> {
     let (named, generation) = naming_instance(core, http)?;
-    match write(&named) {
+    expiring_for_another_instance(core, generation, write(&named))
+}
+
+/// `result`, where it is another instance's `instance_changed` and the core
+/// writes, with the copy expired.
+pub(crate) fn expiring_for_another_instance<T>(
+    core: &Core,
+    generation: u64,
+    result: Result<T>,
+) -> Result<T> {
+    match result {
         Err(CoreError::CopyExpired { reason, server })
             if reason == crate::http::INSTANCE_CHANGED && core.handle() == Handle::Writer =>
         {
@@ -1236,6 +1272,30 @@ pub(crate) fn write_naming_instance<T>(
     }
 }
 
+/// Runs `read` for a call that holds no copy's context, its requests sent
+/// only once the server's root names the copy's instance. Where another
+/// instance answers at the origin, the call ends `copy_expired` with the
+/// reason `instance_changed`, and a writer expires the copy. A store that
+/// names no instance has nothing to confirm.
+pub(crate) fn read_confirming<T>(
+    core: &Core,
+    http: &Http,
+    read: impl FnOnce(&Http) -> Result<T>,
+) -> Result<T> {
+    let (instance, generation) = {
+        let conn = core.conn()?;
+        (
+            store::meta_get(&conn, store::META_INSTANCE_ID)?.filter(|held| !held.is_empty()),
+            reach::generation(&conn)?,
+        )
+    };
+    let Some(instance) = instance else {
+        return read(http);
+    };
+    let confirmed = http.confirming(&crate::http::Confirmation::new(&instance));
+    expiring_for_another_instance(core, generation, read(&confirmed))
+}
+
 fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
@@ -1246,19 +1306,11 @@ fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
     if held.as_deref() == Some(served) {
         return Ok(());
     }
-    let reason = match held {
-        Some(held) => format!(
-            "the server at this address is instance {served}, and this copy was built from instance {held}"
-        ),
-        None => format!(
-            "this copy does not name the instance it was built from, and the server at this address is instance {served}"
-        ),
-    };
     if core.handle() == Handle::Writer {
         reach::expire(&tx)?;
         tx.commit()?;
     }
-    Err(CoreError::expired(reason))
+    Err(CoreError::expired(crate::http::INSTANCE_CHANGED))
 }
 
 /// How a follow starts, beyond the stop that ends it.
@@ -1386,7 +1438,7 @@ fn follow_paced(
             let Some(reached) = reach(&http, &cursor, stop, pace.stop_poll) else {
                 break;
             };
-            let (instance, fetched, frames) = match reached {
+            let (fetched, frames) = match reached {
                 Ok(reached) => reached,
                 Err(error) if error.is_environmental() => {
                     report.failed_opens += 1;
@@ -1406,9 +1458,6 @@ fn follow_paced(
                     return Err(error);
                 }
             };
-            crate::busy::retrying(&core.conn, stop, || {
-                same_instance(core, &instance, context.generation)
-            })?;
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "follow-stream-had");
             if !told.stalled {
@@ -1705,14 +1754,18 @@ impl Look<'_, '_> {
         }
         self.asked = Some(at);
         self.running = true;
-        let (core, context, http) = (self.core, self.context, self.http);
+        let (core, context) = (self.core, self.context);
+        // A look is an operation of its own, however long the stream has held.
+        let http = self
+            .http
+            .confirming(&crate::http::Confirmation::new(&context.instance));
         let (pace, halt, told) = (self.pace, self.halt, self.told.clone());
         let carried = Carried::here();
         self.scope.spawn(inheriting(move || {
             carried.run(|| {
                 let mut held = 0;
                 let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    read_only::refresh(core, context, http, halt, pace, &mut held)
+                    read_only::refresh(core, context, &http, halt, pace, &mut held)
                 }))
                 .unwrap_or_else(|fault| {
                     Err(CoreError::Fault(format!(
@@ -2037,8 +2090,8 @@ fn mark_synced_while_live(
     Ok(())
 }
 
-/// The instance the server's root names, its catalog and its stream.
-type Reached = Result<(String, WireCatalog, Receiver<io::Result<Frame>>)>;
+/// The catalog and the stream of the instance the copy was built from.
+type Reached = Result<(WireCatalog, Receiver<io::Result<Frame>>)>;
 
 /// `None` when `stop` was set first.
 fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> Option<Reached> {
@@ -2050,10 +2103,10 @@ fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> O
     thread::spawn(inheriting(move || {
         let _ends_by = EndsBy::hold(ends_by);
         let reached = (|| {
-            let instance = http.instance_id()?;
+            http.confirm_again()?;
             let catalog = http.catalog()?;
             let frames = open(&http, &cursor, STREAM_HARD_BOUND)?;
-            Ok((instance, catalog, frames))
+            Ok((catalog, frames))
         })();
         let _ = sender.send(reached);
     }));
@@ -3033,6 +3086,75 @@ mod tests {
             "the entering row was not refused three times before it was read"
         );
         assert!(heard.try_iter().next().is_none());
+    }
+
+    #[test]
+    fn each_event_read_on_a_held_stream_confirms_the_instance_first() {
+        let entering = |id: &str| {
+            let payload = item_payload("item.updated", id, NOTE, 2);
+            let read: serde_json::Value = serde_json::from_str(&payload).unwrap();
+            let read = serde_json::json!({
+                "item": read["item"], "metadata": read["metadata"], "listed": true
+            });
+            (
+                event(&id[1..], "item.updated", &payload),
+                crate::scripted::certified(crate::scripted::json(200, &read.to_string())),
+            )
+        };
+        let (eleven, n11) = entering("n11");
+        let (twelve, n12) = entering("n12");
+        for replaced in [false, true] {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            server.on(
+                "/events",
+                vec![stream(
+                    vec![eleven.clone(), twelve.clone(), stream_live(Some("12"))],
+                    held(),
+                )],
+            );
+            server.on("/items/n11", vec![n11.clone()]);
+            server.on("/items/n12", vec![n12.clone()]);
+            let second = if replaced {
+                REPLACED
+            } else {
+                crate::scripted::INSTANCE
+            };
+            server.on(
+                "/",
+                vec![
+                    crate::scripted::root(crate::scripted::INSTANCE),
+                    crate::scripted::root(crate::scripted::INSTANCE),
+                    crate::scripted::root(second),
+                ],
+            );
+            let (_dir, core) = hydrated(&server);
+            let ended = core.catch_up();
+            assert_eq!(
+                server.seen("/").len(),
+                3,
+                "replaced {replaced}: {:?}",
+                server.paths()
+            );
+            assert_eq!(server.seen("/items/n11").len(), 1);
+            if !replaced {
+                // The witness: the second event's read is sent.
+                assert_eq!(ended.unwrap().applied, 2);
+                assert_eq!(server.seen("/items/n12").len(), 1);
+                continue;
+            }
+            match ended {
+                Err(CoreError::CopyExpired { reason, .. }) => {
+                    assert_eq!(reason, crate::http::INSTANCE_CHANGED);
+                }
+                other => panic!("another instance's event was taken: {other:?}"),
+            }
+            assert!(
+                server.seen("/items/n12").is_empty(),
+                "an id reached the instance that replaced the copy's own"
+            );
+            assert!(reach::expired(&core.conn().unwrap()).unwrap());
+        }
     }
 
     /// A copy of one row at the head of a held stream, its last look at
@@ -5731,6 +5853,105 @@ mod tests {
         }
         let run = follow_on(&core, QUICK, None);
         expired(run.ended(), &core, "reach_invalid");
+    }
+
+    const REPLACED: &str = "00000000-0000-7000-8000-0000000000fe";
+
+    #[test]
+    fn a_catch_up_or_a_follow_sends_no_cursor_to_another_instance_its_root_names() {
+        for following in [false, true] {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            server.on(
+                "/events",
+                vec![stream(
+                    vec![stream_cursor("10"), stream_live(Some("10"))],
+                    Then::End,
+                )],
+            );
+            let (_dir, core) = hydrated(&server);
+            // The witness: the instance the copy was built from is sent its cursor.
+            core.catch_up().unwrap();
+            assert_eq!(server.seen("/events").len(), 1);
+
+            server.on("/", vec![crate::scripted::root(REPLACED)]);
+            let ended = if following {
+                follow_on(&core, QUICK, None).ended().map(drop)
+            } else {
+                core.catch_up().map(drop)
+            };
+            expired(ended, &core, crate::http::INSTANCE_CHANGED);
+            assert_eq!(
+                server.seen("/events").len(),
+                1,
+                "following {following}: a cursor reached another instance"
+            );
+        }
+    }
+
+    #[test]
+    fn a_follow_reconnecting_to_another_instance_at_its_origin_sends_it_no_cursor() {
+        for replaced in [false, true] {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            server.on(
+                "/events",
+                vec![stream(
+                    vec![stream_cursor("10"), stream_live(Some("10"))],
+                    Then::Hold {
+                        keepalive: Some(MS(5)),
+                        lasting: Some(MS(200)),
+                    },
+                )],
+            );
+            let (_dir, core) = hydrated(&server);
+            let run = follow_on(&core, QUICK, None);
+            server.wait_for("/events", 1, Duration::from_secs(5));
+            if !replaced {
+                // The witness: a lost stream is opened again with the cursor.
+                server.wait_for("/events", 2, Duration::from_secs(5));
+                run.stop();
+                run.ended().unwrap();
+                continue;
+            }
+            server.on("/", vec![crate::scripted::root(REPLACED)]);
+            expired(run.ended(), &core, crate::http::INSTANCE_CHANGED);
+            assert_eq!(
+                server.seen("/events").len(),
+                1,
+                "the cursor reached the instance that replaced the copy's own"
+            );
+        }
+    }
+
+    #[test]
+    fn a_look_at_read_only_reads_the_root_again_and_sends_no_row_id_to_another_instance() {
+        for replaced in [false, true] {
+            let server = Scripted::start();
+            let (_dir, core) = owing_a_look(&server, Some(MS(5)), vec![a_look(true)]);
+            if replaced {
+                server.on(
+                    "/",
+                    vec![
+                        crate::scripted::root(crate::scripted::INSTANCE),
+                        crate::scripted::root(REPLACED),
+                    ],
+                );
+            }
+            let run = follow_on(&core, STILL, None);
+            if !replaced {
+                server.wait_for("/items/bulk-get", 1, Duration::from_secs(5));
+                run.stop();
+                run.ended().unwrap();
+                continue;
+            }
+            expired(run.ended(), &core, crate::http::INSTANCE_CHANGED);
+            assert!(
+                server.seen("/items/bulk-get").is_empty(),
+                "a row id reached another instance"
+            );
+            assert_eq!(server.seen("/").len(), 2);
+        }
     }
 
     #[test]

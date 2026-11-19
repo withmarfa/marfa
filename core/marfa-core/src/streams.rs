@@ -235,6 +235,10 @@ impl Core {
         let _ends_by = http::EndsBy::hold(Some(deadline));
         let target = match catch_up::last_carried(self, self.http()?, deadline, stop) {
             Ok(target) => target,
+            // The copy is no longer the server's, which a writer has recorded.
+            Err(CoreError::CopyExpired { reason, server }) if reason == http::INSTANCE_CHANGED => {
+                return Err(CoreError::CopyExpired { reason, server });
+            }
             Err(error) => {
                 catch_up::refuse_if_stopped(stop)?;
                 telemetry::degraded!(&error);

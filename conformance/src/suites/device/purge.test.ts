@@ -317,7 +317,7 @@ describe("a device confirms the instance before it sends a purge", () => {
     ).toBe(false);
     if (!refused.ok) {
       expect(refused.refusal.code).toBe("copy_expired");
-      expect(refused.refusal.raw).toContain(replaced);
+      expect(refused.refusal.raw).toContain("instance_changed");
     }
     expect(purges(harness)).toEqual([]);
     const status = await harness.device.status();

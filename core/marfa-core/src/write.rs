@@ -739,8 +739,7 @@ impl Core {
             };
             (version, held)
         };
-        let http = self.http()?;
-        catch_up::refuse_another_instance(self, http)?;
+        let http = &catch_up::refuse_another_instance(self, self.http()?)?;
         self.purge_sent(id, || {
             catch_up::write_naming_instance(self, http, |http| http.purge_item(id, version))
         })

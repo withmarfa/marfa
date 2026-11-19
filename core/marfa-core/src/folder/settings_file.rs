@@ -352,8 +352,8 @@ impl Folder {
         }
         // Held to the instance as a drain's sends are: never sent while it is
         // unconfirmed.
-        match crate::catch_up::refuse_another_instance(&self.core, self.core.http()?) {
-            Ok(()) => {}
+        let http = match crate::catch_up::refuse_another_instance(&self.core, self.core.http()?) {
+            Ok(http) => http,
             Err(error) if error.is_environmental() => {
                 return Ok(SettingsFileReport {
                     flagged: Some(format!(
@@ -363,18 +363,18 @@ impl Folder {
                 });
             }
             Err(error) => return Err(error),
-        }
-        let context = crate::reach::Context::capture(&*self.core.conn()?)?;
-        let answer =
-            crate::catch_up::write_naming_instance(&self.core, self.core.http()?, |http| {
-                http.send(&Outgoing {
-                    method: Method::Patch,
-                    segments: vec!["folders".into(), self.folder.clone()],
-                    params: Vec::new(),
-                    body: &body,
-                    idempotency_key: &key,
-                })
-            });
+        };
+        let context =
+            crate::reach::Context::capture(&*self.core.conn()?)?.sharing(http.confirmation());
+        let answer = crate::catch_up::write_naming_instance(&self.core, &http, |http| {
+            http.send(&Outgoing {
+                method: Method::Patch,
+                segments: vec!["folders".into(), self.folder.clone()],
+                params: Vec::new(),
+                body: &body,
+                idempotency_key: &key,
+            })
+        });
         let answer = match answer {
             Ok(answer) => answer,
             Err(error) if error.is_environmental() => {

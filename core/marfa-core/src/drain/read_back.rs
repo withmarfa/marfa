@@ -1,6 +1,7 @@
 //! The read a write owes after its answer, and what the copy does with what it reads.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
 use super::address::Shape;
@@ -9,7 +10,7 @@ use super::send::unavailable_by;
 use super::settle::{land, move_edits_back, receipt_key, same_attempt, settle_success};
 use crate::catch_up::ask_unless_stopped;
 use crate::error::CoreError;
-use crate::http::Answer;
+use crate::http::{Answer, Confirmation};
 use crate::model::{QueuedWrite, Subject, WriteKind};
 use crate::telemetry;
 use crate::wire::WireEdge;
@@ -275,11 +276,19 @@ pub(super) struct ReachChange {
     pub(super) deferred: usize,
     /// Set on the second pass of a drain, which holds nothing back.
     pub(super) later: bool,
+    /// The drain's confirmation of the instance, which its reads share.
+    pub(super) confirmation: Option<Arc<Confirmation>>,
 }
 
 impl ReachChange {
     pub(super) fn changed(&self) -> bool {
         self.seen.is_some()
+    }
+
+    /// The copy as it is now, for a read that confirms the instance with the
+    /// drain's writes.
+    pub(super) fn context(&self, conn: &rusqlite::Connection) -> Result<reach::Context> {
+        Ok(reach::Context::capture(conn)?.sharing(self.confirmation.as_ref()))
     }
 
     /// Expires the copy the server said had changed, once, however many
@@ -329,7 +338,7 @@ pub(super) fn read_owed(
     let (context, before) = {
         let conn = core.conn()?;
         (
-            reach::Context::capture(&conn)?,
+            pass.context(&conn)?,
             store::stamp(&conn, owed.subject, &owed.id)?,
         )
     };

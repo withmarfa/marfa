@@ -72,7 +72,7 @@ pub(super) fn send_queue(
         let result = crate::catch_up::refuse_another_instance_until(core, http, stop);
         crate::catch_up::refuse_if_stopped(stop)?;
         match result {
-            Ok(()) => {
+            Ok(_) => {
                 confirmed = true;
                 Ok(true)
             }
@@ -109,7 +109,7 @@ pub(super) fn send_queue(
     }
     if !unconfirmed
         && report.unavailable.is_none()
-        && let Some(why) = create_edges::read_all(core, stop)?
+        && let Some(why) = create_edges::read_all(core, pass, stop)?
     {
         report.unavailable = Some(why.reason);
         report.limited = why.limited;

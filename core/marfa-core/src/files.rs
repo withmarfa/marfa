@@ -24,6 +24,11 @@ use crate::{
 const RATE_LIMIT_WAITED: Duration = Duration::from_secs(60);
 
 const RATE_LIMIT_WAITS: u32 = 3;
+/// A fetch of many files reads the root again after this many files or
+/// bytes, so a long fetch does not send hashes for its whole length on one
+/// confirmation of the instance.
+const CONFIRMED_FILES: usize = 25;
+const CONFIRMED_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Why a fetch that failed with `error` leaves an attachment's bytes unheld,
 /// and whether a fetch of other bytes from the same server would fare the
@@ -516,7 +521,9 @@ impl Core {
             .conn()
             .ok()
             .and_then(|conn| store::stated_size(&conn, &hash).ok().flatten());
-        let fetched = self.fetch_blob(cache, http, &hash, stated)?;
+        let fetched = catch_up::read_confirming(self, http, |http| {
+            self.fetch_blob(cache, http, &hash, stated)
+        })?;
         self.trim_blobs();
         #[cfg(debug_assertions)]
         crate::fault::hold(|| format!("blob-answered:{hash}"));
@@ -553,7 +560,9 @@ impl Core {
             .conn()
             .ok()
             .and_then(|conn| store::stated_size(&conn, &hash).ok().flatten());
-        self.fetch_blob(cache, http, &hash, stated)?;
+        catch_up::read_confirming(self, http, |http| {
+            self.fetch_blob(cache, http, &hash, stated)
+        })?;
         let file = cache
             .open_held(&hash)
             .map_err(|error| CoreError::Store(format!("cannot read fetched bytes: {error}")))?;
@@ -775,7 +784,9 @@ impl Core {
             fetched_bytes: 0,
             attachments: None,
         };
-        let ended = self.fetch_wanted(cache, http, &wanted, stop, &mut report, &mut notes);
+        let ended = catch_up::read_confirming(self, http, |http| {
+            self.fetch_wanted(cache, http, &wanted, stop, &mut report, &mut notes)
+        });
         {
             let mut conn = self.conn()?;
             let tx = conn.transaction()?;
@@ -806,14 +817,21 @@ impl Core {
         use file_cache::NotHeldReason as Why;
         let mut waits = 0;
         let mut at = 0;
+        let (mut files, mut bytes) = (0, 0);
         while let Some((hex, stated)) = wanted.get(at) {
             catch_up::refuse_if_stopped(stop)?;
+            if files >= CONFIRMED_FILES || bytes >= CONFIRMED_BYTES {
+                http.owe_confirmation();
+                (files, bytes) = (0, 0);
+            }
             let hash = format!("{}{hex}", blob::PREFIX);
+            files += 1;
             let error = match self.fetch_blob(cache, http, &hash, *stated) {
                 Ok(fetched) => {
+                    let size = std::fs::metadata(&fetched.path).map_or(0, |held| held.len());
                     report.fetched += 1;
-                    report.fetched_bytes +=
-                        std::fs::metadata(&fetched.path).map_or(0, |held| held.len());
+                    report.fetched_bytes += size;
+                    bytes += size;
                     at += 1;
                     continue;
                 }

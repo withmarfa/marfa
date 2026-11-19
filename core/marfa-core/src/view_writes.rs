@@ -1,6 +1,6 @@
 use serde_json::{Map, Value};
 
-use crate::http::{Answer, Method, Outgoing};
+use crate::http::{Answer, Http, Method, Outgoing};
 use crate::wire::WireItemWithMetadata;
 use crate::{Core, CoreError, Result, ViewRow, catch_up};
 
@@ -63,6 +63,7 @@ impl Core {
                 String::new(),
                 idempotency_key,
             )
+            .map(|(answer, _)| answer)
         })
     }
 
@@ -72,10 +73,9 @@ impl Core {
         segments: Vec<String>,
         body: String,
         idempotency_key: Option<&str>,
-    ) -> Result<Answer> {
+    ) -> Result<(Answer, Http)> {
         self.lock.refuse_unless_writer()?;
-        let http = self.http()?;
-        catch_up::refuse_another_instance(self, http)?;
+        let http = &catch_up::refuse_another_instance(self, self.http()?)?;
         let key = idempotency_key
             .map(str::to_string)
             .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
@@ -96,13 +96,13 @@ impl Core {
                 answer.retry_after_seconds,
             ));
         }
-        Ok(answer)
+        Ok((answer, http.clone()))
     }
 
-    fn answered_view(&self, answer: &Answer) -> Result<ViewRow> {
+    fn answered_view(&self, (answer, http): &(Answer, Http)) -> Result<ViewRow> {
         let answered: WireItemWithMetadata = serde_json::from_str(&answer.body)
             .map_err(|error| crate::error::unreadable("the view door's answer", &error))?;
-        self.hold_answered(&answered.item.id);
+        self.hold_answered(&answered.item.id, http);
         Ok(ViewRow {
             id: answered.item.id,
             version: answered.item.version,

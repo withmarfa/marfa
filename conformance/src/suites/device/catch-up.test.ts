@@ -4651,6 +4651,7 @@ describe("a server that is not the one the copy followed", () => {
     harness = await startHarness("other-instance");
     const { server, device } = harness;
     let instance = SCRIPTED_INSTANCE;
+    let marked = SCRIPTED_INSTANCE;
     const replayFromInstance = (head: string): Answer => {
       const answer = copyReplay(head, []);
       if (answer.kind !== "sse") throw new Error("a replay must be a stream");
@@ -4662,7 +4663,7 @@ describe("a server that is not the one the copy followed", () => {
             typeof frame.data === "object" &&
             frame.data !== null &&
             "instance_id" in frame.data
-              ? { ...frame.data, instance_id: instance }
+              ? { ...frame.data, instance_id: marked }
               : frame.data,
         })),
       };
@@ -4680,9 +4681,9 @@ describe("a server that is not the one the copy followed", () => {
     const caught = await device.catchUp();
     expect(caught.ok, JSON.stringify(caught)).toBe(true);
 
-    // A fresh instance at the same address, whose log has run past the
-    // copy's cursor; the copy marker identifies the new instance.
-    instance = OTHER_INSTANCE;
+    // A log that has run past the copy's cursor, whose copy marker names
+    // another instance though the root still names the copy's own.
+    marked = OTHER_INSTANCE;
     server.copyAnswer("GET", "/events", () => replayFromInstance("40"));
     const waiting = await queued(harness);
     await expectExpired(
@@ -4692,17 +4693,33 @@ describe("a server that is not the one the copy followed", () => {
       waiting,
     );
 
-    // A follow meets another instance and ends as the catch-up did.
+    // A fresh instance at the same address, whose root names it.
+    instance = OTHER_INSTANCE;
     server.copyAnswer("GET", "/events", () => replayFromInstance("40"));
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const ownEvents = server.requests.filter(
+      (request) => request.pathname === "/events",
+    ).length;
+    // The witness: the copy built from it follows it.
+    const following = await device.follow(1);
+    expect(following.ok, JSON.stringify(following)).toBe(true);
+    expect(
+      server.requests.filter((request) => request.pathname === "/events")
+        .length,
+    ).toBeGreaterThan(ownEvents);
+
+    // A follow meets another instance and ends as the catch-up did.
     instance = SCRIPTED_INSTANCE;
+    const asked = server.requests.filter(
+      (request) => request.pathname === "/events",
+    ).length;
     const followed = await device.follow(30);
-    await expectExpired(
-      harness,
-      followed,
-      [OTHER_INSTANCE, SCRIPTED_INSTANCE],
-      waiting,
-    );
+    await expectExpired(harness, followed, ["instance_changed"], waiting);
+    expect(
+      server.requests.filter((request) => request.pathname === "/events")
+        .length,
+      "a follow sent the copy's cursor to another instance",
+    ).toBe(asked);
   });
 });
 

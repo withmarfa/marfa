@@ -278,6 +278,9 @@ fn attempt(
     // raised before then leaves it as it was.
     crate::catch_up::refuse_if_stopped(stop)?;
     let (mut instance, mut cursor, mut fence) = read_head(http, stop)?;
+    // The head names the instance the copy is built from, whose root is read
+    // only once the credential is renewed.
+    let mut confirmed = confirmed_as(http, &instance)?;
     let refusal = |instance: &str, cursor: &str, fence: &str| -> Result<Option<&'static str>> {
         if fill == Fill::Any {
             return Ok(None);
@@ -301,7 +304,7 @@ fn attempt(
         return Ok(Attempt::NotInPlace(reason));
     }
     let mut ended = expire_if_built_elsewhere(core, &instance, &fence)?;
-    let mut under_reach = http.for_reach(&fence);
+    let mut under_reach = confirmed.for_reach(&fence);
     crate::catch_up::refuse_if_stopped(stop)?;
     let mut catalog_rows = under_reach.catalog()?;
     let declared = declare_on_instance(core, &under_reach, &catalog_rows, stop)?;
@@ -309,15 +312,16 @@ fn attempt(
         // A registration or a replacement changes what the instance's reach
         // certifies, so the head and the catalog read before it are of a reach
         // that has gone.
-        (instance, cursor, fence) = read_head(http, stop)?;
+        (instance, cursor, fence) = read_head(&confirmed, stop)?;
         if let Some(reason) = refusal(&instance, &cursor, &fence)? {
             return Ok(Attempt::NotInPlace(reason));
         }
         ended = ended.or(expire_if_built_elsewhere(core, &instance, &fence)?);
-        under_reach = http.for_reach(&fence);
+        confirmed = confirmed_as(http, &instance)?;
+        under_reach = confirmed.for_reach(&fence);
         catalog_rows = under_reach.catalog()?;
     }
-    let plain = http;
+    let plain = &confirmed;
     let http = &under_reach;
     refuse_unheld(&catalog_rows, types, edge_types)?;
     let start = match restart.or(ended) {
@@ -1781,6 +1785,13 @@ pub(crate) fn fetch_overflow(
         cursor = page.next_cursor;
     }
     Ok(edges)
+}
+
+/// `instance` must be what a head just read under `http`'s credential named.
+fn confirmed_as(http: &Http, instance: &str) -> Result<Http> {
+    let confirmed = http.confirming(&crate::http::Confirmation::new(instance));
+    confirmed.admit(instance)?;
+    Ok(confirmed)
 }
 
 /// Read before the first page so the snapshot has a resume point from before

@@ -1,23 +1,34 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
+import { DatabaseSync } from "node:sqlite";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   SCRIPTED_INSTANCE,
   answers,
+  bulkGetOf,
+  certifiedRead,
+  copyLiveReplay,
   refusal,
+  typeCatalog,
   wireItem,
+  wireType,
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
 import { Cli } from "../cli/harness.js";
 import { keychainEnv } from "../../utils/keychain.js";
 import { ON_MACOS } from "../../utils/platform.js";
 import type { Outcome } from "../../device/protocol.js";
-import { BUILT_FOR } from "../../device/scripted-server.js";
+import {
+  BUILT_FOR,
+  type RecordedRequest,
+} from "../../device/scripted-server.js";
 import {
   KEY,
   folderHarness,
+  hashOf,
   requireBinary,
+  scriptBlob,
   scriptHydration,
   startHarness,
   type FolderHarness,
@@ -101,7 +112,7 @@ async function refusesAnotherInstance([args, body]: [string[], unknown]) {
   ).toBe(false);
   if (!refused.ok) {
     expect(refused.refusal.code).toBe("copy_expired");
-    expect(refused.refusal.raw).toContain(REPLACED);
+    expect(refused.refusal.raw).toContain("instance_changed");
   }
   expect(reached(), "an item id reached the other instance").toBe(1);
   const status = await device.status();
@@ -226,31 +237,338 @@ describe("a link by id looked up on the server", () => {
   });
 });
 
+const LEDGER = "01a00000-0000-7000-8000-00000000001e";
+const BINNED = "01a00000-0000-7000-8000-00000000001b";
+const LEDGER_TYPE = wireType("acme.ledger", {
+  tables: { lines: { columns: { amount: { type: "number" } } } },
+});
+const BYTES = Buffer.from("a file the copy names by its hash");
+
+interface HeldOperation {
+  name: string;
+  /** Scripts what the operation asks for beyond the hydration. */
+  script: (harness: Harness) => void;
+  run: (harness: Harness) => Promise<Outcome<unknown>>;
+  /** The request that carries what the copy holds. */
+  carries: (request: RecordedRequest) => boolean;
+}
+
+const OPERATIONS: HeldOperation[] = [
+  {
+    name: "a pin",
+    script: ({ server }) =>
+      server.copyAnswer(
+        "GET",
+        `/items/${ITEM}`,
+        answers.updated(
+          wireItem({ id: ITEM, properties: { title: "held", body: "held" } }),
+        ),
+      ),
+    run: ({ device }) => device.pin(ITEM),
+    carries: (request) => request.pathname === `/items/${ITEM}`,
+  },
+  {
+    name: "a table hold",
+    script: ({ server }) =>
+      server.answer(
+        "GET",
+        `/items/${LEDGER}/tables`,
+        certifiedRead(
+          {
+            kind: "json",
+            status: 200,
+            body: { data: [{ name: "lines", row_count: 0, bytes: 0 }] },
+          },
+          BUILT_FOR,
+        ),
+      ),
+    run: ({ device }) => device.holdTable("acme.ledger", "lines"),
+    carries: (request) =>
+      request.pathname.startsWith(`/items/${LEDGER}/tables`),
+  },
+  {
+    name: "the bin",
+    script: () => undefined,
+    run: ({ device }) => device.bin(),
+    carries: (request) =>
+      request.pathname === "/items" && request.query.get("state") === "trashed",
+  },
+  {
+    name: "a catch-up",
+    script: () => undefined,
+    run: ({ device }) => device.catchUp(),
+    carries: (request) =>
+      request.pathname === "/events" &&
+      request.headers["last-event-id"] !== undefined,
+  },
+  {
+    name: "a file fetched by its hash",
+    script: ({ server }) => {
+      scriptBlob(server, BYTES);
+    },
+    run: ({ device }) => device.blob(hashOf(BYTES)),
+    carries: (request) => request.pathname === `/blobs/${hashOf(BYTES)}/url`,
+  },
+];
+
+/** What `operation` sent, and answered, once the copy's address names `instance`. */
+async function sentUnder(operation: HeldOperation, replaced: boolean) {
+  harness = await startHarness("server-reads-held");
+  const { server, device } = harness;
+  let instance = SCRIPTED_INSTANCE;
+  server.copyAnswer("GET", "/", () =>
+    answers.root(Number(BUILT_FOR), instance),
+  );
+  scriptHydration(server, {
+    head: "10",
+    catalog: typeCatalog([LEDGER_TYPE]),
+    items: {
+      "core.note": [
+        { item: { id: ITEM, properties: { title: "held", body: "held" } } },
+        {
+          item: {
+            id: BINNED,
+            state: "trashed",
+            properties: { title: "binned", body: "binned" },
+          },
+        },
+      ],
+      "acme.ledger": [
+        {
+          item: { id: LEDGER, type: "acme.ledger", properties: { title: "l" } },
+        },
+      ],
+    },
+    instance: () => instance,
+  });
+  operation.script(harness);
+  value(await device.hydrate(["core.note", "acme.ledger"], "library"));
+  const from = server.requests.length;
+  if (replaced) instance = REPLACED;
+  const outcome = await operation.run(harness);
+  const sent = server.requests.slice(from);
+  const status = await device.status();
+  await harness.stop();
+  harness = undefined;
+  return {
+    outcome,
+    sent,
+    hydration: status.ok ? status.value.hydration : status,
+  };
+}
+
+async function refusesHeldToAnother(name: string) {
+  const operation = OPERATIONS.find((each) => each.name === name)!;
+  const witness = await sentUnder(operation, false);
+  expect(witness.outcome.ok, JSON.stringify(witness.outcome)).toBe(true);
+  expect(
+    witness.sent.some(operation.carries),
+    "the operation sent nothing for its own instance, so the check below proves nothing",
+  ).toBe(true);
+  expect(witness.hydration).not.toBe("expired");
+
+  const replaced = await sentUnder(operation, true);
+  expect(replaced.outcome.ok, "the operation went on at another instance").toBe(
+    false,
+  );
+  if (!replaced.outcome.ok) {
+    expect(replaced.outcome.refusal.code).toBe("copy_expired");
+    expect(replaced.outcome.refusal.raw).toContain("instance_changed");
+  }
+  expect(
+    replaced.sent.map((request) => `${request.method} ${request.pathname}`),
+    "a request other than the root reached the other instance",
+  ).toEqual(replaced.sent.map(() => "GET /"));
+  expect(replaced.sent.length).toBeGreaterThan(0);
+  expect(replaced.hydration).toBe("expired");
+}
+
+describe("an operation that sends what the copy holds", () => {
+  it("sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a pin", () =>
+    refusesHeldToAnother("a pin"));
+  it("sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a table hold", () =>
+    refusesHeldToAnother("a table hold"));
+  it("reads no other instance's bin as the copy's own, and expires the copy instance_changed", () =>
+    refusesHeldToAnother("the bin"));
+  it("sends no cursor to another instance its root names at the copy's own address, and expires the copy instance_changed: a catch-up", () =>
+    refusesHeldToAnother("a catch-up"));
+  it("sends no file hash to another instance its root names at the copy's own address, and expires the copy instance_changed", () =>
+    refusesHeldToAnother("a file fetched by its hash"));
+});
+
+/** What a follow owing a look at `read_only` sent, the root naming another
+ *  instance from the moment its stream opened where `replaced`. */
+async function lookedUnder(replaced: boolean) {
+  harness = await startHarness("server-reads-look");
+  const { server, device } = harness;
+  let streamed = false;
+  let following = false;
+  server.copyAnswer("GET", "/", () =>
+    answers.root(
+      Number(BUILT_FOR),
+      replaced && streamed ? REPLACED : SCRIPTED_INSTANCE,
+    ),
+  );
+  scriptHydration(server, {
+    head: "10",
+    items: {
+      "core.note": [{ item: { id: ITEM, source: "connector.calendar" } }],
+    },
+    replay: (cursor) => {
+      if (following) streamed = true;
+      return copyLiveReplay(cursor, []);
+    },
+  });
+  server.answer("POST", "/items/bulk-get", () =>
+    bulkGetOf(
+      [
+        certifiedRead(
+          answers.updated(
+            wireItem({
+              id: ITEM,
+              source: "connector.calendar",
+              read_only: true,
+            }),
+          ),
+          BUILT_FOR,
+        ),
+      ],
+      { withReach: true, system: false },
+    ),
+  );
+  value(await device.hydrate(["core.note"], "library"));
+  // The copy last looked at read_only well over the interval ago.
+  const store = new DatabaseSync(device.store);
+  try {
+    store
+      .prepare("UPDATE meta SET value = '0' WHERE key = 'read_only_read_at'")
+      .run();
+  } finally {
+    store.close();
+  }
+  following = true;
+  const outcome = await device.follow(3);
+  const looks = server.requests.filter(
+    (request) =>
+      request.method === "POST" && request.pathname === "/items/bulk-get",
+  ).length;
+  const status = await device.status();
+  return {
+    outcome,
+    streamed,
+    looks,
+    hydration: status.ok ? status.value.hydration : status,
+  };
+}
+
+describe("a look at read_only while a stream is held", () => {
+  it("reads the root again and sends no item id to another instance that took the copy's address while the stream was held", async () => {
+    const witness = await lookedUnder(false);
+    expect(witness.outcome.ok, JSON.stringify(witness.outcome)).toBe(true);
+    expect(
+      witness.looks,
+      "the follow looked at nothing for its own instance, so the check below proves nothing",
+    ).toBeGreaterThan(0);
+    await harness?.stop();
+    harness = undefined;
+
+    const replaced = await lookedUnder(true);
+    expect(replaced.streamed, "the follow never held a stream").toBe(true);
+    expect(replaced.outcome.ok, "the look went on at another instance").toBe(
+      false,
+    );
+    if (!replaced.outcome.ok) {
+      expect(replaced.outcome.refusal.code).toBe("copy_expired");
+      expect(replaced.outcome.refusal.raw).toContain("instance_changed");
+    }
+    expect(replaced.looks, "an item id reached the other instance").toBe(0);
+    expect(replaced.hydration).toBe("expired");
+  });
+});
+
+const EXPIRED = refusal(401, "unauthorized", "expired");
+const SECOND = "01a00000-0000-7000-8000-00000000000b";
+
+/** A call whose request the server refuses once for an expired credential. */
+interface Renewed {
+  /** The call, after `device --db <store>`. */
+  args: string[];
+  /** Whether the copy is hydrated before the call. */
+  held: boolean;
+  /** Scripts the refused request, and anything the hydration needs. */
+  script: (server: Harness["server"]) => void;
+  /** The request refused, then sent again. */
+  repeats: (request: RecordedRequest) => boolean;
+}
+
+const RENEWED: Record<string, Renewed> = {
+  "a table read": {
+    args: ["rows", "list", ITEM, "steps"],
+    held: true,
+    script: (server) =>
+      server.copyAnswer("GET", `/items/${ITEM}/tables/steps/rows`, EXPIRED, {
+        kind: "json",
+        status: 200,
+        body: { data: [], next_cursor: null },
+      }),
+    repeats: (request) =>
+      request.pathname === `/items/${ITEM}/tables/steps/rows`,
+  },
+  "a pin": {
+    args: ["pin", ITEM],
+    held: true,
+    script: (server) =>
+      server.copyAnswer(
+        "GET",
+        `/items/${ITEM}`,
+        EXPIRED,
+        answers.updated(
+          wireItem({ id: ITEM, properties: { title: "held", body: "held" } }),
+        ),
+      ),
+    repeats: (request) => request.pathname === `/items/${ITEM}`,
+  },
+  "a hydration": {
+    args: ["hydrate", "--type", "core.note", "--tier", "library"],
+    held: false,
+    script: () => undefined,
+    repeats: (request) =>
+      request.pathname === "/items" && request.query.get("cursor") === "1",
+  },
+};
+
 // This fixture uses a macOS keychain file for the renewable credential.
-describe("a table read repeated after a credential renewal", ON_MACOS, () => {
-  async function repeated(replacedAtRenewal: boolean) {
+describe("a request repeated after a credential renewal", ON_MACOS, () => {
+  async function repeated(name: string, replacedAtRenewal: boolean) {
+    const renewed = RENEWED[name]!;
     harness = await startHarness("server-reads-renewal");
     const { server, device } = harness;
     let instance = SCRIPTED_INSTANCE;
     server.copyAnswer("GET", "/", () =>
       answers.root(Number(BUILT_FOR), instance),
     );
+    let pageRefused = false;
     scriptHydration(server, {
       head: "10",
       items: {
         "core.note": [
           { item: { id: ITEM, properties: { title: "held", body: "held" } } },
+          {
+            item: { id: SECOND, properties: { title: "next", body: "next" } },
+          },
         ],
+      },
+      // One item a page, so a hydration's second page follows its head.
+      pageSize: 1,
+      drop: () => {
+        if (renewed.held || pageRefused) return false;
+        pageRefused = true;
+        return EXPIRED;
       },
       instance: () => instance,
     });
-    value(await device.hydrate(["core.note"], "library"));
-    server.copyAnswer(
-      "GET",
-      `/items/${ITEM}/tables/steps/rows`,
-      refusal(401, "unauthorized", "expired"),
-      { kind: "json", status: 200, body: { data: [], next_cursor: null } },
-    );
+    if (renewed.held) value(await device.hydrate(["core.note"], "library"));
+    renewed.script(server);
     server.answer("POST", "/token", () => {
       if (replacedAtRenewal) instance = REPLACED;
       return {
@@ -288,24 +606,19 @@ describe("a table read repeated after a credential renewal", ON_MACOS, () => {
     try {
       const result = await new Cli(requireBinary(), server.url, KEY)
         .as(undefined)
-        .run([
-          "--json",
-          "device",
-          "--db",
-          device.store,
-          "rows",
-          "list",
-          ITEM,
-          "steps",
-        ]);
-      const reached = server.requests.filter(
-        (request) => request.pathname === `/items/${ITEM}/tables/steps/rows`,
+        .run(["--json", "device", "--db", device.store, ...renewed.args]);
+      const reached = server.requests.filter(renewed.repeats);
+      const renewal = server.requests.findIndex(
+        (request) => request.pathname === "/token",
       );
       expect(
         server.requests.filter((request) => request.pathname === "/token"),
         "the binary did not renew the token the server refused",
       ).toHaveLength(1);
-      return { result, reached };
+      const afterRenewal = server.requests
+        .slice(renewal + 1)
+        .map((request) => `${request.method} ${request.pathname}`);
+      return { result, reached, afterRenewal };
     } finally {
       try {
         execFileSync(
@@ -326,22 +639,34 @@ describe("a table read repeated after a credential renewal", ON_MACOS, () => {
     }
   }
 
-  it("confirms the instance again before it repeats a table read after a credential renewal", async () => {
-    const witness = await repeated(false);
+  async function confirmsAgain(name: string) {
+    const witness = await repeated(name, false);
     expect(witness.result.code, witness.result.stderr).toBe(0);
     expect(
       witness.reached,
-      "the read was not repeated, so the check below proves nothing",
+      "the request was not repeated, so the check below proves nothing",
     ).toHaveLength(2);
     await harness?.stop();
     harness = undefined;
 
-    const replaced = await repeated(true);
+    const replaced = await repeated(name, true);
     expect(replaced.result.code).not.toBe(0);
     expect(replaced.result.stderr).toContain("copy_expired");
+    expect(replaced.result.stderr).toContain("instance_changed");
     expect(
       replaced.reached,
-      "the read was repeated at the instance that replaced the first",
+      "the request was repeated at the instance that replaced the first",
     ).toHaveLength(1);
-  });
+    expect(
+      replaced.afterRenewal,
+      "a request other than the root reached the instance that replaced the first",
+    ).toEqual(["GET /"]);
+  }
+
+  it("confirms the instance again before it repeats a table read after a credential renewal", () =>
+    confirmsAgain("a table read"));
+  it("confirms the instance again before it repeats a pin after a credential renewal", () =>
+    confirmsAgain("a pin"));
+  it("confirms the instance again before a hydration sends its next request after a credential renewal", () =>
+    confirmsAgain("a hydration"));
 });
