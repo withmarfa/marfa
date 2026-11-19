@@ -852,7 +852,7 @@ impl Catalog {
         Catalog::shared(Arc::new(entries), request_limit)
     }
 
-    /// A catalog over entries another holds too, so a read the same types answer need not build them again.
+    /// A catalog over entries another catalog holds too.
     pub fn shared(
         entries: Arc<HashMap<String, CatalogEntry>>,
         request_limit: Option<usize>,

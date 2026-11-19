@@ -38,8 +38,7 @@ pub fn hydrated(conn: &Connection) -> Result<bool, CoreError> {
     holds_slice(conn)
 }
 
-/// Whether the copy holds a slice and an event cursor yet can no longer be
-/// kept current, so the rows it holds only through the slice have lapsed.
+/// Whether the copy holds a slice it can no longer keep current.
 pub fn lapsed(conn: &Connection) -> Result<bool, CoreError> {
     let Some(cursor) = meta_get(conn, META_EVENT_CURSOR)? else {
         return Ok(false);

@@ -52,8 +52,7 @@ fn a_drain_ended_between_writes_is_finished_by_the_next_core_with_nothing_lost_o
     assert_eq!(first.undelivered, 2, "{first:?}");
     drop(core);
 
-    // The process ended here. The next one finds the answered writes
-    // answered and the rest waiting, as they were queued.
+    // The process ended here, and the next finds the rest waiting.
     server.on("/items/c", accepted());
     server.on("/items/d", accepted());
     let core = reopened(&dir, &server);
@@ -84,8 +83,7 @@ fn a_drain_ended_between_writes_is_finished_by_the_next_core_with_nothing_lost_o
             "{id} was sent again after the server took it"
         );
     }
-    // A write the server did not take is sent again under its own key, so a
-    // server that had taken it answers the replay and makes no second item.
+    // A write the server did not take is sent again under its own key.
     let keys = sent(&server, "c");
     assert_eq!(keys.len(), 2, "{keys:?}");
     assert_eq!(keys[0], keys[1], "the retry named another key");

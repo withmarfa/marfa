@@ -173,9 +173,7 @@ pub fn meta_delete_under(conn: &Connection, prefix: &str) -> Result<(), CoreErro
     Ok(())
 }
 
-/// A value no other state of the copy's types has held, which `replace_types`
-/// sets with the rows it writes, so it goes back with them where they roll
-/// back. None until the types are first written.
+/// A value no other state of the types has held, set with the rows so a rollback undoes both.
 pub fn types_stamp(conn: &Connection) -> Result<Option<String>, CoreError> {
     meta_get(conn, META_TYPES_STAMP)
 }

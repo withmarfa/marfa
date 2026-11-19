@@ -1,7 +1,6 @@
 use rusqlite::{Connection, Params, Result, Row};
 
-/// `execute` and `query_row` for SQL written out in the source: they keep the
-/// prepared statement, where rusqlite's own prepare it again on every call.
+/// `execute` and `query_row` that keep the prepared statement, where rusqlite's prepare it on every call.
 pub(crate) trait Cached {
     fn execute_cached(&self, sql: &str, params: impl Params) -> Result<usize>;
 

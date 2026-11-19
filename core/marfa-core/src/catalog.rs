@@ -174,9 +174,7 @@ pub fn edge_type(conn: &Connection, id: &str) -> Result<EdgeType, CoreError> {
     })
 }
 
-/// The entries of the last few type sets read, by the stamp each was read
-/// under. A stamp names one set of types in any store, so a copy whose stamp
-/// is here holds the entries kept under it.
+/// The entries of the last few type sets read, by the stamp each was read under.
 static READ: Mutex<Vec<(String, Entries)>> = Mutex::new(Vec::new());
 
 type Entries = Arc<HashMap<String, CatalogEntry>>;

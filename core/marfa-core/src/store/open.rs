@@ -658,7 +658,7 @@ pub(crate) fn read_directory(
 fn tune(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch("PRAGMA cache_size = -32768;")?;
     conn.set_prepared_statement_cache_capacity(256);
-    // A plan that depends on a bound value is made again each time a statement is reused from the cache.
+    // Without it, a bound value makes each cached statement plan again at every reuse.
     conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG, true)?;
     Ok(())
 }
