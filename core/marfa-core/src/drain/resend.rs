@@ -11,13 +11,13 @@ use marfa_rules::time::projected;
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
-use super::read_back::names_no_row;
+use super::read_back::{ReachChange, names_no_row};
 use crate::catch_up::ask_unless_stopped;
 use crate::error::CoreError;
 use crate::http::{Http, INSTANCE_CHANGED};
 use crate::model::{QueuedWrite, WriteKind};
 use crate::wire::{WireEdge, WireItem};
-use crate::{Core, Result, reach, store};
+use crate::{Core, Result, store};
 
 #[derive(Debug)]
 pub(super) enum Judged {
@@ -116,18 +116,20 @@ enum Read {
     Refused,
 }
 
-/// Every request can be stopped; an error is the read's own, for the caller
-/// to settle as it would the write's.
+/// Every request can be stopped and confirms the instance with the drain's
+/// writes; an error is the read's own, for the caller to settle as it would
+/// the write's.
 /// `own` is the current credential's own source, where known.
 pub(super) fn judge(
     core: &Core,
     http: &Http,
     stop: &AtomicBool,
+    pass: &ReachChange,
     row: &QueuedWrite,
     payload: &Value,
     own: Option<&str>,
 ) -> Result<Judged> {
-    let context = reach::Context::capture(&*core.conn()?)?;
+    let context = pass.context(&*core.conn()?)?;
     let reads = Reads {
         within: &context.http(http),
         plain: http,

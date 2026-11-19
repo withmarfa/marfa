@@ -559,7 +559,7 @@ pub(super) fn send_queue(
             continue;
         } else {
             let own = lookups.own.clone().flatten();
-            match resend::judge(core, http, stop, row, &body, own.as_deref()) {
+            match resend::judge(core, http, stop, pass, row, &body, own.as_deref()) {
                 Ok(Judged::Applied(found)) => Some(found),
                 Ok(Judged::Send { read }) => {
                     if read {

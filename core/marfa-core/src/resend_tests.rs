@@ -1428,3 +1428,75 @@ fn authorizations(server: &Scripted, path: &str) -> Vec<String> {
         .filter_map(|seen| seen.authorization)
         .collect()
 }
+
+#[test]
+fn judges_a_write_sent_under_another_key_on_the_drain_s_one_confirmation_of_the_instance() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let queued = lost_under_first(&server, dir.path(), edit);
+    let before = server.seen("/").len();
+
+    server.on(&path(EDITED), vec![held(EDITED, "edited", 2)]);
+    let core = copy_in_keyed(&server, dir.path(), "second");
+    core.drain().unwrap();
+
+    assert_eq!(verdict(&core, &queued.id), Some(Verdict::Accepted));
+    assert_eq!(
+        asked_under(&server, &path(EDITED), "second"),
+        ["read", "read"]
+    );
+    assert_eq!(
+        server.seen("/").len() - before,
+        1,
+        "the judging read confirmed the instance apart from the drain: {:?}",
+        server.paths()
+    );
+}
+
+#[test]
+fn a_judging_read_renewed_partway_sends_no_item_id_to_another_instance_at_the_address() {
+    const OTHER: &str = "00000000-0000-7000-8000-0000000000fe";
+    for replaced in [false, true] {
+        let server = Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let queued = lost_under_first(&server, dir.path(), edit);
+
+        server.on(
+            &path(EDITED),
+            vec![
+                scripted::refusal(401, "unauthorized"),
+                held(EDITED, "edited", 2),
+            ],
+        );
+        let second = if replaced { OTHER } else { scripted::INSTANCE };
+        server.on(
+            "/",
+            vec![scripted::root(scripted::INSTANCE), scripted::root(second)],
+        );
+        let core = copy_in_keyed(&server, dir.path(), "second");
+        core.renew_credential_with(Box::new(|_| Ok("fresh".into())));
+        let drained = core.drain();
+
+        if !replaced {
+            // The witness: the read goes on under the renewed credential.
+            assert_eq!(drained.unwrap().undelivered, 0);
+            assert_eq!(verdict(&core, &queued.id), Some(Verdict::Accepted));
+            assert_eq!(asked_under(&server, &path(EDITED), "fresh")[0], "read");
+            continue;
+        }
+        match drained {
+            Err(CoreError::CopyExpired { reason, .. }) => {
+                assert_eq!(reason, crate::http::INSTANCE_CHANGED);
+            }
+            other => panic!("a judge that met another instance ended {other:?}"),
+        }
+        assert!(
+            under(&server, &path(EDITED), "fresh").is_empty(),
+            "the item id reached the instance that replaced the copy's own"
+        );
+        assert!(writes_under(&server, &path(EDITED), "second").is_empty());
+        // Held for the instance now at the address, which has seen no attempt.
+        assert!(!sent(&core, &queued.id));
+        assert_eq!(verdict(&core, &queued.id), None);
+    }
+}
