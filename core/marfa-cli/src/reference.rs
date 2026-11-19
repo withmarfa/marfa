@@ -21,7 +21,7 @@ const REGENERATE: &str = "MARFA_WRITE_COMMANDS=1 cargo test -p marfa-cli --bin m
 /// holds the two together.
 const TELEMETRY: &str = "## Telemetry
 
-A command sends one trace to an OpenTelemetry collector when the environment names one, and no trace when it does not. A command that ends in a fault can also send one exception to PostHog, which needs no collector (below). The settings are the standard OpenTelemetry variables, and two for PostHog.
+A command sends one trace to an OpenTelemetry collector when the environment names one, and no trace when it does not. The settings are the standard OpenTelemetry variables.
 
 | Variable | Description |
 | --- | --- |
@@ -31,14 +31,10 @@ A command sends one trace to an OpenTelemetry collector when the environment nam
 | `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | The longest one send may take, in milliseconds. The default is 2000. The command waits no longer than this at its end. |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | `always_on` (the default), `always_off`, or `traceidratio` with a ratio from 0 to 1 as the argument. The `parentbased_` forms act as the sampler they wrap. |
 | `OTEL_SERVICE_NAME` | The service name on the trace. The default is `marfa-cli`. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`. |
-| `OTEL_RESOURCE_ATTRIBUTES` | Attributes to add to the trace and the exception, as comma-separated `key=value` pairs with percent-encoded values, such as `deployment.environment=staging`. One named here replaces the command's own of the same name. A list with a pair that cannot be read is ignored whole. |
-| `OTEL_SDK_DISABLED` | `true` turns off both the trace and the exception report. |
-| `MARFA_POSTHOG_HOST` | The PostHog host that receives a failed command's exception, `https` or, to this machine, `http`. It needs `MARFA_POSTHOG_PROJECT_TOKEN`. |
-| `MARFA_POSTHOG_PROJECT_TOKEN` | The PostHog project token for those exceptions. It needs `MARFA_POSTHOG_HOST`. |
+| `OTEL_RESOURCE_ATTRIBUTES` | Attributes to add to the trace, as comma-separated `key=value` pairs with percent-encoded values, such as `deployment.environment=staging`. One named here replaces the command's own of the same name. A list with a pair that cannot be read is ignored whole. |
+| `OTEL_SDK_DISABLED` | `true` turns the trace off. |
 
 The trace's root span is named for the command, such as `marfa items create`, and carries the exit code. The core's operations are beneath it, with their counts and outcomes. A command that fails adds an `error` event with the exit code and, for a refusal, the error code from the list above. The trace holds no argument, address, credential, item content or message. A collector that is unreachable, slow or refusing changes neither the command's output nor its exit code.
-
-A command that ends in a fault also sends one exception to PostHog's error tracking when `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` are both set, whether or not an OTLP endpoint is. The trace needs an endpoint and the exception does not, so a malformed endpoint turns off the trace only, and a malformed host the exception only. With either PostHog variable unset, no exception is sent. With only one of the two PostHog variables set, or a host that is neither `https` nor on this machine, the command prints one line on standard error that names the variable, and nothing under `--json`. The exception has the command's name, the error code, the exit code, the version, the operating system and the architecture, and a fixed sentence for the kind of error in place of its message. It names no person, and holds no argument, address, credential, item content or message. A fault is something the command line or the core itself got wrong: a panic, including one the core caught and ended with the code `fault`, the local store failing for a reason of its own, an answer that cannot be read, or an answer status the command line should never cause and no refusal is named for, such as `405` or `415`. Nothing the server or the environment did is a fault, and sends nothing: a refusal by design (a `4xx` answer that names a refusal, a usage error, a missing credential or docs page), a command that Ctrl-C stopped or that ended `canceled`, and an environment that failed (offline, a timeout, a rate limit, a `408` or `425` answer, any `5xx` answer, which the server reports itself, full local storage, or another program writing to the working copy). A command that panics sends an exception of type `panic` with no message, and `OTEL_TRACES_SAMPLER` does not change what is sent. A PostHog that is unreachable, slow or refusing changes neither the command's output nor its exit code, and the command waits no longer than the timeout above.
 
 ";
 
@@ -799,7 +795,6 @@ mod tests {
     fn the_reference_and_the_telemetry_page_name_every_variable_the_binary_reads() {
         let settings = [
             include_str!("telemetry/settings.rs"),
-            include_str!("telemetry/posthog.rs"),
             include_str!("../../marfa-telemetry/src/environment.rs"),
             include_str!("../../marfa-telemetry/src/identity.rs"),
             include_str!("../../marfa-telemetry/src/otlp.rs"),
@@ -809,7 +804,7 @@ mod tests {
             .iter()
             .flat_map(|source| source.split('"'))
             .filter(|text| {
-                (text.starts_with("OTEL_") || text.starts_with("MARFA_POSTHOG_"))
+                text.starts_with("OTEL_")
                     // The logs are the server's signal; the binary sends none.
                     && !text.contains("_LOGS_")
                     && text.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
@@ -818,7 +813,7 @@ mod tests {
         variables.sort_unstable();
         variables.dedup();
         // The witness that the source is read: the list is not empty.
-        assert!(variables.len() >= 12, "{variables:?}");
+        assert!(variables.len() >= 11, "{variables:?}");
         for variable in variables {
             assert!(
                 TELEMETRY.contains(&format!("`{variable}`")),

@@ -371,8 +371,8 @@ pub enum DeviceCommand {
     /// Set aside a store SQLite cannot read, and make a new one in its place
     /// that carries every write its queue lets be read.
     ///
-    /// The damaged store and its logs move to `PATH.damaged-N` beside it, for
-    /// the first N no file holds, and are never deleted. Each write carried
+    /// The damaged store and its logs move to `PATH.damaged-N` beside it (beside
+    /// the file a symbolic link at `PATH` leads to), for the first N no file holds, and are never deleted. Each write carried
     /// keeps its id and idempotency key, its body, its base version and its
     /// verdict, and the new store keeps the server and instance the old one
     /// was built from and the bytes kept beside the store. The answer counts

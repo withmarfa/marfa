@@ -295,7 +295,7 @@ function autostart(
   // The shell that runs the tests is silenced, and `on` carries what it
   // finds: a run carries only the settings its own `env` names.
   for (const name of Object.keys(env)) {
-    if (/^(OTEL_|MARFA_OTEL_|MARFA_POSTHOG_)/.test(name)) delete env[name];
+    if (/^(OTEL_|MARFA_OTEL_)/.test(name)) delete env[name];
   }
   Object.assign(env, options.env ?? {});
   const ran = spawnSync(
@@ -390,19 +390,21 @@ describe("folder syncing from login", () => {
     const file = join(dirname(registry), "folder-watch.env");
     const secret = `device-fixture-header-${randomUUID()}`;
     // Dummy values that reach no host: an address that cannot resolve, and
-    // an SDK that is turned off, so that nothing of this test is sent.
+    // an SDK that is turned off, so that nothing of this test is sent. The
+    // PostHog settings are no telemetry setting of the CLI's: they are set
+    // here to show that none is carried.
     const settings = {
       MARFA_POSTHOG_HOST: "https://posthog.invalid",
       MARFA_POSTHOG_PROJECT_TOKEN: "phc_fixture",
       OTEL_SDK_DISABLED: "true",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector.invalid:4318",
       OTEL_EXPORTER_OTLP_HEADERS: `authorization=Bearer ${secret}`,
     };
     const first = autostart(root, "on", { registry, env: settings });
     const report = parsed<Switched>(first);
     expect(report.telemetry).toEqual([
-      "MARFA_POSTHOG_HOST",
-      "MARFA_POSTHOG_PROJECT_TOKEN",
       "OTEL_SDK_DISABLED",
+      "OTEL_EXPORTER_OTLP_ENDPOINT",
       "OTEL_EXPORTER_OTLP_HEADERS",
     ]);
     expect(report.telemetry_file).toBe(file);
@@ -416,11 +418,15 @@ describe("folder syncing from login", () => {
     expect(held).toContain(
       `OTEL_EXPORTER_OTLP_HEADERS=authorization=Bearer ${secret}\n`,
     );
-    expect(held).toContain("MARFA_POSTHOG_HOST=https://posthog.invalid\n");
+    expect(held).toContain(
+      "OTEL_EXPORTER_OTLP_ENDPOINT=http://collector.invalid:4318\n",
+    );
+    expect(held).not.toContain("POSTHOG");
+    expect(held).not.toContain("phc_fixture");
     const written = readFileSync(agentFile(root), "utf8");
     expect(written).not.toContain(secret);
     expect(written).not.toContain("phc_fixture");
-    expect(written).not.toContain("posthog.invalid");
+    expect(written).not.toContain("collector.invalid");
     expect(agentRuns(root).env).toEqual({
       MARFA_FOLDER_REGISTRY: registry,
       MARFA_TELEMETRY_FILE: file,

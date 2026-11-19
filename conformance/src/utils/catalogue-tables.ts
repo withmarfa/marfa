@@ -93,42 +93,120 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
     "Reading, registering, changing and removing the outbound subscriptions that send an instance's events out, and redelivering what they sent.",
 };
 
-/** When each event is sent, written for this table, with the statements that hold each write to its event. */
-const EVENT_TEXT: Readonly<Record<string, string>> = {
-  "item.created": "A write creates an item (`events/create-announced`).",
-  "item.updated":
-    "A write changes an item (`events/update-announced`, `events/update-edges-only-announced`, `housekeeping/enrichment-announced`, `types/move-announced`, `items/folder-announced`, `views/announced`).",
-  "item.trashed":
-    "An item moves to the bin (`items/delete-announced`, `items/trash-cascade-announced`, `events/owner-trash-announced`, `housekeeping/feed-expiry-announced`), or a cascade revokes a `system.*` item (`events/cascade-revoke-announced`).",
-  "item.restored":
-    "An item in the bin is restored (`items/restore-announced`, `events/owner-trash-announced`).",
-  "item.purged":
-    "An item is destroyed (`items/purge-announced`, `events/owner-trash-announced`, `events/sweep-purge-announced`, `views/delete-announced`).",
-  "item.state_changed":
-    "A transition moves the item it names to another state, into and out of the bin included (`items/transition-announced`, `events/job-announced`), or a key revokes a folder (`items/folder-announced`). A delete and a restore do not send it (`events/delete-no-state-change`, `events/restore-no-state-change`).",
-  "metadata.changed":
-    "A tag operation commits for an item, whether or not it changes the tags (`items/tag-announced`), or an extension namespace is written or deleted (`items/extension-announced`).",
-  "rows.changed":
-    "A batch changes the rows of one table of an item (`tables/rows-event`), on a copy stream too (`tables/rows-event-copy-sent`).",
-  "edge.created":
-    "An edge is created (`edges/create-announced`, `events/edge-bulk-announced`, `events/edge-inline-announced`, `versions/copy-edges-announced`).",
-  "edge.updated":
-    "An edge is written: its properties, or one of its ends moving to another item (`edges/update-announced`, `edges/move-announced`, `events/edge-bulk-announced`).",
-  "attention.raised":
-    "A check of what needs the owner's attention first finds an entry (`events/attention-raised`).",
-  "edge.deleted":
-    "An edge is deleted (`edges/delete-announced`, `events/edge-inline-announced`, `items/purge-edges`, `events/sweep-purge-edges`).",
-  stream_cursor:
-    "First, when the stream read the log as it opened: where the log stood then.",
-  stream_live:
-    "Once the catch-up is over: everything up to its cursor has been sent or withheld, and what follows is live.",
-  stream_incomplete:
-    "Last, when the stream can no longer deliver what it opened with.",
-  catchup_too_old:
-    "Last, when the log no longer holds the events after the `Last-Event-ID` the client sent.",
-  cursor_ahead:
-    "Last, when the `Last-Event-ID` the client sent is past the latest event in the log.",
-  reach_changed: "Last on a copy stream, when its reach changes.",
+/** When each event is sent, written for this table, and the statements that hold each write to its event. */
+const EVENT_TEXT: Readonly<
+  Record<string, { when: string; statements: readonly string[] }>
+> = {
+  "item.created": {
+    when: "A write creates an item.",
+    statements: ["events/create-announced"],
+  },
+  "item.updated": {
+    when: "A write changes an item.",
+    statements: [
+      "events/update-announced",
+      "events/update-edges-only-announced",
+      "housekeeping/enrichment-announced",
+      "types/move-announced",
+      "items/folder-announced",
+      "views/announced",
+    ],
+  },
+  "item.trashed": {
+    when: "An item moves to the bin, or a cascade revokes a `system.*` item.",
+    statements: [
+      "items/delete-announced",
+      "items/trash-cascade-announced",
+      "events/owner-trash-announced",
+      "housekeeping/feed-expiry-announced",
+      "events/cascade-revoke-announced",
+    ],
+  },
+  "item.restored": {
+    when: "An item in the bin is restored.",
+    statements: ["items/restore-announced", "events/owner-trash-announced"],
+  },
+  "item.purged": {
+    when: "An item is destroyed.",
+    statements: [
+      "items/purge-announced",
+      "events/owner-trash-announced",
+      "events/sweep-purge-announced",
+      "views/delete-announced",
+    ],
+  },
+  "item.state_changed": {
+    when: "A transition moves the item it names to another state, into and out of the bin included, or a key revokes a folder. A delete and a restore do not send it.",
+    statements: [
+      "items/transition-announced",
+      "events/job-announced",
+      "items/folder-announced",
+      "events/delete-no-state-change",
+      "events/restore-no-state-change",
+    ],
+  },
+  "metadata.changed": {
+    when: "A tag operation commits for an item, whether or not it changes the tags, or an extension namespace is written or deleted.",
+    statements: ["items/tag-announced", "items/extension-announced"],
+  },
+  "rows.changed": {
+    when: "A batch changes the rows of one table of an item, on a copy stream too.",
+    statements: ["tables/rows-event", "tables/rows-event-copy-sent"],
+  },
+  "edge.created": {
+    when: "An edge is created.",
+    statements: [
+      "edges/create-announced",
+      "events/edge-bulk-announced",
+      "events/edge-inline-announced",
+      "versions/copy-edges-announced",
+    ],
+  },
+  "edge.updated": {
+    when: "An edge is written: its properties, or one of its ends moving to another item.",
+    statements: [
+      "edges/update-announced",
+      "edges/move-announced",
+      "events/edge-bulk-announced",
+    ],
+  },
+  "attention.raised": {
+    when: "A check of what needs the owner's attention first finds an entry.",
+    statements: ["events/attention-raised"],
+  },
+  "edge.deleted": {
+    when: "An edge is deleted.",
+    statements: [
+      "edges/delete-announced",
+      "events/edge-inline-announced",
+      "items/purge-edges",
+      "events/sweep-purge-edges",
+    ],
+  },
+  stream_cursor: {
+    when: "First, when the stream read the log as it opened: where the log stood then.",
+    statements: [],
+  },
+  stream_live: {
+    when: "Once the catch-up is over: everything up to its cursor has been sent or withheld, and what follows is live.",
+    statements: [],
+  },
+  stream_incomplete: {
+    when: "Last, when the stream can no longer deliver what it opened with.",
+    statements: [],
+  },
+  catchup_too_old: {
+    when: "Last, when the log no longer holds the events after the `Last-Event-ID` the client sent.",
+    statements: [],
+  },
+  cursor_ahead: {
+    when: "Last, when the `Last-Event-ID` the client sent is past the latest event in the log.",
+    statements: [],
+  },
+  reach_changed: {
+    when: "Last on a copy stream, when its reach changes.",
+    statements: [],
+  },
 };
 
 const CODE_POINT = (a: string, b: string): number =>
@@ -264,11 +342,12 @@ export function eventTypesTable(rows: readonly EventTypeRow[]): string {
   // Source order is the stream's: the events as the webhook list names them,
   // then the frames that steer a stream.
   return renderTable(
-    ["Event", "Sent to", "When it is sent"],
+    ["Event", "Sent to", "When it is sent", "Statements"],
     rows.map((row) => [
       code(row.name),
       row.webhook ? "Streams and webhooks" : "Streams",
-      EVENT_TEXT[row.name] ?? "",
+      EVENT_TEXT[row.name]?.when ?? "",
+      listOf(EVENT_TEXT[row.name]?.statements ?? []),
     ]),
   );
 }

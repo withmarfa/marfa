@@ -784,3 +784,31 @@ fn the_file_schema_reopens() {
     let conn = open(&path).unwrap();
     assert!(item_held(&conn, "n1").unwrap());
 }
+
+#[cfg(unix)]
+#[test]
+fn a_persistent_store_that_cannot_keep_its_log_is_refused_not_opened_in_another_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    // This file system's lock-less access has no shared memory, so SQLite
+    // keeps the mode it had when asked for WAL.
+    let nolock = Connection::open_with_flags_and_vfs(
+        &path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
+        "unix-none",
+    )
+    .unwrap();
+    let mode: String = nolock
+        .query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "delete", "the witness: WAL cannot be had here");
+    let refused = super::open::prepare(&nolock, None);
+    assert!(
+        matches!(&refused, Err(CoreError::Store(message)) if message.contains("write-ahead")),
+        "{refused:?}"
+    );
+    // An in-memory store is not held in WAL and is not refused.
+    super::open_in_memory().unwrap();
+    // The witness: the store opens where WAL can be had.
+    super::open(&path).unwrap();
+}

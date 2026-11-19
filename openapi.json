@@ -20597,20 +20597,20 @@
           {
             "schema": {
               "type": "string",
-              "description": "Window start, ISO 8601. No zone means UTC; a date is its UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days in its `timezone`, else UTC."
+              "description": "A date-time needs seconds and a zone or offset; a date is UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days of its `timezone` or UTC."
             },
             "required": true,
-            "description": "Window start, ISO 8601. No zone means UTC; a date is its UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days in its `timezone`, else UTC.",
+            "description": "A date-time needs seconds and a zone or offset; a date is UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days of its `timezone` or UTC.",
             "name": "from",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Window end, ISO 8601, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time."
+              "description": "Window end, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time."
             },
             "required": true,
-            "description": "Window end, ISO 8601, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time.",
+            "description": "Window end, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time.",
             "name": "to",
             "in": "query"
           },
@@ -21245,7 +21245,7 @@
           "Trash"
         ],
         "summary": "List the trash",
-        "description": "Returns a page of trash summaries, newest creation first, without item content, of the types you can read. Requires `items.purge`.",
+        "description": "Returns a page of trash summaries, newest creation first, without item content, of the types you can write. Requires `items.purge`.",
         "parameters": [
           {
             "schema": {
@@ -21522,7 +21522,7 @@
           "Trash"
         ],
         "summary": "Empty the trash",
-        "description": "Empties one page of the trash: deletes up to 200 items of the types you can read permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed meanwhile may remain. Requires `items.purge`.",
+        "description": "Empties one page of the trash: deletes up to 200 items of the types you can write permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed meanwhile may remain. Requires `items.purge`.",
         "parameters": [
           {
             "schema": {
@@ -51403,7 +51403,7 @@
                         "$ref": "#/components/schemas/ProfilePermissions"
                       },
                       {
-                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` permits name and avatar changes and implies read; email accepts only `read`. `*` reads every field and writes only name and avatar."
+                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` implies read. `write` on `name` or `avatar` changes it, and only `email` at `write` changes the email address. `*` reads every field and at `write` changes only the name and avatar."
                       }
                     ]
                   },
@@ -52690,7 +52690,7 @@
                         "$ref": "#/components/schemas/ProfilePermissions"
                       },
                       {
-                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` permits name and avatar changes and implies read; email accepts only `read`. `*` reads every field and writes only name and avatar."
+                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` implies read. `write` on `name` or `avatar` changes it, and only `email` at `write` changes the email address. `*` reads every field and at `write` changes only the name and avatar."
                       }
                     ]
                   },

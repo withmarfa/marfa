@@ -51,6 +51,8 @@ mod oldest_server_tests;
 mod open;
 #[cfg(test)]
 mod part_names_tests;
+#[cfg(test)]
+mod plain_path_tests;
 pub mod priority;
 mod query;
 mod reach;

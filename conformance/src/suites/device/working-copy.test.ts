@@ -6,12 +6,14 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   KEY,
+  acceptUploads,
   hashOf,
   hydratedHarness,
   requireBinary,
@@ -3869,5 +3871,93 @@ describe("a local read of edges answers both ends", () => {
       await ids(device.edgesFrom("project")),
       "the tickets beneath a project the copy does not hold cannot be read from the project",
     ).toEqual(["beneath"]);
+  });
+});
+
+describe("a store reached by a plain path", () => {
+  it("sends an upload queued through a symbolic link when drained through the store, and the reverse", async () => {
+    harness = await hydratedHarness("link-identity");
+    const { server, device } = harness;
+    acceptUploads(server);
+    const real = device.store;
+    const alias = join(dirname(real), "alias.sqlite");
+    const chained = join(dirname(real), "chained.sqlite");
+    symlinkSync(real, alias);
+    symlinkSync("alias.sqlite", chained);
+    const uploads = () =>
+      server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/blobs",
+      ).length;
+    const rounds = [
+      { queued: chained, drained: real },
+      { queued: real, drained: alias },
+      { queued: alias, drained: chained },
+    ];
+    for (const [round, { queued, drained }] of rounds.entries()) {
+      const file = join(dirname(real), `round-${round}.txt`);
+      writeFileSync(file, `the bytes of round ${round}`);
+      const put = await device.reopen({ store: queued }).putBlob(file);
+      expect(put.ok, JSON.stringify(put)).toBe(true);
+      const before = uploads();
+      const drain = await device.reopen({ store: drained }).drain();
+      expect(drain.ok, JSON.stringify(drain)).toBe(true);
+      expect(
+        drain.ok ? drain.value.unsent : undefined,
+        `an upload queued through ${queued} was refused as lost when drained through ${drained}: ${JSON.stringify(drain)}`,
+      ).toBe(0);
+      expect(uploads(), "the upload was not sent").toBe(before + 1);
+    }
+    expect(
+      existsSync(`${alias}.blobs`) || existsSync(`${chained}.blobs`),
+      "a folder of bytes was made beside a link",
+    ).toBe(false);
+    expect(existsSync(`${real}.blobs`), "the store has no folder").toBe(true);
+  });
+
+  it("refuses a store on a file system that does not lock files before it makes any file", async () => {
+    harness = await hydratedHarness("unlocked-filesystem");
+    const store = newStore("unlocked-filesystem");
+    const device = harness.device.reopen({ store });
+    process.env.MARFA_TEST_FAULT = "unlocked-filesystem";
+    try {
+      const refused = await device.status();
+      expect(
+        refused.ok,
+        "a device took the writer role on a file system that does not lock",
+      ).toBe(false);
+      if (!refused.ok) {
+        expect(refused.refusal.code, refused.refusal.raw).toBe("invalid");
+      }
+      expect(
+        [store, `${store}.writer-lock`].filter((file) => existsSync(file)),
+        "a refused open left a file behind",
+      ).toEqual([]);
+    } finally {
+      delete process.env.MARFA_TEST_FAULT;
+    }
+    // The witness: the same store opens where files lock.
+    expect((await device.status()).ok).toBe(true);
+  });
+
+  it("refuses a store that cannot be kept in write-ahead mode", async () => {
+    harness = await hydratedHarness("wal-unavailable");
+    const store = newStore("wal-unavailable");
+    const device = harness.device.reopen({ store });
+    process.env.MARFA_TEST_FAULT = "wal-unavailable";
+    try {
+      const refused = await device.status();
+      expect(
+        refused.ok,
+        "a device opened a store that is not in write-ahead mode",
+      ).toBe(false);
+      if (!refused.ok) {
+        expect(refused.refusal.code, refused.refusal.raw).toBe("store");
+        expect(refused.refusal.raw).toContain("write-ahead");
+      }
+    } finally {
+      delete process.env.MARFA_TEST_FAULT;
+    }
+    // The witness: the same store opens where write-ahead mode is had.
+    expect((await device.status()).ok).toBe(true);
   });
 });

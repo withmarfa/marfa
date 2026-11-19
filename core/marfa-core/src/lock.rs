@@ -45,7 +45,9 @@ impl WriterLock {
                 _with: None,
             });
         };
-        let path = lock_path(&linked(store)?);
+        let store = linked(store)?;
+        admit_file_system(&store)?;
+        let path = lock_path(&store);
         crate::owner_only(&path)?;
         Self::claim_opened(
             &path.display().to_string(),
@@ -220,6 +222,30 @@ pub(crate) fn lock_path(store: &Path) -> std::path::PathBuf {
     let mut name = store.as_os_str().to_owned();
     name.push(".writer-lock");
     std::path::PathBuf::from(name)
+}
+
+/// Refuses a store on a file system that does not lock files, where a
+/// successful `BEGIN EXCLUSIVE` would not mean no other process holds the
+/// writer role. A folder that is not there is left to the open that follows, which names it.
+#[cfg(unix)]
+fn admit_file_system(store: &Path) -> Result<(), CoreError> {
+    let holder = store
+        .parent()
+        .filter(|holder| !holder.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    match std::fs::File::open(holder) {
+        Ok(folder) => crate::directory_vfs::DirectoryVfs::plain_path_supported(&folder),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CoreError::Store(format!(
+            "{} cannot be read: {error}",
+            holder.display()
+        ))),
+    }
+}
+
+#[cfg(not(unix))]
+fn admit_file_system(_store: &Path) -> Result<(), CoreError> {
+    Ok(())
 }
 
 /// The file a symbolic link at `store`'s own name leads to, followed as
