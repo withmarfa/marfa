@@ -1262,12 +1262,29 @@ impl Folder {
     /// Whether a regular file is at `path`, as the walk takes one: a directory
     /// or a symbolic link there is no file.
     fn is_file(&self, path: impl AsRef<Path>) -> bool {
-        self.location(path.as_ref(), false)
-            .is_ok_and(|(directory, name)| {
-                directory
-                    .entry_kind(Path::new(&name))
-                    .is_ok_and(|kind| kind == crate::directory::FileType::RegularFile)
-            })
+        self.file_at(path.as_ref()).unwrap_or(false)
+    }
+
+    /// Whether a regular file is at `path`, as the walk takes one, or why the
+    /// disk cannot say.
+    fn file_at(&self, path: &Path) -> std::io::Result<bool> {
+        let kind = self
+            .location(path, false)
+            .and_then(|(directory, name)| directory.entry_kind(Path::new(&name)));
+        match kind {
+            Ok(kind) => Ok(kind == crate::directory::FileType::RegularFile),
+            // A parent replaced by a symbolic link is not walked into, so the
+            // walk takes the path as absent; Linux says so as a loop.
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) || is_loop(&error) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn remove_file(&self, path: &Path, still: impl FnOnce(&[u8]) -> bool) -> std::io::Result<bool> {
@@ -1450,6 +1467,16 @@ impl Walked {
             .iter()
             .any(|dir| matches!(dir.flag, "gone" | "unreadable"))
     }
+}
+
+#[cfg(unix)]
+fn is_loop(error: &std::io::Error) -> bool {
+    error.raw_os_error() == Some(libc::ELOOP)
+}
+
+#[cfg(not(unix))]
+fn is_loop(_: &std::io::Error) -> bool {
+    false
 }
 
 /// Reopening a walked parent must prove every component is the same directory.
@@ -3170,7 +3197,7 @@ mod tests {
 
     /// Holds `settings` in the copy's folder row, and the slice they ask in
     /// its meta, as a hydration under them leaves it.
-    fn settled_under(folder: &Folder, settings: Value) {
+    pub(super) fn settled_under(folder: &Folder, settings: Value) {
         let conn = folder.core.conn().unwrap();
         crate::store::upsert_item(
             &conn,
