@@ -7,7 +7,7 @@ mod tools;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{Request, State};
+use axum::extract::{FromRequestParts, Request, State};
 use axum::http::header::{ALLOW, ORIGIN, WWW_AUTHENTICATE};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -21,6 +21,7 @@ use super::caller::{forget, identify, refused};
 use super::query;
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
+use crate::app::auth::Visit;
 use crate::app::oauth::clients::page_approved;
 use crate::app::oauth::scope::Registries;
 use crate::app::provenance;
@@ -31,7 +32,7 @@ use rpc::{Call, Entry, Era, Reply};
 use tools::Group;
 
 /// What a client is told about the server in its first message, at most 512 characters.
-const INSTRUCTIONS: &str = "Marfa is the person's own data store. Call marfa_overview first. Find and read with marfa_find and marfa_get, save with marfa_create (text, or a file by web address), change with marfa_update, and delete with marfa_delete. An item's table rows are read with marfa_read_rows and changed with marfa_write_rows. Read an item before changing it and send the version you read. marfa_delete, marfa_move_items and marfa_revoke_key only preview first: show the person what would change and ask before you confirm.";
+const INSTRUCTIONS: &str = "Marfa is the person's own data store. Call marfa_overview first. Find and read with marfa_find and marfa_get, save with marfa_create (text, or a file by web address), change with marfa_update, and delete with marfa_delete. An item's table rows are read with marfa_read_rows and changed with marfa_write_rows. Read an item before changing it and send the version you read. A tool that deletes, moves, revokes or removes something only previews first: show the person what would change and ask before you confirm.";
 
 const SERVER_NAME: &str = "marfa";
 const SERVER_TITLE: &str = "Marfa";
@@ -196,7 +197,13 @@ fn faulted(mut response: Response, stop: &Stop) -> Response {
     response
 }
 
-async fn tool_call(app: &Arc<App>, caller: &Caller, group: Group, call: Call) -> Response {
+async fn tool_call(
+    app: &Arc<App>,
+    caller: &Caller,
+    group: Group,
+    call: Call,
+    visit: Visit,
+) -> Response {
     let Call {
         id,
         params,
@@ -222,7 +229,7 @@ async fn tool_call(app: &Arc<App>, caller: &Caller, group: Group, call: Call) ->
     };
     let Some(outcome): Option<Outcome> = provenance::through(
         "mcp",
-        tools::call(app, caller, group, name, arguments, exact),
+        tools::call(app, caller, group, name, arguments, exact, visit),
     )
     .await
     else {
@@ -249,7 +256,13 @@ async fn tool_call(app: &Arc<App>, caller: &Caller, group: Group, call: Call) ->
     }
 }
 
-async fn answer(app: &Arc<App>, caller: &Caller, group: Group, call: Call) -> Response {
+async fn answer(
+    app: &Arc<App>,
+    caller: &Caller,
+    group: Group,
+    call: Call,
+    visit: Visit,
+) -> Response {
     let reply = match (call.era, call.method.as_str()) {
         (_, "ping") => Reply::result(call.id, complete(call.era, Map::new())),
         (Era::Legacy, "initialize") => {
@@ -257,7 +270,7 @@ async fn answer(app: &Arc<App>, caller: &Caller, group: Group, call: Call) -> Re
         }
         (Era::Modern, "server/discover") => Reply::result(call.id, discover(caller, group)),
         (era, "tools/list") => Reply::result(call.id, listing(era, caller, group)),
-        (_, "tools/call") => return tool_call(app, caller, group, call).await,
+        (_, "tools/call") => return tool_call(app, caller, group, call, visit).await,
         _ => Reply::in_band(
             call.id,
             rpc::METHOD_NOT_FOUND,
@@ -300,6 +313,9 @@ async fn post(app: Arc<App>, group: Group, request: Request) -> Response {
         Ok(caller) => caller,
         Err(refused) => return *refused,
     };
+    let visit = Visit::from_request_parts(&mut parts, &app)
+        .await
+        .unwrap_or_default();
     let headers = parts.headers;
     if json_text::too_deep(read.bytes()) {
         return unreadable(false);
@@ -317,7 +333,7 @@ async fn post(app: Arc<App>, group: Group, request: Request) -> Response {
             *accepted.status_mut() = StatusCode::ACCEPTED;
             accepted
         }
-        Entry::Call(call) => answer(&app, &caller, group, call).await,
+        Entry::Call(call) => answer(&app, &caller, group, call, visit).await,
     }
 }
 

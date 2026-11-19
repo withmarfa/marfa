@@ -24,7 +24,7 @@ const NARROWED: &str = "auth.grant.narrowed";
 pub(crate) const RENAMED: &str = "auth.grant.renamed";
 pub(crate) const REVOKED: &str = GRANT_REVOKED;
 
-fn no_such_grant() -> Refusal {
+pub(crate) fn no_such_grant() -> Refusal {
     Refusal::new(Code::GrantNotFound, "No live app grant has this ID.")
 }
 

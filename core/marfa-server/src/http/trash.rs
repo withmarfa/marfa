@@ -5,7 +5,7 @@ use axum::extract::State;
 use axum::http::{StatusCode, Uri};
 use axum::response::Response;
 use marfa_rules::validation;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use super::answer::{Answer, text_answer};
 use super::body::{Bag, JsonBody, only_declared};
@@ -15,6 +15,7 @@ use super::items::{
 use super::query;
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
+use crate::app::items::emptied::{self, safe};
 use crate::app::items::write::{self, Change, OwnerAct};
 use crate::app::items::{self, Listing};
 use crate::app::refusal::{Code, Refusal, Result};
@@ -249,31 +250,6 @@ pub async fn bin(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answe
     Ok(text_answer(StatusCode::OK, answer))
 }
 
-/// What the owner may be told of a change that did not happen: nothing the
-/// row's fields, a type or a key could have put in a message.
-fn safe(refusal: Refusal) -> Refusal {
-    if refusal.commit_failed {
-        if refusal.code == Code::InsufficientStorage {
-            return refusal;
-        }
-        return Refusal::new(
-            Code::InternalError,
-            "The change may have completed, but its result could not be confirmed. Read the \
-             item again before trying again.",
-        )
-        .with_detail("write_outcome", "unknown");
-    }
-    let message = match refusal.code {
-        Code::InvalidTransition => "This item is no longer in the required state. Read it again.",
-        Code::EdgeConstraintViolation => {
-            "Another item prevents this item from moving to the trash."
-        }
-        Code::ItemNotFound => "This item is no longer available.",
-        _ => "The change could not be completed. Read the item again before trying again.",
-    };
-    Refusal::new(refusal.code, message)
-}
-
 async fn owner_act(
     app: &Arc<App>,
     caller: &Caller,
@@ -293,84 +269,9 @@ async fn owner_act(
     }
 }
 
-/// Each row is purged at the version the page read, in a write of its own so that other
-/// requests pass between pages. A row already gone is not a failure.
 pub async fn empty(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.require(Permission::ItemsPurge)?;
     query::only(&uri, &["cursor"])?;
-    let listing = Listing {
-        type_id: None,
-        q: String::new(),
-        limit: MAX_PAGE,
-        cursor: named_in(&uri, "cursor")?,
-    };
-    let (selected, mut next_cursor) = items::bin_selection(&app, &caller, listing).await?;
-    let mut purged = 0;
-    let mut taken: HashSet<String> = HashSet::new();
-    let mut failures = Vec::new();
-    for (id, version) in selected {
-        if taken.contains(&id) {
-            continue;
-        }
-        match write::purge_owned(&app, &caller, id.clone(), version).await {
-            Ok((done, removed)) if done.status == 200 => {
-                purged += removed.len();
-                taken.extend(removed);
-            }
-            Ok(_) => failures.push(json!({
-                "id": id,
-                "code": Code::VersionConflict.wire(),
-                "message": "This item changed and was kept.",
-            })),
-            Err(refusal) if refusal.code == Code::ItemNotFound && !refusal.commit_failed => {}
-            Err(refusal) => {
-                let safe = safe(refusal);
-                let unknown = safe.details.is_some();
-                let mut failure = json!({
-                    "id": id,
-                    "code": safe.code.wire(),
-                    "message": safe.message,
-                });
-                if let Some(details) = safe.details {
-                    failure["details"] = Value::Object(*details);
-                }
-                failures.push(failure);
-                if unknown {
-                    next_cursor = None;
-                    break;
-                }
-            }
-        }
-    }
-    let answer = json!({ "purged": purged, "failures": failures, "next_cursor": next_cursor });
-    Ok(text_answer(StatusCode::OK, answer.to_string()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn unconfirmed(code: Code) -> Refusal {
-        Refusal {
-            commit_failed: true,
-            ..Refusal::new(code, "text from below")
-        }
-        .with_detail("write_outcome", "unknown")
-    }
-
-    #[test]
-    fn a_commit_a_full_volume_turned_away_stays_a_507_with_its_outcome() {
-        let told = safe(unconfirmed(Code::InsufficientStorage));
-        assert_eq!(told.code, Code::InsufficientStorage);
-        assert_eq!(told.code.status(), 507);
-        assert_eq!(told.details.unwrap()["write_outcome"], "unknown");
-    }
-
-    #[test]
-    fn any_other_failed_commit_is_a_500_with_its_outcome_and_no_text_from_below() {
-        let told = safe(unconfirmed(Code::InternalError));
-        assert_eq!(told.code, Code::InternalError);
-        assert!(!told.message.contains("text from below"));
-        assert_eq!(told.details.unwrap()["write_outcome"], "unknown");
-    }
+    let emptied = emptied::empty_page(&app, &caller, named_in(&uri, "cursor")?).await?;
+    Ok(text_answer(StatusCode::OK, emptied.to_json().to_string()))
 }

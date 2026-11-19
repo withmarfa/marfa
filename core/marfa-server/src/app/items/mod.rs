@@ -4,6 +4,7 @@
 
 mod archived;
 pub mod bulk;
+pub mod emptied;
 pub mod expiry;
 pub mod file_fields;
 mod index;

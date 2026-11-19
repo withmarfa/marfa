@@ -1,19 +1,28 @@
 //! Validates tool arguments and dispatches with the caller's credential.
 
+mod apps;
 mod audit;
+mod backups;
 mod bulk;
+mod confirmed;
+mod connectors;
 mod create;
 mod delete;
 mod docs;
+mod files;
 mod find;
 mod get;
 mod health;
 mod keys;
+mod maintain;
 mod moving;
 mod overview;
 mod revoke;
 mod rows;
+mod settings;
+mod sign_ins;
 mod sources;
+mod trash;
 mod types;
 mod update;
 mod views;
@@ -27,6 +36,7 @@ use serde_json::{Map, Value};
 use super::results::{Outcome, Stop, check};
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::auth::Visit;
 use crate::app::refusal::Refusal;
 
 /// The endpoint that serves a tool: `/mcp` serves the items group at every endpoint.
@@ -82,6 +92,21 @@ fn definitions() -> Vec<(Group, Definition)> {
         (Group::Admin, revoke::definition()),
         (Group::Admin, webhooks::list_definition()),
         (Group::Admin, webhooks::manage_definition()),
+        (Group::Admin, settings::read_definition()),
+        (Group::Admin, settings::change_definition()),
+        (Group::Admin, trash::read_definition()),
+        (Group::Admin, trash::purge_definition()),
+        (Group::Admin, apps::list_definition()),
+        (Group::Admin, apps::manage_definition()),
+        (Group::Admin, backups::list_definition()),
+        (Group::Admin, backups::manage_definition()),
+        (Group::Admin, maintain::definition()),
+        (Group::Admin, connectors::list_definition()),
+        (Group::Admin, connectors::manage_definition()),
+        (Group::Admin, files::list_definition()),
+        (Group::Admin, files::drop_definition()),
+        (Group::Admin, sign_ins::list_definition()),
+        (Group::Admin, sign_ins::manage_definition()),
     ]
 }
 
@@ -121,6 +146,14 @@ fn offered(caller: &Caller, name: &str) -> bool {
         audit::NAME => caller.may_read_audit(),
         keys::LIST_NAME | keys::MANAGE_NAME | revoke::NAME => caller.may_use_key_door(),
         webhooks::LIST_NAME | webhooks::MANAGE_NAME => caller.may_manage_webhooks(),
+        settings::READ_NAME | settings::CHANGE_NAME => caller.may_change_settings(),
+        trash::READ_NAME | trash::PURGE_NAME => caller.may_purge_items(),
+        apps::LIST_NAME | apps::MANAGE_NAME => caller.may_manage_apps(),
+        backups::LIST_NAME | backups::MANAGE_NAME => caller.may_manage_backups(),
+        maintain::NAME => caller.may_maintain(),
+        connectors::LIST_NAME | connectors::MANAGE_NAME => caller.may_manage_connectors(),
+        files::LIST_NAME | files::DROP_NAME => caller.may_manage_files(),
+        sign_ins::LIST_NAME | sign_ins::MANAGE_NAME => caller.may_manage_sign_ins(),
         _ => false,
     }
 }
@@ -165,6 +198,7 @@ pub async fn call(
     name: &str,
     arguments: Map<String, Value>,
     exact: Result<(), Refusal>,
+    visit: Visit,
 ) -> Option<Outcome> {
     let (_, tool) = definitions().into_iter().find(|(home, tool)| {
         tool.name == name && served(group, *home) && offered(caller, tool.name)
@@ -176,7 +210,7 @@ pub async fn call(
     let Value::Object(arguments) = arguments else {
         return None;
     };
-    Some(run(app, caller, tool.name, arguments, exact).await)
+    Some(run(app, caller, tool.name, arguments, exact, visit).await)
 }
 
 async fn run(
@@ -185,6 +219,7 @@ async fn run(
     name: &str,
     arguments: Map<String, Value>,
     exact: Result<(), Refusal>,
+    visit: Visit,
 ) -> Outcome {
     if works_on_items(name) {
         caller.require_reach()?;
@@ -214,13 +249,28 @@ async fn run(
         docs::NAME => docs::run(arguments),
         sources::LIST_NAME => sources::list(app, caller, arguments).await,
         sources::NAME_NAME => sources::name(app, caller, arguments).await,
-        health::NAME => health::run(app, caller).await,
+        health::NAME => health::run(app, caller, arguments).await,
         audit::NAME => audit::run(app, caller, arguments).await,
         keys::LIST_NAME => keys::list(app, caller).await,
         keys::MANAGE_NAME => keys::manage(app, caller, arguments).await,
         revoke::NAME => revoke::run(app, caller, arguments).await,
         webhooks::LIST_NAME => webhooks::list(app, caller).await,
         webhooks::MANAGE_NAME => webhooks::manage(app, caller, arguments).await,
+        settings::READ_NAME => settings::read(app, caller).await,
+        settings::CHANGE_NAME => settings::change(app, caller, arguments).await,
+        trash::READ_NAME => trash::read(app, caller, arguments).await,
+        trash::PURGE_NAME => trash::purge(app, caller, arguments).await,
+        apps::LIST_NAME => apps::list(app, caller).await,
+        apps::MANAGE_NAME => apps::manage(app, caller, arguments).await,
+        backups::LIST_NAME => backups::list(app, caller).await,
+        backups::MANAGE_NAME => backups::manage(app, caller, arguments).await,
+        maintain::NAME => maintain::run(app, caller, arguments).await,
+        connectors::LIST_NAME => connectors::list(app, caller, arguments).await,
+        connectors::MANAGE_NAME => connectors::manage(app, caller, arguments).await,
+        files::LIST_NAME => files::list(app, caller, arguments).await,
+        files::DROP_NAME => files::drop_copy(app, caller, arguments).await,
+        sign_ins::LIST_NAME => sign_ins::list(app, caller).await,
+        sign_ins::MANAGE_NAME => sign_ins::manage(app, caller, arguments, visit).await,
         _ => Err(Stop::invalid("No tool has this name.")),
     }
 }

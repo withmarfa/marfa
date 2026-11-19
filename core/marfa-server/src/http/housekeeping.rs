@@ -11,7 +11,7 @@ use crate::app::access::{Caller, Permission};
 use crate::app::housekeeping;
 use crate::app::refusal::Refusal;
 
-fn well_formed(name: &str) -> bool {
+pub(in crate::http) fn well_formed(name: &str) -> bool {
     let mut bytes = name.bytes();
     bytes.next().is_some_and(|byte| byte.is_ascii_lowercase())
         && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')

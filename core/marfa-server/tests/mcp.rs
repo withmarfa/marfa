@@ -1770,9 +1770,12 @@ async fn the_documentation_search_names_where_to_search_and_reaches_nowhere() {
 #[tokio::test]
 async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permission() {
     let instance = Instance::start(&[]).await;
-    let cases: [(&str, &[&str]); 7] = [
+    let cases: [(&str, &[&str]); 13] = [
         ("instance.read", &["marfa_health"]),
-        ("connectors.manage", &["marfa_health"]),
+        (
+            "connectors.manage",
+            &["marfa_connectors", "marfa_health", "marfa_manage_connector"],
+        ),
         ("audit.read", &["marfa_audit"]),
         (
             "keys.mint",
@@ -1786,7 +1789,19 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
             "webhooks.manage",
             &["marfa_webhooks", "marfa_manage_webhook"],
         ),
-        ("config.manage", &[]),
+        (
+            "config.manage",
+            &["marfa_change_settings", "marfa_settings"],
+        ),
+        ("items.purge", &["marfa_purge_trash", "marfa_trash"]),
+        ("grants.manage", &["marfa_apps", "marfa_manage_app"]),
+        ("backups.manage", &["marfa_backups", "marfa_manage_backups"]),
+        ("instance.maintain", &["marfa_maintain"]),
+        ("blobs.manage", &["marfa_drop_file_copy", "marfa_files"]),
+        (
+            "sign_ins.manage",
+            &["marfa_manage_sign_in", "marfa_sign_ins"],
+        ),
     ];
     for (permission, tools) in cases {
         let token = instance
@@ -1827,6 +1842,39 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         (
             "marfa_manage_webhook",
             json!({ "action": "delete", "id": "0192e6a8-7c6e-7000-8000-000000000000" }),
+        ),
+        ("marfa_settings", json!({})),
+        (
+            "marfa_change_settings",
+            json!({ "settings": { "trash_retention_days": 61 } }),
+        ),
+        ("marfa_trash", json!({})),
+        ("marfa_purge_trash", json!({ "action": "empty" })),
+        ("marfa_apps", json!({})),
+        (
+            "marfa_manage_app",
+            json!({ "action": "revoke", "id": "no-such-grant" }),
+        ),
+        ("marfa_backups", json!({})),
+        ("marfa_manage_backups", json!({ "action": "take" })),
+        (
+            "marfa_maintain",
+            json!({ "action": "run_housekeeping", "name": "backup" }),
+        ),
+        ("marfa_connectors", json!({})),
+        (
+            "marfa_manage_connector",
+            json!({ "action": "delete", "id": "0192e6a8-7c6e-7000-8000-000000000000" }),
+        ),
+        ("marfa_files", json!({ "hash": "00" })),
+        (
+            "marfa_drop_file_copy",
+            json!({ "hash": "00", "store_id": "disk" }),
+        ),
+        ("marfa_sign_ins", json!({})),
+        (
+            "marfa_manage_sign_in",
+            json!({ "action": "end_sign_in", "id": "no-such-sign-in" }),
         ),
     ] {
         unoffered(&instance, ADMIN, &nobody, name, arguments).await;
@@ -2245,16 +2293,17 @@ async fn a_revoke_confirmation_for_a_key_that_changed_revokes_nothing_but_use_do
 }
 
 #[tokio::test]
-async fn no_tool_purges_exports_restores_claims_configures_or_manages_the_owner() {
+async fn no_tool_exports_restores_claims_recovers_or_updates_the_server() {
     let instance = Instance::start(&[]).await;
     let everything = instance
         .key(json!({
             "type_permissions": { "*": "write" },
             "metadata_permissions": { "*": "write" },
             "permissions": [
-                "audit.read", "blobs.manage", "config.manage", "connectors.manage",
-                "grants.manage", "instance.maintain", "instance.read", "items.purge",
-                "keys.manage", "keys.mint", "schema.write", "webhooks.manage",
+                "audit.read", "backups.manage", "blobs.manage", "config.manage",
+                "connectors.manage", "grants.manage", "instance.maintain",
+                "instance.read", "items.purge", "keys.manage", "keys.mint",
+                "schema.write", "sign_ins.manage", "webhooks.manage",
             ],
         }))
         .await;
@@ -2262,24 +2311,20 @@ async fn no_tool_purges_exports_restores_claims_configures_or_manages_the_owner(
         let names = instance.names_at(path, &everything).await;
         for name in &names {
             for banned in [
-                "purge",
                 "export",
                 "restore",
                 "claim",
-                "config",
-                "setting",
-                "owner",
-                "passkey",
-                "sign_in",
-                "storage",
-                "blob",
-                "housekeeping",
+                "recover",
+                "password",
+                "update_server",
+                "clock",
+                "add_passkey",
             ] {
                 assert!(!name.contains(banned), "{path} offers {name}");
             }
         }
     }
-    assert!(instance.names_at(ADMIN, &everything).await.len() > 6);
+    assert!(instance.names_at(ADMIN, &everything).await.len() > 20);
 }
 
 #[tokio::test]
