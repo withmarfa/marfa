@@ -774,7 +774,8 @@ fn replay(
     let catalog = ask_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
     let mut catalog = adopt(core, context, &catalog, catalog_changed)?;
-    let mut opening = crate::restored::Opening::read(&*core.conn()?, &cursor)?;
+    let mut opening =
+        crate::restored::Opening::read(&*core.conn()?, &cursor, !context.building())?;
     let mut frames = open(http, &opening.from(), STREAM_HARD_BOUND)?;
     let mut opened_under = http.authorization();
     refuse_if_stopped(stop)?;
@@ -901,7 +902,11 @@ fn replay(
                         commit_cursor(core, context, behind, stop)?;
                         renew_for_ended_stream(http, stop, opened_under, ended)?;
                         renewed_at = Some(report.cursor.clone());
-                        opening = crate::restored::Opening::read(&*core.conn()?, &report.cursor)?;
+                        opening = crate::restored::Opening::read(
+                            &*core.conn()?,
+                            &report.cursor,
+                            !context.building(),
+                        )?;
                         let from = opening.from();
                         frames = ask_unless_stopped(stop, http, move |http| {
                             open(http, &from, STREAM_HARD_BOUND)
@@ -1556,7 +1561,7 @@ fn follow_paced(
                 report.reconnects += 1;
             }
             asked = true;
-            let mut opening = crate::restored::Opening::read(&*core.conn()?, &cursor)?;
+            let mut opening = crate::restored::Opening::read(&*core.conn()?, &cursor, true)?;
             let Some(reached) = reach(&http, &opening.from(), stop) else {
                 break;
             };
@@ -5676,9 +5681,11 @@ mod tests {
                 ],
                 Then::End,
             ),
+            // Asked from the event before 12, the last the copy took.
             stream(
                 vec![
                     stream_cursor("14"),
+                    created("n2", "12"),
                     created("n3", "13"),
                     created("n4", "14"),
                     stream_live(Some("14")),
@@ -5717,7 +5724,7 @@ mod tests {
         assert_eq!(*asked.lock().unwrap(), ["k"]);
         assert_eq!(
             asked_from(&server),
-            [Some("10".to_string()), Some("12".to_string())]
+            [Some("10".to_string()), Some("11".to_string())]
         );
         assert_eq!(carried(&server, "/events"), ["Bearer k", "Bearer fresh-1"]);
         let paths = server.paths();

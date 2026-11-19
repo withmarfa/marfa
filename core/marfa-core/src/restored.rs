@@ -49,9 +49,12 @@ pub(crate) enum Heard {
 }
 
 impl Opening {
-    pub(crate) fn read(conn: &Connection, cursor: &str) -> Result<Self> {
+    /// A fill's own replay is not `anchored`: it compares what the copy set
+    /// aside with the server instead, and asks from its cursor alone.
+    pub(crate) fn read(conn: &Connection, cursor: &str, anchored: bool) -> Result<Self> {
         let cursor = crate::reach::cursor(cursor).ok_or_else(crate::reach::invalid)?;
-        let anchor = store::restored::anchor(conn)?.filter(|(id, _)| (1..=cursor).contains(id));
+        let anchor = store::restored::anchor(conn)?
+            .filter(|(id, _)| anchored && (1..=cursor).contains(id));
         Ok(Self {
             cursor,
             settled: anchor.is_none(),
@@ -102,7 +105,7 @@ impl Opening {
             }
             return Heard::Take;
         };
-        if !self.settled {
+        if !self.settled && at >= *anchor {
             self.settled = true;
             if at == *anchor && store::restored::event_print(kind, payload) != *print {
                 return Heard::Went(format!(
@@ -902,6 +905,31 @@ mod tests {
         );
         assert_eq!(
             lagging.heard("item.updated", Some("10"), &payload(Some(("b", 2, at)))),
+            Heard::Take
+        );
+
+        // An event before the anchor, which a stream asked from the anchor
+        // should not carry, leaves the anchor still to compare.
+        let mut early = anchored(7, 7, &print);
+        assert_eq!(
+            early.heard("item.updated", Some("6"), &payload(Some(("b", 1, at)))),
+            Heard::Again
+        );
+        assert!(matches!(
+            early.heard("item.updated", Some("7"), &payload(Some(("b", 1, at)))),
+            Heard::Went(_)
+        ));
+    }
+
+    #[test]
+    fn a_fill_asks_from_its_cursor_though_the_copy_keeps_an_anchor() {
+        let conn = store::testing::conn();
+        store::restored::set_anchor(&conn, "7", "x").unwrap();
+        assert_eq!(Opening::read(&conn, "7", true).unwrap().from(), "6");
+        let mut filling = Opening::read(&conn, "7", false).unwrap();
+        assert_eq!(filling.from(), "7");
+        assert_eq!(
+            filling.heard("item.updated", Some("7"), &payload(None)),
             Heard::Take
         );
     }

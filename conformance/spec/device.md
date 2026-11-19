@@ -1158,9 +1158,11 @@ A device takes an event when it applies it or skips it. Every rule here holds wi
 
 ### `device/catch-up-resumes`
 
-When a device catches up, a device MUST open the event stream at the cursor it holds.
+While a copy has taken no event since it was last filled, when a device catches up, a device MUST open the event stream at the cursor it holds.
 
-**Tests:** `device/catch-up.test.ts › resumes at the stored cursor and applies what the stream carries`, `› leaves the cursor at the last applied event when the stream ends early`.
+**Reason:** a copy that has taken an event since asks from the event before the last one it took instead (`device/stream-asks-before-last`).
+
+**Tests:** `device/catch-up.test.ts › resumes at the stored cursor and applies what the stream carries`.
 
 ### `device/catch-up-takes`
 
@@ -1548,7 +1550,7 @@ When a device opens the event stream for a catch-up or a held stream after takin
 
 **Reason:** the last event the copy took comes again, so the device can compare it with the one it took. Each stream costs one event the copy already holds.
 
-**Tests:** `device/server-restored.test.ts › asks the stream from the event before the last one it took, and takes that one only to compare`.
+**Tests:** `device/server-restored.test.ts › asks the stream from the event before the last one it took, and takes that one only to compare`, `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `› applies each event on a held stream as it arrives, and resumes from its cursor when the stream drops`.
 
 ### `device/stream-again-not-applied`
 
@@ -3748,9 +3750,9 @@ While a device holds a stream open, a device MUST NOT tell its caller of an even
 
 ### `device/follow-reopens`
 
-If a held stream ends, drops or is called incomplete by the server, then a device MUST open it again from the cursor it holds.
+If a held stream ends, drops or is called incomplete by the server, then a device MUST open it again from the cursor it holds, or from the event before the last one it took where `device/stream-asks-before-last` holds.
 
-**Reason:** a stream opened again from the cursor loses nothing between the two and applies nothing twice.
+**Reason:** a stream opened again from the cursor loses nothing between the two, and applies nothing twice because the event it carries again is not applied (`device/stream-again-not-applied`).
 
 **Tests:** `device/catch-up.test.ts › applies each event on a held stream as it arrives, and resumes from its cursor when the stream drops`, `› opens a held stream again from its cursor when the server calls it incomplete`.
 
@@ -3794,7 +3796,7 @@ If another program's writes to the store refuse a held stream's write at each of
 
 ### `device/follow-catalog-reopen`
 
-When a held stream meets an event the catalog cannot answer for, a device MUST open the stream again at once from its cursor, reading the catalogs first, rather than apply the event.
+When a held stream meets an event the catalog cannot answer for, a device MUST open the stream again at once from its cursor, or from the event before the last one it took where `device/stream-asks-before-last` holds, reading the catalogs first, rather than apply the event.
 
 **Tests:** `device/catch-up.test.ts › holds an item whose type was registered after the stream opened, in the slice through its parent`.
 
@@ -4098,7 +4100,7 @@ While a hydration or a catch-up holds the stream of a watch, a device MUST NOT e
 
 ### `device/watch-takeover-returns`
 
-When a hydration or a catch-up that took the stream from a watch ends, however it ends, a device MUST hold the watch's stream again from the cursor the call left.
+When a hydration or a catch-up that took the stream from a watch ends, however it ends, a device MUST hold the watch's stream again from the cursor the call left, or from the event before the last one it took where `device/stream-asks-before-last` holds.
 
 **Tests:** `device/binding-watch-calls.test.ts › takes the stream from the watch for %s without its caller stopping the watch, and holds it again from the cursor the call left`, `device/binding-watch-calls.test.ts › holds the stream of the watch again from the cursor the call left where a catch-up ends on %s`.
 
