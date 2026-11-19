@@ -20,6 +20,8 @@ beforeAll(async () => {
   server = await bootFreshServer("store-follows-settings", {
     MARFA_OBJECT_STORE_BUCKET: "",
     MARFA_BLOB_CLEANUP_GRACE_SECONDS: "0",
+    // A scheduled backup follows the stores too, and could write the record between faults.
+    MARFA_BACKUP_INTERVAL_SECONDS: "0",
   });
   instance = await instanceIdOf(server);
 }, FRESH_SERVER_TIMEOUT_MS);
@@ -133,7 +135,7 @@ it("ends blob-replicate as failed while the settings cannot be read again after 
     await server!.setFault("fail:commit=config.update");
     await server!.setFault("fail:settings-reload");
     const unknown = await operator.patchConfig({
-      backup_interval_seconds: 3600,
+      trash_retention_days: 30,
     });
     expect(unknown.status, JSON.stringify(unknown.error)).toBe(500);
     await firedOnce("fail:settings-reload");
@@ -208,7 +210,7 @@ it("purges nothing while the settings cannot be read again after a write to /con
     await server!.setFault("fail:commit=config.update");
     await server!.setFault("fail:settings-reload");
     const unknown = await operator.patchConfig({
-      backup_interval_seconds: 3600,
+      trash_retention_days: 30,
     });
     expect(unknown.status, JSON.stringify(unknown.error)).toBe(500);
     await firedOnce("fail:settings-reload");
