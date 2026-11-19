@@ -5,7 +5,7 @@ use crate::Seen;
 
 use super::default_edges::default_edges_of;
 use super::push::{admission_hold, file_item_draft, new_document};
-use super::scoped::{Guard, Inventory, Looked, Plan, Reading};
+use super::scoped::{Guard, Inventory, Looked, Plan, Reading, linked_elsewhere};
 use super::settings::OutsideQuery;
 use super::{
     BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Directory, Duration,
@@ -360,12 +360,22 @@ impl Folder {
     }
 
     /// Keeps what the pass found for the next quick pass, but not where it set
-    /// a save aside or folded a name, which only a walk follows.
+    /// a save aside or folded a name, which only a walk follows, nor where the
+    /// walk entered another volume, which may change with no event heard.
     fn leave_inventory(&self, scan: &mut ScanState) {
+        if scan.walked.crossed {
+            self.forget_inventory();
+            return;
+        }
         if !scan.stale.is_empty()
             || scan.files.iter().any(|file| file.folded)
             || scan.seen.len() != scan.keys.len() && scan.scope.is_none()
             || scan.keys.iter().any(|key| !scan.seen.contains(key))
+            || scan
+                .walked
+                .opened
+                .values()
+                .any(|captured| linked_elsewhere(&captured.metadata.borrow()))
         {
             return;
         }

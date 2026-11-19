@@ -1415,6 +1415,11 @@ struct Walked {
     secrets: Vec<String>,
     /// Files a crashed write left beside their target.
     left: Vec<(WalkRoute, PathBuf)>,
+    /// The volume of the directory the walk began at.
+    volume: Option<u64>,
+    /// Whether the walk entered a directory on another volume, where a
+    /// change made elsewhere fires no event the root's watch hears.
+    crossed: bool,
 }
 
 impl Walked {
@@ -1597,6 +1602,7 @@ fn walk(root: &Path, dir: &Path, directory: &Directory, lists: &Lists, walked: &
         root: directory.clone(),
         steps: Vec::new(),
     };
+    walked.volume = device(directory);
     walk_at(root, dir, directory, &route, lists, walked);
 }
 
@@ -1644,6 +1650,7 @@ fn walk_at(
                     continue;
                 }
             };
+            walked.crossed |= walked.volume.is_some() && device(&child) != walked.volume;
             if child
                 .child(Path::new(STATE_DIR), false)
                 .is_ok_and(|state| state.entry_identity(Path::new("core.sqlite")).is_ok())

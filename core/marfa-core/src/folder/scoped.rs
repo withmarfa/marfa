@@ -594,13 +594,13 @@ fn same_name(one: &str, other: &str) -> bool {
 }
 
 #[cfg(unix)]
-fn linked_elsewhere(metadata: &std::fs::Metadata) -> bool {
+pub(super) fn linked_elsewhere(metadata: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::MetadataExt;
     metadata.nlink() > 1
 }
 
 #[cfg(not(unix))]
-fn linked_elsewhere(_: &std::fs::Metadata) -> bool {
+pub(super) fn linked_elsewhere(_: &std::fs::Metadata) -> bool {
     true
 }
 
