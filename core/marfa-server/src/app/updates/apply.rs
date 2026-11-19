@@ -102,8 +102,7 @@ fn unpack(archive: &Path, into: &Path) -> Result<(), String> {
         let to = into.join(PROGRAMS[at]);
         entry.unpack(&to).map_err(|e| unreadable(&e))?;
         set_executable(&to).map_err(|e| unreadable(&e))?;
-        // A program renamed into place before its bytes reach the disk can be found damaged
-        // after a power loss.
+        // Unsynced bytes renamed into place can be damaged by a power loss.
         File::open(&to)
             .and_then(|program| program.sync_all())
             .map_err(|e| unreadable(&e))?;

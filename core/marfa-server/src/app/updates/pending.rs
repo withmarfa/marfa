@@ -65,8 +65,7 @@ pub fn settle(
     let attempt = pending.attempt.as_deref();
     let waiting = next_marfa(programs).exists();
     let finished = finish_swap(programs);
-    // Decided before the new `marfa` is asked anything: one that does not run in place is
-    // still the one to take out.
+    // Known before asking: a moved-in `marfa` that does not run is still the one to take out.
     let marfa_moved = waiting && !next_marfa(programs).exists();
     let said = PROGRAMS.map(|name| (name, reports(&programs.join(name))));
     let whole = said
@@ -96,8 +95,7 @@ pub fn settle(
     );
     let marfa_reports_new = said[1].1.as_deref() == Some(format!("{MARFA} {to}").as_str());
     if schema_now() != pending.schema {
-        // The kept record lets the old `marfa` go on starting the new server, which a new
-        // `marfa` that does not run could not.
+        // With the record kept, the old `marfa` goes on starting the new server.
         let kept_marfa = match marfa_moved && !marfa_reports_new {
             true => match fs::rename(previous_of(programs, MARFA), programs.join(MARFA))
                 .and_then(|()| sync_folder(programs))
