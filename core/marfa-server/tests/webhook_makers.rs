@@ -76,6 +76,11 @@ impl Instance {
 
     /// A key that registers webhooks and reads every type, or one that writes items.
     async fn key(&self, source: &str, writes: bool) -> String {
+        self.minted(source, writes).await.1
+    }
+
+    /// The same key, with its ID.
+    async fn minted(&self, source: &str, writes: bool) -> (String, String) {
         let permissions = if writes {
             json!(["webhooks.manage", "schema.write"])
         } else {
@@ -98,7 +103,25 @@ impl Instance {
         assert!(response.status().is_success(), "{}", response.status());
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let answer: Value = serde_json::from_slice(&bytes).unwrap();
-        answer["key"].as_str().unwrap().to_string()
+        (
+            answer["id"].as_str().unwrap().to_string(),
+            answer["key"].as_str().unwrap().to_string(),
+        )
+    }
+
+    async fn through_control(&self, method: Method, path: &str, body: Value) -> StatusCode {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        self.control
+            .clone()
+            .oneshot(request)
+            .await
+            .unwrap()
+            .status()
     }
 
     /// Holds the sender at the start of a pass begun after this call. A pass already under way
@@ -410,4 +433,84 @@ async fn a_maker_alone_leaves_slots_free_for_a_maker_whose_delivery_falls_due_la
     instance.sender_parked(&writer).await;
     assert_eq!(accepted.load(Ordering::SeqCst), SLOTS - HEADROOM);
     instance.sender_released();
+}
+
+/// A delivery whose maker's key is revoked while its receiver's name is looked up, beside one
+/// whose maker's key stands. Both lookups take as long, so the standing maker's delivery
+/// arriving says the revoked maker's attempt had its turn.
+async fn deliveries_during_a_lookup(change: impl AsyncFnOnce(&Instance, &str)) -> (usize, usize) {
+    let instance = Instance::start().await;
+    let writer = instance.key("writer", true).await;
+    let (changed_id, changed) = instance.minted("changed-maker", false).await;
+    let standing = instance.key("standing-maker", false).await;
+    let (to_changed, changed_received) = answering().await;
+    let (to_standing, standing_received) = answering().await;
+    let by_name = |url: &str| url.replace("127.0.0.1", "localhost");
+    for (key, url) in [(&changed, &to_changed), (&standing, &to_standing)] {
+        let (status, made) = instance.register(key, &by_name(url)).await;
+        assert_eq!(status, StatusCode::CREATED, "{made}");
+    }
+    instance
+        .app
+        .faults
+        .set("resolve:localhost", Some("stall:1500"))
+        .unwrap();
+
+    announce(&instance, &writer).await;
+    until("both lookups did not begin", Duration::from_secs(5), || {
+        instance
+            .app
+            .faults
+            .list()
+            .iter()
+            .any(|fault| fault.name == "resolve:localhost" && fault.fired >= 2)
+    })
+    .await;
+    change(&instance, &changed_id).await;
+    until(
+        "the standing maker's delivery did not arrive",
+        Duration::from_secs(10),
+        || standing_received.load(Ordering::SeqCst) == 1,
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    (
+        changed_received.load(Ordering::SeqCst),
+        standing_received.load(Ordering::SeqCst),
+    )
+}
+
+#[tokio::test]
+async fn a_delivery_goes_out_when_its_key_stands_through_the_lookup_of_the_receivers_name() {
+    let (changed, standing) = deliveries_during_a_lookup(async |_, _| {}).await;
+    assert_eq!((changed, standing), (1, 1));
+}
+
+#[tokio::test]
+async fn no_delivery_goes_out_when_its_key_is_revoked_during_the_lookup_of_the_receivers_name() {
+    let (changed, standing) = deliveries_during_a_lookup(async |instance, id| {
+        let status = instance
+            .through_control(Method::DELETE, &format!("/keys/{id}"), Value::Null)
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    })
+    .await;
+    assert_eq!((changed, standing), (0, 1));
+}
+
+#[tokio::test]
+async fn no_delivery_goes_out_when_its_key_loses_webhooks_manage_during_the_lookup_of_the_receivers_name()
+ {
+    let (changed, standing) = deliveries_during_a_lookup(async |instance, id| {
+        let status = instance
+            .through_control(
+                Method::PATCH,
+                &format!("/keys/{id}"),
+                json!({ "permissions": [] }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    })
+    .await;
+    assert_eq!((changed, standing), (0, 1));
 }

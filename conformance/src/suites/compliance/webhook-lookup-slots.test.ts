@@ -380,4 +380,61 @@ describe("webhook host-name lookups", () => {
       await server.clearFault();
     }
   }, 120_000);
+
+  it("sends no delivery whose key is revoked or loses webhooks.manage while its receiver's name is looked up, and sends one whose key stands", async () => {
+    const mint = async (label: string) => {
+      const minted = await owner().createKey({
+        label,
+        source: `lookup-slots-${label}`,
+        permissions: ["webhooks.manage"],
+        type_permissions: { "*": "read" },
+      });
+      expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+      return {
+        id: minted.data.id,
+        client: new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: minted.data.key,
+        }),
+      };
+    };
+    const revoked = await mint("revoked");
+    const narrowed = await mint("narrowed");
+    const standing = await mint("standing");
+    await subscribe(revoked.client, "localhost", "revoked");
+    await subscribe(narrowed.client, "localhost", "narrowed");
+    await subscribe(standing.client, "localhost", "standing");
+    await server.setFault("resolve:localhost=stall:1500");
+    try {
+      await write("looked up while its key changes");
+      await waitFor(
+        "all three lookups to begin",
+        async () =>
+          ((await server.faults()).find((f) => f.name === "resolve:localhost")
+            ?.fired ?? 0) >= 3
+            ? true
+            : undefined,
+        8_000,
+      );
+      expect((await owner().revokeKey(revoked.id)).ok).toBe(true);
+      const narrowing = await owner().updateKey(narrowed.id, {
+        permissions: [],
+      });
+      expect(narrowing.ok, JSON.stringify(narrowing.error)).toBe(true);
+
+      // The witness: the lookups take as long for each, and the delivery whose key stands arrives.
+      await waitFor(
+        "the delivery whose key stands",
+        async () =>
+          receiver.received.some((r) => r.path === "/hook/standing")
+            ? true
+            : undefined,
+        20_000,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(receiver.received.map((r) => r.path)).toEqual(["/hook/standing"]);
+    } finally {
+      await server.clearFault();
+    }
+  }, 120_000);
 });

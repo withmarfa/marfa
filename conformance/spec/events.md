@@ -1191,6 +1191,14 @@ When the key that registered a subscription no longer holds `webhooks.manage`, t
 
 **Tests:** `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its key no longer holds webhooks.manage`.
 
+### `events/webhook-checked-after-lookup`
+
+When the key that registered a subscription is revoked, or no longer holds `webhooks.manage`, while the server looks up the address of a delivery's receiver, the server MUST NOT send that delivery.
+
+**Reason:** the lookup can take seconds, so the key's standing is read again once it ends and decides the send.
+
+**Tests:** `compliance/webhook-lookup-slots.test.ts › sends no delivery whose key is revoked or loses webhooks.manage while its receiver's name is looked up, and sends one whose key stands`.
+
 ### `events/webhook-expired-silent`
 
 When the key that registered a subscription passes its `expires_at`, the server MUST deliver nothing more to it, its pending deliveries included.

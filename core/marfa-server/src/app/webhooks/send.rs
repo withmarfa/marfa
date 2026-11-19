@@ -222,31 +222,40 @@ pub enum Ended {
     Deferred,
 }
 
-/// `spent` means the deferral limit passed, so an unavailable lookup slot counts as an attempt.
-pub async fn attempt(app: Arc<App>, id: String, maker: String, spent: bool) -> Result<Ended> {
+/// Reads the delivery's standing now: its subscription, its maker's authority and what the maker
+/// may see of the event.
+async fn prepared(app: &App, id: &str) -> Result<Prepared> {
     let at = app.clock.stamp();
     let cache = app.catalog_handle();
     let marked = app.read_only_handle();
-    let looked_up = id.clone();
-    let ready = app
-        .db
+    let looked_up = id.to_string();
+    app.db
         .read(move |tx| {
             let catalog = catalog::current(&cache, tx, catalog::Snapshot::Committed)?;
             let read_only = read_only::current(&marked, tx, &at, catalog::Snapshot::Committed)?;
             prepare(tx, &catalog, &read_only, &looked_up, &at)
         })
-        .await?;
-    let ready = match ready {
+        .await
+}
+
+async fn cancel(app: &App, id: String, reason: &'static str) -> Result<Ended> {
+    let at = app.clock.stamp();
+    write(app, move |tx| store::cancel(tx, &id, reason, &at)).await?;
+    Ok(Ended::Settled)
+}
+
+/// `spent` means the deferral limit passed, so an unavailable lookup slot counts as an attempt.
+pub async fn attempt(app: Arc<App>, id: String, maker: String, spent: bool) -> Result<Ended> {
+    let ready = match prepared(&app, &id).await? {
         Prepared::Gone => return Ok(Ended::Settled),
-        Prepared::Cancel(reason) => {
-            let at = app.clock.stamp();
-            write(&app, move |tx| store::cancel(tx, &id, reason, &at)).await?;
-            return Ok(Ended::Settled);
-        }
+        Prepared::Cancel(reason) => return cancel(&app, id, reason).await,
         Prepared::Send(ready) => ready,
     };
-    let Some(attempted) = send(&app, &ready, &maker, spent).await? else {
-        return Ok(Ended::Deferred);
+    let (ready, attempted) = match send(&app, &id, ready, &maker, spent).await? {
+        Sending::Deferred => return Ok(Ended::Deferred),
+        Sending::Cancel(reason) => return cancel(&app, id, reason).await,
+        Sending::Gone => return Ok(Ended::Settled),
+        Sending::Done(ready, attempted) => (ready, attempted),
     };
     app.faults.hold(HOLD_WEBHOOK_RESPONSE, None).await;
     let now_ms = app.clock.now_ms();
@@ -269,10 +278,19 @@ pub async fn attempt(app: Arc<App>, id: String, maker: String, spent: bool) -> R
     Ok(Ended::Settled)
 }
 
-/// `None` when no lookup slot came free for the maker and the delivery may still wait.
-async fn send(app: &App, ready: &Ready, maker: &str, spent: bool) -> Result<Option<Attempted>> {
+enum Sending {
+    /// No lookup slot came free for the maker and the delivery may still wait.
+    Deferred,
+    /// The delivery stopped being one to send while its address was looked up.
+    Cancel(&'static str),
+    Gone,
+    /// The delivery as last read before it went out, and how the attempt ended.
+    Done(Box<Ready>, Attempted),
+}
+
+async fn send(app: &App, id: &str, ready: Box<Ready>, maker: &str, spent: bool) -> Result<Sending> {
     let Ok(url) = Url::parse(&ready.url) else {
-        return Ok(Some(Attempted::Sent(Outcome::Unreachable)));
+        return Ok(Sending::Done(ready, Attempted::Sent(Outcome::Unreachable)));
     };
     let private_allowed = app
         .settings
@@ -281,10 +299,17 @@ async fn send(app: &App, ready: &Ready, maker: &str, spent: bool) -> Result<Opti
     let reached = outbound::reach(&app.faults, &url, private_allowed, Asker::Delivery(maker));
     let targets = match reached.await {
         Reach::Targets(targets) => targets,
-        Reach::Unresolved => return Ok(Some(Attempted::Sent(Outcome::Unreachable))),
-        Reach::NoSlot if spent => return Ok(Some(Attempted::Sent(Outcome::Unreachable))),
-        Reach::NoSlot => return Ok(None),
-        Reach::NotPublic => return Ok(Some(Attempted::NotPublic)),
+        Reach::Unresolved => return Ok(done(ready, Outcome::Unreachable)),
+        Reach::NoSlot if spent => return Ok(done(ready, Outcome::Unreachable)),
+        Reach::NoSlot => return Ok(Sending::Deferred),
+        Reach::NotPublic => return Ok(Sending::Done(ready, Attempted::NotPublic)),
+    };
+    // The lookup waited, so what the delivery may send is read again and decides the send.
+    let ready = match prepared(app, id).await? {
+        Prepared::Gone => return Ok(Sending::Gone),
+        Prepared::Cancel(reason) => return Ok(Sending::Cancel(reason)),
+        Prepared::Send(now) if now.url == ready.url => now,
+        Prepared::Send(_) => return Ok(Sending::Deferred),
     };
     let now_ms = app.clock.now_ms();
     let mut body = ready.body.clone();
@@ -302,9 +327,12 @@ async fn send(app: &App, ready: &Ready, maker: &str, spent: bool) -> Result<Opti
         headers: &headers,
         body: String::from_utf8_lossy(&printed).into_owned(),
     };
-    Ok(Some(Attempted::Sent(
-        outbound::post(&url, &targets, outgoing, ATTEMPT_BOUND).await,
-    )))
+    let outcome = outbound::post(&url, &targets, outgoing, ATTEMPT_BOUND).await;
+    Ok(done(ready, outcome))
+}
+
+fn done(ready: Box<Ready>, outcome: Outcome) -> Sending {
+    Sending::Done(ready, Attempted::Sent(outcome))
 }
 
 #[cfg(test)]
