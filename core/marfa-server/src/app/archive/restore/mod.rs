@@ -308,6 +308,20 @@ impl App {
                 unknown_kinds,
                 ..
             } = received;
+            let judged = (
+                app.clone(),
+                registrations.settings.clone(),
+                registrations.secrets.clone(),
+                registrations.enforcement.clone(),
+            );
+            let would_store = app
+                .db
+                .read(move |tx| {
+                    let (app, settings, secrets, enforcement) = judged;
+                    stored::restoring(tx, &app, &settings, &secrets, enforcement.as_ref())
+                })
+                .await?;
+            caller.require_settings_restore(&would_store)?;
             let placed = app.place_restored(carried, absent).await?;
             let lacking: Vec<String> = placed
                 .missing
@@ -332,6 +346,13 @@ impl App {
                         .require_step_up(Permission::BackupsManage, &started_at)?;
                     unit.fanning(false, |unit| {
                         let tx = unit.tx();
+                        unit.caller.require_settings_restore(&stored::restoring(
+                            tx,
+                            &settings,
+                            &registrations.settings,
+                            &registrations.secrets,
+                            registrations.enforcement.as_ref(),
+                        )?)?;
                         let before = catalog::current(&cache, tx, Snapshot::Pending)?;
                         let types_plan = types::write::plan_restored(&before, &registrations.types)?;
                         let edges_plan =

@@ -350,7 +350,7 @@ When `POST /restore` reads a `setting` line, the server MUST store that setting 
 
 **Reason:** a restore keeps each setting row the instance holds and stores only those it lacks, and a setting chosen here since the export is newer than the archive's.
 
-**Tests:** `compliance/export-instance-lines.test.ts › restores the settings, connector state and agreements the instance lacks, and replaces none it holds`.
+**Tests:** `compliance/export-instance-lines.test.ts › restores the settings, connector state and agreements the instance lacks, and replaces none it holds`, `compliance/restore-settings-permission.test.ts › stores an archive's settings for an app that holds config.manage as well`.
 
 ### `archive/restore-settings-together`
 
@@ -383,6 +383,36 @@ When `POST /restore` reads a `setting` line that names a setting this instance d
 **Reason:** an archive from before a setting was removed or renamed still restores, and the owner is told what it did not carry over instead of finding a setting silently reset.
 
 **Tests:** `compliance/export-instance-lines.test.ts › leaves out a setting the instance does not have, names it, and restores the rest`.
+
+### `archive/restore-setting-machine`
+
+If the `instance.ndjson.gz` of an archive carries a `setting` line for `sign_in_address`, `addresses`, `backup_path`, an `object_store_` setting or `allow_private_addresses`, then the server MUST answer `400 validation_error` naming the key and store nothing of the archive.
+
+**Reason:** these settings describe this machine and its network, so no archive carries them (`archive/archive-settings`). A restore therefore never moves the sign-in address, the destination or the private-address switch, which `/config` changes only for a caller that holds `config.manage`, and for some only after a recent sign-in.
+
+**Tests:** `compliance/restore-settings-permission.test.ts › refuses an archive carrying a setting that describes this machine, even to an app holding config.manage, and writes nothing, where the archive without it restores`.
+
+### `archive/restore-settings-permission`
+
+If a caller that does not hold `config.manage` sends `POST /restore` or `POST /backups/{instance_id}/{name}/restore` for an archive that would store a setting, a secret to set again or an enforcement setting the instance does not store, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage` and `details.settings` naming each setting the archive would store, with `enforcement` for the enforcement settings.
+
+**Reason:** a restore is not a way to hold settings the caller cannot change at `/config`. A restore never replaces a setting the instance stores (`archive/restore-settings`, `archive/restore-enforcement`), so only the settings the instance lacks count, and an instance's own backup restored onto it needs only `backups.manage`.
+
+**Tests:** `compliance/restore-settings-permission.test.ts › refuses an app without config.manage an archive that would store a setting, writing no item, file or setting, where the same archive without it restores`, `› refuses an app without config.manage an archive whose only instance line is an enforcement setting, which an app holding it restores`, `› refuses an app without config.manage an archive naming a secret the instance would ask to be set again, which an app holding it restores`, `› holds a backup restore to the same rule: it restores while the instance stores the backup's settings, and needs config.manage once one is gone`.
+
+### `archive/restore-settings-permission-unwritten`
+
+When the server refuses a restore under `archive/restore-settings-permission`, the server MUST write none of the archive's items, files and settings.
+
+**Tests:** `compliance/restore-settings-permission.test.ts › refuses an app without config.manage an archive that would store a setting, writing no item, file or setting, where the same archive without it restores`, `› refuses an app without config.manage an archive whose only instance line is an enforcement setting, which an app holding it restores`, `› refuses an app without config.manage an archive naming a secret the instance would ask to be set again, which an app holding it restores`, `› holds a backup restore to the same rule: it restores while the instance stores the backup's settings, and needs config.manage once one is gone`.
+
+### `archive/restore-settings-permission-none`
+
+When a caller that holds `backups.manage` but not `config.manage` restores an archive whose settings the instance already stores or this server does not have, the server MUST restore the archive.
+
+**Reason:** such an archive stores no setting, so `archive/restore-settings-permission` does not hold it back.
+
+**Tests:** `compliance/restore-settings-permission.test.ts › refuses an app without config.manage an archive that would store a setting, writing no item, file or setting, where the same archive without it restores`, `› restores for an app without config.manage an archive whose every setting the instance already stores, and changes none`, `› restores for an app without config.manage an archive whose only setting this server does not have, and names it as dropped`, `› holds a backup restore to the same rule: it restores while the instance stores the backup's settings, and needs config.manage once one is gone`.
 
 ### `archive/archive-connector-state`
 

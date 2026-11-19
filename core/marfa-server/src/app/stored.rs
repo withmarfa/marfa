@@ -284,6 +284,75 @@ impl Restored {
     }
 }
 
+/// What a restore of an archive's settings would write, judged before anything is written.
+struct Plan {
+    before: Vec<(String, String)>,
+    added: Vec<(String, String)>,
+    /// Secrets with no row here, which are stored as ones to set again.
+    set_again: Vec<String>,
+    secrets_to_set: Vec<String>,
+}
+
+fn plan(
+    tx: &Transaction<'_>,
+    app: &App,
+    archived: &[(String, String)],
+    secrets: &[String],
+) -> Result<Plan> {
+    let before = rows(tx)?;
+    let held = |key: &str| before.iter().any(|(stored, _)| stored == key);
+    let readable = app.settings.candidate(&before);
+    let mut set_again = Vec::new();
+    let mut secrets_to_set = Vec::new();
+    for key in secrets {
+        let Some(entry) = registry::entry(key) else {
+            continue;
+        };
+        if readable.secret_set(entry) {
+            continue;
+        }
+        if !held(key) {
+            set_again.push(key.clone());
+        }
+        secrets_to_set.push(key.clone());
+    }
+    let added = archived
+        .iter()
+        .filter(|(key, _)| !held(key))
+        .cloned()
+        .collect();
+    Ok(Plan {
+        before,
+        added,
+        set_again,
+        secrets_to_set,
+    })
+}
+
+/// The names of the settings a restore of these lines would store here, the enforcement row
+/// among them, so a caller is judged on them before anything is written.
+pub fn restoring(
+    tx: &Transaction<'_>,
+    app: &App,
+    archived: &[(String, String)],
+    secrets: &[String],
+    enforcement: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Result<Vec<String>> {
+    let plan = plan(tx, app, archived, secrets)?;
+    let mut names: Vec<String> = plan
+        .added
+        .into_iter()
+        .map(|(key, _)| key)
+        .chain(plan.set_again)
+        .collect();
+    if let Some(levers) = enforcement
+        && plan_levers(tx, levers)?.0.is_some()
+    {
+        names.push(super::config::ENFORCEMENT_ROW.to_string());
+    }
+    Ok(names)
+}
+
 /// Stores each archived setting the instance has none stored for, judged together with the
 /// instance's own as `/config` judges them, and counts how many it stored and how many it left.
 /// Each archived secret this instance holds no readable value for is listed to be set again.
@@ -293,27 +362,17 @@ pub fn restore(
     archived: &[(String, String)],
     secrets: &[String],
 ) -> Result<Restored> {
-    let before = rows(tx)?;
-    let readable = app.settings.candidate(&before);
-    let mut secrets_to_set = Vec::new();
-    for key in secrets {
-        let Some(entry) = registry::entry(key) else {
-            continue;
-        };
-        if readable.secret_set(entry) {
-            continue;
-        }
-        if !before.iter().any(|(held, _)| held == key) {
-            write_row(tx, key, SET_AGAIN)?;
-        }
-        secrets_to_set.push(key.clone());
+    let Plan {
+        before,
+        added,
+        set_again,
+        secrets_to_set,
+    } = plan(tx, app, archived, secrets)?;
+    for key in &set_again {
+        write_row(tx, key, SET_AGAIN)?;
     }
-    let added: Vec<&(String, String)> = archived
-        .iter()
-        .filter(|(key, _)| !before.iter().any(|(held, _)| held == key))
-        .collect();
     let mut after = before.clone();
-    after.extend(added.iter().map(|&row| row.clone()));
+    after.extend(added.iter().cloned());
     let touched: Vec<&str> = added.iter().map(|(key, _)| key.as_str()).collect();
     super::config::judge_together(app, &before, &after, &touched)?;
     for (key, text) in &added {
@@ -347,13 +406,12 @@ pub struct RestoredLevers {
     pub skipped: Vec<String>,
 }
 
-/// Stores each archived enforcement setting the instance does not store and keeps each it does.
+/// The levers to store, if any archived one is new here, and what becomes of each by name.
 /// Stored levers that do not read keep every one, since what they hold is not known.
-pub fn restore_enforcement(
+fn plan_levers(
     tx: &Transaction<'_>,
     archived: &serde_json::Map<String, serde_json::Value>,
-) -> Result<RestoredLevers> {
-    let names = || archived.keys().cloned().collect::<Vec<_>>();
+) -> Result<(Option<Levers>, RestoredLevers)> {
     let mut held = match get(tx, super::config::ENFORCEMENT_ROW)? {
         None => serde_json::Map::new(),
         Some(text) => match Levers::from_row(&text) {
@@ -362,10 +420,14 @@ pub fn restore_enforcement(
                 _ => return Err(Refusal::internal("stored levers read as no object")),
             },
             None => {
-                return Ok(RestoredLevers {
-                    added: Vec::new(),
-                    skipped: names(),
-                });
+                let skipped = archived.keys().cloned().collect();
+                return Ok((
+                    None,
+                    RestoredLevers {
+                        added: Vec::new(),
+                        skipped,
+                    },
+                ));
             }
         },
     };
@@ -378,8 +440,20 @@ pub fn restore_enforcement(
             restored.added.push(name.clone());
         }
     }
-    if !restored.added.is_empty() {
-        let levers = Levers::from_body_at(&serde_json::Value::Object(held), "enforcement")?;
+    if restored.added.is_empty() {
+        return Ok((None, restored));
+    }
+    let levers = Levers::from_body_at(&serde_json::Value::Object(held), "enforcement")?;
+    Ok((Some(levers), restored))
+}
+
+/// Stores each archived enforcement setting the instance does not store and keeps each it does.
+pub fn restore_enforcement(
+    tx: &Transaction<'_>,
+    archived: &serde_json::Map<String, serde_json::Value>,
+) -> Result<RestoredLevers> {
+    let (levers, restored) = plan_levers(tx, archived)?;
+    if let Some(levers) = levers {
         put(
             tx,
             super::config::ENFORCEMENT_ROW,
@@ -497,6 +571,33 @@ mod tests {
                 .is_err()
         );
         assert!(archived(&serde_json::json!({ "key": "trash_retention_days" })).is_err());
+    }
+
+    #[test]
+    fn levers_are_planned_only_where_one_is_new_and_the_stored_ones_read() {
+        let mut conn = table();
+        let tx = conn.transaction().unwrap();
+        let archived = serde_json::json!({ "strict_mode": { "types": ["core.task"] } });
+        let archived = archived.as_object().unwrap();
+
+        let (levers, planned) = plan_levers(&tx, archived).unwrap();
+        assert!(levers.is_some());
+        assert_eq!(planned.added, ["strict_mode"]);
+        assert!(
+            get(&tx, crate::app::config::ENFORCEMENT_ROW)
+                .unwrap()
+                .is_none()
+        );
+
+        restore_enforcement(&tx, archived).unwrap();
+        let (levers, planned) = plan_levers(&tx, archived).unwrap();
+        assert!(levers.is_none());
+        assert_eq!(planned.skipped, ["strict_mode"]);
+
+        put(&tx, crate::app::config::ENFORCEMENT_ROW, "not levers").unwrap();
+        let (levers, planned) = plan_levers(&tx, archived).unwrap();
+        assert!(levers.is_none());
+        assert_eq!(planned.skipped, ["strict_mode"]);
     }
 
     #[test]
