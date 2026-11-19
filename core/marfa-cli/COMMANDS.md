@@ -4904,6 +4904,8 @@ Run the server in the foreground. This is what the service runs.
 
 It starts the `marfa-server` of the same release as this `marfa`, with the settings in `--dir` (the data below it, and the port from `.env`); without `--dir` it uses the settings in its own environment, as the container does. It passes a stop on to the server and ends with its status. On a Mac it keeps the server's output in `~/Library/Logs/Marfa`. A server that refuses its database is not started again: this command says so and waits until it is stopped.
 
+After a self-update, this command tries the new `marfa-server` before the new `marfa` takes its place. It counts each start of the new release that ends before the release settles, and does not count one that a stop ended. After two such starts, or when the new release refuses its database, it puts the old release back when that release can still open the database, and otherwise keeps the new one. `marfa update status` shows what happened.
+
 ```text
 marfa server run [OPTIONS]
 ```
@@ -4911,6 +4913,7 @@ marfa server run [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
+| `--check` | Check that this `marfa` can run the install, with the `marfa-server` beside it, and end without starting the server. A self-update runs this with the new release's `marfa` before it swaps the programs. |
 
 ### marfa server uninstall
 
