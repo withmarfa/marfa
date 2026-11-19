@@ -5458,7 +5458,7 @@ If the server answers a comparison or a replacement of a declared type with a fa
 
 When a stop is raised during a hydration, a catch-up or a drain, a device MUST end the call `canceled` soon after.
 
-**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`, `› ends it without waiting on the natural-key lookup a create asks, leaving the queue as it was`, `› ends it without waiting on the read-back of an accepted write, which stays owed and is read by the next drain`, `device/pages.test.ts › settles the creates a stop left owed from a bulk read, sending none of them again`.
+**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`, `› ends it without waiting on the natural-key lookup a create asks, leaving the queue as it was`, `› ends it without waiting on the read-back of an accepted write, which stays owed and is read by the next drain`, `device/pages.test.ts › settles the creates a stop left owed from a bulk read, sending none of them again`, `› settles the tags carried by the creates a stop left owed, sending none of them again`.
 
 ### `device/stop-hydration-replacing`
 
