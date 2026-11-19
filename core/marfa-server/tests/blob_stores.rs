@@ -276,6 +276,30 @@ async fn start_over_a_missing_or_unmarked_folder_with_recorded_copies_is_refused
 }
 
 #[tokio::test]
+async fn health_reports_a_blob_folder_holding_another_stores_marker_as_down() {
+    let instance = Instance::start(&[]).await;
+    let marker = instance.folder().join(".marfa-store");
+    let own = std::fs::read_to_string(&marker).unwrap();
+
+    // The witness: with its own marker the folder is ok.
+    let before = instance.call(Method::GET, "/health", None).await;
+    assert_eq!(before.body["components"]["blob_storage"]["status"], "ok");
+
+    std::fs::write(&marker, "0198a3c2-7d4e-7a11-9c3b-5f2e8d1a6b40").unwrap();
+    let after = instance.call(Method::GET, "/health", None).await;
+    assert_eq!(
+        after.body["components"]["blob_storage"]["status"], "down",
+        "{}",
+        after.body
+    );
+    assert_eq!(after.status, StatusCode::SERVICE_UNAVAILABLE);
+
+    std::fs::write(&marker, own).unwrap();
+    let back = instance.call(Method::GET, "/health", None).await;
+    assert_eq!(back.body["components"]["blob_storage"]["status"], "ok");
+}
+
+#[tokio::test]
 async fn start_over_a_missing_folder_with_no_recorded_copies_makes_a_fresh_store() {
     let instance = Instance::start(&[]).await;
     instance.app.close().await;
