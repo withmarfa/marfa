@@ -97,13 +97,15 @@ async function configure(
   };
 }
 
-/** The secrets `/config` says are set. */
+/** The secrets `/config` says are set, which it leaves out while none is. */
 async function secretsSet(booted: FreshServer): Promise<string[]> {
   const answer = await fetch(`${booted.apiUrl}/config`, {
     headers: { Authorization: `Bearer ${booted.managementKey}` },
   });
   expect(answer.status).toBe(200);
-  return ((await answer.json()) as { secrets_set: string[] }).secrets_set;
+  return (
+    ((await answer.json()) as { secrets_set?: string[] }).secrets_set ?? []
+  );
 }
 
 const TOKEN = "phc_conformance_fixture";
