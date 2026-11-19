@@ -288,7 +288,10 @@ impl Tree {
         if self.held.contains(&self.root) || !is_directory(&self.root) {
             return None;
         }
-        Some(self.open(watcher, reach).unwrap_or_else(|error| vec![error]))
+        Some(
+            self.open(watcher, reach)
+                .unwrap_or_else(|error| vec![error]),
+        )
     }
 
     /// Watches the directories a scan enters, and the state directory, which
