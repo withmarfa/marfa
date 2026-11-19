@@ -574,6 +574,7 @@ async fn the_orphan_job_reports_then_purges_after_the_grace_and_keeps_what_an_it
     instance.app.clock.advance(1_001).unwrap();
     let second = instance.run("blob-orphans").await;
     assert_eq!(second["purged"], 1, "{second}");
+    assert_eq!(second["bytes_waiting"], 0, "{second}");
     assert!(!instance.file(&orphan).exists());
     assert_eq!(instance.fetch(&orphan).await.status, StatusCode::NOT_FOUND);
     assert!(instance.file(&named).is_file());
@@ -609,7 +610,8 @@ async fn a_purge_cut_short_leaves_its_deletion_queued_and_the_next_run_finishes_
     instance.arm("fail:blob-delete", None);
 
     let cut = instance.run("blob-orphans").await;
-    assert_eq!(cut["purged"], 0, "{cut}");
+    assert_eq!(cut["purged"], 1, "{cut}");
+    assert_eq!(cut["bytes_waiting"], 1, "{cut}");
     assert_eq!(instance.fetch(&hash).await.status, StatusCode::NOT_FOUND);
     assert!(instance.file(&hash).is_file());
     assert_eq!(
@@ -620,7 +622,9 @@ async fn a_purge_cut_short_leaves_its_deletion_queued_and_the_next_run_finishes_
         1
     );
 
-    instance.run("blob-orphans").await;
+    let finished = instance.run("blob-orphans").await;
+    assert_eq!(finished["purged"], 0, "{finished}");
+    assert_eq!(finished["bytes_waiting"], 0, "{finished}");
     assert!(!instance.file(&hash).exists());
     assert_eq!(
         instance.count("SELECT count(*) FROM blob_pending_deletions"),

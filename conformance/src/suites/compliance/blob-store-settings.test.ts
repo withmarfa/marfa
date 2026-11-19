@@ -148,7 +148,11 @@ describe("a stored setting that decides a deletion and does not read", () => {
       expect(upload.status).toBe(201);
       const hash = upload.data.hash;
       const first = await runJob(operator, "blob-orphans");
-      expect(first.result).toEqual({ reported: 1, purged: 0 });
+      expect(first.result).toEqual({
+        reported: 1,
+        purged: 0,
+        bytes_waiting: 0,
+      });
 
       storeSettingRow(server.sqlitePath, "blob_cleanup_grace_seconds", "soon");
       const refused = await operator.runHousekeeping("blob-orphans");
@@ -158,7 +162,11 @@ describe("a stored setting that decides a deletion and does not read", () => {
 
       storeSettingRow(server.sqlitePath, "blob_cleanup_grace_seconds", null);
       const purged = await runJob(operator, "blob-orphans");
-      expect(purged.result).toEqual({ reported: 0, purged: 1 });
+      expect(purged.result).toEqual({
+        reported: 0,
+        purged: 1,
+        bytes_waiting: 0,
+      });
       expect((await operator.downloadBlob(hash)).status).toBe(404);
     },
     FRESH_SERVER_TIMEOUT_MS,
@@ -186,7 +194,11 @@ describe("a positive grace on the orphan sweep", () => {
         operator,
         "blob-orphans",
       );
-      expect(first.result).toEqual({ reported: 1, purged: 0 });
+      expect(first.result).toEqual({
+        reported: 1,
+        purged: 0,
+        bytes_waiting: 0,
+      });
       const reportedAt = (await operator.listBlobOrphans()).data.data[0]!
         .reported_at;
 
@@ -200,7 +212,11 @@ describe("a positive grace on the orphan sweep", () => {
         Date.parse(second.started_at) - Date.parse(reportedAt),
         "the second run must start inside the grace",
       ).toBeLessThan(graceMs);
-      expect(second.result).toEqual({ reported: 1, purged: 0 });
+      expect(second.result).toEqual({
+        reported: 1,
+        purged: 0,
+        bytes_waiting: 0,
+      });
       expect((await operator.listBlobOrphans()).data.data).toEqual([
         expect.objectContaining({ hash, reported_at: reportedAt }),
       ]);
@@ -215,7 +231,11 @@ describe("a positive grace on the orphan sweep", () => {
         operator,
         "blob-orphans",
       );
-      expect(third.result).toEqual({ reported: 0, purged: 1 });
+      expect(third.result).toEqual({
+        reported: 0,
+        purged: 1,
+        bytes_waiting: 0,
+      });
       expect((await operator.listBlobOrphans()).data.data).toEqual([]);
       expect((await operator.downloadBlob(hash)).status).toBe(404);
     },
