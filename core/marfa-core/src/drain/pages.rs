@@ -2026,7 +2026,6 @@ mod tests {
         ))
     }
 
-    /// A stop ends the read while a page of the listing waits.
     #[test]
     fn a_stop_ends_the_read_of_a_listing_while_a_page_of_it_waits() {
         let server = Scripted::start();
