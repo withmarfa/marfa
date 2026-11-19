@@ -16,6 +16,7 @@ import {
   copyStreamCursor,
   edgeTypeCatalog,
   refusal,
+  SERVED_SOURCE,
   typeCatalog,
   wireItem,
 } from "../../device/marfa-answers.js";
@@ -575,6 +576,143 @@ describe("stopping a drain", () => {
       "accepted",
     ]);
     release();
+  });
+
+  it("ends it without waiting on the natural-key lookup a create asks, leaving the queue as it was", async () => {
+    harness = await hydratedHarness("stop-drain-lookup", { head: "10" });
+    const { server, device } = harness;
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "looked up", body: "looked up" },
+      source: SERVED_SOURCE,
+      sourceId: "looked-up-1",
+    });
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    const row = wireItem({
+      id: queued.value.item_id ?? "",
+      type: "core.note",
+      properties: { title: "looked up", body: "looked up" },
+    });
+    const before = await device.queue();
+    let release = (): void => {};
+    const until = new Promise<void>((resolve) => (release = resolve));
+    scriptWrites(server, {
+      create: [answers.created(row)],
+      // Answered only once the test ends: a server that holds the lookup for
+      // longer than anyone waits.
+      lookup: [{ kind: "gated", until, then: answers.lookup([]) }],
+      read: [answers.updated(row)],
+    });
+    const lookups = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "POST" && request.pathname === "/items/lookup",
+      ).length;
+    const draining = device.hold(["drain"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(lookups(), draining.stderr).toBe(1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      const stopped = Date.now();
+      draining.interrupt();
+      await draining.exited();
+      expect(
+        Date.now() - stopped,
+        "the stopped drain waited on the lookup in flight",
+      ).toBeLessThan(3_000);
+      expect(draining.exitCode(), draining.stderr).toBe(UNFINISHED);
+      expect(JSON.parse(refusalLine(draining.stderr)).error.code).toBe(
+        "canceled",
+      );
+    } finally {
+      release();
+      await draining.stop();
+    }
+    expect(
+      creates(server),
+      "a create was sent after the stop, so the stop did not end the drain",
+    ).toBe(0);
+    expect(await device.queue()).toEqual(before);
+
+    // The witness: the same drain, with nothing held, sends the create.
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    expect(creates(server)).toBe(1);
+  });
+
+  it("ends it without waiting on the read-back of an accepted write, which stays owed and is read by the next drain", async () => {
+    harness = await hydratedHarness("stop-drain-read-back", { head: "10" });
+    const { server, device } = harness;
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "read back", body: "read back" },
+    });
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    const row = wireItem({
+      id: queued.value.item_id ?? "",
+      type: "core.note",
+      properties: { title: "read back", body: "read back" },
+    });
+    let release = (): void => {};
+    const until = new Promise<void>((resolve) => (release = resolve));
+    scriptWrites(server, {
+      create: [answers.created(row)],
+      read: [
+        // Answered only once the test ends, after the create's verdict is kept.
+        { kind: "gated", until, then: answers.updated(row) },
+        answers.updated(row),
+      ],
+    });
+    const reads = () =>
+      server.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${row.id}`,
+      ).length;
+    const draining = device.hold(["drain"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(reads(), draining.stderr).toBe(1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      const stopped = Date.now();
+      draining.interrupt();
+      await draining.exited();
+      expect(
+        Date.now() - stopped,
+        "the stopped drain waited on the read-back in flight",
+      ).toBeLessThan(3_000);
+      expect(draining.exitCode(), draining.stderr).toBe(UNFINISHED);
+      expect(JSON.parse(refusalLine(draining.stderr)).error.code).toBe(
+        "canceled",
+      );
+    } finally {
+      release();
+      await draining.stop();
+    }
+    const queue = await device.queue();
+    expect(
+      queue.ok && queue.value.map((write) => write.verdict),
+      "the verdict the server's answer gave was not kept",
+    ).toEqual(["accepted"]);
+    expect(creates(server)).toBe(1);
+
+    // The read the stop cut short is made by the next drain, which sends
+    // nothing again.
+    const readsBefore = reads();
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    expect(
+      reads(),
+      "the read the stop cut short was not made again",
+    ).toBeGreaterThan(readsBefore);
+    expect(creates(server), "the accepted create was sent again").toBe(1);
   });
 });
 
