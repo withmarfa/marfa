@@ -183,6 +183,7 @@ A renewer must:
 - Keep the new access token and refresh token before it returns, because a refresh token is spent once the server answers.
 - Return the access token it holds, without renewing, when `refused` differs from it.
 - Throw `Ended`, and delete the refresh token, on a token endpoint's `invalid_grant` or `invalid_client`.
+- Throw `Refused`, with the `RenewalFailure` that fits, and keep the refresh token, when the token endpoint refuses the renewal any other way (`invalid_request`, `invalid_scope`, `unauthorized_client`), answers a redirect, or answers what the renewer cannot read.
 - Give the token request a time limit, and throw `Unavailable` when it times out or there is no network, because stopping a watch waits for a renewal under way.
 - Never wait synchronously on the main thread inside `renew`.
 - Never log the refused token.
@@ -191,6 +192,7 @@ A renewer that cannot renew throws a `RenewalError`, and the queued writes stay 
 
 - `Ended` ends the call `SignedOut`, and every later refusal ends `SignedOut` without asking the renewer again.
 - `Unavailable` ends it `Network`, which a drain takes as environmental and reports as unavailable.
+- `Refused` ends it `RenewalRefused`, whose `reason` is `Refused` (the server refused the renewal and the sign-in still stands), `Redirected` (the token endpoint answered a redirect, which is not followed) or `Unreadable` (the answer could not be read, or the server is not a sign-in server). Its `message` is for logs. It is not `Invalid`, which is an app's own bad arguments, and a drain does not take it as environmental: it ends with the error, and the next refusal asks the renewer again.
 - `Failed`, or any other error the renewer throws, ends it `Invalid`.
 
 The Node module takes no renewer.
