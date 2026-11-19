@@ -5,8 +5,8 @@ use std::path::{Component, Path, PathBuf};
 use super::registry::{
     ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, ERROR_REPORTING_ENABLED, ERROR_WEBHOOK_URL,
     HEARTBEAT_ENABLED, HEARTBEAT_URL, OBJECT_STORE_BUCKET, OBJECT_STORE_ENDPOINT,
-    OBJECT_STORE_PATH_STYLE, Snapshot, VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS,
-    VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
+    OBJECT_STORE_PATH_STYLE, POSTHOG_HOST, POSTHOG_PROJECT_TOKEN, Snapshot,
+    VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
 };
 use super::start::Fixed;
 use crate::app::addresses::Address;
@@ -54,14 +54,22 @@ pub const TOGETHER: &[Together] = &[
     },
     Together {
         name: "reporting_needs_a_receiver",
-        description: "Error reporting and the heartbeat can be turned from off to on only where a receiver is set: error_webhook_url or an exception receiver set where Marfa runs, and heartbeat_url.",
+        description: "Error reporting and the heartbeat can be turned from off to on only where a receiver is set: error_webhook_url, or posthog_host with posthog_project_token, and heartbeat_url.",
         keys: &[
             "error_reporting_enabled",
             "heartbeat_enabled",
             "error_webhook_url",
+            "posthog_host",
+            "posthog_project_token",
             "heartbeat_url",
         ],
         judge: reporting_needs_a_receiver,
+    },
+    Together {
+        name: "posthog_pair",
+        description: "posthog_host and posthog_project_token are set together or not at all.",
+        keys: &["posthog_host", "posthog_project_token"],
+        judge: posthog_pair,
     },
     Together {
         name: "one_backup_destination",
@@ -77,11 +85,12 @@ pub const TOGETHER: &[Together] = &[
     },
     Together {
         name: "destinations_are_public",
-        description: "While allow_private_addresses is false, heartbeat_url, error_webhook_url and object_store_endpoint cannot be written as a loopback, private or other address that is not public.",
+        description: "While allow_private_addresses is false, heartbeat_url, error_webhook_url, posthog_host and object_store_endpoint cannot be written as a loopback, private or other address that is not public.",
         keys: &[
             "allow_private_addresses",
             "heartbeat_url",
             "error_webhook_url",
+            "posthog_host",
             "object_store_endpoint",
         ],
         judge: destinations_are_public,
@@ -180,14 +189,42 @@ fn version_windows(judged: &Judged) -> Vec<Breach> {
 }
 
 /// Whether `key` is a reporting switch whose receiver `settings` lack.
-pub fn lacks_receiver(start: &Fixed, settings: &Snapshot, key: &str) -> bool {
+pub fn lacks_receiver(settings: &Snapshot, key: &str) -> bool {
     match key {
         "heartbeat_enabled" => !settings.secret_set(HEARTBEAT_URL.entry),
         "error_reporting_enabled" => {
-            !start.exception_receiver && !settings.secret_set(ERROR_WEBHOOK_URL.entry)
+            let posthog = settings.secret_set(POSTHOG_HOST.entry)
+                && settings.secret_set(POSTHOG_PROJECT_TOKEN.entry);
+            !posthog && !settings.secret_set(ERROR_WEBHOOK_URL.entry)
         }
         _ => false,
     }
+}
+
+/// A row that must be set again counts as unset, so the other cannot be set alone.
+fn posthog_pair(judged: &Judged) -> Vec<Breach> {
+    let host = POSTHOG_HOST.entry.key;
+    let token = POSTHOG_PROJECT_TOKEN.entry.key;
+    let (set, unset) = match (
+        judged.after.secret_set(POSTHOG_HOST.entry),
+        judged.after.secret_set(POSTHOG_PROJECT_TOKEN.entry),
+    ) {
+        (true, false) => (host, token),
+        (false, true) => (token, host),
+        _ => return Vec::new(),
+    };
+    let breach = if judged.names(set) {
+        Breach {
+            path: set,
+            message: format!("needs {unset} set too"),
+        }
+    } else {
+        Breach {
+            path: unset,
+            message: format!("cannot be removed while {set} is set; remove both together"),
+        }
+    };
+    vec![breach]
 }
 
 fn reporting_needs_a_receiver(judged: &Judged) -> Vec<Breach> {
@@ -197,14 +234,14 @@ fn reporting_needs_a_receiver(judged: &Judged) -> Vec<Breach> {
             judged.names(entry.key)
                 && *judged.after.value(entry) == Value::Boolean(true)
                 && *judged.before.value(entry) != Value::Boolean(true)
-                && lacks_receiver(judged.start, judged.after, entry.key)
+                && lacks_receiver(judged.after, entry.key)
         })
         .map(|entry| Breach {
             path: entry.key,
             message: if entry.key == HEARTBEAT_ENABLED.entry.key {
                 "needs heartbeat_url to be set"
             } else {
-                "needs error_webhook_url, or an exception receiver configured where Marfa runs"
+                "needs error_webhook_url, or posthog_host and posthog_project_token, to be set"
             }
             .to_string(),
         })
@@ -228,6 +265,10 @@ fn destinations_are_public(judged: &Judged) -> Vec<Breach> {
             after
                 .get(ERROR_WEBHOOK_URL)
                 .map(|url| url.expose().to_string()),
+        ),
+        (
+            POSTHOG_HOST.entry.key,
+            after.get(POSTHOG_HOST).map(|url| url.expose().to_string()),
         ),
         (
             OBJECT_STORE_ENDPOINT.entry.key,

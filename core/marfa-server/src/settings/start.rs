@@ -146,8 +146,6 @@ pub struct Fixed {
     pub blob_path: PathBuf,
     /// A folder of OCR language models read beside the ones the server carries.
     pub enrichment_tessdata_dir: Option<PathBuf>,
-    /// Judged by the presence of the settings that name it, not by reachability.
-    pub exception_receiver: bool,
     /// Stored at start only while the instance has no owner.
     pub claim_address: Option<Address>,
     pub owner_recovery: bool,
@@ -354,8 +352,6 @@ impl Fixed {
                 .get("MARFA_ENRICHMENT_TESSDATA_DIR")
                 .filter(|folder| !folder.is_empty())
                 .map(PathBuf::from),
-            exception_receiver: environment.get("MARFA_POSTHOG_HOST").is_some()
-                && environment.get("MARFA_POSTHOG_PROJECT_TOKEN").is_some(),
             claim_address,
             owner_recovery,
         };

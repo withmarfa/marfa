@@ -146,7 +146,9 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
         return Ok(updates::RESTART_STATUS);
     }
     let app = App::start_kept(accepted, kept, held).await?;
-    let telemetry = app.telemetry.start(&telemetry, &app.instance_id);
+    let telemetry = app
+        .telemetry
+        .start(&telemetry, &app.instance_id, &app.settings.live());
     let mut signals = Signals::install()?;
 
     let public = if app.settings.start.control_only {

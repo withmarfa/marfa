@@ -99,6 +99,14 @@ impl Event<'_> {
         event.insert("properties".into(), Value::Object(properties));
         Value::Object(event)
     }
+
+    /// The event as capture v1 takes it, which wants an id of its own for each event.
+    pub fn v1(&self, uuid: &str) -> Value {
+        let mut event = self.json();
+        event["uuid"] = uuid.into();
+        event["options"] = json!({ "process_person_profile": false });
+        event
+    }
 }
 
 pub fn single(token: &str, event: &Event) -> Value {
@@ -110,8 +118,9 @@ pub fn single(token: &str, event: &Event) -> Value {
     Value::Object(body)
 }
 
-pub fn batch(token: &str, events: Vec<Value>) -> Value {
-    json!({ "api_key": token, "batch": events })
+/// A capture v1 body; the token travels in `Authorization`, never in the body.
+pub fn batch(created_at: &str, events: Vec<Value>) -> Value {
+    json!({ "created_at": created_at, "batch": events })
 }
 
 #[cfg(test)]
@@ -200,12 +209,20 @@ mod tests {
     }
 
     #[test]
-    fn the_token_goes_in_the_body_in_both_shapes() {
+    fn a_single_event_carries_the_token_and_a_batch_carries_none() {
         let one = single("phc_x", &event(None, &[]));
         assert_eq!(one["api_key"], "phc_x");
         assert_eq!(one["event"], "$exception");
-        let many = batch("phc_x", vec![event(None, &[]).json()]);
-        assert_eq!(many["api_key"], "phc_x");
-        assert_eq!(many["batch"][0]["event"], "$exception");
+        let many = batch(
+            "2026-11-19T10:00:00Z",
+            vec![event(None, &[]).v1("0193a5f0-0000-7000-8000-000000000000")],
+        );
+        assert!(many.get("api_key").is_none());
+        assert_eq!(many["created_at"], "2026-11-19T10:00:00Z");
+        let first = &many["batch"][0];
+        assert_eq!(first["event"], "$exception");
+        assert_eq!(first["uuid"], "0193a5f0-0000-7000-8000-000000000000");
+        assert_eq!(first["options"]["process_person_profile"], false);
+        assert_eq!(first["properties"]["$geoip_disable"], true);
     }
 }

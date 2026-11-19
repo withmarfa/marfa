@@ -23,6 +23,8 @@ umask 077
 # The server this boots is throwaway, so it reports nothing, whatever the shell sets.
 # shellcheck source=no-telemetry.sh
 source "$(dirname "${BASH_SOURCE[0]}")/no-telemetry.sh"
+# Whatever a test server does send says it came from one.
+export OTEL_RESOURCE_ATTRIBUTES=deployment.environment=test
 
 repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 server_bin="${MARFA_SERVER_BIN:-${CARGO_TARGET_DIR:-${repo}/core/target}/release/marfa-server}"

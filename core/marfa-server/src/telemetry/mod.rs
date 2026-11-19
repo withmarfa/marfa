@@ -25,7 +25,10 @@ pub use fault::{Fault, Kind, caught, install_panic_hook};
 pub use logs::{Logs, REQUEST_TARGET};
 
 use lane::Lane;
-use sinks::{Notice, Report};
+use sinks::{Notice, Report, Tracked};
+
+use crate::settings::Snapshot;
+use crate::settings::registry::{ALLOW_PRIVATE_ADDRESSES, ERROR_REPORTING_ENABLED};
 
 pub const FLUSH_WITHIN: Duration = Duration::from_millis(750);
 
@@ -40,10 +43,8 @@ pub struct Finished<'a> {
     pub status: u16,
     pub error_code: Option<&'a str>,
     pub fault: Option<&'a Arc<Fault>>,
-    pub reporting: bool,
-    /// Where `error_webhook_url` sends a notice of the fault, if it is set.
-    pub webhook: Option<&'a str>,
-    pub private_allowed: bool,
+    /// The settings as they stand now, which say where a fault is reported.
+    pub settings: &'a Snapshot,
     pub timestamp: &'a str,
 }
 
@@ -51,7 +52,8 @@ struct Active {
     tracer: Option<SdkTracer>,
     tracers: Option<SdkTracerProvider>,
     loggers: Option<SdkLoggerProvider>,
-    exceptions: Option<Lane<Report>>,
+    off: bool,
+    exceptions: Lane<Tracked>,
     webhook: Lane<Notice>,
 }
 
@@ -87,8 +89,8 @@ fn identity(config: &Config, instance_id: &str) -> Vec<(String, String)> {
         ("service.name".to_string(), config.service.clone()),
         ("service.instance.id".to_string(), instance_id.to_string()),
         (
-            "deployment.environment".to_string(),
-            config.environment.clone(),
+            "service.version".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
         ),
     ];
     for (key, value) in &config.resource {
@@ -102,12 +104,8 @@ fn identity(config: &Config, instance_id: &str) -> Vec<(String, String)> {
 
 impl Telemetry {
     /// The instance id is read from the database, which opens after the process starts.
-    pub fn start(&self, config: &Config, instance_id: &str) -> Guard {
-        for notice in &config.notices {
-            notice.say();
-        }
+    pub fn start(&self, config: &Config, instance_id: &str, settings: &Snapshot) -> Guard {
         let pairs = identity(config, instance_id);
-        fault::capture_stacks(config.exceptions.is_some());
         let sampler = marfa_telemetry::sampler::Sampler::Ratio(config.ratio);
         let (mut tracer, mut tracers, mut loggers) = (None, None, None);
         if let Some(export) = &config.traces {
@@ -129,21 +127,27 @@ impl Telemetry {
                 Err(error) => tracing::error!(%error, "Logs could not be set up"),
             }
         }
-        let exceptions = config
-            .exceptions
-            .clone()
-            .map(|settings| sinks::exceptions(settings, pairs.clone()));
+        let exceptions = sinks::exceptions(pairs);
         let webhook = sinks::webhook(config.environment.clone());
         let _ = self.active.set(Active {
             tracer,
             tracers,
             loggers,
+            off: config.off,
             exceptions,
             webhook,
         });
+        self.follow(settings);
         Guard {
             telemetry: self.clone(),
             stopped: false,
+        }
+    }
+
+    /// A stack is taken at a fault only while the settings name somewhere to report it.
+    pub fn follow(&self, settings: &Snapshot) {
+        if let Some(active) = self.active.get() {
+            fault::capture_stacks(!active.off && settings.exception_receiver().is_some());
         }
     }
 
@@ -164,13 +168,24 @@ impl Telemetry {
     /// Nothing that fails in here reaches the request.
     pub fn finish(&self, span: Option<RequestSpan>, done: &Finished<'_>) {
         let _ = catch_unwind(AssertUnwindSafe(|| {
+            let mut trace = None;
             if let Some(RequestSpan(mut span)) = span {
                 annotate(&mut span, done);
+                let context = span.span_context();
+                if context.is_valid() {
+                    trace = Some((
+                        context.trace_id().to_string(),
+                        context.span_id().to_string(),
+                    ));
+                }
                 span.end();
             }
-            if let (Some(fault), true, Some(active)) =
-                (done.fault, done.reporting, self.active.get())
-            {
+            let settings = done.settings;
+            if let (Some(fault), true, Some(active)) = (
+                done.fault,
+                settings.get(ERROR_REPORTING_ENABLED),
+                self.active.get(),
+            ) {
                 let report = Report {
                     fault: fault.clone(),
                     request_id: done.request_id.to_string(),
@@ -178,16 +193,22 @@ impl Telemetry {
                     path: done.path.to_string(),
                     error_code: done.error_code.unwrap_or("internal_error").to_string(),
                     timestamp: done.timestamp.to_string(),
+                    trace,
                 };
-                if let Some(url) = done.webhook {
+                let private_allowed = settings.get(ALLOW_PRIVATE_ADDRESSES);
+                if let Some(url) = settings.error_notice_url() {
                     active.webhook.offer(Notice {
                         report: report.clone(),
-                        url: url.to_string(),
-                        private_allowed: done.private_allowed,
+                        url,
+                        private_allowed,
                     });
                 }
-                if let Some(lane) = &active.exceptions {
-                    lane.offer(report);
+                if let Some(receiver) = settings.exception_receiver().filter(|_| !active.off) {
+                    active.exceptions.offer(Tracked {
+                        report,
+                        receiver,
+                        private_allowed,
+                    });
                 }
             }
         }));
@@ -205,9 +226,7 @@ impl Telemetry {
         if let Some(provider) = &active.loggers {
             let _ = provider.shutdown_with_timeout(left());
         }
-        if let Some(lane) = &active.exceptions {
-            lane.flush(left());
-        }
+        active.exceptions.flush(left());
         active.webhook.flush(left());
     }
 }

@@ -77,7 +77,7 @@ fn notes(answer: &serde_json::Value) -> Vec<String> {
     }
     for switch in texts(answer, "settings_without_receiver") {
         notes.push(format!(
-            "Stored {switch}, which sends nothing until a receiver is set where Marfa runs."
+            "Stored {switch}, which sends nothing until its receiver is set."
         ));
     }
     let added = texts(answer, "enforcement_added");
@@ -172,7 +172,7 @@ mod tests {
         assert_eq!(
             notes(&answer),
             [
-                "Stored heartbeat_enabled, which sends nothing until a receiver is set where Marfa runs.",
+                "Stored heartbeat_enabled, which sends nothing until its receiver is set.",
                 "Restored the archive's enforcement settings: source_filter.",
                 "Kept this instance's own enforcement settings instead of the archive's: strict_mode, source_allowlist.",
                 "Previous instance line.",

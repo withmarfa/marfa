@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
+use marfa_telemetry::host::{Capture, capture_url};
 use serde_json::Value as Json;
 
 #[cfg(feature = "test-hooks")]
@@ -22,6 +23,10 @@ pub enum Rule {
     Text {
         max: usize,
     },
+    /// A token sent in an HTTP header: at most `max` visible ASCII characters, or nothing.
+    Token {
+        max: usize,
+    },
     /// A region name that can be part of a host name, or nothing.
     Region,
     /// A bucket name of ASCII letters, digits, dots, colons, hyphens and underscores, or nothing.
@@ -30,6 +35,9 @@ pub enum Rule {
     Endpoint,
     /// An absolute http or https URL, kept as written, or nothing.
     Url,
+    /// A PostHog host: an https URL, or an http URL on this machine, with no user name or
+    /// password, kept as written, or nothing.
+    CaptureHost,
     /// `/`-joined segments naming a folder in an object store.
     Prefix,
     /// An absolute path with no `..` in it, or nothing.
@@ -48,6 +56,13 @@ pub enum Keep {
     Secret,
     /// A secret that stays with this machine's settings, named in no archive.
     MachineSecret,
+}
+
+/// Where the server's fault reports are posted, and the token they carry.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Receiver {
+    pub url: String,
+    pub token: String,
 }
 
 #[derive(Debug)]
@@ -184,7 +199,7 @@ impl Entry {
     /// Whether a refusal must not repeat the value given: a secret, or an address that could
     /// carry a credential.
     pub fn hides_value(&self) -> bool {
-        self.is_secret() || matches!(self.rule, Rule::Endpoint | Rule::Url)
+        self.is_secret() || matches!(self.rule, Rule::Endpoint | Rule::Url | Rule::CaptureHost)
     }
 
     /// Whether an archive carries this setting's value.
@@ -223,6 +238,14 @@ impl Entry {
                 }
                 Some(kept.to_string())
             }
+            Rule::Token { max } => {
+                if text.len() > max || !text.bytes().all(|byte| byte.is_ascii_graphic()) {
+                    return Err(format!(
+                        "must be 1 to {max} visible ASCII characters, with no spaces"
+                    ));
+                }
+                Some(text.to_string())
+            }
             Rule::Region => Some(region(text.trim())?),
             Rule::Bucket => Some(bucket(text.trim())?),
             Rule::Endpoint => Some(url(text.trim(), true)?),
@@ -230,6 +253,15 @@ impl Entry {
                 if self.is_secret() { text } else { text.trim() },
                 false,
             )?),
+            Rule::CaptureHost => {
+                let host = if self.is_secret() { text } else { text.trim() };
+                capture_url(host, Capture::Events).ok_or_else(|| {
+                    "must be an https URL, or an http URL on this machine, with no user name \
+                     or password"
+                        .to_string()
+                })?;
+                Some(host.to_string())
+            }
             Rule::Prefix => Some(prefix(text.trim())?),
             Rule::Folder => Some(folder(text.trim())?),
         };
@@ -273,6 +305,9 @@ impl Entry {
             Rule::Address => "an address such as https://marfa.example, or nothing".to_string(),
             Rule::Addresses => "a list of addresses such as https://marfa.example".to_string(),
             Rule::Text { max } => format!("text of 1 to {max} characters, or nothing"),
+            Rule::Token { max } => {
+                format!("1 to {max} visible ASCII characters with no spaces, or nothing")
+            }
             Rule::Region => {
                 "a region name such as us-east-1 or auto, of letters, digits, `-` and `_`, or nothing"
                     .to_string()
@@ -286,6 +321,11 @@ impl Entry {
                 "an http or https URL with no user name or password, or nothing".to_string()
             }
             Rule::Url => "an http or https URL, or nothing".to_string(),
+            Rule::CaptureHost => {
+                "an https URL, or an http URL on this machine, with no user name or password, or \
+                 nothing"
+                    .to_string()
+            }
             Rule::Prefix => {
                 "a folder such as marfa or a/b, of letters, digits, `.`, `_` and `-`".to_string()
             }
@@ -311,10 +351,12 @@ impl Entry {
             }
             (
                 Rule::Text { .. }
+                | Rule::Token { .. }
                 | Rule::Region
                 | Rule::Bucket
                 | Rule::Endpoint
                 | Rule::Url
+                | Rule::CaptureHost
                 | Rule::Prefix
                 | Rule::Folder,
                 Json::String(text),
@@ -617,12 +659,14 @@ registry! {
     OBJECT_STORE_SECRET_ACCESS_KEY: Option<Secret> = "object_store_secret_access_key", Rule::Text { max: 4096 }, "", "The secret the object store is reached with.", MachineSecret;
     HEARTBEAT_URL: Option<Secret> = "heartbeat_url", Rule::Url, "", "Where the server sends its heartbeat, a GET request on the housekeeping schedule, so that something else can notice when the requests stop.", Secret;
     ERROR_WEBHOOK_URL: Option<Secret> = "error_webhook_url", Rule::Url, "", "Where the server posts a notice of each error it answers with a 500.", Secret;
-    ALLOW_PRIVATE_ADDRESSES: bool = "allow_private_addresses", Rule::Boolean, "false", "Whether the server may send to loopback, private and other addresses that are not public: webhooks, heartbeat_url, error_webhook_url and object_store_endpoint. Changing it needs a sign-in from the last five minutes.", Machine;
+    POSTHOG_HOST: Option<Secret> = "posthog_host", Rule::CaptureHost, "", "The PostHog host the server sends a report of each of its own faults to, for PostHog's error tracking. It needs posthog_project_token set too.", Secret;
+    POSTHOG_PROJECT_TOKEN: Option<Secret> = "posthog_project_token", Rule::Token { max: 256 }, "", "The PostHog project token the server's fault reports are sent with. It needs posthog_host set too.", Secret;
+    ALLOW_PRIVATE_ADDRESSES: bool = "allow_private_addresses", Rule::Boolean, "false", "Whether the server may send to loopback, private and other addresses that are not public: webhooks, heartbeat_url, error_webhook_url, posthog_host and object_store_endpoint. Changing it needs a sign-in from the last five minutes.", Machine;
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Rule::Boolean, "true", "Whether the rate limiter is on for the requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses.";
     RATE_LIMIT_REQUESTS: u64 = "rate_limit_requests", COUNT, "4000", "How many requests one key or app may make in each window, across every operation.";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", COUNT, "200", "How many requests one key may make in each window to the operations under `/keys`.";
     RATE_LIMIT_WINDOW_SECONDS: u64 = "rate_limit_window_seconds", UP_TO_A_DAY, "60", "How long one rate-limit window lasts, in seconds.";
-    ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Rule::Boolean, "true", "Whether the server reports its own errors to error_webhook_url and to the exception receiver set where it runs.";
+    ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Rule::Boolean, "true", "Whether the server reports its own faults to error_webhook_url and to posthog_host.";
     AUDIT_RETENTION_DAYS: u64 = "audit_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days the audit log is kept. 0 keeps it for ever.";
     UNAPPROVED_APP_RETENTION_HOURS: u64 = "unapproved_app_retention_hours", Rule::Whole { min: 0, max: 876_000 }, "1", "How many hours an app that registered itself and holds no grant is kept. 0 keeps it for ever.";
     REVOKED_GRANT_RETENTION_DAYS: u64 = "revoked_grant_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days a revoked app grant is kept. 0 keeps it for ever.";
@@ -783,6 +827,20 @@ impl Snapshot {
             .map(|url| url.expose().to_string())
     }
 
+    /// Where a report of a fault goes: `posthog_host` with its token, while error reporting is
+    /// on.
+    pub fn exception_receiver(&self) -> Option<Receiver> {
+        if !self.get(ERROR_REPORTING_ENABLED) {
+            return None;
+        }
+        let host = self.get(POSTHOG_HOST)?;
+        let token = self.get(POSTHOG_PROJECT_TOKEN)?;
+        Some(Receiver {
+            url: capture_url(host.expose(), Capture::Events)?,
+            token: token.expose().to_string(),
+        })
+    }
+
     /// Whether `entry`, a secret, holds a value now.
     pub fn secret_set(&self, entry: &Entry) -> bool {
         self.values.get(entry.key).is_some_and(Value::is_set_secret)
@@ -799,6 +857,17 @@ mod tests {
             assert!(entry.parse(entry.default).is_ok(), "{}", entry.key);
         }
         each_kind_reads_its_rule();
+    }
+
+    #[test]
+    fn a_project_token_is_taken_only_as_header_text() {
+        let token = POSTHOG_PROJECT_TOKEN.entry;
+        assert!(token.parse("phc_Ab-9_x.y").is_ok());
+        assert!(token.parse("").is_ok());
+        for refused in ["phc_é", "phc a", "phc\u{7f}", &"p".repeat(257)] {
+            let refusal = token.parse(refused).expect_err(refused);
+            assert!(!refusal.contains(refused), "{refusal}");
+        }
     }
 
     fn spec_table(heading: &str) -> Vec<Vec<String>> {
@@ -982,6 +1051,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_posthog_host_is_https_or_on_this_machine_with_no_login() {
+        let host = POSTHOG_HOST.entry;
+        let kept = |text: &str| {
+            host.secret_text(&Json::from(text))
+                .map(|secret| secret.map(|secret| secret.expose().to_string()))
+        };
+        for good in [
+            "https://eu.i.posthog.com",
+            "https://proxy.example/ingest/",
+            "http://127.0.0.1:8123",
+            "http://localhost",
+            "http://[::1]:9",
+        ] {
+            assert_eq!(kept(good), Ok(Some(good.to_string())), "{good}");
+        }
+        for bad in [
+            "http://eu.i.posthog.com",
+            "http://10.0.0.5",
+            "ftp://eu.i.posthog.com",
+            "https://user:hush@eu.i.posthog.com",
+            "https://user@eu.i.posthog.com",
+            "eu.i.posthog.com",
+            " https://eu.i.posthog.com",
+        ] {
+            let refused = kept(bad).expect_err(bad);
+            assert!(!refused.contains("posthog.com"), "{refused}");
+            assert!(!refused.contains("hush"), "{refused}");
+        }
+        assert_eq!(kept(""), Ok(None));
+        assert!(host.hides_value());
+    }
+
+    #[test]
+    fn the_exception_receiver_needs_both_settings_and_reporting_on() {
+        let secret = |text: &str| Value::Secret(Some(Secret::new(text.to_string())));
+        let host = ("posthog_host", secret("https://eu.i.posthog.com/"));
+        let token = ("posthog_project_token", secret("phc_x"));
+        let resolve = |seeded: &[(&'static str, Value)], rows: &[(String, String)]| {
+            Snapshot::resolve(&seeded.iter().cloned().collect(), None, rows, 0)
+        };
+        assert!(
+            resolve(std::slice::from_ref(&host), &[])
+                .exception_receiver()
+                .is_none()
+        );
+        assert!(
+            resolve(std::slice::from_ref(&token), &[])
+                .exception_receiver()
+                .is_none()
+        );
+        let both = resolve(&[host.clone(), token.clone()], &[]).exception_receiver();
+        assert!(both.is_some_and(|receiver| receiver.url
+            == "https://eu.i.posthog.com/i/v1/analytics/events"
+            && receiver.token == "phc_x"));
+        let off = [("error_reporting_enabled".to_string(), "false".to_string())];
+        assert!(
+            resolve(&[host.clone(), token.clone()], &off)
+                .exception_receiver()
+                .is_none()
+        );
+        // A restored host sealed with a key this server lacks reads as unset.
+        let sealed_elsewhere = [("posthog_host".to_string(), "sealed".to_string())];
+        let restored = resolve(std::slice::from_ref(&token), &sealed_elsewhere);
+        assert_eq!(restored.unreadable, ["posthog_host"]);
+        assert!(restored.exception_receiver().is_none());
+    }
+
     /// `a<c>b` for each printable ASCII character `allowed` does not take.
     fn with_each_other_character(allowed: fn(char) -> bool) -> Vec<String> {
         (' '..='~')
@@ -1155,7 +1292,7 @@ mod tests {
                     problems.push(format!("{key}: range against {min} to {max}"));
                 }
             }
-            Rule::Text { max } if schema["maxLength"] != max => {
+            Rule::Text { max } | Rule::Token { max } if schema["maxLength"] != max => {
                 problems.push(format!("{key}: maxLength against {max}"));
             }
             Rule::Region if schema["maxLength"] != REGION_LONGEST => {
@@ -1167,7 +1304,7 @@ mod tests {
             Rule::Addresses if schema["items"]["type"] != "string" => {
                 problems.push(format!("{key}: items are not text"));
             }
-            Rule::Endpoint | Rule::Url if schema["format"] != "uri" => {
+            Rule::Endpoint | Rule::Url | Rule::CaptureHost if schema["format"] != "uri" => {
                 problems.push(format!("{key}: not a uri"));
             }
             _ => {}

@@ -122,8 +122,19 @@ pub fn now() -> String {
     time::written(jiff::Timestamp::now().as_millisecond())
 }
 
+/// A read answered well within this is in the request log only, not exported.
+const QUIET_READ_UNDER_MS: f64 = 1_000.0;
+
+/// Quick successful reads, health checks and polling among them, would be nearly every
+/// exported record.
+fn exported(record: &Request<'_>) -> bool {
+    let read = matches!(record.method, "GET" | "HEAD");
+    let answered = (200..300).contains(&record.status) || record.status == 304;
+    !(read && answered && record.duration_ms < QUIET_READ_UNDER_MS)
+}
+
 pub fn request(record: &Request<'_>) {
-    if logs().is_on() {
+    if logs().is_on() && exported(record) {
         tracing::info!(
             target: REQUEST_TARGET,
             request_id = record.request_id,
@@ -215,6 +226,52 @@ pub(crate) fn captured<R>(f: impl FnOnce() -> R) -> (R, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_read_that_went_well_and_quickly_stays_unexported() {
+        let record = |method, path, status, duration_ms| Request {
+            timestamp: "2026-11-19T10:00:00.000Z",
+            request_id: "r",
+            method,
+            transport: "http",
+            path,
+            route: None,
+            status,
+            duration_ms,
+            key_id: None,
+            error_code: None,
+        };
+        for quiet in [
+            record("GET", "/items", 200, 3.0),
+            record("HEAD", "/items/x", 304, 999.9),
+            record("GET", "/health", 200, 2.0),
+        ] {
+            assert!(
+                !exported(&quiet),
+                "{} {} {}",
+                quiet.method,
+                quiet.path,
+                quiet.status
+            );
+        }
+        for kept in [
+            record("GET", "/health", 503, 2.0),
+            record("POST", "/health", 405, 2.0),
+            record("GET", "/items", 404, 3.0),
+            record("GET", "/items", 500, 3.0),
+            record("GET", "/items", 200, 1_000.0),
+            record("POST", "/items", 201, 3.0),
+            record("DELETE", "/items/x", 204, 3.0),
+        ] {
+            assert!(
+                exported(&kept),
+                "{} {} {}",
+                kept.method,
+                kept.path,
+                kept.status
+            );
+        }
+    }
 
     #[test]
     fn a_record_time_keeps_microseconds_and_a_stamp_milliseconds() {

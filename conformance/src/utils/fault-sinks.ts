@@ -8,7 +8,8 @@ import { expect } from "vitest";
  * spans it exports over OTLP, and the exceptions it sends to error tracking.
  * One receiver on the loopback address is all four, so a fixture boots its
  * server with {@link FaultSinks.env} and reads what arrived. The command line
- * posts a single event to the capture path where the server posts a batch.
+ * posts a single event to PostHog's capture path, where the server posts a
+ * batch to capture v1.
  */
 export interface FaultSinks {
   /**
@@ -23,6 +24,8 @@ export interface FaultSinks {
   readonly traces: Record<string, unknown>[];
   readonly logRecords: Record<string, unknown>[];
   readonly trackedErrors: Record<string, unknown>[];
+  /** The headers of each batch the server posted to capture v1, in order. */
+  readonly trackedHeaders: Record<string, string | string[] | undefined>[];
   sentLogRecords(): {
     body: unknown;
     attributes: Record<string, unknown>;
@@ -34,7 +37,12 @@ export interface FaultSinks {
   /** The `$exception` events error tracking was sent. */
   sentExceptions(): {
     event: string;
+    uuid?: string;
+    distinct_id?: string;
+    timestamp?: string;
+    options?: { process_person_profile?: boolean };
     properties: {
+      [property: string]: unknown;
       request_id?: string;
       method?: string;
       path?: string;
@@ -53,6 +61,9 @@ export interface FaultSinks {
  */
 export const COLLECTOR_BUDGET_MS = 60_000;
 export const COLLECTOR_TEST_TIMEOUT_MS = COLLECTOR_BUDGET_MS + 15_000;
+
+/** Where the server posts its exceptions under the PostHog host: capture v1. */
+export const CAPTURE_V1 = "/i/v1/analytics/events";
 
 type OtlpValue = {
   stringValue?: string;
@@ -85,6 +96,7 @@ export async function startFaultSinks(): Promise<FaultSinks> {
   const traces: Record<string, unknown>[] = [];
   const logRecords: Record<string, unknown>[] = [];
   const trackedErrors: Record<string, unknown>[] = [];
+  const trackedHeaders: FaultSinks["trackedHeaders"][number][] = [];
   const receiver: Server = createServer((request, response) => {
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
@@ -100,8 +112,10 @@ export async function startFaultSinks(): Promise<FaultSinks> {
         const path = request.url ?? "";
         if (path.startsWith("/v1/traces")) traces.push(parsed);
         else if (path.startsWith("/v1/logs")) logRecords.push(parsed);
-        else if (path.startsWith("/batch")) trackedErrors.push(parsed);
-        else if (path.startsWith("/i/v0/e/"))
+        else if (path.startsWith(CAPTURE_V1)) {
+          trackedErrors.push(parsed);
+          trackedHeaders.push({ ...request.headers });
+        } else if (path.startsWith("/i/v0/e/"))
           trackedErrors.push({ batch: [parsed] });
         else notifications.push(parsed);
       } finally {
@@ -131,6 +145,7 @@ export async function startFaultSinks(): Promise<FaultSinks> {
     traces,
     logRecords,
     trackedErrors,
+    trackedHeaders,
     sentLogRecords() {
       type Batch = {
         resourceLogs: {

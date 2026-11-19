@@ -78,8 +78,7 @@ function start(
   for (const [name, value] of Object.entries(process.env)) {
     const own =
       name.startsWith("MARFA_") && name !== "MARFA_SERVER_RELEASE_BIN";
-    const reporting = /^(OTEL_|MARFA_OTEL_|MARFA_POSTHOG_)/.test(name);
-    if (!own && !reporting) env[name] = value;
+    if (!own && !name.startsWith("OTEL_")) env[name] = value;
   }
   env.OTEL_SDK_DISABLED = "true";
   Object.assign(env, {

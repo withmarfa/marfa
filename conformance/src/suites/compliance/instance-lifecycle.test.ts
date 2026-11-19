@@ -544,14 +544,14 @@ describe("starting with a setting outside its rule", () => {
       const secret = "padded-secret-value";
 
       const lines = await refusedOverSettings({
-        MARFA_POSTHOG_PROJECT_TOKEN: ` ${secret} `,
+        MARFA_KEY_SALT: ` ${secret} `,
         MARFA_AUDIT_RETENTION_DAYS: "36501",
       });
 
       expect([...lines].sort()).toEqual(
         [
           'MARFA_AUDIT_RETENTION_DAYS must be a whole number, from 0 to 36500 (got "36501")',
-          "MARFA_POSTHOG_PROJECT_TOKEN has whitespace around it, which would be part of the secret; remove it",
+          "MARFA_KEY_SALT has whitespace around it, which would be part of the secret; remove it",
         ].sort(),
       );
       expect(lines.join("\n")).not.toContain(secret);
