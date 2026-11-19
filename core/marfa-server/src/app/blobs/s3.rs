@@ -1074,11 +1074,12 @@ mod tests {
         }
         assert!(asked.lock().unwrap().is_empty());
         let s3 = s3.named(Uuid::now_v7().to_string());
-        assert!(s3.refused_as_private(), "the judgment carries over to the named store");
+        assert!(
+            s3.refused_as_private(),
+            "the judgment carries over to the named store"
+        );
 
-        faults
-            .set(&fault, Some("93.184.216.34>127.0.0.1"))
-            .unwrap();
+        faults.set(&fault, Some("93.184.216.34>127.0.0.1")).unwrap();
         assert!(matches!(s3.marker().await, Marker::None));
         assert!(!s3.refused_as_private());
         assert_eq!(*asked.lock().unwrap(), [format!("{host}:{port}")]);

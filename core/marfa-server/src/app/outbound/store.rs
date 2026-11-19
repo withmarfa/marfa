@@ -403,7 +403,11 @@ mod tests {
         let faults = Arc::new(Faults::default());
         let judgment = Arc::new(Judgment::default());
         let service = RequestsJudged {
-            client: client(Duration::from_secs(2), Arc::new(PublicNames(faults.clone()))).unwrap(),
+            client: client(
+                Duration::from_secs(2),
+                Arc::new(PublicNames(faults.clone())),
+            )
+            .unwrap(),
             faults: faults.clone(),
             judgment: judgment.clone(),
         };
@@ -415,9 +419,7 @@ mod tests {
         assert!(!judgment.refused());
         assert_eq!(requests.load(Ordering::SeqCst), 1);
 
-        faults
-            .set("resolve:store.test", Some("127.0.0.1"))
-            .unwrap();
+        faults.set("resolve:store.test", Some("127.0.0.1")).unwrap();
         let refused = service.call(get(&url)).await.unwrap_err();
         assert!(refused_as_private(&refused), "{refused}");
         assert!(judgment.refused());
@@ -437,11 +439,18 @@ mod tests {
         let judgment = Arc::new(Judgment::default());
         judgment.record(true);
         let service = RequestsJudged {
-            client: client(Duration::from_secs(2), Arc::new(PublicNames(faults.clone()))).unwrap(),
+            client: client(
+                Duration::from_secs(2),
+                Arc::new(PublicNames(faults.clone())),
+            )
+            .unwrap(),
             faults,
             judgment: judgment.clone(),
         };
-        let failed = service.call(get("http://store.invalid:9/b/k")).await.unwrap_err();
+        let failed = service
+            .call(get("http://store.invalid:9/b/k"))
+            .await
+            .unwrap_err();
         assert_eq!(failed.kind(), HttpErrorKind::Connect);
         assert!(!refused_as_private(&failed), "{failed}");
         assert!(judgment.refused());

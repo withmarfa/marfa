@@ -2579,7 +2579,10 @@ impl Instance {
             .follow_stores(marfa_server::app::blobs::Retry::Trouble)
             .await
             .unwrap();
-        self.object_store().await["id"].as_str().unwrap().to_string()
+        self.object_store().await["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
     }
 
     /// The one attached object store, as `GET /blobs/stores` lists it.
@@ -2644,7 +2647,12 @@ impl Instance {
         );
         for method in [Method::GET, Method::POST] {
             let refused = self.call(method, "/backups", None).await;
-            assert_eq!(refused.status, StatusCode::SERVICE_UNAVAILABLE, "{}", refused.body);
+            assert_eq!(
+                refused.status,
+                StatusCode::SERVICE_UNAVAILABLE,
+                "{}",
+                refused.body
+            );
             assert_eq!(refused.code(), "blob_store_unavailable");
         }
         assert_ne!(self.link_host(held).await, host);
@@ -2653,7 +2661,11 @@ impl Instance {
         self.run("blob-replicate").await;
         assert_eq!(self.copies(&later).await.len(), 1);
         self.run("blob-integrity").await;
-        assert_eq!(s3.paths_as_sent().len(), reached, "nothing reached the store");
+        assert_eq!(
+            s3.paths_as_sent().len(),
+            reached,
+            "nothing reached the store"
+        );
     }
 }
 
@@ -2662,7 +2674,9 @@ async fn a_store_whose_lookup_turns_private_is_unusable_until_a_request_is_allow
     let s3 = FakeS3::start().await;
     let instance = Instance::start(&[]).await;
     instance.arm("resolve:store.test", Some(PUBLIC_HOST));
-    let id = instance.name_store_at(&s3, "store.test", "blobs", false).await;
+    let id = instance
+        .name_store_at(&s3, "store.test", "blobs", false)
+        .await;
     let store = store_at(&s3, "store.test");
     let held = instance.held_in_store(&store).await;
     assert!(instance.object_store().await["unusable_reason"].is_null());
@@ -2693,7 +2707,9 @@ async fn a_store_whose_lookup_turns_private_is_unusable_until_a_request_is_allow
 async fn a_store_the_switch_stops_reaching_keeps_its_identity_and_is_used_again_once_on() {
     let s3 = FakeS3::start().await;
     let instance = Instance::start(&[]).await;
-    let id = instance.name_store_at(&s3, "localhost", "blobs", true).await;
+    let id = instance
+        .name_store_at(&s3, "localhost", "blobs", true)
+        .await;
     let store = store_at(&s3, "localhost");
     let held = instance.held_in_store(&store).await;
 
@@ -2728,18 +2744,28 @@ async fn a_store_the_switch_stops_reaching_keeps_its_identity_and_is_used_again_
 async fn two_stores_at_one_bucket_and_prefix_keep_their_identities_through_a_refusal() {
     let s3 = FakeS3::start().await;
     let instance = Instance::start(&[]).await;
-    let first = instance.name_store_at(&s3, "localhost", "blobs", true).await;
+    let first = instance
+        .name_store_at(&s3, "localhost", "blobs", true)
+        .await;
     let marker = s3.object(&marker_key("blobs")).unwrap();
     s3.remove_object(&marker_key("blobs"));
-    instance.name_store_at(&s3, "localhost", "other", true).await;
-    let second = instance.name_store_at(&s3, "localhost", "blobs", true).await;
+    instance
+        .name_store_at(&s3, "localhost", "other", true)
+        .await;
+    let second = instance
+        .name_store_at(&s3, "localhost", "blobs", true)
+        .await;
     assert_ne!(second, first, "a marker the store lost names a new store");
     // The first store's marker returns, so the store attached first is the one in use again,
     // and the second, attached later, is detached.
     s3.put_object(&marker_key("blobs"), &marker);
-    instance.name_store_at(&s3, "localhost", "other", true).await;
+    instance
+        .name_store_at(&s3, "localhost", "other", true)
+        .await;
     assert_eq!(
-        instance.name_store_at(&s3, "localhost", "blobs", true).await,
+        instance
+            .name_store_at(&s3, "localhost", "blobs", true)
+            .await,
         first
     );
 

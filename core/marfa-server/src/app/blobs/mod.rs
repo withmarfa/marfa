@@ -193,14 +193,17 @@ impl Attached {
         if let Some(trouble) = &self.trouble {
             return Some(trouble.clone());
         }
-        self.s3.as_ref().filter(|s3| s3.refused_as_private()).map(|s3| {
-            format!(
-                "The object store {} is at an address that is not public, and \
+        self.s3
+            .as_ref()
+            .filter(|s3| s3.refused_as_private())
+            .map(|s3| {
+                format!(
+                    "The object store {} is at an address that is not public, and \
                  allow_private_addresses is false. {}",
-                s3.locator(),
-                until_usable("object store")
-            )
-        })
+                    s3.locator(),
+                    until_usable("object store")
+                )
+            })
     }
 
     /// The object store, while the private-address guard did not refuse the latest request.
@@ -673,7 +676,9 @@ impl Blobs {
     pub async fn recheck(&self) {
         let attached = self.attachment();
         if let Some(s3) = attached.s3.as_ref().filter(|s3| s3.refused_as_private())
-            && tokio::time::timeout(self.check(), s3.marker()).await.is_err()
+            && tokio::time::timeout(self.check(), s3.marker())
+                .await
+                .is_err()
         {
             tracing::warn!("The object store did not answer a check of its marker in time");
         }
@@ -1868,7 +1873,10 @@ impl App {
             && let Some(object) = found.object_in(&Store::S3(s3.clone()))
         {
             if s3.refused_as_private() {
-                if found.object_in(&Store::Disk(self.blobs.disk.clone())).is_none() {
+                if found
+                    .object_in(&Store::Disk(self.blobs.disk.clone()))
+                    .is_none()
+                {
                     return Err(unavailable());
                 }
                 return self.instance_link(&found, ttl);
