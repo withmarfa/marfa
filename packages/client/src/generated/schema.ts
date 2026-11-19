@@ -30220,7 +30220,7 @@ export interface operations {
                      */
                     expires_at?: string;
                     /**
-                     * @description `true` if the key is the owner's, not the app's you act for: it carries no `oauth_client_id`, and disconnecting or narrowing that app leaves it working. From an app, it needs `keys.manage`.
+                     * @description `true` if the key is the owner's, not the app's you act for: it carries no `oauth_client_id`, and disconnecting or narrowing that app leaves it working. From an app, or a key an app made, it needs `keys.manage`.
                      * @default false
                      */
                     owner_key?: boolean;
@@ -30861,7 +30861,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens an app's key, a key with `narrow_only`, which also refuses a changed `enforcement_override`, or any key through `keys.manage` alone; or it names `enforcement_override` without `config.manage`. `details` names what's missing. */
+            /** @description - `forbidden`: you don't hold `keys.mint` and aren't the local command; the body gives the key more than you hold or an `expires_at` later than yours; it widens or lengthens an app's key, any key when the body names `narrow_only`, which also refuses a changed `enforcement_override`, or any key through `keys.manage` alone; or it names `enforcement_override` without `config.manage`. `details` names what's missing. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

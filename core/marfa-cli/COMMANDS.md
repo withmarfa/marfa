@@ -1903,7 +1903,7 @@ Mint a key. Needs `keys.mint` or local authority.
 
 The key holds exactly what the flags name. A permission, a map entry or a claim each names a part of what it holds, and a part left unnamed is held as nothing. `--all-access` names every permission and every map at its widest. With none named, a key sent to a server takes the caller's whole set, and through `--socket` the command is refused, since the socket's authority has no limit to take.
 
-A key made by a credential that holds `keys.manage` is the owner's: it carries no app, so it keeps working when the app sign-in that made it is disconnected or narrowed. With `keys.manage` the key can also claim any source but those starting `oauth:` or `restored:`.
+A key made through a sign-in or a key that holds `keys.manage`, as `marfa login`'s does, is the owner's: it carries no app, so it keeps working when the app sign-in that made it is disconnected or narrowed. An app's access token passed with `--key` or `MARFA_API_KEY` makes an app's key. With `keys.manage`, `--claim` can name any source but one starting `oauth:` or `restored:`.
 
 ```text
 marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
