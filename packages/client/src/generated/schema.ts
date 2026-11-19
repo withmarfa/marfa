@@ -5341,6 +5341,8 @@ export interface components {
              * @example 2026-10-03T09:30:00.000Z
              */
             detached_at: string | null;
+            /** @description Why Marfa can't use the attached store right now, for a person to read, or `null` while it can. The store stays attached, and Marfa copies no file to it and reads none from it until it can. */
+            unusable_reason: string | null;
         };
         /** @description An error response. */
         BlobNotFoundRefusal: {
@@ -22060,7 +22062,8 @@ export interface operations {
                      *           "kind": "disk",
                      *           "locator": "/var/lib/marfa/blobs",
                      *           "attached_at": "2026-10-03T09:34:00.198Z",
-                     *           "detached_at": null
+                     *           "detached_at": null,
+                     *           "unusable_reason": null
                      *         }
                      *       ],
                      *       "next_cursor": null,

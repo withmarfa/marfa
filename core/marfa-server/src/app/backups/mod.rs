@@ -508,6 +508,9 @@ pub(crate) enum Destination {
 
 impl Destination {
     fn of(attached: &Attached) -> Option<Destination> {
+        if attached.refused_as_private() {
+            return None;
+        }
         match attached.kept()? {
             Kept::Bucket { s3, .. } => Some(Destination::Bucket(s3)),
             Kept::Folder(folder) => Some(Destination::Folder(folder)),
@@ -517,7 +520,7 @@ impl Destination {
     /// For an attachment of a named store, which is never a missing destination.
     fn required(attached: &Attached) -> Result<Destination> {
         Destination::of(attached).ok_or_else(|| match attached.trouble() {
-            Some(trouble) => Refusal::new(Code::BlobStoreUnavailable, trouble.to_string()),
+            Some(trouble) => Refusal::new(Code::BlobStoreUnavailable, trouble),
             None => unsettled(),
         })
     }
@@ -1008,6 +1011,7 @@ impl App {
 
     /// The settings are read again after the follow, which may outlast several changes to them.
     async fn backup_stores(self: &Arc<App>) -> Result<Arc<Attached>> {
+        self.blobs.recheck().await;
         let wanted = self.named_destination()?;
         let current = self.blobs.attachment();
         if current.is(&wanted) && self.blobs.settled() {
@@ -1571,7 +1575,7 @@ impl App {
             store_trouble(destination, looked, refused)
         });
         let unusable = match (&destination, &attachment) {
-            (None, Some(Ok(attached))) => attached.trouble().map(str::to_string),
+            (None, Some(Ok(attached))) => attached.trouble(),
             (None, Some(Err(unsettled))) => Some(unsettled.to_string()),
             _ => None,
         };

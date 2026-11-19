@@ -414,6 +414,7 @@ fn refusal_to_copy(store: &Store, why: Option<&str>) -> String {
 
 /// Keep a failed settle visible even when file copying succeeds.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
+    app.blobs.recheck().await;
     let unsettled = match app.settle_stores(super::Retry::Settle).await {
         Ok(()) => None,
         Err(refused) => {

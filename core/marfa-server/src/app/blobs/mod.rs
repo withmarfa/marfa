@@ -179,10 +179,38 @@ pub struct Attached {
     trouble: Option<String>,
 }
 
+/// What follows an object store's or backup folder's trouble, in the owner's words.
+fn until_usable(place: &str) -> String {
+    format!(
+        "Until the {place} can be used, no file is copied there, no backup is taken and no file \
+         is purged."
+    )
+}
+
 impl Attached {
-    /// Why the store the settings name is not attached, in the owner's words.
-    pub fn trouble(&self) -> Option<&str> {
-        self.trouble.as_deref()
+    /// Why the store the settings name cannot be used now, in the owner's words.
+    pub fn trouble(&self) -> Option<String> {
+        if let Some(trouble) = &self.trouble {
+            return Some(trouble.clone());
+        }
+        self.s3.as_ref().filter(|s3| s3.refused_as_private()).map(|s3| {
+            format!(
+                "The object store {} is at an address that is not public, and \
+                 allow_private_addresses is false. {}",
+                s3.locator(),
+                until_usable("object store")
+            )
+        })
+    }
+
+    /// The object store, while the private-address guard did not refuse the latest request.
+    fn usable_s3(&self) -> Option<&Arc<S3>> {
+        self.s3.as_ref().filter(|s3| !s3.refused_as_private())
+    }
+
+    /// Whether the object store attached is one the private-address guard refused just now.
+    pub(crate) fn refused_as_private(&self) -> bool {
+        self.s3.as_ref().is_some_and(|s3| s3.refused_as_private())
     }
 
     /// The store backups and file copies go to, where one is attached.
@@ -199,7 +227,7 @@ impl Attached {
 
     /// Whether this is the store `wanted` names, and could be used.
     pub(crate) fn is(&self, wanted: &Wanted) -> bool {
-        self.wanted == *wanted && self.trouble.is_none()
+        self.wanted == *wanted && self.trouble().is_none()
     }
 
     /// Lets another server take the backup folder this attachment opened.
@@ -237,10 +265,7 @@ impl Attached {
             wanted,
             s3: None,
             folder: None,
-            trouble: Some(format!(
-                "{message}. Until the {place} can be used, no file is copied there, no backup is \
-                 taken and no file is purged."
-            )),
+            trouble: Some(format!("{message}. {}", until_usable(place))),
         }
     }
 }
@@ -278,32 +303,12 @@ fn folder_missing(root: &Path, why: &str) -> Failure {
     ))
 }
 
-enum Untaken {
-    Failed(Failure),
-    /// The private-address guard refused its address, which only a running server can allow.
-    Private(Failure),
-}
-
-impl From<Failure> for Untaken {
-    fn from(failure: Failure) -> Untaken {
-        Untaken::Failed(failure)
-    }
-}
-
-impl Untaken {
-    fn failure(self) -> Failure {
-        match self {
-            Untaken::Failed(failure) | Untaken::Private(failure) => failure,
-        }
-    }
-}
-
 /// With `unfilled`, only a store the server kept copies in may refill the folder.
 async fn object_store(
     db: &Db,
     settings: &ObjectStoreSettings,
     unfilled: Option<&Path>,
-) -> std::result::Result<S3, Untaken> {
+) -> std::result::Result<S3, Failure> {
     let refused =
         |what: String| Failure::start(format!("The object store {} {what}", settings.locator()));
     let bucket = S3::new(settings, String::new(), db.faults()).map_err(started)?;
@@ -313,13 +318,6 @@ async fn object_store(
     };
     let unknown = ", and the object store is not one the server has kept copies in";
     match marker {
-        Marker::Private(error) => {
-            tracing::warn!(%error, "The object store's address is not public");
-            Err(Untaken::Private(refused(
-                "is at an address that is not public, and allow_private_addresses is false"
-                    .to_string(),
-            )))
-        }
         Marker::Id(id) => {
             if let Some(root) = unfilled {
                 let named = id.clone();
@@ -328,31 +326,33 @@ async fn object_store(
                     .await
                     .map_err(started)?;
                 if !kept_copies {
-                    return Err(folder_missing(root, unknown).into());
+                    return Err(folder_missing(root, unknown));
                 }
             }
-            Ok(S3::new(settings, id, db.faults()).map_err(started)?)
+            Ok(bucket.named(id))
         }
         Marker::None => {
             if let Some(root) = unfilled {
-                return Err(folder_missing(root, unknown).into());
+                return Err(folder_missing(root, unknown));
             }
-            let s3 = S3::new(settings, Uuid::now_v7().to_string(), db.faults()).map_err(started)?;
+            let s3 = bucket.named(Uuid::now_v7().to_string());
             match tokio::time::timeout(CHECK_DEADLINE, s3.mark()).await {
                 Ok(Ok(())) => Ok(s3),
                 Ok(Err(error)) => Err(refused(format!(
                     "holds no store marker and took none: {}",
                     upkeep::object_store_said(&error)
-                ))
-                .into()),
-                Err(_) => {
-                    Err(refused("holds no store marker and took none in time".to_string()).into())
-                }
+                ))),
+                Err(_) => Err(refused(
+                    "holds no store marker and took none in time".to_string(),
+                )),
             }
         }
         Marker::Silent(error) => {
             if let Some(root) = unfilled {
-                return Err(folder_missing(root, ", and the object store did not answer").into());
+                return Err(folder_missing(
+                    root,
+                    ", and the object store did not answer",
+                ));
             }
             let locator = settings.locator();
             let recorded = db
@@ -362,13 +362,12 @@ async fn object_store(
             match recorded {
                 Some(id) => {
                     tracing::warn!(%error, "The object store did not answer; its copies wait");
-                    Ok(S3::new(settings, id, db.faults()).map_err(started)?)
+                    Ok(bucket.named(id))
                 }
                 None => Err(refused(format!(
                     "did not answer: {}",
                     upkeep::object_store_said(&error)
-                ))
-                .into()),
+                ))),
             }
         }
         Marker::Refused(error) => {
@@ -376,8 +375,7 @@ async fn object_store(
             Err(refused(format!(
                 "did not say which store it is: {}",
                 upkeep::object_store_said(&error)
-            ))
-            .into())
+            )))
         }
     }
 }
@@ -450,7 +448,7 @@ async fn taking(
                 folder: None,
                 trouble: None,
             },
-            Err(untaken) => Attached::troubled(wanted, untaken.failure()),
+            Err(failure) => Attached::troubled(wanted, failure),
         },
         Wanted::Folder(root) => {
             let (checked, kept) = (root.clone(), kept.to_vec());
@@ -486,7 +484,8 @@ async fn taking(
     }
 }
 
-/// The owner needs a running server to correct the destination settings.
+/// A store setting that does not read or cannot make the store's host does not refuse the start:
+/// only a running server can correct it.
 async fn refilling(db: &Db, wanted: Wanted, root: &Path) -> std::result::Result<Attached, Failure> {
     let failure = match &wanted {
         Wanted::Bucket(settings) => match caught(object_store(db, settings, Some(root))).await {
@@ -498,8 +497,7 @@ async fn refilling(db: &Db, wanted: Wanted, root: &Path) -> std::result::Result<
                     trouble: None,
                 });
             }
-            Ok(Err(Untaken::Private(failure))) => failure,
-            Ok(Err(Untaken::Failed(refused))) => return Err(refused),
+            Ok(Err(refused)) => return Err(refused),
             Err(_) => client_failed(),
         },
         Wanted::Unreadable(keys) => does_not_read(keys),
@@ -577,7 +575,7 @@ impl Blobs {
             }
             None => (attach(db, wanted, instance, &kept).await, None),
         };
-        if let Some(trouble) = &attached.trouble {
+        if let Some(trouble) = attached.trouble() {
             tracing::error!("{trouble}");
         }
         let folder_opened = away.is_none();
@@ -665,9 +663,20 @@ impl Blobs {
         Ok(attached)
     }
 
-    /// Why the store the settings name is not in use, in the owner's words.
+    /// Why the store the settings name cannot be used now, in the owner's words.
     pub fn trouble(&self) -> Option<String> {
-        self.attachment().trouble().map(str::to_string)
+        self.attachment().trouble()
+    }
+
+    /// While the private-address guard refuses the object store in use, asks the store for its
+    /// marker, so a request the guard allows again ends the refusal.
+    pub async fn recheck(&self) {
+        let attached = self.attachment();
+        if let Some(s3) = attached.s3.as_ref().filter(|s3| s3.refused_as_private())
+            && tokio::time::timeout(self.check(), s3.marker()).await.is_err()
+        {
+            tracing::warn!("The object store did not answer a check of its marker in time");
+        }
     }
 
     /// How long a store is given to answer.
@@ -675,9 +684,9 @@ impl Blobs {
         self.faults.store_check_deadline().unwrap_or(CHECK_DEADLINE)
     }
 
-    /// The object store, where one is in use.
+    /// The object store, where one is in use and the private-address guard allows it.
     pub fn s3(&self) -> Option<Arc<S3>> {
-        self.attached.load().s3.clone()
+        self.attached.load().usable_s3().cloned()
     }
 
     /// The backup folder, where one is in use.
@@ -743,7 +752,7 @@ impl Blobs {
     /// Whether a blob is copied to another store than the disk.
     pub fn replicates(&self) -> bool {
         let attached = self.attached.load();
-        attached.s3.is_some() || attached.folder.is_some()
+        attached.usable_s3().is_some() || attached.folder.is_some()
     }
 
     /// What a blob fault makes `store` read of `hash`; only the disk store is ever faulted.
@@ -754,7 +763,7 @@ impl Blobs {
         }
     }
 
-    /// The attached stores, the disk first.
+    /// The attached stores the server may ask, the disk first.
     fn attached(&self) -> Vec<Store> {
         let attached = self.attached.load();
         std::iter::once(Store::Disk(self.disk.clone()))
@@ -764,7 +773,7 @@ impl Blobs {
                     .iter()
                     .map(|folder| Store::Folder(folder.files().clone())),
             )
-            .chain(attached.s3.iter().map(|s3| Store::S3(s3.clone())))
+            .chain(attached.usable_s3().map(|s3| Store::S3(s3.clone())))
             .collect()
     }
 
@@ -1459,7 +1468,7 @@ impl App {
                 continue;
             };
             blobs.record_doubted.store(false, Ordering::SeqCst);
-            match &next.trouble {
+            match next.trouble() {
                 Some(trouble) => tracing::error!("{trouble}"),
                 None => tracing::info!("The store beside the disk follows the settings"),
             }
@@ -1850,12 +1859,20 @@ impl App {
         Err(unavailable())
     }
 
-    /// The object store's own link while it holds a copy, else the instance's.
+    /// The object store's own link while it holds a copy, else the instance's. While the
+    /// private-address guard refuses the store, only a copy on the disk is linked.
     pub async fn mint_link(&self, caller: &Caller, hash: &Hash, ttl: u64) -> Result<Link> {
         let found = self.find_blob(caller, hash).await?;
-        if let Some(s3) = &self.blobs.s3()
+        let attached = self.blobs.attachment();
+        if let Some(s3) = &attached.s3
             && let Some(object) = found.object_in(&Store::S3(s3.clone()))
         {
+            if s3.refused_as_private() {
+                if found.object_in(&Store::Disk(self.blobs.disk.clone())).is_none() {
+                    return Err(unavailable());
+                }
+                return self.instance_link(&found, ttl);
+            }
             let lifetime = Duration::from_secs(ttl);
             return match s3.link(object, lifetime, self.blobs.check()).await {
                 Ok(url) => Ok(Link {
@@ -1868,6 +1885,10 @@ impl App {
                 }
             };
         }
+        self.instance_link(&found, ttl)
+    }
+
+    fn instance_link(&self, found: &Found, ttl: u64) -> Result<Link> {
         let expires_ms = i64::try_from(ttl)
             .ok()
             .and_then(|seconds| seconds.checked_mul(1000))
@@ -1910,7 +1931,15 @@ impl App {
     /// Every store, and the fewest live copies of a blob the instance keeps.
     pub async fn blob_stores(&self, caller: &Caller) -> Result<(Vec<StoreRecord>, u64)> {
         caller.require(Permission::InstanceRead)?;
-        let stores = self.db.read(rows::stores).await?;
+        let mut stores = self.db.read(rows::stores).await?;
+        let attached = self.blobs.attachment();
+        if let Some(s3) = &attached.s3
+            && let Some(store) = stores
+                .iter_mut()
+                .find(|store| store.id == s3.id() && store.detached_at.is_none())
+        {
+            store.unusable_reason = attached.trouble();
+        }
         Ok((stores, self.settings.live().get(BLOB_MIN_COPIES)))
     }
 

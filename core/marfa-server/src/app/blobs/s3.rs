@@ -25,7 +25,7 @@ use uuid::Uuid;
 use super::hash::Hash;
 use super::store::Answer;
 use crate::app::faults::Faults;
-use crate::app::outbound::store::{PublicOnly, refused_as_private};
+use crate::app::outbound::store::{Judgment, PublicOnly, refused_as_private};
 use crate::settings::Snapshot;
 use crate::settings::registry::{
     ALLOW_PRIVATE_ADDRESSES, OBJECT_STORE_ACCESS_KEY_ID, OBJECT_STORE_BUCKET,
@@ -125,6 +125,7 @@ pub struct S3 {
     locator: String,
     prefix: String,
     client: AmazonS3,
+    judgment: Arc<Judgment>,
 }
 
 /// An ETag as a listing and an upload's answer both give it, without the quotes some stores add.
@@ -248,10 +249,8 @@ impl Parts {
 pub enum Marker {
     Id(String),
     None,
-    /// No connection, or no answer in time.
+    /// No connection, the guard's refusal of one included, or no answer in time.
     Silent(io::Error),
-    /// The guard refused the address before the store could answer.
-    Private(io::Error),
     /// An answer that names no store: a refusal, an error or a marker that does not read.
     Refused(io::Error),
 }
@@ -366,6 +365,7 @@ impl S3 {
     fn builder(
         settings: &ObjectStoreSettings,
         faults: &Arc<Faults>,
+        judgment: &Arc<Judgment>,
     ) -> io::Result<AmazonS3Builder> {
         let retry = RetryConfig {
             backoff: BackoffConfig::default(),
@@ -389,6 +389,7 @@ impl S3 {
             builder = builder.with_http_connector(PublicOnly {
                 connect_timeout,
                 faults: faults.clone(),
+                judgment: judgment.clone(),
             });
         }
         if let Some(endpoint) = &settings.endpoint {
@@ -411,18 +412,28 @@ impl S3 {
         Ok(builder)
     }
 
-    fn client(settings: &ObjectStoreSettings, faults: &Arc<Faults>) -> io::Result<AmazonS3> {
-        S3::builder(settings, faults)?.build().map_err(failed)
-    }
-
     /// The configured store, before its marker says which store it is.
     pub fn new(settings: &ObjectStoreSettings, id: String, faults: &Arc<Faults>) -> io::Result<S3> {
+        let judgment = Arc::new(Judgment::default());
         Ok(S3 {
             id,
             locator: settings.locator(),
             prefix: settings.prefix.clone(),
-            client: S3::client(settings, faults)?,
+            client: S3::builder(settings, faults, &judgment)?
+                .build()
+                .map_err(failed)?,
+            judgment,
         })
+    }
+
+    /// The same store and client as the store `id`, so the guard's last judgment carries over.
+    pub fn named(self, id: String) -> S3 {
+        S3 { id, ..self }
+    }
+
+    /// Whether the private-address guard refused the latest request to the store.
+    pub fn refused_as_private(&self) -> bool {
+        self.judgment.refused()
     }
 
     fn marker_path(&self) -> Path {
@@ -443,8 +454,9 @@ impl S3 {
                 )),
             },
             Err(error) if is_missing(&error) => Marker::None,
-            Err(error) if refused_as_private(&error) => Marker::Private(failed(error)),
-            Err(error) if is_silent(&error) => Marker::Silent(failed(error)),
+            Err(error) if refused_as_private(&error) || is_silent(&error) => {
+                Marker::Silent(failed(error))
+            }
             Err(error) => Marker::Refused(failed(error)),
         }
     }
@@ -467,7 +479,7 @@ impl S3 {
             Marker::Id(id) if id == self.id => Ok(()),
             Marker::Id(_) => Err(io::Error::other("the store's marker names another store")),
             Marker::None => Err(io::Error::other("the store holds no marker")),
-            Marker::Silent(error) | Marker::Private(error) | Marker::Refused(error) => Err(error),
+            Marker::Silent(error) | Marker::Refused(error) => Err(error),
         }
     }
 
@@ -817,7 +829,7 @@ mod tests {
     /// The address the marker is asked for at.
     async fn marker_address(settings: &ObjectStoreSettings) -> String {
         let recorded = Recorded::default();
-        let client = S3::builder(settings, &Arc::default())
+        let client = S3::builder(settings, &Arc::default(), &Arc::default())
             .unwrap()
             .with_http_connector(recorded.clone())
             .build()
@@ -827,6 +839,7 @@ mod tests {
             locator: settings.locator(),
             prefix: settings.prefix.clone(),
             client,
+            judgment: Arc::default(),
         };
         assert!(matches!(s3.marker().await, Marker::None));
         let sent = recorded.0.lock().unwrap().clone();
@@ -1046,44 +1059,39 @@ mod tests {
         (port, asked)
     }
 
-    #[tokio::test]
-    async fn a_bucket_host_is_reached_only_where_its_addresses_are_public() {
+    /// Asks the marker of a store whose host the resolver fault scripts as `host`, first as a
+    /// private address and then as a public one, with the same client throughout.
+    async fn reached_only_while_public(path_style: bool, host: &str) {
         let (port, asked) = hosts_asked().await;
         let faults = Arc::new(Faults::default());
-        let guarded = settings(&format!("http://store.test:{port}"), false);
-        faults
-            .set("resolve:marfa.store.test", Some("127.0.0.1"))
-            .unwrap();
+        let guarded = settings(&format!("http://store.test:{port}"), path_style);
+        let fault = format!("resolve:{host}");
+        faults.set(&fault, Some("127.0.0.1")).unwrap();
         let s3 = S3::new(&guarded, String::new(), &faults).unwrap();
-        let marker = s3.marker().await;
-        assert!(matches!(marker, Marker::Private(_)), "{marker:?}");
+        match s3.marker().await {
+            Marker::Silent(error) => assert!(refused_as_private(&error), "{error}"),
+            marker => panic!("{marker:?}"),
+        }
         assert!(asked.lock().unwrap().is_empty());
+        let s3 = s3.named(Uuid::now_v7().to_string());
+        assert!(s3.refused_as_private(), "the judgment carries over to the named store");
 
         faults
-            .set("resolve:marfa.store.test", Some("93.184.216.34>127.0.0.1"))
+            .set(&fault, Some("93.184.216.34>127.0.0.1"))
             .unwrap();
-        let s3 = S3::new(&guarded, String::new(), &faults).unwrap();
         assert!(matches!(s3.marker().await, Marker::None));
-        assert_eq!(*asked.lock().unwrap(), [format!("marfa.store.test:{port}")]);
+        assert!(!s3.refused_as_private());
+        assert_eq!(*asked.lock().unwrap(), [format!("{host}:{port}")]);
     }
 
     #[tokio::test]
-    async fn a_store_by_path_is_reached_only_where_its_addresses_are_public() {
-        let (port, asked) = hosts_asked().await;
-        let faults = Arc::new(Faults::default());
-        let guarded = settings(&format!("http://store.test:{port}"), true);
-        faults.set("resolve:store.test", Some("127.0.0.1")).unwrap();
-        let s3 = S3::new(&guarded, String::new(), &faults).unwrap();
-        let marker = s3.marker().await;
-        assert!(matches!(marker, Marker::Private(_)), "{marker:?}");
-        assert!(asked.lock().unwrap().is_empty());
+    async fn a_bucket_host_is_reached_only_while_its_addresses_are_public() {
+        reached_only_while_public(false, "marfa.store.test").await;
+    }
 
-        faults
-            .set("resolve:store.test", Some("93.184.216.34>127.0.0.1"))
-            .unwrap();
-        let s3 = S3::new(&guarded, String::new(), &faults).unwrap();
-        assert!(matches!(s3.marker().await, Marker::None));
-        assert_eq!(*asked.lock().unwrap(), [format!("store.test:{port}")]);
+    #[tokio::test]
+    async fn a_store_by_path_is_reached_only_while_its_addresses_are_public() {
+        reached_only_while_public(true, "store.test").await;
     }
 
     #[tokio::test]
@@ -1126,6 +1134,7 @@ mod tests {
             locator: "s3://marfa/marfa".to_string(),
             prefix: "marfa".to_string(),
             client,
+            judgment: Arc::default(),
         };
         let limit = Duration::from_millis(50);
         let link = s3.link("a/b", Duration::from_secs(60), limit);

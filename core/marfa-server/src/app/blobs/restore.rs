@@ -418,6 +418,9 @@ impl App {
             Readable::Silent => return Err(unavailable()),
             Readable::Nowhere => {}
         }
+        if self.blobs.attachment().refused_as_private() {
+            return Err(unavailable());
+        }
         let Some(s3) = self.blobs.s3() else {
             return Ok(Absent::Missing);
         };

@@ -3,6 +3,7 @@
 use std::io;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -15,10 +16,25 @@ use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use super::address::is_public;
 use crate::app::faults::Faults;
 
+/// Whether the guard refused the latest request it judged.
+#[derive(Debug, Default)]
+pub struct Judgment(AtomicBool);
+
+impl Judgment {
+    pub fn refused(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+
+    fn record(&self, refused: bool) {
+        self.0.store(refused, Ordering::SeqCst);
+    }
+}
+
 #[derive(Debug)]
 pub struct PublicOnly {
     pub connect_timeout: Duration,
     pub faults: Arc<Faults>,
+    pub judgment: Arc<Judgment>,
 }
 
 impl HttpConnector for PublicOnly {
@@ -31,7 +47,11 @@ impl HttpConnector for PublicOnly {
             store: "S3",
             source: Box::new(error),
         })?;
-        Ok(HttpClient::new(RequestsJudged(client)))
+        Ok(HttpClient::new(RequestsJudged {
+            client,
+            faults: self.faults.clone(),
+            judgment: self.judgment.clone(),
+        }))
     }
 }
 
@@ -86,66 +106,105 @@ pub fn refused_as_private(error: &(dyn std::error::Error + 'static)) -> bool {
     false
 }
 
-/// Holds each request to the destination address rules.
+/// Holds each request to the destination address rules, judging the host's lookup again for
+/// each one, since a pooled connection skips the resolver.
 #[derive(Debug)]
-struct RequestsJudged(reqwest::Client);
+struct RequestsJudged {
+    client: reqwest::Client,
+    faults: Arc<Faults>,
+    judgment: Arc<Judgment>,
+}
 
-fn judged(uri: &http::Uri) -> Result<(), io::Error> {
+fn judged_literally(uri: &http::Uri) -> Result<Option<String>, io::Error> {
     let url = url::Url::parse(&uri.to_string()).map_err(|_| not_public())?;
     if !url.username().is_empty() || url.password().is_some() {
         return Err(not_public());
     }
     let literal = match url.host() {
-        Some(url::Host::Ipv4(ip)) => Some(IpAddr::V4(ip)),
-        Some(url::Host::Ipv6(ip)) => Some(IpAddr::V6(ip)),
-        Some(url::Host::Domain(_)) => None,
+        Some(url::Host::Ipv4(ip)) => IpAddr::V4(ip),
+        Some(url::Host::Ipv6(ip)) => IpAddr::V6(ip),
+        Some(url::Host::Domain(name)) => return Ok(Some(name.to_string())),
         None => return Err(not_public()),
     };
-    if literal.is_some_and(|ip| !is_public(ip)) {
+    if !is_public(literal) {
         return Err(not_public());
     }
-    Ok(())
+    Ok(None)
+}
+
+/// A refusal is not retried; a lookup that fails is, as a connection that fails would be.
+fn refused_request(error: io::Error) -> HttpError {
+    let kind = if refused_as_private(&error) {
+        HttpErrorKind::Unknown
+    } else {
+        HttpErrorKind::Connect
+    };
+    HttpError::new(kind, error)
 }
 
 #[async_trait]
 impl HttpService for RequestsJudged {
     async fn call(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
-        judged(request.uri()).map_err(|error| HttpError::new(HttpErrorKind::Unknown, error))?;
-        self.0.call(request).await
+        let judged = match judged_literally(request.uri()) {
+            Ok(Some(name)) => looked_up(&self.faults, name).await.map(|_| ()),
+            Ok(None) => Ok(()),
+            Err(refused) => Err(refused),
+        };
+        match judged {
+            Ok(()) => self.judgment.record(false),
+            Err(error) => {
+                if refused_as_private(&error) {
+                    self.judgment.record(true);
+                }
+                return Err(refused_request(error));
+            }
+        }
+        let answer = self.client.call(request).await;
+        if let Err(error) = &answer
+            && refused_as_private(error)
+        {
+            self.judgment.record(true);
+        }
+        answer
     }
 }
 
-/// Any answer that is not public refuses the whole name, as for a webhook. A lookup the resolver
-/// fault scripts is judged by the addresses it names to be judged.
+/// The addresses a lookup of `host` reaches, refused whole if any it finds is not public. A
+/// lookup the resolver fault scripts is judged by the addresses it names to be judged.
+async fn looked_up(faults: &Faults, host: String) -> io::Result<Vec<SocketAddr>> {
+    let (judged, reached): (Vec<IpAddr>, Vec<SocketAddr>) = match faults.resolve(&host) {
+        Some(scripted) => (
+            scripted.judged,
+            scripted
+                .reached
+                .into_iter()
+                .map(|ip| SocketAddr::new(ip, 0))
+                .collect(),
+        ),
+        None => {
+            let found: Vec<SocketAddr> = tokio::task::spawn_blocking(move || {
+                (host.as_str(), 0).to_socket_addrs().map(Iterator::collect)
+            })
+            .await
+            .map_err(io::Error::other)??;
+            (found.iter().map(SocketAddr::ip).collect(), found)
+        }
+    };
+    if reached.is_empty() || judged.is_empty() || judged.iter().any(|ip| !is_public(*ip)) {
+        return Err(not_public());
+    }
+    Ok(reached)
+}
+
+/// Any answer that is not public refuses the whole name, as for a webhook.
 #[derive(Debug)]
 struct PublicNames(Arc<Faults>);
 
 impl Resolve for PublicNames {
     fn resolve(&self, name: Name) -> Resolving {
-        let host = name.as_str().to_string();
-        let scripted = self.0.resolve(&host);
+        let (faults, host) = (self.0.clone(), name.as_str().to_string());
         Box::pin(async move {
-            let (judged, reached): (Vec<IpAddr>, Vec<SocketAddr>) = match scripted {
-                Some(scripted) => (
-                    scripted.judged,
-                    scripted
-                        .reached
-                        .into_iter()
-                        .map(|ip| SocketAddr::new(ip, 0))
-                        .collect(),
-                ),
-                None => {
-                    let found: Vec<SocketAddr> = tokio::task::spawn_blocking(move || {
-                        (host.as_str(), 0).to_socket_addrs().map(Iterator::collect)
-                    })
-                    .await
-                    .map_err(io::Error::other)??;
-                    (found.iter().map(SocketAddr::ip).collect(), found)
-                }
-            };
-            if reached.is_empty() || judged.is_empty() || judged.iter().any(|ip| !is_public(*ip)) {
-                return Err(not_public().into());
-            }
+            let reached = looked_up(&faults, host).await?;
             Ok(Box::new(reached.into_iter()) as Addrs)
         })
     }
@@ -272,16 +331,18 @@ mod tests {
     async fn a_request_to_a_loopback_host_is_refused_before_any_connection() {
         let (at, connections) = counted_listener().await;
         let port = at.port();
-        let service = RequestsJudged(
-            client(
+        let service = RequestsJudged {
+            client: client(
                 Duration::from_secs(2),
                 Arc::new(PublicNames(Arc::default())),
             )
             .unwrap(),
-        );
+            faults: Arc::default(),
+            judgment: Arc::default(),
+        };
         // The witness: the listener does take a connection when nothing refuses it.
         let _ = service
-            .0
+            .client
             .get(format!("http://127.0.0.1:{port}/"))
             .send()
             .await;
@@ -312,6 +373,80 @@ mod tests {
         assert_eq!(connections.load(Ordering::SeqCst), 0);
     }
 
+    /// Answers every request on a connection it keeps open, counting the requests.
+    async fn kept_alive_listener() -> (SocketAddr, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let at = listener.local_addr().unwrap();
+        let requests = Arc::new(AtomicUsize::new(0));
+        let seen = requests.clone();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let seen = seen.clone();
+                tokio::spawn(async move {
+                    let mut asked = vec![0u8; 4096];
+                    while socket.read(&mut asked).await.unwrap_or(0) > 0 {
+                        seen.fetch_add(1, Ordering::SeqCst);
+                        let answer = "HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n";
+                        if socket.write_all(answer.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (at, requests)
+    }
+
+    #[tokio::test]
+    async fn a_lookup_that_turns_private_refuses_the_next_request_on_a_kept_connection() {
+        let (at, requests) = kept_alive_listener().await;
+        let faults = Arc::new(Faults::default());
+        let judgment = Arc::new(Judgment::default());
+        let service = RequestsJudged {
+            client: client(Duration::from_secs(2), Arc::new(PublicNames(faults.clone()))).unwrap(),
+            faults: faults.clone(),
+            judgment: judgment.clone(),
+        };
+        let url = format!("http://store.test:{}/b/k", at.port());
+        faults
+            .set("resolve:store.test", Some("93.184.216.34>127.0.0.1"))
+            .unwrap();
+        assert!(service.call(get(&url)).await.is_ok());
+        assert!(!judgment.refused());
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+
+        faults
+            .set("resolve:store.test", Some("127.0.0.1"))
+            .unwrap();
+        let refused = service.call(get(&url)).await.unwrap_err();
+        assert!(refused_as_private(&refused), "{refused}");
+        assert!(judgment.refused());
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+
+        faults
+            .set("resolve:store.test", Some("93.184.216.34>127.0.0.1"))
+            .unwrap();
+        assert!(service.call(get(&url)).await.is_ok());
+        assert!(!judgment.refused());
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_lookup_that_fails_leaves_the_judgment_as_it_was() {
+        let faults = Arc::new(Faults::default());
+        let judgment = Arc::new(Judgment::default());
+        judgment.record(true);
+        let service = RequestsJudged {
+            client: client(Duration::from_secs(2), Arc::new(PublicNames(faults.clone()))).unwrap(),
+            faults,
+            judgment: judgment.clone(),
+        };
+        let failed = service.call(get("http://store.invalid:9/b/k")).await.unwrap_err();
+        assert_eq!(failed.kind(), HttpErrorKind::Connect);
+        assert!(!refused_as_private(&failed), "{failed}");
+        assert!(judgment.refused());
+    }
+
     #[test]
     fn a_host_is_judged_by_its_address() {
         let (mut fit, mut refused) = (0, 0);
@@ -322,7 +457,7 @@ mod tests {
                 Some(url::Host::Domain(_)) => true,
                 None => false,
             };
-            let judged = judged(&url.parse().unwrap()).is_ok();
+            let judged = judged_literally(&url.parse().unwrap()).is_ok();
             assert_eq!(judged, public, "{url}");
             if judged {
                 fit += 1;
@@ -343,7 +478,7 @@ mod tests {
             "https://[2606:4700:4700::1111]/bucket",
             "http://store.example.com:9000/bucket",
         ] {
-            assert!(judged(&url.parse().unwrap()).is_ok(), "{url}");
+            assert!(judged_literally(&url.parse().unwrap()).is_ok(), "{url}");
         }
         for url in [
             "http://10.0.0.1/b",
@@ -351,7 +486,7 @@ mod tests {
             "http://192.168.1.1/b",
             "http://[fe80::1]/b",
         ] {
-            assert!(judged(&url.parse().unwrap()).is_err(), "{url}");
+            assert!(judged_literally(&url.parse().unwrap()).is_err(), "{url}");
         }
     }
 }
