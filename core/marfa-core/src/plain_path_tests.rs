@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::scripted::{self, Scripted};
 use crate::stop_tests::{holding_a_catalog, scripted_copy};
-use crate::{Core, CoreError, Handle, Server};
+use crate::{Core, Handle, Server};
 
 fn on(server: &Scripted, path: &Path) -> Arc<Core> {
     let core = Core::open(
@@ -144,7 +144,7 @@ fn a_plain_path_on_a_file_system_that_does_not_lock_is_refused_before_a_lock_is_
         let _lockless = crate::fault::fail_on_this_thread("unlocked-filesystem");
         let refused = Core::open(&path, None);
         assert!(
-            matches!(&refused, Err(CoreError::Invalid(message)) if message.contains("filesystem")),
+            matches!(&refused, Err(crate::CoreError::Invalid(message)) if message.contains("filesystem")),
             "{:?}",
             refused.map(|core| core.handle())
         );
