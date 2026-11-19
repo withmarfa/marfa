@@ -3,7 +3,6 @@
 use std::time::Duration;
 
 use marfa_telemetry::environment::{disabled, text};
-use marfa_telemetry::host::{Capture, capture_url};
 use marfa_telemetry::identity::{self, headers};
 use marfa_telemetry::otlp::{self, Endpoint, GENERAL_ENDPOINT, GENERAL_HEADERS, Signal};
 use url::Url;
@@ -13,11 +12,8 @@ use crate::settings::rule;
 
 const DEFAULT_SERVICE: &str = "marfa-server";
 const DEFAULT_RATIO: f64 = 0.05;
-const DEFAULT_ENVIRONMENT: &str = "production";
 const PAIRS_RULE: &str = "must be comma-separated key=value pairs with percent-encoded values";
 const URL_RULE: &str = "must be an absolute http or https URL";
-const POSTHOG_HOST: &str = "MARFA_POSTHOG_HOST";
-const POSTHOG_TOKEN: &str = "MARFA_POSTHOG_PROJECT_TOKEN";
 
 /// Where one OTLP signal is posted.
 #[derive(Clone, Debug)]
@@ -27,38 +23,10 @@ pub struct Export {
     pub timeout: Duration,
 }
 
-/// Where exception reports go.
-#[derive(Clone)]
-pub struct Exceptions {
-    pub url: String,
-    pub token: String,
-    pub timeout: Duration,
-}
-
-/// What a boot says about telemetry that is not on, naming a setting and
-/// never its value.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Notice {
-    /// `MARFA_POSTHOG_HOST` is not an address the token may travel to.
-    HostUnusable,
-}
-
-impl Notice {
-    pub fn say(self) {
-        match self {
-            Notice::HostUnusable => tracing::warn!(
-                setting = POSTHOG_HOST,
-                "{POSTHOG_HOST} is not an https address, or an http address on this machine, \
-                 with no user name or password; exception reports are off"
-            ),
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct Config {
     /// `OTEL_SDK_DISABLED` is `true`: no trace, log record or exception report.
-    /// The error webhook is not telemetry, and is a stored setting.
+    /// Where exception reports go, and the error webhook, are stored settings.
     pub off: bool,
     pub service: String,
     /// `OTEL_RESOURCE_ATTRIBUTES`, less `service.name`.
@@ -66,11 +34,9 @@ pub struct Config {
     pub traces: Option<Export>,
     pub logs: Option<Export>,
     pub ratio: f64,
-    pub exceptions: Option<Exceptions>,
     /// What an error notice names: `deployment.environment.name`, then
-    /// `deployment.environment`.
-    pub environment: String,
-    pub notices: Vec<Notice>,
+    /// `deployment.environment`, where the resource attributes name one.
+    pub environment: Option<String>,
 }
 
 impl Config {
@@ -132,18 +98,6 @@ impl Config {
             }),
         };
 
-        // A secret is used as written, so whitespace around it is part of it.
-        let token = environment.get(POSTHOG_TOKEN).map(str::to_string);
-        if let Some(token) = &token
-            && token != token.trim()
-        {
-            refuse(format!(
-                "{POSTHOG_TOKEN} has whitespace around it, which would be part of the \
-                 secret; remove it"
-            ));
-        }
-        let host = text(&get, POSTHOG_HOST);
-
         let environment_name = ["deployment.environment.name", "deployment.environment"]
             .iter()
             .find_map(|key| {
@@ -152,25 +106,9 @@ impl Config {
                     .iter()
                     .find(|(name, _)| name == key)
                     .map(|(_, value)| value.clone())
-            })
-            .unwrap_or_else(|| DEFAULT_ENVIRONMENT.to_string());
+            });
 
         let off = disabled(&get);
-        let mut notices = Vec::new();
-        let exceptions = match (host, token) {
-            (Some(host), Some(token)) if !off => match capture_url(&host, Capture::Batch) {
-                Some(url) => Some(Exceptions {
-                    url,
-                    token,
-                    timeout: identity::timeout(&get, Signal::Traces),
-                }),
-                None => {
-                    notices.push(Notice::HostUnusable);
-                    None
-                }
-            },
-            _ => None,
-        };
 
         Config {
             off,
@@ -179,9 +117,7 @@ impl Config {
             traces: traces.filter(|_| !off),
             logs: logs.filter(|_| !off),
             ratio,
-            exceptions,
             environment: environment_name,
-            notices,
         }
     }
 }
@@ -198,14 +134,6 @@ pub fn disagreements(environment: &Environment) -> Vec<String> {
                 problems.push(format!("{variable} needs {GENERAL_ENDPOINT} set too"));
             }
         }
-    }
-    let host = text(get, POSTHOG_HOST).is_some();
-    let token = get(POSTHOG_TOKEN).is_some();
-    if host && !token {
-        problems.push(format!("{POSTHOG_HOST} needs {POSTHOG_TOKEN} set too"));
-    }
-    if token && !host {
-        problems.push(format!("{POSTHOG_TOKEN} needs {POSTHOG_HOST} set too"));
     }
     problems
 }
@@ -250,9 +178,9 @@ mod tests {
     fn nothing_is_on_when_nothing_is_set() {
         let (config, problems) = read(&[]);
         assert!(problems.is_empty());
-        assert!(config.traces.is_none() && config.logs.is_none() && config.exceptions.is_none());
+        assert!(config.traces.is_none() && config.logs.is_none());
         assert_eq!(config.service, "marfa-server");
-        assert_eq!(config.environment, "production");
+        assert_eq!(config.environment, None);
         assert_eq!(config.ratio, 0.05);
     }
 
@@ -272,13 +200,10 @@ mod tests {
         let (config, problems) = read(&[
             ("OTEL_SDK_DISABLED", "TRUE"),
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318"),
-            ("MARFA_POSTHOG_HOST", "http://example.test"),
-            ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_x"),
         ]);
         assert!(problems.is_empty());
         assert!(config.off);
-        assert!(config.traces.is_none() && config.logs.is_none() && config.exceptions.is_none());
-        assert!(config.notices.is_empty());
+        assert!(config.traces.is_none() && config.logs.is_none());
     }
 
     #[test]
@@ -291,47 +216,16 @@ mod tests {
     }
 
     #[test]
-    fn a_host_the_token_may_not_travel_to_stops_exceptions_alone() {
-        let (config, problems) = read(&[
-            ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318"),
-            ("MARFA_POSTHOG_HOST", "http://posthog.example.test"),
-            ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_x"),
-        ]);
-        assert!(problems.is_empty());
-        assert!(config.exceptions.is_none());
-        assert!(config.traces.is_some() && config.logs.is_some());
-        assert_eq!(config.notices, [Notice::HostUnusable]);
-    }
-
-    #[test]
-    fn a_loopback_http_host_and_an_https_host_are_used() {
-        for host in ["http://127.0.0.1:9000", "https://eu.i.posthog.com"] {
-            let (config, _) = read(&[
-                ("MARFA_POSTHOG_HOST", host),
-                ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_x"),
-            ]);
-            assert!(config.exceptions.is_some(), "{host}");
-        }
-    }
-
-    #[test]
-    fn an_exception_report_needs_no_otlp_setting() {
-        let (config, _) = read(&[
-            ("MARFA_POSTHOG_HOST", "http://127.0.0.1:9000"),
-            ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_x"),
-        ]);
-        assert!(config.exceptions.is_some() && config.traces.is_none());
-    }
-
-    #[test]
     fn the_environment_comes_from_the_name_before_the_older_attribute() {
         let (config, _) = read(&[(
             "OTEL_RESOURCE_ATTRIBUTES",
             "deployment.environment=old,deployment.environment.name=named",
         )]);
-        assert_eq!(config.environment, "named");
+        assert_eq!(config.environment.as_deref(), Some("named"));
         let (config, _) = read(&[("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=old")]);
-        assert_eq!(config.environment, "old");
+        assert_eq!(config.environment.as_deref(), Some("old"));
+        let (config, _) = read(&[("OTEL_RESOURCE_ATTRIBUTES", "team=a")]);
+        assert_eq!(config.environment, None);
     }
 
     #[test]
@@ -369,31 +263,10 @@ mod tests {
     }
 
     #[test]
-    fn a_token_with_whitespace_is_refused_without_its_value() {
-        let lines = refused(&[
-            ("MARFA_POSTHOG_HOST", "https://eu.i.posthog.com"),
-            ("MARFA_POSTHOG_PROJECT_TOKEN", " phc_secret "),
-        ]);
-        assert_eq!(lines.len(), 1);
-        assert!(lines[0].starts_with("MARFA_POSTHOG_PROJECT_TOKEN has whitespace"));
-        assert!(!lines[0].contains("phc_secret"));
-    }
-
-    #[test]
     fn a_rule_between_settings_names_the_one_that_needs_the_other() {
         assert_eq!(
-            disagree(&[
-                ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://127.0.0.1:1"),
-                ("MARFA_POSTHOG_HOST", "https://eu.i.posthog.com"),
-            ]),
-            [
-                "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT needs OTEL_EXPORTER_OTLP_ENDPOINT set too",
-                "MARFA_POSTHOG_HOST needs MARFA_POSTHOG_PROJECT_TOKEN set too",
-            ]
-        );
-        assert_eq!(
-            disagree(&[("MARFA_POSTHOG_PROJECT_TOKEN", "phc_x")]),
-            ["MARFA_POSTHOG_PROJECT_TOKEN needs MARFA_POSTHOG_HOST set too"]
+            disagree(&[("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://127.0.0.1:1")]),
+            ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT needs OTEL_EXPORTER_OTLP_ENDPOINT set too"]
         );
         assert!(
             disagree(&[

@@ -18,7 +18,6 @@ use crate::app::outbound;
 use crate::app::refusal::{Code, Result};
 use crate::db::Write;
 use crate::log;
-use crate::settings::registry::{ALLOW_PRIVATE_ADDRESSES, ERROR_REPORTING_ENABLED};
 use crate::telemetry::{Fault, Finished};
 
 /// Sockets the sender may hold open at once; each subscription still takes one turn at a time.
@@ -404,7 +403,6 @@ fn report(app: &App, gap: Gap) {
     log::unhandled(&request_id, METHOD, PATH, None, gap.describe());
     let timestamp = app.clock.stamp();
     let live = app.settings.live();
-    let webhook = live.error_notice_url();
     app.telemetry.finish(
         None,
         &Finished {
@@ -416,9 +414,7 @@ fn report(app: &App, gap: Gap) {
             status: 500,
             error_code: Some(Code::InternalError.wire()),
             fault: Some(&Arc::new(Fault::internal(gap.describe()))),
-            reporting: live.get(ERROR_REPORTING_ENABLED),
-            webhook: webhook.as_deref(),
-            private_allowed: live.get(ALLOW_PRIVATE_ADDRESSES),
+            settings: &live,
             timestamp: &timestamp,
         },
     );

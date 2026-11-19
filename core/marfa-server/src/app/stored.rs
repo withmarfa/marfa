@@ -120,9 +120,10 @@ pub fn stage(tx: &Transaction<'_>, app: &App) -> Result<Staged> {
 
 impl Staged {
     /// A job's interval or switch may be a setting, so the scheduler looks again, and the store
-    /// beside the disk follows its settings.
+    /// beside the disk and telemetry follow their settings.
     pub fn publish(self, app: &Arc<App>) {
         app.settings.publish(self.generation, &self.rows);
+        app.telemetry.follow(&app.settings.live());
         super::housekeeping::wake(app);
         app.ask_stores_to_follow();
     }
@@ -387,7 +388,7 @@ pub fn restore(
         added
             .iter()
             .any(|(key, text)| key == switch && text == "true")
-            && crate::settings::together::lacks_receiver(&app.settings.start, &now, switch)
+            && crate::settings::together::lacks_receiver(&now, switch)
     })
     .collect();
     Ok(Restored {

@@ -83,11 +83,6 @@ pub const DECLARED: &[Declared] = &[
     ),
     secret("MARFA_KEY_SALT", "Secret that keys are stored under."),
     secret("MARFA_AUTH_SECRET", "Secret that sign-in is signed with."),
-    plain("MARFA_POSTHOG_HOST", "Where exception reports are sent."),
-    secret(
-        "MARFA_POSTHOG_PROJECT_TOKEN",
-        "The token exception reports are sent with.",
-    ),
     plain(
         "MARFA_OTEL_SAMPLE_RATIO",
         "The share of requests whose traces are kept.",
