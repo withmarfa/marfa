@@ -794,20 +794,40 @@ fn a_reading_handle_and_the_writer_at_a_moved_origin_both_send_at_once() {
     assert_eq!(origin(&writer), server.url());
 }
 
-#[test]
-fn a_lookup_waiting_for_a_renewal_that_fails_starts_none_of_its_own_once_stopped() {
+#[cfg(debug_assertions)]
+fn until(what: &str, done: impl Fn() -> bool) {
+    let by = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !done() {
+        assert!(std::time::Instant::now() < by, "{what}");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+}
+
+#[cfg(debug_assertions)]
+type Looked = crate::Result<Option<crate::wire::WireItemWithMetadata>>;
+
+/// Two lookups of a link by id, each refused once with `401`, the first
+/// renewal failing once `fail` says so. Answers how each lookup ended, how
+/// many renewals started and how many item requests were sent, once both
+/// requests have ended.
+#[cfg(debug_assertions)]
+fn lookups_behind_a_failing_renewal(
+    stop: &AtomicBool,
+    fail: impl Fn() -> bool + Send + Sync + 'static,
+    before_failing: impl FnOnce(),
+) -> ([Looked; 2], usize, usize) {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let server = Scripted::start();
     answers(&server);
     let dir = tempfile::tempdir().unwrap();
     let core = copy_in_keyed(&server, dir.path(), "k");
+    crate::fault::observe(true);
+    let ended_before = crate::fault::reached("request-ended");
     let started = Arc::new(AtomicUsize::new(0));
-    let failed = Arc::new(AtomicBool::new(false));
-    let (counted, failing) = (Arc::clone(&started), Arc::clone(&failed));
+    let counted = Arc::clone(&started);
     core.renew_credential_with(Box::new(move |_| {
         if counted.fetch_add(1, Ordering::SeqCst) == 0 {
-            std::thread::sleep(std::time::Duration::from_millis(500));
-            failing.store(true, Ordering::SeqCst);
+            until("the first renewal was never let fail", &fail);
             return Err(CoreError::Network("the renewal failed".into()));
         }
         Ok("fresh".into())
@@ -816,41 +836,75 @@ fn a_lookup_waiting_for_a_renewal_that_fails_starts_none_of_its_own_once_stopped
     for path in &paths {
         renewed_once(&server, path, scripted::refusal(404, "not_found"));
     }
-    let stop = AtomicBool::new(false);
     let http = core.http().unwrap();
     let ended = std::thread::scope(|scope| {
         let lookups = [ITEM, OTHER_ITEM].map(|id| {
-            scope.spawn(|| crate::catch_up::item_checked_unless_stopped(&core, http, &stop, id))
+            scope.spawn(|| crate::catch_up::item_checked_unless_stopped(&core, http, stop, id))
         });
         for path in &paths {
-            server.wait_for(path, 1, std::time::Duration::from_secs(2));
+            server.wait_for(path, 1, std::time::Duration::from_secs(5));
         }
-        while started.load(Ordering::SeqCst) == 0 {
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        stop.store(true, Ordering::SeqCst);
-        lookups.map(|lookup| lookup.join().unwrap().unwrap_err())
+        until("no renewal started", || started.load(Ordering::SeqCst) > 0);
+        before_failing();
+        lookups.map(|lookup| lookup.join().unwrap())
     });
+    until("a lookup's request never ended", || {
+        crate::fault::reached("request-ended") == ended_before + 2
+    });
+    let sent = paths.iter().map(|path| server.seen(path).len()).sum();
+    (ended, started.load(Ordering::SeqCst), sent)
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_lookup_waiting_for_a_renewal_that_fails_starts_none_of_its_own_once_stopped() {
+    let stop = AtomicBool::new(false);
+    let (ended, started, _) = lookups_behind_a_failing_renewal(
+        &stop,
+        || crate::fault::reached("request-let-go") == 2,
+        || stop.store(true, std::sync::atomic::Ordering::SeqCst),
+    );
     assert!(
         ended
             .iter()
-            .all(|error| matches!(error, CoreError::Canceled)),
+            .all(|ended| matches!(ended, Err(CoreError::Canceled))),
         "{ended:?}"
     );
-    // The renewal the stop found under way fails after the calls have ended,
-    // which is when the lookup that waited on it would renew for itself.
-    let by = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while !failed.load(Ordering::SeqCst) {
-        assert!(std::time::Instant::now() < by, "the witness never failed");
-        std::thread::sleep(std::time::Duration::from_millis(5));
+    assert_eq!(started, 1, "a lookup renewed the credential after the stop");
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_lookup_stopped_before_its_caller_looks_again_starts_no_renewal_of_its_own() {
+    for stopped in [true, false] {
+        let stop = Arc::new(AtomicBool::new(false));
+        let fail = Arc::new(AtomicBool::new(false));
+        let failing = Arc::clone(&fail);
+        // The renewal fails at once after the stop, well inside the time a
+        // caller takes to look at `stop` again.
+        let (ended, started, sent) = lookups_behind_a_failing_renewal(
+            &stop,
+            move || failing.load(std::sync::atomic::Ordering::SeqCst),
+            || {
+                if stopped {
+                    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+                fail.store(true, std::sync::atomic::Ordering::SeqCst);
+            },
+        );
+        if stopped {
+            assert_eq!(started, 1, "a lookup renewed after the stop: {ended:?}");
+            assert_eq!(sent, 2, "a lookup was sent again after the stop");
+            assert!(
+                ended.iter().all(|ended| ended.is_err()),
+                "a stopped lookup was answered: {ended:?}"
+            );
+        } else {
+            assert_eq!(started, 2, "the waiting lookup did not renew: {ended:?}");
+            assert_eq!(sent, 3);
+            assert!(ended.iter().any(|ended| matches!(ended, Ok(None))), "{ended:?}");
+        }
     }
-    std::thread::sleep(std::time::Duration::from_millis(300));
-    assert_eq!(
-        started.load(Ordering::SeqCst),
-        1,
-        "a lookup renewed the credential after the stop"
-    );
 }
 
 #[test]
@@ -888,6 +942,56 @@ fn a_stop_raised_while_the_instance_check_reads_the_root_sends_no_item_request()
             usize::from(retried),
             "{retried}: an item request was sent after the stop"
         );
+    }
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_lookup_stopped_while_the_root_is_read_sends_no_item_request_however_soon_the_root_answers() {
+    for stopped in [true, false] {
+        let server = Scripted::start();
+        answers(&server);
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_in_keyed(&server, dir.path(), "k");
+        crate::fault::observe(true);
+        let ended_before = crate::fault::reached("request-ended");
+        let ready = Arc::new(AtomicBool::new(false));
+        let roots = server.seen("/").len();
+        server.on(
+            "/",
+            vec![scripted::Answer::WaitFor {
+                ready: Arc::clone(&ready),
+                answer: Box::new(scripted::root(scripted::INSTANCE)),
+            }],
+        );
+        let path = format!("/items/{ITEM}");
+        let stop = AtomicBool::new(false);
+        let http = core.http().unwrap();
+        let ended = std::thread::scope(|scope| {
+            let looking = scope
+                .spawn(|| crate::catch_up::item_checked_unless_stopped(&core, http, &stop, ITEM));
+            server.wait_for("/", roots + 1, std::time::Duration::from_secs(5));
+            // The root answers at once after the stop, well inside the time
+            // the caller takes to look at `stop` again.
+            if stopped {
+                stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+            ready.store(true, std::sync::atomic::Ordering::SeqCst);
+            looking.join().unwrap()
+        });
+        until("the lookup's request never ended", || {
+            crate::fault::reached("request-ended") == ended_before + 1
+        });
+        if stopped {
+            assert!(matches!(ended, Err(CoreError::Canceled)), "{ended:?}");
+            assert!(
+                server.seen(&path).is_empty(),
+                "an item request was sent after the stop"
+            );
+        } else {
+            assert!(matches!(ended, Ok(None)), "{ended:?}");
+            assert_eq!(server.seen(&path).len(), 1);
+        }
     }
 }
 
