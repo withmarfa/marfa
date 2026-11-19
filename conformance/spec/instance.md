@@ -3176,7 +3176,7 @@ When the server answers `GET /config/settings`, the server MUST answer each secr
 
 ### `instance/secret-put-keeps`
 
-When `PUT /config` leaves out a secret setting, the server MUST keep the value stored for it.
+When `PUT /config` leaves out a secret setting, the server MUST keep the value stored for it, unless the setting is `object_store_secret_access_key` and the write changes `object_store_bucket` or `object_store_endpoint` (`instance/store-secret-removed`).
 
 **Reason:** no answer gives a secret back, so a body read from `GET /config` and sent back whole could not name it. `PATCH /config` with `null` removes it.
 
