@@ -3,14 +3,14 @@
 use super::meta::{META_STORE_ID, meta_get, meta_set};
 use super::unsent::{folder_unsent, unsendable, untaken, untaken_count};
 use crate::error::CoreError;
-use rusqlite::Connection;
+use rusqlite::{Connection, config::DbConfig};
 use std::collections::HashMap;
 use std::path::Path;
 
 pub const SCHEMA: &str = include_str!("../schema.sql");
 
 /// SQLite's `user_version`; a shape change increments it and appends to `SHAPES`.
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// Moves with `SCHEMA_VERSION` until the first compatible release, then stays fixed.
 pub(super) const OLDEST_UPGRADED: i64 = SCHEMA_VERSION;
@@ -657,7 +657,9 @@ pub(crate) fn read_directory(
 /// hydration runs for each row it writes.
 fn tune(conn: &Connection) -> Result<(), CoreError> {
     conn.execute_batch("PRAGMA cache_size = -32768;")?;
-    conn.set_prepared_statement_cache_capacity(64);
+    conn.set_prepared_statement_cache_capacity(256);
+    // Without it, a bound value makes each cached statement plan again at every reuse.
+    conn.set_db_config(DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG, true)?;
     Ok(())
 }
 

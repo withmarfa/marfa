@@ -25,6 +25,7 @@ pub const META_INSTANCE_ID: &str = "instance_id";
 /// The largest request body the root last named, in bytes; absent where it
 /// has named none (`queue-and-verdicts/request-limit-unknown`).
 const META_REQUEST_LIMIT: &str = "request_limit";
+const META_TYPES_STAMP: &str = "types_stamp";
 
 /// Set where a write was refused for that limit, so a raised one is seen with
 /// nothing to send: a drain or a folder's pass reads the root. It holds
@@ -170,6 +171,11 @@ pub fn meta_delete_under(conn: &Connection, prefix: &str) -> Result<(), CoreErro
     conn.prepare_cached("DELETE FROM meta WHERE key >= ?1 AND key < ?2")?
         .execute(params![prefix, prefix_end(prefix)])?;
     Ok(())
+}
+
+/// A value no other state of the types has held: triggers on `types` set it in the transaction that changes them.
+pub fn types_stamp(conn: &Connection) -> Result<Option<String>, CoreError> {
+    meta_get(conn, META_TYPES_STAMP)
 }
 
 /// What the root last said this server takes in one request. Fresh in a

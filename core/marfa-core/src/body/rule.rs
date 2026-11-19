@@ -5,6 +5,7 @@
 //! folder reads its own files and keeps its own record, so the edges its
 //! sync makes do not come through here.
 
+use crate::store::Cached;
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -479,7 +480,7 @@ fn put_row(conn: &Connection, row: &Row) -> Result<()> {
 /// which replaces the item's rows, is never written over.
 fn unchanged(conn: &Connection, row: &Row) -> Result<bool> {
     Ok(conn
-        .query_row(
+        .query_row_cached(
             "SELECT 1 FROM body_names WHERE item_id = ?1 AND kind = ?2 AND text = ?3
                AND state = ?4 AND write_id IS ?5",
             params![
@@ -496,7 +497,7 @@ fn unchanged(conn: &Connection, row: &Row) -> Result<bool> {
 }
 
 fn forget_row(conn: &Connection, row: &Row) -> Result<()> {
-    conn.execute(
+    conn.execute_cached(
         "DELETE FROM body_names WHERE item_id = ?1 AND kind = ?2 AND text = ?3",
         params![row.item_id, row.kind.as_str(), row.text],
     )?;
@@ -660,7 +661,7 @@ fn remember_edge(
     other: &str,
     body_write: Option<&str>,
 ) -> Result<()> {
-    conn.execute(
+    conn.execute_cached(
         "INSERT OR REPLACE INTO body_edges (write_id, item_id, kind, other_id, body_write)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![write, host, kind.as_str(), other, body_write],
@@ -726,7 +727,7 @@ pub(crate) fn derive(
         }
     }
     release_pins(conn)?;
-    conn.execute("DELETE FROM body_names WHERE item_id = ?1", [host])?;
+    conn.execute_cached("DELETE FROM body_names WHERE item_id = ?1", [host])?;
     for (kind, text, other) in &now.found {
         put_row(
             conn,
@@ -788,7 +789,7 @@ pub(crate) fn derive_on_answer(
     old: &str,
     write: &str,
 ) -> Result<()> {
-    conn.execute(
+    conn.execute_cached(
         "INSERT OR REPLACE INTO body_checks (write_id, item_id, body) VALUES (?1, ?2, ?3)",
         params![write, host, old],
     )?;
@@ -918,7 +919,7 @@ pub(crate) fn item_changing(conn: &Connection, id: &str, next: Option<&WireItem>
     let mut catalog = None;
     if let Some(next) = next {
         let held: Option<(String, String, String)> = conn
-            .query_row(
+            .query_row_cached(
                 "SELECT type, state, properties FROM items WHERE id = ?1",
                 [id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
@@ -1024,7 +1025,7 @@ pub(crate) fn edge_changing(conn: &Connection, edge: &WireEdge) -> Result<()> {
     // A link and an embed alike stand for a `references` edge, so with none
     // yet no link or embed of the body has an edge to be recorded against.
     let any = conn
-        .query_row(
+        .query_row_cached(
             "SELECT 1 FROM edges WHERE from_id = ?1 AND edge_type = ?2 LIMIT 1",
             params![host, LINK_EDGE],
             |_| Ok(()),
@@ -1043,7 +1044,7 @@ pub(crate) fn edge_changing(conn: &Connection, edge: &WireEdge) -> Result<()> {
 
 fn edge_held(conn: &Connection, edge_type: &str, source: &str, target: &str) -> Result<bool> {
     Ok(conn
-        .query_row(
+        .query_row_cached(
             "SELECT 1 FROM edges WHERE edge_type = ?1 AND from_id = ?2 AND to_id = ?3 LIMIT 1",
             params![edge_type, source, target],
             |_| Ok(()),
@@ -1146,7 +1147,7 @@ pub(crate) fn rows_changed(conn: &Connection) -> Result<()> {
 pub(crate) fn waiting(conn: &Connection) -> Result<bool> {
     let recheck = store::meta_get(conn, RECHECK)?.is_some();
     Ok(conn
-        .query_row(
+        .query_row_cached(
             "SELECT 1 FROM body_names
               WHERE state IN ('pending', 'unanswered')
                  OR (?1 AND state IN ('missing', 'ambiguous'))
@@ -1198,7 +1199,7 @@ fn settle_rows(core: &Core, catalog: &Catalog, rows: Vec<Row>, stop: &AtomicBool
         let item = core.get(&host)?;
         let Some(item) = item else {
             core.conn()?
-                .execute("DELETE FROM body_names WHERE item_id = ?1", [&host])?;
+                .execute_cached("DELETE FROM body_names WHERE item_id = ?1", [&host])?;
             continue;
         };
         let body = body_of(catalog, &item).to_string();
@@ -1349,7 +1350,7 @@ fn settle_one(core: &Core, row: &Row, resolved: Resolved, held: i64) -> Result<(
     if core.get(&found)?.is_none() {
         match core.pin(&found) {
             Ok(false) => {
-                core.conn()?.execute(
+                core.conn()?.execute_cached(
                     "INSERT OR IGNORE INTO body_pins (item_id) VALUES (?1)",
                     [&found],
                 )?;
@@ -1407,7 +1408,7 @@ fn releasable_pins(conn: &Connection) -> Result<Vec<String>> {
 /// no `attached-to` edge leaves, whoever made the edge.
 fn release_pins(conn: &Connection) -> Result<()> {
     for id in releasable_pins(conn)? {
-        conn.execute("DELETE FROM body_pins WHERE item_id = ?1", [&id])?;
+        conn.execute_cached("DELETE FROM body_pins WHERE item_id = ?1", [&id])?;
         crate::unpin_held(conn, &id)?;
     }
     Ok(())
@@ -1416,7 +1417,7 @@ fn release_pins(conn: &Connection) -> Result<()> {
 /// Durable inputs that can make `after_answers` change the copy, even after
 /// every queued write and read-back has been settled.
 pub(crate) fn has_answer_work(conn: &Connection) -> Result<bool> {
-    let tracked: bool = conn.query_row(
+    let tracked: bool = conn.query_row_cached(
         "SELECT EXISTS (SELECT 1 FROM body_edges) OR EXISTS (SELECT 1 FROM body_checks)",
         [],
         |row| row.get(0),
@@ -1436,7 +1437,7 @@ fn rederive_due(conn: &Connection) -> Result<bool> {
     {
         return Ok(false);
     }
-    Ok(conn.query_row(
+    Ok(conn.query_row_cached(
         "SELECT EXISTS (SELECT 1 FROM items
                          WHERE state IN ('active', 'archived') AND instr(properties, '![') > 0)",
         [],
@@ -1515,7 +1516,7 @@ pub(crate) fn lost_body(
     row: &crate::model::QueuedWrite,
 ) -> Result<Option<String>> {
     let body_write: Option<String> = conn
-        .query_row(
+        .query_row_cached(
             "SELECT body_write FROM body_edges WHERE write_id = ?1",
             [&row.id],
             |found| found.get(0),
@@ -1609,7 +1610,7 @@ pub(crate) fn after_answers_in(tx: &Connection, named: Option<&[String]>) -> Res
             _ => false,
         };
         if done {
-            tx.execute("DELETE FROM body_edges WHERE write_id = ?1", [&write])?;
+            tx.execute_cached("DELETE FROM body_edges WHERE write_id = ?1", [&write])?;
         }
     }
     let checks: Vec<(String, String, String)> = {
@@ -1634,7 +1635,7 @@ pub(crate) fn after_answers_in(tx: &Connection, named: Option<&[String]>) -> Res
             None if store::queued_write(tx, &write)?.is_none() => {}
             _ => continue,
         }
-        tx.execute("DELETE FROM body_checks WHERE write_id = ?1", [&write])?;
+        tx.execute_cached("DELETE FROM body_checks WHERE write_id = ?1", [&write])?;
     }
     release_pins(tx)?;
     Ok(())
@@ -1644,7 +1645,7 @@ pub(crate) fn after_answers_in(tx: &Connection, named: Option<&[String]>) -> Res
 /// answered, which what the copy shows of the body now waits on.
 fn latest_body_write(conn: &Connection, host: &str) -> Result<Option<String>> {
     Ok(conn
-        .query_row(
+        .query_row_cached(
             "SELECT id FROM queue
               WHERE item_id = ?1 AND kind IN (?2, ?3)
                 AND (verdict IS NULL OR verdict IN (?4, ?5))

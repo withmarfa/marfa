@@ -1,5 +1,6 @@
 //! State kept by a queued write's id: its chosen tier, cleared time, learned source and unsent payload.
 
+use super::Cached;
 use super::meta::{meta_get, meta_set};
 use crate::error::CoreError;
 use crate::model::{Tier, WriteKind};
@@ -18,7 +19,7 @@ pub(crate) fn cleared_time_key(create: &str) -> String {
 /// Forgets the clear of `item_id`'s time that the answer of any of its
 /// creates still owes, whether or not that create has been answered.
 pub(crate) fn forget_owed_time_clears(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "DELETE FROM main.meta
           WHERE key IN (SELECT 'cleared_time/' || id FROM queue
                          WHERE item_id = ?1 AND kind = ?2)",
@@ -105,7 +106,7 @@ pub fn source_of(
 
 pub fn unsent(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn
-        .query_row("SELECT sent FROM queue WHERE id = ?1", [id], |row| {
+        .query_row_cached("SELECT sent FROM queue WHERE id = ?1", [id], |row| {
             row.get::<_, i64>(0)
         })
         .optional()?
@@ -115,7 +116,7 @@ pub fn unsent(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 /// Only before the write is first sent: the body sent is the one every
 /// retry under its key sends again.
 pub fn set_unsent_payload(conn: &Connection, id: &str, payload: &str) -> Result<(), CoreError> {
-    conn.execute(
+    conn.execute_cached(
         "UPDATE queue SET payload = ?2 WHERE id = ?1 AND sent = 0",
         params![id, payload],
     )?;

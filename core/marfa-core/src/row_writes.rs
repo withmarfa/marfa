@@ -1,5 +1,6 @@
 //! Row writes, queued as a table's door takes them and laid over a table held whole.
 
+use crate::store::Cached;
 use std::collections::{BTreeMap, BTreeSet};
 
 use marfa_rules::rows;
@@ -291,7 +292,7 @@ fn refuse_unheld(
 /// The row write this one follows (`queue-and-verdicts/follows-write-ahead`).
 fn row_write_ahead(conn: &Connection, item: &str, table: &str) -> Result<Option<String>> {
     Ok(conn
-        .query_row(
+        .query_row_cached(
             "SELECT id FROM queue
               WHERE item_id = ?1 AND row_table = ?2 AND kind IN (?3, ?4)
                 AND (verdict IS NULL OR verdict NOT IN (?5, ?6))
@@ -334,7 +335,7 @@ fn enqueue(
             depends_on: &depends_on,
         },
     )?;
-    conn.execute(
+    conn.execute_cached(
         "UPDATE queue SET row_table = ?2, follows = ?3, read = ?4 WHERE id = ?1",
         params![queued.id, table, follows, read.map(Value::to_string)],
     )?;
@@ -396,9 +397,10 @@ pub(crate) fn write(
         &payload,
         read.as_ref(),
     )?;
-    let seq: i64 = tx.query_row("SELECT seq FROM queue WHERE id = ?1", [&queued.id], |row| {
-        row.get(0)
-    })?;
+    let seq: i64 =
+        tx.query_row_cached("SELECT seq FROM queue WHERE id = ?1", [&queued.id], |row| {
+            row.get(0)
+        })?;
     let ids = record_laid(&tx, &queued.id, seq, item, table, &ops, &queued.queued_at)?;
     if laid {
         for id in &ids {
@@ -614,7 +616,7 @@ fn lay(conn: &Connection, item: &str, table: &str, id: &str) -> Result<()> {
     if laid.is_empty() {
         if let Some(under) = under {
             hold(conn, item, table, id, under.as_ref())?;
-            conn.execute(
+            conn.execute_cached(
                 "DELETE FROM rows_beneath WHERE item_id = ?1 AND name = ?2 AND id = ?3",
                 params![item, table, id],
             )?;
@@ -660,7 +662,7 @@ pub(crate) fn flush(conn: &Connection) -> Result<()> {
     if dirty.is_empty() {
         return Ok(());
     }
-    conn.execute("DELETE FROM rows_dirty", [])?;
+    conn.execute_cached("DELETE FROM rows_dirty", [])?;
     let mut tables_laid = BTreeSet::new();
     for (item, table, id) in &dirty {
         if whole(conn, item, table)? {
@@ -715,19 +717,19 @@ pub(crate) fn take_server_row(
 
 /// A fill after this reads the batches taken before it, so none is waited for.
 pub(crate) fn forget_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
-    conn.execute(
+    conn.execute_cached(
         "DELETE FROM rows_beneath WHERE item_id = ?1 AND name = ?2",
         params![item, table],
     )?;
-    conn.execute(
+    conn.execute_cached(
         "DELETE FROM rows_laid WHERE item_id = ?1 AND name = ?2 AND batch IS NOT NULL",
         params![item, table],
     )?;
-    conn.execute(
+    conn.execute_cached(
         "DELETE FROM rows_seen WHERE item_id = ?1 AND name = ?2",
         params![item, table],
     )?;
-    conn.execute(
+    conn.execute_cached(
         "DELETE FROM rows_seen_beneath WHERE item_id = ?1 AND name = ?2",
         params![item, table],
     )?;
@@ -735,13 +737,13 @@ pub(crate) fn forget_table(conn: &Connection, item: &str, table: &str) -> Result
 }
 
 pub(crate) fn forget_item(conn: &Connection, item: &str) -> Result<()> {
-    conn.execute("DELETE FROM rows_beneath WHERE item_id = ?1", [item])?;
-    conn.execute(
+    conn.execute_cached("DELETE FROM rows_beneath WHERE item_id = ?1", [item])?;
+    conn.execute_cached(
         "DELETE FROM rows_laid WHERE item_id = ?1 AND batch IS NOT NULL",
         [item],
     )?;
-    conn.execute("DELETE FROM rows_seen WHERE item_id = ?1", [item])?;
-    conn.execute("DELETE FROM rows_seen_beneath WHERE item_id = ?1", [item])?;
+    conn.execute_cached("DELETE FROM rows_seen WHERE item_id = ?1", [item])?;
+    conn.execute_cached("DELETE FROM rows_seen_beneath WHERE item_id = ?1", [item])?;
     Ok(())
 }
 
@@ -859,7 +861,7 @@ pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &
             .optional()?
             .is_some();
         if waiting {
-            conn.execute(
+            conn.execute_cached(
                 "INSERT OR IGNORE INTO rows_seen (batch, item_id, name) VALUES (?1, ?2, ?3)",
                 params![batch, item, table],
             )?;
@@ -875,7 +877,7 @@ pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &
 
 /// Kept so a late answer under the spent key is not read as the next one's.
 pub(crate) fn spend_key(conn: &Connection, id: &str) -> Result<()> {
-    let (key, spent): (String, Option<String>) = conn.query_row(
+    let (key, spent): (String, Option<String>) = conn.query_row_cached(
         "SELECT idempotency_key, spent_keys FROM queue WHERE id = ?1",
         [id],
         |row| Ok((row.get(0)?, row.get(1)?)),
@@ -885,7 +887,7 @@ pub(crate) fn spend_key(conn: &Connection, id: &str) -> Result<()> {
         None => Vec::new(),
     };
     keys.push(key);
-    conn.execute(
+    conn.execute_cached(
         "UPDATE queue SET spent_keys = ?2, idempotency_key = ?3 WHERE id = ?1",
         params![
             id,
@@ -900,7 +902,7 @@ pub(crate) fn spend_key(conn: &Connection, id: &str) -> Result<()> {
 /// `id` alone where it went in no batch with another.
 pub(crate) fn batch_of(conn: &Connection, id: &str) -> Result<Vec<String>> {
     let Some(lead) = conn
-        .query_row(
+        .query_row_cached(
             "SELECT COALESCE(batched_with, id) FROM queue WHERE id = ?1 AND kind = ?2",
             params![id, WriteKind::WriteRows.as_str()],
             |row| row.get::<_, String>(0),
@@ -921,7 +923,7 @@ pub(crate) fn batch_of(conn: &Connection, id: &str) -> Result<Vec<String>> {
 /// for an answer that proves the server holding the copy's items took none of it.
 pub(crate) fn leave_unsent(conn: &Connection, id: &str) -> Result<()> {
     for write in batch_of(conn, id)? {
-        conn.execute(
+        conn.execute_cached(
             "UPDATE queue SET batched_with = NULL WHERE id = ?1",
             [&write],
         )?;
@@ -966,7 +968,7 @@ pub(crate) fn unjudge(conn: &Connection, item: &str, table: &str, row: Option<&s
                 left.then(|| read.to_string())
             }
         };
-        conn.execute(
+        conn.execute_cached(
             "UPDATE queue SET read = ?2 WHERE id = ?1",
             params![id, kept],
         )?;
@@ -988,7 +990,7 @@ pub(crate) fn taken(
     writes: &[Taken<'_>],
 ) -> Result<Vec<Vec<RowConflict>>> {
     let seen = match batch {
-        Some(batch) => conn.execute("DELETE FROM rows_seen WHERE batch = ?1", [batch])? > 0,
+        Some(batch) => conn.execute_cached("DELETE FROM rows_seen WHERE batch = ?1", [batch])? > 0,
         None => false,
     };
     // Applied first, the batch's own event left beneath what the batch made.
@@ -1037,11 +1039,11 @@ pub(crate) fn taken(
                 set_beneath(conn, item, table, id, left.as_ref())?;
             }
             match (waits, batch) {
-                (true, Some(batch)) => conn.execute(
+                (true, Some(batch)) => conn.execute_cached(
                     "UPDATE rows_laid SET batch = ?3 WHERE write_id = ?1 AND id = ?2",
                     params![write.id, id, batch],
                 )?,
-                _ => conn.execute(
+                _ => conn.execute_cached(
                     "DELETE FROM rows_laid WHERE write_id = ?1 AND id = ?2",
                     params![write.id, id],
                 )?,
@@ -1083,9 +1085,10 @@ fn clashes(
     else {
         return Ok(Vec::new());
     };
-    let seq: i64 = conn.query_row("SELECT seq FROM queue WHERE id = ?1", [&write.id], |row| {
-        row.get(0)
-    })?;
+    let seq: i64 =
+        conn.query_row_cached("SELECT seq FROM queue WHERE id = ?1", [&write.id], |row| {
+            row.get(0)
+        })?;
     let mut clashed = Vec::new();
     let mut judged = BTreeSet::new();
     for op in ops {

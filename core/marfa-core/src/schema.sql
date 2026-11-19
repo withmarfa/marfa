@@ -561,6 +561,23 @@ CREATE TABLE IF NOT EXISTS attachment_bytes (
   miss TEXT
 ) WITHOUT ROWID;
 
+-- `types_stamp` in `meta` takes a new random value with every change to
+-- `types`, in the transaction that makes it, so a rollback restores both and
+-- a reader can keep what it read of the types for as long as the stamp holds.
+-- Triggers, so a write that goes round `replace_types` moves it too.
+CREATE TRIGGER IF NOT EXISTS types_stamp_insert AFTER INSERT ON types BEGIN
+  INSERT INTO meta (key, value) VALUES ('types_stamp', hex(randomblob(16)))
+    ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+END;
+CREATE TRIGGER IF NOT EXISTS types_stamp_update AFTER UPDATE ON types BEGIN
+  INSERT INTO meta (key, value) VALUES ('types_stamp', hex(randomblob(16)))
+    ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+END;
+CREATE TRIGGER IF NOT EXISTS types_stamp_delete AFTER DELETE ON types BEGIN
+  INSERT INTO meta (key, value) VALUES ('types_stamp', hex(randomblob(16)))
+    ON CONFLICT (key) DO UPDATE SET value = excluded.value;
+END;
+
 -- `copy_revision` in `meta` moves with every change to a row a folder's pull
 -- reads, whoever made it: a catch-up, a hydration, a write laid over the copy
 -- before the server answers, a drain's answer or its rollback. A folder watch

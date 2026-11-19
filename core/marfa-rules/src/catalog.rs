@@ -1,6 +1,7 @@
 //! The type catalog as a value: what types declare and inherit, how properties are judged against it and how an item is shown by it.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -824,7 +825,7 @@ pub struct Indexing {
 /// The type catalog as last hydrated, answering the subtree question `?type=` answers: exact name, dotted-name descendant, or a type whose declared parent chain reaches the root.
 #[derive(Debug)]
 pub struct Catalog {
-    entries: HashMap<String, CatalogEntry>,
+    entries: Arc<HashMap<String, CatalogEntry>>,
     /// What the root last said a request may carry; a write is held to it.
     request_limit: Option<usize>,
 }
@@ -842,16 +843,28 @@ impl Catalog {
     /// A catalog that declares no type: every type reads its title and body from the default properties.
     pub fn empty() -> Catalog {
         Catalog {
-            entries: HashMap::new(),
+            entries: Arc::default(),
             request_limit: None,
         }
     }
 
     pub fn new(entries: HashMap<String, CatalogEntry>, request_limit: Option<usize>) -> Catalog {
+        Catalog::shared(Arc::new(entries), request_limit)
+    }
+
+    /// A catalog over entries another catalog holds too.
+    pub fn shared(
+        entries: Arc<HashMap<String, CatalogEntry>>,
+        request_limit: Option<usize>,
+    ) -> Catalog {
         Catalog {
             entries,
             request_limit,
         }
+    }
+
+    pub fn entries(&self) -> &Arc<HashMap<String, CatalogEntry>> {
+        &self.entries
     }
 
     pub fn from_wire(types: &[WireType], request_limit: Option<usize>) -> Catalog {
@@ -1421,31 +1434,34 @@ mod tests {
 
     fn catalog(pairs: &[(&str, Option<&str>)]) -> Catalog {
         Catalog {
-            entries: pairs
-                .iter()
-                .map(|(id, parent)| {
-                    (
-                        id.to_string(),
-                        CatalogEntry {
-                            parent: parent.map(str::to_string),
-                            title_field: None,
-                            thumbnail_field: None,
-                            body_field: None,
-                            name_from_body: None,
-                            icon: None,
-                            fields: Vec::new(),
-                            definitions: Map::new(),
-                        },
-                    )
-                })
-                .collect(),
+            entries: Arc::new(
+                pairs
+                    .iter()
+                    .map(|(id, parent)| {
+                        (
+                            id.to_string(),
+                            CatalogEntry {
+                                parent: parent.map(str::to_string),
+                                title_field: None,
+                                thumbnail_field: None,
+                                body_field: None,
+                                name_from_body: None,
+                                icon: None,
+                                fields: Vec::new(),
+                                definitions: Map::new(),
+                            },
+                        )
+                    })
+                    .collect(),
+            ),
             request_limit: None,
         }
     }
 
     fn with_bodies(parent_body: Option<&str>, child_body: Option<&str>) -> Catalog {
         let mut catalog = catalog(&[("parent", None), ("child", Some("parent"))]);
-        let parent = catalog.entries.get_mut("parent").unwrap();
+        let entries = Arc::get_mut(&mut catalog.entries).unwrap();
+        let parent = entries.get_mut("parent").unwrap();
         parent.body_field = parent_body.map(str::to_string);
         parent.definitions = serde_json::json!({
             "description": {"type": "string"},
@@ -1454,7 +1470,7 @@ mod tests {
         .as_object()
         .unwrap()
         .clone();
-        catalog.entries.get_mut("child").unwrap().body_field = child_body.map(str::to_string);
+        entries.get_mut("child").unwrap().body_field = child_body.map(str::to_string);
         catalog
     }
 
@@ -1557,7 +1573,11 @@ mod tests {
     fn a_body_fields_own_length_wins_in_both_directions() {
         let declaring = |max: u64| {
             let mut catalog = with_bodies(Some("body"), None);
-            catalog.entries.get_mut("parent").unwrap().definitions = serde_json::json!({
+            Arc::get_mut(&mut catalog.entries)
+                .unwrap()
+                .get_mut("parent")
+                .unwrap()
+                .definitions = serde_json::json!({
                 "body": {"type": "string", "max_length": max},
             })
             .as_object()
@@ -1588,16 +1608,23 @@ mod tests {
     #[test]
     fn projected_nulls_follow_the_destination_type_and_replace_mode() {
         let mut catalog = catalog(&[("parent", None), ("child", Some("parent"))]);
-        catalog.entries.get_mut("parent").unwrap().definitions =
+        Arc::get_mut(&mut catalog.entries)
+            .unwrap()
+            .get_mut("parent")
+            .unwrap()
+            .definitions =
             serde_json::json!({"body": {"required": true}, "title": {"required": false}})
                 .as_object()
                 .unwrap()
                 .clone();
-        catalog.entries.get_mut("child").unwrap().definitions =
-            serde_json::json!({"title": {"required": true}})
-                .as_object()
-                .unwrap()
-                .clone();
+        Arc::get_mut(&mut catalog.entries)
+            .unwrap()
+            .get_mut("child")
+            .unwrap()
+            .definitions = serde_json::json!({"title": {"required": true}})
+            .as_object()
+            .unwrap()
+            .clone();
         let input =
             serde_json::json!({ "body": null, "title": null, "extra": null, "notes": "kept" });
         let properties = input.as_object().unwrap();

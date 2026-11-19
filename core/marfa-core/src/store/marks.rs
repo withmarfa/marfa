@@ -1,5 +1,6 @@
 //! Marks that a row was purged or removed, and the pins that keep a row.
 
+use super::Cached;
 use super::meta::{meta_delete, meta_get, meta_set, prefix_end};
 use super::rows::WAITING;
 use crate::error::CoreError;
@@ -118,8 +119,9 @@ pub fn forget_removals(conn: &Connection) -> Result<(), CoreError> {
 pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     // A pin asked for again is somebody's own, which the body rule's release
     // must not take.
-    conn.execute("DELETE FROM body_pins WHERE item_id = ?1", [id])?;
-    let changed = conn.execute("INSERT OR IGNORE INTO pins (item_id) VALUES (?1)", [id])? > 0;
+    conn.execute_cached("DELETE FROM body_pins WHERE item_id = ?1", [id])?;
+    let changed =
+        conn.execute_cached("INSERT OR IGNORE INTO pins (item_id) VALUES (?1)", [id])? > 0;
     if changed {
         crate::reach::pins_changed(conn)?;
     }
@@ -128,7 +130,7 @@ pub fn pin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 
 /// Whether it was pinned.
 pub fn unpin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    let changed = conn.execute("DELETE FROM pins WHERE item_id = ?1", [id])? > 0;
+    let changed = conn.execute_cached("DELETE FROM pins WHERE item_id = ?1", [id])? > 0;
     if changed {
         crate::reach::pins_changed(conn)?;
     }
@@ -137,7 +139,7 @@ pub fn unpin(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 
 pub fn pinned(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn
-        .query_row("SELECT 1 FROM pins WHERE item_id = ?1", [id], |_| Ok(()))
+        .query_row_cached("SELECT 1 FROM pins WHERE item_id = ?1", [id], |_| Ok(()))
         .optional()?
         .is_some())
 }
@@ -150,7 +152,7 @@ pub fn pins(conn: &Connection) -> Result<Vec<String>, CoreError> {
 
 pub fn item_held(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn
-        .query_row("SELECT 1 FROM items WHERE id = ?1", [id], |_| Ok(()))
+        .query_row_cached("SELECT 1 FROM items WHERE id = ?1", [id], |_| Ok(()))
         .optional()?
         .is_some())
 }

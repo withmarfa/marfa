@@ -757,6 +757,7 @@ mod tests {
 
     #[test]
     fn status_keeps_the_edge_catalog_from_its_item_catalog_snapshot() {
+        let _reads = crate::catalog::uncached();
         let (_dir, writing, folder) = folder_of_new_notes(&["Note.md"]);
         let changed = Arc::new(AtomicBool::new(false));
         let witnessed = changed.clone();
@@ -811,6 +812,7 @@ mod tests {
 
     /// How many times a status read the item catalog's types.
     fn catalog_reads_of_a_status(notes: &[&str]) -> usize {
+        let _reads = crate::catalog::uncached();
         let (_dir, _writing, folder) = folder_of_new_notes(notes);
         let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = reads.clone();

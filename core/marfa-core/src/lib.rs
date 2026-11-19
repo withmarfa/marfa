@@ -419,12 +419,7 @@ impl Core {
         let mut conn = self.conn.lock().map_err(|_| {
             CoreError::Store("the connection was poisoned by an earlier panic".into())
         })?;
-        if self.handle() == Handle::Writer
-            && store::hydration_complete(&conn)?
-            && store::holds_slice(&conn)?
-            && store::meta_get(&conn, store::META_EVENT_CURSOR)?.is_some()
-            && !store::hydrated(&conn)?
-        {
+        if self.handle() == Handle::Writer && store::lapsed(&conn)? {
             let tx = conn.transaction()?;
             reach::expire(&tx)?;
             tx.commit()?;

@@ -1,4 +1,5 @@
 mod attachments;
+mod cached;
 mod catalog;
 mod completeness;
 mod dead;
@@ -25,6 +26,7 @@ mod verdicts;
 mod write_state;
 
 pub use attachments::*;
+pub(crate) use cached::Cached;
 pub use catalog::*;
 pub use completeness::*;
 pub use forget::*;
