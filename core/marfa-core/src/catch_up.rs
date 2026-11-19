@@ -520,9 +520,9 @@ fn take(
             Some(reread) => crate::tables::take_reread(&tx, reread)?,
             None => Vec::new(),
         };
+        store::restored::receipts_seen(&tx, kind, payload)?;
         // The last id applied, never the highest seen: where an event is not
         // applied, a high-water mark would step over it forever.
-        store::restored::receipts_seen(&tx, kind, payload)?;
         let behind = leave_skipped && !applied && reread.is_empty();
         if !behind {
             store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;

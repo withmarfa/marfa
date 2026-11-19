@@ -165,13 +165,13 @@ impl Context {
         http.for_reach(&self.fence).confirming(&self.confirmation)
     }
 
-    /// Takes `confirmation` where it is for this copy's instance, for a read
-    /// that follows a write the same call confirmed.
     /// Whether the copy was still being filled when this was captured.
     pub(crate) fn building(&self) -> bool {
         self.building
     }
 
+    /// Takes `confirmation` where it is for this copy's instance, for a read
+    /// that follows a write the same call confirmed.
     pub(crate) fn sharing(mut self, confirmation: Option<&Arc<Confirmation>>) -> Self {
         if let Some(confirmation) = confirmation
             && confirmation.instance() == self.instance

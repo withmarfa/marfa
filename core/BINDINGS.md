@@ -133,7 +133,7 @@ Use `removeStoreLosingAll` when the person agrees to lose every unsent write. It
 
 ## A server restored to an earlier point
 
-A server put back to an earlier copy of its database no longer holds what it took after that point, and its event log reuses the ids it gave then. A catch-up or `follow` finds this in three ways, and ends `CopyExpired` with the reason `head_past_log`:
+A server put back to an earlier copy of its database no longer holds what it took after that point, and its event log reuses the ids it gave then. A catch-up or `follow` finds this in three ways, ends `CopyExpired`, and the next `hydrate` reports `restarted` as `head_past_log`:
 
 - The server's log ends before the cursor the copy holds.
 - The event at the last id the copy took differs from the one it took. The core keeps that event's fingerprint and asks the stream for one event before its cursor, so each stream it opens replays one event the copy already holds.
