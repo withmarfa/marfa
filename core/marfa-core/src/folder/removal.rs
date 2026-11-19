@@ -406,8 +406,8 @@ mod tests {
         let folder = &paused.folder;
         let confirmed = folder.confirm().unwrap();
         assert_eq!(confirmed.deleted, 1, "{confirmed:?}");
-        assert_eq!(deletes_queued(&folder).len(), 1);
-        assert_eq!(bound_item(&folder, "original.md"), None);
+        assert_eq!(deletes_queued(folder).len(), 1);
+        assert_eq!(bound_item(folder, "original.md"), None);
     }
 
     #[test]
@@ -419,16 +419,16 @@ mod tests {
         let confirmed = folder.confirm().unwrap();
         assert_eq!(confirmed.deleted, 0, "{confirmed:?}");
         assert!(confirmed.unsure.is_empty(), "{confirmed:?}");
-        assert!(deletes_queued(&folder).is_empty(), "a delete was queued");
-        assert_eq!(bound_item(&folder, "moved.md").as_ref(), Some(&items[0]));
-        assert_eq!(bound_item(&folder, "original.md"), None);
+        assert!(deletes_queued(folder).is_empty(), "a delete was queued");
+        assert_eq!(bound_item(folder, "moved.md").as_ref(), Some(&items[0]));
+        assert_eq!(bound_item(folder, "original.md"), None);
         let after = folder.scan().unwrap();
         assert_eq!(
             (after.created, after.deleted, after.paused),
             (0, 0, 0),
             "{after:?}"
         );
-        assert!(deletes_queued(&folder).is_empty());
+        assert!(deletes_queued(folder).is_empty());
     }
 
     #[cfg(unix)]
@@ -454,20 +454,20 @@ mod tests {
         unsure.sort_unstable();
         // Unread, `sub` may hold `gone.md` too, under another name.
         assert_eq!(unsure, ["gone.md", "sub/original.md"], "{confirmed:?}");
-        assert!(deletes_queued(&folder).is_empty(), "a delete was queued");
+        assert!(deletes_queued(folder).is_empty(), "a delete was queued");
         drop(sealed);
         assert_eq!(
-            bound_item(&folder, "sub/original.md").as_ref(),
+            bound_item(folder, "sub/original.md").as_ref(),
             Some(&items[0])
         );
         let again = folder.scan().unwrap();
         assert_eq!(again.paused, 1, "{again:?}");
         let confirmed = folder.confirm().unwrap();
         assert_eq!(confirmed.deleted, 1, "{confirmed:?}");
-        assert_eq!(deletes_queued(&folder).len(), 1);
-        assert_eq!(bound_item(&folder, "gone.md"), None);
+        assert_eq!(deletes_queued(folder).len(), 1);
+        assert_eq!(bound_item(folder, "gone.md"), None);
         assert_eq!(
-            bound_item(&folder, "sub/original.md").as_ref(),
+            bound_item(folder, "sub/original.md").as_ref(),
             Some(&items[0])
         );
     }
