@@ -2,6 +2,7 @@
 
 mod deferred;
 mod request;
+mod roster;
 mod schedule;
 mod send;
 mod sender;
@@ -27,6 +28,7 @@ use request::invalid;
 use store::{Delivery, Status};
 
 pub use request::{Address, CREATE_FIELDS, Create, UPDATE_FIELDS, Update};
+pub use roster::tell as tell_from_memory;
 pub use sender::{Webhooks, start};
 pub use store::{Subscription, UNREAD_DELIVERIES};
 

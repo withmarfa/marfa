@@ -658,15 +658,14 @@ registry! {
     OBJECT_STORE_ACCESS_KEY_ID: Option<String> = "object_store_access_key_id", Rule::Text { max: 256 }, "", "The key the object store is reached with.", Machine;
     OBJECT_STORE_SECRET_ACCESS_KEY: Option<Secret> = "object_store_secret_access_key", Rule::Text { max: 4096 }, "", "The secret the object store is reached with.", MachineSecret;
     HEARTBEAT_URL: Option<Secret> = "heartbeat_url", Rule::Url, "", "Where the server sends its heartbeat, a GET request on the housekeeping schedule, so that something else can notice when the requests stop.", Secret;
-    ERROR_WEBHOOK_URL: Option<Secret> = "error_webhook_url", Rule::Url, "", "Where the server posts a notice of each error it answers with a 500.", Secret;
     POSTHOG_HOST: Option<Secret> = "posthog_host", Rule::CaptureHost, "", "The PostHog host the server sends a report of each of its own faults to, for PostHog's error tracking. It needs posthog_project_token set too.", Secret;
     POSTHOG_PROJECT_TOKEN: Option<Secret> = "posthog_project_token", Rule::Token { max: 256 }, "", "The PostHog project token the server's fault reports are sent with. It needs posthog_host set too.", Secret;
-    ALLOW_PRIVATE_ADDRESSES: bool = "allow_private_addresses", Rule::Boolean, "false", "Whether the server may send to loopback, private and other addresses that are not public: webhooks, heartbeat_url, error_webhook_url, posthog_host and object_store_endpoint. Changing it needs a sign-in from the last five minutes.", Machine;
+    ALLOW_PRIVATE_ADDRESSES: bool = "allow_private_addresses", Rule::Boolean, "false", "Whether the server may send to loopback, private and other addresses that are not public: webhooks, heartbeat_url, posthog_host and object_store_endpoint. Changing it needs a sign-in from the last five minutes.", Machine;
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Rule::Boolean, "true", "Whether the rate limiter is on for the requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses.";
     RATE_LIMIT_REQUESTS: u64 = "rate_limit_requests", COUNT, "4000", "How many requests one key or app may make in each window, across every operation.";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", COUNT, "200", "How many requests one key may make in each window to the operations under `/keys`.";
     RATE_LIMIT_WINDOW_SECONDS: u64 = "rate_limit_window_seconds", UP_TO_A_DAY, "60", "How long one rate-limit window lasts, in seconds.";
-    ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Rule::Boolean, "true", "Whether the server reports its own faults to error_webhook_url and to posthog_host.";
+    ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Rule::Boolean, "true", "Whether the server reports its own faults to posthog_host.";
     AUDIT_RETENTION_DAYS: u64 = "audit_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days the audit log is kept. 0 keeps it for ever.";
     UNAPPROVED_APP_RETENTION_HOURS: u64 = "unapproved_app_retention_hours", Rule::Whole { min: 0, max: 876_000 }, "1", "How many hours an app that registered itself and holds no grant is kept. 0 keeps it for ever.";
     REVOKED_GRANT_RETENTION_DAYS: u64 = "revoked_grant_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days a revoked app grant is kept. 0 keeps it for ever.";
@@ -818,13 +817,6 @@ impl Snapshot {
             .copied()
             .filter(|key| entry(key).is_some_and(Entry::is_secret))
             .collect()
-    }
-
-    /// Where a notice of a fault goes: `error_webhook_url`, while error reporting is on.
-    pub fn error_notice_url(&self) -> Option<String> {
-        self.get(ERROR_WEBHOOK_URL)
-            .filter(|_| self.get(ERROR_REPORTING_ENABLED))
-            .map(|url| url.expose().to_string())
     }
 
     /// Where a report of a fault goes: `posthog_host` with its token, while error reporting is

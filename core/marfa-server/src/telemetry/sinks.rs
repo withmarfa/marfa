@@ -1,13 +1,11 @@
-//! PostHog's error tracking and the error webhook. Both post from a thread of their own
-//! and neither retries.
+//! PostHog's error tracking, posted from a thread of its own without retries.
 
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use marfa_telemetry::exception::{Event, Exception, batch};
 use marfa_telemetry::host::{CONNECT_LIMIT, may_use_proxy};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::fault::Fault;
 use super::lane::Lane;
@@ -17,8 +15,6 @@ use crate::settings::registry::Receiver;
 const QUEUE: usize = 256;
 const WINDOW: Duration = Duration::from_secs(2);
 const BATCH: usize = 20;
-const DEBOUNCE: Duration = Duration::from_secs(60);
-const MAX_DEBOUNCED: usize = 1_024;
 const EXCEPTION_TIMEOUT: Duration = Duration::from_secs(5);
 const SDK_INFO: &str = concat!("marfa-server/", env!("CARGO_PKG_VERSION"));
 
@@ -132,64 +128,6 @@ fn event(report: &Report, attributes: &[(String, String)]) -> Value {
         attributes,
     }
     .v1(&uuid::Uuid::now_v7().to_string())
-}
-
-const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(5);
-
-/// A report, with the error webhook and `allow_private_addresses` as they stood when it was made.
-#[derive(Clone)]
-pub struct Notice {
-    pub report: Report,
-    pub url: String,
-    pub private_allowed: bool,
-}
-
-pub fn webhook(environment: Option<String>) -> Lane<Notice> {
-    let mut told: HashMap<String, Instant> = HashMap::new();
-    Lane::start(
-        "error-webhook",
-        QUEUE,
-        Duration::ZERO,
-        1,
-        move |notices: Vec<Notice>| {
-            for Notice {
-                report,
-                url,
-                private_allowed,
-            } in notices
-            {
-                let now = Instant::now();
-                told.retain(|_, at| now.duration_since(*at) < DEBOUNCE);
-                let key = format!(
-                    "{}:{}",
-                    report.fault.message.chars().take(100).collect::<String>(),
-                    report.path
-                );
-                if told.contains_key(&key) || told.len() >= MAX_DEBOUNCED {
-                    continue;
-                }
-                let connect = WEBHOOK_TIMEOUT.min(CONNECT_LIMIT);
-                // A notice refused for its address was never sent, so it holds back no other.
-                let Some(agent) = notice_agent(&url, WEBHOOK_TIMEOUT, connect, private_allowed)
-                else {
-                    continue;
-                };
-                told.insert(key, now);
-                let notice = json!({
-                    "timestamp": report.timestamp,
-                    "request_id": report.request_id,
-                    "error": report.fault.message,
-                    "path": report.path,
-                    "method": report.method,
-                    "environment": environment,
-                });
-                let _ = agent
-                    .post(&url)
-                    .header("Content-Type", "application/json")
-                    .send(notice.to_string().as_bytes());
-            }
-        },
-    )
 }
 
 #[cfg(test)]

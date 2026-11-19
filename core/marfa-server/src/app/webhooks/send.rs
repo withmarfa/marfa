@@ -108,7 +108,7 @@ fn prepare(
     })))
 }
 
-fn signature(secret: &str, t: i64, body: &[u8]) -> Result<String> {
+pub(super) fn signature(secret: &str, t: i64, body: &[u8]) -> Result<String> {
     let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
         .map_err(|_| Refusal::internal("a webhook secret was refused"))?;
     mac.update(t.to_string().as_bytes());

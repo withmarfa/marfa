@@ -25,14 +25,14 @@ pub use fault::{Fault, Kind, caught, install_panic_hook};
 pub use logs::{Logs, REQUEST_TARGET};
 
 use lane::Lane;
-use sinks::{Notice, Report, Tracked};
+use sinks::{Report, Tracked};
 
 use crate::settings::Snapshot;
 use crate::settings::registry::{ALLOW_PRIVATE_ADDRESSES, ERROR_REPORTING_ENABLED};
 
 pub const FLUSH_WITHIN: Duration = Duration::from_millis(750);
 
-/// A raw path is here only for the two sinks that name it; a span and a log record
+/// A raw path is here only for the exception report, which names it; a span and a log record
 /// carry the route's template.
 pub struct Finished<'a> {
     pub request_id: &'a str,
@@ -54,7 +54,6 @@ struct Active {
     loggers: Option<SdkLoggerProvider>,
     off: bool,
     exceptions: Lane<Tracked>,
-    webhook: Lane<Notice>,
 }
 
 #[derive(Clone, Default)]
@@ -128,14 +127,12 @@ impl Telemetry {
             }
         }
         let exceptions = sinks::exceptions(pairs);
-        let webhook = sinks::webhook(config.environment.clone());
         let _ = self.active.set(Active {
             tracer,
             tracers,
             loggers,
             off: config.off,
             exceptions,
-            webhook,
         });
         self.follow(settings);
         Guard {
@@ -196,13 +193,6 @@ impl Telemetry {
                     trace,
                 };
                 let private_allowed = settings.get(ALLOW_PRIVATE_ADDRESSES);
-                if let Some(url) = settings.error_notice_url() {
-                    active.webhook.offer(Notice {
-                        report: report.clone(),
-                        url,
-                        private_allowed,
-                    });
-                }
                 if let Some(receiver) = settings.exception_receiver().filter(|_| !active.off) {
                     active.exceptions.offer(Tracked {
                         report,
@@ -227,7 +217,6 @@ impl Telemetry {
             let _ = provider.shutdown_with_timeout(left());
         }
         active.exceptions.flush(left());
-        active.webhook.flush(left());
     }
 }
 

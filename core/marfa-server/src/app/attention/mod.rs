@@ -1,6 +1,9 @@
 //! What the owner should look at: one list over the instance's own state, where a check that
 //! cannot answer is itself an entry, so an empty list always means every check found nothing.
 
+pub mod faults;
+
+use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -17,9 +20,11 @@ use super::connectors::{self, Reason};
 use super::events::Event;
 use super::faults::{FAIL_ATTENTION, HOLD_ATTENTION};
 use super::housekeeping::{Report, Run};
-use super::refusal::Result;
-use super::{App, folders, health, housekeeping, keys};
+use super::refusal::{Code, Refusal, Result};
+use super::{App, folders, health, housekeeping, keys, webhooks};
 use crate::app::clock::{Stamp, Standing};
+use crate::telemetry::{Finished, Kind, RequestSpan};
+use faults::Entry;
 
 const CHECK_WAIT: Duration = Duration::from_secs(3);
 const SOON_MS: i64 = 7 * housekeeping::DAY_MS;
@@ -41,6 +46,9 @@ pub const CHECKS: [(&str, &str); 5] = [
 
 /// The event a new entry is announced by.
 pub const RAISED: &str = "attention.raised";
+
+const FAULT: &str = "fault";
+const WRITE_ACTION: &str = "attention.check";
 
 /// The kinds of entry each check finds, kept as announced while the check cannot answer.
 const FOUND_BY: [(&str, &[&str]); 5] = [
@@ -79,6 +87,8 @@ impl Concern {
             "key" => "An API key expires within seven days.",
             "backup" => "The backups need a look.",
             "clock" => "The server's clock disagrees with the time it last trusted.",
+            "setting" => "A secret setting must be set again.",
+            FAULT => faults::DESCRIPTION,
             _ => "A check of what needs attention could not answer.",
         };
         json!({
@@ -490,6 +500,16 @@ fn without_covered_jobs(health: &[Concern], jobs: Vec<Concern>) -> Vec<Concern> 
 pub struct Order {
     begun: AtomicU64,
     looked: Arc<AtomicU64>,
+    pub reported: Arc<faults::Faults>,
+}
+
+fn fault_concern(entry: &Entry) -> Concern {
+    Concern {
+        kind: FAULT,
+        reference: entry.reference.clone(),
+        title: entry.title(),
+        description: faults::DESCRIPTION.to_string(),
+    }
 }
 
 /// Every entry, and the kinds of entry a check that could not answer would have found.
@@ -539,7 +559,14 @@ async fn gather(app: &Arc<App>) -> Gathered {
         .collect();
     let jobs = without_covered_jobs(&health.0, jobs.0);
     let clock: Vec<Concern> = clocked(app.clock.standing()).into_iter().collect();
-    let concerns = [health.0, clock, jobs, connectors.0, folders.0, keys.0]
+    let met: Vec<Concern> = app
+        .attention
+        .reported
+        .standing(app.clock.now_ms())
+        .iter()
+        .map(fault_concern)
+        .collect();
+    let concerns = [health.0, clock, met, jobs, connectors.0, folders.0, keys.0]
         .into_iter()
         .flatten()
         .collect();
@@ -573,11 +600,19 @@ fn unannounced<'a>(tx: &Transaction<'_>, gathered: &'a Gathered) -> Result<Vec<&
 }
 
 /// The announced entries that are gone, so that one is announced again should it come back.
-/// An entry of a check that could not answer is kept.
-fn forgotten(tx: &Transaction<'_>, gathered: &Gathered) -> Result<Vec<(String, String)>> {
+/// An entry of a check that could not answer is kept, and a fault is judged by `faults`, the
+/// faults standing as the write runs, since one can be met after the check looked.
+fn forgotten(
+    tx: &Transaction<'_>,
+    gathered: &Gathered,
+    faults: &HashSet<String>,
+) -> Result<Vec<(String, String)>> {
     Ok(announced(tx)?
         .into_iter()
         .filter(|(kind, reference)| {
+            if kind == FAULT {
+                return !faults.contains(reference);
+            }
             !gathered.unknown.contains(&kind.as_str())
                 && !gathered
                     .concerns
@@ -587,48 +622,157 @@ fn forgotten(tx: &Transaction<'_>, gathered: &Gathered) -> Result<Vec<(String, S
         .collect())
 }
 
+fn remember(tx: &Transaction<'_>, kind: &str, reference: &str, at: &str) -> Result<()> {
+    tx.execute(
+        "INSERT INTO attention_announced (kind, reference, announced_at) VALUES (?1, ?2, ?3)",
+        params![kind, reference, at],
+    )?;
+    Ok(())
+}
+
+fn raised_event(concern: &Concern) -> Event<'static> {
+    Event {
+        event_type: RAISED,
+        item_id: "",
+        type_id: "",
+        source: "",
+        payload: json!({ "attention": concern.to_event() }).to_string(),
+    }
+}
+
 /// Writes only when an entry is new or gone, decided again in the write unless a newer check looked.
 async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
     let looking = gathered.clone();
+    let standing = app.attention.reported.references(app.clock.now_ms());
     let changed = app
         .db
         .read(move |tx| {
-            Ok(!unannounced(tx, &looking)?.is_empty() || !forgotten(tx, &looking)?.is_empty())
+            Ok(!unannounced(tx, &looking)?.is_empty()
+                || !forgotten(tx, &looking, &standing)?.is_empty())
         })
         .await?;
     if !changed {
         return Ok(0);
     }
     let (writing, looked) = (gathered.clone(), app.attention.looked.clone());
-    app.write(&Caller::Server, "attention.check", move |unit| {
+    let reported = app.attention.reported.clone();
+    app.write(&Caller::Server, WRITE_ACTION, move |unit| {
         if looked.load(Ordering::Acquire) > writing.order {
             return Ok(0);
         }
         let tx = unit.tx();
-        for (kind, reference) in forgotten(tx, &writing)? {
+        let now_ms = unit.instant.ms();
+        for (kind, reference) in forgotten(tx, &writing, &reported.references(now_ms))? {
             tx.execute(
                 "DELETE FROM attention_announced WHERE kind = ?1 AND reference = ?2",
                 params![kind, reference],
             )?;
         }
-        let new = unannounced(tx, &writing)?;
-        for concern in &new {
-            tx.execute(
-                "INSERT INTO attention_announced (kind, reference, announced_at) \
-                 VALUES (?1, ?2, ?3)",
-                params![concern.kind, concern.reference, unit.at],
-            )?;
-            unit.announce(&Event {
-                event_type: RAISED,
-                item_id: "",
-                type_id: "",
-                source: "",
-                payload: json!({ "attention": concern.to_event() }).to_string(),
-            })?;
+        let sent: HashSet<String> = reported
+            .from_memory(now_ms)
+            .into_iter()
+            .map(|(reference, _)| reference)
+            .collect();
+        let mut raised = 0;
+        for concern in unannounced(tx, &writing)? {
+            remember(tx, concern.kind, &concern.reference, &unit.at)?;
+            if concern.kind == FAULT && sent.contains(&concern.reference) {
+                continue;
+            }
+            unit.announce(&raised_event(concern))?;
+            raised += 1;
         }
-        Ok(new.len())
+        Ok(raised)
     })
     .await
+}
+
+/// Whether a refused write met a database that fails, and certainly did not commit.
+fn database_failed(refused: &Refusal) -> bool {
+    let failed = refused.code == Code::InsufficientStorage
+        || refused
+            .fault
+            .as_ref()
+            .is_some_and(|fault| fault.kind == Kind::Database);
+    failed && !refused.commit_failed
+}
+
+/// Announces a fault entry at once. Where the database fails, the entry goes to the webhooks
+/// from memory instead, and is recorded unannounced once a write lands.
+fn raise_fault(app: &Arc<App>, entry: Entry) {
+    let app = app.clone();
+    tokio::spawn(async move {
+        let concern = fault_concern(&entry);
+        let reported = app.attention.reported.clone();
+        let writing = concern.clone();
+        let first_ms = entry.first_ms;
+        let written = app
+            .write(&Caller::Server, WRITE_ACTION, move |unit| {
+                let tx = unit.tx();
+                for (reference, _) in reported.from_memory(unit.instant.ms()) {
+                    if announced_at(tx, &reference)?.is_none() {
+                        remember(tx, FAULT, &reference, &unit.at)?;
+                    }
+                }
+                if let Some(at) = announced_at(tx, &writing.reference)? {
+                    if Stamp::read(&at)?.ms() >= first_ms {
+                        return Ok(());
+                    }
+                    tx.execute(
+                        "DELETE FROM attention_announced WHERE kind = ?1 AND reference = ?2",
+                        params![FAULT, writing.reference],
+                    )?;
+                }
+                remember(tx, FAULT, &writing.reference, &unit.at)?;
+                unit.announce(&raised_event(&writing))
+            })
+            .await;
+        match written {
+            Ok(()) => {}
+            Err(refused) if database_failed(&refused) => {
+                app.attention
+                    .reported
+                    .sent_from_memory(&entry.reference, first_ms);
+                webhooks::tell_from_memory(&app, concern.to_event());
+            }
+            Err(refused) => {
+                tracing::warn!(error = %refused, "A fault's attention entry was not announced");
+            }
+        }
+    });
+}
+
+impl App {
+    /// Lists a fault in what needs attention, announcing it when it is new there, and offers
+    /// its report to error tracking.
+    pub fn report_fault(
+        self: &Arc<App>,
+        place: faults::Place<'_>,
+        span: Option<RequestSpan>,
+        done: &Finished<'_>,
+    ) {
+        if let Some(fault) = done.fault
+            && let Some(entry) =
+                self.attention
+                    .reported
+                    .record(fault.kind, &place, self.clock.now_ms())
+        {
+            raise_fault(self, entry);
+        }
+        self.telemetry.finish(span, done);
+    }
+}
+
+/// When a fault's entry was announced, read in the write that decides whether to announce it.
+fn announced_at(tx: &Transaction<'_>, reference: &str) -> Result<Option<String>> {
+    use rusqlite::OptionalExtension;
+    Ok(tx
+        .query_row(
+            "SELECT announced_at FROM attention_announced WHERE kind = ?1 AND reference = ?2",
+            params![FAULT, reference],
+            |row| row.get(0),
+        )
+        .optional()?)
 }
 
 /// A list that cannot announce its new entries is still answered whole.
