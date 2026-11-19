@@ -166,8 +166,7 @@ pub struct Http {
     renewing: Arc<Mutex<()>>,
     /// Raised by `let_go`: no request or renewal starts after it.
     let_go: Arc<AtomicBool>,
-    /// Asked before each request and renewal whether the caller still wants
-    /// the read: `let_go` is raised only once the caller looks at its stop.
+    /// Asked before each request and renewal whether the caller still wants the read.
     wanted: Option<Wanted>,
     relocation: Arc<OnceLock<Mutex<Relocation>>>,
     /// Keeps what `keep` writes through, the writer lock among it, alive.

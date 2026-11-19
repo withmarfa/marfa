@@ -1171,8 +1171,7 @@ impl<T: Send + 'static> Pending<T> {
         let reading = http.wanted_while({
             let (asks, waiting) = (Arc::downgrade(&sender), Arc::clone(&waiting));
             Arc::new(move || {
-                // A caller not yet waiting reads its stop itself when it does,
-                // and a read already ended has no caller left to ask.
+                // A caller not yet waiting checks `stop` itself; an ended read has none.
                 let Some(asks) = asks.upgrade().filter(|_| waiting.load(Ordering::SeqCst)) else {
                     return true;
                 };
@@ -1227,9 +1226,7 @@ impl<T> Drop for Pending<T> {
         if !self.answered {
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "request-let-go");
-            // A read asking whether it is wanted may hold the renewal lock
-            // `let_go` waits for, so the question is closed first: it then
-            // hears no.
+            // Closed first, so a read asking under the renewal lock hears no.
             drop(std::mem::replace(&mut self.answer, mpsc::sync_channel(0).1));
             self.http.let_go();
         }

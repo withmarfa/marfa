@@ -880,8 +880,7 @@ fn a_lookup_stopped_before_its_caller_looks_again_starts_no_renewal_of_its_own()
         let stop = Arc::new(AtomicBool::new(false));
         let fail = Arc::new(AtomicBool::new(false));
         let failing = Arc::clone(&fail);
-        // The renewal fails at once after the stop, well inside the time a
-        // caller takes to look at `stop` again.
+        // Fails at once after the stop, before the caller looks again.
         let (ended, started, sent) = lookups_behind_a_failing_renewal(
             &stop,
             move || failing.load(std::sync::atomic::Ordering::SeqCst),
@@ -974,8 +973,7 @@ fn a_lookup_stopped_while_the_root_is_read_sends_no_item_request_however_soon_th
             let looking = scope
                 .spawn(|| crate::catch_up::item_checked_unless_stopped(&core, http, &stop, ITEM));
             server.wait_for("/", roots + 1, std::time::Duration::from_secs(5));
-            // The root answers at once after the stop, well inside the time
-            // the caller takes to look at `stop` again.
+            // Answers at once after the stop, before the caller looks again.
             if stopped {
                 stop.store(true, std::sync::atomic::Ordering::SeqCst);
             }
