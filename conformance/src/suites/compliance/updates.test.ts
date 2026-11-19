@@ -323,7 +323,7 @@ it("refuses a release that names its files anywhere but Marfa's release address,
     repository: (version, name) =>
       `${origin()}/withmarfa/other/releases/download/v${version}/${name}`,
     tag: (_version, name) =>
-      `${origin()}/withmarfa/marfa/releases/download/v0.0.1/${name}`,
+      `${origin()}/withmarfa/marfa/releases/download/v${before.data.release}/${name}`,
     name: (version) =>
       `${origin()}/withmarfa/marfa/releases/download/v${version}/marfa-${version}-other.tar.gz`,
     host: (version, name) =>
