@@ -113,52 +113,55 @@ const created = (events: SseEvent[], id: string) =>
       (event.data as { item?: { id?: string } }).item?.id === id,
   );
 
-it("lists a fault once for where it happened, with a fixed description, counting each time it happens", async ({
-  signal,
-}) => {
-  const reader = await mint({
-    permissions: ["instance.read"],
-    type_permissions: { "core.note": "read" },
-  });
-  const reference = "database:POST /items";
-  await withStreamAtCursor(
-    server.apiUrl,
-    reader.key,
-    { signal },
-    async (held) => {
-      await failNote();
-      // Announced with no check of the list in between.
-      const first = await collectUntil(
-        held,
-        (events) => attentionTo(events, reference).length > 0,
-        "the fault's attention.raised",
-        signal,
-      );
-      expect(attentionTo(first.events, reference)[0]!.data).toEqual({
-        event_type: "attention.raised",
-        attention: { kind: "fault", reference, description: DESCRIPTION },
-      });
+it(
+  "lists a fault once for where it happened, with a fixed description, counting each time it happens",
+  // The fault stays listed, so a second run would find nothing new to announce.
+  { retry: 0 },
+  async ({ signal }) => {
+    const reader = await mint({
+      permissions: ["instance.read"],
+      type_permissions: { "core.note": "read" },
+    });
+    const reference = "database:POST /items";
+    await withStreamAtCursor(
+      server.apiUrl,
+      reader.key,
+      { signal },
+      async (held) => {
+        await failNote();
+        // Announced with no check of the list in between.
+        const first = await collectUntil(
+          held,
+          (events) => attentionTo(events, reference).length > 0,
+          "the fault's attention.raised",
+          signal,
+        );
+        expect(attentionTo(first.events, reference)[0]!.data).toEqual({
+          event_type: "attention.raised",
+          attention: { kind: "fault", reference, description: DESCRIPTION },
+        });
 
-      await failNote();
-      expect(await faults()).toEqual([
-        {
-          kind: "fault",
-          reference,
-          title: "A database failure in POST /items, 2 times",
-          description: DESCRIPTION,
-        },
-      ]);
-      const sentinel = (await writeNote()).id;
-      const rest = await collectUntil(
-        held,
-        (events) => created(events, sentinel),
-        "the sentinel note",
-        signal,
-      );
-      expect(attentionTo(rest.events, reference)).toEqual([]);
-    },
-  );
-});
+        await failNote();
+        expect(await faults()).toEqual([
+          {
+            kind: "fault",
+            reference,
+            title: "A database failure in POST /items, 2 times",
+            description: DESCRIPTION,
+          },
+        ]);
+        const sentinel = (await writeNote()).id;
+        const rest = await collectUntil(
+          held,
+          (events) => created(events, sentinel),
+          "the sentinel note",
+          signal,
+        );
+        expect(attentionTo(rest.events, reference)).toEqual([]);
+      },
+    );
+  },
+);
 
 /** A webhook subscribed to `attention.raised`, made by a key holding `permissions`. */
 async function subscribe(
