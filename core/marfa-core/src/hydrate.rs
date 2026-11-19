@@ -1025,6 +1025,7 @@ fn catalog_differs(core: &Core, catalog: &WireCatalog) -> Result<bool> {
 /// frame after `stream_cursor`: `None` where the log would replay them, and
 /// otherwise why it cannot.
 fn head_held(http: &Http, head: &str, stop: &AtomicBool) -> Result<Option<HydrateRestart>> {
+    let mut renewed = false;
     for _ in 0..HEAD_ATTEMPTS {
         crate::catch_up::refuse_if_stopped(stop)?;
         let asked = head.to_string();
@@ -1038,6 +1039,7 @@ fn head_held(http: &Http, head: &str, stop: &AtomicBool) -> Result<Option<Hydrat
             }
             reader => reader?,
         };
+        let opened_under = http.authorization();
         let mut frames = Frames::new(BufReader::new(reader));
         let mut opened = false;
         loop {
@@ -1059,10 +1061,18 @@ fn head_held(http: &Http, head: &str, stop: &AtomicBool) -> Result<Option<Hydrat
                     match kind {
                         "reach_changed" => return Ok(Some(HydrateRestart::ReachChanged)),
                         "stream_incomplete" => {
-                            return Err(CoreError::StreamIncomplete {
-                                reason: payload.reason.unwrap_or_default(),
-                                server: None,
-                            });
+                            let ended = crate::catch_up::stream_ended(&payload);
+                            if renewed || !crate::catch_up::credential_ended_the_stream(&ended) {
+                                return Err(ended);
+                            }
+                            crate::catch_up::renew_for_ended_stream(
+                                http,
+                                stop,
+                                opened_under,
+                                ended,
+                            )?;
+                            renewed = true;
+                            break;
                         }
                         "stream_cursor" if !opened => opened = true,
                         // A replayed event or the end of the replay: the log
@@ -1797,11 +1807,13 @@ fn confirmed_as(http: &Http, instance: &str) -> Result<Http> {
 /// Read before the first page so the snapshot has a resume point from before
 /// it.
 fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)> {
+    let mut renewed = false;
     for _ in 0..HEAD_ATTEMPTS {
         crate::catch_up::refuse_if_stopped(stop)?;
         let reader = crate::catch_up::ask_unless_stopped(stop, http, |http| {
             http.open_events(None, HEAD_READ_TIMEOUT)
         })?;
+        let opened_under = http.authorization();
         let mut frames = Frames::new(BufReader::new(reader));
         loop {
             crate::catch_up::refuse_if_stopped(stop)?;
@@ -1816,10 +1828,13 @@ fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)>
                         return Err(crate::reach::invalid());
                     }
                     if payload.event_type == "stream_incomplete" {
-                        return Err(CoreError::StreamIncomplete {
-                            reason: payload.reason.unwrap_or_default(),
-                            server: None,
-                        });
+                        let ended = crate::catch_up::stream_ended(&payload);
+                        if renewed || !crate::catch_up::credential_ended_the_stream(&ended) {
+                            return Err(ended);
+                        }
+                        crate::catch_up::renew_for_ended_stream(http, stop, opened_under, ended)?;
+                        renewed = true;
+                        break;
                     }
                     if payload.event_type == "reach_changed" {
                         return Err(CoreError::CopyExpired {

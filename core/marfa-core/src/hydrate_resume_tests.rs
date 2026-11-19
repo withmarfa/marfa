@@ -158,6 +158,116 @@ fn the_rest(server: &Scripted, events: Vec<String>, live: &str) {
     );
 }
 
+fn credential_ended() -> String {
+    "event: stream_incomplete\ndata: {\"event_type\":\"stream_incomplete\",\"reason\":\"credential_ended\"}\n\n"
+        .into()
+}
+
+fn created(id: &str, cursor: &str) -> String {
+    let mut payload: Value =
+        serde_json::from_str(&scripted::item_payload("item.created", id, "core.note", 1)).unwrap();
+    payload["listed"] = true.into();
+    scripted::event(cursor, "item.created", &payload.to_string())
+}
+
+/// `the_rest`, with the replay's stream ended for its credential after
+/// event 11 and the rest of the log read from there.
+fn the_rest_ended_for_its_credential(server: &Scripted) {
+    server.on("/items", vec![page(&["c"], None)]);
+    server.on("/items/bulk-get", vec![bulk(&["pinned"])]);
+    let marker = |kind| scripted::copy_marker(kind, "12");
+    server.on(
+        "/events",
+        vec![
+            head("12"),
+            replay(vec![], "12"),
+            scripted::stream(
+                vec![
+                    marker("stream_cursor"),
+                    created("d", "11"),
+                    credential_ended(),
+                ],
+                Then::End,
+            ),
+            scripted::stream(
+                vec![
+                    marker("stream_cursor"),
+                    created("e", "12"),
+                    marker("stream_live"),
+                ],
+                Then::End,
+            ),
+        ],
+    );
+}
+
+fn renewer(core: &Core) -> Arc<std::sync::Mutex<Vec<String>>> {
+    let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let told = Arc::clone(&asked);
+    core.renew_credential_with(Box::new(move |refused| {
+        let mut told = told.lock().unwrap();
+        told.push(refused.to_string());
+        Ok(format!("fresh-{}", told.len()))
+    }));
+    asked
+}
+
+#[test]
+fn a_hydration_whose_replay_ends_for_its_credential_renews_and_reads_on() {
+    let server = Scripted::start();
+    let core = interrupted(&server);
+    the_rest_ended_for_its_credential(&server);
+    let asked = renewer(&core);
+
+    let report = hydrate(&core, SliceTier::Library).unwrap();
+
+    assert!(report.resumed);
+    assert_eq!(report.cursor, "12");
+    assert_eq!(held(&core), ["a", "b", "c", "d", "e", "pinned"]);
+    assert_eq!(asked.lock().unwrap().len(), 1);
+    let from: Vec<_> = server
+        .seen("/events")
+        .into_iter()
+        .map(|seen| seen.last_event_id)
+        .collect();
+    assert_eq!(from.last().unwrap().as_deref(), Some("11"));
+}
+
+#[test]
+fn a_hydration_whose_replay_ends_for_its_credential_is_a_key_refusal_when_it_cannot_renew() {
+    // The witness: the same script, renewed, hydrates.
+    let server = Scripted::start();
+    let core = interrupted(&server);
+    the_rest_ended_for_its_credential(&server);
+    renewer(&core);
+    assert!(hydrate(&core, SliceTier::Library).is_ok());
+
+    let renewals: [(&str, Option<crate::http::Renew>); 2] = [
+        ("a key", None),
+        (
+            "a sign-in the renewal ended",
+            Some(Box::new(|_| {
+                Err(CoreError::SignedOut {
+                    origin: "scripted".into(),
+                })
+            })),
+        ),
+    ];
+    for (how, renew) in renewals {
+        let server = Scripted::start();
+        let core = interrupted(&server);
+        the_rest_ended_for_its_credential(&server);
+        if let Some(renew) = renew {
+            core.renew_credential_with(renew);
+        }
+        let error = hydrate(&core, SliceTier::Library).unwrap_err();
+        assert!(
+            matches!(&error, CoreError::StreamIncomplete { reason, .. } if reason == "credential_ended"),
+            "{how}: {error:?}"
+        );
+    }
+}
+
 /// A server that answers fewer rows than the `limit` it was sent still fills
 /// a copy, because the fill follows `next_cursor` and never counts on a full
 /// page.

@@ -2592,7 +2592,7 @@ Where a copy names the instance it was hydrated from, a device MUST confirm that
 
 **Reason:** the instance at an address can change between two calls, during a stream or a fetch held for hours, and while a device renews its credential, and each of these tells the server an item ID, a file hash, an event cursor or a name a person wrote. The root read and the request after it are two requests, so this cannot keep what the copy holds from a server that takes the address between them; a write names the instance, and such a server refuses it (`instance/write-names-other`).
 
-**Tests:** `device/server-reads-instance.test.ts › confirms the instance again before it repeats a table read after a credential renewal`, `› confirms the instance again before it repeats a pin after a credential renewal`, `› sends no second link id to an instance that replaced the first between two lookups`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a pin`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a table hold`, `› reads no other instance's bin as the copy's own, and expires the copy instance_changed`, `› sends no cursor to another instance its root names at the copy's own address, and expires the copy instance_changed: a catch-up`, `› sends no file hash to another instance its root names at the copy's own address, and expires the copy instance_changed`, `› reads the root again and sends no item id to another instance that took the copy's address while the stream was held`.
+**Tests:** `device/server-reads-instance.test.ts › confirms the instance again before it repeats a table read after a credential renewal`, `› confirms the instance again before it repeats a pin after a credential renewal`, `› confirms the instance again before it opens a stream again after a credential renewal`, `› sends no second link id to an instance that replaced the first between two lookups`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a pin`, `› sends no item id to another instance its root names at the copy's own address, and expires the copy instance_changed: a table hold`, `› reads no other instance's bin as the copy's own, and expires the copy instance_changed`, `› sends no cursor to another instance its root names at the copy's own address, and expires the copy instance_changed: a catch-up`, `› sends no file hash to another instance its root names at the copy's own address, and expires the copy instance_changed`, `› reads the root again and sends no item id to another instance that took the copy's address while the stream was held`.
 
 ### `device/server-reads-instance-hydration`
 
@@ -5157,6 +5157,22 @@ If a read under the copy's reach meets a dropped connection, a rate limit, a ser
 If a read under the copy's reach is refused `401` naming the contract and the credential cannot be renewed, then a device MUST expire the copy `copy_expired` with the reason `credential_ended`.
 
 **Tests:** `device/contract.test.ts › refuses an event stream's refusal on another contract rather than reading its envelope`.
+
+### `device/stream-credential-ended-renews`
+
+Where a copy holds a renewable sign-in, when the stream of a catch-up or a hydration ends with a `stream_incomplete` frame whose `reason` is `credential_ended`, a device MUST renew the sign-in and read on from the last event it took.
+
+**Reason:** an access token that expires while a long stream is read ends the stream, though the refresh token still works, so the call ends at the first event the token cannot carry and the app signs the person out. A cursor taken with each event lets the read go on without applying one twice, and `device/server-reads-instance-each-request` holds the instance confirmed again before the stream opens.
+
+**Tests:** `device/server-reads-instance.test.ts › confirms the instance again before it opens a stream again after a credential renewal`.
+
+### `device/stream-credential-ended-unrenewed`
+
+If the stream of a catch-up or a hydration ends with a `stream_incomplete` frame whose `reason` is `credential_ended` and renewing the sign-in ends it, then a device MUST end the call as it ends one whose copy holds a key, with that frame's reason.
+
+**Reason:** a renewal that fails for another cause, such as the network, leaves the sign-in standing and is reported as its own failure, so only an ended sign-in reads as an ended credential.
+
+**Tests:** `device/server-reads-instance.test.ts › ends a catch-up as it does without a renewal when renewing its sign-in after its stream ended for its credential ends the sign-in`, `device/cli-outcomes.test.ts › ends $command on a stream_incomplete frame for credential_ended with exit 5`.
 
 ### `device/read-back-keeps-verdict`
 

@@ -1074,6 +1074,14 @@ impl Http {
         }
     }
 
+    /// `false` where the copy holds a key or the renewal ended the sign-in.
+    pub(crate) fn renew_for_ended_stream(&self, sent: &str) -> Result<bool, CoreError> {
+        if !self.renews {
+            return Ok(false);
+        }
+        Ok(self.renewed(sent, None)?.is_some())
+    }
+
     fn renewal(&self, sent: &str, before: Before<'_>) -> Result<Option<String>, CoreError> {
         let Some(renew) = self.renew.get() else {
             return Ok(None);

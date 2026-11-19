@@ -27,6 +27,7 @@ use marfa_rules::catalog::Catalog;
 use marfa_rules::wire::WireCatalog;
 
 const STREAM_HARD_BOUND: Duration = Duration::from_secs(120);
+const CREDENTIAL_ENDED: &str = "credential_ended";
 const FIRST_FRAME_WAIT: Duration = Duration::from_secs(15);
 // The server budgets its head read at five seconds before it announces the
 // cursor, so this has to outlast that budget.
@@ -768,7 +769,8 @@ fn replay(
     let catalog = ask_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
     let mut catalog = adopt(core, context, &catalog, catalog_changed)?;
-    let frames = open(http, &cursor, STREAM_HARD_BOUND)?;
+    let mut frames = open(http, &cursor, STREAM_HARD_BOUND)?;
+    let mut opened_under = http.authorization();
     refuse_if_stopped(stop)?;
     // So a type the server will not describe costs one read of the catalog
     // rather than one for every event naming it.
@@ -789,6 +791,8 @@ fn replay(
     let mut connected = false;
     let mut prologue_seen = false;
     let mut unsettled = 0;
+    // A stream that ends again before an event is not renewed for again.
+    let mut renewed_at: Option<String> = None;
     loop {
         let wait = if prologue_seen {
             idle
@@ -864,10 +868,23 @@ fn replay(
                         break;
                     }
                     "stream_incomplete" => {
-                        return Err(CoreError::StreamIncomplete {
-                            reason: payload.reason.unwrap_or_default(),
-                            server: None,
-                        });
+                        let ended = stream_ended(&payload);
+                        if !credential_ended_the_stream(&ended)
+                            || renewed_at.as_deref() == Some(report.cursor.as_str())
+                        {
+                            return Err(ended);
+                        }
+                        commit_cursor(core, context, behind, stop)?;
+                        renew_for_ended_stream(http, stop, opened_under, ended)?;
+                        renewed_at = Some(report.cursor.clone());
+                        let from = report.cursor.clone();
+                        frames = ask_unless_stopped(stop, http, move |http| {
+                            open(http, &from, STREAM_HARD_BOUND)
+                        })?;
+                        opened_under = http.authorization();
+                        head = None;
+                        connected = false;
+                        prologue_seen = false;
                     }
                     kind => {
                         let Some(id) = id else {
@@ -1023,6 +1040,37 @@ pub(crate) fn refuse_another_instance(core: &Core, http: &Http) -> Result<Http> 
 
 pub(crate) fn refuse_an_old_server(http: &Http, stop: &AtomicBool) -> Result<crate::http::Served> {
     ask_unless_stopped(stop, http, Http::served)
+}
+
+/// The error a `stream_incomplete` frame is.
+pub(crate) fn stream_ended(payload: &EventPayload) -> CoreError {
+    CoreError::StreamIncomplete {
+        reason: payload.reason.clone().unwrap_or_default(),
+        server: None,
+    }
+}
+
+/// Whether the stream ended because its credential did.
+pub(crate) fn credential_ended_the_stream(ended: &CoreError) -> bool {
+    matches!(ended, CoreError::StreamIncomplete { reason, .. } if reason == CREDENTIAL_ENDED)
+}
+
+/// `Ok` once the sign-in the stream was opened under is renewed; `ended` where
+/// the copy holds a key or the renewal ended the sign-in.
+pub(crate) fn renew_for_ended_stream(
+    http: &Http,
+    stop: &AtomicBool,
+    opened_under: String,
+    ended: CoreError,
+) -> Result<()> {
+    match ask_unless_stopped(stop, http, move |http| {
+        http.renew_for_ended_stream(&opened_under)
+    }) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(ended),
+        Err(error) if error.is_signed_out() => Err(ended),
+        Err(error) => Err(error),
+    }
 }
 
 /// The instance may change during credential renewal: before each attempt the
@@ -5526,6 +5574,210 @@ mod tests {
             carried(&server, "/types"),
             ["Bearer k", "Bearer k", "Bearer fresh-1"]
         );
+    }
+
+    fn credential_ended() -> String {
+        "event: stream_incomplete\ndata: {\"event_type\":\"stream_incomplete\",\"reason\":\"credential_ended\"}\n\n"
+            .into()
+    }
+
+    /// Two events, then the end of the stream for its credential, and after
+    /// it the rest of the log.
+    fn ended_after_two_events() -> Vec<Answer> {
+        vec![
+            stream(
+                vec![
+                    stream_cursor("14"),
+                    created("n1", "11"),
+                    created("n2", "12"),
+                    credential_ended(),
+                ],
+                Then::End,
+            ),
+            stream(
+                vec![
+                    stream_cursor("14"),
+                    created("n3", "13"),
+                    created("n4", "14"),
+                    stream_live(Some("14")),
+                ],
+                Then::End,
+            ),
+        ]
+    }
+
+    fn asked_from(server: &Scripted) -> Vec<Option<String>> {
+        server
+            .seen("/events")
+            .into_iter()
+            .map(|seen| seen.last_event_id)
+            .collect()
+    }
+
+    #[test]
+    fn a_catch_up_whose_stream_ends_for_its_credential_renews_and_reads_on() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", ended_after_two_events());
+        let (_dir, core) = hydrated(&server);
+        let asked = renewing(&core);
+
+        let report = core.catch_up().unwrap();
+
+        assert_eq!(
+            report.applied, 4,
+            "an event was applied twice or not at all"
+        );
+        assert_eq!(stored_cursor(&core).as_deref(), Some("14"));
+        for id in ["n1", "n2", "n3", "n4"] {
+            assert!(core.get(id).unwrap().is_some(), "{id} was not applied");
+        }
+        assert_eq!(*asked.lock().unwrap(), ["k"]);
+        assert_eq!(
+            asked_from(&server),
+            [Some("10".to_string()), Some("12".to_string())]
+        );
+        assert_eq!(carried(&server, "/events"), ["Bearer k", "Bearer fresh-1"]);
+        let paths = server.paths();
+        let second = paths.iter().rposition(|path| path == "/events").unwrap();
+        assert_eq!(
+            paths[second - 1],
+            "/",
+            "the stream was opened again before the instance was confirmed"
+        );
+    }
+
+    #[test]
+    fn a_catch_up_whose_stream_ends_for_its_credential_is_a_key_refusal_when_it_cannot_renew() {
+        let ended = |core: &Core| core.catch_up().unwrap_err();
+        let signed_out = |core: &Core| {
+            core.renew_credential_with(Box::new(|_| {
+                Err(CoreError::SignedOut {
+                    origin: "scripted".into(),
+                })
+            }));
+        };
+        let unreachable = |core: &Core| {
+            core.renew_credential_with(Box::new(|_| Err(CoreError::Network("offline".into()))));
+        };
+        // The witness: the same script, renewed, reads on.
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", ended_after_two_events());
+        let (_dir, core) = hydrated(&server);
+        renewing(&core);
+        assert!(core.catch_up().is_ok());
+
+        for (how, arrange) in [
+            ("a key", None),
+            (
+                "a sign-in the renewal ended",
+                Some(&signed_out as &dyn Fn(&Core)),
+            ),
+        ] {
+            let server = Scripted::start();
+            server.on("/types", vec![types(&[(NOTE, None)])]);
+            server.on("/events", ended_after_two_events());
+            let (_dir, core) = hydrated(&server);
+            if let Some(arrange) = arrange {
+                arrange(&core);
+            }
+            let error = ended(&core);
+            assert!(
+                matches!(&error, CoreError::StreamIncomplete { reason, .. } if reason == "credential_ended"),
+                "{how}: {error:?}"
+            );
+            assert_eq!(server.seen("/events").len(), 1, "{how}");
+            assert_eq!(stored_cursor(&core).as_deref(), Some("12"), "{how}");
+        }
+
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", ended_after_two_events());
+        let (_dir, core) = hydrated(&server);
+        unreachable(&core);
+        let error = ended(&core);
+        assert!(
+            matches!(&error, CoreError::RenewalFailed(cause) if matches!(**cause, CoreError::Network(_))),
+            "a renewal that failed on the network ended the sign-in: {error:?}"
+        );
+        assert_eq!(server.seen("/events").len(), 1);
+    }
+
+    #[test]
+    fn a_stream_ended_again_for_its_credential_under_the_renewed_one_is_not_renewed_for_again() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on(
+            "/events",
+            vec![
+                stream(
+                    vec![stream_cursor("14"), created("n1", "11"), credential_ended()],
+                    Then::End,
+                ),
+                stream(vec![stream_cursor("14"), credential_ended()], Then::End),
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        let asked = renewing(&core);
+
+        let error = core.catch_up().unwrap_err();
+
+        assert!(
+            matches!(&error, CoreError::StreamIncomplete { reason, .. } if reason == "credential_ended"),
+            "{error:?}"
+        );
+        assert_eq!(asked.lock().unwrap().len(), 1);
+        assert_eq!(server.seen("/events").len(), 2);
+        assert_eq!(stored_cursor(&core).as_deref(), Some("11"));
+    }
+
+    #[test]
+    fn a_catch_up_stopped_while_it_renews_or_opens_again_ends_canceled() {
+        // During the renewal.
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", ended_after_two_events());
+        let (_dir, core) = hydrated(&server);
+        let stop = Arc::new(AtomicBool::new(false));
+        let raised = Arc::clone(&stop);
+        core.renew_credential_with(Box::new(move |_| {
+            raised.store(true, Ordering::SeqCst);
+            Ok("fresh".into())
+        }));
+        let http = core.http.clone().unwrap();
+        assert!(matches!(
+            catch_up(&core, &http, MS(200), &stop, &mut false),
+            Err(CoreError::Canceled)
+        ));
+        assert_eq!(server.seen("/events").len(), 1);
+
+        // While the root is asked again before the stream opens.
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", ended_after_two_events());
+        server.on(
+            "/",
+            vec![
+                crate::scripted::root(crate::scripted::INSTANCE),
+                Answer::Stall,
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        renewing(&core);
+        let http = core.http.clone().unwrap();
+        let stop = AtomicBool::new(false);
+        thread::scope(|scope| {
+            scope.spawn(|| {
+                server.wait_for("/", 2, Duration::from_secs(5));
+                stop.store(true, Ordering::SeqCst);
+            });
+            assert!(matches!(
+                catch_up(&core, &http, MS(200), &stop, &mut false),
+                Err(CoreError::Canceled)
+            ));
+        });
+        assert_eq!(server.seen("/events").len(), 1);
     }
 
     #[test]

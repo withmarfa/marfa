@@ -8,6 +8,8 @@ import {
   answers,
   bulkGetOf,
   certifiedRead,
+  copyIncompleteReplay,
+  copyItemEvent,
   copyLiveReplay,
   refusal,
   typeCatalog,
@@ -488,6 +490,7 @@ describe("a look at read_only while a stream is held", () => {
 
 const EXPIRED = refusal(401, "unauthorized", "expired");
 const SECOND = "01a00000-0000-7000-8000-00000000000b";
+const THIRD = "01a00000-0000-7000-8000-00000000000c";
 
 /** A call whose request the server refuses once for an expired credential. */
 interface Renewed {
@@ -495,6 +498,8 @@ interface Renewed {
   args: string[];
   /** Whether the copy is hydrated before the call. */
   held: boolean;
+  /** Whether `script` runs before the hydration, for a stream whose answers follow the hydration's own. */
+  early?: boolean;
   /** Scripts the refused request, and anything the hydration needs. */
   script: (server: Harness["server"]) => void;
   /** The request refused, then sent again. */
@@ -528,6 +533,32 @@ const RENEWED: Record<string, Renewed> = {
       ),
     repeats: (request) => request.pathname === `/items/${ITEM}`,
   },
+  "a catch-up whose stream ends for its credential": {
+    args: ["catch-up"],
+    held: true,
+    early: true,
+    script: (server) =>
+      server.copyAnswer(
+        "GET",
+        "/events",
+        copyIncompleteReplay("12", [
+          copyItemEvent("11", "item.created", wireItem({ id: SECOND })),
+          {
+            event: "stream_incomplete",
+            data: {
+              event_type: "stream_incomplete",
+              reason: "credential_ended",
+            },
+          },
+        ]),
+        copyLiveReplay("12", [
+          copyItemEvent("12", "item.created", wireItem({ id: THIRD })),
+        ]),
+      ),
+    repeats: (request) =>
+      request.pathname === "/events" &&
+      request.headers["last-event-id"] !== undefined,
+  },
   "a hydration": {
     args: ["hydrate", "--type", "core.note", "--tier", "library"],
     held: false,
@@ -539,7 +570,11 @@ const RENEWED: Record<string, Renewed> = {
 
 // This fixture uses a macOS keychain file for the renewable credential.
 describe("a request repeated after a credential renewal", ON_MACOS, () => {
-  async function repeated(name: string, replacedAtRenewal: boolean) {
+  async function repeated(
+    name: string,
+    replacedAtRenewal: boolean,
+    signInEnds = false,
+  ) {
     const renewed = RENEWED[name]!;
     harness = await startHarness("server-reads-renewal");
     const { server, device } = harness;
@@ -567,9 +602,11 @@ describe("a request repeated after a credential renewal", ON_MACOS, () => {
       },
       instance: () => instance,
     });
+    if (renewed.early) renewed.script(server);
     if (renewed.held) value(await device.hydrate(["core.note"], "library"));
-    renewed.script(server);
+    if (!renewed.early) renewed.script(server);
     server.answer("POST", "/token", () => {
+      if (signInEnds) return answers.validation("invalid_grant", "ended");
       if (replacedAtRenewal) instance = REPLACED;
       return {
         kind: "json",
@@ -603,11 +640,12 @@ describe("a request repeated after a credential renewal", ON_MACOS, () => {
       }),
       keychain,
     ]);
+    const before = server.requests.length;
     try {
       const result = await new Cli(requireBinary(), server.url, KEY)
         .as(undefined)
         .run(["--json", "device", "--db", device.store, ...renewed.args]);
-      const reached = server.requests.filter(renewed.repeats);
+      const reached = server.requests.slice(before).filter(renewed.repeats);
       const renewal = server.requests.findIndex(
         (request) => request.pathname === "/token",
       );
@@ -663,10 +701,25 @@ describe("a request repeated after a credential renewal", ON_MACOS, () => {
     ).toEqual(["GET /"]);
   }
 
+  it("ends a catch-up as it does without a renewal when renewing its sign-in after its stream ended for its credential ends the sign-in", async () => {
+    const ended = await repeated(
+      "a catch-up whose stream ends for its credential",
+      false,
+      true,
+    );
+    expect(ended.result.code, ended.result.stderr).toBe(5);
+    expect(ended.result.stderr).toContain("unauthorized");
+    expect(
+      ended.reached,
+      "the stream was opened again after the sign-in ended",
+    ).toHaveLength(1);
+  });
   it("confirms the instance again before it repeats a table read after a credential renewal", () =>
     confirmsAgain("a table read"));
   it("confirms the instance again before it repeats a pin after a credential renewal", () =>
     confirmsAgain("a pin"));
   it("confirms the instance again before a hydration sends its next request after a credential renewal", () =>
     confirmsAgain("a hydration"));
+  it("confirms the instance again before it opens a stream again after a credential renewal", () =>
+    confirmsAgain("a catch-up whose stream ends for its credential"));
 });

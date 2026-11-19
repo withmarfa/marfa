@@ -178,6 +178,8 @@ The command line and the Node module refuse the read.
 
 An app signed in with OAuth holds a refresh token the core never sees, so it renews its own credential. The Swift binding's `Core::open` and `Folders::new` take an optional `CredentialRenewer`. When the server refuses the token sent, the core calls its `renew` with that token, on the thread that was refused, and sends the request again, once, with the token it answers.
 
+A catch-up or a hydration whose stream the server ends for its credential, with a `StreamIncomplete` frame whose reason is `credential_ended`, calls `renew` the same way and reads on from the last event it took, so no event is applied twice. A stream that ends again at once under the renewed token is not renewed for again. Where `renew` throws `Ended`, or the copy holds a key, the call ends `StreamIncomplete` with that reason, which the app treats as an ended sign-in; any other `RenewalError` ends it as listed below.
+
 Within one `Core` or one `Folders`, `renew` is called once at a time: calls refused together wait for one renewal and send its token, a folder still sending the token renewed away gets the new one without a call, and a folder that the `Folders` opens after a renewal starts with the renewed token. Separate `Core` and `Folders` objects call `renew` on their own and may call it at the same time, so an app that opens more than one with the same sign-in must serialize renewals across them.
 
 A renewer must:
