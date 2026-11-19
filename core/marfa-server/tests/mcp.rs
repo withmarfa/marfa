@@ -1774,7 +1774,7 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         ("instance.read", &["marfa_health"]),
         (
             "connectors.manage",
-            &["marfa_connectors", "marfa_health", "marfa_manage_connector"],
+            &["marfa_connectors", "marfa_health", "marfa_make_endpoint"],
         ),
         ("audit.read", &["marfa_audit"]),
         (
@@ -1793,14 +1793,14 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
             "config.manage",
             &["marfa_change_settings", "marfa_settings"],
         ),
-        ("items.purge", &["marfa_purge_trash", "marfa_trash"]),
-        ("grants.manage", &["marfa_apps", "marfa_manage_app"]),
-        ("backups.manage", &["marfa_backups", "marfa_manage_backups"]),
+        ("items.purge", &["marfa_trash"]),
+        ("grants.manage", &["marfa_apps", "marfa_narrow_app"]),
+        ("backups.manage", &["marfa_backups", "marfa_take_backup"]),
         ("instance.maintain", &["marfa_maintain"]),
-        ("blobs.manage", &["marfa_drop_file_copy", "marfa_files"]),
+        ("blobs.manage", &["marfa_files"]),
         (
             "sign_ins.manage",
-            &["marfa_manage_sign_in", "marfa_sign_ins"],
+            &["marfa_rename_sign_in", "marfa_sign_ins"],
         ),
     ];
     for (permission, tools) in cases {
@@ -1849,32 +1849,27 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
             json!({ "settings": { "trash_retention_days": 61 } }),
         ),
         ("marfa_trash", json!({})),
-        ("marfa_purge_trash", json!({ "action": "empty" })),
         ("marfa_apps", json!({})),
         (
-            "marfa_manage_app",
-            json!({ "action": "revoke", "id": "no-such-grant" }),
+            "marfa_narrow_app",
+            json!({ "id": "no-such-grant", "scopes": [], "expected_scopes": [] }),
         ),
         ("marfa_backups", json!({})),
-        ("marfa_manage_backups", json!({ "action": "take" })),
+        ("marfa_take_backup", json!({})),
         (
             "marfa_maintain",
             json!({ "action": "run_housekeeping", "name": "backup" }),
         ),
         ("marfa_connectors", json!({})),
         (
-            "marfa_manage_connector",
-            json!({ "action": "delete", "id": "0192e6a8-7c6e-7000-8000-000000000000" }),
+            "marfa_make_endpoint",
+            json!({ "id": "0192e6a8-7c6e-7000-8000-000000000000" }),
         ),
         ("marfa_files", json!({ "hash": "00" })),
-        (
-            "marfa_drop_file_copy",
-            json!({ "hash": "00", "store_id": "disk" }),
-        ),
         ("marfa_sign_ins", json!({})),
         (
-            "marfa_manage_sign_in",
-            json!({ "action": "end_sign_in", "id": "no-such-sign-in" }),
+            "marfa_rename_sign_in",
+            json!({ "kind": "sign_in", "id": "no-such-sign-in", "name": "Renamed" }),
         ),
     ] {
         unoffered(&instance, ADMIN, &nobody, name, arguments).await;
@@ -2293,7 +2288,7 @@ async fn a_revoke_confirmation_for_a_key_that_changed_revokes_nothing_but_use_do
 }
 
 #[tokio::test]
-async fn no_tool_exports_restores_claims_recovers_or_updates_the_server() {
+async fn no_tool_offers_a_withheld_owner_task() {
     let instance = Instance::start(&[]).await;
     let everything = instance
         .key(json!({
@@ -2319,6 +2314,15 @@ async fn no_tool_exports_restores_claims_recovers_or_updates_the_server() {
                 "update_server",
                 "clock",
                 "add_passkey",
+                "purge",
+                "empty",
+                "adopt",
+                "drop",
+                "clear",
+                "retire",
+                "end_sign_in",
+                "remove_passkey",
+                "revoke_app",
             ] {
                 assert!(!name.contains(banned), "{path} offers {name}");
             }

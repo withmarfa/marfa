@@ -145,6 +145,28 @@ pub fn fit_list(entries: Vec<Value>, room: usize) -> (Vec<Value>, usize) {
     (kept, left_out)
 }
 
+/// A page whose `data` fits `room`, read again with fewer rows until it does, so that its own
+/// `next_cursor` continues right after the last row the answer holds.
+pub async fn fitted_page<Read, Page>(
+    mut limit: i64,
+    room: usize,
+    mut read: Read,
+) -> Result<Value, Stop>
+where
+    Read: FnMut(i64) -> Page,
+    Page: Future<Output = Result<Value, Stop>>,
+{
+    loop {
+        let page = read(limit).await?;
+        let rows = page["data"].as_array().cloned().unwrap_or_default();
+        let (kept, left_out) = fit_list(rows, room);
+        if left_out == 0 || limit <= 1 {
+            return Ok(page);
+        }
+        limit = i64::try_from(kept.len()).unwrap_or(1).max(1);
+    }
+}
+
 fn json_width(point: char) -> usize {
     match point {
         '"' | '\\' | '\u{8}' | '\u{c}' | '\n' | '\r' | '\t' => 2,
@@ -340,5 +362,49 @@ mod tests {
         assert!(check(&schema, &json!("ééé"), "q").is_ok());
         let error = check(&schema, &json!("abcd"), "q").unwrap_err();
         assert!(error.contains("at most 3"), "{error}");
+    }
+
+    /// Rows `0..total`, newest first, read `limit` at a time; the cursor names the next row.
+    fn page_of(total: i64, limit: i64, width: usize) -> Value {
+        let rows: Vec<Value> = (0..total.min(limit))
+            .map(|row| json!({ "row": row, "pad": "x".repeat(width) }))
+            .collect();
+        let next = (limit < total).then(|| limit.to_string());
+        json!({ "data": rows, "next_cursor": next })
+    }
+
+    #[tokio::test]
+    async fn a_page_too_long_for_its_room_is_read_again_shorter_so_its_cursor_follows_its_last_row()
+    {
+        let mut asked = Vec::new();
+        let page = fitted_page(20, 1_000, |limit| {
+            asked.push(limit);
+            std::future::ready(Ok(page_of(20, limit, 200)))
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the page reads"));
+        let rows = page["data"].as_array().map_or(0, Vec::len);
+        assert_eq!(rows, 4);
+        assert_eq!(page["next_cursor"], "4");
+        assert_eq!(asked, [20, 4]);
+        // The witness: a page that fits is read once and answered whole.
+        let mut asked = Vec::new();
+        let whole = fitted_page(20, 100_000, |limit| {
+            asked.push(limit);
+            std::future::ready(Ok(page_of(20, limit, 200)))
+        })
+        .await
+        .unwrap_or_else(|_| panic!("the page reads"));
+        assert_eq!(whole["data"].as_array().map_or(0, Vec::len), 20);
+        assert_eq!(asked, [20]);
+    }
+
+    #[tokio::test]
+    async fn a_single_row_too_long_for_its_room_is_answered_with_its_cursor() {
+        let page = fitted_page(5, 10, |limit| std::future::ready(Ok(page_of(5, limit, 50))))
+            .await
+            .unwrap_or_else(|_| panic!("the page reads"));
+        assert_eq!(page["data"].as_array().map_or(0, Vec::len), 1);
+        assert_eq!(page["next_cursor"], "1");
     }
 }

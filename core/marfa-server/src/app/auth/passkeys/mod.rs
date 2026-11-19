@@ -28,7 +28,6 @@ use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::addresses::Address;
 use crate::app::clock::Stamp;
-use crate::app::mcp::confirm::{self, Confirmed, Confirming};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 
@@ -519,54 +518,14 @@ pub async fn rename(app: &App, caller: &Caller, id: String, name: &str) -> Resul
 }
 
 pub async fn remove(app: &App, caller: &Caller, id: String) -> Result<()> {
-    removing(app, caller, id, None).await?.unconfirmed()
-}
-
-/// Changes when the ID comes to name another passkey.
-fn state_of(tx: &Transaction<'_>, id: &str) -> Result<String> {
-    let held = store::all(tx)?
-        .into_iter()
-        .find(|passkey| passkey.id == id)
-        .ok_or_else(not_found)?;
-    Ok(format!("passkey\n{}\n{}", held.id, held.created_at))
-}
-
-/// The state a confirmation to remove the passkey covers.
-pub async fn remove_state(app: &App, caller: &Caller, id: String) -> Result<String> {
-    caller.require_passkeys()?;
-    app.db.read(move |tx| state_of(tx, &id)).await
-}
-
-/// Removes only the passkey the confirmed preview showed.
-pub async fn remove_confirmed(
-    app: &App,
-    caller: &Caller,
-    id: String,
-    confirming: Confirming,
-) -> Result<Confirmed<()>> {
-    removing(app, caller, id, Some(confirming)).await
-}
-
-async fn removing(
-    app: &App,
-    caller: &Caller,
-    id: String,
-    confirming: Option<Confirming>,
-) -> Result<Confirmed<()>> {
     caller.require_passkeys()?;
     app.write(caller, REMOVED, move |unit| {
         unit.caller.require_passkeys()?;
         unit.caller.require_recent(&unit.at)?;
-        let state = match &confirming {
-            Some(_) => state_of(unit.tx(), &id)?,
-            None => String::new(),
-        };
-        confirm::redeem(confirming.as_ref(), unit.tx(), unit.instant, &state, || {
-            if !store::remove(unit.tx(), &id)? {
-                return Err(not_found());
-            }
-            unit.audit("passkey", &id, None)
-        })
+        if !store::remove(unit.tx(), &id)? {
+            return Err(not_found());
+        }
+        unit.audit("passkey", &id, None)
     })
     .await
 }

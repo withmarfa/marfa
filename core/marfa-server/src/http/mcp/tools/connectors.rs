@@ -1,20 +1,20 @@
-//! `marfa_connectors` and `marfa_manage_connector`: the connectors, their runs and inbound endpoints, and removing them.
+//! `marfa_connectors` and `marfa_make_endpoint`: the connectors, their runs and inbound endpoints, and making an endpoint.
 
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::confirmed::{self, Shown, confirm_property};
 use super::{Definition, text};
 use crate::app::access::{Caller, Permission};
 use crate::app::connectors::Window;
 use crate::app::inbound::{self, NewEndpoint};
-use crate::app::mcp::confirm::Confirmed;
 use crate::app::{App, connectors};
-use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list};
+use crate::http::mcp::results::{
+    ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list, fitted_page, json_length,
+};
 
 pub const LIST_NAME: &str = "marfa_connectors";
-pub const MANAGE_NAME: &str = "marfa_manage_connector";
+pub const ENDPOINT_NAME: &str = "marfa_make_endpoint";
 
 const RUNS_PAGE: i64 = 20;
 const MOST_RUNS: i64 = 200;
@@ -51,43 +51,32 @@ pub fn list_definition() -> Definition {
     }
 }
 
-pub fn manage_definition() -> Definition {
+pub fn endpoint_definition() -> Definition {
     Definition {
-        name: MANAGE_NAME,
-        title: "Change or remove a connector",
-        description: "Use to remove a connector, clear what it remembers between runs, make an inbound endpoint for it, or retire one. Removing, clearing and retiring first preview: show the person, and call again with the same arguments and confirm. A confirmation works once, and only while what it previewed is unchanged. Making an endpoint returns its address once.",
+        name: ENDPOINT_NAME,
+        title: "Make an inbound endpoint for a connector",
+        description: "Use to make an inbound endpoint that delivers to a connector. The answer holds the endpoint's address once: the address is what lets a sender deliver, so give it only to the sender.",
         input: json!({
             "type": "object",
             "properties": {
-                "action": { "type": "string",
-                    "enum": ["delete", "clear_state", "make_endpoint", "retire_endpoint"] },
                 "id": { "type": "string", "minLength": 1, "description": "The connector." },
-                "endpoint_id": { "type": "string", "minLength": 1,
-                    "description": "The endpoint to retire." },
-                "label": { "type": "string", "minLength": 1, "description": "A name for a new endpoint." },
+                "label": { "type": "string", "minLength": 1, "description": "A name for the endpoint." },
                 "duplicate_header": { "type": "string", "minLength": 1,
                     "description": "The header that names a delivery, so a repeat is dropped." },
-                "confirm": confirm_property(),
             },
-            "required": ["action", "id"],
+            "required": ["id"],
             "additionalProperties": false,
         }),
         output: json!({
             "type": "object",
             "properties": {
-                "preview": { "type": "object" },
-                "confirm": { "type": "string" },
-                "expires_at": { "type": "string" },
                 "endpoint": { "type": "object" },
-                "retired": { "type": "object" },
-                "deleted": { "type": "string" },
-                "cleared": { "type": "string" },
-                "next": { "type": "string" },
             },
+            "required": ["endpoint"],
         }),
         annotations: json!({
             "readOnlyHint": false,
-            "destructiveHint": true,
+            "destructiveHint": false,
             "idempotentHint": false,
             "openWorldHint": false,
         }),
@@ -117,135 +106,42 @@ pub async fn list(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>
         .get("runs_limit")
         .and_then(Value::as_i64)
         .unwrap_or(RUNS_PAGE);
-    let window = Window::open(
-        app,
-        format!("connector-runs:{id}"),
-        limit,
-        text(&arguments, "runs_cursor").as_deref(),
-    )?;
-    let page = connectors::runs(app, caller, id, window).await?;
-    let runs = page["data"].as_array().cloned().unwrap_or_default();
-    let (kept, left_out) = fit_list(runs, ANSWER_BUDGET_CHARS / 2);
+    let cursor = text(&arguments, "runs_cursor");
+    let room =
+        ANSWER_BUDGET_CHARS.saturating_sub(json_length(&connector) + json_length(&endpoints) + 500);
+    let page = fitted_page(limit, room, |limit| {
+        let (id, cursor) = (id.clone(), cursor.clone());
+        async move {
+            let window = Window::open(
+                app,
+                format!("connector-runs:{id}"),
+                limit,
+                cursor.as_deref(),
+            )?;
+            Ok(connectors::runs(app, caller, id, window).await?)
+        }
+    })
+    .await?;
     let mut answer = Map::new();
     answer.insert("connector".into(), connector);
     answer.insert("endpoints".into(), endpoints["data"].clone());
-    answer.insert("runs".into(), Value::Array(kept));
-    if left_out == 0 {
-        answer.insert("runs_next_cursor".into(), page["next_cursor"].clone());
-    } else {
-        answer.insert("runs_next_cursor".into(), Value::Null);
-        answer.insert("left_out".into(), left_out.into());
-    }
+    answer.insert("runs".into(), page["data"].clone());
+    answer.insert("runs_next_cursor".into(), page["next_cursor"].clone());
     Ok(Value::Object(answer))
 }
 
-fn shown<'a>(arguments: &'a Map<String, Value>, state: String, effect: &str) -> Shown<'a> {
-    Shown {
-        tool: MANAGE_NAME,
-        arguments,
-        state,
-        preview: json!({
-            "action": arguments.get("action"),
-            "connector": arguments.get("id"),
-            "endpoint": arguments.get("endpoint_id"),
-            "effect": effect,
-        }),
-        what: "what the connector loses",
-    }
-}
-
-pub async fn manage(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>) -> Outcome {
-    caller.require(Permission::ConnectorsManage)?;
-    let id = text(&arguments, "id").unwrap_or_default();
-    match text(&arguments, "action").as_deref() {
-        Some("make_endpoint") => {
-            let body: Map<String, Value> = ["label", "duplicate_header"]
-                .iter()
-                .filter_map(|name| {
-                    arguments
-                        .get(*name)
-                        .map(|v| ((*name).to_string(), v.clone()))
-                })
-                .collect();
-            let request = NewEndpoint::parse(&body)?;
-            let made = inbound::create_endpoint(app, caller, id, request).await?;
-            Ok(json!({ "endpoint": made }))
-        }
-        Some("retire_endpoint") => retire(app, caller, &arguments, id).await,
-        Some("clear_state") => {
-            let effect = "What the connector remembers between runs is cleared.";
-            let state = connectors::confirm_state(app, caller, id.clone(), true).await?;
-            let Some(confirming) = confirmed::confirming(app, caller, MANAGE_NAME, &arguments)
-            else {
-                return confirmed::preview(app, caller, shown(&arguments, state, effect));
-            };
-            match connectors::clear_state_confirmed(app, caller, id.clone(), confirming).await? {
-                Confirmed::Done(()) => Ok(json!({ "cleared": id })),
-                Confirmed::Stale => {
-                    let state = connectors::confirm_state(app, caller, id, true).await?;
-                    Err(confirmed::stale(
-                        app,
-                        caller,
-                        shown(&arguments, state, effect),
-                    ))
-                }
-            }
-        }
-        _ => {
-            let effect = "The connector's registration is removed.";
-            let state = connectors::confirm_state(app, caller, id.clone(), false).await?;
-            let Some(confirming) = confirmed::confirming(app, caller, MANAGE_NAME, &arguments)
-            else {
-                return confirmed::preview(app, caller, shown(&arguments, state, effect));
-            };
-            match connectors::remove_confirmed(app, caller, id.clone(), confirming).await? {
-                Confirmed::Done(()) => Ok(json!({ "deleted": id })),
-                Confirmed::Stale => {
-                    let state = connectors::confirm_state(app, caller, id, false).await?;
-                    Err(confirmed::stale(
-                        app,
-                        caller,
-                        shown(&arguments, state, effect),
-                    ))
-                }
-            }
-        }
-    }
-}
-
-async fn retire(
+pub async fn make_endpoint(
     app: &Arc<App>,
     caller: &Caller,
-    arguments: &Map<String, Value>,
-    id: String,
+    arguments: Map<String, Value>,
 ) -> Outcome {
-    let Some(endpoint_id) = text(arguments, "endpoint_id") else {
-        return Err(Stop::coded(
-            "missing_required_field",
-            "Name the endpoint with endpoint_id (endpoint_id).",
-        ));
-    };
-    let effect = "The endpoint stops accepting deliveries.";
-    let state = inbound::retire_state(app, caller, id.clone(), endpoint_id.clone()).await?;
-    let Some(confirming) = confirmed::confirming(app, caller, MANAGE_NAME, arguments) else {
-        return confirmed::preview(app, caller, shown(arguments, state, effect));
-    };
-    let retired = inbound::retire_endpoint_confirmed(
-        app,
-        caller,
-        id.clone(),
-        endpoint_id.clone(),
-        confirming,
-    );
-    match retired.await? {
-        Confirmed::Done(retired) => Ok(json!({ "retired": retired })),
-        Confirmed::Stale => {
-            let state = inbound::retire_state(app, caller, id, endpoint_id).await?;
-            Err(confirmed::stale(
-                app,
-                caller,
-                shown(arguments, state, effect),
-            ))
-        }
-    }
+    caller.require(Permission::ConnectorsManage)?;
+    let id = text(&arguments, "id").unwrap_or_default();
+    let body: Map<String, Value> = arguments
+        .into_iter()
+        .filter(|(name, _)| name == "label" || name == "duplicate_header")
+        .collect();
+    let request = NewEndpoint::parse(&body)?;
+    let made = inbound::create_endpoint(app, caller, id, request).await?;
+    Ok(json!({ "endpoint": made }))
 }

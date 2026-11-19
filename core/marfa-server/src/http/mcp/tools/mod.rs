@@ -4,7 +4,6 @@ mod apps;
 mod audit;
 mod backups;
 mod bulk;
-mod confirmed;
 mod connectors;
 mod create;
 mod delete;
@@ -36,7 +35,6 @@ use serde_json::{Map, Value};
 use super::results::{Outcome, Stop, check};
 use crate::app::App;
 use crate::app::access::Caller;
-use crate::app::auth::Visit;
 use crate::app::refusal::Refusal;
 
 /// The endpoint that serves a tool: `/mcp` serves the items group at every endpoint.
@@ -94,19 +92,17 @@ fn definitions() -> Vec<(Group, Definition)> {
         (Group::Admin, webhooks::manage_definition()),
         (Group::Admin, settings::read_definition()),
         (Group::Admin, settings::change_definition()),
-        (Group::Admin, trash::read_definition()),
-        (Group::Admin, trash::purge_definition()),
+        (Group::Admin, trash::definition()),
         (Group::Admin, apps::list_definition()),
-        (Group::Admin, apps::manage_definition()),
+        (Group::Admin, apps::narrow_definition()),
         (Group::Admin, backups::list_definition()),
-        (Group::Admin, backups::manage_definition()),
+        (Group::Admin, backups::take_definition()),
         (Group::Admin, maintain::definition()),
         (Group::Admin, connectors::list_definition()),
-        (Group::Admin, connectors::manage_definition()),
-        (Group::Admin, files::list_definition()),
-        (Group::Admin, files::drop_definition()),
+        (Group::Admin, connectors::endpoint_definition()),
+        (Group::Admin, files::definition()),
         (Group::Admin, sign_ins::list_definition()),
-        (Group::Admin, sign_ins::manage_definition()),
+        (Group::Admin, sign_ins::rename_definition()),
     ]
 }
 
@@ -147,13 +143,13 @@ fn offered(caller: &Caller, name: &str) -> bool {
         keys::LIST_NAME | keys::MANAGE_NAME | revoke::NAME => caller.may_use_key_door(),
         webhooks::LIST_NAME | webhooks::MANAGE_NAME => caller.may_manage_webhooks(),
         settings::READ_NAME | settings::CHANGE_NAME => caller.may_change_settings(),
-        trash::READ_NAME | trash::PURGE_NAME => caller.may_purge_items(),
-        apps::LIST_NAME | apps::MANAGE_NAME => caller.may_manage_apps(),
-        backups::LIST_NAME | backups::MANAGE_NAME => caller.may_manage_backups(),
+        trash::NAME => caller.may_purge_items(),
+        apps::LIST_NAME | apps::NARROW_NAME => caller.may_manage_apps(),
+        backups::LIST_NAME | backups::TAKE_NAME => caller.may_manage_backups(),
         maintain::NAME => caller.may_maintain(),
-        connectors::LIST_NAME | connectors::MANAGE_NAME => caller.may_manage_connectors(),
-        files::LIST_NAME | files::DROP_NAME => caller.may_manage_files(),
-        sign_ins::LIST_NAME | sign_ins::MANAGE_NAME => caller.may_manage_sign_ins(),
+        connectors::LIST_NAME | connectors::ENDPOINT_NAME => caller.may_manage_connectors(),
+        files::NAME => caller.may_manage_files(),
+        sign_ins::LIST_NAME | sign_ins::RENAME_NAME => caller.may_manage_sign_ins(),
         _ => false,
     }
 }
@@ -198,7 +194,6 @@ pub async fn call(
     name: &str,
     arguments: Map<String, Value>,
     exact: Result<(), Refusal>,
-    visit: Visit,
 ) -> Option<Outcome> {
     let (_, tool) = definitions().into_iter().find(|(home, tool)| {
         tool.name == name && served(group, *home) && offered(caller, tool.name)
@@ -210,7 +205,7 @@ pub async fn call(
     let Value::Object(arguments) = arguments else {
         return None;
     };
-    Some(run(app, caller, tool.name, arguments, exact, visit).await)
+    Some(run(app, caller, tool.name, arguments, exact).await)
 }
 
 async fn run(
@@ -219,7 +214,6 @@ async fn run(
     name: &str,
     arguments: Map<String, Value>,
     exact: Result<(), Refusal>,
-    visit: Visit,
 ) -> Outcome {
     if works_on_items(name) {
         caller.require_reach()?;
@@ -258,19 +252,17 @@ async fn run(
         webhooks::MANAGE_NAME => webhooks::manage(app, caller, arguments).await,
         settings::READ_NAME => settings::read(app, caller).await,
         settings::CHANGE_NAME => settings::change(app, caller, arguments).await,
-        trash::READ_NAME => trash::read(app, caller, arguments).await,
-        trash::PURGE_NAME => trash::purge(app, caller, arguments).await,
+        trash::NAME => trash::run(app, caller, arguments).await,
         apps::LIST_NAME => apps::list(app, caller).await,
-        apps::MANAGE_NAME => apps::manage(app, caller, arguments).await,
+        apps::NARROW_NAME => apps::narrow(app, caller, arguments).await,
         backups::LIST_NAME => backups::list(app, caller).await,
-        backups::MANAGE_NAME => backups::manage(app, caller, arguments).await,
+        backups::TAKE_NAME => backups::take(app, caller).await,
         maintain::NAME => maintain::run(app, caller, arguments).await,
         connectors::LIST_NAME => connectors::list(app, caller, arguments).await,
-        connectors::MANAGE_NAME => connectors::manage(app, caller, arguments).await,
-        files::LIST_NAME => files::list(app, caller, arguments).await,
-        files::DROP_NAME => files::drop_copy(app, caller, arguments).await,
+        connectors::ENDPOINT_NAME => connectors::make_endpoint(app, caller, arguments).await,
+        files::NAME => files::run(app, caller, arguments).await,
         sign_ins::LIST_NAME => sign_ins::list(app, caller).await,
-        sign_ins::MANAGE_NAME => sign_ins::manage(app, caller, arguments, visit).await,
+        sign_ins::RENAME_NAME => sign_ins::rename(app, caller, arguments).await,
         _ => Err(Stop::invalid("No tool has this name.")),
     }
 }

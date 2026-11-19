@@ -15,7 +15,7 @@ use super::{
 };
 use crate::app::App;
 use crate::app::access::reach::Demand;
-use crate::app::access::{Caller, Level, Permission};
+use crate::app::access::{Caller, Level};
 use crate::app::catalog::{self, Catalog, Snapshot};
 use crate::app::clock::Stamp;
 use crate::app::connectors::{ReadOnly, read_only};
@@ -618,38 +618,6 @@ pub async fn extension(
             Value::from(namespace),
             data.as_deref().unwrap_or("null")
         ))
-    })
-    .await
-}
-
-/// What purging the trashed item at `version` takes, and the state a confirmation covers.
-pub async fn purge_preview(
-    app: &App,
-    caller: &Caller,
-    id: String,
-    version: i64,
-) -> Result<(Value, String)> {
-    reading(app, caller, move |read| {
-        read.caller.require(Permission::ItemsPurge)?;
-        let gate = Gate {
-            tx: read.tx,
-            caller: &read.caller,
-            catalog: &read.catalog,
-            claim: None,
-            server_own: false,
-        };
-        let asked = [Asked {
-            id,
-            version: Some(version),
-        }];
-        let plan = plan::plan(&gate, Act::Purge, &asked)?;
-        let (items, not_shown) = plan::purge_shown(&read.caller, &plan);
-        let shown = json!({
-            "items": items,
-            "count": plan.purging.len(),
-            "not_shown": not_shown,
-        });
-        Ok((shown, plan::purge_digest(&plan)))
     })
     .await
 }

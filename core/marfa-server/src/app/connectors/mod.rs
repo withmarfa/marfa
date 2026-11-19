@@ -18,7 +18,6 @@ use super::items;
 use super::query::bad_cursor;
 use super::refusal::{Code, Refusal, Result};
 use crate::app::clock::Stamp;
-use crate::app::mcp::confirm::{self, Confirmed, Confirming};
 pub use read_only::{ReadOnly, Registry};
 pub use request::{Batch, Lookup, Register, Replace, Run, Take, released};
 pub(crate) use request::{Fields, Stray, invalid, missing, required, text};
@@ -232,68 +231,12 @@ pub async fn read(app: &App, caller: &Caller, id: String) -> Result<Value> {
 }
 
 pub async fn remove(app: &App, caller: &Caller, id: String) -> Result<()> {
-    removing(app, caller, id, None).await?.unconfirmed()
-}
-
-/// Removes only the registration the confirmed preview showed.
-pub async fn remove_confirmed(
-    app: &App,
-    caller: &Caller,
-    id: String,
-    confirming: Confirming,
-) -> Result<Confirmed<()>> {
-    removing(app, caller, id, Some(confirming)).await
-}
-
-/// Changes when the connector registers again or its registration changes.
-fn registration_state(registration: &Registration) -> String {
-    format!(
-        "connector\n{}\n{}\n{}",
-        registration.id, registration.registered_at, registration.updated_at
-    )
-}
-
-/// What its state and agreements are when a confirmation to clear them is given.
-fn kept_state(tx: &Transaction<'_>, registration: &Registration) -> Result<String> {
-    let document = store::document(tx, &registration.source)?.map(|held| held.updated_at);
-    let (agreements, latest) = store::agreements_mark(tx, &registration.source)?;
-    Ok(format!(
-        "{}\n{}\n{agreements}\n{}",
-        registration_state(registration),
-        document.unwrap_or_default(),
-        latest.unwrap_or_default()
-    ))
-}
-
-/// The state a confirmation to remove the connector, or to clear what it keeps, covers.
-pub async fn confirm_state(app: &App, caller: &Caller, id: String, kept: bool) -> Result<String> {
-    reading(app, caller, move |tx, caller, _| {
-        let registration = find(tx, &id)?;
-        caller.require_connector_key_or_manager(&registration.key_id)?;
-        if kept {
-            kept_state(tx, &registration)
-        } else {
-            Ok(registration_state(&registration))
-        }
-    })
-    .await
-}
-
-async fn removing(
-    app: &App,
-    caller: &Caller,
-    id: String,
-    confirming: Option<Confirming>,
-) -> Result<Confirmed<()>> {
     app.write(caller, "connector.delete", move |unit| {
         let registration = find(unit.tx(), &id)?;
         unit.caller
             .require_connector_key_or_manager(&registration.key_id)?;
-        let state = registration_state(&registration);
-        confirm::redeem(confirming.as_ref(), unit.tx(), unit.instant, &state, || {
-            store::delete(unit.tx(), &id)?;
-            unit.audit("connector", &id, Some(json!({ "name": registration.name })))
-        })
+        store::delete(unit.tx(), &id)?;
+        unit.audit("connector", &id, Some(json!({ "name": registration.name })))
     })
     .await
 }
@@ -461,47 +404,22 @@ pub async fn replace_state(
 }
 
 pub async fn clear_state(app: &App, caller: &Caller, id: String) -> Result<()> {
-    clearing(app, caller, id, None).await?.unconfirmed()
-}
-
-/// Clears only the state and agreements the confirmed preview saw.
-pub async fn clear_state_confirmed(
-    app: &App,
-    caller: &Caller,
-    id: String,
-    confirming: Confirming,
-) -> Result<Confirmed<()>> {
-    clearing(app, caller, id, Some(confirming)).await
-}
-
-async fn clearing(
-    app: &App,
-    caller: &Caller,
-    id: String,
-    confirming: Option<Confirming>,
-) -> Result<Confirmed<()>> {
     app.write(caller, "connector_state.delete", move |unit| {
         let tx = unit.tx();
         let registration = find(tx, &id)?;
         unit.caller
             .require_connector_key_or_manager(&registration.key_id)?;
-        let kept = match &confirming {
-            Some(_) => kept_state(tx, &registration)?,
-            None => String::new(),
-        };
-        confirm::redeem(confirming.as_ref(), tx, unit.instant, &kept, || {
-            let state = store::clear_document(tx, &registration.source)?;
-            let agreements = store::clear_agreements(tx, &registration.source)?;
-            unit.audit(
-                "connector",
-                &id,
-                Some(json!({
-                    "source": registration.source,
-                    "state": state,
-                    "agreements": agreements,
-                })),
-            )
-        })
+        let state = store::clear_document(tx, &registration.source)?;
+        let agreements = store::clear_agreements(tx, &registration.source)?;
+        unit.audit(
+            "connector",
+            &id,
+            Some(json!({
+                "source": registration.source,
+                "state": state,
+                "agreements": agreements,
+            })),
+        )
     })
     .await
 }

@@ -1,19 +1,17 @@
-//! `marfa_sign_ins` and `marfa_manage_sign_in`: where the owner is signed in, and the owner's passkeys.
+//! `marfa_sign_ins` and `marfa_rename_sign_in`: where the owner is signed in, the owner's passkeys, and naming them.
 
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::confirmed::{self, Shown, confirm_property};
 use super::{Definition, text};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
-use crate::app::auth::{Visit, passkeys, sign_ins};
-use crate::app::mcp::confirm::Confirmed;
-use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list};
+use crate::app::auth::{passkeys, sign_ins};
+use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, fit_list};
 
 pub const LIST_NAME: &str = "marfa_sign_ins";
-pub const MANAGE_NAME: &str = "marfa_manage_sign_in";
+pub const RENAME_NAME: &str = "marfa_rename_sign_in";
 
 pub fn list_definition() -> Definition {
     Definition {
@@ -39,43 +37,33 @@ pub fn list_definition() -> Definition {
     }
 }
 
-pub fn manage_definition() -> Definition {
+pub fn rename_definition() -> Definition {
     Definition {
-        name: MANAGE_NAME,
-        title: "Rename or end a sign-in, rename or remove a passkey",
-        description: "Use to rename a sign-in or a passkey, to end a sign-in, or to remove a passkey. Ending and removing first preview: show the person, and call again with the same arguments and confirm. A confirmation holds only for the arguments it previewed. Adding a passkey needs a browser and is not offered here.",
+        name: RENAME_NAME,
+        title: "Rename a sign-in or a passkey",
+        description: "Use to give a sign-in or a passkey, as marfa_sign_ins lists them, a new name. Ending a sign-in, removing a passkey and adding one are not offered here.",
         input: json!({
             "type": "object",
             "properties": {
-                "action": { "type": "string",
-                    "enum": ["rename_sign_in", "end_sign_in", "rename_passkey", "remove_passkey"] },
+                "kind": { "type": "string", "enum": ["sign_in", "passkey"] },
                 "id": { "type": "string", "minLength": 1,
                     "description": "The sign-in or passkey, as marfa_sign_ins shows it." },
-                "name": { "type": "string", "minLength": 1, "description": "The new name. Only to rename." },
-                "revoke_keys": { "type": "boolean",
-                    "description": "Also revoke the keys an app minted. Only to end an app's sign-in; false when left out." },
-                "confirm": confirm_property(),
+                "name": { "type": "string", "minLength": 1, "description": "The new name." },
             },
-            "required": ["action", "id"],
+            "required": ["kind", "id", "name"],
             "additionalProperties": false,
         }),
         output: json!({
             "type": "object",
             "properties": {
-                "preview": { "type": "object" },
-                "confirm": { "type": "string" },
-                "expires_at": { "type": "string" },
                 "sign_in": { "type": "object" },
                 "passkey": { "type": "object" },
-                "ended": { "type": "string" },
-                "removed": { "type": "string" },
-                "next": { "type": "string" },
             },
         }),
         annotations: json!({
             "readOnlyHint": false,
-            "destructiveHint": true,
-            "idempotentHint": false,
+            "destructiveHint": false,
+            "idempotentHint": true,
             "openWorldHint": false,
         }),
         meta: None,
@@ -106,92 +94,14 @@ pub async fn list(app: &Arc<App>, caller: &Caller) -> Outcome {
     Ok(Value::Object(answer))
 }
 
-fn shown<'a>(arguments: &'a Map<String, Value>, state: String, effect: &str) -> Shown<'a> {
-    Shown {
-        tool: MANAGE_NAME,
-        arguments,
-        state,
-        preview: json!({
-            "action": arguments.get("action"),
-            "id": arguments.get("id"),
-            "revoke_keys": arguments.get("revoke_keys").and_then(Value::as_bool).unwrap_or(false),
-            "effect": effect,
-        }),
-        what: "what the owner loses",
-    }
-}
-
-pub async fn manage(
-    app: &Arc<App>,
-    caller: &Caller,
-    arguments: Map<String, Value>,
-    visit: Visit,
-) -> Outcome {
+pub async fn rename(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>) -> Outcome {
     caller.require(Permission::SignInsManage)?;
     let id = text(&arguments, "id").unwrap_or_default();
-    let action = text(&arguments, "action").unwrap_or_default();
-    let rename = action.starts_with("rename");
-    let name = text(&arguments, "name");
-    if rename != name.is_some() {
-        return Err(Stop::invalid(
-            "A rename takes name, and nothing else takes it.",
-        ));
+    let name = text(&arguments, "name").unwrap_or_default();
+    if text(&arguments, "kind").as_deref() == Some("passkey") {
+        let renamed = passkeys::rename(app, caller, id, &name).await?;
+        return Ok(json!({ "passkey": renamed.to_json() }));
     }
-    if arguments.contains_key("revoke_keys") && action != "end_sign_in" {
-        return Err(Stop::invalid("revoke_keys applies only to end_sign_in."));
-    }
-    match (action.as_str(), name) {
-        ("rename_sign_in", Some(name)) => {
-            let renamed = sign_ins::rename(app, caller, id, sign_ins::new_name(&name)?).await?;
-            Ok(json!({ "sign_in": renamed.to_json() }))
-        }
-        ("rename_passkey", Some(name)) => {
-            let renamed = passkeys::rename(app, caller, id, &name).await?;
-            Ok(json!({ "passkey": renamed.to_json() }))
-        }
-        ("remove_passkey", _) => {
-            let effect = "The passkey can no longer sign the owner in.";
-            let state = passkeys::remove_state(app, caller, id.clone()).await?;
-            let Some(confirming) = confirmed::confirming(app, caller, MANAGE_NAME, &arguments)
-            else {
-                return confirmed::preview(app, caller, shown(&arguments, state, effect));
-            };
-            match passkeys::remove_confirmed(app, caller, id.clone(), confirming).await? {
-                Confirmed::Done(()) => Ok(json!({ "removed": id })),
-                Confirmed::Stale => {
-                    let state = passkeys::remove_state(app, caller, id).await?;
-                    Err(confirmed::stale(
-                        app,
-                        caller,
-                        shown(&arguments, state, effect),
-                    ))
-                }
-            }
-        }
-        _ => {
-            let with_keys = arguments
-                .get("revoke_keys")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let effect = "The sign-in ends; whoever holds it is signed out.";
-            let state = sign_ins::end_state(app, caller, id.clone(), with_keys).await?;
-            let Some(confirming) = confirmed::confirming(app, caller, MANAGE_NAME, &arguments)
-            else {
-                return confirmed::preview(app, caller, shown(&arguments, state, effect));
-            };
-            let ended =
-                sign_ins::end_confirmed(app, caller, id.clone(), with_keys, visit, confirming);
-            match ended.await? {
-                Confirmed::Done(()) => Ok(json!({ "ended": id })),
-                Confirmed::Stale => {
-                    let state = sign_ins::end_state(app, caller, id, with_keys).await?;
-                    Err(confirmed::stale(
-                        app,
-                        caller,
-                        shown(&arguments, state, effect),
-                    ))
-                }
-            }
-        }
-    }
+    let renamed = sign_ins::rename(app, caller, id, sign_ins::new_name(&name)?).await?;
+    Ok(json!({ "sign_in": renamed.to_json() }))
 }

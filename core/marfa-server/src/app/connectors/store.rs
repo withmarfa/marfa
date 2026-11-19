@@ -362,15 +362,6 @@ pub fn drop_agreement(tx: &Transaction<'_>, source: &str, item_id: &str) -> Resu
         .execute(params![source, item_id])?)
 }
 
-/// How many agreements the source keeps, and when the latest changed.
-pub fn agreements_mark(tx: &Transaction<'_>, source: &str) -> Result<(i64, Option<String>)> {
-    Ok(tx
-        .prepare_cached(
-            "SELECT COUNT(*), MAX(updated_at) FROM connector_agreements WHERE source = ?1",
-        )?
-        .query_row([source], |row| Ok((row.get(0)?, row.get(1)?)))?)
-}
-
 pub fn clear_agreements(tx: &Transaction<'_>, source: &str) -> Result<usize> {
     Ok(tx
         .prepare_cached("DELETE FROM connector_agreements WHERE source = ?1")?

@@ -429,26 +429,6 @@ fn purged(gate: &Gate<'_, '_>, asked: &[Asked]) -> Result<Plan> {
     })
 }
 
-/// Every row a purge takes, with the version it stands at.
-pub(super) fn purge_digest(plan: &Plan) -> String {
-    digest_of(plan.purging.iter().map(|purging| &purging.item))
-}
-
-/// The rows a purge takes that the caller may read the type of, the asked one first, and how many it may not.
-pub(super) fn purge_shown(caller: &Caller, plan: &Plan) -> (Vec<Value>, usize) {
-    let mut shown = Vec::new();
-    let mut hidden = 0;
-    for purging in &plan.purging {
-        let item = &purging.item;
-        if caller.may_read_type(&item.type_id) {
-            shown.push(json!({ "id": item.id, "type": item.type_id, "version": item.version }));
-        } else {
-            hidden += 1;
-        }
-    }
-    (shown, hidden)
-}
-
 pub(super) fn plan(gate: &Gate<'_, '_>, act: Act, asked: &[Asked]) -> Result<Plan> {
     match act {
         Act::Bin => binned(gate, asked),

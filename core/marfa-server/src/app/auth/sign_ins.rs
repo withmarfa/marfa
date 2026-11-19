@@ -10,7 +10,6 @@ use crate::app::App;
 use crate::app::access::{Caller, Permission};
 use crate::app::clock::Stamp;
 use crate::app::keys::{self, Key};
-use crate::app::mcp::confirm::{self, Confirmed, Confirming};
 use crate::app::oauth::grants;
 use crate::app::oauth::store::Consent;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -160,34 +159,6 @@ fn to_end(tx: &Transaction<'_>, id: &str, with_keys: bool, at: &str) -> Result<N
     }
 }
 
-impl Named {
-    /// Changes when the ID comes to name another sign-in, or an app is approved again.
-    fn state(&self) -> String {
-        match self {
-            Named::Browser(session) => {
-                format!("browser\n{}\n{}", session.id, session.created_at.ms())
-            }
-            Named::App(consent) => grants::consent_state(consent),
-            Named::Key(key) => format!("key\n{}\n{}", key.id, key.created_at),
-            Named::Nothing => String::new(),
-        }
-    }
-}
-
-/// The state a confirmation to end the sign-in covers.
-pub async fn end_state(app: &App, caller: &Caller, id: String, with_keys: bool) -> Result<String> {
-    let caller = caller.clone();
-    let at = app.clock.stamp();
-    app.db
-        .read(move |tx| {
-            caller
-                .current(tx, &at)?
-                .require(Permission::SignInsManage)?;
-            Ok(to_end(tx, &id, with_keys, &at)?.state())
-        })
-        .await
-}
-
 pub async fn end(
     app: &Arc<App>,
     caller: &Caller,
@@ -195,31 +166,6 @@ pub async fn end(
     with_keys: bool,
     visit: Visit,
 ) -> Result<()> {
-    ending(app, caller, id, with_keys, visit, None)
-        .await?
-        .unconfirmed()
-}
-
-/// Ends only the sign-in as the confirmed preview showed it.
-pub async fn end_confirmed(
-    app: &Arc<App>,
-    caller: &Caller,
-    id: String,
-    with_keys: bool,
-    visit: Visit,
-    confirming: Confirming,
-) -> Result<Confirmed<()>> {
-    ending(app, caller, id, with_keys, visit, Some(confirming)).await
-}
-
-async fn ending(
-    app: &Arc<App>,
-    caller: &Caller,
-    id: String,
-    with_keys: bool,
-    visit: Visit,
-    confirming: Option<Confirming>,
-) -> Result<Confirmed<()>> {
     let asking = caller.clone();
     let looked_for = id.clone();
     let at = app.clock.stamp();
@@ -239,28 +185,20 @@ async fn ending(
     let cache = app.catalog_handle();
     app.write(caller, action, move |unit| {
         unit.caller.require(Permission::SignInsManage)?;
-        let named = to_end(unit.tx(), &id, with_keys, &unit.at)?;
-        let state = named.state();
-        confirm::redeem(
-            confirming.as_ref(),
-            unit.tx(),
-            unit.instant,
-            &state,
-            || match named {
-                Named::Browser(session) => session::ended(
-                    unit.tx(),
-                    &unit.at,
-                    &unit.caller,
-                    &visit,
-                    &session.id,
-                    &session.owner_id,
-                    false,
-                ),
-                Named::App(consent) => grants::withdraw(unit, &cache, &consent, with_keys),
-                Named::Key(key) => keys::end_for_owner(unit, &key.id),
-                Named::Nothing => Err(no_such_sign_in()),
-            },
-        )
+        match to_end(unit.tx(), &id, with_keys, &unit.at)? {
+            Named::Browser(session) => session::ended(
+                unit.tx(),
+                &unit.at,
+                &unit.caller,
+                &visit,
+                &session.id,
+                &session.owner_id,
+                false,
+            ),
+            Named::App(consent) => grants::withdraw(unit, &cache, &consent, with_keys),
+            Named::Key(key) => keys::end_for_owner(unit, &key.id),
+            Named::Nothing => Err(no_such_sign_in()),
+        }
     })
     .await
 }

@@ -4,7 +4,6 @@
 
 mod archived;
 pub mod bulk;
-pub mod emptied;
 pub mod expiry;
 pub mod file_fields;
 mod index;
@@ -34,8 +33,7 @@ pub(crate) use archived::{Archived, archived, versions};
 pub(crate) use plan::require_version;
 pub use read::{
     Caption, Detail, Listing, Many, Selector, bin, bin_selection, bulk_get, captions, detail,
-    extension, extensions, history, lookup, purge_preview, summaries, tag_counts, titles,
-    trash_preview,
+    extension, extensions, history, lookup, summaries, tag_counts, titles, trash_preview,
 };
 pub(crate) use read::{
     Reader, listed, listed_rows, readable_tags, reading, reading_background, reading_under,

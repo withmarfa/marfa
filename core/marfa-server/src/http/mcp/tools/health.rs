@@ -7,9 +7,7 @@ use serde_json::{Map, Value, json};
 use super::{Definition, text};
 use crate::app::access::{Caller, Permission};
 use crate::app::refusal::Refusal;
-use crate::app::{
-    App, attention, config, connectors, health, housekeeping, jobs, metrics, updates,
-};
+use crate::app::{App, attention, connectors, health, housekeeping, jobs, metrics, updates};
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, fit_list, json_length};
 
 pub const NAME: &str = "marfa_health";
@@ -28,14 +26,12 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "How this Marfa is doing",
-        description: "Use to check this Marfa: whether it is serving and each component's state, and each connector's last run and problems. With instance.read it also shows what needs attention, the housekeeping jobs, the metrics, the file stores and unreferenced files, whether a newer server is available, with settings each setting and its value, and with job_id one bulk job. A part that cannot be read is named in unread, and the others still answer.",
+        description: "Use to check this Marfa: whether it is serving and each component's state, and each connector's last run and problems. With instance.read it also shows what needs attention, the housekeeping jobs, the metrics, the file stores and unreferenced files, whether a newer server is available, and with job_id one bulk job. A part that cannot be read is named in unread, and the others still answer.",
         input: json!({
             "type": "object",
             "properties": {
                 "job_id": { "type": "string", "minLength": 1,
                     "description": "A bulk job to read, with instance.read." },
-                "settings": { "type": "boolean",
-                    "description": "Also list each setting and its value, with instance.read." },
             },
             "additionalProperties": false,
         }),
@@ -50,9 +46,6 @@ pub fn definition() -> Definition {
                 "metrics": { "type": "object" },
                 "storage": { "type": "object",
                     "description": "The file stores, the fewest copies kept of a file, and the unreferenced files." },
-                "settings": { "type": "array", "items": { "type": "object" },
-                    "description": "Each setting, as GET /config/settings lists it." },
-                "settings_left_out": { "type": "integer" },
                 "update": { "type": "object",
                     "description": "Whether a newer server is available, as GET /update reads it." },
                 "job": { "type": "object" },
@@ -111,34 +104,16 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
         }
     };
     let mut answer = Map::new();
-    let with_settings = arguments.get("settings").and_then(Value::as_bool) == Some(true);
     if let Err(refusal) = caller.require(Permission::InstanceRead) {
-        for part in ["job_id", "settings"] {
-            if arguments.contains_key(part) {
-                unreadable.push(unread(part, &refusal));
-            }
+        if arguments.contains_key("job_id") {
+            unreadable.push(unread("job", &refusal));
         }
     } else {
         answer = instance_reads(app, caller, &arguments, &mut unreadable).await;
     }
-    let used = |answer: &Map<String, Value>, unreadable: &Vec<Value>| {
-        json_length(&json!({ "health": health, "unread": unreadable, "more": answer })) + 200
-    };
-    if reads_errors && with_settings {
-        match config::listing(app).await {
-            Ok(listed) => {
-                let lines = listed["data"].as_array().cloned().unwrap_or_default();
-                let room = ANSWER_BUDGET_CHARS.saturating_sub(used(&answer, &unreadable));
-                let (kept, left_out) = fit_list(lines, room);
-                answer.insert("settings".into(), Value::Array(kept));
-                if left_out > 0 {
-                    answer.insert("settings_left_out".into(), left_out.into());
-                }
-            }
-            Err(refusal) => unreadable.push(unread("settings", &refusal)),
-        }
-    }
-    let room = ANSWER_BUDGET_CHARS.saturating_sub(used(&answer, &unreadable));
+    let room = ANSWER_BUDGET_CHARS.saturating_sub(
+        json_length(&json!({ "health": health, "unread": unreadable, "more": answer })) + 200,
+    );
     answer.insert("health".into(), health);
     if let Some(listed) = listed {
         let (kept, left_out) = fit_list(listed, room);

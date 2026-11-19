@@ -35,7 +35,6 @@ use super::faults::{
     HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE, HOLD_STORES_RECORD, HOLD_STORES_SWAP,
 };
 use super::housekeeping::{self, Report, Run};
-use super::mcp::confirm::{self, Confirmed, Confirming};
 use super::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 use crate::settings::registry::BACKUP_INTERVAL_SECONDS;
@@ -1312,78 +1311,34 @@ impl App {
 
     /// Takes an unmarked backup folder as a new store, forgetting the old one's copies and backups.
     pub async fn adopt_backup_folder(self: &Arc<App>, caller: &Caller) -> Result<Value> {
-        self.adopt_folder(caller, None).await?.unconfirmed()
-    }
-
-    /// Adopts only the folder the confirmed preview showed, in place of the store it showed.
-    pub async fn adopt_backup_folder_confirmed(
-        self: &Arc<App>,
-        caller: &Caller,
-        confirming: Confirming,
-    ) -> Result<Confirmed<Value>> {
-        self.adopt_folder(caller, Some(confirming)).await
-    }
-
-    /// The folder an adopt would take and the store it would replace, and the state a confirmation covers.
-    pub async fn backup_folder_state(self: &Arc<App>, caller: &Caller) -> Result<(Value, String)> {
-        caller.require(Permission::BackupsManage)?;
-        let followed = match self.backup_stores().await {
-            Err(refused) if refused.code == Code::NoBackupDestination => return Err(refused),
-            followed => followed,
-        };
-        let folder = self.folder_to_adopt(&followed)?;
-        let (root, replaced) = (
-            folder.root().display().to_string(),
-            folder.files().id().to_string(),
-        );
-        let state = folder_state(&root, &replaced);
-        Ok((
-            json!({ "folder": root, "replaced_store_id": replaced }),
-            state,
-        ))
-    }
-
-    async fn adopt_folder(
-        self: &Arc<App>,
-        caller: &Caller,
-        confirming: Option<Confirming>,
-    ) -> Result<Confirmed<Value>> {
         caller.require(Permission::BackupsManage)?;
         let (app, caller) = (self.clone(), caller.clone());
         tokio::spawn(super::provenance::carried(async move {
-            app.adopting(&caller, confirming).await
+            app.adopting(&caller).await
         }))
         .await
         .map_err(|_| Refusal::internal("an adopt of the backup folder did not finish"))?
     }
 
-    fn folder_to_adopt(&self, followed: &Result<Arc<Attached>>) -> Result<Arc<Folder>> {
-        let wanted = self.named_destination()?;
-        let attached = self
-            .blobs
-            .stores_in_use(&wanted)
-            .map_err(|unsettled| followed.as_ref().err().cloned().unwrap_or(unsettled))?;
-        match Destination::required(&attached)? {
-            Destination::Folder(folder) => Ok(folder),
-            Destination::Bucket(_) => Err(Refusal::new(
-                Code::Conflict,
-                "This instance backs up to an object store, so it has no backup folder to adopt.",
-            )),
-        }
-    }
-
     /// The follow lock covers folder selection through its claim.
-    async fn adopting(
-        self: &Arc<App>,
-        caller: &Caller,
-        confirming: Option<Confirming>,
-    ) -> Result<Confirmed<Value>> {
+    async fn adopting(self: &Arc<App>, caller: &Caller) -> Result<Value> {
         let followed = match self.backup_stores().await {
             Err(refused) if refused.code == Code::NoBackupDestination => return Err(refused),
             followed => followed,
         };
         let _changing = self.blobs.changing().await;
-        let folder = &self.folder_to_adopt(&followed)?;
+        let wanted = self.named_destination()?;
+        let attached = self
+            .blobs
+            .stores_in_use(&wanted)
+            .map_err(|unsettled| followed.as_ref().err().cloned().unwrap_or(unsettled))?;
+        let destination = Destination::required(&attached)?;
+        let Destination::Folder(folder) = &destination else {
+            return Err(Refusal::new(
+                Code::Conflict,
+                "This instance backs up to an object store, so it has no backup folder to adopt.",
+            ));
+        };
         let Ok(_running) = self.backups.running.try_lock() else {
             return Err(running(self.backups.restoring.load(Ordering::Acquire)));
         };
@@ -1456,7 +1411,6 @@ impl App {
         let (forgotten, new_id) = (old_id.clone(), id.clone());
         let (standing, checking, named) =
             (caller.clone(), self.clone(), folder.root().to_path_buf());
-        let (state, clock) = (folder_state(&root, &old_id), self.clock.clone());
         self.faults.hold(HOLD_STORES_RECORD, None).await;
         let written = self
             .db
@@ -1465,19 +1419,16 @@ impl App {
                     .current(tx, &at)?
                     .require(Permission::BackupsManage)?;
                 super::blobs::Blobs::check_adoptable(tx, &checking, &named, &forgotten)?;
-                confirm::redeem(confirming.as_ref(), tx, clock.instant(), &state, || {
-                    let backups = forget_backups(tx, &forgotten)?;
-                    let copies = super::blobs::Blobs::replace_folder_store(
-                        tx, &forgotten, &new_id, &locator, &at,
-                    )?;
-                    housekeeping::bring_forward(tx, REPLICATION, &at)?;
-                    Ok((copies, backups))
-                })
+                let backups = forget_backups(tx, &forgotten)?;
+                let copies = super::blobs::Blobs::replace_folder_store(
+                    tx, &forgotten, &new_id, &locator, &at,
+                )?;
+                housekeeping::bring_forward(tx, REPLICATION, &at)?;
+                Ok((copies, backups))
             })
             .await;
         let (copies, backups) = match written {
-            Ok(Confirmed::Done(counted)) => counted,
-            Ok(Confirmed::Stale) => return Ok(Confirmed::Stale),
+            Ok(counted) => counted,
             Err(refusal) => {
                 if refusal.commit_failed
                     && let Err(refused) = self.retake_folder(folder).await
@@ -1518,12 +1469,12 @@ impl App {
             }
         }
         tracing::info!(store = %id, replaced = %old_id, backups, copies, "The backup folder was adopted");
-        Ok(Confirmed::Done(json!({
+        Ok(json!({
             "store_id": id,
             "replaced_store_id": old_id,
             "backups_forgotten": backups,
             "copies_forgotten": copies,
-        })))
+        }))
     }
 
     /// Whether the folder's disk is there, or `None` when a look at it has not answered.
@@ -1830,11 +1781,6 @@ fn store_trouble(
         }
     }
     refused.map(|error| (StoreFault::Refused, error))
-}
-
-/// What a confirmation to adopt covers: the folder, and the store it replaces.
-fn folder_state(root: &str, replaced: &str) -> String {
-    format!("backup folder\n{root}\n{replaced}")
 }
 
 fn counted(count: usize, one: &str, many: &str) -> String {

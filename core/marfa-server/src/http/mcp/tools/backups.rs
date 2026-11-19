@@ -1,18 +1,16 @@
-//! `marfa_backups` and `marfa_manage_backups`: the backups, taking one now, and adopting the folder.
+//! `marfa_backups` and `marfa_take_backup`: the backups, and taking one now.
 
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::confirmed::{self, Shown, confirm_property};
-use super::{Definition, text};
+use super::Definition;
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
-use crate::app::mcp::confirm::Confirmed;
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, fit_list};
 
 pub const LIST_NAME: &str = "marfa_backups";
-pub const MANAGE_NAME: &str = "marfa_manage_backups";
+pub const TAKE_NAME: &str = "marfa_take_backup";
 
 pub fn list_definition() -> Definition {
     Definition {
@@ -37,34 +35,26 @@ pub fn list_definition() -> Definition {
     }
 }
 
-pub fn manage_definition() -> Definition {
+pub fn take_definition() -> Definition {
     Definition {
-        name: MANAGE_NAME,
-        title: "Take a backup or adopt the backup folder",
-        description: "Use to take a backup now, or to adopt an unmarked backup folder as the instance's store. Adopting forgets the old store's copies and backups, so it first previews: show the person, and call again with the same arguments and confirm. Restoring a backup is not offered here.",
+        name: TAKE_NAME,
+        title: "Take a backup now",
+        description: "Use to take a backup now, where the instance keeps its backups, which can be an object store. Restoring a backup is not offered here.",
         input: json!({
             "type": "object",
-            "properties": {
-                "action": { "type": "string", "enum": ["take", "adopt_folder"] },
-                "confirm": confirm_property(),
-            },
-            "required": ["action"],
+            "properties": {},
             "additionalProperties": false,
         }),
         output: json!({
             "type": "object",
             "properties": {
                 "backup": { "type": "object" },
-                "adopted": { "type": "object" },
-                "preview": { "type": "object" },
-                "confirm": { "type": "string" },
-                "expires_at": { "type": "string" },
-                "next": { "type": "string" },
             },
+            "required": ["backup"],
         }),
         annotations: json!({
             "readOnlyHint": false,
-            "destructiveHint": true,
+            "destructiveHint": false,
             "idempotentHint": false,
             "openWorldHint": true,
         }),
@@ -84,36 +74,8 @@ pub async fn list(app: &Arc<App>, caller: &Caller) -> Outcome {
     Ok(Value::Object(answer))
 }
 
-pub async fn manage(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>) -> Outcome {
+pub async fn take(app: &Arc<App>, caller: &Caller) -> Outcome {
     caller.require(Permission::BackupsManage)?;
-    if text(&arguments, "action").as_deref() == Some("take") {
-        let backup = app.run_backup(caller).await?;
-        return Ok(json!({ "backup": backup }));
-    }
-    let shown = |(target, state): (Value, String)| Shown {
-        tool: MANAGE_NAME,
-        arguments: &arguments,
-        state,
-        preview: json!({
-            "action": "adopt_folder",
-            "folder": target["folder"],
-            "replaced_store_id": target["replaced_store_id"],
-            "effect": "The backup folder is taken as a new store, and the old store's copies and backups are forgotten.",
-        }),
-        what: "which folder is adopted and what adopting it forgets",
-    };
-    let target = app.backup_folder_state(caller).await?;
-    let Some(confirming) = confirmed::confirming(app, caller, MANAGE_NAME, &arguments) else {
-        return confirmed::preview(app, caller, shown(target));
-    };
-    match app
-        .adopt_backup_folder_confirmed(caller, confirming)
-        .await?
-    {
-        Confirmed::Done(adopted) => Ok(json!({ "adopted": adopted })),
-        Confirmed::Stale => {
-            let now = app.backup_folder_state(caller).await?;
-            Err(confirmed::stale(app, caller, shown(now)))
-        }
-    }
+    let backup = app.run_backup(caller).await?;
+    Ok(json!({ "backup": backup }))
 }

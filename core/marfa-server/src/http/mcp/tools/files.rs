@@ -1,23 +1,20 @@
-//! `marfa_files` and `marfa_drop_file_copy`: where a file's copies are kept, and removing one.
+//! `marfa_files`: where a file's copies are kept.
 
 use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::confirmed::{self, Shown, confirm_property};
 use super::{Definition, text};
 use crate::app::App;
-use crate::app::access::{Caller, Permission};
+use crate::app::access::Caller;
 use crate::app::blobs::Hash;
-use crate::app::mcp::confirm::Confirmed;
-use crate::http::mcp::results::{Outcome, Stop};
+use crate::http::mcp::results::Outcome;
 
-pub const LIST_NAME: &str = "marfa_files";
-pub const DROP_NAME: &str = "marfa_drop_file_copy";
+pub const NAME: &str = "marfa_files";
 
-pub fn list_definition() -> Definition {
+pub fn definition() -> Definition {
     Definition {
-        name: LIST_NAME,
+        name: NAME,
         title: "Where a file's copies are kept",
         description: "Use to see each copy the instance keeps of one file, by its hash: the store holding it, its kind, and when it was last verified. marfa_health lists the stores.",
         input: json!({
@@ -40,42 +37,7 @@ pub fn list_definition() -> Definition {
     }
 }
 
-pub fn drop_definition() -> Definition {
-    Definition {
-        name: DROP_NAME,
-        title: "Remove one copy of a file",
-        description: "Use to remove the copy of a file that one store holds. The file's other copies stay. It first previews: show the person, and call again with the same arguments and confirm. A confirmation works once, and only while the copy it previewed stands.",
-        input: json!({
-            "type": "object",
-            "properties": {
-                "hash": { "type": "string", "minLength": 1, "description": "The file's content hash." },
-                "store_id": { "type": "string", "minLength": 1, "description": "The store whose copy is removed." },
-                "confirm": confirm_property(),
-            },
-            "required": ["hash", "store_id"],
-            "additionalProperties": false,
-        }),
-        output: json!({
-            "type": "object",
-            "properties": {
-                "preview": { "type": "object" },
-                "confirm": { "type": "string" },
-                "expires_at": { "type": "string" },
-                "dropped": { "type": "object" },
-                "next": { "type": "string" },
-            },
-        }),
-        annotations: json!({
-            "readOnlyHint": false,
-            "destructiveHint": true,
-            "idempotentHint": false,
-            "openWorldHint": false,
-        }),
-        meta: None,
-    }
-}
-
-pub async fn list(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>) -> Outcome {
+pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>) -> Outcome {
     caller.require_blob_reach()?;
     let hash = Hash::parse(&text(&arguments, "hash").unwrap_or_default())?;
     let copies = app.blob_copies(caller, &hash).await?;
@@ -92,39 +54,4 @@ pub async fn list(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>
         })
         .collect();
     Ok(json!({ "copies": listed }))
-}
-
-pub async fn drop_copy(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>) -> Outcome {
-    caller.require(Permission::BlobsManage)?;
-    let hash = text(&arguments, "hash").unwrap_or_default();
-    let store = text(&arguments, "store_id").unwrap_or_default();
-    let parsed = Hash::parse(&hash)?;
-    caller.require_blob_reach()?;
-    let shown = |state: String| Shown {
-        tool: DROP_NAME,
-        arguments: &arguments,
-        state,
-        preview: json!({
-            "action": "drop_copy",
-            "hash": hash,
-            "store_id": store,
-            "effect": "This store's copy of the file is removed. The file's other copies stay.",
-        }),
-        what: "which copy is removed",
-    };
-    let state = app.copy_state(caller, &parsed, &store).await?;
-    let Some(confirming) = confirmed::confirming(app, caller, DROP_NAME, &arguments) else {
-        return confirmed::preview(app, caller, shown(state));
-    };
-    match app
-        .drop_copy_confirmed(caller, &parsed, &store, confirming)
-        .await
-        .map_err(Stop::refused)?
-    {
-        Confirmed::Done(()) => Ok(json!({ "dropped": { "hash": hash, "store_id": store } })),
-        Confirmed::Stale => {
-            let state = app.copy_state(caller, &parsed, &store).await?;
-            Err(confirmed::stale(app, caller, shown(state)))
-        }
-    }
 }
