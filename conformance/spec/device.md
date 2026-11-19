@@ -402,9 +402,9 @@ While another process holds the writer role for a store, a device MUST NOT take 
 
 ### `device/store-identity-link`
 
-When a device opens a store through a symbolic link, a device MUST keep the store's fetched bytes and the bytes of its queued uploads in the folder named for the file the link leads to, so that every name that reaches the store reaches one queue and one folder of bytes.
+When a device opens a store through a symbolic link, a device MUST keep the store's fetched bytes and the bytes of its queued uploads in the folder named for the file the link leads to.
 
-**Reason:** an upload queued through one name and found missing through another would be refused as lost while its bytes sit beside the link.
+**Reason:** every name that reaches a store reaches one queue, so an upload queued through one name and looked for through another would be refused as lost while its bytes sit beside the link.
 
 **Tests:** `device/working-copy.test.ts › sends an upload queued through a symbolic link when drained through the store, and the reverse`.
 
@@ -412,15 +412,15 @@ When a device opens a store through a symbolic link, a device MUST keep the stor
 
 If a device is asked to open a store on a file system that does not lock files, then a device MUST refuse it `invalid` before it makes any file there.
 
-**Reason:** a file system that accepts a lock without holding it lets two processes both take the writer role (`device/one-writer`). A folder's store is held to the same rule.
+**Reason:** a file system that accepts a lock without holding it lets two processes both take the writer role (`device/one-writer`).
 
 **Tests:** `device/working-copy.test.ts › refuses a store on a file system that does not lock files before it makes any file`.
 
 ### `device/store-keeps-wal`
 
-If a device opens a store that is kept on disk and SQLite does not put it in write-ahead mode, then a device MUST refuse it `store`.
+If a device opens, as the writer, a store kept on disk that cannot be put in write-ahead mode, then a device MUST refuse it `store`.
 
-**Reason:** the writer and its readers rely on write-ahead mode to read one store while it is written, and SQLite keeps the old mode, without an error, where write-ahead mode cannot be had.
+**Reason:** readers rely on write-ahead mode to read a store while the writer writes it, and SQLite keeps the old mode without an error where write-ahead mode cannot be had.
 
 **Tests:** `device/working-copy.test.ts › refuses a store that cannot be kept in write-ahead mode`.
 
