@@ -365,7 +365,7 @@ pub(super) fn send_queue(
                 continue;
             }
             Readiness::RefusedWith(reason) => {
-                refuse_unsent(core, row, reason, None, replacing, pass, report)?;
+                refuse_unsent(core, stop, row, reason, None, replacing, pass, report)?;
                 answers.insert(row.id.clone(), Some(Verdict::Refused));
                 continue;
             }
@@ -400,7 +400,7 @@ pub(super) fn send_queue(
                 core.catch_up_before_rows(stop)?;
             }
         }
-        let payload = match payload_to_send(core, http, row, &all, &mut lookups)? {
+        let payload = match payload_to_send(core, http, stop, row, &all, &mut lookups)? {
             Ok(_) if row.kind == WriteKind::WriteRows => rows::body(row, &batched),
             Ok(payload) => payload,
             Err(CoreError::Unauthorized { server, .. }) => {
@@ -442,6 +442,7 @@ pub(super) fn send_queue(
             store::note_limit_refused(&*core.conn()?)?;
             refuse_unsent(
                 core,
+                stop,
                 row,
                 reason,
                 Some(over.stored()),
@@ -653,7 +654,7 @@ pub(super) fn send_queue(
         let taken = match store_fault(row) {
             Some(error) => Err(error),
             None if row.kind.rows() => rows::settle(core, row, &answer, class, resent),
-            None => settle(core, row, &answer, class, shape, pass),
+            None => settle(core, stop, row, &answer, class, shape, pass),
         };
         let mut settled = match taken {
             Ok(settled) => settled,
@@ -701,6 +702,7 @@ pub(super) fn send_queue(
                         | CoreError::StoreBusy(_)
                         | CoreError::CopyExpired { .. }
                         | CoreError::StreamIncomplete { .. }
+                        | CoreError::Canceled
                 ) {
                     return Err(error);
                 }
@@ -907,8 +909,10 @@ pub(super) fn send_queue(
 
 /// Refuses `row` with the device's own `reason`, nothing sent. Told before
 /// the read it owes, which can end the pass.
+#[allow(clippy::too_many_arguments)]
 fn refuse_unsent(
     core: &Core,
+    stop: &AtomicBool,
     row: &QueuedWrite,
     reason: String,
     answer: Option<String>,
@@ -945,7 +949,7 @@ fn refuse_unsent(
             answer.as_deref(),
         ),
     );
-    if let Some(unread) = reconcile(core, row, pass)? {
+    if let Some(unread) = reconcile(core, stop, row, pass)? {
         report.unavailable = Some(unread.reason);
         report.limited = unread.limited;
         waited(report, unread.retry_after_seconds);
@@ -1030,7 +1034,8 @@ fn failed(error: CoreError) -> Failed {
         | CoreError::CopyExpired { .. }
         | CoreError::StreamIncomplete { .. }
         | CoreError::Store(_)
-        | CoreError::StoreBusy(_) => Failed::Fatal(error),
+        | CoreError::StoreBusy(_)
+        | CoreError::Canceled => Failed::Fatal(error),
         CoreError::RenewalFailed(_) if !error.is_environmental() => Failed::Fatal(error),
         CoreError::Unauthorized { .. } => Failed::Unanswered(error),
         CoreError::Server { status, .. } if crate::error::environmental_status(status) => {
@@ -1057,6 +1062,7 @@ fn failed(error: CoreError) -> Failed {
 fn payload_to_send(
     core: &Core,
     http: &Http,
+    stop: &AtomicBool,
     row: &QueuedWrite,
     all: &[QueuedWrite],
     lookups: &mut Lookups,
@@ -1082,7 +1088,7 @@ fn payload_to_send(
         return Ok(Ok(payload));
     };
     if text("source").is_none()
-        && let Err(error) = own_source(core, http, lookups)?
+        && let Err(error) = own_source(core, http, stop, lookups)?
     {
         return Ok(Err(error));
     }
@@ -1092,7 +1098,7 @@ fn payload_to_send(
             let key = (r#type, source, source_id);
             if !lookups.keys.contains_key(&key) {
                 let asked = keys_to_ask(core, all, &key, lookups)?;
-                if let Err(error) = ask(http, &key.0, &key.1, &asked, &mut lookups.keys)? {
+                if let Err(error) = ask(http, stop, &key.0, &key.1, &asked, &mut lookups.keys)? {
                     return Ok(Err(error));
                 }
             }
@@ -1121,6 +1127,7 @@ fn payload_to_send(
 fn own_source(
     core: &Core,
     http: &Http,
+    stop: &AtomicBool,
     lookups: &mut Lookups,
 ) -> Result<std::result::Result<(), CoreError>> {
     if lookups.own.is_some() {
@@ -1131,7 +1138,7 @@ fn own_source(
         lookups.own = Some(learned);
         return Ok(Ok(()));
     }
-    let learned = match http.current_key() {
+    let learned = match crate::catch_up::ask_unless_stopped(stop, http, Http::current_key) {
         Ok(key) => {
             let learned = key.and_then(|key| {
                 key.get("source")
@@ -1155,6 +1162,7 @@ fn own_source(
 /// bytes.
 fn ask(
     http: &Http,
+    stop: &AtomicBool,
     r#type: &str,
     source: &str,
     asked: &[String],
@@ -1177,7 +1185,7 @@ fn ask(
             bytes += more;
             end += 1;
         }
-        if let Err(error) = ask_batch(http, r#type, source, &asked[start..end], keys)? {
+        if let Err(error) = ask_batch(http, stop, r#type, source, &asked[start..end], keys)? {
             return Ok(Err(error));
         }
         start = end;
@@ -1189,22 +1197,26 @@ fn ask(
 /// halves, so a key refused for good is told apart from the keys beside it.
 fn ask_batch(
     http: &Http,
+    stop: &AtomicBool,
     r#type: &str,
     source: &str,
     batch: &[String],
     keys: &mut HashMap<(String, String, String), Known>,
 ) -> Result<std::result::Result<(), CoreError>> {
-    let known = match http.keys_held(r#type, source, batch) {
+    let asked = (r#type.to_string(), source.to_string(), batch.to_vec());
+    let known = match crate::catch_up::ask_unless_stopped(stop, http, move |http| {
+        http.keys_held(&asked.0, &asked.1, &asked.2)
+    }) {
         Ok(held) => Some(held),
         Err(error) => match failed(error) {
             Failed::Fatal(error) => return Err(error),
             Failed::Unanswered(error) => return Ok(Err(error)),
             Failed::Refused(true) if batch.len() > 1 => {
                 let (first, second) = batch.split_at(batch.len() / 2);
-                if let Err(error) = ask_batch(http, r#type, source, first, keys)? {
+                if let Err(error) = ask_batch(http, stop, r#type, source, first, keys)? {
                     return Ok(Err(error));
                 }
-                return ask_batch(http, r#type, source, second, keys);
+                return ask_batch(http, stop, r#type, source, second, keys);
             }
             Failed::Refused(_) => None,
         },

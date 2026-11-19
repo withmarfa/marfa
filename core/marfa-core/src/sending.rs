@@ -34,14 +34,11 @@ impl Core {
         self.drain_until(&NEVER_STOPPED)
     }
 
-    /// Ended with `Canceled` soon after `stop` is raised, without waiting on
-    /// an upload in flight, which can take as long as the server takes, or
-    /// a write the server answers by its key: that write stays queued as
-    /// sent, under its key, and the next drain sends it again; an answer to
-    /// it that arrives after the stop is dropped. Any other write in flight
-    /// is waited for, and its answer recorded, since sent again it could
-    /// overwrite a newer change. Answers already recorded remain in the
-    /// queue.
+    /// Ended with `Canceled` soon after `stop` is raised, without waiting on a
+    /// request in flight: a write stays queued as sent and the next drain sends
+    /// it again under its key, or by its content for an upload; a read-back
+    /// stays owed for the next drain. An answer that arrives after the stop is
+    /// dropped. Answers already recorded remain in the queue.
     pub fn drain_until(&self, stop: &AtomicBool) -> Result<DrainReport> {
         let _one = self.wait_to_drain(stop)?;
         let report = drain::drain(self, stop)?;

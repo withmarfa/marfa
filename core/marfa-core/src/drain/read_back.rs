@@ -7,6 +7,7 @@ use super::address::Shape;
 use super::pages;
 use super::send::unavailable_by;
 use super::settle::{land, move_edits_back, receipt_key, same_attempt, settle_success};
+use crate::catch_up::ask_unless_stopped;
 use crate::error::CoreError;
 use crate::http::Answer;
 use crate::model::{QueuedWrite, Subject, WriteKind};
@@ -22,13 +23,14 @@ use crate::{reach, store};
 /// Other unavailable reads return their reason and end the pass too.
 pub(super) fn reconcile(
     core: &Core,
+    stop: &AtomicBool,
     row: &QueuedWrite,
     pass: &mut ReachChange,
 ) -> Result<Option<Unreadable>> {
     let Some(owed) = store::owed_of(&*core.conn()?, row)? else {
         return Ok(None);
     };
-    match read_owed(core, &owed, Bin::Held, pass, false).and_then(|read| {
+    match read_owed(core, stop, &owed, Bin::Held, pass, false).and_then(|read| {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         check_read_back(&tx, &read)?;
@@ -55,7 +57,8 @@ pub(super) fn reconcile(
             | CoreError::RenewalFailed(_)
             | CoreError::StorageFull(_)
             | CoreError::CopyExpired { .. }
-            | CoreError::StreamIncomplete { .. }),
+            | CoreError::StreamIncomplete { .. }
+            | CoreError::Canceled),
         ) => Err(error),
         Err(error) => {
             let unread = unreadable(&error);
@@ -118,7 +121,7 @@ pub(super) fn read_owed_backs(
     for (row, shape) in pending {
         crate::catch_up::refuse_if_stopped(stop)?;
         if shape == "refused" {
-            if let Some(unread) = reconcile(core, &row, pass)? {
+            if let Some(unread) = reconcile(core, stop, &row, pass)? {
                 return Ok(Some(unread));
             }
             continue;
@@ -134,9 +137,9 @@ pub(super) fn read_owed_backs(
         let settled = if let Some(id) = shape.strip_prefix("land:") {
             land(
                 core,
+                stop,
                 &row,
                 &Ok(answer),
-                Shape::Plain,
                 id,
                 row.reason.clone().unwrap_or_default(),
                 pass,
@@ -147,7 +150,7 @@ pub(super) fn read_owed_backs(
                 "edge" => Shape::Edge,
                 _ => Shape::Plain,
             };
-            settle_success(core, &row, &answer, shape, pass, false, None)?
+            settle_success(core, stop, &row, &answer, shape, pass, false, None)?
         };
         if let Some(reason) = settled.unavailable {
             return Ok(Some(Unreadable {
@@ -163,7 +166,7 @@ pub(super) fn read_owed_backs(
         if entry.subject == Subject::Item && landing.contains(&entry.id) {
             continue;
         }
-        match read_owed(core, &entry, Bin::Held, pass, false)
+        match read_owed(core, stop, &entry, Bin::Held, pass, false)
             .and_then(|read| apply_owed(core, &entry, &read))
         {
             Err(error) if ends_the_pass(&error) => return Err(error),
@@ -193,6 +196,7 @@ pub(super) fn ends_the_pass(error: &CoreError) -> bool {
             | CoreError::StorageFull(_)
             | CoreError::CopyExpired { .. }
             | CoreError::StreamIncomplete { .. }
+            | CoreError::Canceled
     )
 }
 
@@ -233,7 +237,14 @@ pub(crate) enum ReadBack {
 pub(crate) fn read_back(core: &Core, row: &QueuedWrite) -> Result<ReadBack> {
     let owed = store::owed_of(&*core.conn()?, row)?;
     match owed {
-        Some(owed) => read_owed(core, &owed, Bin::Held, &mut ReachChange::default(), false),
+        Some(owed) => read_owed(
+            core,
+            &crate::NEVER_STOPPED,
+            &owed,
+            Bin::Held,
+            &mut ReachChange::default(),
+            false,
+        ),
         None => Ok(ReadBack::Nothing),
     }
 }
@@ -306,6 +317,7 @@ pub(super) fn changes_reach(row: &QueuedWrite) -> bool {
 /// the pass here, with the copy expired.
 pub(super) fn read_owed(
     core: &Core,
+    stop: &AtomicBool,
     owed: &store::Owed,
     bin: Bin,
     pass: &mut ReachChange,
@@ -321,7 +333,7 @@ pub(super) fn read_owed(
             store::stamp(&conn, owed.subject, &owed.id)?,
         )
     };
-    match read_held(core, owed, bin, &context, before) {
+    match read_held(core, stop, owed, bin, &context, before) {
         Err(CoreError::CopyExpired { reason, server })
             if reach_write && reason == "reach_changed" =>
         {
@@ -335,6 +347,7 @@ pub(super) fn read_owed(
 
 fn read_held(
     core: &Core,
+    stop: &AtomicBool,
     owed: &store::Owed,
     bin: Bin,
     context: &reach::Context,
@@ -342,7 +355,8 @@ fn read_held(
 ) -> Result<ReadBack> {
     let http = context.http(core.http()?);
     if owed.subject == Subject::Edge {
-        let held = match http.edge(&owed.id) {
+        let id = owed.id.clone();
+        let held = match ask_unless_stopped(stop, &http, move |http| http.edge(&id)) {
             Ok(found) => found,
             Err(CoreError::Forbidden { .. }) => None,
             Err(error) if names_no_row(&error) => None,
@@ -355,13 +369,17 @@ fn read_held(
             before,
         });
     }
-    let held = match http.item(&owed.id) {
+    let id = owed.id.clone();
+    let held = match ask_unless_stopped(stop, &http, move |http| http.item(&id)) {
         Ok(Some(found)) => Some(found),
         // A read by id answers a row in the bin `404` as it answers a row
         // that is gone (`items/get-missing`), and the slice may hold such a
         // row. A landing takes no row in the bin
         // (`queue-and-verdicts/landed-target-unreadable`).
-        Ok(None) if bin == Bin::Held => match http.trashed_item(&owed.id) {
+        Ok(None) if bin == Bin::Held => match ask_unless_stopped(stop, &http, {
+            let id = owed.id.clone();
+            move |http| http.trashed_item(&id)
+        }) {
             Ok(found) => found,
             Err(CoreError::Forbidden { .. }) => None,
             Err(error) => return Err(error),

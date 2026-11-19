@@ -283,6 +283,7 @@ fn failed_verdicts_restore_unsent_followers_base_without_reading_or_rewriting_se
             };
             settle(
                 &core,
+                &crate::NEVER_STOPPED,
                 &ahead,
                 &answer,
                 classify(&answer),

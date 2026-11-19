@@ -288,10 +288,7 @@ impl<'a> Resolver<'a> {
             return Ok(Resolved::Waiting);
         }
         let http = self.core.http()?;
-        let confirm = crate::catch_up::confirm_each_attempt(self.core, http, self.stop);
-        crate::catch_up::refuse_if_stopped(self.stop)?;
-        let asked = http.item_checked(id, Some(&confirm));
-        crate::catch_up::refuse_if_stopped(self.stop)?;
+        let asked = crate::catch_up::item_checked_unless_stopped(self.core, http, self.stop, id);
         Ok(match asked {
             Ok(Some(row)) => Resolved::Found {
                 id: row.item.id,
@@ -319,7 +316,7 @@ impl<'a> Resolver<'a> {
             let r#type = self.core.get(&id)?.map(|item| item.r#type);
             found.insert(id, r#type);
         }
-        let (items, more) = match self.answer(name) {
+        let (items, more) = match self.answer(name)? {
             Looked::Titled { items, more } => (items, more),
             Looked::Waiting => return Ok(Resolved::Waiting),
             Looked::Unanswered(why) => return Ok(Resolved::Unanswered(why)),
@@ -390,8 +387,7 @@ impl<'a> Resolver<'a> {
             }
             asked.push((key, sent.to_string()));
         }
-        self.ask(asked);
-        Ok(())
+        self.ask(asked)
     }
 
     /// Sends the names, each with its folded key, in calls of
@@ -400,7 +396,7 @@ impl<'a> Resolver<'a> {
     /// or an answer that the server has no title lookup, no more are sent.
     /// A refusal names no name, so only a call that carried one name alone
     /// leaves it refused; the names of any other refused call wait.
-    fn ask(&mut self, asked: Vec<(String, String)>) {
+    fn ask(&mut self, asked: Vec<(String, String)>) -> Result<()> {
         let (past, asked): (Vec<_>, Vec<_>) = asked
             .into_iter()
             .partition(|(_, sent)| sent.chars().count() > names::MAX_NAME_LENGTH);
@@ -416,11 +412,18 @@ impl<'a> Resolver<'a> {
         }
         for page in asked.chunks(TITLE_LOOKUP_NAMES) {
             if !self.online || !self.offered {
-                return;
+                return Ok(());
             }
             let sent: Vec<String> = page.iter().map(|(_, sent)| sent.clone()).collect();
-            let answers = self.core.http().and_then(|http| http.item_titles(&sent));
+            let answers = self.core.http().and_then(|http| {
+                crate::catch_up::ask_unless_stopped(self.stop, http, move |http| {
+                    http.item_titles(&sent)
+                })
+            });
             match answers {
+                Err(crate::error::CoreError::Canceled) => {
+                    return Err(crate::error::CoreError::Canceled);
+                }
                 Ok(answers) => {
                     self.answered = true;
                     for ((key, _), answer) in page.iter().zip(answers) {
@@ -441,6 +444,7 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     /// What a failed title lookup of `names` names leaves each of them.
@@ -470,23 +474,23 @@ impl<'a> Resolver<'a> {
 
     /// What the server says of `name`: what it said already, or else its
     /// answer to a call for the name alone.
-    fn answer(&mut self, name: &str) -> Looked {
+    fn answer(&mut self, name: &str) -> Result<Looked> {
         let sent = name.trim();
         let key = folded(sent);
         if let Some(held) = self.looked.get(&key) {
-            return held.clone();
+            return Ok(held.clone());
         }
         if !self.online || !self.offered {
-            return Looked::Waiting;
+            return Ok(Looked::Waiting);
         }
         if key.is_empty() {
-            return Looked::Titled {
+            return Ok(Looked::Titled {
                 items: Vec::new(),
                 more: false,
-            };
+            });
         }
-        self.ask(vec![(key.clone(), sent.to_string())]);
-        self.looked.get(&key).cloned().unwrap_or(Looked::Waiting)
+        self.ask(vec![(key.clone(), sent.to_string())])?;
+        Ok(self.looked.get(&key).cloned().unwrap_or(Looked::Waiting))
     }
 
     /// The file item named `name` among those the copy holds, `held`, and
@@ -495,7 +499,7 @@ impl<'a> Resolver<'a> {
         if held.len() > 1 {
             return Ok(Resolved::Ambiguous);
         }
-        let (items, more) = match self.answer(name) {
+        let (items, more) = match self.answer(name)? {
             Looked::Titled { items, more } => (items, more),
             Looked::Waiting => return Ok(Resolved::Waiting),
             Looked::Unanswered(why) => return Ok(Resolved::Unanswered(why)),
@@ -859,6 +863,73 @@ mod tests {
 
     fn catalog_of(core: &Core) -> Catalog {
         crate::catalog::load(&core.conn().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_stop_ends_a_title_lookup_that_waits_and_leaves_its_names_unasked() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        server.on(
+            "/items/titles",
+            vec![crate::scripted::Answer::WaitFor {
+                ready: std::sync::Arc::new(AtomicBool::new(false)),
+                answer: Box::new(nothing_for(1)),
+            }],
+        );
+        let stop = AtomicBool::new(false);
+        let mut resolver = Resolver::new(&core, &catalog, &crate::body::rule::Placements, &stop);
+        let started = std::time::Instant::now();
+        let ended = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                server.wait_for("/items/titles", 1, std::time::Duration::from_secs(2));
+                stop.store(true, Ordering::Relaxed);
+            });
+            resolver.prefetch(["Waiting"])
+        });
+        assert_eq!(ended, Err(crate::error::CoreError::Canceled));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+    }
+
+    #[test]
+    fn a_stop_ends_the_read_of_a_link_by_id_while_the_item_waits() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let server = crate::scripted::Scripted::start();
+        let dir = tempfile::tempdir().unwrap();
+        let core = copy_holding(&server, dir.path(), &[]);
+        let catalog = catalog_of(&core);
+        let id = "01a00000-0000-7000-8000-0000000000bb";
+        let path = format!("/items/{id}");
+        let late = std::sync::Arc::new(AtomicBool::new(false));
+        server.on(
+            &path,
+            vec![
+                crate::scripted::Answer::WaitFor {
+                    ready: late.clone(),
+                    answer: Box::new(crate::scripted::refusal(404, "item_not_found")),
+                },
+                crate::scripted::refusal(404, "item_not_found"),
+            ],
+        );
+        let stop = AtomicBool::new(false);
+        let mut held_up = Resolver::new(&core, &catalog, &crate::body::rule::Placements, &stop);
+        let started = std::time::Instant::now();
+        let ended = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                server.wait_for(&path, 1, std::time::Duration::from_secs(2));
+                stop.store(true, Ordering::Relaxed);
+            });
+            held_up.resolve(id)
+        });
+        assert!(matches!(ended, Err(crate::error::CoreError::Canceled)));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+
+        // The witness: held no longer, the same read is answered.
+        late.store(true, Ordering::Relaxed);
+        let mut resolver = resolver(&core, &catalog);
+        assert!(matches!(resolver.resolve(id).unwrap(), Resolved::Unmatched));
     }
 
     #[test]

@@ -221,7 +221,7 @@ fn a_verdict_whose_own_read_meets_a_changed_reach_is_told_with_the_cut() {
                 ))
             };
             server.on("/edges/e1", vec![answer.clone(), read]);
-            let report = match drain_keeping(&core, &AtomicBool::new(false)) {
+            let report = match drain_keeping(&core, &crate::NEVER_STOPPED) {
                 Ok(report) => {
                     assert!(
                         !changed,
@@ -282,7 +282,7 @@ fn a_write_refused_unsent_whose_read_meets_a_changed_reach_is_told_with_the_cut(
         .unwrap()
         .execute("UPDATE queue SET base_version = 0 WHERE id = ?1", [&row.id])
         .unwrap();
-    let cut = drain_keeping(&core, &AtomicBool::new(false)).unwrap_err();
+    let cut = drain_keeping(&core, &crate::NEVER_STOPPED).unwrap_err();
     assert_eq!(cut.error, reach_changed());
     // The witness: the read the refusal owes was made, and met the change.
     assert_eq!(server.seen("/items/a").len(), 1);
@@ -600,7 +600,7 @@ fn a_refusal_left_to_its_read_behind_a_source_move_does_not_rebase_the_writes_be
         )
         .unwrap()
     };
-    read_owed_backs(&core, &AtomicBool::new(false), &mut ReachChange::default()).unwrap();
+    read_owed_backs(&core, &crate::NEVER_STOPPED, &mut ReachChange::default()).unwrap();
     let conn = core.conn().unwrap();
     assert_eq!(
         store::queued_write(&conn, &later.id)
@@ -740,7 +740,15 @@ fn an_edge_read_back_uses_direct_certified_absence() {
             "edge_not_found",
         ))],
     );
-    let read = read_owed(&core, &owed, Bin::Held, &mut ReachChange::default(), false).unwrap();
+    let read = read_owed(
+        &core,
+        &crate::NEVER_STOPPED,
+        &owed,
+        Bin::Held,
+        &mut ReachChange::default(),
+        false,
+    )
+    .unwrap();
     apply_owed(&core, &owed, &read).unwrap();
     assert_eq!(server.seen("/edges/edge").len(), 1);
     assert!(server.seen("/items/source/edges").is_empty());

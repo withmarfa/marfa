@@ -780,3 +780,156 @@ fn a_read_started_for_work_at_utility_runs_at_utility_and_one_for_other_work_doe
     assert_ne!(read(false), UTILITY);
     assert_eq!(read(true), UTILITY);
 }
+
+/// Raises the stop while the first request to `path` waits; returns how the drain ended and how long it took.
+fn stopped_while_waiting_on(
+    server: &Scripted,
+    core: &Arc<Core>,
+    path: &str,
+) -> (Result<crate::DrainReport>, Duration) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let (done, result) = mpsc::channel();
+    {
+        let (core, stop) = (core.clone(), stop.clone());
+        std::thread::spawn(move || {
+            let _ = done.send(core.drain_until(&stop));
+        });
+    }
+    server.wait_for(path, 1, WAIT);
+    let raised = Instant::now();
+    stop.store(true, Ordering::Relaxed);
+    let ended = result
+        .recv_timeout(WAIT)
+        .unwrap_or_else(|_| panic!("a stopped drain still waited on {path}"));
+    (ended, raised.elapsed())
+}
+
+#[test]
+fn a_stop_ends_a_drain_waiting_on_a_lookup_or_the_credentials_own_source() {
+    // A create naming a source asks a lookup; one naming none asks the credential's own source.
+    for (source, path) in [(Some("notes"), "/items/lookup"), (None, "/keys/current")] {
+        let server = Scripted::start();
+        let core = copy(&server);
+        holding_a_catalog(&core);
+        let mut draft = note(None);
+        draft.source = source.map(str::to_string);
+        draft.source_id = Some("a.md".into());
+        let queued = core.create_item(&draft).unwrap();
+        let id = queued.item_id.clone().unwrap();
+        let (receipt, read) = created(&id, "core.note");
+        let late = Arc::new(AtomicBool::new(false));
+        let own = r#"{"source":"notes","type_permissions":{"core.note":"read"}}"#;
+        let looked_up = scripted::json(200, r#"{"data":[],"tombstones":[]}"#);
+        let held = |answer: Answer| Answer::WaitFor {
+            ready: late.clone(),
+            answer: Box::new(answer),
+        };
+        if path == "/keys/current" {
+            server.on(
+                path,
+                vec![
+                    held(scripted::certified(scripted::json(200, own))),
+                    scripted::certified(scripted::json(200, own)),
+                ],
+            );
+            server.on("/items/lookup", vec![looked_up]);
+        } else {
+            server.on(path, vec![held(looked_up.clone()), looked_up]);
+        }
+        server.on("/items", vec![scripted::json(201, &receipt)]);
+        server.on(&format!("/items/{id}"), vec![read]);
+        let before = core.queue().unwrap();
+
+        let (ended, took) = stopped_while_waiting_on(&server, &core, path);
+        assert_eq!(ended.unwrap_err(), CoreError::Canceled, "{path}");
+        assert!(took < Duration::from_secs(1), "{path}: waited {took:?}");
+        assert_eq!(core.queue().unwrap(), before, "{path}");
+        assert!(
+            server.seen("/items").is_empty(),
+            "{path}: sent after the stop"
+        );
+
+        // The witness: the same drain, no longer held, sends the create.
+        late.store(true, Ordering::Relaxed);
+        let report = core.drain().unwrap();
+        assert_eq!(report.answered, 1, "{path}: {report:?}");
+        assert_eq!(server.seen("/items").len(), 1, "{path}");
+    }
+}
+
+#[test]
+fn a_stop_ends_a_drain_waiting_on_a_read_back_and_leaves_the_read_owed() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    holding_a_catalog(&core);
+    let queued = core.create_item(&note(None)).unwrap();
+    let id = queued.item_id.clone().unwrap();
+    let (receipt, read) = created(&id, "core.note");
+    let late = Arc::new(AtomicBool::new(false));
+    server.on("/items", vec![scripted::json(201, &receipt)]);
+    server.on(
+        &format!("/items/{id}"),
+        vec![
+            Answer::WaitFor {
+                ready: late.clone(),
+                answer: Box::new(read.clone()),
+            },
+            read,
+        ],
+    );
+    let path = format!("/items/{id}");
+
+    let (ended, took) = stopped_while_waiting_on(&server, &core, &path);
+    assert_eq!(ended.unwrap_err(), CoreError::Canceled);
+    assert!(took < Duration::from_secs(1), "waited {took:?}");
+    let verdicts: Vec<_> = core
+        .queue()
+        .unwrap()
+        .iter()
+        .map(|row| row.verdict)
+        .collect();
+    assert_eq!(
+        verdicts,
+        [Some(crate::model::Verdict::Accepted)],
+        "the verdict the server's answer gave was not kept"
+    );
+    assert_eq!(
+        store::owed_read_backs(&core.conn().unwrap()).unwrap().len(),
+        1,
+        "the read the stop cut short was not kept owed"
+    );
+
+    // The witness: the next drain makes the read and sends nothing again.
+    late.store(true, Ordering::Relaxed);
+    core.drain().unwrap();
+    assert!(
+        store::owed_read_backs(&core.conn().unwrap())
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(server.seen("/items").len(), 1, "the create was sent again");
+    assert_eq!(server.seen(&path).len(), 2);
+}
+
+#[test]
+fn a_stop_ends_the_catch_up_a_drain_makes_before_it_sends_while_the_event_stream_is_asked_for() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    server.on("/events", vec![Answer::Stall]);
+    let stop = Arc::new(AtomicBool::new(false));
+    let (done, result) = mpsc::channel();
+    {
+        let (core, stop) = (core.clone(), stop.clone());
+        std::thread::spawn(move || {
+            let _ = done.send(core.catch_up_before_rows(&stop));
+        });
+    }
+    server.wait_for("/events", 1, WAIT);
+    let raised = Instant::now();
+    stop.store(true, Ordering::Relaxed);
+    let ended = result
+        .recv_timeout(WAIT)
+        .expect("a stopped call still waited on the event stream");
+    assert_eq!(ended.unwrap_err(), CoreError::Canceled);
+    assert!(raised.elapsed() < Duration::from_secs(1));
+}

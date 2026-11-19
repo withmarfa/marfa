@@ -11,6 +11,7 @@ use super::read_back::{
 };
 use super::report::DrainVerdict;
 use super::send::{unavailable, unavailable_by};
+use crate::catch_up::ask_unless_stopped;
 use crate::error::CoreError;
 use crate::http::Answer;
 use crate::model::{BlockedReason, QueuedWrite, Refusal, RowConflict, Subject, Verdict, WriteKind};
@@ -419,8 +420,10 @@ pub(super) fn recorded<T>(core: &Core, write: impl FnMut() -> Result<T>) -> Resu
 
 /// `read` is a page's read of what its create made at version 1, made
 /// before the answer was settled; the row can have moved past 1 since.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn settle_success(
     core: &Core,
+    stop: &AtomicBool,
     row: &QueuedWrite,
     answer: &Answer,
     shape: Shape,
@@ -535,6 +538,7 @@ pub(super) fn settle_success(
     let read = match read.map(Ok).unwrap_or_else(|| {
         read_owed(
             core,
+            stop,
             &owed,
             Bin::Held,
             pass,
@@ -630,7 +634,7 @@ pub(super) fn settle_success(
         // left owed, for the read before the next pass sends anything. One no
         // later read gets past ends the pass, as `read_owed_backs` does, after
         // the caller has reported the committed verdict.
-        match create_edges::read(core, &parsed.item.id) {
+        match create_edges::read(core, stop, &parsed.item.id) {
             Ok(()) => {}
             Err(error) if ends_the_pass(&error) => return Err(error),
             Err(error) if error.is_environmental() => {
@@ -789,6 +793,7 @@ fn waits_for_bytes_again(
 
 pub(super) fn settle(
     core: &Core,
+    stop: &AtomicBool,
     row: &QueuedWrite,
     answer: &std::result::Result<Answer, CoreError>,
     class: Classified,
@@ -810,6 +815,7 @@ pub(super) fn settle(
     match class {
         Classified::Success => settle_success(
             core,
+            stop,
             row,
             answer.as_ref().expect("a success has a response"),
             shape,
@@ -858,7 +864,7 @@ pub(super) fn settle(
                 tx.commit()?;
                 Ok(())
             })?;
-            let unread = reconcile(core, row, pass)?;
+            let unread = reconcile(core, stop, row, pass)?;
             Ok(Settled {
                 retry_after_seconds: unread
                     .as_ref()
@@ -874,14 +880,22 @@ pub(super) fn settle(
             drop(conn);
             finish_counted(core, row, refusals, envelope)
         }
-        Classified::Landed { id, code } => land(core, row, answer, shape, &id, code, pass),
-        Classified::Delivered => settle_delivered(core, row, shape, pass),
+        Classified::Landed { id, code } => land(core, stop, row, answer, &id, code, pass),
+        Classified::Delivered => settle_delivered(core, stop, row, shape, pass),
         Classified::Trashed => {
             let mut response = answer.clone();
             if let Ok(answer) = &mut response {
                 answer.code = "trashed".into();
             }
-            settle(core, row, &response, Classified::Contract, shape, pass)
+            settle(
+                core,
+                stop,
+                row,
+                &response,
+                Classified::Contract,
+                shape,
+                pass,
+            )
         }
         Classified::Unclaimed { source } => {
             let mut conn = core.conn()?;
@@ -957,6 +971,7 @@ pub(super) fn settle(
 /// nothing, the write settles with no answer to take a version from.
 fn settle_delivered(
     core: &Core,
+    stop: &AtomicBool,
     row: &QueuedWrite,
     shape: Shape,
     pass: &mut ReachChange,
@@ -973,7 +988,11 @@ fn settle_delivered(
         Some(_) if pass.changed() => return Ok(Settled::plain(None, None, row.refusals)),
         Some((collection, id)) => {
             let context = reach::Context::capture(&*core.conn()?)?;
-            match context.http(core.http()?).read_whole(&[collection, id]) {
+            let http = context.http(core.http()?);
+            let (collection, id) = (collection.to_string(), id.to_string());
+            match ask_unless_stopped(stop, &http, move |http| {
+                http.read_whole(&[collection.as_str(), id.as_str()])
+            }) {
                 Ok(found) => found,
                 Err(CoreError::Forbidden { .. }) => None,
                 Err(error) if names_no_row(&error) => None,
@@ -1006,16 +1025,16 @@ fn settle_delivered(
         replayed: true,
         contract_named: true,
     };
-    settle_success(core, row, &answer, shape, pass, true, None)
+    settle_success(core, stop, row, &answer, shape, pass, true, None)
 }
 
 /// A natural-key receipt settles independently of the current read authority.
 /// Its identity reconciliation waits until a fresh conditional read can land.
 pub(super) fn land(
     core: &Core,
+    stop: &AtomicBool,
     row: &QueuedWrite,
     answer: &std::result::Result<Answer, CoreError>,
-    _shape: Shape,
     id: &str,
     code: String,
     pass: &mut ReachChange,
@@ -1049,7 +1068,7 @@ pub(super) fn land(
         tx.commit()?;
     }
     let mut settled = Settled::plain(Some(Verdict::Refused), Some(code), row.refusals);
-    let read = match read_owed(core, &owed, Bin::NotFound, pass, false) {
+    let read = match read_owed(core, stop, &owed, Bin::NotFound, pass, false) {
         Ok(read @ ReadBack::Item { held: Some(_), .. }) => read,
         // The receipt stays owed and the writes behind the create stay held,
         // but nothing else waits on a row the server may never hold again.

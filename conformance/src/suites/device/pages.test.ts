@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -12,6 +12,7 @@ import {
   writeAnswers,
   type WireEdgeOptions,
 } from "../../device/marfa-answers.js";
+import { refusalLine } from "../../device/cli-adapter.js";
 import type {
   DrainReport,
   Outcome,
@@ -633,6 +634,130 @@ describe("creates in pages", () => {
     expect(door.items.size).toBe(51);
     expect(notes).toHaveLength(50);
   });
+  it("settles the creates a stop left owed from a bulk read, sending none of them again", async () => {
+    const made = await start("pages-stopped-read");
+    harness = made.harness;
+    const { door } = made;
+    const { notes } = await queue(harness, 50);
+    let release = (): void => {};
+    const until = new Promise<void>((resolve) => (release = resolve));
+    let held = false;
+    door.reading = () => {
+      if (held) return undefined;
+      held = true;
+      // Answered only once the test ends: a server that holds the page's
+      // bulk read for longer than anyone waits.
+      return { kind: "gated", until, then: answers.itemNotFound() };
+    };
+    const draining = harness.device.hold(["drain"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(bulkReads(door), draining.stderr).toHaveLength(1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      const stopped = Date.now();
+      draining.interrupt();
+      await draining.exited();
+      expect(
+        Date.now() - stopped,
+        "the stopped drain waited on the bulk read in flight",
+      ).toBeLessThan(3_000);
+      expect(draining.exitCode(), draining.stderr).toBe(3);
+      expect(JSON.parse(refusalLine(draining.stderr)).error.code).toBe(
+        "canceled",
+      );
+    } finally {
+      release();
+      await draining.stop();
+    }
+    expect(door.requests("POST", "/items/bulk")).toHaveLength(1);
+    expect(door.items.size, "the page was not taken").toBe(51);
+
+    const second = await drain(harness);
+
+    expect(
+      door.requests("POST", "/items"),
+      "a create the server had accepted was sent again on its own door",
+    ).toHaveLength(0);
+    expect(second.undelivered).toBe(0);
+    expect(
+      bulkReads(door).map((ids) => ids.length),
+      "the page's read was not made again in bulk",
+    ).toEqual([50, 50]);
+    const queued = value(await harness.device.queue());
+    expect(queued.map((row) => row.verdict)).toEqual(
+      notes.map(() => "accepted"),
+    );
+  });
+
+  it("settles the tags carried by the creates a stop left owed, sending none of them again", async () => {
+    const made = await start("pages-stopped-read-tagged");
+    harness = made.harness;
+    const { door } = made;
+    const { notes } = await queue(harness, 50, { tags: ["alpha"] });
+    let release = (): void => {};
+    const until = new Promise<void>((resolve) => (release = resolve));
+    let held = false;
+    door.reading = () => {
+      if (held) return undefined;
+      held = true;
+      // Answered only once the test ends: a server that holds the page's
+      // bulk read for longer than anyone waits.
+      return { kind: "gated", until, then: answers.itemNotFound() };
+    };
+    const draining = harness.device.hold(["drain"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(bulkReads(door), draining.stderr).toHaveLength(1);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      const stopped = Date.now();
+      draining.interrupt();
+      await draining.exited();
+      expect(
+        Date.now() - stopped,
+        "the stopped drain waited on the bulk read in flight",
+      ).toBeLessThan(3_000);
+      expect(draining.exitCode(), draining.stderr).toBe(3);
+      expect(JSON.parse(refusalLine(draining.stderr)).error.code).toBe(
+        "canceled",
+      );
+    } finally {
+      release();
+      await draining.stop();
+    }
+    expect(door.requests("POST", "/items/bulk")).toHaveLength(1);
+    expect(door.items.size, "the page was not taken").toBe(51);
+
+    const second = await drain(harness);
+
+    expect(
+      door.requests("POST", "/items"),
+      "a create the server had accepted was sent again on its own door",
+    ).toHaveLength(0);
+    expect(
+      harness.server.requests.filter((request) =>
+        /^\/items\/[^/]+\/tags$/.test(request.pathname),
+      ),
+      "a tag the page carried was sent again on its own door",
+    ).toHaveLength(0);
+    expect(second.undelivered).toBe(0);
+    expect(
+      bulkReads(door).map((ids) => ids.length),
+      "the page's read was not made again in bulk",
+    ).toEqual([50, 50]);
+    const queued = value(await harness.device.queue());
+    expect(queued).toHaveLength(notes.length * 2);
+    expect(queued.every((row) => row.verdict === "accepted")).toBe(true);
+    expect([...(door.tags.get(notes[0]?.item_id ?? "") ?? [])]).toEqual([
+      "alpha",
+    ]);
+  });
+
   it("sends a page whose answer was lost again one write at a time, under each write's key", async () => {
     const made = await start("pages-answer-lost");
     harness = made.harness;

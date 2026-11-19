@@ -590,11 +590,10 @@ pub(crate) fn last_carried(
             store::meta_get(&conn, store::META_EVENT_CURSOR)?.ok_or_else(reach::invalid)?;
         (context, cursor)
     };
-    let frames = open(
-        &context.http(http),
-        &cursor,
-        deadline.saturating_duration_since(Instant::now()),
-    )?;
+    let bound = deadline.saturating_duration_since(Instant::now());
+    let frames = ask_unless_stopped(stop, &context.http(http), move |http| {
+        open(http, &cursor, bound)
+    })?;
     let unended = |reason: &str| CoreError::StreamIncomplete {
         reason: reason.into(),
         server: None,
@@ -1010,32 +1009,66 @@ pub(crate) fn refuse_an_old_server(http: &Http, stop: &AtomicBool) -> Result<()>
     ask_unless_stopped(stop, http, Http::served).map(drop)
 }
 
-/// The instance may change during credential renewal. The root is read on the
-/// calling thread, so a stop raised meanwhile ends the call `Canceled` once
-/// the read returns, within the transport's own timeout, and drops its answer:
-/// a thread left behind would hold the copy's writer lock after the core was
-/// dropped. The stop is read again once the instance is confirmed, which can
-/// wait on the store, so no request follows a stop raised meanwhile.
+/// The instance may change during credential renewal: before each attempt the
+/// root is read and the copy's generation and instance are checked.
 pub(crate) fn confirm_each_attempt<'a>(
     core: &'a Core,
     http: &'a Http,
-    stop: &'a AtomicBool,
 ) -> impl Fn(Stage) -> Result<()> + 'a {
-    move |stage| {
-        refuse_if_stopped(stop)?;
-        match stage {
+    move |stage| match stage {
+        Stage::Attempt => {
+            let Some(generation) = held_generation(core)? else {
+                return Ok(());
+            };
+            confirm_served(core, &http.served()?, generation)
+        }
+        Stage::Renewal => Ok(()),
+    }
+}
+
+/// `GET /items/<id>` through the stop, refused before an attempt when the root
+/// names another instance. The copy's generation and instance are checked, and
+/// any expiry written, on the calling thread once the request returns.
+pub(crate) fn item_checked_unless_stopped(
+    core: &Core,
+    http: &Http,
+    stop: &AtomicBool,
+    id: &str,
+) -> Result<Option<crate::wire::WireItemWithMetadata>> {
+    let id = id.to_string();
+    let Some(generation) = held_generation(core)? else {
+        return ask_unless_stopped(stop, http, move |http| http.item_checked(&id, None));
+    };
+    let held = store::meta_get(&*core.conn()?, store::META_INSTANCE_ID)?.unwrap_or_default();
+    let last = Arc::new(Mutex::new(None));
+    let seen = Arc::clone(&last);
+    let asked = ask_unless_stopped(stop, http, move |http| {
+        let before = |stage: Stage| match stage {
             Stage::Attempt => {
-                let Some(generation) = held_generation(core)? else {
-                    return Ok(());
-                };
-                let served = http.served();
-                refuse_if_stopped(stop)?;
-                confirm_served(core, &served?, generation)?;
-                refuse_if_stopped(stop)
+                let served = http.served()?;
+                let same = served.instance_id == held;
+                let reason = format!("the server's instance is {}", served.instance_id);
+                if let Ok(mut last) = seen.lock() {
+                    *last = Some(served);
+                }
+                if same {
+                    Ok(())
+                } else {
+                    Err(CoreError::expired(reason))
+                }
             }
             Stage::Renewal => Ok(()),
-        }
+        };
+        http.item_checked(&id, Some(&before))
+    });
+    if matches!(asked, Err(CoreError::Canceled)) {
+        return asked;
     }
+    let served = last.lock().ok().and_then(|mut last| last.take());
+    if let Some(served) = served {
+        confirm_served(core, &served, generation)?;
+    }
+    asked
 }
 
 /// Ended with `Canceled` as soon as `stop` is raised, even while the root is
