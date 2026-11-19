@@ -329,8 +329,7 @@ fn plan(
     })
 }
 
-/// The names of the settings a restore of these lines would store here, the enforcement row
-/// among them, so a caller is judged on them before anything is written.
+/// Reports new enforcement levers under their shared settings key.
 pub fn restoring(
     tx: &Transaction<'_>,
     app: &App,
@@ -406,8 +405,7 @@ pub struct RestoredLevers {
     pub skipped: Vec<String>,
 }
 
-/// The levers to store, if any archived one is new here, and what becomes of each by name.
-/// Stored levers that do not read keep every one, since what they hold is not known.
+/// An unreadable enforcement row must survive a restore intact.
 fn plan_levers(
     tx: &Transaction<'_>,
     archived: &serde_json::Map<String, serde_json::Value>,

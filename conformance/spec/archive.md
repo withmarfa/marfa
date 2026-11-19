@@ -388,7 +388,7 @@ When `POST /restore` reads a `setting` line that names a setting this instance d
 
 If the `instance.ndjson.gz` of an archive carries a `setting` line for `sign_in_address`, `addresses`, `backup_path`, an `object_store_` setting or `allow_private_addresses`, then the server MUST answer `400 validation_error` naming the key and store nothing of the archive.
 
-**Reason:** these settings describe this machine and its network, so no archive carries them (`archive/archive-settings`). A restore therefore never moves the sign-in address, the destination or the private-address switch, which `/config` changes only for a caller that holds `config.manage`, and for some only after a recent sign-in.
+**Reason:** these settings describe the destination machine and its network. Marfa omits them when it writes an archive (`archive/archive-settings`).
 
 **Tests:** `compliance/restore-settings-permission.test.ts › refuses an archive carrying a setting that describes this machine, even to an app holding config.manage, and writes nothing, where the archive without it restores`.
 
@@ -396,7 +396,7 @@ If the `instance.ndjson.gz` of an archive carries a `setting` line for `sign_in_
 
 If a caller that does not hold `config.manage` sends `POST /restore` or `POST /backups/{instance_id}/{name}/restore` for an archive that would store a setting, a secret to set again or an enforcement setting the instance does not store, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage` and `details.settings` naming each setting the archive would store, with `enforcement` for the enforcement settings.
 
-**Reason:** a restore is not a way to hold settings the caller cannot change at `/config`. A restore never replaces a setting the instance stores (`archive/restore-settings`, `archive/restore-enforcement`), so only the settings the instance lacks count, and an instance's own backup restored onto it needs only `backups.manage`.
+**Reason:** adding a setting requires the same permission as changing it at `/config`. This applies to the instance's own backup if a setting has been removed since the backup was taken.
 
 **Tests:** `compliance/restore-settings-permission.test.ts › refuses an app without config.manage an archive that would store a setting, writing no item, file or setting, where the same archive without it restores`, `› refuses an app without config.manage an archive whose only instance line is an enforcement setting, which an app holding it restores`, `› refuses an app without config.manage an archive naming a secret the instance would ask to be set again, which an app holding it restores`, `› holds a backup restore to the same rule: it restores while the instance stores the backup's settings, and needs config.manage once one is gone`.
 

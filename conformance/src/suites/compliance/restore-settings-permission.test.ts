@@ -23,14 +23,7 @@ import {
 } from "../../utils/signed-in.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
-/**
- * A restore stores settings only for a caller that may change them: an
- * archive that would store a setting, a secret to set again or an
- * enforcement setting needs `config.manage` beside `backups.manage`, at both
- * restore doors. Apps signed in just now meet the restore's step-up, and the
- * instance's settings are the subject, so the file boots a server of its
- * own, with a backup folder.
- */
+// The fixtures change instance settings and need their own backup folder.
 let server: FreshServer;
 let origin: string;
 let operator: MarfaClient;
@@ -60,7 +53,6 @@ afterAll(async () => {
   rmSync(backups, { recursive: true, force: true });
 }, FRESH_SERVER_TIMEOUT_MS);
 
-/** A client on an app's token, from a sign-in made just now. */
 async function signedInNow(app: App, scope: string): Promise<MarfaClient> {
   const cookie = await signIn(server, origin);
   const tokens = await connect(server, origin, cookie, app, scope);

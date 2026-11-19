@@ -37947,7 +37947,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you don't hold `backups.manage`, or the archive would store settings and you don't hold `config.manage`. `details.required_scope` names the permission, and `details.settings` names the settings.
+             * @description - `forbidden`: you don't hold `backups.manage`, or the archive would store settings and you don't hold `config.manage`. `details.required_scope` names the missing permission. For `config.manage`, `details.settings` lists the settings.
              *     - `app_sign_in_required`: you are an API key. A person restores from an app they signed in to, or with the private local command.
              */
             403: {
@@ -38754,7 +38754,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you don't hold `backups.manage`, or the archive would store settings and you don't hold `config.manage`. `details.required_scope` names the permission, and `details.settings` names the settings.
+             * @description - `forbidden`: you don't hold `backups.manage`, or the archive would store settings and you don't hold `config.manage`. `details.required_scope` names the missing permission. For `config.manage`, `details.settings` lists the settings.
              *     - `app_sign_in_required`: you are an API key. A person restores from an app they signed in to, or with the private local command.
              */
             403: {

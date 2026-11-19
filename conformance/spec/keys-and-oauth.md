@@ -27,7 +27,7 @@ A credential holds any of these permissions, each a row of the table below, whic
 
 ## Content reach
 
-A named permission opens the operations it names and no item. What a credential reads and writes is its maps' alone, except a restore: `backups.manage` adds the archive's items and definitions whatever the credential's maps and other permissions, and its settings only with `config.manage` (`archive/restore-settings-permission`).
+A named permission opens the operations it names. A credential's maps govern which items it can read and write. A restore with `backups.manage` can add items and definitions outside those maps. Adding settings also requires `config.manage` (`archive/restore-settings-permission`).
 
 ### `keys-and-oauth/permissions-no-content`
 
