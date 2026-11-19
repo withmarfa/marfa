@@ -212,8 +212,7 @@ pub(crate) fn lock_path(store: &Path) -> std::path::PathBuf {
 
 /// Refuses a store on a file system that does not lock files, where a
 /// successful `BEGIN EXCLUSIVE` would not mean no other process holds the
-/// writer role. The same admission a folder's store gets. A folder that is
-/// not there is left to the open that follows, which names it.
+/// writer role. A folder that is not there is left to the open that follows, which names it.
 #[cfg(unix)]
 fn admit_file_system(store: &Path) -> Result<(), CoreError> {
     let holder = store
@@ -221,7 +220,7 @@ fn admit_file_system(store: &Path) -> Result<(), CoreError> {
         .filter(|holder| !holder.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     match std::fs::File::open(holder) {
-        Ok(folder) => crate::directory_vfs::DirectoryVfs::supported(&folder),
+        Ok(folder) => crate::directory_vfs::DirectoryVfs::plain_path_supported(&folder),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(CoreError::Store(format!(
             "{} cannot be read: {error}",

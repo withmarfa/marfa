@@ -201,12 +201,13 @@ impl Core {
     }
 
     /// Sets aside a store SQLite cannot read: moves the store file and its
-    /// logs to `<store>.damaged-<n>` beside it, for the first `n` no file
+    /// logs to `<store>.damaged-<n>` beside it (beside the file a symbolic link
+    /// at `path` leads to), for the first `n` no file
     /// holds, never deleting them, and makes a new store at `path` that
     /// carries every write the old queue lets be read, under its id and
     /// idempotency key, with its body, base version and verdict. The new
     /// store keeps the server and instance the old one was built from, and
-    /// the fetched and uploaded bytes beside the path, which are addressed by
+    /// the fetched and uploaded bytes beside the file the path leads to, which are addressed by
     /// content. Where it cannot read every write, every record that decides
     /// how a carried write is sent, or every record of the bytes an earlier
     /// set-aside keeps, every byte held beside the path as it sets the store
