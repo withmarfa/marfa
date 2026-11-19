@@ -704,9 +704,25 @@ Where `backup_path` is set, if a backup run fails because `<backup_path>/files/<
 
 ### `instance/backup-folder-adopt`
 
-Where `backup_path` is set, when a caller holding `backups.manage` sends `POST /backups/folder/adopt` while the folder `backup_path` names exists and `<backup_path>/files/<instance id>/` holds no store marker, the server MUST take that files folder as a store of kind `folder` with an id no store had before, which it answers in `store_id`.
+Where `backup_path` is set, when a caller holding `backups.manage` sends `POST /backups/folder/adopt` while the folder `backup_path` names exists and `<backup_path>/files/<instance id>/` holds no store marker and the server can write in it, the server MUST take that files folder as a store of kind `folder` with an id no store had before, which it answers in `store_id`.
 
-**Tests:** `compliance/backup-folder.test.ts › refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
+**Reason:** the files folder may have lost its marker while the server kept it in use, and the server adopts it all the same.
+
+**Tests:** `compliance/backup-folder.test.ts › refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`, `› adopts a files folder that lost its marker while the server held it, and changes no record when it cannot mark the folder`.
+
+### `instance/backup-folder-adopt-unwritable`
+
+If a caller holding `backups.manage` sends `POST /backups/folder/adopt` while `<backup_path>/files/<instance id>/` holds no store marker and the server cannot write in it, then the server MUST answer `503 blob_store_unavailable`.
+
+**Tests:** `compliance/backup-folder.test.ts › adopts a files folder that lost its marker while the server held it, and changes no record when it cannot mark the folder`.
+
+### `instance/backup-folder-adopt-unwritable-kept`
+
+When the server refuses an adopt under `instance/backup-folder-adopt-unwritable`, the server MUST NOT change the stores it lists in `GET /blobs/stores`, forget a backup it recorded or leave a store marker in `<backup_path>/files/<instance id>/`.
+
+**Reason:** the owner makes the folder writable and adopts it again, and the backups and copies are forgotten only by the adopt that takes the folder.
+
+**Tests:** `compliance/backup-folder.test.ts › adopts a files folder that lost its marker while the server held it, and changes no record when it cannot mark the folder`.
 
 ### `instance/backup-folder-adopt-forgets`
 

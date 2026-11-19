@@ -164,6 +164,14 @@ While a disk folder is as `stores/returned-folder-taken` describes, the server M
 
 **Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
 
+### `stores/returned-folder-private`
+
+When a disk folder that the server started without returns holding the store's marker and another account could read or enter it, the server MUST make it private to its own account before it stores a file there.
+
+**Reason:** the server keeps its blob folder private while it runs (`instance/files-private`), and a folder that returns keeps the mode it was left with.
+
+**Tests:** `compliance/one-server.test.ts › makes a returned folder that others could read private before it stores a file there`.
+
 ### `stores/unread-setting-folder-returns`
 
 When the folder of the disk store that `stores/unread-setting-store-kept` keeps listed holds that store's marker again and `stores/returned-folder-taken` does not describe it, the server MUST serve and store blobs through that store, without a restart.

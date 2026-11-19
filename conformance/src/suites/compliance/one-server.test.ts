@@ -370,6 +370,34 @@ describe("a blob folder that returns to a server started without it", () => {
   );
 
   it(
+    "makes a returned folder that others could read private before it stores a file there",
+    async () => {
+      const {
+        server,
+        folder,
+        away,
+        working: client,
+      } = await startedWithoutItsFolder("one-server-returned-open");
+      const mode = async () => (await stat(folder)).mode & 0o777;
+      try {
+        await chmod(away, 0o755);
+        await rename(away, folder);
+        // The witness: the folder returns as open as it was left.
+        expect(await mode()).toBe(0o755);
+        const stored = await client.uploadBlob(
+          new TextEncoder().encode("sent to a returned folder"),
+          "text/plain",
+        );
+        expect(stored.status, JSON.stringify(stored.error)).toBe(201);
+        expect(await mode()).toBe(0o700);
+      } finally {
+        await server.stop();
+      }
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "refuses a second server on a returned folder once it has answered GET /health, and not after it has only served a read",
     async () => {
       const {
