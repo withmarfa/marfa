@@ -5160,11 +5160,35 @@ If a read under the copy's reach is refused `401` naming the contract and the cr
 
 ### `device/stream-credential-ended-renews`
 
-Where a copy holds a renewable sign-in, when the stream of a catch-up or a hydration ends with a `stream_incomplete` frame whose `reason` is `credential_ended`, a device MUST renew the sign-in and read on from the last event it took.
+Where a copy holds a renewable sign-in, when the stream of a catch-up ends with a `stream_incomplete` frame whose `reason` is `credential_ended` and the device has not renewed since the last event it took, a device MUST renew the sign-in and read on from the last event it took.
 
 **Reason:** an access token that expires while a long stream is read ends the stream, though the refresh token still works, so the call ends at the first event the token cannot carry and the app signs the person out. A cursor taken with each event lets the read go on without applying one twice, and `device/server-reads-instance-each-request` holds the instance confirmed again before the stream opens.
 
-**Tests:** `device/server-reads-instance.test.ts › confirms the instance again before it opens a stream again after a credential renewal`.
+**Tests:** `device/server-reads-instance.test.ts › confirms the instance again before it opens a stream again after a credential renewal`, `› reads on from the last event it took, and holds each event once, after a catch-up's stream ends for its credential`.
+
+### `device/stream-credential-ended-repeated`
+
+If the stream of a catch-up ends with a `stream_incomplete` frame whose `reason` is `credential_ended` and the device renewed the sign-in with no event taken since, then a device MUST end the call `StreamIncomplete` with the reason `credential_ended`.
+
+**Reason:** a renewal that does not let the stream carry one more event has not cured the end, and renewing again at each end would loop for as long as the server ends the stream.
+
+**Tests:** `device/server-reads-instance.test.ts › ends a catch-up with its stream's reason, after one renewal, when the stream ends again before an event`.
+
+### `device/hydration-credential-ended-renews`
+
+Where a copy holds a renewable sign-in, when a hydration reads the head of the log, or asks the log whether it holds what follows the head, and the stream ends with a `stream_incomplete` frame whose `reason` is `credential_ended`, a device MUST renew the sign-in and read again, once in the call.
+
+**Reason:** a hydration of a large copy outlasts an access token, and the call that ended at the first read made after the token expired would leave the person signed out of a copy that was otherwise whole.
+
+**Tests:** `device/server-reads-instance.test.ts › reads the head of the log again after renewing its sign-in when a hydration's first read ends for its credential`, `› asks the log again after renewing its sign-in when a hydration's question about the head ends for its credential`.
+
+### `device/hydration-credential-ended-repeated`
+
+If a hydration reads the head of the log, or asks the log whether it holds what follows the head, and that stream ends with a `stream_incomplete` frame whose `reason` is `credential_ended` after the call renewed the sign-in once, then a device MUST end the call `StreamIncomplete` with the reason `credential_ended`.
+
+**Reason:** the call renews once, so a server that ends every stream for its credential cannot keep a hydration renewing without end.
+
+**Tests:** `device/server-reads-instance.test.ts › ends a hydration with its stream's reason when a second read of the head ends for its credential`, `› ends a hydration with its stream's reason when a second question about the head ends for its credential`.
 
 ### `device/stream-credential-ended-unrenewed`
 
