@@ -1596,7 +1596,8 @@ impl Folder {
     }
 
     /// An editor that did not follow a pull's move of a document saves its old
-    /// buffer where the file was. In a scan that writes files, such a save,
+    /// buffer where the file was. In a scan that writes files, such a save at
+    /// that name as the volume compares names, never one held for its name,
     /// naming the item and a version line no newer than the item's when it
     /// moved, takes the place of the item's file where that file holds nothing
     /// the device has not read and sent. Otherwise it waits, keyed by path
@@ -1645,7 +1646,7 @@ impl Folder {
                 })
                 .and_then(|id| Some((moved.get(id)?, id)))
                 .filter(|(from, _)| {
-                    marfa_rules::names::same(&from.path, &file.key)
+                    self.one_name_on_volume(&from.path, &file.key)
                         && file.line.is_some_and(|line| line <= from.version)
                 })
                 .and_then(|(_, id)| snapshot.iter().find(|row| row.item_id == id))
@@ -1711,6 +1712,20 @@ impl Folder {
             }
         }
         Ok(waiting)
+    }
+
+    /// Whether the volume reads `moved` and `key` as one name: the same bytes,
+    /// or another case or form of it that the volume finds the same file by.
+    fn one_name_on_volume(&self, moved: &str, key: &str) -> bool {
+        moved == key
+            || (marfa_rules::names::same(moved, key)
+                && matches!(
+                    (
+                        self.root_dir.entry_identity(Path::new(moved)),
+                        self.root_dir.entry_identity(Path::new(key)),
+                    ),
+                    (Ok(one), Ok(other)) if one == other
+                ))
     }
 
     /// Why a save of an old buffer of `bound`'s file is held and not taken, as
