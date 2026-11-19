@@ -35,8 +35,8 @@ const BODY_LIMIT: u64 = 10 * 1024 * 1024;
 /// Reads the docs site at https://docs.marfa.so, or at the address in
 /// MARFA_DOCS_URL. It needs no server, store or key, and sends no credential.
 ///
-/// A page is its path on the site. `files`, `/files`,
-/// `files.md` and `https://docs.marfa.so/files` name
+/// A page is its path on the site. `build/files`, `/build/files`,
+/// `build/files.md` and `https://docs.marfa.so/build/files` name
 /// the same page. `search`, `topics` and `help` are commands, so a page with
 /// one of those names takes a leading slash, such as `/search`.
 ///
@@ -45,7 +45,7 @@ const BODY_LIMIT: u64 = 10 * 1024 * 1024;
 #[command(
     args_conflicts_with_subcommands = true,
     arg_required_else_help = true,
-    after_long_help = "Examples:\n  marfa docs search \"restore an archive\" --limit 5\n  marfa docs topics\n  marfa docs files\n  marfa docs cli --section \"Use another keychain file\""
+    after_long_help = "Examples:\n  marfa docs search \"restore an archive\" --limit 5\n  marfa docs topics\n  marfa docs build/files\n  marfa docs cli --section \"Use another keychain file\""
 )]
 pub struct DocsArgs {
     /// The page to print, as Markdown: its path on the docs site, or its address.
