@@ -342,6 +342,7 @@ pub(crate) fn in_force(setting: FileBudget, volume: Option<Volume>, held: u64) -
 }
 
 /// Where the cache is, for reading its volume.
+#[derive(Clone, Copy)]
 pub(crate) enum Place<'a> {
     /// A directory held open: the cache's own folder, or the folder it is
     /// made in before the first fetch makes it.
@@ -369,19 +370,22 @@ pub(crate) fn read_volume(place: Place<'_>) -> Option<Volume> {
 
 #[cfg(unix)]
 fn statvfs(place: Place<'_>) -> Option<Volume> {
-    let read = |figures: rustix::fs::StatVfs| {
-        volume_from(figures.f_blocks, figures.f_bavail, figures.f_frsize)
-    };
+    let figures = raw_statvfs(place)?;
+    volume_from(figures.f_blocks, figures.f_bavail, figures.f_frsize)
+}
+
+#[cfg(unix)]
+fn raw_statvfs(place: Place<'_>) -> Option<rustix::fs::StatVfs> {
     match place {
-        Place::Held(directory) => rustix::fs::fstatvfs(directory).ok().and_then(read),
+        Place::Held(directory) => rustix::fs::fstatvfs(directory).ok(),
         Place::Named(path) => path.ancestors().find_map(|ancestor| {
             let ancestor = if ancestor.as_os_str().is_empty() {
                 Path::new(".")
             } else {
                 ancestor
             };
-            rustix::fs::statvfs(ancestor).ok().map(read)
-        })?,
+            rustix::fs::statvfs(ancestor).ok()
+        }),
     }
 }
 
@@ -390,6 +394,31 @@ fn statvfs(place: Place<'_>) -> Option<Volume> {
 #[cfg(not(unix))]
 fn statvfs(_place: Place<'_>) -> Option<Volume> {
     None
+}
+
+/// Too little room to make the log and the index SQLite keeps beside a store
+/// in write-ahead mode, whose index alone is 32 KiB.
+const STORE_LOG_ROOM: u64 = 64 * 1024;
+
+/// Whether the volume at `place` has no room left to write, which is not
+/// the same as a volume that is mounted read-only, however full it is.
+///
+/// A debug build also answers true where the calling thread's test has made
+/// `volume-full` fail, since a unit test cannot choose its runner's disk.
+pub(crate) fn volume_is_full(place: Place<'_>) -> bool {
+    #[cfg(debug_assertions)]
+    if crate::fault::fails(|| "volume-full") {
+        return true;
+    }
+    #[cfg(unix)]
+    if raw_statvfs(place).is_some_and(|figures| {
+        figures
+            .f_flag
+            .contains(rustix::fs::StatVfsMountFlags::RDONLY)
+    }) {
+        return false;
+    }
+    read_volume(place).is_some_and(|volume| volume.free < STORE_LOG_ROOM)
 }
 
 /// Some FUSE and network mounts answer a size of zero, which says nothing

@@ -48,6 +48,10 @@ impl DirectoryVfs {
         })
     }
 
+    pub(crate) fn directory(&self) -> &File {
+        &self.directory
+    }
+
     /// Looks `name` up in the folder without opening it, so no lock of this
     /// process on the file is dropped.
     pub(crate) fn stat(&self, name: &str) -> std::io::Result<()> {
