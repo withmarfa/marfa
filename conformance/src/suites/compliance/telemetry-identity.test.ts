@@ -12,18 +12,17 @@ import { CAPTURE_V1 } from "../../utils/fault-sinks.js";
  * What the server's telemetry says about where it came from: the instance's
  * own id and the server's version on every log record, span and exception,
  * the attributes and service name the operator set in place of the server's
- * own, no environment the operator did not name, and the environment an
- * error notification names. Which requests leave a log record is here too.
+ * own, and no environment the operator did not name. Which requests leave a
+ * log record is here too.
  *
  * **A server of its own, with a receiver the fixture runs.** The receiver is
- * the OTLP collector for the log records and spans, the PostHog host for the
- * exception, and the error webhook, as `fault-reports.test.ts` arranges it.
+ * the OTLP collector for the log records and spans and the PostHog host for
+ * the exception, as `fault-reports.test.ts` arranges it.
  */
 let server: FreshServer | undefined;
 let receiver: Server | undefined;
 let base = "";
 
-const notifications: Record<string, unknown>[] = [];
 const traces: Record<string, unknown>[] = [];
 const logRecords: Record<string, unknown>[] = [];
 const trackedErrors: Record<string, unknown>[] = [];
@@ -49,7 +48,6 @@ beforeAll(async () => {
         if (path.startsWith("/v1/traces")) traces.push(parsed);
         else if (path.startsWith("/v1/logs")) logRecords.push(parsed);
         else if (path.startsWith(CAPTURE_V1)) trackedErrors.push(parsed);
-        else notifications.push(parsed);
       } finally {
         response
           .writeHead(200, { "Content-Type": "application/json" })
@@ -75,7 +73,6 @@ beforeAll(async () => {
 /** Every report pointed at the receiver, and every trace kept. */
 function reporting(): Record<string, string> {
   return {
-    MARFA_ERROR_WEBHOOK_URL: `${base}/errors`,
     OTEL_SDK_DISABLED: "false",
     OTEL_EXPORTER_OTLP_ENDPOINT: base,
     MARFA_POSTHOG_HOST: base,
@@ -268,7 +265,7 @@ describe("what a server's telemetry says of where it came from", () => {
   );
 
   it(
-    "names the instance and the environment in an exception and an error notification",
+    "names the instance and the environment in an exception",
     async () => {
       const id = await instanceId();
       const requestId = "telemetry-identity-faulted";
@@ -278,11 +275,6 @@ describe("what a server's telemetry says of where it came from", () => {
       expect(exception.properties["service.instance.id"]).toBe(id);
       expect(exception.properties["deployment.environment"]).toBe(ENVIRONMENT);
       expect(exception.properties["service.name"]).toBe(SERVICE);
-
-      const notification = await until("the error notification", () =>
-        notifications.find((entry) => entry.request_id === requestId),
-      );
-      expect(notification.environment).toBe(ENVIRONMENT);
     },
     COLLECTOR_TEST_TIMEOUT_MS,
   );
@@ -432,30 +424,5 @@ describe("what a server's telemetry says of where it came from", () => {
       }
     },
     COLLECTOR_TEST_TIMEOUT_MS,
-  );
-
-  it(
-    "names deployment.environment.name in an error notification before deployment.environment",
-    async () => {
-      // A server of its own, with telemetry off: the environment an alert
-      // names comes from the attributes either way. The first server's
-      // table cannot be put back in a state it will boot from again.
-      const named = await bootFreshServer("telemetry-identity-name", {
-        MARFA_ERROR_WEBHOOK_URL: `${base}/errors`,
-        OTEL_RESOURCE_ATTRIBUTES:
-          "deployment.environment=old,deployment.environment.name=named",
-      });
-      try {
-        const requestId = "telemetry-identity-named";
-        await faulted(named, requestId);
-        const notification = await until("the error notification", () =>
-          notifications.find((entry) => entry.request_id === requestId),
-        );
-        expect(notification.environment).toBe("named");
-      } finally {
-        await named.stop();
-      }
-    },
-    COLLECTOR_TEST_TIMEOUT_MS + FRESH_SERVER_TIMEOUT_MS,
   );
 });

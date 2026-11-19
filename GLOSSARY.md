@@ -84,7 +84,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **local authority**: Authority that only the private Unix socket supplies, to a process running under the server's operating-system account. Not an API key, and never asserted through public HTTP.
 - **local command**: A request made with local authority, over the private socket: the route to what no key may do, such as claiming the instance, recovering the owner's password and minting a key with no ceiling. A write it makes has the writer `kind` `local`. Not an API key, and not a command of the CLI.
 - **setup code**: A machine-issued proof that authorizes one owner claim. It grants no API access.
-- **secret setting**: A stored setting that holds a credential, such as `object_store_secret_access_key`, `heartbeat_url` or `error_webhook_url`. The server seals it with a key that stays beside the database, says only whether it is set, and never puts its value in an answer, a log, a backup or an archive. Not a start-only secret such as `MARFA_AUTH_SECRET`, which the environment or `marfa.secrets` holds.
+- **secret setting**: A stored setting that holds a credential, such as `object_store_secret_access_key`, `heartbeat_url` or `posthog_project_token`. The server seals it with a key that stays beside the database, says only whether it is set, and never puts its value in an answer, a log, a backup or an archive. Not a start-only secret such as `MARFA_AUTH_SECRET`, which the environment or `marfa.secrets` holds.
 
 ### Access words
 

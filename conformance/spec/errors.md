@@ -584,9 +584,9 @@ If the server needs a stored time as an instant to answer a request, such as to 
 
 When a client closes its connection while the server is still reading the request body, the server MUST NOT report the request as an unhandled fault.
 
-**Reason:** the client gave up and nothing failed on the server, so a report would bury the faults that need a person. A report of an unhandled fault is its log line `Unhandled error`, its error webhook notification and its exception in error tracking; the request is still logged, with status `499`.
+**Reason:** the client gave up and nothing failed on the server, so a report would bury the faults that need a person. A report of an unhandled fault is its log line `Unhandled error`, its entry in what needs the owner's attention (`instance/attention-fault`) and its exception in error tracking; the request is still logged, with status `499`.
 
-**Tests:** `compliance/client-closed-request.test.ts › is not logged as an unhandled fault, sent to the error webhook or reported to error tracking`.
+**Tests:** `compliance/client-closed-request.test.ts › is not logged as an unhandled fault, listed in attention or reported to error tracking`.
 
 ### `errors/internal-error-body`
 
@@ -693,20 +693,6 @@ When the server logs an unhandled fault in which a database statement failed, th
 **Reason:** the values of a failed write are what was being written, its properties, tags and hashes, the statement's text and the driver's message can quote them, and a log is read by people and services that the instance's data does not otherwise reach.
 
 **Tests:** `compliance/fault-reports.test.ts › is logged as a database failure with its SQLite code, and none of the statement, the driver's message or the values`.
-
-### `errors/report-webhook`
-
-When the server sends the error webhook a notification of an unhandled fault in which a database statement failed, the server MUST carry in the notification `Database operation failed` and the SQLite result code the statement failed with.
-
-**Tests:** `compliance/fault-reports.test.ts › is sent to the error webhook as a database failure with its SQLite code, and none of the statement, the driver's message or the values`.
-
-### `errors/report-webhook-values`
-
-When the server sends the error webhook a notification of an unhandled fault in which a database statement failed, the server MUST NOT carry the statement, the driver's own message or any value the statement was bound to in the notification.
-
-**Reason:** a webhook's receiver is a service the instance's data does not otherwise reach.
-
-**Tests:** `compliance/fault-reports.test.ts › is sent to the error webhook as a database failure with its SQLite code, and none of the statement, the driver's message or the values`.
 
 ### `errors/report-telemetry`
 

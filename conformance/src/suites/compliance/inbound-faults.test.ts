@@ -15,6 +15,7 @@ import {
   type FreshServer,
   serverOutput,
 } from "../../utils/fresh-server.js";
+import { controlRequest } from "../../utils/control-request.js";
 import { idOf, send } from "../../utils/inbound-sender.js";
 import { DAY_MS, QUIET_SCHEDULE, quiet } from "../../utils/moved-clock.js";
 
@@ -226,11 +227,13 @@ describe("a receipt whose storing fails on a database fault", () => {
     expectFixedFailure(JSON.stringify(log), "SQLITE_IOERR", forbidden);
     holdsNone(serverOutput(server.stateDir));
 
-    const sent = await until("the error webhook's notification", () =>
-      sinks.notifications.find((entry) => entry.request_id === requestId),
+    const listed = await controlRequest(server.controlSocket, "/attention");
+    expect(listed.status).toBe(200);
+    const faults = (listed.body as { data: { kind: string }[] }).data.filter(
+      (entry) => entry.kind === "fault",
     );
-    expectFixedFailure(JSON.stringify(sent), "SQLITE_IOERR", forbidden);
-    holdsNone(JSON.stringify(sinks.notifications));
+    expect(faults.length).toBeGreaterThan(0);
+    holdsNone(JSON.stringify(listed.body));
 
     const record = await until(
       "the fault's telemetry log record",

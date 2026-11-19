@@ -8,7 +8,6 @@ import {
   rmSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { createServer } from "node:http";
 import {
   type AddressInfo,
   connect,
@@ -1276,59 +1275,6 @@ describe("the notice addresses set through /config", () => {
       } finally {
         await server.stop();
         await beats.close();
-      }
-    },
-    FRESH_SERVER_TIMEOUT_MS,
-  );
-
-  it(
-    "posts a notice of a 500 to an error_webhook_url set through /config, without a restart",
-    async () => {
-      const notices: Record<string, unknown>[] = [];
-      const receiver = createServer((request, response) => {
-        let body = "";
-        request.on("data", (chunk: Buffer) => (body += chunk.toString()));
-        request.on("end", () => {
-          notices.push(JSON.parse(body) as Record<string, unknown>);
-          response.writeHead(204).end();
-        });
-      });
-      await new Promise<void>((resolve) =>
-        receiver.listen(0, "127.0.0.1", resolve),
-      );
-      const address = receiver.address();
-      if (typeof address !== "object" || address === null) {
-        throw new Error("the receiver did not bind to a port");
-      }
-      const server = await bootFreshServer("notice-error-webhook", DISK);
-      try {
-        const { operator, working } = clientsFor(server);
-        const fail = async () => {
-          await server.setFault("fail:audit=item.create");
-          const failed = await working.createItem({
-            type: "core.note",
-            properties: { body: `fails ${randomUUID()}` },
-          });
-          await server.clearFault();
-          expect(failed.status).toBe(500);
-          return failed.headers.get("x-request-id");
-        };
-
-        // The witness: with no address set, a 500 sends nothing.
-        await fail();
-        const set = await operator.patchConfig({
-          error_webhook_url: `http://127.0.0.1:${String(address.port)}/errors`,
-        });
-        expect(set.status, JSON.stringify(set.error)).toBe(200);
-        const requestId = await fail();
-        await waitFor("the notice of the 500", async () =>
-          notices.find((notice) => notice.request_id === requestId),
-        );
-        expect(notices).toHaveLength(1);
-      } finally {
-        await server.stop();
-        receiver.closeAllConnections();
-        await new Promise<void>((resolve) => receiver.close(() => resolve()));
       }
     },
     FRESH_SERVER_TIMEOUT_MS,

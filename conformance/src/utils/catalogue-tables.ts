@@ -115,7 +115,7 @@ const EVENT_TEXT: Readonly<Record<string, string>> = {
   "edge.updated":
     "An edge is written: its properties, or one of its ends moving to another item (`edges/update-announced`, `edges/move-announced`, `events/edge-bulk-announced`).",
   "attention.raised":
-    "A check of what needs the owner's attention first finds an entry (`events/attention-raised`).",
+    "A check of what needs the owner's attention first finds an entry, or the server first meets a fault (`events/attention-raised`, `events/attention-fault-at-once`).",
   "edge.deleted":
     "An edge is deleted (`edges/delete-announced`, `events/edge-inline-announced`, `items/purge-edges`, `events/sweep-purge-edges`).",
   stream_cursor:

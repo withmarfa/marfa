@@ -18,16 +18,32 @@ const BATCH: usize = 20;
 const EXCEPTION_TIMEOUT: Duration = Duration::from_secs(5);
 const SDK_INFO: &str = concat!("marfa-server/", env!("CARGO_PKG_VERSION"));
 
+/// What a report says failed: a fault the server met, with its stack, or a fixed sentence.
 #[derive(Clone)]
-pub struct Report {
-    pub fault: Arc<Fault>,
+pub enum Raised {
+    Fault(Arc<Fault>),
+    Fixed {
+        kind: &'static str,
+        value: &'static str,
+    },
+}
+
+/// The request or job a fault failed, which a fixed report never names.
+#[derive(Clone)]
+pub struct Failed {
     pub request_id: String,
     pub method: String,
     pub path: String,
     pub error_code: String,
-    pub timestamp: String,
     /// The trace and span of the request that failed, where it was traced.
     pub trace: Option<(String, String)>,
+}
+
+#[derive(Clone)]
+pub struct Report {
+    pub raised: Raised,
+    pub failed: Option<Failed>,
+    pub timestamp: String,
 }
 
 /// A proxy from the environment is used for an address on another host, not for one on
@@ -101,25 +117,29 @@ pub fn exceptions(attributes: Vec<(String, String)>) -> Lane<Tracked> {
 }
 
 fn event(report: &Report, attributes: &[(String, String)]) -> Value {
-    let frames = report.fault.frames();
     let distinct_id = uuid::Uuid::now_v7().to_string();
-    let mut properties = vec![
-        ("request_id", report.request_id.as_str().into()),
-        ("method", report.method.as_str().into()),
-        ("path", report.path.as_str().into()),
-        ("error_code", report.error_code.as_str().into()),
-    ];
-    if let Some((trace_id, span_id)) = &report.trace {
-        properties.push(("$trace_id", trace_id.as_str().into()));
-        properties.push(("$span_id", span_id.as_str().into()));
+    let mut properties: Vec<(&str, Value)> = Vec::new();
+    if let Some(failed) = &report.failed {
+        properties.push(("request_id", failed.request_id.as_str().into()));
+        properties.push(("method", failed.method.as_str().into()));
+        properties.push(("path", failed.path.as_str().into()));
+        properties.push(("error_code", failed.error_code.as_str().into()));
+        if let Some((trace_id, span_id)) = &failed.trace {
+            properties.push(("$trace_id", trace_id.as_str().into()));
+            properties.push(("$span_id", span_id.as_str().into()));
+        }
     }
+    let (kind, value, frames) = match &report.raised {
+        Raised::Fault(fault) => (fault.kind.name(), fault.message.as_str(), fault.frames()),
+        Raised::Fixed { kind, value } => (*kind, *value, None),
+    };
     Event {
         distinct_id: &distinct_id,
         lib: "marfa-server",
         lib_version: env!("CARGO_PKG_VERSION"),
         exception: Exception {
-            kind: report.fault.kind.name(),
-            value: &report.fault.message,
+            kind,
+            value,
             frames: frames.as_deref(),
             handled: true,
         },
@@ -136,14 +156,38 @@ mod tests {
 
     fn report(trace: Option<(String, String)>) -> Report {
         Report {
-            fault: Arc::new(Fault::internal("a job")),
-            request_id: String::new(),
-            method: String::new(),
-            path: String::new(),
-            error_code: "internal_error".into(),
+            raised: Raised::Fault(Arc::new(Fault::internal("a job"))),
+            failed: Some(Failed {
+                request_id: String::new(),
+                method: String::new(),
+                path: String::new(),
+                error_code: "internal_error".into(),
+                trace,
+            }),
             timestamp: "2026-11-19T12:00:00.000Z".into(),
-            trace,
         }
+    }
+
+    #[test]
+    fn a_fixed_report_names_no_request_and_carries_only_its_sentence() {
+        let fixed = event(
+            &Report {
+                raised: Raised::Fixed {
+                    kind: "ConnectorRunFailed",
+                    value: "A connector's last run failed.",
+                },
+                failed: None,
+                timestamp: "2026-11-19T12:00:00.000Z".into(),
+            },
+            &[],
+        );
+        let properties = &fixed["properties"];
+        for absent in ["request_id", "method", "path", "error_code", "$trace_id"] {
+            assert!(properties.get(absent).is_none(), "{absent} in {fixed}");
+        }
+        let exception = &properties["$exception_list"][0];
+        assert_eq!(exception["type"], "ConnectorRunFailed");
+        assert_eq!(exception["value"], "A connector's last run failed.");
     }
 
     #[test]

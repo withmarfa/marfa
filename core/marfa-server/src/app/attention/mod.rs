@@ -65,6 +65,8 @@ struct Concern {
     reference: String,
     title: String,
     description: String,
+    /// A connector whose last run failed, not one that reports problems or has gone quiet.
+    failed_run: bool,
 }
 
 impl Concern {
@@ -113,6 +115,7 @@ fn backing(health: &BackupHealth) -> Vec<Concern> {
     let text = |field: &str| backups[field].as_str().filter(|text| !text.is_empty());
     let concern = |reference: &str, title: &str, description: String| Concern {
         kind: "backup",
+        failed_run: false,
         reference: reference.to_string(),
         title: title.to_string(),
         description,
@@ -226,6 +229,7 @@ async fn healthy(app: &Arc<App>) -> Result<Vec<Concern>> {
         .into_iter()
         .map(|(name, status, reason)| Concern {
             kind: "health",
+            failed_run: false,
             reference: name.to_string(),
             title: format!("{} is {status}", capitalized(&words(name))),
             description: if reason.is_empty() {
@@ -252,6 +256,7 @@ fn secrets_to_set(settings: &crate::settings::Snapshot) -> Vec<Concern> {
         .into_iter()
         .map(|key| Concern {
             kind: "setting",
+            failed_run: false,
             reference: key.to_string(),
             title: format!("Set {key} again"),
             description: format!(
@@ -268,6 +273,7 @@ fn secrets_to_set(settings: &crate::settings::Snapshot) -> Vec<Concern> {
 fn unlocked(files: &Disk) -> Option<Concern> {
     files.unlocked().map(|why| Concern {
         kind: "backup",
+        failed_run: false,
         reference: "folder_unlocked".to_string(),
         title: "The backup folder is not locked".to_string(),
         description: format!(
@@ -309,6 +315,7 @@ fn clocked(standing: Standing) -> Option<Concern> {
             ends,
         } => Some(Concern {
             kind: "clock",
+            failed_run: false,
             reference: "clock_ahead".to_string(),
             title: "Clean-up is held because the clock is ahead".to_string(),
             description: format!(
@@ -321,6 +328,7 @@ fn clocked(standing: Standing) -> Option<Concern> {
         }),
         Standing::Behind { trusted, wall } => Some(Concern {
             kind: "clock",
+            failed_run: false,
             reference: "clock_behind".to_string(),
             title: "The server's clock is behind".to_string(),
             description: format!(
@@ -340,6 +348,7 @@ async fn jobs(app: &Arc<App>) -> Result<Vec<Concern>> {
         .into_iter()
         .map(|(name, error)| Concern {
             kind: "job",
+            failed_run: false,
             title: format!("The {name} job failed its last run"),
             description: error.unwrap_or_else(|| "The last run failed.".to_string()),
             reference: name,
@@ -374,6 +383,7 @@ async fn connected(app: &Arc<App>, at: &str) -> Result<Vec<Concern>> {
             };
             Concern {
                 kind: "connector",
+                failed_run: matches!(concern.reasons.first(), Some(Reason::Failed(_))),
                 reference: concern.id,
                 title,
                 description: said.join(" "),
@@ -404,6 +414,7 @@ async fn synced(app: &Arc<App>, at: &str) -> Result<Vec<Concern>> {
             }
             Concern {
                 kind: "folder",
+                failed_run: false,
                 reference: folder.id,
                 title: format!("{} needs a look", folder.title),
                 description: format!("A current sign-in reports {}.", said.join(", ")),
@@ -434,6 +445,7 @@ async fn ending(app: &Arc<App>, at: &str) -> Result<Vec<Concern>> {
         .into_iter()
         .map(|(id, label, expires)| Concern {
             kind: "key",
+            failed_run: false,
             reference: id,
             title: format!("{label} expires soon"),
             description: format!("It expires at {expires}. Scripts using it will stop working."),
@@ -469,6 +481,7 @@ where
                 .map_or(name, |(_, label)| *label);
             let unavailable = Concern {
                 kind: "unavailable",
+                failed_run: false,
                 reference: label.to_string(),
                 title: format!("Couldn't check {}", label.to_lowercase()),
                 description: "The check failed or did not answer in time. Its state is unknown."
@@ -506,6 +519,7 @@ pub struct Order {
 fn fault_concern(entry: &Entry) -> Concern {
     Concern {
         kind: FAULT,
+        failed_run: false,
         reference: entry.reference.clone(),
         title: entry.title(),
         description: faults::DESCRIPTION.to_string(),
@@ -656,35 +670,45 @@ async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
     }
     let (writing, looked) = (gathered.clone(), app.attention.looked.clone());
     let reported = app.attention.reported.clone();
-    app.write(&Caller::Server, WRITE_ACTION, move |unit| {
-        if looked.load(Ordering::Acquire) > writing.order {
-            return Ok(0);
-        }
-        let tx = unit.tx();
-        let now_ms = unit.instant.ms();
-        for (kind, reference) in forgotten(tx, &writing, &reported.references(now_ms))? {
-            tx.execute(
-                "DELETE FROM attention_announced WHERE kind = ?1 AND reference = ?2",
-                params![kind, reference],
-            )?;
-        }
-        let sent: HashSet<String> = reported
-            .from_memory(now_ms)
-            .into_iter()
-            .map(|(reference, _)| reference)
-            .collect();
-        let mut raised = 0;
-        for concern in unannounced(tx, &writing)? {
-            remember(tx, concern.kind, &concern.reference, &unit.at)?;
-            if concern.kind == FAULT && sent.contains(&concern.reference) {
-                continue;
+    let written = app
+        .write(&Caller::Server, WRITE_ACTION, move |unit| {
+            if looked.load(Ordering::Acquire) > writing.order {
+                return Ok((0, 0));
             }
-            unit.announce(&raised_event(concern))?;
-            raised += 1;
+            let tx = unit.tx();
+            let now_ms = unit.instant.ms();
+            for (kind, reference) in forgotten(tx, &writing, &reported.references(now_ms))? {
+                tx.execute(
+                    "DELETE FROM attention_announced WHERE kind = ?1 AND reference = ?2",
+                    params![kind, reference],
+                )?;
+            }
+            let sent: HashSet<String> = reported
+                .from_memory(now_ms)
+                .into_iter()
+                .map(|(reference, _)| reference)
+                .collect();
+            let (mut raised, mut failed_runs) = (0, 0);
+            for concern in unannounced(tx, &writing)? {
+                remember(tx, concern.kind, &concern.reference, &unit.at)?;
+                if concern.kind == FAULT && sent.contains(&concern.reference) {
+                    continue;
+                }
+                unit.announce(&raised_event(concern))?;
+                raised += 1;
+                failed_runs += usize::from(concern.failed_run);
+            }
+            Ok((raised, failed_runs))
+        })
+        .await?;
+    let (raised, failed_runs) = written;
+    if failed_runs > 0 {
+        let (settings, at) = (app.settings.live(), app.clock.stamp());
+        for _ in 0..failed_runs {
+            app.telemetry.report_connector_failure(&settings, &at);
         }
-        Ok(raised)
-    })
-    .await
+    }
+    Ok(raised)
 }
 
 /// Whether a refused write met a database that fails, and certainly did not commit.

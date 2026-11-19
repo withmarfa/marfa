@@ -32,7 +32,7 @@ If `GET /attention` carries a query field, then the server MUST answer `400 vali
 
 ### `instance/attention-concerns`
 
-When `GET /attention` completes its checks, the server MUST include degraded or down health components, housekeeping jobs whose last run failed, connectors whose last run failed or that report problems or have said nothing for more than 24 hours, active folders whose current sign-ins report problems, paused removals or a first sync waiting, live keys expiring within the next seven days inclusive, and a clock more than 7 days later or more than an hour earlier than the trusted time (`housekeeping/clock-ahead-held`, `housekeeping/clock-followed`).
+When `GET /attention` completes its checks, the server MUST include degraded or down health components, housekeeping jobs whose last run failed, connectors whose last run failed or that report problems or have said nothing for more than 24 hours, unhandled faults (`instance/attention-fault`), active folders whose current sign-ins report problems, paused removals or a first sync waiting, live keys expiring within the next seven days inclusive, and a clock more than 7 days later or more than an hour earlier than the trusted time (`housekeeping/clock-ahead-held`, `housekeeping/clock-followed`).
 
 **Reason:** connector silence follows the latest registration, heartbeat, or received run; folder totals exclude historical sign-ins and do not claim that a copy is online.
 
@@ -149,6 +149,52 @@ While the server's clock is more than an hour earlier than the trusted time, the
 If a check fails or does not answer within its bounded deadline, then the server MUST answer `GET /attention` with known concerns and an `unavailable` item identifying the check whose state is unknown.
 
 **Tests:** `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
+
+### `instance/attention-fault`
+
+When the server reports an unhandled fault (`errors/client-closed-request` says what a report is), the server MUST include in `GET /attention` an entry of kind `fault` whose reference is the fault's kind, `database`, `panic` or `internal`, a colon, and where it happened: the request's method and route template, such as `POST /items/{id}`, `job <name>` for a housekeeping job, or `webhooks schedule`.
+
+**Reason:** a fault shows first where the owner already looks, and the reference names no item, key or other id, so one fault met on many items is one entry.
+
+**Tests:** `compliance/attention-faults.test.ts › lists a fault once for where it happened, with a fixed description, counting each time it happens`.
+
+### `instance/attention-fault-description`
+
+The server MUST give an entry of kind `fault` the description `The server met a fault it did not expect, and the request or job it was doing failed. If this keeps happening, report it to the Marfa project with the server's log from that time.`
+
+**Reason:** the fault's own message can quote what was being written, and the owner needs to know what to do about it, not its detail, which the server's log holds.
+
+**Tests:** `compliance/attention-faults.test.ts › lists a fault once for where it happened, with a fixed description, counting each time it happens`.
+
+### `instance/attention-fault-count`
+
+When the server reports an unhandled fault where an entry of kind `fault` with the same reference is listed, the server MUST keep that one entry and give it a `title` that ends with how many times the fault happened, as `once` or `<n> times`.
+
+**Tests:** `compliance/attention-faults.test.ts › lists a fault once for where it happened, with a fixed description, counting each time it happens`.
+
+### `instance/attention-fault-other`
+
+While 64 entries of kind `fault` other than `other` are listed, if the server reports an unhandled fault with a reference none of them has, then the server MUST count it in one entry of kind `fault` with the reference `other`.
+
+**Reason:** a fault in many places at once must not grow the list, or the memory that holds it, without end.
+
+**Tests:** none, closed in #CAPISSUE: no route or fault point lets a fixture fail 65 places of the server's own, and the server's own tests hold the bound.
+
+### `instance/attention-fault-day`
+
+When 24 hours have passed since the server last reported an unhandled fault with a reference, the server MUST NOT include the entry of kind `fault` with that reference in `GET /attention`.
+
+**Reason:** a fault that stopped needs no look, and one that comes back is listed and announced again.
+
+**Tests:** `compliance/attention-faults.test.ts › forgets a fault 24 hours after it last happened, and announces it again when it comes back`.
+
+### `instance/attention-fault-restart`
+
+When the server starts, the server MUST include no entry of kind `fault` in `GET /attention`.
+
+**Reason:** the entries are held in memory, so that a database that fails does not lose them.
+
+**Tests:** `compliance/attention-faults.test.ts › lists no fault after a restart`.
 
 ### `instance/attention-empty`
 
@@ -2574,7 +2620,7 @@ When the server starts, the server MUST hold no fault.
 
 ## Telemetry
 
-Telemetry has two parts, each with settings of its own. Traces and log records are on when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Exception reports to PostHog's error tracking are on when the stored settings `posthog_host` and `posthog_project_token` are both set, and follow them without a restart. One part being off leaves the other as it was. `OTEL_SDK_DISABLED` set to `true` in any case turns both parts off; any other value, including `1`, leaves them as they were. The error webhook is not telemetry, so `OTEL_SDK_DISABLED` does not turn it off. With none of these set, the server sends nothing about itself.
+Telemetry has two parts, each with settings of its own. Traces and log records are on when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Exception reports to PostHog's error tracking are on when the stored settings `posthog_host` and `posthog_project_token` are both set, and follow them without a restart. One part being off leaves the other as it was. `OTEL_SDK_DISABLED` set to `true` in any case turns both parts off; any other value, including `1`, leaves them as they were. With none of these set, the server sends nothing about itself.
 
 ### `instance/telemetry-exception-report`
 
@@ -2626,14 +2672,6 @@ If `OTEL_SDK_DISABLED` holds a value other than `true` in any case, then the ser
 
 **Tests:** `compliance/telemetry-exception-alone.test.ts › are still sent, with traces and logs, when OTEL_SDK_DISABLED is any value but true, 1 included`.
 
-### `instance/telemetry-disabled-webhook`
-
-While `OTEL_SDK_DISABLED` is `true` in any case and `error_webhook_url` is set, the server MUST still post an error notification for a request that fails with a 500 error.
-
-**Reason:** the notice is how an owner hears of a fault, and it is not telemetry.
-
-**Tests:** `compliance/telemetry-exception-alone.test.ts › still post an error notification when OTEL_SDK_DISABLED is true in any case`.
-
 ### `instance/posthog-host-refused`
 
 If a write to `/config` sets `posthog_host` to a value that is not an `https` URL or an `http` URL on this machine, or that has a user name or password, then the server MUST answer `400 validation_error` naming the setting, with no part of the value in the refusal.
@@ -2672,7 +2710,7 @@ Where exceptions go to error tracking, the server MUST carry the instance's `ins
 
 **Reason:** the id is in the database, which opens after the server starts, so an exception captured before it opens goes unnamed.
 
-**Tests:** `compliance/telemetry-identity.test.ts › names the instance and the environment in an exception and an error notification`.
+**Tests:** `compliance/telemetry-identity.test.ts › names the instance and the environment in an exception`.
 
 ### `instance/telemetry-attributes`
 
@@ -2680,7 +2718,7 @@ Where anything is exported, the server MUST carry each attribute `OTEL_RESOURCE_
 
 **Reason:** the operator is the one who knows what the instance is for, and the standard variable is how an instance marks itself apart, as `deployment.environment=staging` does.
 
-**Tests:** `compliance/telemetry-identity.test.ts › names the attributes and the service name the operator set, in place of its own`, `› names the instance and the environment in an exception and an error notification`.
+**Tests:** `compliance/telemetry-identity.test.ts › names the attributes and the service name the operator set, in place of its own`, `› names the instance and the environment in an exception`.
 
 ### `instance/telemetry-service-name`
 
@@ -2703,14 +2741,6 @@ If `OTEL_RESOURCE_ATTRIBUTES` names neither `deployment.environment` nor `deploy
 **Reason:** the server cannot tell an owner's instance from a test one, so any value it chose would be wrong for some. A test or development server marks itself with `OTEL_RESOURCE_ATTRIBUTES=deployment.environment=test`.
 
 **Tests:** `compliance/telemetry-identity.test.ts › names no environment of its own when the operator names none`.
-
-### `instance/telemetry-error-environment`
-
-Where `error_webhook_url` is set and `OTEL_RESOURCE_ATTRIBUTES` names `deployment.environment.name` or `deployment.environment`, the server MUST name the value of the first of them it names, in that order, as the `environment` of each notification it posts.
-
-**Reason:** a notification from a test instance that said `production` would send the person reading it to the wrong place.
-
-**Tests:** `compliance/telemetry-identity.test.ts › names the instance and the environment in an exception and an error notification`, `› names deployment.environment.name in an error notification before deployment.environment`.
 
 ## Settings refused at boot
 
@@ -2825,11 +2855,10 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `object_store_prefix`            | `marfa`            | `/`-joined segments of letters, digits, `.`, `_` and `-`                                            | The key prefix the instance keeps everything under in the bucket: its files under `blobs/` and its backups under `backups/`. Each running instance on a bucket needs its own; a server that replaces an instance starts on its prefix. A `/` at either end is dropped; a `.` or `..` segment is refused. Changing it needs a sign-in from the last five minutes.                                                                                                                                                                                                                                                                                                                                        |
 | `object_store_access_key_id`     | None               | Text of 1 to 256 characters, or empty                                                               | The access key ID for the object store.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `object_store_secret_access_key` | None               | A secret: text of 1 to 4096 characters with no whitespace around it, or empty                       | The secret access key for the object store. A write that changes `object_store_bucket` or `object_store_endpoint` removes it, unless the write sets it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `error_webhook_url`              | None               | A secret: an absolute `http` or `https` URL, or empty                                               | The URL the server posts a notice to when a request fails with a 500 error, while `error_reporting_enabled` is true. When empty, no notice is sent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `posthog_host`                   | None               | A secret: an `https` URL, or an `http` URL on this machine, with no user name or password, or empty | The PostHog host the server sends a report of each unhandled fault to, at `i/v1/analytics/events` under it, while `error_reporting_enabled` is true. It needs `posthog_project_token` set too. When empty, no exception report is sent.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `posthog_project_token`          | None               | A secret: 1 to 256 visible ASCII characters with no spaces, or empty                                | The PostHog project token the server sends its exception reports with. It needs `posthog_host` set too.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `heartbeat_url`                  | None               | A secret: an absolute `http` or `https` URL, or empty                                               | The URL the server requests on a schedule while `heartbeat_enabled` is true, so that something else can notice when the requests stop. When empty, there is no heartbeat.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `allow_private_addresses`        | `false`            | `true` or `false`                                                                                   | Whether the server may send to loopback, private and other addresses that are not public: webhooks, `heartbeat_url`, `error_webhook_url`, `posthog_host` and `object_store_endpoint`. Changing it needs a sign-in from the last five minutes.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `allow_private_addresses`        | `false`            | `true` or `false`                                                                                   | Whether the server may send to loopback, private and other addresses that are not public: webhooks, `heartbeat_url`, `posthog_host` and `object_store_endpoint`. Changing it needs a sign-in from the last five minutes.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `enrichment_enabled`             | `true`             | `true` or `false`                                                                                   | Whether the server extracts text from uploaded files.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `enrichment_ocr_enabled`         | `true`             | `true` or `false`                                                                                   | Whether the server reads text from images with OCR. When off, images are recorded as unsupported.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `enrichment_max_blob_bytes`      | `20971520` bytes   | Whole number of bytes, 1 to 1099511627776                                                           | The largest blob the server extracts text from. A larger blob gets no extracted text.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -2867,7 +2896,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `mcp_fetch_enabled`              | `true`             | `true` or `false`                                                                                   | Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `mcp_fetch_max_bytes`            | `52428800` bytes   | Whole number of bytes, 1 to 1099511627776                                                           | The largest file an MCP tool fetches from a web address to save. A larger file is refused and nothing is stored.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `mcp_fetch_timeout_seconds`      | `60` seconds       | Whole number of seconds, 1 to 3600                                                                  | How long an MCP tool's fetch of a file from a web address may take, from connecting to the last byte.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `error_reporting_enabled`        | `true`             | `true` or `false`                                                                                   | Send error alerts to `error_webhook_url` and exception reports to `posthog_host`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `error_reporting_enabled`        | `true`             | `true` or `false`                                                                                   | Send exception reports to `posthog_host`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `heartbeat_enabled`              | `true`             | `true` or `false`                                                                                   | Send scheduled requests to `heartbeat_url`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `update_check_enabled`           | `true`             | `true` or `false`                                                                                   | Whether the server checks GitHub for new Marfa releases every few hours. When off, it makes no request for them and reports no release as newer.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `addresses`                      | None               | List of origins, each `scheme://host[:port]` with no path                                           | The addresses people reach this instance at, such as `https://marfa.example`. Each is an origin: a scheme, a host and an optional port, with no path. Links the server builds come from this list and the sign-in address.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -3170,7 +3199,7 @@ When an authorized caller replaces or updates the configuration, the server MUST
 
 If a configuration write would make the effective recent, daily and weekly version windows decrease in that order, set a negative window or inactivity period, set a version count below one, or turn reporting from off to on without a configured receiver, then the server MUST refuse it with `400 validation_error` without changing the stored configuration.
 
-**Reason:** validation includes the defaults exposed by clearing a stored setting. A receiver is `heartbeat_url` for the heartbeat, and `error_webhook_url`, or `posthog_host` with `posthog_project_token`, for error reporting.
+**Reason:** validation includes the defaults exposed by clearing a stored setting. A receiver is `heartbeat_url` for the heartbeat, and `posthog_host` with `posthog_project_token` for error reporting.
 
 **Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the default`, `compliance/restore-says.test.ts › restores a reporting setting that is turned on where no receiver is set, names it, and still refuses turning it on again from off`.
 
@@ -3184,7 +3213,7 @@ When a stored setting changes, the server MUST use the effective choice for futu
 
 ## Secret settings
 
-A stored setting the table gives as a secret holds a credential: `object_store_secret_access_key` and `posthog_project_token`, and `heartbeat_url`, `error_webhook_url` and `posthog_host`, whose address is itself the credential. It is written through `PUT /config` and `PATCH /config` like any stored setting, and never read back.
+A stored setting the table gives as a secret holds a credential: `object_store_secret_access_key` and `posthog_project_token`, and `heartbeat_url` and `posthog_host`, whose address is itself the credential. It is written through `PUT /config` and `PATCH /config` like any stored setting, and never read back.
 
 ### `instance/secret-sealed`
 
@@ -3302,7 +3331,7 @@ If the contents of `marfa.settings.key` do not read when the server starts, then
 
 ## Destination and notice settings
 
-The backup destination and the object store, its secret and the backup schedule, the error webhook and the heartbeat are stored settings. A write to `/config` that changes them takes effect without a restart.
+The backup destination and the object store, its secret and the backup schedule, the PostHog host and project token and the heartbeat are stored settings. A write to `/config` that changes them takes effect without a restart.
 
 `object_store_secret_access_key` is a secret that belongs to this machine as the other `object_store_` settings do, so no archive names it (`archive/archive-secret-named`).
 
@@ -3376,15 +3405,9 @@ When a write to `/config` sets `heartbeat_url`, the server MUST list the `heartb
 
 **Tests:** `compliance/destination-settings.test.ts › lists and sends the heartbeat to a heartbeat_url set through /config, without a restart`.
 
-### `instance/error-webhook-url-live`
-
-When a write to `/config` sets `error_webhook_url`, the server MUST post its notice of each later request that fails with a 500 error to that URL, without a restart.
-
-**Tests:** `compliance/destination-settings.test.ts › posts a notice of a 500 to an error_webhook_url set through /config, without a restart`.
-
 ## Where the server may send
 
-The server sends to the destinations its settings name: webhooks, `heartbeat_url`, `error_webhook_url`, `posthog_host` and `object_store_endpoint`. While `allow_private_addresses` is `false`, the default, each is held to the rule webhooks are held to: an address is public only where `events/address-private`, `events/address-ipv6-global` and `events/address-mapped` judge it so. A credential that may change the configuration must not reach the network the server runs on unless a person just confirmed it, so the switch changes only as `keys-and-oauth/step-up-recent` and `keys-and-oauth/step-up-socket` allow.
+The server sends to the destinations its settings name: webhooks, `heartbeat_url`, `posthog_host` and `object_store_endpoint`. While `allow_private_addresses` is `false`, the default, each is held to the rule webhooks are held to: an address is public only where `events/address-private`, `events/address-ipv6-global` and `events/address-mapped` judge it so. A credential that may change the configuration must not reach the network the server runs on unless a person just confirmed it, so the switch changes only as `keys-and-oauth/step-up-recent` and `keys-and-oauth/step-up-socket` allow.
 
 ### `instance/private-addresses-local`
 
@@ -3394,11 +3417,11 @@ When a write sets `allow_private_addresses` to `true` through `/config`, the ser
 
 ### `instance/destination-private-refused`
 
-Where `allow_private_addresses` is `false`, if a write to `/config` sets `heartbeat_url`, `error_webhook_url`, `posthog_host` or `object_store_endpoint` to a URL whose host is an address that is not public, then the server MUST answer `400 validation_error` naming the setting, with no part of the URL in the refusal.
+Where `allow_private_addresses` is `false`, if a write to `/config` sets `heartbeat_url`, `posthog_host` or `object_store_endpoint` to a URL whose host is an address that is not public, then the server MUST answer `400 validation_error` naming the setting, with no part of the URL in the refusal.
 
-**Reason:** `heartbeat_url`, `error_webhook_url` and `posthog_host` are secrets, and a URL can carry a credential.
+**Reason:** `heartbeat_url` and `posthog_host` are secrets, and a URL can carry a credential.
 
-**Tests:** `compliance/destination-addresses.test.ts › refuses a heartbeat_url, error_webhook_url, posthog_host or object_store_endpoint written as a private address while the switch is off`.
+**Tests:** `compliance/destination-addresses.test.ts › refuses a heartbeat_url, posthog_host or object_store_endpoint written as a private address while the switch is off`.
 
 ### `instance/object-store-region-name`
 
@@ -3502,21 +3525,15 @@ While the object store the stored settings name is not in use because it could n
 
 ### `instance/private-switch-off-refused`
 
-If a write to `/config` sets `allow_private_addresses` to `false` while `heartbeat_url`, `error_webhook_url`, `posthog_host` or `object_store_endpoint` holds a URL whose host is an address that is not public, then the server MUST answer `400 validation_error` naming that setting.
+If a write to `/config` sets `allow_private_addresses` to `false` while `heartbeat_url`, `posthog_host` or `object_store_endpoint` holds a URL whose host is an address that is not public, then the server MUST answer `400 validation_error` naming that setting.
 
-**Tests:** `compliance/destination-addresses.test.ts › refuses a heartbeat_url, error_webhook_url, posthog_host or object_store_endpoint written as a private address while the switch is off`.
+**Tests:** `compliance/destination-addresses.test.ts › refuses a heartbeat_url, posthog_host or object_store_endpoint written as a private address while the switch is off`.
 
 ### `instance/heartbeat-private-unsent`
 
 Where `allow_private_addresses` is `false`, if the host of `heartbeat_url` is a name whose lookup finds any address that is not public, then the server MUST NOT send the heartbeat.
 
 **Tests:** `compliance/destination-addresses.test.ts › sends no heartbeat to a name that leads to a private address until the switch is on`.
-
-### `instance/error-webhook-private-unsent`
-
-Where `allow_private_addresses` is `false`, if the host of `error_webhook_url` is a name whose lookup finds any address that is not public, then the server MUST NOT send the notice of a failed request.
-
-**Tests:** `compliance/destination-addresses.test.ts › sends no error notice to a name that leads to a private address until the switch is on`.
 
 ### `instance/posthog-host-private-unsent`
 
@@ -3560,9 +3577,9 @@ The environment variables below are read once, when the server starts. Each is n
 | `MARFA_KEY_SALT`                     | None. Generated on first start into `marfa.secrets`. | Text with no whitespace around it                                  | The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Unset, the server uses the salt in `marfa.secrets`, which it generated on first start.                                                                                                                                                                                                                                                                                                                                          |
 | `MARFA_AUTH_SECRET`                  | None. Generated on first start into `marfa.secrets`. | Text of at least 32 characters, with no whitespace around it       | The secret that signs sign-in cookies, authorize queries, reach proofs and credential-free blob links. It must be at least 32 characters. Unset, the server uses the secret in `marfa.secrets`, which it generated on first start.                                                                                                                                                                                                                                                                                                  |
 | `MARFA_OTEL_SAMPLE_RATIO`            | `0.05`                                               | Decimal number, 0 to 1                                             | The share of traces exported. A trace that contains an error is exported whatever this says: the span that failed, the spans held for the trace (at most 500) and every span after it.                                                                                                                                                                                                                                                                                                                                              |
-| `OTEL_SDK_DISABLED`                  | `false`                                              | `true` in any case, or any other value                             | `true` in any case turns off traces, logs and exception reports together, whatever the other telemetry settings say. Any other value, including `1`, leaves them as they are. The error webhook stays on.                                                                                                                                                                                                                                                                                                                           |
+| `OTEL_SDK_DISABLED`                  | `false`                                              | `true` in any case, or any other value                             | `true` in any case turns off traces, logs and exception reports together, whatever the other telemetry settings say. Any other value, including `1`, leaves them as they are.                                                                                                                                                                                                                                                                                                                           |
 | `OTEL_SERVICE_NAME`                  | `marfa-server`                                       | Any text                                                           | The service name on exported telemetry. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `OTEL_RESOURCE_ATTRIBUTES`           | None                                                 | Comma-separated `key=value` pairs, values percent-encoded          | Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `service.version`. A `deployment.environment` named here also goes on each error notification.                                                                                                                                                                                                                                                                                           |
+| `OTEL_RESOURCE_ATTRIBUTES`           | None                                                 | Comma-separated `key=value` pairs, values percent-encoded          | Attributes added to everything exported, as OpenTelemetry defines them. One named here replaces the server's own of the same name, such as `service.version`.                                                                                                                                                                                                                                                                                           |
 | `OTEL_EXPORTER_OTLP_ENDPOINT`        | None                                                 | Absolute `http` or `https` URL                                     | The base URL of the OTLP receiver. Setting it turns traces and logs on: the server exports traces to `v1/traces` and logs to `v1/logs` under it. Unset, no trace or log is exported; exception reports have stored settings of their own (`posthog_host`).                                                                                                                                                                                                                                                                          |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | None                                                 | Absolute `http` or `https` URL                                     | The URL traces post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`   | None                                                 | Absolute `http` or `https` URL                                     | The URL logs post to, used as written. It takes precedence over `OTEL_EXPORTER_OTLP_ENDPOINT`, which must also be set.                                                                                                                                                                                                                                                                                                                                                                                                              |

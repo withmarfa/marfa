@@ -4,22 +4,20 @@ import { expect } from "vitest";
 
 /**
  * Where a server or the command line under test reports an unhandled fault,
- * in the places a fixture can read: the error webhook, the log records and
- * spans it exports over OTLP, and the exceptions it sends to error tracking.
- * One receiver on the loopback address is all four, so a fixture boots its
+ * in the places a fixture can read: the log records and spans it exports over
+ * OTLP, and the exceptions it sends to error tracking. One receiver on the
+ * loopback address is all three, so a fixture boots its
  * server with {@link FaultSinks.env} and reads what arrived. The command line
  * posts a single event to PostHog's capture path, where the server posts a
  * batch to capture v1.
  */
 export interface FaultSinks {
   /**
-   * The settings that point the four reports at the receiver. They name the
+   * The settings that point the three reports at the receiver. They name the
    * switch too, since a booted test server is told to send nothing unless a
    * fixture says otherwise.
    */
   env(): Record<string, string>;
-  /** What the error webhook was sent, parsed. */
-  readonly notifications: Record<string, unknown>[];
   /** What it was sent as OTLP traces, as OTLP log records and as error tracking's events. */
   readonly traces: Record<string, unknown>[];
   readonly logRecords: Record<string, unknown>[];
@@ -92,7 +90,6 @@ function attributesOf(
 }
 
 export async function startFaultSinks(): Promise<FaultSinks> {
-  const notifications: Record<string, unknown>[] = [];
   const traces: Record<string, unknown>[] = [];
   const logRecords: Record<string, unknown>[] = [];
   const trackedErrors: Record<string, unknown>[] = [];
@@ -117,7 +114,6 @@ export async function startFaultSinks(): Promise<FaultSinks> {
           trackedHeaders.push({ ...request.headers });
         } else if (path.startsWith("/i/v0/e/"))
           trackedErrors.push({ batch: [parsed] });
-        else notifications.push(parsed);
       } finally {
         response
           .writeHead(200, { "Content-Type": "application/json" })
@@ -135,13 +131,11 @@ export async function startFaultSinks(): Promise<FaultSinks> {
   const origin = `http://127.0.0.1:${String(address.port)}`;
   return {
     env: () => ({
-      MARFA_ERROR_WEBHOOK_URL: `${origin}/errors`,
       OTEL_SDK_DISABLED: "false",
       OTEL_EXPORTER_OTLP_ENDPOINT: origin,
       MARFA_POSTHOG_HOST: origin,
       MARFA_POSTHOG_PROJECT_TOKEN: "phc_conformance_fixture",
     }),
-    notifications,
     traces,
     logRecords,
     trackedErrors,
