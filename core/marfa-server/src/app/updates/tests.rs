@@ -193,6 +193,7 @@ impl Case {
             database: self.root.join("data/marfa.db"),
             record: self.record(),
             dir: self.root.clone(),
+            attempt: "attempt".into(),
         }
     }
 
@@ -270,6 +271,7 @@ async fn a_release_that_checks_out_swaps_in_its_server_and_stages_its_marfa() {
         ("0.0.74", "0.0.75")
     );
     assert_eq!((pending.schema, pending.starts), (Some(1), 0));
+    assert_eq!(pending.attempt.as_deref(), Some("attempt"));
     assert!(!case.bin().join(".marfa-update-0.0.75").exists());
 }
 
@@ -585,6 +587,7 @@ async fn no_update_starts_while_another_holds_or_has_not_settled_the_programs() 
             schema: Some(1),
             starts: 1,
             programs: case.bin(),
+            attempt: None,
         })
         .unwrap();
     let refused = case

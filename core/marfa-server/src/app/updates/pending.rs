@@ -1,11 +1,12 @@
 //! The record of a swap as the server reads and settles it. `marfa server run` counts the new
 //! release's starts and puts the old one back when it does not stay up.
 
+use std::fs;
 use std::path::Path;
 
 pub use marfa_rules::update_record::{
-    Folder, LOCK, MARFA, Outcome, Pending, SERVER, finish_swap, keep_aside, next_marfa,
-    previous_of, put_back,
+    ASK_LIMIT, Folder, LOCK, MARFA, Outcome, Pending, SERVER, finish_swap, keep_aside, next_marfa,
+    previous_of, put_back, run_within, sync_folder,
 };
 
 use crate::settings::DatabasePath;
@@ -19,8 +20,15 @@ pub fn record_of(database: &DatabasePath) -> Option<Folder> {
 
 /// Keeps how an update ended; a record that cannot be written is logged, since the update has
 /// already ended either way.
-pub fn end(record: &Folder, at: &str, outcome: Outcome, release: &str, reason: Option<String>) {
-    if let Err(error) = record.end(at, outcome, release, reason) {
+pub fn end(
+    record: &Folder,
+    at: &str,
+    outcome: Outcome,
+    release: &str,
+    reason: Option<String>,
+    attempt: Option<&str>,
+) {
+    if let Err(error) = record.end(at, outcome, release, reason, attempt) {
         tracing::warn!("The outcome of an update could not be kept: {error}");
     }
 }
@@ -54,7 +62,12 @@ pub fn settle(
         }
     };
     let (from, to, programs) = (&pending.from, &pending.to, &pending.programs);
+    let attempt = pending.attempt.as_deref();
+    let waiting = next_marfa(programs).exists();
     let finished = finish_swap(programs);
+    // Decided before the new `marfa` is asked anything: one that does not run in place is
+    // still the one to take out.
+    let marfa_moved = waiting && !next_marfa(programs).exists();
     let said = PROGRAMS.map(|name| (name, reports(&programs.join(name))));
     let whole = said
         .iter()
@@ -64,7 +77,7 @@ pub fn settle(
             tracing::warn!("The settled update's record could not be cleared: {error}");
             return Settled::Nothing;
         }
-        end(record, at, Outcome::Succeeded, to, None);
+        end(record, at, Outcome::Succeeded, to, None, attempt);
         return Settled::Succeeded;
     }
     let problem = match finished {
@@ -81,19 +94,32 @@ pub fn settle(
     let reinstall = format!(
         "Install release {to} on this host, then run `marfa server upgrade` for this server."
     );
+    let marfa_reports_new = said[1].1.as_deref() == Some(format!("{MARFA} {to}").as_str());
     if schema_now() != pending.schema {
+        // The kept record lets the old `marfa` go on starting the new server, which a new
+        // `marfa` that does not run could not.
+        let kept_marfa = match marfa_moved && !marfa_reports_new {
+            true => match fs::rename(previous_of(programs, MARFA), programs.join(MARFA))
+                .and_then(|()| sync_folder(programs))
+            {
+                Ok(()) => format!(" Release {from}'s marfa was put back to keep starting it."),
+                Err(error) => format!(" Release {from}'s marfa could not be put back: {error}."),
+            },
+            false => String::new(),
+        };
         end(
             record,
             at,
             Outcome::Failed,
             to,
             Some(format!(
-                "Release {to} runs, but its programs are not all in place ({problem}), and it has changed the database, so release {from} cannot be put back. {reinstall}"
+                "Release {to} runs, but its programs are not all in place ({problem}), and it has changed the database, so release {from} cannot be put back.{kept_marfa} {reinstall}"
             )),
+            attempt,
         );
         return Settled::Failed;
     }
-    let marfa_replaced = said[1].1.as_deref() == Some(format!("{MARFA} {to}").as_str());
+    let marfa_replaced = marfa_moved || marfa_reports_new;
     match put_back(programs, marfa_replaced) {
         Ok(()) => {
             if let Err(error) = record.clear_pending() {
@@ -107,6 +133,7 @@ pub fn settle(
                 Some(format!(
                     "Release {to}'s programs were not all in place ({problem}), so release {from} was put back."
                 )),
+                attempt,
             );
             Settled::PutBack
         }
@@ -119,6 +146,7 @@ pub fn settle(
                 Some(format!(
                     "Release {to}'s programs were not all in place ({problem}), and release {from} could not be put back: {error}. {reinstall}"
                 )),
+                attempt,
             );
             Settled::Failed
         }
@@ -164,6 +192,7 @@ mod tests {
                     schema: Some(1),
                     starts: 1,
                     programs: bin,
+                    attempt: Some("attempt".into()),
                 })
                 .unwrap();
             Case { dir, record }
@@ -178,8 +207,11 @@ mod tests {
         }
 
         fn settle(&self, schema: Option<u32>) -> Settled {
+            // An empty file stands for a program that does not run.
             settle(&self.record, "0.0.75", AT, &|| schema, &|program| {
-                fs::read_to_string(program).ok()
+                fs::read_to_string(program)
+                    .ok()
+                    .filter(|said| !said.is_empty())
             })
         }
 
@@ -222,6 +254,36 @@ mod tests {
                 && reason.contains("0.0.74 was put back"),
             "{reason}"
         );
+    }
+
+    #[test]
+    fn a_new_marfa_that_does_not_run_in_place_is_put_back_with_the_server() {
+        for (name, said) in [("wrong", "marfa 0.0.99"), ("fails", "")] {
+            let case = Case::new(name);
+            fs::write(next_marfa(&case.bin()), said).unwrap();
+            assert_eq!(case.settle(Some(1)), Settled::PutBack, "{name}");
+            assert_eq!(case.text(SERVER), "marfa-server 0.0.74", "{name}");
+            assert_eq!(case.text(MARFA), "marfa 0.0.74", "{name}");
+            assert!(!next_marfa(&case.bin()).exists(), "{name}");
+            assert_eq!(case.last().0, "rolled_back", "{name}");
+        }
+    }
+
+    #[test]
+    fn a_new_marfa_that_does_not_run_after_the_database_changed_gives_way_to_the_old_one() {
+        let case = Case::new("broken-moved");
+        fs::write(next_marfa(&case.bin()), "").unwrap();
+        assert_eq!(case.settle(Some(2)), Settled::Failed);
+        assert_eq!(
+            case.text(SERVER),
+            "marfa-server 0.0.75",
+            "the new server stays"
+        );
+        assert_eq!(case.text(MARFA), "marfa 0.0.74", "the old marfa starts it");
+        assert!(case.record.pending().unwrap().is_some());
+        let (outcome, reason) = case.last();
+        assert_eq!(outcome, "failed");
+        assert!(reason.contains("0.0.74's marfa was put back"), "{reason}");
     }
 
     #[test]

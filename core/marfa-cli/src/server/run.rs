@@ -2,15 +2,17 @@
 //! A server that refused its database is not run again: a restart meets the same refusal.
 //!
 //! A self-update swaps in only the new `marfa-server`, so this process, of the release that ran
-//! before, tries the new server: it counts each start in the update's record before the server
-//! runs, and puts the old server back when the new one does not stay up. The service
-//! definitions restart only a failed exit, so a start of the new release that ends unasked ends
-//! this process with [`RESTART`].
+//! before, tries the new server: it counts each start in the update's record before any program
+//! of the new release runs, ends a start that has not settled within [`TRIAL_LIMIT`], and puts
+//! the old server back when the new one does not stay up. The service definitions restart only a
+//! failed exit, so a start of the new release that ends unasked ends this process with
+//! [`RESTART`].
 
-use std::fs::File;
-use std::io::Read;
+use std::fs::{File, OpenOptions, TryLockError};
+use std::io::{ErrorKind, Read};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -18,7 +20,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use marfa_rules::environment::INSTALL_DIR;
 use marfa_rules::update_record::{
-    self as record, MARFA, Outcome, Pending, UNFINISHED_STARTS, finish_swap, previous_of, put_back,
+    self as record, ASK_LIMIT, MARFA, Outcome, Pending, UNFINISHED_STARTS, finish_swap,
+    previous_of, put_back, release_of, run_within,
 };
 
 #[cfg(target_os = "linux")]
@@ -42,8 +45,21 @@ const SERVER: &str = record::SERVER;
 /// What both service managers start again, as a failed exit.
 const RESTART: i32 = 75;
 
-/// How long the old server may take to say whether it opens the database.
-const ASK_LIMIT: Duration = Duration::from_secs(20);
+/// How long a start of a new release may run without settling. A first start that migrates a
+/// large database on a slow disk takes minutes.
+const TRIAL_LIMIT: Duration = Duration::from_secs(10 * 60);
+
+/// How long a start of a new release waits for the last server of the install to let go of its
+/// files, which a server that outlived its `marfa server run` holds until it ends.
+const LET_GO_WAIT: Duration = Duration::from_secs(30);
+
+/// How long a server ended at the trial limit has to stop before it is killed.
+const STOP_GRACE: Duration = Duration::from_secs(30);
+
+/// How often a start of a new release looks whether its update has settled.
+const LOOK_EVERY: Duration = Duration::from_secs(2);
+
+const POLL: Duration = Duration::from_millis(100);
 
 const OWN: &str = env!("CARGO_PKG_VERSION");
 
@@ -72,7 +88,8 @@ fn forward_stops() {
     }
 }
 
-/// macOS has no parent-death signal; there the service manager's clean-up of the process group stops the child.
+/// macOS has no parent-death signal; there the service manager's clean-up of the process group
+/// stops the child, and a start of a new release waits for it to let go of its files.
 #[cfg(target_os = "linux")]
 fn die_with_the_parent(command: &mut Command) {
     let parent = std::process::id() as libc::pid_t;
@@ -95,24 +112,26 @@ fn die_with_the_parent(command: &mut Command) {
 #[cfg(not(target_os = "linux"))]
 fn die_with_the_parent(_command: &mut Command) {}
 
-/// The version `marfa-server --version` prints: its last word.
-fn version_of(server: &Path) -> Result<String, CliError> {
-    let output = Command::new(server)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|error| CliError::Install(format!("cannot run {}: {error}", server.display())))?;
-    String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .last()
-        .filter(|_| output.status.success())
-        .map(str::to_string)
-        .ok_or_else(|| {
-            CliError::Install(format!(
-                "{} did not say which release it is",
-                server.display()
-            ))
-        })
+/// A limit a test sets shorter through `name`; a release build reads no such variable.
+fn limit(name: &str, otherwise: Duration) -> Duration {
+    #[cfg(debug_assertions)]
+    if let Some(ms) = std::env::var(name).ok().and_then(|ms| ms.parse().ok()) {
+        return Duration::from_millis(ms);
+    }
+    let _ = name;
+    otherwise
+}
+
+fn spoken(limit: Duration) -> String {
+    match limit.as_secs() {
+        seconds if seconds >= 60 && seconds % 60 == 0 => format!("{} minutes", seconds / 60),
+        seconds if limit.subsec_millis() == 0 => format!("{seconds} seconds"),
+        _ => format!("{} ms", limit.as_millis()),
+    }
+}
+
+fn release(server: &Path) -> Result<String, CliError> {
+    release_of(server, ASK_LIMIT).map_err(CliError::Install)
 }
 
 fn beside() -> Result<PathBuf, CliError> {
@@ -129,6 +148,30 @@ fn record_of(dir: &Path) -> record::Folder {
     record::Folder::beside(&native::Layout::new(dir).database())
 }
 
+/// The files a server of the install in `dir` locks while it runs, named as the server names
+/// them: beside the database, in the blob folder and beside the control socket.
+fn server_locks(dir: &Path) -> Vec<PathBuf> {
+    let layout = native::Layout::new(dir);
+    let with = |path: PathBuf, suffix: &str| {
+        let mut name = path.into_os_string();
+        name.push(suffix);
+        PathBuf::from(name)
+    };
+    vec![
+        with(layout.database(), ".server-lock"),
+        layout.blobs().join(".server-lock"),
+        with(layout.socket(), ".lock"),
+    ]
+}
+
+fn held(lock: &Path) -> bool {
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(lock)
+        .is_ok_and(|file| matches!(file.try_lock_shared(), Err(TryLockError::WouldBlock)))
+}
+
 /// A new server that an update swapped in, under the `marfa` of either release.
 fn trying(pending: &Pending, own: &str, theirs: &str) -> bool {
     theirs == pending.to && (own == pending.from || own == pending.to)
@@ -138,7 +181,7 @@ fn trying(pending: &Pending, own: &str, theirs: &str) -> bool {
 /// and a socket, except a new server the install in `dir` is trying after an update.
 pub fn locate(dir: Option<&Path>) -> Result<PathBuf, CliError> {
     let server = beside()?;
-    let theirs = version_of(&server)?;
+    let theirs = release(&server)?;
     let pending = dir.and_then(|dir| record_of(dir).pending().ok().flatten());
     if pending.is_some_and(|pending| trying(&pending, OWN, &theirs)) {
         return Ok(server);
@@ -187,7 +230,7 @@ fn pump(mut from: impl Read + Send + 'static, log: Arc<Mutex<RotatingLog>>) -> J
                         let _ = log.write(&buffer[..read]);
                     }
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
                 Err(_) => break,
             }
         }
@@ -201,20 +244,33 @@ fn now() -> String {
     marfa_rules::time::written(ms)
 }
 
+/// How this start runs the server.
+enum Start {
+    /// A start of the new release of an update that has not settled, counted in this record.
+    Trial(Pending),
+    /// Any other start, of a server that reports this release.
+    Plain(String),
+}
+
 /// The install `--dir` names, as this process supervises its server's updates.
 struct Install {
     record: record::Folder,
     database: PathBuf,
     environment: Vec<(String, String)>,
+    server_locks: Vec<PathBuf>,
     /// Held while this process runs, so a second `marfa server run` of the install counts no
     /// start; `None` when another holds it.
     lock: Option<File>,
 }
 
 impl Install {
-    fn end(&self, sink: &Sink, outcome: Outcome, release: &str, reason: String) {
+    fn end(&self, sink: &Sink, pending: &Pending, outcome: Outcome, reason: String) {
         sink.say(&reason);
-        if let Err(error) = self.record.end(&now(), outcome, release, Some(reason)) {
+        let attempt = pending.attempt.as_deref();
+        if let Err(error) = self
+            .record
+            .end(&now(), outcome, &pending.to, Some(reason), attempt)
+        {
             sink.say(&format!(
                 "The outcome of the update could not be kept: {error}"
             ));
@@ -229,6 +285,93 @@ impl Install {
         }
     }
 
+    /// Whether `pending`'s own attempt has an outcome already: a record kept after it ended lets
+    /// the old `marfa` go on starting the new server, which is then no longer on trial.
+    fn ended(&self, pending: &Pending) -> bool {
+        self.record
+            .last()
+            .ok()
+            .flatten()
+            .is_some_and(|last| last.ends(pending))
+    }
+
+    /// Whether the update `trial` counts has settled or ended since this start began.
+    fn settled(&self, trial: &Pending) -> bool {
+        match self.record.pending() {
+            Ok(Some(now)) => now.to != trial.to || now.attempt != trial.attempt || self.ended(&now),
+            Ok(None) => true,
+            Err(_) => false,
+        }
+    }
+
+    /// The first lock the last server of the install still holds after [`LET_GO_WAIT`].
+    fn still_held(&self) -> Option<&Path> {
+        let wait = limit("MARFA_TEST_LET_GO_MS", LET_GO_WAIT);
+        let began = Instant::now();
+        loop {
+            match self.server_locks.iter().find(|lock| held(lock)) {
+                None => return None,
+                Some(lock) if began.elapsed() >= wait => return Some(lock),
+                Some(_) => std::thread::sleep(POLL),
+            }
+        }
+    }
+
+    /// Counts this start before any program of the new release runs, so a start that hangs or
+    /// dies on its first word is counted too. Ends the process when this start may not run.
+    fn begin(&self, sink: &Sink, server: &Path, pending: Pending) -> Result<Start, CliError> {
+        if self.ended(&pending) || (OWN != pending.from && OWN != pending.to) {
+            let theirs = release(server)?;
+            self.reconcile(sink, &pending, &theirs);
+            return Ok(Start::Plain(theirs));
+        }
+        let (from, to) = (&pending.from, &pending.to);
+        if pending.starts >= UNFINISHED_STARTS {
+            match release_of(server, ASK_LIMIT) {
+                Ok(theirs) if !trying(&pending, OWN, &theirs) => {
+                    self.reconcile(sink, &pending, &theirs);
+                    return Ok(Start::Plain(theirs));
+                }
+                _ => self.roll_back(
+                    sink,
+                    &pending,
+                    &format!(
+                        "Release {to} ended {} times before it settled",
+                        pending.starts
+                    ),
+                ),
+            }
+        }
+        if let Some(lock) = self.still_held() {
+            sink.say(&format!(
+                "The last server of this install still holds {} after {}, so this start of release {to} is not counted and ends for the service to start it again.",
+                lock.display(),
+                spoken(limit("MARFA_TEST_LET_GO_MS", LET_GO_WAIT))
+            ));
+            std::process::exit(RESTART);
+        }
+        let counted = Pending {
+            starts: pending.starts + 1,
+            ..pending.clone()
+        };
+        if let Err(error) = self.record.keep_pending(&counted) {
+            sink.say(&format!(
+                "This start of release {to} could not be counted, so it does not run: {error}"
+            ));
+            std::process::exit(RESTART);
+        }
+        match release_of(server, ASK_LIMIT) {
+            Err(why) => {
+                sink.say(&format!(
+                    "{why}, so this start of release {to} is counted as one that ended before it settled; the service starts it again, and puts release {from} back after {UNFINISHED_STARTS} such starts."
+                ));
+                std::process::exit(RESTART);
+            }
+            Ok(theirs) if self.reconcile(sink, &counted, &theirs) => Ok(Start::Trial(counted)),
+            Ok(theirs) => Ok(Start::Plain(theirs)),
+        }
+    }
+
     /// Why release `pending.from` cannot run again, or `None` when it can: it must open the
     /// database, as it stands now, with the same schema as before the swap.
     fn cannot_put_back(&self, pending: &Pending) -> Option<String> {
@@ -240,14 +383,11 @@ impl Install {
         command
             .arg("--can-open")
             .arg(&self.database)
-            .envs(self.environment.iter().map(|(name, value)| (name, value)))
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .envs(self.environment.iter().map(|(name, value)| (name, value)));
         let from = &pending.from;
-        let (status, stdout, stderr) = match within(command, ASK_LIMIT) {
-            Ok(Some(answered)) => answered,
-            Ok(None) => {
+        let ran = match run_within(command, ASK_LIMIT) {
+            Ok(ran) => ran,
+            Err(error) if error.kind() == ErrorKind::TimedOut => {
                 return Some(format!(
                     "release {from} did not say within {} seconds whether it opens the database",
                     ASK_LIMIT.as_secs()
@@ -255,8 +395,8 @@ impl Install {
             }
             Err(error) => return Some(format!("release {from} could not be asked: {error}")),
         };
-        if !status.success() {
-            let said = stderr.trim();
+        if !ran.status.success() {
+            let said = ran.stderr.trim();
             return Some(format!(
                 "release {from} will not open the database{}",
                 if said.is_empty() {
@@ -270,7 +410,7 @@ impl Install {
         struct Said {
             schema: Option<u32>,
         }
-        match serde_json::from_str::<Said>(stdout.trim()) {
+        match serde_json::from_str::<Said>(ran.stdout.trim()) {
             Ok(said) if said.schema == pending.schema => None,
             Ok(said) => Some(format!(
                 "release {} has changed the database's schema from {} to {}",
@@ -288,56 +428,73 @@ impl Install {
     /// start runs one release whole. Ends the process for the service to start again.
     fn roll_back(&self, sink: &Sink, pending: &Pending, why: &str) -> ! {
         let (from, to, programs) = (&pending.from, &pending.to, &pending.programs);
-        match self.cannot_put_back(pending) {
-            None => match put_back(programs, OWN == to.as_str()) {
-                Ok(()) => {
-                    self.clear(sink);
-                    self.end(
-                        sink,
-                        Outcome::RolledBack,
-                        to,
-                        format!("{why}, so release {from} was put back."),
-                    );
-                }
-                Err(error) => self.end(
-                    sink,
-                    Outcome::Failed,
-                    to,
-                    format!(
-                        "{why}, and release {from} could not be put back: {error}. The next start tries again."
-                    ),
-                ),
-            },
-            Some(cannot) => {
-                let forward = finish_swap(programs);
+        if let Some(cannot) = self.cannot_put_back(pending) {
+            self.finish_forward(
+                sink,
+                pending,
+                &format!("{why}, and release {from} cannot be put back: {cannot}"),
+                ", and the server's log says why it ends.",
+            );
+        }
+        match put_back(programs, OWN == to.as_str()) {
+            Ok(()) => {
                 self.clear(sink);
-                let reason = match forward {
-                    Ok(()) => format!(
-                        "{why}, and release {from} cannot be put back: {cannot}. Release {to} stays, and the server's log says why it ends."
-                    ),
-                    Err(error) => format!(
-                        "{why}, release {from} cannot be put back ({cannot}), and release {to}'s marfa could not be put in place: {error}. Install release {to} on this host, then run `marfa server upgrade` for this server."
-                    ),
-                };
-                self.end(sink, Outcome::Failed, to, reason);
+                self.end(
+                    sink,
+                    pending,
+                    Outcome::RolledBack,
+                    format!("{why}, so release {from} was put back."),
+                );
             }
+            // Nothing was put back, so the new release is still whole but for its `marfa`.
+            Err(error) if previous_of(programs, SERVER).is_file() => self.finish_forward(
+                sink,
+                pending,
+                &format!("{why}, and release {from} could not be put back: {error}"),
+                ", with both of its programs in place.",
+            ),
+            Err(error) => sink.say(&format!(
+                "{why}, and release {from}'s server was put back, but not all of its programs: {error}. The next start finishes putting it back."
+            )),
+        }
+        std::process::exit(RESTART);
+    }
+
+    /// Ends the update as `failed` with release `pending.to` in place, so that a start runs it
+    /// again. When its `marfa` cannot be put in place, the record stays, ended, so that the old
+    /// `marfa` goes on starting the new server.
+    fn finish_forward(&self, sink: &Sink, pending: &Pending, why: &str, stays: &str) -> ! {
+        let (from, to) = (&pending.from, &pending.to);
+        match finish_swap(&pending.programs) {
+            Ok(()) => {
+                self.clear(sink);
+                self.end(
+                    sink,
+                    pending,
+                    Outcome::Failed,
+                    format!("{why}. Release {to} stays{stays}"),
+                );
+            }
+            Err(error) => self.end(
+                sink,
+                pending,
+                Outcome::Failed,
+                format!(
+                    "{why}, and release {to}'s marfa could not be put in place: {error}. Release {from}'s marfa goes on starting release {to}'s server. Install release {to} on this host, then run `marfa server upgrade` for this server."
+                ),
+            ),
         }
         std::process::exit(RESTART);
     }
 
     /// Ends an update the programs on disk no longer match. `true` when this start goes on to
-    /// try the new server, which `pending` counts.
+    /// try the new server.
     fn reconcile(&self, sink: &Sink, pending: &Pending, theirs: &str) -> bool {
         let (from, to, programs) = (&pending.from, &pending.to, &pending.programs);
         if trying(pending, OWN, theirs) {
             return true;
         }
-        let ended_already = self
-            .record
-            .last()
-            .ok()
-            .flatten()
-            .is_some_and(|last| last.release == *to);
+        let ended_already = self.ended(pending);
         let reason = if OWN == from && theirs == from {
             let _ = record::drop_next(programs);
             (!ended_already).then(|| {
@@ -349,7 +506,8 @@ impl Install {
         } else if OWN == to && theirs == from {
             // Putting back stopped between the two programs.
             let restored = std::fs::rename(previous_of(programs, MARFA), programs.join(MARFA))
-                .and_then(|()| record::drop_next(programs));
+                .and_then(|()| record::drop_next(programs))
+                .and_then(|()| record::sync_folder(programs));
             self.clear(sink);
             let (outcome, reason) = match restored {
                 Ok(()) => (
@@ -365,7 +523,7 @@ impl Install {
                     ),
                 ),
             };
-            self.end(sink, outcome, to, reason);
+            self.end(sink, pending, outcome, reason);
             std::process::exit(RESTART);
         } else {
             let _ = record::drop_next(programs);
@@ -378,7 +536,7 @@ impl Install {
         };
         self.clear(sink);
         if let Some((outcome, reason)) = reason {
-            self.end(sink, outcome, to, reason);
+            self.end(sink, pending, outcome, reason);
         }
         false
     }
@@ -388,60 +546,9 @@ fn schema_text(schema: Option<u32>) -> String {
     schema.map_or_else(|| "none".to_string(), |schema| schema.to_string())
 }
 
-/// Runs `command` for at most `limit`, stopping it after that: its status and output, or `None`
-/// when it did not end in time.
-fn within(
-    mut command: Command,
-    limit: Duration,
-) -> std::io::Result<Option<(ExitStatus, String, String)>> {
-    let mut child = command.spawn()?;
-    let mut readers = Vec::new();
-    for from in [
-        child
-            .stdout
-            .take()
-            .map(|out| Box::new(out) as Box<dyn Read + Send>),
-        child
-            .stderr
-            .take()
-            .map(|err| Box::new(err) as Box<dyn Read + Send>),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        readers.push(std::thread::spawn(move || {
-            let mut text = String::new();
-            let mut from = from;
-            let _ = from.read_to_string(&mut text);
-            text
-        }));
-    }
-    let started = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break Some(status);
-        }
-        if started.elapsed() >= limit {
-            let _ = child.kill();
-            let _ = child.wait();
-            break None;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    };
-    let mut said = readers
-        .into_iter()
-        .map(|reader| reader.join().unwrap_or_default());
-    let (stdout, stderr) = (
-        said.next().unwrap_or_default(),
-        said.next().unwrap_or_default(),
-    );
-    Ok(status.map(|status| (status, stdout, stderr)))
-}
-
 pub fn run(args: &RunArgs) -> Result<(), CliError> {
     let dir = &args.dir;
     let server = beside()?;
-    let theirs = version_of(&server)?;
     let mut command = Command::new(&server);
     command.stdin(Stdio::null());
     let mut sink = Sink::Inherit;
@@ -462,8 +569,10 @@ pub fn run(args: &RunArgs) -> Result<(), CliError> {
             log_path = Some(launchd::server_log(&state.name)?);
         }
         let record = record_of(&folder.dir);
-        let lock = match record.path().is_dir() {
-            true => Some(record.supervisor_lock().map_err(|error| {
+        // A check runs beside the service it checks, and must not take the service's lock.
+        let lock = match args.check {
+            true => None,
+            false => Some(record.supervisor_lock().map_err(|error| {
                 CliError::Io(std::io::Error::new(
                     error.kind(),
                     format!(
@@ -472,28 +581,28 @@ pub fn run(args: &RunArgs) -> Result<(), CliError> {
                     ),
                 ))
             })?),
-            false => None,
         };
-        let supervised = lock.as_ref().is_none_or(|lock| lock.try_lock().is_ok());
-        if supervised {
+        let lock = lock.filter(|lock| lock.try_lock().is_ok());
+        if lock.is_some() {
             command.env(INSTALL_DIR, &folder.dir);
         }
         install = Some(Install {
             record,
             database: native::Layout::new(&folder.dir).database(),
             environment,
-            lock: lock.filter(|_| supervised),
+            server_locks: server_locks(&folder.dir),
+            lock,
         });
     }
-    let accept = |install: Option<&Install>| {
+    let accept = |install: Option<&Install>, theirs: &str| {
         let pending = install.and_then(|install| install.record.pending().ok().flatten());
-        match pending.is_some_and(|pending| trying(&pending, OWN, &theirs)) {
+        match pending.is_some_and(|pending| trying(&pending, OWN, theirs)) {
             true => Ok(()),
-            false => agree(&server, &theirs, OWN),
+            false => agree(&server, theirs, OWN),
         }
     };
     if args.check {
-        return accept(install.as_ref());
+        return accept(install.as_ref(), &release(&server)?);
     }
     if let Some(path) = &log_path {
         let log = RotatingLog::open(path, logs::LIMIT).map_err(|error| {
@@ -515,32 +624,14 @@ pub fn run(args: &RunArgs) -> Result<(), CliError> {
         }
         None => None,
     };
-    let trial = match (supervising, pending) {
-        (Some(install), Some(pending)) if install.reconcile(&sink, &pending, &theirs) => {
-            if pending.starts >= UNFINISHED_STARTS {
-                install.roll_back(
-                    &sink,
-                    &pending,
-                    &format!(
-                        "Release {} ended {} times before it settled",
-                        pending.to, pending.starts
-                    ),
-                );
-            }
-            let counted = Pending {
-                starts: pending.starts + 1,
-                ..pending.clone()
-            };
-            install.record.keep_pending(&counted).map_err(|error| {
-                CliError::Io(std::io::Error::new(
-                    error.kind(),
-                    format!("cannot count this start of release {}: {error}", pending.to),
-                ))
-            })?;
-            Some((install, pending.to))
-        }
-        _ => {
-            accept(install.as_ref())?;
+    let start = match (supervising, pending) {
+        (Some(install), Some(pending)) => install.begin(&sink, &server, pending)?,
+        _ => Start::Plain(release(&server)?),
+    };
+    let trial = match start {
+        Start::Trial(pending) => supervising.map(|install| (install, pending)),
+        Start::Plain(theirs) => {
+            accept(install.as_ref(), &theirs)?;
             None
         }
     };
@@ -567,14 +658,18 @@ pub fn run(args: &RunArgs) -> Result<(), CliError> {
             pumps.push(pump(err, log.clone()));
         }
     }
-    let status = child.wait()?;
+    let (status, timed_out) = match &trial {
+        Some((install, pending)) => on_trial(install, &sink, &mut child, pending)?,
+        None => (child.wait()?, false),
+    };
     for pump in pumps {
         let _ = pump.join();
     }
     CHILD.store(0, Ordering::SeqCst);
-    let stopped = STOP.load(Ordering::SeqCst);
-    if let Some((install, to)) = trial {
-        ended_trial(install, &sink, &to, status, stopped);
+    // A start ended at the limit stays counted, whatever stop came after.
+    let stopped = STOP.load(Ordering::SeqCst) && !timed_out;
+    if let Some((install, pending)) = &trial {
+        ended_trial(install, &sink, pending, status, stopped);
     }
     if status.code() == Some(REFUSED) && !stopped {
         sink.say(&format!(
@@ -588,6 +683,56 @@ pub fn run(args: &RunArgs) -> Result<(), CliError> {
     std::process::exit(exit_code(status, stopped));
 }
 
+/// Waits for a start of the new release, and ends it when its update has not settled within
+/// the trial limit: its status, and whether it was ended at the limit.
+fn on_trial(
+    install: &Install,
+    sink: &Sink,
+    child: &mut Child,
+    trial: &Pending,
+) -> std::io::Result<(ExitStatus, bool)> {
+    let allowed = limit("MARFA_TEST_TRIAL_LIMIT_MS", TRIAL_LIMIT);
+    let began = Instant::now();
+    let mut looked = began;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok((status, false));
+        }
+        let over = began.elapsed() >= allowed;
+        if over || looked.elapsed() >= LOOK_EVERY {
+            looked = Instant::now();
+            if install.settled(trial) {
+                return Ok((child.wait()?, false));
+            }
+        }
+        // A stop someone asked for has reached the server already.
+        if over && !STOP.load(Ordering::SeqCst) {
+            sink.say(&format!(
+                "Release {} did not settle within {}, so this start of it is ended.",
+                trial.to,
+                spoken(allowed)
+            ));
+            return Ok((stop(child)?, true));
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
+/// Stops the server as a service manager does, and kills it when it does not end in time.
+fn stop(child: &mut Child) -> std::io::Result<ExitStatus> {
+    // SAFETY: a signal to a process this one started and has not yet waited for.
+    unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+    let began = Instant::now();
+    while began.elapsed() < STOP_GRACE {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        std::thread::sleep(POLL);
+    }
+    let _ = child.kill();
+    child.wait()
+}
+
 fn exit_code(status: ExitStatus, stopped: bool) -> i32 {
     match (status.code(), status.signal()) {
         (Some(code), _) => code,
@@ -597,11 +742,18 @@ fn exit_code(status: ExitStatus, stopped: bool) -> i32 {
     }
 }
 
-/// After a start of the new release while its update has not settled. Returns only when the
-/// update has ended meanwhile, and the exit is then as for any other server.
-fn ended_trial(install: &Install, sink: &Sink, to: &str, status: ExitStatus, stopped: bool) {
+/// After a start of the new release while its update had not settled. Returns only when the
+/// update has settled or ended meanwhile, and the exit is then as for any other server.
+fn ended_trial(install: &Install, sink: &Sink, trial: &Pending, status: ExitStatus, stopped: bool) {
+    let to = &trial.to;
     let pending = match install.record.pending() {
-        Ok(Some(pending)) if pending.to == to => pending,
+        Ok(Some(pending))
+            if pending.to == trial.to
+                && pending.attempt == trial.attempt
+                && !install.ended(&pending) =>
+        {
+            pending
+        }
         Ok(_) => return,
         Err(error) => {
             sink.say(&format!(
@@ -647,29 +799,12 @@ fn ended_trial(install: &Install, sink: &Sink, to: &str, status: ExitStatus, sto
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::fs::PermissionsExt;
-
-    fn script(dir: &Path, body: &str) -> PathBuf {
-        let path = dir.join("marfa-server");
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        path
-    }
-
-    fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("marfa-run-{}-{name}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
 
     #[test]
-    fn the_release_is_the_last_word_of_what_the_server_prints() {
-        let dir = scratch("version");
-        let server = script(&dir, "echo marfa-server 0.0.70");
-        assert_eq!(version_of(&server).unwrap(), "0.0.70");
-        agree(&server, "0.0.70", "0.0.70").unwrap();
-        let error = agree(&server, "0.0.70", "0.0.71").unwrap_err().to_string();
+    fn a_server_of_another_release_is_refused_by_name() {
+        let server = Path::new("marfa-server");
+        agree(server, "0.0.70", "0.0.70").unwrap();
+        let error = agree(server, "0.0.70", "0.0.71").unwrap_err().to_string();
         assert!(
             error.contains("0.0.70") && error.contains("0.0.71"),
             "{error}"
@@ -684,6 +819,7 @@ mod tests {
             schema: Some(1),
             starts: 0,
             programs: PathBuf::from("/bin"),
+            attempt: None,
         };
         assert!(trying(&pending, "0.0.74", "0.0.75"));
         assert!(trying(&pending, "0.0.75", "0.0.75"));
@@ -694,10 +830,9 @@ mod tests {
     }
 
     #[test]
-    fn a_server_that_says_nothing_or_fails_is_not_taken_for_a_release() {
-        let dir = scratch("silent");
-        assert!(version_of(&script(&dir, "exit 0")).is_err());
-        assert!(version_of(&script(&dir, "echo marfa-server 0.0.70; exit 3")).is_err());
-        assert!(version_of(&dir.join("absent")).is_err());
+    fn a_limit_is_said_in_minutes_when_it_is_whole_minutes() {
+        assert_eq!(spoken(TRIAL_LIMIT), "10 minutes");
+        assert_eq!(spoken(Duration::from_millis(1500)), "1500 ms");
+        assert_eq!(spoken(LET_GO_WAIT), "30 seconds");
     }
 }

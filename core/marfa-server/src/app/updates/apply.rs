@@ -1,17 +1,20 @@
 //! Fetches a release, checks it, and swaps its programs in, keeping the old ones.
 
 use std::fs::{self, File};
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
+
+use marfa_rules::update_record::Ran;
 
 use flate2::read::GzDecoder;
 use serde::Deserialize;
 use url::Url;
 
 use super::feed::{Feed, RELEASE_HOSTS};
-use super::pending::{self, Folder, MARFA, PROGRAMS, Pending, SERVER};
+use super::pending::{
+    self, ASK_LIMIT, Folder, MARFA, PROGRAMS, Pending, SERVER, run_within, sync_folder,
+};
 use super::release::Asset;
 use crate::db::volume;
 
@@ -19,7 +22,6 @@ const MAX_ARCHIVE_BYTES: u64 = 512 << 20;
 const MAX_CHECKSUMS_BYTES: u64 = 64 << 10;
 const MAX_PROGRAM_BYTES: u64 = 512 << 20;
 const DOWNLOAD_TIME: Duration = Duration::from_secs(20 * 60);
-const RUN_TIME: Duration = Duration::from_secs(20);
 /// The room unpacking needs, as a multiple of the archive's size and a margin.
 const ROOM_FACTOR: u64 = 4;
 const ROOM_MARGIN: u64 = 64 << 20;
@@ -35,6 +37,8 @@ pub struct Job {
     pub dir: PathBuf,
     pub database: PathBuf,
     pub record: Folder,
+    /// Tells this swap's outcome from that of an earlier swap to the same release.
+    pub attempt: String,
 }
 
 pub const FETCHING: &str = "fetching";
@@ -98,12 +102,17 @@ fn unpack(archive: &Path, into: &Path) -> Result<(), String> {
         let to = into.join(PROGRAMS[at]);
         entry.unpack(&to).map_err(|e| unreadable(&e))?;
         set_executable(&to).map_err(|e| unreadable(&e))?;
+        // A program renamed into place before its bytes reach the disk can be found damaged
+        // after a power loss.
+        File::open(&to)
+            .and_then(|program| program.sync_all())
+            .map_err(|e| unreadable(&e))?;
         found[at] = true;
     }
-    match PROGRAMS.iter().zip(found).find(|(_, held)| !held) {
-        Some((program, _)) => Err(format!("The archive holds no {program}.")),
-        None => Ok(()),
+    if let Some((program, _)) = PROGRAMS.iter().zip(found).find(|(_, held)| !held) {
+        return Err(format!("The archive holds no {program}."));
     }
+    sync_folder(into).map_err(|e| unreadable(&e))
 }
 
 fn set_executable(path: &Path) -> std::io::Result<()> {
@@ -111,51 +120,11 @@ fn set_executable(path: &Path) -> std::io::Result<()> {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755))
 }
 
-pub(super) struct Ran {
-    pub status: Option<i32>,
-    pub stdout: String,
-    pub stderr: String,
-}
-
-pub(super) fn run_within(
-    program: &Path,
-    arguments: &[&std::ffi::OsStr],
-) -> Result<Ran, std::io::Error> {
-    let mut child = Command::new(program)
-        .args(arguments)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let began = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status.code();
-        }
-        if began.elapsed() > RUN_TIME {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::TimedOut,
-                "it did not answer in time",
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
-    let text = |from: Option<&mut dyn Read>| {
-        let mut text = String::new();
-        if let Some(from) = from {
-            let _ = from.take(64 << 10).read_to_string(&mut text);
-        }
-        text
-    };
-    let stdout = text(child.stdout.as_mut().map(|out| out as &mut dyn Read));
-    let stderr = text(child.stderr.as_mut().map(|err| err as &mut dyn Read));
-    Ok(Ran {
-        status,
-        stdout,
-        stderr,
-    })
+/// Runs a program of the release with `arguments`, for at most [`ASK_LIMIT`].
+pub(super) fn ask(program: &Path, arguments: &[&std::ffi::OsStr]) -> std::io::Result<Ran> {
+    let mut command = Command::new(program);
+    command.args(arguments);
+    run_within(command, ASK_LIMIT)
 }
 
 #[derive(Deserialize)]
@@ -166,9 +135,9 @@ struct Said {
 /// Proves each program and asks the new server about the database; gives its schema version.
 fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
     for name in PROGRAMS {
-        let reported = run_within(&staging.join(name), &["--version".as_ref()])
+        let reported = ask(&staging.join(name), &["--version".as_ref()])
             .ok()
-            .filter(|ran| ran.status == Some(0))
+            .filter(|ran| ran.status.success())
             .ok_or_else(|| format!("The downloaded {name} does not run on this machine."))?;
         let wanted = format!("{name} {}", job.version);
         if reported.stdout.trim() != wanted {
@@ -178,7 +147,7 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
             ));
         }
     }
-    let checked = run_within(
+    let checked = ask(
         &staging.join(MARFA),
         &[
             "server".as_ref(),
@@ -189,13 +158,13 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
         ],
     )
     .map_err(|error| format!("The downloaded marfa could not check this install: {error}."))?;
-    if checked.status != Some(0) {
+    if !checked.status.success() {
         return Err(format!(
             "The downloaded marfa will not run this install, so nothing was changed. {}",
             checked.stderr.trim()
         ));
     }
-    let asked = run_within(
+    let asked = ask(
         &staging.join(SERVER),
         &["--can-open".as_ref(), job.database.as_os_str()],
     )
@@ -205,7 +174,7 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
             job.version
         )
     })?;
-    match asked.status {
+    match asked.status.code() {
         Some(0) => Ok(serde_json::from_str::<Said>(asked.stdout.trim())
             .map_err(|_| {
                 format!(
@@ -237,6 +206,7 @@ pub(super) fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(),
         schema,
         starts: 0,
         programs: job.programs.clone(),
+        attempt: Some(job.attempt.clone()),
     };
     job.record
         .keep_pending(&pending)
@@ -265,7 +235,7 @@ pub(super) fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(),
         .map_err(|error| undo("keeping the old program", error, false))?;
     fs::rename(staging.join(SERVER), &live)
         .map_err(|error| undo("placing the new program", error, true))?;
-    let _ = File::open(&job.programs).and_then(|folder| folder.sync_all());
+    let _ = sync_folder(&job.programs);
     Ok(())
 }
 

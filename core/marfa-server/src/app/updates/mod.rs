@@ -123,9 +123,9 @@ pub fn inspect(file: &Path) -> std::result::Result<String, Failure> {
 
 /// What a program prints for `--version`, or `None` when it does not run and say.
 fn reports(program: &Path) -> Option<String> {
-    apply::run_within(program, &["--version".as_ref()])
+    apply::ask(program, &["--version".as_ref()])
         .ok()
-        .filter(|ran| ran.status == Some(0))
+        .filter(|ran| ran.status.success())
         .map(|ran| ran.stdout.trim().to_string())
 }
 
@@ -270,7 +270,12 @@ pub async fn status(app: &App) -> Result<Value> {
         "method": method,
         "step": step,
         "progress": progress,
-        "last": last,
+        "last": last.map(|last| json!({
+            "outcome": last.outcome,
+            "release": last.release,
+            "finished_at": last.finished_at,
+            "reason": last.reason,
+        })),
     }))
 }
 
@@ -324,6 +329,7 @@ pub async fn start(app: &Arc<App>) -> Result<Value> {
             dir: dir.clone(),
             database: file,
             record,
+            attempt: uuid::Uuid::now_v7().to_string(),
         };
         run(app.clone(), job);
     }
@@ -335,6 +341,7 @@ fn run(app: Arc<App>, job: apply::Job) {
     tokio::spawn(async move {
         let version = job.version.clone();
         let record = job.record.clone();
+        let attempt = job.attempt.clone();
         let stages = app.clone();
         let done = tokio::task::spawn_blocking(move || {
             apply::run(&feed, &job, &|stage| stages.updates.stage(stage))
@@ -352,7 +359,14 @@ fn run(app: Arc<App>, job: apply::Job) {
                 let record = record.clone();
                 let at = app.clock.stamp();
                 let _ = tokio::task::spawn_blocking(move || {
-                    pending::end(&record, &at, Outcome::Failed, &version, Some(reason));
+                    pending::end(
+                        &record,
+                        &at,
+                        Outcome::Failed,
+                        &version,
+                        Some(reason),
+                        Some(&attempt),
+                    );
                 })
                 .await;
                 app.updates.set(State::Idle);
