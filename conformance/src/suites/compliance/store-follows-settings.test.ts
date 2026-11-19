@@ -20,9 +20,11 @@ beforeAll(async () => {
   server = await bootFreshServer("store-follows-settings", {
     MARFA_OBJECT_STORE_BUCKET: "",
     MARFA_BLOB_CLEANUP_GRACE_SECONDS: "0",
-    // A scheduled backup follows the stores too, and could write the record between faults.
+    // Scheduled jobs follow the stores too: one could write the record between
+    // faults, or take a fault armed for the test's own run.
     MARFA_BACKUP_INTERVAL_SECONDS: "0",
   });
+  await server.pauseClock(true);
   instance = await instanceIdOf(server);
 }, FRESH_SERVER_TIMEOUT_MS);
 
