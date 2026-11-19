@@ -17,6 +17,7 @@ use super::connectors::{self, Registration, Window};
 use super::keys;
 use super::refusal::{Code, Refusal, Result};
 use crate::app::clock::Stamp;
+use crate::app::mcp::confirm::{self, Confirmed, Confirming};
 pub use cleanup::delivery_cleanup;
 pub use receive::{
     Arrival, Full, InFlight, Landed, Place, Reservation, Sent, admit, head_charge, receive,
@@ -178,27 +179,86 @@ pub async fn retire_endpoint(
     connector_id: String,
     endpoint_id: String,
 ) -> Result<Value> {
+    retiring(app, caller, connector_id, endpoint_id, None)
+        .await?
+        .unconfirmed()
+}
+
+/// Retires only the endpoint the confirmed preview showed.
+pub async fn retire_endpoint_confirmed(
+    app: &App,
+    caller: &Caller,
+    connector_id: String,
+    endpoint_id: String,
+    confirming: Confirming,
+) -> Result<Confirmed<Value>> {
+    retiring(app, caller, connector_id, endpoint_id, Some(confirming)).await
+}
+
+fn retirable(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    connector_id: &str,
+    endpoint_id: &str,
+) -> Result<(Registration, Endpoint)> {
+    let registration = manageable(tx, caller, connector_id)?;
+    let held = store::holds(tx, &registration.source, &registration.id)?;
+    let endpoint = store::endpoint_of(tx, &registration.source, endpoint_id)?
+        .filter(|_| held)
+        .ok_or_else(endpoint_not_found)?;
+    Ok((registration, endpoint))
+}
+
+fn endpoint_state(endpoint: &Endpoint) -> String {
+    format!(
+        "endpoint\n{}\n{}\n{}",
+        endpoint.id,
+        endpoint.created_at,
+        endpoint.retired_at.as_deref().unwrap_or_default()
+    )
+}
+
+/// The state a confirmation to retire the endpoint covers.
+pub async fn retire_state(
+    app: &App,
+    caller: &Caller,
+    connector_id: String,
+    endpoint_id: String,
+) -> Result<String> {
+    connectors::reading(app, caller, move |tx, caller, _| {
+        let (_, endpoint) = retirable(tx, caller, &connector_id, &endpoint_id)?;
+        Ok(endpoint_state(&endpoint))
+    })
+    .await
+}
+
+async fn retiring(
+    app: &App,
+    caller: &Caller,
+    connector_id: String,
+    endpoint_id: String,
+    confirming: Option<Confirming>,
+) -> Result<Confirmed<Value>> {
     app.write(caller, "inbound_endpoint.retire", move |unit| {
         let tx = unit.tx();
-        let registration = manageable(tx, &unit.caller, &connector_id)?;
-        let held = store::holds(tx, &registration.source, &registration.id)?;
-        let endpoint = store::endpoint_of(tx, &registration.source, &endpoint_id)?
-            .filter(|_| held)
-            .ok_or_else(endpoint_not_found)?;
-        if endpoint.retired_at.is_some() {
-            return Ok(endpoint_json(&endpoint, &registration.id, None));
-        }
-        store::retire(tx, &endpoint.id, &unit.at)?;
-        unit.audit(
-            "inbound_endpoint",
-            &endpoint.id,
-            Some(json!({ "connector_id": registration.id })),
-        )?;
-        let retired = Endpoint {
-            retired_at: Some(unit.at.clone()),
-            ..endpoint
-        };
-        Ok(endpoint_json(&retired, &registration.id, None))
+        let (registration, endpoint) = retirable(tx, &unit.caller, &connector_id, &endpoint_id)?;
+        let state = endpoint_state(&endpoint);
+        confirm::redeem(confirming.as_ref(), tx, unit.instant, &state, || {
+            if endpoint.retired_at.is_some() {
+                return Ok(endpoint_json(&endpoint, &registration.id, None));
+            }
+            store::retire(tx, &endpoint.id, &unit.at)?;
+            unit.audit(
+                "inbound_endpoint",
+                &endpoint.id,
+                Some(json!({ "connector_id": registration.id })),
+            )?;
+            let retired = Endpoint {
+                retired_at: Some(unit.at.clone()),
+                ..endpoint
+            };
+            Ok(endpoint_json(&retired, &registration.id, None))
+        })
     })
     .await
 }

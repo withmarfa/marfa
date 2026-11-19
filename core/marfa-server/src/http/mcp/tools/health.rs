@@ -7,7 +7,9 @@ use serde_json::{Map, Value, json};
 use super::{Definition, text};
 use crate::app::access::{Caller, Permission};
 use crate::app::refusal::Refusal;
-use crate::app::{App, attention, connectors, health, housekeeping, jobs, metrics};
+use crate::app::{
+    App, attention, config, connectors, health, housekeeping, jobs, metrics, updates,
+};
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, fit_list, json_length};
 
 pub const NAME: &str = "marfa_health";
@@ -26,7 +28,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "How this Marfa is doing",
-        description: "Use to check this Marfa: whether it is serving and each component's state, and each connector's last run and problems. With instance.read it also shows what needs attention, the housekeeping jobs, the metrics, the file stores and unreferenced files, and, with job_id, one bulk job.",
+        description: "Use to check this Marfa: whether it is serving and each component's state, and each connector's last run and problems. With instance.read it also shows what needs attention, the housekeeping jobs, the metrics, the file stores and unreferenced files, the settings and their values, whether a newer server is available, and, with job_id, one bulk job. A part that cannot be read is named in unread, and the others still answer.",
         input: json!({
             "type": "object",
             "properties": {
@@ -46,6 +48,11 @@ pub fn definition() -> Definition {
                 "metrics": { "type": "object" },
                 "storage": { "type": "object",
                     "description": "The file stores, the fewest copies kept of a file, and the unreferenced files." },
+                "settings": { "type": "array", "items": { "type": "object" },
+                    "description": "Each setting, as GET /config/settings lists it." },
+                "settings_left_out": { "type": "integer" },
+                "update": { "type": "object",
+                    "description": "Whether a newer server is available, as GET /update reads it." },
                 "job": { "type": "object" },
                 "connectors_left_out": { "type": "boolean",
                     "description": "`true` when there are more connectors than this answer holds." },
@@ -86,33 +93,37 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
     if reads_errors {
         health["housekeeping"] = housekeeping::attention(app).await;
     }
-    // A read that is refused leaves the others standing: a down instance is when health matters most.
+    // Each part stands on its own: a down instance is when health matters most.
     let mut unreadable: Vec<Value> = Vec::new();
-    let mut listed: Vec<Value> = Vec::new();
-    match connectors::list(app, caller).await {
-        Ok(answer) => {
-            if let Some(data) = answer.get("data").and_then(Value::as_array) {
-                listed = data.iter().map(connector_state).collect();
-            }
+    let listed = match connectors::list(app, caller).await {
+        Ok(answer) => Some(
+            answer
+                .get("data")
+                .and_then(Value::as_array)
+                .map(|data| data.iter().map(connector_state).collect::<Vec<_>>())
+                .unwrap_or_default(),
+        ),
+        Err(refusal) => {
+            unreadable.push(unread("connectors", &refusal));
+            None
         }
-        Err(refusal) => unreadable.push(unread("connectors", &refusal)),
-    }
-    let mut extra = Map::new();
+    };
+    let mut answer = Map::new();
     if reads_errors {
-        extra = instance_reads(app, caller, &arguments, &mut unreadable).await;
+        answer = instance_reads(app, caller, &arguments, &mut unreadable).await;
     }
     let room = ANSWER_BUDGET_CHARS.saturating_sub(
-        json_length(&json!({ "health": health, "unread": unreadable, "more": extra })) + 200,
+        json_length(&json!({ "health": health, "unread": unreadable, "more": answer })) + 200,
     );
-    let (kept, left_out) = fit_list(listed, room);
-    let mut answer = extra;
     answer.insert("health".into(), health);
-    if unreadable.is_empty() {
+    if let Some(listed) = listed {
+        let (kept, left_out) = fit_list(listed, room);
         answer.insert("connectors".into(), Value::Array(kept));
         if left_out > 0 {
             answer.insert("connectors_left_out".into(), true.into());
         }
-    } else {
+    }
+    if !unreadable.is_empty() {
         answer.insert("unread".into(), Value::Array(unreadable));
     }
     Ok(Value::Object(answer))
@@ -147,6 +158,23 @@ async fn instance_reads(
             extra.insert("storage".into(), found);
         }
         Err(refusal) => unreadable.push(unread("storage", &refusal)),
+    }
+    match config::listing(app).await {
+        Ok(listed) => {
+            let lines = listed["data"].as_array().cloned().unwrap_or_default();
+            let (kept, left_out) = fit_list(lines, ANSWER_BUDGET_CHARS / 3);
+            extra.insert("settings".into(), Value::Array(kept));
+            if left_out > 0 {
+                extra.insert("settings_left_out".into(), left_out.into());
+            }
+        }
+        Err(refusal) => unreadable.push(unread("settings", &refusal)),
+    }
+    match updates::status(app).await {
+        Ok(status) => {
+            extra.insert("update".into(), status);
+        }
+        Err(refusal) => unreadable.push(unread("update", &refusal)),
     }
     if let Some(id) = text(arguments, "job_id") {
         match jobs::read(app, caller, id).await {

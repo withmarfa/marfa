@@ -184,6 +184,77 @@ pub fn spend(
     Ok(())
 }
 
+/// What an owner task's preview covered: its arguments and the state of what they name.
+pub fn owner_subject(arguments: &str, state: &str) -> String {
+    hex::encode(Sha256::digest(format!("{arguments}\n{state}").as_bytes()))
+}
+
+/// A confirmation an owner task carries, judged in the transaction that makes the change.
+#[derive(Clone)]
+pub struct Confirming {
+    pub signer: Signer,
+    pub tool: &'static str,
+    pub credential: String,
+    pub arguments: String,
+    pub token: String,
+}
+
+pub enum Confirmed<T> {
+    Done(T),
+    /// Expired, spent, another credential's, or for a state that has since changed.
+    Stale,
+}
+
+impl<T> Confirmed<T> {
+    /// For a call that carried no confirmation, which is never stale.
+    pub fn unconfirmed(self) -> Result<T> {
+        match self {
+            Confirmed::Done(done) => Ok(done),
+            Confirmed::Stale => Err(Refusal::internal(
+                "a change that needs no confirmation was judged stale",
+            )),
+        }
+    }
+}
+
+/// Without a confirmation the change goes as the API makes it; with one, the token is judged
+/// against `state` and spent in the same transaction as `act`.
+pub fn redeem<T>(
+    confirming: Option<&Confirming>,
+    tx: &Transaction<'_>,
+    now: Stamp,
+    state: &str,
+    act: impl FnOnce() -> Result<T>,
+) -> Result<Confirmed<T>> {
+    let Some(confirming) = confirming else {
+        return act().map(Confirmed::Done);
+    };
+    let Some(parsed) = parse(&confirming.token) else {
+        return Ok(Confirmed::Stale);
+    };
+    if parsed.expires_at_ms <= now.ms() {
+        return Ok(Confirmed::Stale);
+    }
+    sweep(tx, now)?;
+    if spent(tx, &parsed.signature)?.is_some() {
+        return Ok(Confirmed::Stale);
+    }
+    let subject = owner_subject(&confirming.arguments, state);
+    let check = confirming.signer.check(
+        confirming.tool,
+        &confirming.credential,
+        &subject,
+        &confirming.token,
+        now.ms(),
+    )?;
+    if check != Check::Valid {
+        return Ok(Confirmed::Stale);
+    }
+    let done = act()?;
+    spend(tx, &parsed, &confirming.credential, &subject, 1)?;
+    Ok(Confirmed::Done(done))
+}
+
 pub const UNREAD: Unread<'static> = Unread {
     table: "mcp_spent_confirmations",
     time: "expires_at",

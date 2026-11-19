@@ -36,6 +36,7 @@ use crate::app::faults::HOLD_BULK_PAGE;
 use crate::app::folders::{self, FOLDER_TYPE};
 use crate::app::idempotency::{self, Claim, Need};
 use crate::app::instance;
+use crate::app::mcp::confirm::{self, Confirmed, Confirming};
 use crate::app::query::VIEW_TYPE;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::unit::Unit;
@@ -305,6 +306,52 @@ pub async fn purge_owned(
                 server_own: false,
             };
             job.owner(OwnerAct::Purge, id, version)
+        })
+    })
+    .await
+}
+
+/// What a confirmed purge removed: the rows the caller may read the type of, and how many more.
+pub struct Purged {
+    pub items: Vec<Value>,
+    pub not_shown: usize,
+    pub total: usize,
+}
+
+/// Purges only if the item and what goes with it stand as the confirmed preview showed them.
+pub async fn purge_confirmed(
+    app: &App,
+    caller: &Caller,
+    id: String,
+    version: i64,
+    confirming: Confirming,
+) -> Result<Confirmed<Purged>> {
+    let cache = app.catalog_handle();
+    app.write(caller, "item.purge", move |unit| {
+        unit.caller.require(Permission::ItemsPurge)?;
+        unit.fanning(true, |unit| {
+            let job = Job {
+                unit,
+                catalog: catalog::current(&cache, unit.tx(), Reading::Pending)?,
+                read_only: unit.read_only()?,
+                claim: None,
+                server_own: false,
+            };
+            let asked = [Asked {
+                id: id.clone(),
+                version: Some(version),
+            }];
+            let plan = plan::plan(&job.gate(), Act::Purge, &asked)?;
+            let state = plan::purge_digest(&plan);
+            confirm::redeem(Some(&confirming), unit.tx(), unit.instant, &state, || {
+                let done = job.purged(id, Some(version))?;
+                let (items, not_shown) = plan::purge_shown(&unit.caller, &plan);
+                Ok(Purged {
+                    total: done.carried.len() + 1,
+                    items,
+                    not_shown,
+                })
+            })
         })
     })
     .await

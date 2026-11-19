@@ -211,8 +211,14 @@ pub fn check(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
     }
     if let Some(text) = value.as_str() {
         let shortest = schema.get("minLength").and_then(Value::as_u64).unwrap_or(0);
-        if (text.chars().count() as u64) < shortest {
+        let length = text.chars().count() as u64;
+        if length < shortest {
             return Err(format!("{at} must not be empty."));
+        }
+        if let Some(longest) = schema.get("maxLength").and_then(Value::as_u64)
+            && length > longest
+        {
+            return Err(format!("{at} holds at most {longest} characters."));
         }
     }
     if let Some(number) = value.as_f64() {
@@ -325,5 +331,14 @@ mod tests {
         assert!(error.contains("typ"), "{error}");
         assert!(check(&schema, &json!({ "type": "core.note" }), "").is_ok());
         assert!(check(&schema, &json!({ "type": "" }), "").is_err());
+    }
+
+    #[test]
+    fn a_string_longer_than_its_schema_allows_is_refused() {
+        let schema = json!({ "type": "string", "maxLength": 3 });
+        assert!(check(&schema, &json!("abc"), "q").is_ok());
+        assert!(check(&schema, &json!("ééé"), "q").is_ok());
+        let error = check(&schema, &json!("abcd"), "q").unwrap_err();
+        assert!(error.contains("at most 3"), "{error}");
     }
 }

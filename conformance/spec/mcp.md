@@ -90,11 +90,25 @@ When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp
 
 ### `mcp/health-instance-read`
 
-While a credential holds `instance.read`, the server MUST add to the answer of `marfa_health` what needs the owner's attention, the housekeeping jobs, the metrics and the file storage diagnostics, and the status of the bulk job a `job_id` names.
+While a credential holds `instance.read`, the server MUST add to the answer of `marfa_health` what needs the owner's attention, the housekeeping jobs, the metrics, the file storage diagnostics, the settings and their values, whether a newer server is available, and the status of the bulk job a `job_id` names.
 
 **Reason:** these are the reads `instance.read` opens at the API, so the tool answers what the credential may read there.
 
 **Tests:** `compliance/owner-tasks.test.ts › adds what instance.read opens to the health tool, and only for a credential that holds it`.
+
+### `mcp/health-parts`
+
+If the server cannot read one part of the answer to `marfa_health`, then the server MUST answer every other part it read and name the part it could not read, with its error code, in `unread`.
+
+**Reason:** a bulk job that does not exist, or one part that fails, says nothing about the rest, and a down instance is when health matters most.
+
+**Tests:** `compliance/owner-tasks.test.ts › answers each part of the health tool on its own, so a bulk job it cannot read leaves the others`.
+
+### `mcp/connector-runs`
+
+When `marfa_connectors` is called with an `id`, the server MUST answer the connector's runs as `GET /connectors/{id}/runs` lists them.
+
+**Tests:** `compliance/owner-tasks.test.ts › lists a connector with its runs, and deletes it only on its confirmation, refusing as the API does and refusing the confirmation again`.
 
 ### `mcp/tools-withheld`
 
@@ -106,39 +120,73 @@ The server MUST NOT list at any MCP endpoint a tool that restores a backup or an
 
 ### `mcp/settings-step-up-withheld`
 
-If a `marfa_change_settings` call names `sign_in_address`, `allow_private_addresses`, `object_store_bucket`, `object_store_endpoint`, `object_store_region`, `object_store_path_style`, `object_store_prefix` or `backup_path`, then the server MUST answer the call with the tool error code `app_sign_in_required` and change no setting.
+If a `marfa_change_settings` call names `sign_in_address`, `allow_private_addresses`, `object_store_bucket`, `object_store_endpoint`, `object_store_region`, `object_store_path_style`, `object_store_prefix` or `backup_path`, then the server MUST answer the call with the tool error code `app_sign_in_required`.
 
 **Reason:** the owner changes where people sign in, whether the server reaches private addresses and where it keeps files and backups from the command line or after a recent sign-in, never on a key's say-so. A setting that is not one of these changes through the tool as it does through `PATCH /config`.
 
 **Tests:** `compliance/owner-tasks.test.ts › refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes`.
 
+### `mcp/settings-step-up-unchanged`
+
+If a `marfa_change_settings` call names a setting that `mcp/settings-step-up-withheld` lists, then the server MUST NOT change any setting.
+
+**Tests:** `compliance/owner-tasks.test.ts › refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes`.
+
 ### `mcp/owner-preview`
 
-When a call to `marfa_purge_trash` or `marfa_drop_file_copy`, or a call to `marfa_manage_app` with the action `revoke`, to `marfa_manage_backups` with `adopt_folder`, to `marfa_manage_connector` with `delete`, `clear_state` or `retire_endpoint`, or to `marfa_manage_sign_in` with `end_sign_in` or `remove_passkey`, carries no `confirm`, the server MUST answer a preview that carries a `confirm` token.
+When a call to `marfa_purge_trash` or `marfa_drop_file_copy`, or a call to `marfa_manage_app` with the action `revoke`, to `marfa_manage_backups` with `adopt_folder`, to `marfa_manage_connector` with `delete`, `clear_state` or `retire_endpoint`, or to `marfa_manage_sign_in` with `end_sign_in` or `remove_passkey`, carries no `confirm` and names what the API would let the credential change, the server MUST answer a preview that carries a `confirm` token.
 
-**Reason:** these remove what the owner keeps or end what another app or sign-in holds, and a person sees what goes before it goes.
+**Reason:** these remove what the owner keeps or end what another app or sign-in holds, and a person sees what goes before it goes. A call the API would refuse, such as one that names an app that does not exist, gets the API's error instead.
 
-**Tests:** `compliance/owner-tasks.test.ts › previews a purge, purges only on its confirmation, and refuses another credential's`, `› empties only the bin's items of the types a credential writes through the tool, page by page, each page on its confirmation`, `› lists, narrows and revokes an app's grant through the tools, a revoke on its confirmation`, `› lists, renames and ends a sign-in through the tools, an end on its confirmation`, `› lists a connector, and deletes it only on its confirmation, refusing as the API does`, `› lists backups, takes one now and adopts the folder only on its confirmation, with the API's answers`, `› lists a file's copies, drops one only on its confirmation and refuses as the API does`.
+**Tests:** `compliance/owner-tasks.test.ts › previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one`, `› empties only the bin's items of the types a credential writes through the tool, page by page, each page on its confirmation`, `› lists, narrows and revokes an app's grant through the tools, a revoke on its confirmation`, `› lists, renames and ends a sign-in through the tools, an end on its confirmation, and refuses the confirmation again`, `› lists a connector with its runs, and deletes it only on its confirmation, refusing as the API does and refusing the confirmation again`, `› clears a connector's state only as its confirmation saw it, and only once, keeping newer state`, `› retires an endpoint only as its confirmation saw it, where the fresh confirmation it returns retires`, `› lists backups and takes one now through the tools, with the API's answers, and previews adopting the folder`, `› lists a file's copies, drops one only on its confirmation, refuses as the API does and refuses the confirmation again`.
 
 ### `mcp/owner-unconfirmed-unchanged`
 
-When a call to `marfa_purge_trash` or `marfa_drop_file_copy`, or a call to `marfa_manage_app` with the action `revoke`, to `marfa_manage_backups` with `adopt_folder`, to `marfa_manage_connector` with `delete`, `clear_state` or `retire_endpoint`, or to `marfa_manage_sign_in` with `end_sign_in` or `remove_passkey`, carries no `confirm`, the server MUST NOT change what the call names.
+When a call that `mcp/owner-preview` names carries no `confirm`, the server MUST NOT change what the call names.
 
-**Tests:** `compliance/owner-tasks.test.ts › previews a purge, purges only on its confirmation, and refuses another credential's`, `› empties only the bin's items of the types a credential writes through the tool, page by page, each page on its confirmation`, `› lists, narrows and revokes an app's grant through the tools, a revoke on its confirmation`, `› lists, renames and ends a sign-in through the tools, an end on its confirmation`, `› lists a connector, and deletes it only on its confirmation, refusing as the API does`, `› lists backups, takes one now and adopts the folder only on its confirmation, with the API's answers`, `› lists a file's copies, drops one only on its confirmation and refuses as the API does`.
+**Tests:** `compliance/owner-tasks.test.ts › previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one`, `› empties only the bin's items of the types a credential writes through the tool, page by page, each page on its confirmation`, `› lists, narrows and revokes an app's grant through the tools, a revoke on its confirmation`, `› lists, renames and ends a sign-in through the tools, an end on its confirmation, and refuses the confirmation again`, `› lists a connector with its runs, and deletes it only on its confirmation, refusing as the API does and refusing the confirmation again`, `› lists a file's copies, drops one only on its confirmation, refuses as the API does and refuses the confirmation again`.
 
 ### `mcp/owner-confirmation-stale`
 
-If a call that `mcp/owner-preview` names carries a `confirm` token that another credential's preview gave, or one for other arguments, then the server MUST answer the tool error code `confirmation_stale` and change nothing.
+If a call that `mcp/owner-preview` names carries a `confirm` token that another credential's preview gave, that a preview of other arguments gave, or that a preview gave before what the call names changed, then the server MUST answer the tool error code `confirmation_stale`.
 
-**Tests:** `compliance/owner-tasks.test.ts › previews a purge, purges only on its confirmation, and refuses another credential's`.
+**Reason:** a confirmation stands for what the person saw. An app approved again keeps its grant's ID, a connector's state moves on and a folder is replaced, so a token judged on its arguments alone would act on something the person never saw.
+
+**Tests:** `compliance/owner-tasks.test.ts › previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one`, `› refuses a purge confirmation once what goes with the item changed, where the fresh confirmation it returns purges what goes now`, `› refuses an empty confirmation once the page changed, and a repeated one where nothing changed, where a fresh confirmation empties`, `› refuses a revoke confirmation once the owner approved the app again under the same grant, where the fresh confirmation it returns revokes`, `› refuses an end confirmation for an app's sign-in once the owner approved the app again, where the fresh confirmation it returns ends it`, `› clears a connector's state only as its confirmation saw it, and only once, keeping newer state`, `› retires an endpoint only as its confirmation saw it, where the fresh confirmation it returns retires`, `› adopts the backup folder only in place of the store its confirmation named, where the fresh confirmation it returns adopts`.
+
+### `mcp/owner-confirmation-stale-unchanged`
+
+If a call that `mcp/owner-preview` names carries a `confirm` token that `mcp/owner-confirmation-stale` refuses, then the server MUST NOT change what the call names.
+
+**Tests:** `compliance/owner-tasks.test.ts › previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one`, `› refuses a purge confirmation once what goes with the item changed, where the fresh confirmation it returns purges what goes now`, `› refuses an empty confirmation once the page changed, and a repeated one where nothing changed, where a fresh confirmation empties`, `› refuses a revoke confirmation once the owner approved the app again under the same grant, where the fresh confirmation it returns revokes`, `› refuses an end confirmation for an app's sign-in once the owner approved the app again, where the fresh confirmation it returns ends it`, `› clears a connector's state only as its confirmation saw it, and only once, keeping newer state`.
+
+### `mcp/owner-confirmation-single-use`
+
+If a call that `mcp/owner-preview` names carries a `confirm` token that an earlier call acted on, then the server MUST NOT change what the call names, even where nothing it names has changed since.
+
+**Reason:** a person agrees to one change, not to the same change whenever it is sent again.
+
+**Tests:** `compliance/owner-tasks.test.ts › refuses an empty confirmation once the page changed, and a repeated one where nothing changed, where a fresh confirmation empties`, `› clears a connector's state only as its confirmation saw it, and only once, keeping newer state`, `› previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one`, `› lists, renames and ends a sign-in through the tools, an end on its confirmation, and refuses the confirmation again`, `› lists a connector with its runs, and deletes it only on its confirmation, refusing as the API does and refusing the confirmation again`, `› lists a file's copies, drops one only on its confirmation, refuses as the API does and refuses the confirmation again`.
+
+### `mcp/purge-trash-preview-parts`
+
+When `marfa_purge_trash` previews purging one item, the server MUST name in the preview each item the purge would remove, the parts that go with the item included.
+
+**Tests:** `compliance/owner-tasks.test.ts › previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one`.
+
+### `mcp/purge-trash-reports-removed`
+
+When `marfa_purge_trash` purges one item, the server MUST answer how many items the purge removed, the parts that went with the item included.
+
+**Tests:** `compliance/owner-tasks.test.ts › previews a purge with the parts that go with its item, purges them on its confirmation, and refuses another credential's, one for another item and a repeated one`, `› refuses a purge confirmation once what goes with the item changed, where the fresh confirmation it returns purges what goes now`.
 
 ### `mcp/open-world-hint`
 
-When the server lists its tools, the server MUST annotate `marfa_create` and `marfa_manage_webhook` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
+When the server lists its tools, the server MUST annotate `marfa_create`, `marfa_manage_webhook`, `marfa_manage_backups`, `marfa_maintain` and `marfa_change_settings` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
 
-**Reason:** `marfa_create` fetches a file from a web address the agent gives it, and `marfa_manage_webhook` has the instance send events to one; a client asks the person differently before a tool that reaches outside the instance.
+**Reason:** `marfa_create` fetches a file from a web address the agent gives it, `marfa_manage_webhook` has the instance send events to one, `marfa_manage_backups` can upload a backup to an object store, `marfa_maintain` can send the heartbeat, and `marfa_change_settings` can set where errors are sent; a client asks the person differently before a tool that reaches outside the instance.
 
-**Tests:** `compliance/mcp.test.ts › marks marfa_create as reaching outside the instance and no other tool`, `› marks marfa_create and marfa_manage_webhook as reaching outside the instance and no other tool`.
+**Tests:** `compliance/mcp.test.ts › marks marfa_create as reaching outside the instance and no other tool`, `› marks each tool that can send something outside the instance as reaching outside it, and no other tool`.
 
 ## Calling a tool
 
@@ -146,9 +194,17 @@ When the server lists its tools, the server MUST annotate `marfa_create` and `ma
 
 When a tool call reads or writes, the server MUST apply the permissions, refusals and limits of the API operation that read or write is.
 
-**Reason:** a tool is another door to what the API guards, so a credential the API refuses is refused by the tool with the same `code`, and no tool is a way round a rule the API holds.
+**Reason:** a tool is another door to what the API guards, so a credential the API refuses is refused by the tool with the same `code`, and no tool is a way round a rule the API holds. A tool the server does not list to a credential is not called at all (`mcp/unlisted-tool`).
 
-**Tests:** `compliance/mcp.test.ts › refuses marfa_create for a type the credential only reads, as POST /items does`, `› refuses a change that needs schema.write at /mcp/schema, as PUT /types/{id} does`, `› refuses marfa_revoke_key for a key beyond its credential's reach, as DELETE /keys/{id} does`, `compliance/owner-tasks.test.ts › refuses a setting that does not exist in the settings tool, as the API does`, `› refuses a purge the API refuses, with the API's code, at the confirmed call`, `› refuses an app task the API refuses, with the API's code`, `› refuses a sign-in or passkey task the API refuses, with the API's code`, `› runs housekeeping and cancels a job through the maintenance tool, refusing as the API does`.
+**Tests:** `compliance/mcp.test.ts › refuses marfa_create for a type the credential only reads, as POST /items does`, `› refuses a change that needs schema.write at /mcp/schema, as PUT /types/{id} does`, `› refuses marfa_revoke_key for a key beyond its credential's reach, as DELETE /keys/{id} does`, `compliance/owner-tasks.test.ts › refuses a setting that does not exist in the settings tool, as the API does`, `› refuses a purge the API refuses, with the API's code, at the preview`, `› refuses a search longer than the API takes and a malformed id in the trash tools, with the API's codes`, `› refuses an app task the API refuses, with the API's code`, `› refuses a sign-in or passkey task the API refuses, with the API's code`, `› runs housekeeping and cancels a job through the maintenance tool, refusing as the API does`.
+
+### `mcp/unlisted-tool`
+
+If a credential calls a tool that the endpoint does not list to it, then the server MUST answer the JSON-RPC error `-32602` with the message `Unknown tool:` and the tool's name.
+
+**Reason:** a credential learns of a tool only from the list it is given, so a tool outside that list does not exist for it, and the answer says nothing of which permission would open it.
+
+**Tests:** `compliance/mcp.test.ts › answers Unknown tool to a call of an admin tool the credential is not offered, where a credential offered it runs it`.
 
 ### `mcp/unknown-argument`
 

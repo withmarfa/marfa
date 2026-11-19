@@ -1108,7 +1108,7 @@ describe("the schema and admin endpoints", () => {
     }
   });
 
-  it("marks marfa_create and marfa_manage_webhook as reaching outside the instance and no other tool", async () => {
+  it("marks each tool that can send something outside the instance as reaching outside it, and no other tool", async () => {
     const management = process.env.MARFA_MANAGEMENT_KEY;
     if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
     const manager = new MarfaClient({ baseUrl: apiUrl, apiKey: management });
@@ -1146,20 +1146,74 @@ describe("the schema and admin endpoints", () => {
       "2026-07-28",
       "/mcp/schema",
     );
+    // A file fetched from a web address, a webhook, a backup to an object
+    // store, the heartbeat and an error webhook each reach outside.
+    const outward = [
+      "marfa_change_settings",
+      "marfa_create",
+      "marfa_maintain",
+      "marfa_manage_backups",
+      "marfa_manage_webhook",
+    ];
     try {
+      const seen = new Set<string>();
       for (const connection of [admin, everyAdmin, schema]) {
         const { tools } = await connection.client.listTools();
         for (const tool of tools) {
+          seen.add(tool.name);
           expect(tool.annotations?.openWorldHint, tool.name).toBe(
-            tool.name === "marfa_create" ||
-              tool.name === "marfa_manage_webhook",
+            outward.includes(tool.name),
           );
         }
+      }
+      // The witness: every outward tool was listed and judged.
+      for (const name of outward) {
+        expect(seen.has(name), name).toBe(true);
       }
     } finally {
       await admin.close();
       await everyAdmin.close();
       await schema.close();
+    }
+  });
+});
+
+describe("a tool the endpoint does not list to the credential", () => {
+  it("answers Unknown tool to a call of an admin tool the credential is not offered, where a credential offered it runs it", async () => {
+    const management = process.env.MARFA_MANAGEMENT_KEY;
+    if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
+    const manager = new MarfaClient({ baseUrl: apiUrl, apiKey: management });
+    const label = `${ctx.source}-unlisted`;
+    const minted = await manager.createKey({
+      label,
+      source: label,
+      permissions: ["items.purge"],
+      type_permissions: {},
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const purger = await connectMcp(
+      apiUrl,
+      minted.data.key,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    const owner = await connectMcp(
+      apiUrl,
+      management,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      // The witness: a credential offered the tool runs it.
+      toolResult(await callTool(owner, "marfa_settings", {}));
+      expect(await toolNames(purger)).not.toContain("marfa_settings");
+      await expect(callTool(purger, "marfa_settings", {})).rejects.toThrow(
+        /Unknown tool: marfa_settings/,
+      );
+    } finally {
+      await purger.close();
+      await owner.close();
     }
   });
 });

@@ -37,6 +37,7 @@ use super::faults::{
     Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS, HOLD_BLOB_READ, HOLD_BLOB_WRITE, HOLD_STORES_RECORD,
     HOLD_STORES_SWAP, Lie,
 };
+use super::mcp::confirm::{self, Confirmed, Confirming};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use super::{housekeeping, provenance, stored};
@@ -1038,6 +1039,20 @@ fn not_found() -> Refusal {
     Refusal::new(Code::BlobNotFound, "Blob not found")
 }
 
+/// Changes when the store's copy is dropped and placed again.
+fn copy_state_in(tx: &rusqlite::Transaction<'_>, hash: &Hash, store_id: &str) -> Result<String> {
+    rows::copies(tx, hash)?
+        .into_iter()
+        .find(|copy| copy.store_id == store_id)
+        .map(|copy| {
+            format!(
+                "copy\n{}\n{}\n{}",
+                copy.store_id, copy.recorded_at, copy.detached
+            )
+        })
+        .ok_or_else(copy_not_found)
+}
+
 fn copy_not_found() -> Refusal {
     Refusal::new(
         Code::BlobCopyNotFound,
@@ -1894,12 +1909,54 @@ impl App {
         hash: &Hash,
         store_id: &str,
     ) -> Result<()> {
-        let (app, caller, hash) = (self.clone(), caller.clone(), hash.clone());
-        let store_id = store_id.to_string();
-        owned(async move { app.dropping(&caller, &hash, &store_id).await }).await
+        self.drop_copy_once(caller, hash, store_id, None)
+            .await?
+            .unconfirmed()
     }
 
-    async fn dropping(&self, caller: &Caller, hash: &Hash, store_id: &str) -> Result<()> {
+    /// Drops only the copy the confirmed preview showed.
+    pub async fn drop_copy_confirmed(
+        self: &Arc<App>,
+        caller: &Caller,
+        hash: &Hash,
+        store_id: &str,
+        confirming: Confirming,
+    ) -> Result<Confirmed<()>> {
+        self.drop_copy_once(caller, hash, store_id, Some(confirming))
+            .await
+    }
+
+    /// The state a confirmation to drop the store's copy covers.
+    pub async fn copy_state(&self, caller: &Caller, hash: &Hash, store_id: &str) -> Result<String> {
+        caller.require(Permission::BlobsManage)?;
+        let (caller, hash, store_id) = (caller.clone(), hash.clone(), store_id.to_string());
+        self.db
+            .read(move |tx| {
+                App::found_in(tx, Some(&caller), &hash)?;
+                copy_state_in(tx, &hash, &store_id)
+            })
+            .await
+    }
+
+    async fn drop_copy_once(
+        self: &Arc<App>,
+        caller: &Caller,
+        hash: &Hash,
+        store_id: &str,
+        confirming: Option<Confirming>,
+    ) -> Result<Confirmed<()>> {
+        let (app, caller, hash) = (self.clone(), caller.clone(), hash.clone());
+        let store_id = store_id.to_string();
+        owned(async move { app.dropping(&caller, &hash, &store_id, confirming).await }).await
+    }
+
+    async fn dropping(
+        &self,
+        caller: &Caller,
+        hash: &Hash,
+        store_id: &str,
+        confirming: Option<Confirming>,
+    ) -> Result<Confirmed<()>> {
         let blob = hash.clone();
         let (found, holders) = self
             .db
@@ -1965,34 +2022,44 @@ impl App {
         }
         let (blob, dropped) = (hash.clone(), store_id.to_string());
         let seeds = self.settings.seeds();
-        self.write(caller, "blob.copy_dropped", move |unit| {
-            unit.caller.require(Permission::BlobsManage)?;
-            let holders = rows::holders(unit.tx(), &blob)?;
-            if !holders.iter().any(|held| held.store_id == dropped) {
-                return Err(copy_not_found());
-            }
-            keep_held(unit.tx(), &blob, &dropped)?;
-            let min_copies = stored::deciding(unit.tx(), &seeds, BLOB_MIN_COPIES)?;
-            let kept = own_others(&holders, &dropped);
-            if (kept as u64) < min_copies {
-                return Err(below(kept + 1, min_copies));
-            }
-            if (confirmed as u64) < min_copies {
-                return Err(below(confirmed + 1, min_copies));
-            }
-            let object = holders
-                .iter()
-                .find(|held| held.store_id == dropped)
-                .map(|held| held.object.as_str())
-                .ok_or_else(copy_not_found)?;
-            rows::remove_copy(unit.tx(), &blob, &dropped, object, &unit.at)?;
-            unit.audit("blob", blob.as_str(), Some(json!({ "store_id": dropped })))
-        })
-        .await?;
+        let outcome = self
+            .write(caller, "blob.copy_dropped", move |unit| {
+                unit.caller.require(Permission::BlobsManage)?;
+                let holders = rows::holders(unit.tx(), &blob)?;
+                if !holders.iter().any(|held| held.store_id == dropped) {
+                    return Err(copy_not_found());
+                }
+                keep_held(unit.tx(), &blob, &dropped)?;
+                let min_copies = stored::deciding(unit.tx(), &seeds, BLOB_MIN_COPIES)?;
+                let kept = own_others(&holders, &dropped);
+                if (kept as u64) < min_copies {
+                    return Err(below(kept + 1, min_copies));
+                }
+                if (confirmed as u64) < min_copies {
+                    return Err(below(confirmed + 1, min_copies));
+                }
+                let object = holders
+                    .iter()
+                    .find(|held| held.store_id == dropped)
+                    .map(|held| held.object.as_str())
+                    .ok_or_else(copy_not_found)?;
+                let state = match &confirming {
+                    Some(_) => copy_state_in(unit.tx(), &blob, &dropped)?,
+                    None => String::new(),
+                };
+                confirm::redeem(confirming.as_ref(), unit.tx(), unit.instant, &state, || {
+                    rows::remove_copy(unit.tx(), &blob, &dropped, object, &unit.at)?;
+                    unit.audit("blob", blob.as_str(), Some(json!({ "store_id": dropped })))
+                })
+            })
+            .await?;
+        if let Confirmed::Stale = outcome {
+            return Ok(Confirmed::Stale);
+        }
         if let Err(failure) = self.finish_deletion(&store, hash).await {
             tracing::warn!(?failure, "A dropped copy's bytes wait for a later run");
         }
-        Ok(())
+        Ok(Confirmed::Done(()))
     }
 }
 

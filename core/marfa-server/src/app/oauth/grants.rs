@@ -14,6 +14,7 @@ use crate::app::access::{Caller, Permission};
 use crate::app::auth::names;
 use crate::app::catalog::Catalog;
 use crate::app::clock::Stamp;
+use crate::app::mcp::confirm::{self, Confirmed, Confirming};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::unit::Unit;
 use crate::app::{App, instance, keys};
@@ -251,6 +252,52 @@ pub(crate) fn withdraw(
         keys::end_all_of_app(unit, &consent.client_id)?;
     }
     Ok(())
+}
+
+/// Changes when the owner approves the app again, which keeps the grant's ID, or its access changes.
+pub(crate) fn consent_state(consent: &Consent) -> String {
+    format!(
+        "grant\n{}\n{}\n{}",
+        consent.grant_id,
+        consent.updated_at.ms(),
+        consent.scopes.literals().join(" ")
+    )
+}
+
+/// The grant as `marfa_apps` lists it, and the state a confirmation to revoke it covers.
+pub async fn standing(app: &App, caller: &Caller, id: String) -> Result<(Value, String)> {
+    let caller = caller.clone();
+    let at = app.clock.stamp();
+    app.db
+        .read(move |tx| {
+            caller.current(tx, &at)?.require(Permission::GrantsManage)?;
+            let consent = of_owner(tx, &id)?.ok_or_else(no_such_grant)?;
+            Ok((listed(tx, &consent)?, consent_state(&consent)))
+        })
+        .await
+}
+
+/// Revokes only the grant as the confirmed preview showed it.
+pub async fn revoke_confirmed(
+    app: &Arc<App>,
+    caller: &Caller,
+    id: String,
+    with_keys: bool,
+    confirming: Confirming,
+) -> Result<Confirmed<()>> {
+    let cache = app.catalog_handle();
+    app.write(caller, REVOKED, move |unit| {
+        unit.caller.require(Permission::GrantsManage)?;
+        let consent = of_owner(unit.tx(), &id)?.ok_or_else(no_such_grant)?;
+        confirm::redeem(
+            Some(&confirming),
+            unit.tx(),
+            unit.instant,
+            &consent_state(&consent),
+            || withdraw(unit, &cache, &consent, with_keys),
+        )
+    })
+    .await
 }
 
 pub async fn revoke(app: &Arc<App>, caller: &Caller, id: String, with_keys: bool) -> Result<()> {

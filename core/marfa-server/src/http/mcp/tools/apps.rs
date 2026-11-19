@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::confirmed::{self, Step, confirm_property};
+use super::confirmed::{self, Shown, confirm_property};
 use super::{Definition, text};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
-use crate::app::oauth::grants::{self, Narrowing, no_such_grant};
+use crate::app::mcp::confirm::Confirmed;
+use crate::app::oauth::grants::{self, Narrowing};
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list};
 use crate::http::oauth::grants::scopes_in;
 
@@ -127,35 +128,31 @@ pub async fn manage(app: &Arc<App>, caller: &Caller, arguments: Map<String, Valu
         .get("revoke_keys")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let listed = grants::list(app, caller).await?;
-    let Some(shown) = listed
-        .into_iter()
-        .find(|grant| grant.get("id").and_then(Value::as_str) == Some(id.as_str()))
-    else {
-        return Err(Stop::refused(no_such_grant()));
+    let shown = |(app_shown, state): (Value, String)| Shown {
+        tool: MANAGE_NAME,
+        arguments: &arguments,
+        state,
+        preview: json!({
+            "action": "revoke",
+            "app": app_shown,
+            "revoke_keys": with_keys,
+            "effect": if with_keys {
+                "The app's access ends, and so do the keys it minted."
+            } else {
+                "The app's access ends. The keys it minted keep working."
+            },
+        }),
+        what: "which app loses its access",
     };
-    let preview = json!({
-        "action": "revoke",
-        "app": shown,
-        "revoke_keys": with_keys,
-        "effect": if with_keys {
-            "The app's access ends, and so do the keys it minted."
-        } else {
-            "The app's access ends. The keys it minted keep working."
-        },
-    });
-    let step = confirmed::gate(
-        app,
-        caller,
-        MANAGE_NAME,
-        &arguments,
-        "",
-        preview,
-        "which app loses its access",
-    )?;
-    if let Step::Preview(body) = step {
-        return Ok(body);
+    let standing = grants::standing(app, caller, id.clone()).await?;
+    let Some(confirming) = confirmed::confirming(app, caller, MANAGE_NAME, &arguments) else {
+        return confirmed::preview(app, caller, shown(standing));
+    };
+    match grants::revoke_confirmed(app, caller, id.clone(), with_keys, confirming).await? {
+        Confirmed::Done(()) => Ok(json!({ "revoked": id })),
+        Confirmed::Stale => {
+            let now = grants::standing(app, caller, id).await?;
+            Err(confirmed::stale(app, caller, shown(now)))
+        }
     }
-    grants::revoke(app, caller, id.clone(), with_keys).await?;
-    Ok(json!({ "revoked": id }))
 }

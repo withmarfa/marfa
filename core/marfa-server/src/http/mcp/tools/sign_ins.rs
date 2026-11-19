@@ -4,11 +4,12 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::confirmed::{self, Step, confirm_property};
+use super::confirmed::{self, Shown, confirm_property};
 use super::{Definition, text};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
 use crate::app::auth::{Visit, passkeys, sign_ins};
+use crate::app::mcp::confirm::Confirmed;
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list};
 
 pub const LIST_NAME: &str = "marfa_sign_ins";
@@ -105,27 +106,19 @@ pub async fn list(app: &Arc<App>, caller: &Caller) -> Outcome {
     Ok(Value::Object(answer))
 }
 
-fn confirmation(
-    app: &App,
-    caller: &Caller,
-    arguments: &Map<String, Value>,
-    effect: &str,
-) -> Result<Step, Stop> {
-    let preview = json!({
-        "action": arguments.get("action"),
-        "id": arguments.get("id"),
-        "revoke_keys": arguments.get("revoke_keys").and_then(Value::as_bool).unwrap_or(false),
-        "effect": effect,
-    });
-    confirmed::gate(
-        app,
-        caller,
-        MANAGE_NAME,
+fn shown<'a>(arguments: &'a Map<String, Value>, state: String, effect: &str) -> Shown<'a> {
+    Shown {
+        tool: MANAGE_NAME,
         arguments,
-        "",
-        preview,
-        "what the owner loses",
-    )
+        state,
+        preview: json!({
+            "action": arguments.get("action"),
+            "id": arguments.get("id"),
+            "revoke_keys": arguments.get("revoke_keys").and_then(Value::as_bool).unwrap_or(false),
+            "effect": effect,
+        }),
+        what: "what the owner loses",
+    }
 }
 
 pub async fn manage(
@@ -157,34 +150,48 @@ pub async fn manage(
             Ok(json!({ "passkey": renamed.to_json() }))
         }
         ("remove_passkey", _) => {
-            let step = confirmation(
-                app,
-                caller,
-                &arguments,
-                "The passkey can no longer sign the owner in.",
-            )?;
-            if let Step::Preview(body) = step {
-                return Ok(body);
+            let effect = "The passkey can no longer sign the owner in.";
+            let state = passkeys::remove_state(app, caller, id.clone()).await?;
+            let Some(confirming) = confirmed::confirming(app, caller, MANAGE_NAME, &arguments)
+            else {
+                return confirmed::preview(app, caller, shown(&arguments, state, effect));
+            };
+            match passkeys::remove_confirmed(app, caller, id.clone(), confirming).await? {
+                Confirmed::Done(()) => Ok(json!({ "removed": id })),
+                Confirmed::Stale => {
+                    let state = passkeys::remove_state(app, caller, id).await?;
+                    Err(confirmed::stale(
+                        app,
+                        caller,
+                        shown(&arguments, state, effect),
+                    ))
+                }
             }
-            passkeys::remove(app, caller, id.clone()).await?;
-            Ok(json!({ "removed": id }))
         }
         _ => {
             let with_keys = arguments
                 .get("revoke_keys")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let step = confirmation(
-                app,
-                caller,
-                &arguments,
-                "The sign-in ends; whoever holds it is signed out.",
-            )?;
-            if let Step::Preview(body) = step {
-                return Ok(body);
+            let effect = "The sign-in ends; whoever holds it is signed out.";
+            let state = sign_ins::end_state(app, caller, id.clone(), with_keys).await?;
+            let Some(confirming) = confirmed::confirming(app, caller, MANAGE_NAME, &arguments)
+            else {
+                return confirmed::preview(app, caller, shown(&arguments, state, effect));
+            };
+            let ended =
+                sign_ins::end_confirmed(app, caller, id.clone(), with_keys, visit, confirming);
+            match ended.await? {
+                Confirmed::Done(()) => Ok(json!({ "ended": id })),
+                Confirmed::Stale => {
+                    let state = sign_ins::end_state(app, caller, id, with_keys).await?;
+                    Err(confirmed::stale(
+                        app,
+                        caller,
+                        shown(&arguments, state, effect),
+                    ))
+                }
             }
-            sign_ins::end(app, caller, id.clone(), with_keys, visit).await?;
-            Ok(json!({ "ended": id }))
         }
     }
 }

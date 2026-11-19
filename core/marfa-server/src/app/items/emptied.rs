@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use super::{Listing, bin_selection, write};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
+use crate::app::mcp::confirm::{self, Confirmed, Confirming};
 use crate::app::refusal::{Code, Refusal, Result};
 
 /// How many rows a page of the bin holds.
@@ -62,11 +63,69 @@ pub fn page_of(cursor: Option<String>) -> Listing {
     }
 }
 
+/// A page of the bin as read: its rows at their versions, and where the next page starts.
+pub struct Selected {
+    pub rows: Vec<(String, i64)>,
+    pub next_cursor: Option<String>,
+}
+
+impl Selected {
+    /// What a confirmation to empty the page covers.
+    pub fn state(&self) -> String {
+        let rows: Vec<String> = self
+            .rows
+            .iter()
+            .map(|(id, version)| format!("{id}:{version}"))
+            .collect();
+        format!("bin page\n{}", rows.join(","))
+    }
+}
+
+pub async fn select_page(app: &App, caller: &Caller, cursor: Option<String>) -> Result<Selected> {
+    caller.require(Permission::ItemsPurge)?;
+    let (rows, next_cursor) = bin_selection(app, caller, page_of(cursor)).await?;
+    Ok(Selected { rows, next_cursor })
+}
+
+pub async fn empty_page(app: &App, caller: &Caller, cursor: Option<String>) -> Result<Emptied> {
+    let selected = select_page(app, caller, cursor).await?;
+    purge_selected(app, caller, selected).await
+}
+
+/// Spends the confirmation once, judged against the page as it was selected. Each row is then
+/// purged only at the version selected.
+pub async fn empty_confirmed(
+    app: &App,
+    caller: &Caller,
+    selected: Selected,
+    confirming: Confirming,
+) -> Result<Confirmed<Emptied>> {
+    let state = selected.state();
+    let spent = app
+        .write(caller, "item.purge", move |unit| {
+            unit.caller.require(Permission::ItemsPurge)?;
+            confirm::redeem(
+                Some(&confirming),
+                unit.tx(),
+                unit.instant,
+                &state,
+                || Ok(()),
+            )
+        })
+        .await?;
+    match spent {
+        Confirmed::Done(()) => Ok(Confirmed::Done(
+            purge_selected(app, caller, selected).await?,
+        )),
+        Confirmed::Stale => Ok(Confirmed::Stale),
+    }
+}
+
 /// Each row is purged at the version the page read, in a write of its own so that other
 /// requests pass between pages. A row already gone is not a failure.
-pub async fn empty_page(app: &App, caller: &Caller, cursor: Option<String>) -> Result<Emptied> {
+async fn purge_selected(app: &App, caller: &Caller, page: Selected) -> Result<Emptied> {
     caller.require(Permission::ItemsPurge)?;
-    let (selected, mut next_cursor) = bin_selection(app, caller, page_of(cursor)).await?;
+    let (selected, mut next_cursor) = (page.rows, page.next_cursor);
     let mut purged = 0;
     let mut taken: HashSet<String> = HashSet::new();
     let mut failures = Vec::new();

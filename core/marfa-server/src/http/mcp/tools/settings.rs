@@ -88,7 +88,7 @@ pub fn change_definition() -> Definition {
             "readOnlyHint": false,
             "destructiveHint": false,
             "idempotentHint": true,
-            "openWorldHint": false,
+            "openWorldHint": true,
         }),
         meta: None,
     }

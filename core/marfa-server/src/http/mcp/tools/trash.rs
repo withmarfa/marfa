@@ -4,13 +4,15 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::confirmed::{self, Step, confirm_property};
-use super::{Definition, item_id, parsed, text};
+use super::confirmed::{self, Shown, confirm_property};
+use super::{Definition, parsed, text};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
-use crate::app::items::write::{self, Change};
+use crate::app::items::write;
 use crate::app::items::{self, Listing, emptied};
+use crate::app::mcp::confirm::Confirmed;
 use crate::app::types::check_id;
+use crate::http::items::check_item_id;
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list};
 
 pub const READ_NAME: &str = "marfa_trash";
@@ -55,7 +57,7 @@ pub fn purge_definition() -> Definition {
     Definition {
         name: PURGE_NAME,
         title: "Remove items from the trash for good",
-        description: "Use to purge one item from the trash, or to empty it a page at a time. Neither can be undone, so each first previews: show the person, and call again with the same arguments and confirm. A confirmation holds only for the arguments it previewed, and for emptying, only for the page it previewed. Emptying purges up to 200 items and returns next_cursor while more remain.",
+        description: "Use to purge one item from the trash, or to empty it a page at a time. Neither can be undone, so each first previews what goes, including the parts that go with an item: show the person, and call again with the same arguments and confirm. A confirmation works once, and only while what it previewed is unchanged. Emptying purges up to 200 items and returns next_cursor while more remain.",
         input: json!({
             "type": "object",
             "properties": {
@@ -76,7 +78,12 @@ pub fn purge_definition() -> Definition {
                 "preview": { "type": "object" },
                 "confirm": { "type": "string" },
                 "expires_at": { "type": "string" },
-                "purged": { "type": "integer" },
+                "purged": { "type": "integer",
+                    "description": "How many items were removed, the parts that went with them included." },
+                "items": { "type": "array", "items": { "type": "object" },
+                    "description": "Each item a purge removed whose type the credential reads." },
+                "not_shown": { "type": "integer",
+                    "description": "How many removed items are of a type the credential does not read." },
                 "failures": { "type": "array", "items": { "type": "object" } },
                 "next_cursor": { "type": ["string", "null"] },
                 "next": { "type": "string" },
@@ -137,7 +144,7 @@ async fn purge_one(app: &Arc<App>, caller: &Caller, arguments: &Map<String, Valu
             "Name the item with id (id).",
         ));
     };
-    item_id(&id)?;
+    check_item_id(&id)?;
     let Some(version) = arguments.get("version").and_then(Value::as_i64) else {
         return Err(Stop::coded(
             "missing_required_field",
@@ -147,35 +154,34 @@ async fn purge_one(app: &Arc<App>, caller: &Caller, arguments: &Map<String, Valu
     if arguments.contains_key("cursor") {
         return Err(Stop::invalid("Purging one item takes id and version only."));
     }
-    let preview = json!({
-        "action": "purge",
-        "id": id,
-        "version": version,
-        "effect": "The item and its history are removed for good.",
-    });
-    let step = confirmed::gate(
-        app,
-        caller,
-        PURGE_NAME,
+    let shown = |(going, state): (Value, String)| Shown {
+        tool: PURGE_NAME,
         arguments,
-        "",
-        preview,
-        "which item is removed for good",
-    )?;
-    if let Step::Preview(body) = step {
-        return Ok(body);
+        state,
+        preview: json!({
+            "action": "purge",
+            "id": id,
+            "version": version,
+            "goes": going,
+            "effect": "The item, the parts that go with it and their history are removed for good.",
+        }),
+        what: "what is removed for good",
+    };
+    let going = items::purge_preview(app, caller, id.clone(), version).await?;
+    let Some(confirming) = confirmed::confirming(app, caller, PURGE_NAME, arguments) else {
+        return confirmed::preview(app, caller, shown(going));
+    };
+    match write::purge_confirmed(app, caller, id.clone(), version, confirming).await? {
+        Confirmed::Done(purged) => Ok(json!({
+            "purged": purged.total,
+            "items": purged.items,
+            "not_shown": purged.not_shown,
+        })),
+        Confirmed::Stale => {
+            let now = items::purge_preview(app, caller, id.clone(), version).await?;
+            Err(confirmed::stale(app, caller, shown(now)))
+        }
     }
-    write::run(
-        app,
-        caller,
-        None,
-        Change::Purge {
-            id: id.clone(),
-            version: Some(version),
-        },
-    )
-    .await?;
-    Ok(json!({ "purged": 1, "id": id }))
 }
 
 async fn empty(app: &Arc<App>, caller: &Caller, arguments: &Map<String, Value>) -> Outcome {
@@ -183,30 +189,27 @@ async fn empty(app: &Arc<App>, caller: &Caller, arguments: &Map<String, Value>) 
         return Err(Stop::invalid("Emptying the trash takes a cursor only."));
     }
     let cursor = text(arguments, "cursor");
-    let (selected, next) =
-        items::bin_selection(app, caller, emptied::page_of(cursor.clone())).await?;
-    let covers = selected
-        .iter()
-        .map(|(id, version)| format!("{id}:{version}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let preview = json!({
-        "action": "empty",
-        "items": selected.len(),
-        "more_after_this_page": next.is_some(),
-        "effect": "These items and their history are removed for good.",
-    });
-    let step = confirmed::gate(
-        app,
-        caller,
-        PURGE_NAME,
+    let shown = |selected: &emptied::Selected| Shown {
+        tool: PURGE_NAME,
         arguments,
-        &covers,
-        preview,
-        "how many items are removed for good",
-    )?;
-    if let Step::Preview(body) = step {
-        return Ok(body);
+        state: selected.state(),
+        preview: json!({
+            "action": "empty",
+            "items": selected.rows.len(),
+            "more_after_this_page": selected.next_cursor.is_some(),
+            "effect": "These items, the parts that go with them and their history are removed for good.",
+        }),
+        what: "how many items are removed for good",
+    };
+    let selected = emptied::select_page(app, caller, cursor.clone()).await?;
+    let Some(confirming) = confirmed::confirming(app, caller, PURGE_NAME, arguments) else {
+        return confirmed::preview(app, caller, shown(&selected));
+    };
+    match emptied::empty_confirmed(app, caller, selected, confirming).await? {
+        Confirmed::Done(emptied) => Ok(emptied.to_json()),
+        Confirmed::Stale => {
+            let now = emptied::select_page(app, caller, cursor).await?;
+            Err(confirmed::stale(app, caller, shown(&now)))
+        }
     }
-    Ok(emptied::empty_page(app, caller, cursor).await?.to_json())
 }

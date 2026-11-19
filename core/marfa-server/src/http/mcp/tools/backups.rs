@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::confirmed::{self, Step, confirm_property};
+use super::confirmed::{self, Shown, confirm_property};
 use super::{Definition, text};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
+use crate::app::mcp::confirm::Confirmed;
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, fit_list};
 
 pub const LIST_NAME: &str = "marfa_backups";
@@ -65,7 +66,7 @@ pub fn manage_definition() -> Definition {
             "readOnlyHint": false,
             "destructiveHint": true,
             "idempotentHint": false,
-            "openWorldHint": false,
+            "openWorldHint": true,
         }),
         meta: None,
     }
@@ -89,22 +90,30 @@ pub async fn manage(app: &Arc<App>, caller: &Caller, arguments: Map<String, Valu
         let backup = app.run_backup(caller).await?;
         return Ok(json!({ "backup": backup }));
     }
-    let preview = json!({
-        "action": "adopt_folder",
-        "effect": "The backup folder is taken as a new store, and the old store's copies and backups are forgotten.",
-    });
-    let step = confirmed::gate(
-        app,
-        caller,
-        MANAGE_NAME,
-        &arguments,
-        "",
-        preview,
-        "what adopting the folder forgets",
-    )?;
-    if let Step::Preview(body) = step {
-        return Ok(body);
+    let shown = |(target, state): (Value, String)| Shown {
+        tool: MANAGE_NAME,
+        arguments: &arguments,
+        state,
+        preview: json!({
+            "action": "adopt_folder",
+            "folder": target["folder"],
+            "replaced_store_id": target["replaced_store_id"],
+            "effect": "The backup folder is taken as a new store, and the old store's copies and backups are forgotten.",
+        }),
+        what: "which folder is adopted and what adopting it forgets",
+    };
+    let target = app.backup_folder_state(caller).await?;
+    let Some(confirming) = confirmed::confirming(app, caller, MANAGE_NAME, &arguments) else {
+        return confirmed::preview(app, caller, shown(target));
+    };
+    match app
+        .adopt_backup_folder_confirmed(caller, confirming)
+        .await?
+    {
+        Confirmed::Done(adopted) => Ok(json!({ "adopted": adopted })),
+        Confirmed::Stale => {
+            let now = app.backup_folder_state(caller).await?;
+            Err(confirmed::stale(app, caller, shown(now)))
+        }
     }
-    let adopted = app.adopt_backup_folder(caller).await?;
-    Ok(json!({ "adopted": adopted }))
 }
