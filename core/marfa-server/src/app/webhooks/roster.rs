@@ -13,7 +13,7 @@ use url::Url;
 use super::send::{ATTEMPT_BOUND, signature};
 use super::store;
 use crate::app::App;
-use crate::app::access::{Listener, Maker, attention_listeners};
+use crate::app::access::{Listener, attention_listeners};
 use crate::app::attention::RAISED;
 use crate::app::outbound::{self, Asker, Outcome, Outgoing, Reach};
 use crate::settings::registry::ALLOW_PRIVATE_ADDRESSES;
@@ -176,13 +176,6 @@ fn stands(app: &App, listener: &Listener) -> bool {
             .any(|held| held == listener)
 }
 
-fn maker_text(maker: &Maker) -> String {
-    match maker {
-        Maker::Key(id) => format!("key:{id}"),
-        Maker::Grant(id) => format!("grant:{id}"),
-    }
-}
-
 async fn once(app: &App, listener: &Listener, attention: &Value, delivery_id: &str) -> Tried {
     if !stands(app, listener) {
         return Tried::Given;
@@ -191,7 +184,7 @@ async fn once(app: &App, listener: &Listener, attention: &Value, delivery_id: &s
         return Tried::Given;
     };
     let private_allowed = app.settings.live().get(ALLOW_PRIVATE_ADDRESSES);
-    let maker = maker_text(&listener.maker);
+    let maker = super::slot_key(&listener.maker);
     let targets = match outbound::reach(&app.faults, &url, private_allowed, Asker::Delivery(&maker))
         .await
     {

@@ -146,7 +146,7 @@ pub async fn check_address(app: &App, maker: &Maker, address: &request::Address)
 }
 
 /// The text that tells one maker's lookups from another's.
-fn slot_key(maker: &Maker) -> String {
+pub(super) fn slot_key(maker: &Maker) -> String {
     match maker {
         Maker::Key(id) => format!("key:{id}"),
         Maker::Grant(id) => format!("grant:{id}"),
