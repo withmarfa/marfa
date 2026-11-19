@@ -588,6 +588,11 @@ impl Blobs {
         self.folder_opened
     }
 
+    /// Whether the blob folder is there and holds this store's marker. It blocks.
+    pub fn folder_reachable(&self) -> bool {
+        self.disk.reachable()
+    }
+
     /// Whether the blob folder returned after the start and cannot be locked now. It blocks.
     pub fn folder_unlockable(&self) -> bool {
         self.disk.returned_unlockable()

@@ -17,7 +17,7 @@ use crate::app::access::standing_maker;
 use crate::app::catalog::{self, Catalog};
 use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::events::{Head, Judge, Judged};
-use crate::app::faults::HOLD_WEBHOOK_RESPONSE;
+use crate::app::faults::{HOLD_WEBHOOK_CONNECTED, HOLD_WEBHOOK_RESPONSE};
 use crate::app::outbound::{self, Asker, Outcome, Outgoing, Reach};
 use crate::app::refusal::{Refusal, Result};
 use crate::db::Write;
@@ -32,6 +32,7 @@ pub const TIMED_OUT: &str = "The receiver did not answer in time.";
 pub const REDIRECTED: &str = "The receiver answered with a redirect, which is not followed.";
 pub const NOT_PUBLIC: &str = "The receiver's address is not public.";
 
+#[derive(PartialEq)]
 struct Ready {
     url: String,
     secret: String,
@@ -218,35 +219,42 @@ async fn write(
 pub enum Ended {
     /// What the attempt met is recorded, or there was nothing to send.
     Settled,
-    /// No lookup slot came free, so the delivery is left due, unrecorded and with no attempt spent.
+    /// The delivery stays due, without spending an attempt.
     Deferred,
 }
 
-/// `spent` means the deferral limit passed, so an unavailable lookup slot counts as an attempt.
-pub async fn attempt(app: Arc<App>, id: String, maker: String, spent: bool) -> Result<Ended> {
+async fn prepared(app: &App, id: &str) -> Result<Prepared> {
     let at = app.clock.stamp();
     let cache = app.catalog_handle();
     let marked = app.read_only_handle();
-    let looked_up = id.clone();
-    let ready = app
-        .db
+    let looked_up = id.to_string();
+    app.db
         .read(move |tx| {
             let catalog = catalog::current(&cache, tx, catalog::Snapshot::Committed)?;
             let read_only = read_only::current(&marked, tx, &at, catalog::Snapshot::Committed)?;
             prepare(tx, &catalog, &read_only, &looked_up, &at)
         })
-        .await?;
-    let ready = match ready {
+        .await
+}
+
+async fn cancel(app: &App, id: String, reason: &'static str) -> Result<Ended> {
+    let at = app.clock.stamp();
+    write(app, move |tx| store::cancel(tx, &id, reason, &at)).await?;
+    Ok(Ended::Settled)
+}
+
+/// `spent` means the deferral limit passed, so an unavailable lookup slot counts as an attempt.
+pub async fn attempt(app: Arc<App>, id: String, maker: String, spent: bool) -> Result<Ended> {
+    let ready = match prepared(&app, &id).await? {
         Prepared::Gone => return Ok(Ended::Settled),
-        Prepared::Cancel(reason) => {
-            let at = app.clock.stamp();
-            write(&app, move |tx| store::cancel(tx, &id, reason, &at)).await?;
-            return Ok(Ended::Settled);
-        }
+        Prepared::Cancel(reason) => return cancel(&app, id, reason).await,
         Prepared::Send(ready) => ready,
     };
-    let Some(attempted) = send(&app, &ready, &maker, spent).await? else {
-        return Ok(Ended::Deferred);
+    let (ready, attempted) = match send(&app, &id, ready, &maker, spent).await? {
+        Sending::Deferred => return Ok(Ended::Deferred),
+        Sending::Cancel(reason) => return cancel(&app, id, reason).await,
+        Sending::Gone => return Ok(Ended::Settled),
+        Sending::Done(ready, attempted) => (ready, attempted),
     };
     app.faults.hold(HOLD_WEBHOOK_RESPONSE, None).await;
     let now_ms = app.clock.now_ms();
@@ -269,10 +277,16 @@ pub async fn attempt(app: Arc<App>, id: String, maker: String, spent: bool) -> R
     Ok(Ended::Settled)
 }
 
-/// `None` when no lookup slot came free for the maker and the delivery may still wait.
-async fn send(app: &App, ready: &Ready, maker: &str, spent: bool) -> Result<Option<Attempted>> {
+enum Sending {
+    Deferred,
+    Cancel(&'static str),
+    Gone,
+    Done(Box<Ready>, Attempted),
+}
+
+async fn send(app: &App, id: &str, ready: Box<Ready>, maker: &str, spent: bool) -> Result<Sending> {
     let Ok(url) = Url::parse(&ready.url) else {
-        return Ok(Some(Attempted::Sent(Outcome::Unreachable)));
+        return Ok(Sending::Done(ready, Attempted::Sent(Outcome::Unreachable)));
     };
     let private_allowed = app
         .settings
@@ -281,10 +295,10 @@ async fn send(app: &App, ready: &Ready, maker: &str, spent: bool) -> Result<Opti
     let reached = outbound::reach(&app.faults, &url, private_allowed, Asker::Delivery(maker));
     let targets = match reached.await {
         Reach::Targets(targets) => targets,
-        Reach::Unresolved => return Ok(Some(Attempted::Sent(Outcome::Unreachable))),
-        Reach::NoSlot if spent => return Ok(Some(Attempted::Sent(Outcome::Unreachable))),
-        Reach::NoSlot => return Ok(None),
-        Reach::NotPublic => return Ok(Some(Attempted::NotPublic)),
+        Reach::Unresolved => return Ok(done(ready, Outcome::Unreachable)),
+        Reach::NoSlot if spent => return Ok(done(ready, Outcome::Unreachable)),
+        Reach::NoSlot => return Ok(Sending::Deferred),
+        Reach::NotPublic => return Ok(Sending::Done(ready, Attempted::NotPublic)),
     };
     let now_ms = app.clock.now_ms();
     let mut body = ready.body.clone();
@@ -302,9 +316,37 @@ async fn send(app: &App, ready: &Ready, maker: &str, spent: bool) -> Result<Opti
         headers: &headers,
         body: String::from_utf8_lossy(&printed).into_owned(),
     };
-    Ok(Some(Attempted::Sent(
-        outbound::post(&url, &targets, outgoing, ATTEMPT_BOUND).await,
-    )))
+    let as_signed = &*ready;
+    let check = || async move {
+        app.faults.hold(HOLD_WEBHOOK_CONNECTED, None).await;
+        match prepared(app, id).await {
+            Ok(Prepared::Send(now)) if *now == *as_signed => Ok(()),
+            Ok(Prepared::Send(_)) => Err(Holds::Changed),
+            Ok(Prepared::Gone) => Err(Holds::Gone),
+            Ok(Prepared::Cancel(reason)) => Err(Holds::Cancel(reason)),
+            Err(refusal) => Err(Holds::Failed(refusal)),
+        }
+    };
+    match outbound::post(&url, &targets, outgoing, ATTEMPT_BOUND, check).await {
+        Ok(outcome) => Ok(done(ready, outcome)),
+        Err(Holds::Gone) => Ok(Sending::Gone),
+        Err(Holds::Cancel(reason)) => Ok(Sending::Cancel(reason)),
+        Err(Holds::Changed) => Ok(Sending::Deferred),
+        Err(Holds::Failed(refusal)) => Err(refusal),
+    }
+}
+
+/// Why a delivery's request was not sent on a connection that was ready for it.
+enum Holds {
+    Gone,
+    Cancel(&'static str),
+    /// The subscription or the event reads differently than what was signed.
+    Changed,
+    Failed(Refusal),
+}
+
+fn done(ready: Box<Ready>, outcome: Outcome) -> Sending {
+    Sending::Done(ready, Attempted::Sent(outcome))
 }
 
 #[cfg(test)]

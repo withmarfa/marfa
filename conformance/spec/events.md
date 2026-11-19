@@ -1191,6 +1191,14 @@ When the key that registered a subscription no longer holds `webhooks.manage`, t
 
 **Tests:** `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its key no longer holds webhooks.manage`.
 
+### `events/webhook-checked-once-connected`
+
+If the key that registered a subscription is revoked, or no longer holds `webhooks.manage`, before the server's connection to a delivery's receiver is ready, then the server MUST NOT send any part of that delivery's request, its headers and its body included.
+
+**Reason:** looking up the receiver's name, connecting to it and, for an `https` address, the TLS handshake can each take seconds. Once the connection is ready, the server reads the key's standing on committed state and only then hands the request to the connection, with nothing between the two that waits on the network. A request handed to the connection is in flight and is not recalled. A delivery not sent for this reason is settled unsent, as `events/webhook-manage-removed` says.
+
+**Tests:** `compliance/webhook-lookup-slots.test.ts › sends no delivery whose key is revoked or loses webhooks.manage while its receiver's name is looked up, and sends one whose key stands`, `compliance/webhook-lookup-slots.test.ts › sends nothing of a delivery whose key is revoked or loses webhooks.manage once its connection is ready, cancels it, and sends one whose key stands`.
+
 ### `events/webhook-expired-silent`
 
 When the key that registered a subscription passes its `expires_at`, the server MUST deliver nothing more to it, its pending deliveries included.
@@ -1483,9 +1491,9 @@ While an attempt for a deleted subscription is in flight, the server MUST NOT ho
 
 If a receiver that has accepted the connection has not answered an attempt 10 seconds after the server started it, then the server MUST end the attempt as not answered in time.
 
-**Reason:** the bound runs from the start of the attempt, so a receiver that accepts the connection and then says nothing holds a subscription's turn for 10 seconds at most. The record of the attempt is `events/record-error-timeout`.
+**Reason:** the bound runs from the start of the attempt, so a receiver that accepts the connection and then says nothing holds a subscription's turn for 10 seconds at most. The bound covers connecting, the check of the key's standing once connected (`events/webhook-checked-once-connected`) and the answer, so a check that outlasts it ends the attempt with nothing sent. The record of the attempt is `events/record-error-timeout`.
 
-**Tests:** `compliance/webhook-attempts.test.ts › ends an attempt the receiver has not answered 10 seconds after it started, and takes one answered within it`.
+**Tests:** `compliance/webhook-attempts.test.ts › ends an attempt the receiver has not answered 10 seconds after it started, and takes one answered within it`, `compliance/webhook-lookup-slots.test.ts › ends an attempt as not answered in time when the check of its key outlasts the 10 second bound, sends nothing, and delivers when the same wait is short`.
 
 ### `events/retry-server-error`
 

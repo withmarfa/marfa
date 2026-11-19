@@ -125,14 +125,15 @@ describe("an orphan purge cut short after the blob left the registry", () => {
     await server.setFault("fail:blob-delete");
     const cut = await runJob<{ purged: number }>(operator, "blob-orphans");
     expect(await fired("fail:blob-delete")).toBe(1);
-    expect(cut.result.purged).toBe(0);
+    expect(cut.result.purged).toBe(1);
 
     // The registry has let go of the blob and the store has not.
     expect(await listed(blob.hash)).toBe(false);
     expect(await reported()).not.toContain(blob.hash);
     expect(await diskHolds(server.controlSocket, blob.hash)).toBe(true);
 
-    await runJob(operator, "blob-orphans");
+    const finished = await runJob<{ purged: number }>(operator, "blob-orphans");
+    expect(finished.result.purged).toBe(0);
     expect(await diskHolds(server.controlSocket, blob.hash)).toBe(false);
     expect(await listed(blob.hash)).toBe(false);
   });

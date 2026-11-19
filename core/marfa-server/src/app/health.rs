@@ -10,7 +10,7 @@ use tokio::sync::watch;
 
 use super::App;
 use super::backups::BackupHealth;
-use super::blobs::{MARKER, bytes_in_words};
+use super::blobs::bytes_in_words;
 use super::clock::Standing;
 use super::faults::{FAIL_HEALTH_WRITE, HOLD_DISK_PROBE, REFUSE_BLOB_STORE, Volume};
 use super::instance;
@@ -353,12 +353,8 @@ async fn blob_storage(app: &Arc<App>) -> Component {
     let app = app.clone();
     let looked = bounded(move || {
         app.faults.hold_blocking(HOLD_DISK_PROBE);
-        let folder = &app.settings.start.blob_path;
-        if app.faults.refusing(REFUSE_BLOB_STORE)
-            || !folder.is_dir()
-            || !folder.join(MARKER).is_file()
-        {
-            return Some("the blob folder or its marker is missing");
+        if app.faults.refusing(REFUSE_BLOB_STORE) || !app.blobs.folder_reachable() {
+            return Some("the blob folder is missing or holds no marker of this store");
         }
         app.blobs
             .folder_unlockable()

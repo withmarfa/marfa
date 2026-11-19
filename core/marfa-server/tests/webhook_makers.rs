@@ -20,7 +20,7 @@ const SLOTS: usize = 64;
 const HEADROOM: usize = 8;
 
 struct Instance {
-    _dir: TempDir,
+    dir: TempDir,
     app: Arc<App>,
     public: Router,
     control: Router,
@@ -47,7 +47,7 @@ impl Instance {
             public: public(app.clone()),
             control: control(app.clone()),
             app,
-            _dir: dir,
+            dir,
         }
     }
 
@@ -76,6 +76,11 @@ impl Instance {
 
     /// A key that registers webhooks and reads every type, or one that writes items.
     async fn key(&self, source: &str, writes: bool) -> String {
+        self.minted(source, writes).await.1
+    }
+
+    /// The same key, with its ID.
+    async fn minted(&self, source: &str, writes: bool) -> (String, String) {
         let permissions = if writes {
             json!(["webhooks.manage", "schema.write"])
         } else {
@@ -98,7 +103,25 @@ impl Instance {
         assert!(response.status().is_success(), "{}", response.status());
         let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let answer: Value = serde_json::from_slice(&bytes).unwrap();
-        answer["key"].as_str().unwrap().to_string()
+        (
+            answer["id"].as_str().unwrap().to_string(),
+            answer["key"].as_str().unwrap().to_string(),
+        )
+    }
+
+    async fn through_control(&self, method: Method, path: &str, body: Value) -> StatusCode {
+        let request = Request::builder()
+            .method(method)
+            .uri(path)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        self.control
+            .clone()
+            .oneshot(request)
+            .await
+            .unwrap()
+            .status()
     }
 
     /// Holds the sender at the start of a pass begun after this call. A pass already under way
@@ -124,6 +147,21 @@ impl Instance {
 
     fn sender_released(&self) {
         self.app.faults.clear(Some("hold:webhook-schedule"));
+    }
+
+    /// The status of the one delivery to `webhook`, and how many attempts it has had.
+    fn recorded(&self, webhook: &str) -> (String, i64) {
+        let db = rusqlite::Connection::open_with_flags(
+            self.dir.path().join("marfa.db"),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+        db.query_row(
+            "SELECT status, attempt FROM webhook_deliveries WHERE webhook_id = ?1",
+            [webhook],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap()
     }
 
     async fn register(&self, key: &str, url: &str) -> (StatusCode, Value) {
@@ -194,6 +232,47 @@ async fn replying(first: u16) -> (String, Arc<AtomicUsize>) {
         }
     });
     (url, received)
+}
+
+/// Answers every delivery `200`, after reading it or, with `first`, as soon as it accepts the
+/// connection. Counts each connection that sent any byte at all, a header alone included.
+async fn counting_any_byte(first: bool) -> (String, Arc<AtomicUsize>) {
+    const OK: &[u8] = b"HTTP/1.1 200 X\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/hook", listener.local_addr().unwrap());
+    let seen = Arc::new(AtomicUsize::new(0));
+    let counted = seen.clone();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let counted = counted.clone();
+            tokio::spawn(async move {
+                if first && stream.write_all(OK).await.is_err() {
+                    return;
+                }
+                let mut read = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let Ok(size) = stream.read(&mut chunk).await else {
+                        return;
+                    };
+                    if size == 0 {
+                        return;
+                    }
+                    if read.is_empty() {
+                        counted.fetch_add(1, Ordering::SeqCst);
+                    }
+                    read.extend_from_slice(&chunk[..size]);
+                    if complete(&read) {
+                        break;
+                    }
+                }
+                if !first {
+                    let _ = stream.write_all(OK).await;
+                }
+            });
+        }
+    });
+    (url, seen)
 }
 
 fn complete(read: &[u8]) -> bool {
@@ -410,4 +489,164 @@ async fn a_maker_alone_leaves_slots_free_for_a_maker_whose_delivery_falls_due_la
     instance.sender_parked(&writer).await;
     assert_eq!(accepted.load(Ordering::SeqCst), SLOTS - HEADROOM);
     instance.sender_released();
+}
+
+/// Where a delivery is held while its key changes.
+#[derive(Clone, Copy)]
+enum Held {
+    /// While the receiver's name is looked up.
+    Lookup,
+    /// Once the connection is ready, before the key is read again and the request sent.
+    Connected,
+}
+
+/// What reached each receiver, and the status recorded for the delivery whose key changed.
+struct Seen {
+    changed: usize,
+    standing: usize,
+    recorded: String,
+}
+
+async fn deliveries_during(held: Held, change: impl AsyncFnOnce(&Instance, &str)) -> Seen {
+    deliveries_answered_during(held, false, change).await
+}
+
+async fn deliveries_answered_during(
+    held: Held,
+    answers_first: bool,
+    change: impl AsyncFnOnce(&Instance, &str),
+) -> Seen {
+    let instance = Instance::start().await;
+    let writer = instance.key("writer", true).await;
+    let (changed_id, changed) = instance.minted("changed-maker", false).await;
+    let standing = instance.key("standing-maker", false).await;
+    let (to_changed, changed_received) = counting_any_byte(answers_first).await;
+    let (to_standing, standing_received) = answering().await;
+    let by_name = |url: &str| url.replace("127.0.0.1", "localhost");
+    let mut hooks = Vec::new();
+    for (key, url) in [(&changed, &to_changed), (&standing, &to_standing)] {
+        let (status, made) = instance.register(key, &by_name(url)).await;
+        assert_eq!(status, StatusCode::CREATED, "{made}");
+        hooks.push(made["id"].as_str().unwrap().to_string());
+    }
+    match held {
+        Held::Lookup => instance
+            .app
+            .faults
+            .set("resolve:localhost", Some("stall:1500"))
+            .unwrap(),
+        Held::Connected => instance
+            .app
+            .faults
+            .set("hold:webhook:connected", None)
+            .unwrap(),
+    }
+
+    announce(&instance, &writer).await;
+    until(
+        "both deliveries did not wait",
+        Duration::from_secs(5),
+        || {
+            instance.app.faults.list().iter().any(|fault| match held {
+                Held::Lookup => fault.name == "resolve:localhost" && fault.fired >= 2,
+                Held::Connected => fault.name == "hold:webhook:connected" && fault.waiting >= 2,
+            })
+        },
+    )
+    .await;
+    change(&instance, &changed_id).await;
+    instance.app.faults.clear(Some("hold:webhook:connected"));
+    until(
+        "the standing maker's delivery did not arrive",
+        Duration::from_secs(10),
+        || standing_received.load(Ordering::SeqCst) == 1,
+    )
+    .await;
+    let changed_hook = hooks[0].clone();
+    until(
+        "the changed maker's delivery was not settled",
+        Duration::from_secs(10),
+        || {
+            let (status, attempts) = instance.recorded(&changed_hook);
+            status != "pending" || attempts >= 1
+        },
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    Seen {
+        changed: changed_received.load(Ordering::SeqCst),
+        standing: standing_received.load(Ordering::SeqCst),
+        recorded: instance.recorded(&changed_hook).0,
+    }
+}
+
+async fn revoke(instance: &Instance, id: &str) {
+    let status = instance
+        .through_control(Method::DELETE, &format!("/keys/{id}"), Value::Null)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+async fn narrow(instance: &Instance, id: &str) {
+    let status = instance
+        .through_control(
+            Method::PATCH,
+            &format!("/keys/{id}"),
+            json!({ "permissions": [] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+fn delivered(seen: &Seen) {
+    assert_eq!((seen.changed, seen.standing), (1, 1));
+    assert_eq!(seen.recorded, "succeeded");
+}
+
+fn canceled_unsent(seen: &Seen) {
+    assert_eq!((seen.changed, seen.standing), (0, 1));
+    assert_eq!(seen.recorded, "canceled");
+}
+
+#[tokio::test]
+async fn a_delivery_goes_out_when_its_key_stands_through_the_lookup_of_the_receivers_name() {
+    delivered(&deliveries_during(Held::Lookup, async |_, _| {}).await);
+}
+
+#[tokio::test]
+async fn no_delivery_goes_out_when_its_key_is_revoked_during_the_lookup_of_the_receivers_name() {
+    canceled_unsent(&deliveries_during(Held::Lookup, revoke).await);
+}
+
+#[tokio::test]
+async fn no_delivery_goes_out_when_its_key_loses_webhooks_manage_during_the_lookup_of_the_receivers_name()
+ {
+    canceled_unsent(&deliveries_during(Held::Lookup, narrow).await);
+}
+
+#[tokio::test]
+async fn a_delivery_goes_out_when_its_key_stands_while_its_connection_is_ready() {
+    delivered(&deliveries_during(Held::Connected, async |_, _| {}).await);
+}
+
+#[tokio::test]
+async fn nothing_is_sent_when_its_key_is_revoked_while_its_connection_is_ready() {
+    canceled_unsent(&deliveries_during(Held::Connected, revoke).await);
+}
+
+#[tokio::test]
+async fn nothing_is_sent_when_its_key_loses_webhooks_manage_while_its_connection_is_ready() {
+    canceled_unsent(&deliveries_during(Held::Connected, narrow).await);
+}
+
+#[tokio::test]
+async fn a_receiver_that_answers_before_it_is_sent_anything_is_not_recorded_as_delivered() {
+    let seen = deliveries_answered_during(Held::Connected, true, async |_, _| {}).await;
+    assert_eq!((seen.changed, seen.standing), (0, 1));
+    assert_eq!(seen.recorded, "pending", "left due for another attempt");
+}
+
+#[tokio::test]
+async fn a_receiver_that_answers_before_it_is_sent_anything_has_a_revoked_keys_delivery_canceled() {
+    canceled_unsent(&deliveries_answered_during(Held::Connected, true, revoke).await);
 }

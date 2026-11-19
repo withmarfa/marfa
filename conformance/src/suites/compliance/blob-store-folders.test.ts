@@ -5,8 +5,10 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   renameSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import type { MarfaClient } from "../../client/api.js";
@@ -430,6 +432,31 @@ describe("a store whose folder is away", () => {
     rmSync(blobFolder(server!), { recursive: true });
     renameSync(away(), blobFolder(server!));
     expect((await operator.downloadBlob(hash)).status).toBe(200);
+  });
+
+  it("answers blob storage down while the folder holds another store's marker, and ok when it holds the server's own", async () => {
+    const marker = join(blobFolder(server!), ".marfa-store");
+    const own = readFileSync(marker, "utf8");
+    const blobStorage = async (): Promise<string | undefined> => {
+      const response = await fetch(`${server!.apiUrl}/health`, {
+        headers: { Authorization: `Bearer ${server!.managementKey}` },
+      });
+      const body = (await response.json()) as {
+        components: Record<string, { status: string }>;
+      };
+      return body.components.blob_storage?.status;
+    };
+
+    // The witness: the server's own marker answers ok.
+    expect(await blobStorage()).toBe("ok");
+
+    writeFileSync(marker, "0198a3c2-7d4e-7a11-9c3b-5f2e8d1a6b40");
+    try {
+      expect(await blobStorage()).toBe("down");
+    } finally {
+      writeFileSync(marker, own);
+    }
+    expect(await blobStorage()).toBe("ok");
   });
 
   it("still strikes a copy missing from a folder that is there", async () => {

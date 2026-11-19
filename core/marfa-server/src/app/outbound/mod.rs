@@ -8,12 +8,14 @@ pub mod store;
 pub use slots::{Asker, deliveries_released, delivery_share_is_free};
 use slots::{BOUND, Lane};
 
+use std::future::Future;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use http_body_util::Full;
 use hyper::body::Bytes;
+use hyper::client::conn::http1::{Connection, SendRequest};
 use hyper::header::{CONTENT_LENGTH, CONTENT_TYPE, HOST, RETRY_AFTER};
 use hyper::{Method, Request};
 use hyper_util::rt::TokioIo;
@@ -264,22 +266,72 @@ static TLS: LazyLock<Option<Arc<ClientConfig>>> = LazyLock::new(|| {
     }
 });
 
-/// The bound includes connecting; redirects are never followed.
-pub async fn post(
+/// Connects, then runs `check`, then sends the request only if `check` passes. The bound covers
+/// connecting, the TLS handshake, `check` and the answer. Redirects are never followed.
+pub async fn post<T, F>(
     url: &Url,
     targets: &[Target],
     outgoing: Outgoing<'_>,
     bound: Duration,
-) -> Outcome {
-    tokio::time::timeout(bound, attempt(url, targets, outgoing))
-        .await
-        .unwrap_or(Outcome::TimedOut)
+    check: impl FnOnce() -> F,
+) -> Result<Outcome, T>
+where
+    F: Future<Output = Result<(), T>>,
+{
+    post_with(TLS.as_ref(), url, targets, outgoing, bound, check).await
 }
 
-async fn attempt(url: &Url, targets: &[Target], outgoing: Outgoing<'_>) -> Outcome {
-    let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default()) else {
-        return Outcome::Unreachable;
+async fn post_with<T, F>(
+    tls: Option<&Arc<ClientConfig>>,
+    url: &Url,
+    targets: &[Target],
+    outgoing: Outgoing<'_>,
+    bound: Duration,
+    check: impl FnOnce() -> F,
+) -> Result<Outcome, T>
+where
+    F: Future<Output = Result<(), T>>,
+{
+    let Some(host) = url.host_str() else {
+        return Ok(Outcome::Unreachable);
     };
+    let Ok(request) = request(url, host, outgoing.headers, outgoing.body) else {
+        return Ok(Outcome::Unreachable);
+    };
+    let deadline = tokio::time::Instant::now() + bound;
+    let connected = match tokio::time::timeout_at(deadline, connect(tls, url, targets)).await {
+        Ok(Some(connected)) => connected,
+        Ok(None) => return Ok(Outcome::Unreachable),
+        Err(_) => return Ok(Outcome::TimedOut),
+    };
+    // A refusal, or a check that runs past the deadline, drops the connection, which closes it
+    // with nothing sent.
+    match tokio::time::timeout_at(deadline, check()).await {
+        Ok(passed) => passed?,
+        Err(_) => return Ok(Outcome::TimedOut),
+    }
+    let answer = connected.send(request);
+    Ok(tokio::time::timeout_at(deadline, answer)
+        .await
+        .unwrap_or(Outcome::TimedOut))
+}
+
+trait Io: AsyncRead + AsyncWrite + Unpin + Send {}
+
+impl<S: AsyncRead + AsyncWrite + Unpin + Send> Io for S {}
+
+/// A fresh connection, secured for HTTPS, with nothing of a request written to it.
+struct Connected {
+    sender: SendRequest<Full<Bytes>>,
+    connection: Connection<TokioIo<Box<dyn Io>>, Full<Bytes>>,
+}
+
+async fn connect(
+    tls: Option<&Arc<ClientConfig>>,
+    url: &Url,
+    targets: &[Target],
+) -> Option<Connected> {
+    let port = url.port_or_known_default()?;
     let mut stream = None;
     for target in targets {
         if let Ok(Ok(connected)) = tokio::time::timeout(
@@ -292,25 +344,55 @@ async fn attempt(url: &Url, targets: &[Target], outgoing: Outgoing<'_>) -> Outco
             break;
         }
     }
-    let Some(stream) = stream else {
-        return Outcome::Unreachable;
-    };
+    let stream = stream?;
     let _ = stream.set_nodelay(true);
-    let Ok(request) = request(url, host, outgoing) else {
-        return Outcome::Unreachable;
+    let stream: Box<dyn Io> = if url.scheme() == "https" {
+        let (config, name) = (tls?, server_name(url)?);
+        Box::new(
+            TlsConnector::from(config.clone())
+                .connect(name, stream)
+                .await
+                .ok()?,
+        )
+    } else {
+        Box::new(stream)
     };
-    if url.scheme() != "https" {
-        return exchange(stream, request).await;
-    }
-    let (Some(config), Some(name)) = (TLS.as_ref(), server_name(url)) else {
-        return Outcome::Unreachable;
-    };
-    match TlsConnector::from(config.clone())
-        .connect(name, stream)
+    let (sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
         .await
-    {
-        Ok(secured) => exchange(secured, request).await,
-        Err(_) => Outcome::Unreachable,
+        .ok()?;
+    Some(Connected { sender, connection })
+}
+
+impl Connected {
+    /// The request is handed to the connection before this returns, and is in flight from then.
+    fn send(self, request: Request<Full<Bytes>>) -> impl Future<Output = Outcome> {
+        let Self {
+            mut sender,
+            connection,
+        } = self;
+        let answer = sender.send_request(request);
+        async move {
+            let _sender = sender;
+            let mut connection = std::pin::pin!(connection);
+            let mut answer = std::pin::pin!(answer);
+            // An answer still counts when its connection closes at the same time.
+            let answered = tokio::select! {
+                biased;
+                answered = &mut answer => answered,
+                _ = &mut connection => answer.await,
+            };
+            match answered {
+                Ok(response) => Outcome::Answered {
+                    status: response.status().as_u16(),
+                    retry_after: response
+                        .headers()
+                        .get(RETRY_AFTER)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_string),
+                },
+                Err(_) => Outcome::Unreachable,
+            }
+        }
     }
 }
 
@@ -325,7 +407,8 @@ fn server_name(url: &Url) -> Option<ServerName<'static>> {
 fn request(
     url: &Url,
     host: &str,
-    outgoing: Outgoing<'_>,
+    headers: &[(&str, String)],
+    body: String,
 ) -> hyper::http::Result<Request<Full<Bytes>>> {
     let authority = match url.port() {
         Some(port) => format!("{host}:{port}"),
@@ -340,41 +423,11 @@ fn request(
         .uri(target)
         .header(HOST, authority)
         .header(CONTENT_TYPE, "application/json")
-        .header(CONTENT_LENGTH, outgoing.body.len());
-    for (name, value) in outgoing.headers {
+        .header(CONTENT_LENGTH, body.len());
+    for (name, value) in headers {
         builder = builder.header(*name, value);
     }
-    builder.body(Full::new(Bytes::from(outgoing.body)))
-}
-
-async fn exchange<S>(stream: S, request: Request<Full<Bytes>>) -> Outcome
-where
-    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-{
-    let Ok((mut sender, connection)) =
-        hyper::client::conn::http1::handshake(TokioIo::new(stream)).await
-    else {
-        return Outcome::Unreachable;
-    };
-    let mut connection = std::pin::pin!(connection);
-    let mut answer = std::pin::pin!(sender.send_request(request));
-    // An answer still counts when its connection closes at the same time.
-    let answered = tokio::select! {
-        biased;
-        answered = &mut answer => answered,
-        _ = &mut connection => answer.await,
-    };
-    match answered {
-        Ok(response) => Outcome::Answered {
-            status: response.status().as_u16(),
-            retry_after: response
-                .headers()
-                .get(RETRY_AFTER)
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_string),
-        },
-        Err(_) => Outcome::Unreachable,
-    }
+    builder.body(Full::new(Bytes::from(body)))
 }
 
 #[cfg(test)]
@@ -618,7 +671,7 @@ mod tests {
         )
     }
 
-    async fn head(stream: &mut TcpStream) -> String {
+    async fn head<S: AsyncRead + Unpin>(stream: &mut S) -> String {
         let mut seen = Vec::new();
         let mut byte = [0u8; 1];
         while !seen.ends_with(b"\r\n\r\n") {
@@ -634,13 +687,30 @@ mod tests {
         vec![literal("127.0.0.1".parse().unwrap())]
     }
 
-    async fn send(url: &Url, targets: &[Target], bound: Duration) -> Outcome {
+    const REFUSED: &str = "refused";
+
+    async fn send_checked<F>(
+        tls: Option<&Arc<ClientConfig>>,
+        url: &Url,
+        targets: &[Target],
+        bound: Duration,
+        check: F,
+    ) -> Result<Outcome, &'static str>
+    where
+        F: Future<Output = Result<(), &'static str>>,
+    {
         let headers = [("x-marfa-event-type", "item.created".to_string())];
         let outgoing = Outgoing {
             headers: &headers,
             body: "{}".to_string(),
         };
-        post(url, targets, outgoing, bound).await
+        post_with(tls, url, targets, outgoing, bound, || check).await
+    }
+
+    async fn send(url: &Url, targets: &[Target], bound: Duration) -> Outcome {
+        send_checked(None, url, targets, bound, async { Ok(()) })
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -795,6 +865,291 @@ mod tests {
         assert_eq!(
             reach(&faults, &literal, false, Asker::McpFetch).await,
             Reach::NotPublic
+        );
+    }
+
+    /// What reaches `stream` before it closes or goes quiet, and whether it closed.
+    async fn bytes_until_closed<S: AsyncRead + Unpin>(stream: &mut S) -> (Vec<u8>, bool) {
+        let mut seen = Vec::new();
+        let mut chunk = [0u8; 256];
+        loop {
+            match tokio::time::timeout(Duration::from_millis(1_500), stream.read(&mut chunk)).await
+            {
+                Ok(Ok(0) | Err(_)) => return (seen, true),
+                Ok(Ok(read)) => seen.extend_from_slice(&chunk[..read]),
+                Err(_) => return (seen, false),
+            }
+        }
+    }
+
+    async fn waited(answer: Result<(), &'static str>) -> Result<(), &'static str> {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        answer
+    }
+
+    #[tokio::test]
+    async fn a_check_that_refuses_once_connected_sends_nothing_and_closes_the_connection() {
+        let (url, served) = receiver(|mut stream| async move {
+            let (seen, closed) = bytes_until_closed(&mut stream).await;
+            assert!(closed, "the connection was closed");
+            String::from_utf8(seen).unwrap()
+        })
+        .await;
+        let outcome = send_checked(
+            None,
+            &url,
+            &loopback(),
+            Duration::from_secs(5),
+            waited(Err(REFUSED)),
+        )
+        .await;
+        assert_eq!(outcome, Err(REFUSED));
+        assert_eq!(served.await.unwrap(), "", "no header and no body arrived");
+    }
+
+    #[tokio::test]
+    async fn a_check_that_passes_after_the_same_wait_sends_the_request() {
+        let (url, served) = receiver(|mut stream| async move {
+            let request = head(&mut stream).await;
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+                .await
+                .unwrap();
+            request
+        })
+        .await;
+        let outcome = send_checked(
+            None,
+            &url,
+            &loopback(),
+            Duration::from_secs(5),
+            waited(Ok(())),
+        )
+        .await;
+        assert!(matches!(outcome, Ok(Outcome::Answered { status: 204, .. })));
+        assert!(
+            served
+                .await
+                .unwrap()
+                .to_ascii_lowercase()
+                .contains("x-marfa-event-type: item.created")
+        );
+    }
+
+    /// A receiver that answers `204` as soon as it accepts, then reads what arrives.
+    async fn answering_before_reading() -> (Url, tokio::task::JoinHandle<String>) {
+        receiver(|mut stream| async move {
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+                .await
+                .unwrap();
+            let (seen, _) = bytes_until_closed(&mut stream).await;
+            String::from_utf8(seen).unwrap()
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn an_answer_sent_before_the_request_counts_for_nothing_when_the_check_refuses() {
+        let (url, served) = answering_before_reading().await;
+        let outcome = send_checked(
+            None,
+            &url,
+            &loopback(),
+            Duration::from_secs(5),
+            waited(Err(REFUSED)),
+        )
+        .await;
+        assert_eq!(outcome, Err(REFUSED));
+        assert_eq!(served.await.unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_arrives_before_the_request_is_written_is_not_taken() {
+        let (url, served) = answering_before_reading().await;
+        let outcome = send_checked(
+            None,
+            &url,
+            &loopback(),
+            Duration::from_secs(5),
+            waited(Ok(())),
+        )
+        .await;
+        assert_eq!(outcome, Ok(Outcome::Unreachable));
+        assert_eq!(served.await.unwrap(), "");
+    }
+
+    #[tokio::test]
+    async fn a_receiver_that_is_never_reached_is_never_checked() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+        assert_eq!(
+            send_checked(None, &url, &loopback(), Duration::from_secs(5), async {
+                Err(REFUSED)
+            })
+            .await,
+            Ok(Outcome::Unreachable)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_check_that_runs_past_the_bound_ends_the_attempt_as_timed_out_and_sends_nothing() {
+        let (url, served) = receiver(|mut stream| async move {
+            let (seen, closed) = bytes_until_closed(&mut stream).await;
+            assert!(closed, "the connection was closed");
+            String::from_utf8(seen).unwrap()
+        })
+        .await;
+        let began = Instant::now();
+        let outcome = send_checked(None, &url, &loopback(), Duration::from_millis(300), async {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            Ok(())
+        })
+        .await;
+        assert_eq!(outcome, Ok(Outcome::TimedOut));
+        assert!(
+            began.elapsed() < Duration::from_secs(2),
+            "the check was cut at the bound"
+        );
+        assert_eq!(served.await.unwrap(), "", "no header and no body arrived");
+    }
+
+    #[tokio::test]
+    async fn the_check_and_the_answer_share_one_bound() {
+        let (url, _served) = receiver(|mut stream| async move {
+            head(&mut stream).await;
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            String::new()
+        })
+        .await;
+        let began = Instant::now();
+        let check = async {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            Ok(())
+        };
+        let outcome =
+            send_checked(None, &url, &loopback(), Duration::from_millis(1_500), check).await;
+        assert_eq!(outcome, Ok(Outcome::TimedOut));
+        assert!(
+            began.elapsed() < Duration::from_millis(2_000),
+            "the answer had only what the check left of the bound"
+        );
+    }
+
+    /// An HTTPS receiver with a certificate only the returned client trusts. It reports whether
+    /// its handshake finished, then what it read before the connection closed.
+    async fn secured_receiver(
+        answer: bool,
+    ) -> (
+        Url,
+        Arc<ClientConfig>,
+        tokio::sync::oneshot::Receiver<()>,
+        tokio::task::JoinHandle<String>,
+    ) {
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+
+        let certified = rcgen::generate_simple_self_signed(vec!["hook.test".to_string()]).unwrap();
+        let certificate = CertificateDer::from(certified.cert.der().to_vec());
+        let key = PrivateKeyDer::try_from(certified.signing_key.serialize_der()).unwrap();
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let server = rustls::ServerConfig::builder_with_provider(provider.clone())
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![certificate.clone()], key)
+            .unwrap();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(certificate).unwrap();
+        let client = ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (secured, handshaken) = tokio::sync::oneshot::channel();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server));
+        let served = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut stream = acceptor.accept(stream).await.unwrap();
+            secured.send(()).unwrap();
+            if answer {
+                let request = head(&mut stream).await;
+                stream
+                    .write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+                    .await
+                    .unwrap();
+                stream.flush().await.unwrap();
+                return request;
+            }
+            let (seen, closed) = bytes_until_closed(&mut stream).await;
+            assert!(closed, "the connection was closed");
+            String::from_utf8(seen).unwrap()
+        });
+        (
+            Url::parse(&format!("https://hook.test:{port}/hook")).unwrap(),
+            Arc::new(client),
+            handshaken,
+            served,
+        )
+    }
+
+    #[tokio::test]
+    async fn over_https_the_check_comes_after_the_handshake_and_a_refusal_sends_nothing() {
+        let (url, client, handshaken, served) = secured_receiver(false).await;
+        let check = async {
+            tokio::time::timeout(Duration::from_secs(5), handshaken)
+                .await
+                .expect("the handshake finished before the check decided")
+                .unwrap();
+            Err(REFUSED)
+        };
+        let outcome = send_checked(
+            Some(&client),
+            &url,
+            &loopback(),
+            Duration::from_secs(5),
+            check,
+        )
+        .await;
+        assert_eq!(outcome, Err(REFUSED));
+        assert_eq!(
+            served.await.unwrap(),
+            "",
+            "nothing arrived over the secured connection"
+        );
+    }
+
+    #[tokio::test]
+    async fn over_https_a_check_that_passes_after_the_handshake_sends_the_request() {
+        let (url, client, handshaken, served) = secured_receiver(true).await;
+        let check = async {
+            tokio::time::timeout(Duration::from_secs(5), handshaken)
+                .await
+                .expect("the handshake finished before the check decided")
+                .unwrap();
+            Ok(())
+        };
+        let outcome = send_checked(
+            Some(&client),
+            &url,
+            &loopback(),
+            Duration::from_secs(5),
+            check,
+        )
+        .await;
+        assert!(
+            matches!(outcome, Ok(Outcome::Answered { status: 204, .. })),
+            "{outcome:?}"
+        );
+        assert!(
+            served
+                .await
+                .unwrap()
+                .to_ascii_lowercase()
+                .contains("host: hook.test:")
         );
     }
 }

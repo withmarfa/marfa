@@ -10,6 +10,8 @@ import { PUBLIC_ONLY } from "../../utils/own-blob-server.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
+const TIMED_OUT = "The receiver did not answer in time.";
+
 // Unlike a scripted address, localhost exercises the lookup slots.
 let server: FreshServer;
 let receiver: Receiver;
@@ -379,5 +381,178 @@ describe("webhook host-name lookups", () => {
       await dropAll(busy);
       await server.clearFault();
     }
+  }, 120_000);
+
+  it("sends no delivery whose key is revoked or loses webhooks.manage while its receiver's name is looked up, and sends one whose key stands", async () => {
+    const mint = async (label: string) => {
+      const minted = await owner().createKey({
+        label,
+        source: `lookup-slots-${label}`,
+        permissions: ["webhooks.manage"],
+        type_permissions: { "*": "read" },
+      });
+      expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+      return {
+        id: minted.data.id,
+        client: new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: minted.data.key,
+        }),
+      };
+    };
+    const revoked = await mint("revoked");
+    const narrowed = await mint("narrowed");
+    const standing = await mint("standing");
+    await subscribe(revoked.client, "localhost", "revoked");
+    await subscribe(narrowed.client, "localhost", "narrowed");
+    await subscribe(standing.client, "localhost", "standing");
+    await server.setFault("resolve:localhost=stall:1500");
+    try {
+      await write("looked up while its key changes");
+      await waitFor(
+        "all three lookups to begin",
+        async () =>
+          ((await server.faults()).find((f) => f.name === "resolve:localhost")
+            ?.fired ?? 0) >= 3
+            ? true
+            : undefined,
+        8_000,
+      );
+      expect((await owner().revokeKey(revoked.id)).ok).toBe(true);
+      const narrowing = await owner().updateKey(narrowed.id, {
+        permissions: [],
+      });
+      expect(narrowing.ok, JSON.stringify(narrowing.error)).toBe(true);
+
+      // The witness: the lookups take as long for each, and the delivery whose key stands arrives.
+      await waitFor(
+        "the delivery whose key stands",
+        async () =>
+          receiver.received.some((r) => r.path === "/hook/standing")
+            ? true
+            : undefined,
+        20_000,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      expect(receiver.received.map((r) => r.path)).toEqual(["/hook/standing"]);
+    } finally {
+      await server.clearFault();
+    }
+  }, 120_000);
+
+  it("sends nothing of a delivery whose key is revoked or loses webhooks.manage once its connection is ready, cancels it, and sends one whose key stands", async () => {
+    const mint = async (label: string) => {
+      const minted = await owner().createKey({
+        label,
+        source: `lookup-slots-${label}`,
+        permissions: ["webhooks.manage"],
+        type_permissions: { "*": "read" },
+      });
+      expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+      return {
+        id: minted.data.id,
+        client: new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: minted.data.key,
+        }),
+      };
+    };
+    const revoked = await mint("revoked");
+    const narrowed = await mint("narrowed");
+    const standing = await mint("standing");
+    await subscribe(revoked.client, "localhost", "revoked");
+    const narrowedHook = await subscribe(
+      narrowed.client,
+      "localhost",
+      "narrowed",
+    );
+    await subscribe(standing.client, "localhost", "standing");
+    await server.setFault("hold:webhook:connected");
+    try {
+      await write("written while its connection waits");
+      await server.waitForHold("hold:webhook:connected", 3);
+      expect((await owner().revokeKey(revoked.id)).ok).toBe(true);
+      const narrowing = await owner().updateKey(narrowed.id, {
+        permissions: [],
+      });
+      expect(narrowing.ok, JSON.stringify(narrowing.error)).toBe(true);
+      expect(receiver.received).toEqual([]);
+    } finally {
+      await server.clearFault("hold:webhook:connected");
+    }
+
+    // The witness: the same wait, and the delivery whose key stands arrives.
+    await waitFor(
+      "the delivery whose key stands",
+      async () =>
+        receiver.received.some((r) => r.path === "/hook/standing")
+          ? true
+          : undefined,
+      20_000,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(receiver.received.map((r) => r.path)).toEqual(["/hook/standing"]);
+
+    // With the permission back, its maker reads the delivery as canceled, never sent.
+    const restored = await owner().updateKey(narrowed.id, {
+      permissions: ["webhooks.manage"],
+    });
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    const rows = await narrowed.client.listWebhookDeliveries(narrowedHook);
+    expect(rows.ok, JSON.stringify(rows.error)).toBe(true);
+    expect(rows.data.data).toHaveLength(1);
+    expect(rows.data.data[0]).toMatchObject({
+      status: "canceled",
+      succeeded: false,
+      error:
+        "The credential the subscription belongs to no longer stands or no longer holds webhooks.manage.",
+    });
+  }, 120_000);
+
+  it("ends an attempt as not answered in time when the check of its key outlasts the 10 second bound, sends nothing, and delivers when the same wait is short", async () => {
+    const maker = await makerKey("slow-check");
+    const slow = await subscribe(maker, "localhost", "slow");
+    await server.setFault("hold:webhook:connected");
+    try {
+      await write("written while its check outlasts the bound");
+      await server.waitForHold("hold:webhook:connected", 1);
+      const began = Date.now();
+      const timedOut = await waitFor(
+        "the attempt to be recorded as not answered in time",
+        async () => {
+          const rows = await maker.listWebhookDeliveries(slow);
+          expect(rows.ok, JSON.stringify(rows.error)).toBe(true);
+          return rows.data.data[0]?.error === TIMED_OUT
+            ? rows.data.data[0]
+            : undefined;
+        },
+        20_000,
+      );
+      expect(Date.now() - began).toBeGreaterThan(8_000);
+      expect(timedOut).toMatchObject({ status: "pending", succeeded: false });
+      expect(receiver.received).toEqual([]);
+    } finally {
+      await server.clearFault("hold:webhook:connected");
+    }
+
+    // The witness: a short wait at the same point, and the delivery arrives.
+    await maker.deleteWebhook(slow);
+    await subscribe(maker, "localhost", "short");
+    await server.setFault("hold:webhook:connected");
+    try {
+      await write("written while its check waits a short while");
+      await server.waitForHold("hold:webhook:connected", 1);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    } finally {
+      await server.clearFault("hold:webhook:connected");
+    }
+    await waitFor(
+      "the delivery after the short wait",
+      async () =>
+        receiver.received.some((r) => r.path === "/hook/short")
+          ? true
+          : undefined,
+      20_000,
+    );
   }, 120_000);
 });

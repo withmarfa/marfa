@@ -830,6 +830,14 @@ When a caller authorized by `instance.maintain` or local authority runs `blob-or
 
 **Tests:** `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`, `compliance/blob-rules.test.ts › records when a run first reported a blob`.
 
+### `stores/orphan-purged-counted`
+
+When a run of `blob-orphans` purges a blob, the server MUST count the blob in `purged` whether or not every store has deleted its bytes.
+
+**Reason:** the blob left the registry when the run purged it, and `stores/cleanup-retried` finishes the deletion on a later run. A store that cannot yet delete the bytes does not undo the purge.
+
+**Tests:** `compliance/blob-purge-faults.test.ts › finishes removing the bytes on the next run, and answers the run that was cut short ok`.
+
 ### `stores/orphan-forgets`
 
 When a blob in the report is referenced again before a run purges it, the server MUST take it out of the report.
