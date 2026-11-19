@@ -141,9 +141,14 @@ describe("the core's live checks under Full CI", () => {
     expect(jobs.core).toEqual({ name: "Core", uses: CALLED });
     expect(Object.keys(jobs)).toEqual(["core", "report-failure"]);
     expect(needsOf(jobs["report-failure"])).toEqual(["core"]);
-    // No group: only a pull request's run is ever cancelled, and none starts
-    // this workflow.
-    expect(concurrency).toBeUndefined();
+    // Pushes to main share one group and none is cancelled while running, so
+    // only the newest waiting run is kept; the nightly and a dispatch each get
+    // their own.
+    expect(concurrency).toEqual({
+      group:
+        "${{ github.workflow }}-${{ github.event_name == 'push' && github.ref || github.run_id }}",
+      "cancel-in-progress": false,
+    });
   });
 
   it("are one workflow that only another can call, with nothing a caller's run could collide with", () => {

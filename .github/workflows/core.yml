@@ -20,6 +20,15 @@ on:
     - cron: "47 3 * * *"
   workflow_dispatch:
 
+# Every push to `main` shares one group and none is cancelled while it runs:
+# GitHub lets the running run finish, keeps only the newest waiting one and
+# cancels the older waiting ones. The nightly and a dispatch each get their
+# own group. A release that finds its commit's run cancelled tags the newest
+# commit whose run passed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.ref || github.run_id }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
