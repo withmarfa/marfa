@@ -1903,6 +1903,8 @@ Mint a key. Needs `keys.mint` or local authority.
 
 The key holds exactly what the flags name. A permission, a map entry or a claim each names a part of what it holds, and a part left unnamed is held as nothing. `--all-access` names every permission and every map at its widest. With none named, a key sent to a server takes the caller's whole set, and through `--socket` the command is refused, since the socket's authority has no limit to take.
 
+A key made by a credential that holds `keys.manage` is the owner's: it carries no app, so it keeps working when the app sign-in that made it is disconnected or narrowed. With `keys.manage` the key can also claim any source but those starting `oauth:` or `restored:`.
+
 ```text
 marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
 ```
@@ -1945,6 +1947,8 @@ marfa keys current [OPTIONS]
 ### marfa keys update
 
 Change a key's label, tier, expiry or permission maps. Needs `keys.manage`, `keys.mint` (a key within the caller's reach) or local authority.
+
+`keys.mint` widens a key within what the caller holds and no later than the caller's own expiry. `keys.manage` without `keys.mint` only narrows a key and never moves its expiry later. A key an app made only narrows, whoever changes it.
 
 ```text
 marfa keys update [OPTIONS] <ID>
