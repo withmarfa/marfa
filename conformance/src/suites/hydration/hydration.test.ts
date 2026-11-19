@@ -175,12 +175,12 @@ async function localRead(env: Environment, args: string[]): Promise<LocalRead> {
   for (let i = 0; i <= READ_RUNS; i++) {
     const { stdout, ms } = await device(env, args);
     const answer = JSON.parse(stdout) as {
-      items?: unknown[];
-      hits?: unknown[];
+      data: unknown[];
       completeness: string;
     };
     expect(answer.completeness, "a read of the whole copy").toBe("complete");
-    results = (answer.items ?? answer.hits ?? []).length;
+    expect(Array.isArray(answer.data), "the rows a read prints").toBe(true);
+    results = answer.data.length;
     times.push(ms);
   }
   return {

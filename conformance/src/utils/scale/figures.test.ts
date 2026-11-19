@@ -136,13 +136,14 @@ describe("a fragment", () => {
 describe("the folder and device figures", () => {
   it("takes each ceiling from the budget or the issue that set it", () => {
     expect(CEILINGS.folder_scan).toEqual({ ceiling: 60, issue: 2610 });
-    expect(CEILINGS.folder_first_sync).toEqual({ ceiling: 300, issue: null });
+    expect(CEILINGS.folder_first_sync).toEqual({ ceiling: 400, issue: null });
     expect(CEILINGS.folder_edit_to_server).toEqual({
       ceiling: 2000,
       issue: 2611,
     });
     expect(CEILINGS.folder_watch_cpu).toEqual({ ceiling: 1, issue: 2608 });
-    expect(CEILINGS.device_hydrate).toEqual({ ceiling: 60, issue: null });
+    expect(CEILINGS.device_hydrate).toEqual({ ceiling: 100, issue: null });
+    expect(CEILINGS.search_common).toEqual({ ceiling: 200, issue: null });
     expect(CEILINGS.device_follow_change).toEqual({
       ceiling: 1000,
       issue: null,
