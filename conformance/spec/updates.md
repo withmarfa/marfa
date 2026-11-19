@@ -156,13 +156,37 @@ If an update starts while an earlier update of the same programs has not settled
 
 ## Trying the new release
 
-The service runs `marfa server run`, the CLI of the release that ran before the update, until the new release settles: once the new server has stayed up for 20 seconds, with its health not `down`, it settles the update. Until then the CLI counts each start of the new release.
+The service runs `marfa server run`, the CLI of the release that ran before the update, until the new release settles: once the new server has stayed up for 20 seconds, with its health not `down`, it settles the update. Until then the CLI counts each start of the new release, and ends a start that has not settled within 10 minutes.
 
 ### `updates/start-counted-before-run`
 
-When `marfa server run` starts the new release of an update that has not settled, the CLI MUST count the start in the update's record before the new server program runs.
+When `marfa server run` starts the new release of an update that has not settled, the CLI MUST count the start in the update's record before it runs any program of the new release.
 
-**Reason:** a release that ends before any of its own code runs is still counted.
+**Reason:** a release that hangs or ends before it says which release it is is still counted, so it cannot keep the old release from coming back.
+
+**Tests:** waiting on #3177.
+
+### `updates/start-uncounted-not-run`
+
+If the CLI cannot count a start of the new release in the update's record, then the CLI MUST end `marfa server run` with status 75 without running the new release.
+
+**Reason:** a start that is not counted could fail again and again without the old release ever coming back.
+
+**Tests:** waiting on #3177.
+
+### `updates/start-waits-for-last-server`
+
+If a server of the install still holds the lock on its database, its blob folder or its control socket 30 seconds after a start of the new release begins, then the CLI MUST end `marfa server run` with status 75 without counting the start.
+
+**Reason:** on macOS a server can outlive a `marfa server run` that was killed, and a start that fails on that server's locks is not the new release failing. The CLI waits for the lock first, because that server usually ends within seconds.
+
+**Tests:** waiting on #3177.
+
+### `updates/start-unsettled-limit`
+
+If a start of the new release has run for 10 minutes and its update has not settled, then the CLI MUST stop that server, keep the start counted, and end `marfa server run` with status 75.
+
+**Reason:** a release that hangs, or whose health never rises above `down`, does not end by itself, so the old release would never come back. Ten minutes leaves room for a first start that migrates a large database.
 
 **Tests:** waiting on #3177.
 
@@ -204,11 +228,35 @@ If the new release is to be put back and the old server will not open the databa
 
 **Tests:** waiting on #3177.
 
+### `updates/rollback-put-back-fails`
+
+If the old `marfa-server` is to be put back and cannot be moved into place, then the CLI MUST put the new `marfa` in place beside the new `marfa-server`, report the update as `failed` with the error, and run the new release at the next start.
+
+**Reason:** an install left with nothing it can start would leave the owner's server down.
+
+**Tests:** waiting on #3177.
+
 ### `updates/rollback-impossible-whole`
 
 If the new release is to be put back and the old server will not open the database or the database's schema has changed since the swap, then the CLI MUST put the new `marfa` in place beside the new `marfa-server`.
 
 **Reason:** `marfa server run` refuses to start a `marfa-server` of another release, so a half-swapped install would not start again.
+
+**Tests:** waiting on #3177.
+
+### `updates/forward-marfa-fails`
+
+If the new release is to stay because the old one cannot be put back, and the new `marfa` cannot be put in place, then the CLI MUST report the update as `failed` with the step to install the new release on the host, and keep the update's record, so that the old `marfa` goes on starting the new `marfa-server` and counts none of its starts.
+
+**Reason:** the update has ended, and the server must still start until the owner installs the release whole.
+
+**Tests:** waiting on #3177.
+
+### `updates/outcome-per-attempt`
+
+If an update to a release ends after an earlier update to the same release has ended, then the server MUST report the later update's own outcome as the last update.
+
+**Reason:** a release put back once can be tried again, and the second try's outcome must not be taken for the first's.
 
 **Tests:** waiting on #3177.
 
@@ -233,5 +281,13 @@ If the new release has stayed up for 20 seconds, a program in its folder does no
 If the new release has stayed up for 20 seconds, a program in its folder does not report the new release, and the database's schema has changed since the swap, then the server MUST report the update as `failed` with the step to install the new release on the host.
 
 **Reason:** the old release cannot open a database the new one has changed, so the new release keeps running.
+
+**Tests:** waiting on #3177.
+
+### `updates/settle-half-failed-marfa`
+
+If the new release has stayed up for 20 seconds, the database's schema has changed since the swap, and the new `marfa` that was put in place does not report the new release, then the server MUST put the old `marfa` back.
+
+**Reason:** the service's `marfa server run` starts the new server again after a restart, which a `marfa` that does not run cannot do.
 
 **Tests:** waiting on #3177.

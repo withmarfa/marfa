@@ -8288,7 +8288,7 @@ export interface components {
         /** @description How the latest update ended. */
         UpdateLast: {
             /**
-             * @description How the update ended. `succeeded`: the new release stayed up. `failed`: Marfa did not change the running release, or could not put the old one back. `rolled_back`: the new release did not stay up and Marfa put the old one back.
+             * @description How the update ended. `succeeded`: the new release stayed up and both its programs are in place. `failed`: Marfa did not change the running release, or could not put the old one back. `rolled_back`: the new release did not stay up, or its programs were not all in place, and Marfa put the old one back.
              * @enum {string}
              */
             outcome: "succeeded" | "failed" | "rolled_back";
