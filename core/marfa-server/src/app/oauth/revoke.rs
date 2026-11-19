@@ -1,4 +1,4 @@
-//! Unknown, foreign and already-ended tokens answer as revoked, so the door reveals nothing.
+//! Unknown, foreign, ended and expired tokens answer as revoked, so the door reveals nothing.
 
 use std::sync::Arc;
 
@@ -59,10 +59,11 @@ pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answere
         let cache = app.catalog_handle();
         app.write(&Caller::Server, GRANT_REVOKED, move |unit| {
             let tx = unit.tx();
+            // A chain's newest token expires last, so an unexpired token means a live chain.
             let Some(found) = store::refresh_token_by_digest(tx, &digest)?.filter(|found| {
                 found.client_id == client.id
-                    && found.rotated_at.is_none()
                     && found.ended_at.is_none()
+                    && found.expires_at > unit.instant
             }) else {
                 return Ok(());
             };

@@ -2247,7 +2247,7 @@ If a tool call to an MCP endpoint the server serves carries an app's access toke
 
 When `POST /oauth/revoke` names a token the server holds, the server MUST answer `200`.
 
-**Tests:** `compliance/oauth-tokens.test.ts › of an access token ends it at once`, `› of a refresh token ends the app's grant: its tokens, its listing and the person's consent`.
+**Tests:** `compliance/oauth-tokens.test.ts › of an access token ends it at once`, `› of a refresh token ends the app's grant: its tokens, its listing and the person's consent`, `› of another app's refresh token, an unknown one or a malformed one answers 200 and changes nothing`.
 
 ### `keys-and-oauth/revoke-access-token`
 
@@ -2257,17 +2257,39 @@ When an app revokes an access token at `POST /oauth/revoke`, the server MUST ref
 
 ### `keys-and-oauth/revoke-refresh-token`
 
-When an app revokes its refresh token at `POST /oauth/revoke`, the server MUST end the app's grant: its tokens, its entry in `GET /grants` and the person's consent.
+When an app revokes at `POST /oauth/revoke` its newest refresh token, one no refresh has rotated, while that token's chain has not ended and the token has not expired, the server MUST end the app's grant: its tokens, its entry in `GET /grants` and the person's consent.
 
 **Reason:** RFC 7009 is the one way an app says "disconnect me", and an app that used it was still connected while the grant's records stood.
 
-**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token ends the app's grant: its tokens, its listing and the person's consent`.
+**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token ends the app's grant: its tokens, its listing and the person's consent`, `› of the newest refresh token after a rotation ends the app's grant`.
+
+### `keys-and-oauth/revoke-rotated-refresh-token`
+
+When an app revokes at `POST /oauth/revoke` a refresh token the server issued to that app, whether or not a refresh rotated it, while that token's chain has not ended and the token has not expired, the server MUST end the app's grant: its tokens, its newest refresh token, its entry in `GET /grants` and the person's consent.
+
+**Reason:** An app signs out with the refresh token it last stored, which need not be the newest one its chain holds.
+
+**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token a refresh already rotated ends the app's grant and its newest refresh token`, `› of the newest refresh token after a rotation ends the app's grant`, `› of another app's refresh token, an unknown one or a malformed one answers 200 and changes nothing`.
+
+### `keys-and-oauth/revoke-ended-or-expired`
+
+When an app revokes at `POST /oauth/revoke` a refresh token whose chain has ended, or one past its own expiry, the server MUST leave the app's grant, its other tokens and its entry in `GET /grants` as they stand.
+
+**Reason:** A grant keeps its ID when the person approves the app again and can hold several chains, so a token that may belong to a finished chain must not end a chain that lives.
+
+**Tests:** `compliance/oauth-tokens.test.ts › of a refresh token from before the person revoked the grant and approved the app again leaves the new approval`, `› of a refresh token whose chain a replay ended leaves the grant and its other sign-ins`, `› of a refresh token past its own expiry leaves the grant and its live sign-in`.
 
 ### `keys-and-oauth/revoke-unknown-token`
 
 When a revocation names a token the server does not hold, never issued, already revoked or already gone, the server MUST answer `200` as RFC 7009 has it, whatever `token_type_hint` says.
 
-**Tests:** `compliance/oauth.test.ts › answers 200 to revoking a token it does not hold, and 400 to a revocation naming no token`, `compliance/oauth-tokens.test.ts › of an access token ends it at once`.
+**Tests:** `compliance/oauth.test.ts › answers 200 to revoking a token it does not hold, and 400 to a revocation naming no token`, `compliance/oauth-tokens.test.ts › of an access token ends it at once`, `› of another app's refresh token, an unknown one or a malformed one answers 200 and changes nothing`.
+
+### `keys-and-oauth/revoke-other-client-token`
+
+When an app revokes at `POST /oauth/revoke` a refresh token the server issued to another client, the server MUST leave that token and its grant unchanged.
+
+**Tests:** `compliance/oauth-tokens.test.ts › of another app's refresh token, an unknown one or a malformed one answers 200 and changes nothing`.
 
 ### `keys-and-oauth/revoke-no-token`
 

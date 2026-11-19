@@ -739,6 +739,56 @@ async fn a_grant_revoked_between_approval_and_poll_issues_nothing() {
 }
 
 #[tokio::test]
+async fn revoking_a_rotated_refresh_token_ends_the_grant() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(OFFLINE_NOTES).await;
+    let issued = instance.tokens(&client, OFFLINE_NOTES).await;
+    let first = text_at(&issued, "refresh_token");
+    let renewed = instance.refresh(&client, first).await;
+    assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
+    let renewed = renewed.json();
+
+    instance.revoke(&client, first).await;
+    assert_eq!(instance.count(WITHDRAWN).await, 1);
+    let newest = instance
+        .refresh(&client, text_at(&renewed, "refresh_token"))
+        .await;
+    refused_as(&newest, "invalid_grant");
+    let written = instance.write_note(text_at(&renewed, "access_token")).await;
+    assert_eq!(written.status, StatusCode::UNAUTHORIZED, "{}", written.text);
+}
+
+#[tokio::test]
+async fn revoking_an_expired_refresh_token_leaves_the_live_chain_of_its_grant() {
+    let instance = Instance::signed_in().await;
+    let client = instance.register(OFFLINE_NOTES).await;
+    let unused = instance.tokens(&client, OFFLINE_NOTES).await;
+    let live = instance.tokens(&client, OFFLINE_NOTES).await;
+    instance.app.clock.advance(10 * DAY_MS).unwrap();
+    let rotated = instance
+        .refresh(&client, text_at(&live, "refresh_token"))
+        .await;
+    assert_eq!(rotated.status, StatusCode::OK, "{}", rotated.text);
+    instance.app.clock.advance(21 * DAY_MS).unwrap();
+
+    for expired in [&unused, &live] {
+        instance
+            .revoke(&client, text_at(expired, "refresh_token"))
+            .await;
+    }
+    assert_eq!(instance.count(WITHDRAWN).await, 0);
+    let renewed = instance
+        .refresh(&client, text_at(&rotated.json(), "refresh_token"))
+        .await;
+    assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
+
+    instance
+        .revoke(&client, text_at(&renewed.json(), "refresh_token"))
+        .await;
+    assert_eq!(instance.count(WITHDRAWN).await, 1);
+}
+
+#[tokio::test]
 async fn a_poll_that_cannot_read_the_consent_fails_as_the_server() {
     let instance = Instance::signed_in().await;
     let scope = "core.note:read offline_access";
