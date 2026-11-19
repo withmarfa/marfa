@@ -859,8 +859,8 @@ impl Http {
         }
     }
 
-    /// Reads the root before the next request, whether or not the instance
-    /// was confirmed under this credential.
+    /// Reads the root now, whether or not the instance was confirmed under
+    /// this credential.
     pub(crate) fn confirm_again(&self) -> Result<(), CoreError> {
         let Some(confirmation) = &self.confirmation else {
             return Ok(());
