@@ -21,6 +21,7 @@ macro_rules! point_list {
         HOLD_STREAM_REPLAY = Hold "stream-replay" None;
         HOLD_STREAM_DRAIN = Hold "stream-drain" None;
         HOLD_FOLDER_STATUS_READ = Hold "folder-status-read" None;
+        HOLD_WEBHOOK_CONNECTED = Hold "webhook:connected" None;
         HOLD_WEBHOOK_RESPONSE = Hold "webhook:response" None;
         HOLD_WEBHOOK_SCHEDULE = Hold "webhook-schedule" None;
         HOLD_WEBHOOK_SCHEDULE_QUEUED = Hold "webhook-schedule:queued" None;

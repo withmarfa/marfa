@@ -437,4 +437,54 @@ describe("webhook host-name lookups", () => {
       await server.clearFault();
     }
   }, 120_000);
+
+  it("writes no byte of a delivery whose key is revoked or loses webhooks.manage after the connection is ready, and writes one whose key stands", async () => {
+    const mint = async (label: string) => {
+      const minted = await owner().createKey({
+        label,
+        source: `lookup-slots-${label}`,
+        permissions: ["webhooks.manage"],
+        type_permissions: { "*": "read" },
+      });
+      expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+      return {
+        id: minted.data.id,
+        client: new MarfaClient({
+          baseUrl: server.apiUrl,
+          apiKey: minted.data.key,
+        }),
+      };
+    };
+    const revoked = await mint("revoked");
+    const narrowed = await mint("narrowed");
+    const standing = await mint("standing");
+    await subscribe(revoked.client, "localhost", "revoked");
+    await subscribe(narrowed.client, "localhost", "narrowed");
+    await subscribe(standing.client, "localhost", "standing");
+    await server.setFault("hold:webhook:connected");
+    try {
+      await write("written while its connection waits");
+      await server.waitForHold("hold:webhook:connected", 3);
+      expect((await owner().revokeKey(revoked.id)).ok).toBe(true);
+      const narrowing = await owner().updateKey(narrowed.id, {
+        permissions: [],
+      });
+      expect(narrowing.ok, JSON.stringify(narrowing.error)).toBe(true);
+      expect(receiver.received).toEqual([]);
+    } finally {
+      await server.clearFault("hold:webhook:connected");
+    }
+
+    // The witness: the same wait, and the delivery whose key stands arrives.
+    await waitFor(
+      "the delivery whose key stands",
+      async () =>
+        receiver.received.some((r) => r.path === "/hook/standing")
+          ? true
+          : undefined,
+      20_000,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(receiver.received.map((r) => r.path)).toEqual(["/hook/standing"]);
+  }, 120_000);
 });

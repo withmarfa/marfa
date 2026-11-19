@@ -219,6 +219,42 @@ async fn replying(first: u16) -> (String, Arc<AtomicUsize>) {
     (url, received)
 }
 
+/// Answers every delivery `200`; counts each connection that sent any byte at all, a header alone included.
+async fn counting_any_byte() -> (String, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/hook", listener.local_addr().unwrap());
+    let seen = Arc::new(AtomicUsize::new(0));
+    let counted = seen.clone();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let counted = counted.clone();
+            tokio::spawn(async move {
+                let mut read = Vec::new();
+                let mut chunk = [0u8; 4096];
+                loop {
+                    let Ok(size) = stream.read(&mut chunk).await else {
+                        return;
+                    };
+                    if size == 0 {
+                        return;
+                    }
+                    if read.is_empty() {
+                        counted.fetch_add(1, Ordering::SeqCst);
+                    }
+                    read.extend_from_slice(&chunk[..size]);
+                    if complete(&read) {
+                        break;
+                    }
+                }
+                let _ = stream
+                    .write_all(b"HTTP/1.1 200 X\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                    .await;
+            });
+        }
+    });
+    (url, seen)
+}
+
 fn complete(read: &[u8]) -> bool {
     let text = String::from_utf8_lossy(read);
     let Some((head, body)) = text.split_once("\r\n\r\n") else {
@@ -435,35 +471,57 @@ async fn a_maker_alone_leaves_slots_free_for_a_maker_whose_delivery_falls_due_la
     instance.sender_released();
 }
 
-async fn deliveries_during_a_lookup(change: impl AsyncFnOnce(&Instance, &str)) -> (usize, usize) {
+/// Where a delivery is held while its key changes.
+#[derive(Clone, Copy)]
+enum Held {
+    /// While the receiver's name is looked up.
+    Lookup,
+    /// Once the connection is ready, before the first byte is written.
+    Connected,
+}
+
+async fn deliveries_during(
+    held: Held,
+    change: impl AsyncFnOnce(&Instance, &str),
+) -> (usize, usize) {
     let instance = Instance::start().await;
     let writer = instance.key("writer", true).await;
     let (changed_id, changed) = instance.minted("changed-maker", false).await;
     let standing = instance.key("standing-maker", false).await;
-    let (to_changed, changed_received) = answering().await;
+    let (to_changed, changed_received) = counting_any_byte().await;
     let (to_standing, standing_received) = answering().await;
     let by_name = |url: &str| url.replace("127.0.0.1", "localhost");
     for (key, url) in [(&changed, &to_changed), (&standing, &to_standing)] {
         let (status, made) = instance.register(key, &by_name(url)).await;
         assert_eq!(status, StatusCode::CREATED, "{made}");
     }
-    instance
-        .app
-        .faults
-        .set("resolve:localhost", Some("stall:1500"))
-        .unwrap();
-
-    announce(&instance, &writer).await;
-    until("both lookups did not begin", Duration::from_secs(5), || {
-        instance
+    match held {
+        Held::Lookup => instance
             .app
             .faults
-            .list()
-            .iter()
-            .any(|fault| fault.name == "resolve:localhost" && fault.fired >= 2)
-    })
+            .set("resolve:localhost", Some("stall:1500"))
+            .unwrap(),
+        Held::Connected => instance
+            .app
+            .faults
+            .set("hold:webhook:connected", None)
+            .unwrap(),
+    }
+
+    announce(&instance, &writer).await;
+    until(
+        "both deliveries did not wait",
+        Duration::from_secs(5),
+        || {
+            instance.app.faults.list().iter().any(|fault| match held {
+                Held::Lookup => fault.name == "resolve:localhost" && fault.fired >= 2,
+                Held::Connected => fault.name == "hold:webhook:connected" && fault.waiting >= 2,
+            })
+        },
+    )
     .await;
     change(&instance, &changed_id).await;
+    instance.app.faults.clear(Some("hold:webhook:connected"));
     until(
         "the standing maker's delivery did not arrive",
         Duration::from_secs(10),
@@ -479,13 +537,13 @@ async fn deliveries_during_a_lookup(change: impl AsyncFnOnce(&Instance, &str)) -
 
 #[tokio::test]
 async fn a_delivery_goes_out_when_its_key_stands_through_the_lookup_of_the_receivers_name() {
-    let (changed, standing) = deliveries_during_a_lookup(async |_, _| {}).await;
+    let (changed, standing) = deliveries_during(Held::Lookup, async |_, _| {}).await;
     assert_eq!((changed, standing), (1, 1));
 }
 
 #[tokio::test]
 async fn no_delivery_goes_out_when_its_key_is_revoked_during_the_lookup_of_the_receivers_name() {
-    let (changed, standing) = deliveries_during_a_lookup(async |instance, id| {
+    let (changed, standing) = deliveries_during(Held::Lookup, async |instance, id| {
         let status = instance
             .through_control(Method::DELETE, &format!("/keys/{id}"), Value::Null)
             .await;
@@ -498,7 +556,41 @@ async fn no_delivery_goes_out_when_its_key_is_revoked_during_the_lookup_of_the_r
 #[tokio::test]
 async fn no_delivery_goes_out_when_its_key_loses_webhooks_manage_during_the_lookup_of_the_receivers_name()
  {
-    let (changed, standing) = deliveries_during_a_lookup(async |instance, id| {
+    let (changed, standing) = deliveries_during(Held::Lookup, async |instance, id| {
+        let status = instance
+            .through_control(
+                Method::PATCH,
+                &format!("/keys/{id}"),
+                json!({ "permissions": [] }),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    })
+    .await;
+    assert_eq!((changed, standing), (0, 1));
+}
+
+#[tokio::test]
+async fn a_delivery_goes_out_when_its_key_stands_while_its_connection_waits_to_write() {
+    let (changed, standing) = deliveries_during(Held::Connected, async |_, _| {}).await;
+    assert_eq!((changed, standing), (1, 1));
+}
+
+#[tokio::test]
+async fn no_byte_goes_out_when_its_key_is_revoked_while_its_connection_waits_to_write() {
+    let (changed, standing) = deliveries_during(Held::Connected, async |instance, id| {
+        let status = instance
+            .through_control(Method::DELETE, &format!("/keys/{id}"), Value::Null)
+            .await;
+        assert_eq!(status, StatusCode::OK);
+    })
+    .await;
+    assert_eq!((changed, standing), (0, 1));
+}
+
+#[tokio::test]
+async fn no_byte_goes_out_when_its_key_loses_webhooks_manage_while_its_connection_waits_to_write() {
+    let (changed, standing) = deliveries_during(Held::Connected, async |instance, id| {
         let status = instance
             .through_control(
                 Method::PATCH,

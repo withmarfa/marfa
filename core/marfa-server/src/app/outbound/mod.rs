@@ -8,8 +8,13 @@ pub mod store;
 pub use slots::{Asker, deliveries_released, delivery_share_is_free};
 use slots::{BOUND, Lane};
 
+use std::future::Future;
+use std::io;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock};
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use http_body_util::Full;
@@ -20,7 +25,7 @@ use hyper_util::rt::TokioIo;
 use rustls::ClientConfig;
 use rustls::pki_types::ServerName;
 use rustls_platform_verifier::BuilderVerifierExt;
-use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use ureq::config::Config;
@@ -91,9 +96,107 @@ pub enum Outcome {
     TimedOut,
 }
 
+/// Decides, once the connection is set up, whether the request may go.
+pub type Gate = Pin<Box<dyn Future<Output = bool> + Send>>;
+
 pub struct Outgoing<'a> {
     pub headers: &'a [(&'a str, String)],
     pub body: String,
+    /// Nothing is written until it answers `true`.
+    pub gate: Gate,
+}
+
+/// The gate answered `false`, so no byte of the request was written.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Withheld;
+
+/// A stream that writes nothing until its gate has answered `true`.
+struct Gated<S> {
+    inner: S,
+    standing: Standing,
+    withheld: Arc<AtomicBool>,
+}
+
+enum Standing {
+    Waiting(Gate),
+    Open,
+    Closed,
+}
+
+impl<S> Gated<S> {
+    /// Wrap a secured stream once it is secured, so the gate comes after the handshake.
+    fn new(inner: S, gate: Gate, withheld: Arc<AtomicBool>) -> Self {
+        Self {
+            inner,
+            standing: Standing::Waiting(gate),
+            withheld,
+        }
+    }
+
+    fn poll_open(&mut self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match &mut self.standing {
+            Standing::Open => Poll::Ready(Ok(())),
+            Standing::Closed => Poll::Ready(Err(refused())),
+            Standing::Waiting(gate) => match gate.as_mut().poll(cx) {
+                Poll::Pending => Poll::Pending,
+                Poll::Ready(true) => {
+                    self.standing = Standing::Open;
+                    Poll::Ready(Ok(()))
+                }
+                Poll::Ready(false) => {
+                    self.standing = Standing::Closed;
+                    self.withheld.store(true, Ordering::Release);
+                    Poll::Ready(Err(refused()))
+                }
+            },
+        }
+    }
+}
+
+fn refused() -> io::Error {
+    io::Error::new(io::ErrorKind::PermissionDenied, "the request was withheld")
+}
+
+impl<S: AsyncRead + Unpin> AsyncRead for Gated<S> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: AsyncWrite + Unpin> AsyncWrite for Gated<S> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        std::task::ready!(self.poll_open(cx))?;
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[io::IoSlice<'_>],
+    ) -> Poll<io::Result<usize>> {
+        std::task::ready!(self.poll_open(cx))?;
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
 }
 
 enum Lookup {
@@ -264,19 +367,30 @@ static TLS: LazyLock<Option<Arc<ClientConfig>>> = LazyLock::new(|| {
     }
 });
 
-/// The bound includes connecting; redirects are never followed.
+/// The bound includes connecting and the gate; redirects are never followed.
 pub async fn post(
     url: &Url,
     targets: &[Target],
     outgoing: Outgoing<'_>,
     bound: Duration,
-) -> Outcome {
-    tokio::time::timeout(bound, attempt(url, targets, outgoing))
+) -> Result<Outcome, Withheld> {
+    let withheld = Arc::new(AtomicBool::new(false));
+    let sent = tokio::time::timeout(bound, attempt(url, targets, outgoing, &withheld))
         .await
-        .unwrap_or(Outcome::TimedOut)
+        .unwrap_or(Outcome::TimedOut);
+    if withheld.load(Ordering::Acquire) {
+        Err(Withheld)
+    } else {
+        Ok(sent)
+    }
 }
 
-async fn attempt(url: &Url, targets: &[Target], outgoing: Outgoing<'_>) -> Outcome {
+async fn attempt(
+    url: &Url,
+    targets: &[Target],
+    outgoing: Outgoing<'_>,
+    withheld: &Arc<AtomicBool>,
+) -> Outcome {
     let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default()) else {
         return Outcome::Unreachable;
     };
@@ -296,11 +410,17 @@ async fn attempt(url: &Url, targets: &[Target], outgoing: Outgoing<'_>) -> Outco
         return Outcome::Unreachable;
     };
     let _ = stream.set_nodelay(true);
-    let Ok(request) = request(url, host, outgoing) else {
+    let Outgoing {
+        headers,
+        body,
+        gate,
+    } = outgoing;
+    let Ok(request) = request(url, host, headers, body) else {
         return Outcome::Unreachable;
     };
+    let withheld = withheld.clone();
     if url.scheme() != "https" {
-        return exchange(stream, request).await;
+        return exchange(Gated::new(stream, gate, withheld), request).await;
     }
     let (Some(config), Some(name)) = (TLS.as_ref(), server_name(url)) else {
         return Outcome::Unreachable;
@@ -309,7 +429,7 @@ async fn attempt(url: &Url, targets: &[Target], outgoing: Outgoing<'_>) -> Outco
         .connect(name, stream)
         .await
     {
-        Ok(secured) => exchange(secured, request).await,
+        Ok(secured) => exchange(Gated::new(secured, gate, withheld), request).await,
         Err(_) => Outcome::Unreachable,
     }
 }
@@ -325,7 +445,8 @@ fn server_name(url: &Url) -> Option<ServerName<'static>> {
 fn request(
     url: &Url,
     host: &str,
-    outgoing: Outgoing<'_>,
+    headers: &[(&str, String)],
+    body: String,
 ) -> hyper::http::Result<Request<Full<Bytes>>> {
     let authority = match url.port() {
         Some(port) => format!("{host}:{port}"),
@@ -340,11 +461,11 @@ fn request(
         .uri(target)
         .header(HOST, authority)
         .header(CONTENT_TYPE, "application/json")
-        .header(CONTENT_LENGTH, outgoing.body.len());
-    for (name, value) in outgoing.headers {
+        .header(CONTENT_LENGTH, body.len());
+    for (name, value) in headers {
         builder = builder.header(*name, value);
     }
-    builder.body(Full::new(Bytes::from(outgoing.body)))
+    builder.body(Full::new(Bytes::from(body)))
 }
 
 async fn exchange<S>(stream: S, request: Request<Full<Bytes>>) -> Outcome
@@ -634,13 +755,25 @@ mod tests {
         vec![literal("127.0.0.1".parse().unwrap())]
     }
 
-    async fn send(url: &Url, targets: &[Target], bound: Duration) -> Outcome {
+    async fn send_gated(
+        url: &Url,
+        targets: &[Target],
+        bound: Duration,
+        gate: Gate,
+    ) -> Result<Outcome, Withheld> {
         let headers = [("x-marfa-event-type", "item.created".to_string())];
         let outgoing = Outgoing {
             headers: &headers,
             body: "{}".to_string(),
+            gate,
         };
         post(url, targets, outgoing, bound).await
+    }
+
+    async fn send(url: &Url, targets: &[Target], bound: Duration) -> Outcome {
+        send_gated(url, targets, bound, Box::pin(async { true }))
+            .await
+            .unwrap()
     }
 
     #[tokio::test]
@@ -795,6 +928,76 @@ mod tests {
         assert_eq!(
             reach(&faults, &literal, false, Asker::McpFetch).await,
             Reach::NotPublic
+        );
+    }
+
+    /// What reaches `stream` before it goes quiet, and so what a receiver would have seen.
+    async fn bytes_before_silence(stream: &mut TcpStream) -> Vec<u8> {
+        let mut seen = Vec::new();
+        let mut chunk = [0u8; 256];
+        while let Ok(Ok(read)) =
+            tokio::time::timeout(Duration::from_millis(500), stream.read(&mut chunk)).await
+        {
+            if read == 0 {
+                break;
+            }
+            seen.extend_from_slice(&chunk[..read]);
+        }
+        seen
+    }
+
+    #[tokio::test]
+    async fn a_gate_that_answers_no_after_the_connection_is_made_writes_nothing() {
+        let (url, served) = receiver(|mut stream| async move {
+            let seen = bytes_before_silence(&mut stream).await;
+            String::from_utf8(seen).unwrap()
+        })
+        .await;
+        let gate: Gate = Box::pin(async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            false
+        });
+        let outcome = send_gated(&url, &loopback(), Duration::from_secs(5), gate).await;
+        assert_eq!(outcome, Err(Withheld));
+        assert_eq!(served.await.unwrap(), "", "no header and no body arrived");
+    }
+
+    #[tokio::test]
+    async fn a_gate_that_answers_yes_after_the_same_wait_lets_the_request_through() {
+        let (url, served) = receiver(|mut stream| async move {
+            let request = head(&mut stream).await;
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+                .await
+                .unwrap();
+            request
+        })
+        .await;
+        let gate: Gate = Box::pin(async {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            true
+        });
+        let outcome = send_gated(&url, &loopback(), Duration::from_secs(5), gate).await;
+        assert!(matches!(outcome, Ok(Outcome::Answered { status: 204, .. })));
+        assert!(
+            served
+                .await
+                .unwrap()
+                .to_ascii_lowercase()
+                .contains("x-marfa-event-type: item.created")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_receiver_that_is_never_reached_is_not_a_withheld_request() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+        let gate: Gate = Box::pin(async { false });
+        assert_eq!(
+            send_gated(&url, &loopback(), Duration::from_secs(5), gate).await,
+            Ok(Outcome::Unreachable)
         );
     }
 }

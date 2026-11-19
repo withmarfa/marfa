@@ -17,8 +17,8 @@ use crate::app::access::standing_maker;
 use crate::app::catalog::{self, Catalog};
 use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::events::{Head, Judge, Judged};
-use crate::app::faults::HOLD_WEBHOOK_RESPONSE;
-use crate::app::outbound::{self, Asker, Outcome, Outgoing, Reach};
+use crate::app::faults::{HOLD_WEBHOOK_CONNECTED, HOLD_WEBHOOK_RESPONSE};
+use crate::app::outbound::{self, Asker, Gate, Outcome, Outgoing, Reach};
 use crate::app::refusal::{Refusal, Result};
 use crate::db::Write;
 
@@ -32,6 +32,7 @@ pub const TIMED_OUT: &str = "The receiver did not answer in time.";
 pub const REDIRECTED: &str = "The receiver answered with a redirect, which is not followed.";
 pub const NOT_PUBLIC: &str = "The receiver's address is not public.";
 
+#[derive(Clone, PartialEq)]
 struct Ready {
     url: String,
     secret: String,
@@ -283,7 +284,13 @@ enum Sending {
     Done(Box<Ready>, Attempted),
 }
 
-async fn send(app: &App, id: &str, ready: Box<Ready>, maker: &str, spent: bool) -> Result<Sending> {
+async fn send(
+    app: &Arc<App>,
+    id: &str,
+    ready: Box<Ready>,
+    maker: &str,
+    spent: bool,
+) -> Result<Sending> {
     let Ok(url) = Url::parse(&ready.url) else {
         return Ok(Sending::Done(ready, Attempted::Sent(Outcome::Unreachable)));
     };
@@ -299,12 +306,6 @@ async fn send(app: &App, id: &str, ready: Box<Ready>, maker: &str, spent: bool) 
         Reach::NoSlot => return Ok(Sending::Deferred),
         Reach::NotPublic => return Ok(Sending::Done(ready, Attempted::NotPublic)),
     };
-    let ready = match prepared(app, id).await? {
-        Prepared::Gone => return Ok(Sending::Gone),
-        Prepared::Cancel(reason) => return Ok(Sending::Cancel(reason)),
-        Prepared::Send(now) if now.url == ready.url => now,
-        Prepared::Send(_) => return Ok(Sending::Deferred),
-    };
     let now_ms = app.clock.now_ms();
     let mut body = ready.body.clone();
     body.insert("event_id".into(), ready.event_id.to_string().into());
@@ -317,12 +318,51 @@ async fn send(app: &App, id: &str, ready: Box<Ready>, maker: &str, spent: bool) 
         ("x-marfa-signature", signed),
         ("x-marfa-event-type", ready.event_type.clone()),
     ];
+    let (verdict, held) = tokio::sync::oneshot::channel();
     let outgoing = Outgoing {
         headers: &headers,
         body: String::from_utf8_lossy(&printed).into_owned(),
+        gate: standing_gate(app.clone(), id.to_string(), (*ready).clone(), verdict),
     };
-    let outcome = outbound::post(&url, &targets, outgoing, ATTEMPT_BOUND).await;
+    let Ok(outcome) = outbound::post(&url, &targets, outgoing, ATTEMPT_BOUND).await else {
+        return match held.await {
+            Ok(Holds::Gone) => Ok(Sending::Gone),
+            Ok(Holds::Cancel(reason)) => Ok(Sending::Cancel(reason)),
+            Ok(Holds::Changed) | Err(_) => Ok(Sending::Deferred),
+            Ok(Holds::Failed(refusal)) => Err(refusal),
+        };
+    };
     Ok(done(ready, outcome))
+}
+
+/// Why the gate kept a delivery's request from going out.
+enum Holds {
+    Gone,
+    Cancel(&'static str),
+    /// The subscription or the event reads differently than what was signed.
+    Changed,
+    Failed(Refusal),
+}
+
+/// Reads the delivery on committed state before the first byte is written, headers included.
+fn standing_gate(
+    app: Arc<App>,
+    id: String,
+    signed: Ready,
+    verdict: tokio::sync::oneshot::Sender<Holds>,
+) -> Gate {
+    Box::pin(async move {
+        app.faults.hold(HOLD_WEBHOOK_CONNECTED, None).await;
+        let hold = match prepared(&app, &id).await {
+            Ok(Prepared::Send(now)) if *now == signed => return true,
+            Ok(Prepared::Send(_)) => Holds::Changed,
+            Ok(Prepared::Gone) => Holds::Gone,
+            Ok(Prepared::Cancel(reason)) => Holds::Cancel(reason),
+            Err(refusal) => Holds::Failed(refusal),
+        };
+        let _ = verdict.send(hold);
+        false
+    })
 }
 
 fn done(ready: Box<Ready>, outcome: Outcome) -> Sending {

@@ -1191,13 +1191,13 @@ When the key that registered a subscription no longer holds `webhooks.manage`, t
 
 **Tests:** `compliance/webhook-delivery.test.ts › settles a pending delivery unsent when its key no longer holds webhooks.manage`.
 
-### `events/webhook-checked-after-lookup`
+### `events/webhook-checked-before-the-first-byte`
 
-When the key that registered a subscription is revoked, or no longer holds `webhooks.manage`, while the server looks up the address of a delivery's receiver, the server MUST NOT send that delivery.
+When the key that registered a subscription is revoked, or no longer holds `webhooks.manage`, after the server looked up a delivery's receiver and before the server writes the first byte of that delivery's request, the server MUST NOT write any part of that request, its headers and its body included.
 
-**Reason:** the lookup can take seconds, so the key's standing is read again once it ends and decides the send.
+**Reason:** looking up the receiver's name and connecting to it can each take seconds, so the key's standing is read again on committed state once the connection is ready, and that read decides whether anything is written. A request already written is in flight and is not recalled.
 
-**Tests:** `compliance/webhook-lookup-slots.test.ts › sends no delivery whose key is revoked or loses webhooks.manage while its receiver's name is looked up, and sends one whose key stands`.
+**Tests:** `compliance/webhook-lookup-slots.test.ts › sends no delivery whose key is revoked or loses webhooks.manage while its receiver's name is looked up, and sends one whose key stands`, `compliance/webhook-lookup-slots.test.ts › writes no byte of a delivery whose key is revoked or loses webhooks.manage after the connection is ready, and writes one whose key stands`.
 
 ### `events/webhook-expired-silent`
 
