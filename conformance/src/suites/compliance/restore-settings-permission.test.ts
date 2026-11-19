@@ -21,6 +21,7 @@ import {
   signIn,
   type App,
 } from "../../utils/signed-in.js";
+import { diskHolds } from "../../utils/store-faults.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
 // The fixtures change instance settings and need their own backup folder.
@@ -253,6 +254,64 @@ describe("a restore's settings and config.manage", () => {
     const restored = await app.restoreArchive(plain.archive);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     await expectWritten(plain.id, plain.hash);
+  });
+
+  it("judges a restore's settings after every write admitted before it, and places no file when it refuses", async () => {
+    await setConfig({ trash_retention_days: 45 });
+    const app = await signedInNow(backupsOnlyApp, BACKUPS_ONLY);
+    const held = archiveWith([setting("trash_retention_days", 45)]);
+    const pause = (ms: number) =>
+      new Promise((resolve) => setTimeout(resolve, ms));
+
+    // A bulk write holds the writer, so the settings change below is admitted
+    // and waits behind it, and the restore starts while the change is unwritten.
+    await server.setFault("hold:bulk-page=1");
+    const page = fetch(`${server.apiUrl}/items/bulk`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${server.workingKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        mode: "upsert",
+        items: [
+          {
+            type: "core.note",
+            source_id: `restore-settings-held-${randomUUID()}`,
+            properties: { title: "held" },
+          },
+        ],
+      }),
+    });
+    let removed: Promise<{ status: number; error?: unknown }> | undefined;
+    let restoring: Promise<{ status: number; error?: unknown }> | undefined;
+    try {
+      await server.waitForHold("hold:bulk-page");
+      removed = operator.patchConfig({ trash_retention_days: null });
+      await pause(500);
+      restoring = app.restoreArchive(held.archive);
+      await pause(1500);
+    } finally {
+      await server.clearFault("hold:bulk-page");
+    }
+    expect((await page).status).toBe(200);
+    const change = await removed!;
+    expect(change.status, JSON.stringify(change.error)).toBe(200);
+
+    expectSettingsRefused(await restoring!, ["trash_retention_days"]);
+    await expectNothingWritten(held.id, held.hash);
+    expect(await diskHolds(server.controlSocket, held.hash)).toBe(false);
+    expect((await config()).trash_retention_days).toBeUndefined();
+
+    try {
+      const restored = await (
+        await signedInNow(bothApp, BOTH)
+      ).restoreArchive(held.archive);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      expect(await diskHolds(server.controlSocket, held.hash)).toBe(true);
+    } finally {
+      await setConfig({ trash_retention_days: null });
+    }
   });
 
   it("holds a backup restore to the same rule: it restores while the instance stores the backup's settings, and needs config.manage once one is gone", async () => {

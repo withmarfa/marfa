@@ -394,9 +394,9 @@ If the `instance.ndjson.gz` of an archive carries a `setting` line for `sign_in_
 
 ### `archive/restore-settings-permission`
 
-If a caller that does not hold `config.manage` sends `POST /restore` or `POST /backups/{instance_id}/{name}/restore` for an archive that would store a setting, a secret to set again or an enforcement setting the instance does not store, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage` and `details.settings` naming each setting the archive would store, with `enforcement` for the enforcement settings.
+If an app's access token that `keys-and-oauth/step-up-recent` admits to `POST /restore` or `POST /backups/{instance_id}/{name}/restore`, and that does not hold `config.manage`, sends that restore for an archive that would store a setting, a secret to set again or an enforcement setting the instance does not store, then the server MUST answer `403 forbidden` with `details.required_scope` `config.manage` and `details.settings` naming each setting the archive would store, with `enforcement` for the enforcement settings.
 
-**Reason:** adding a setting requires the same permission as changing it at `/config`. This applies to the instance's own backup if a setting has been removed since the backup was taken.
+**Reason:** adding a setting requires the same permission as changing it at `/config`. This applies to the instance's own backup if a setting has been removed since the backup was taken. A token without `backups.manage` is refused first (`keys-and-oauth/step-up-permission-first`), and one whose sign-in is not recent is challenged first (`keys-and-oauth/step-up-challenge`).
 
 **Tests:** `compliance/restore-settings-permission.test.ts › refuses an app without config.manage an archive that would store a setting, writing no item, file or setting, where the same archive without it restores`, `› refuses an app without config.manage an archive whose only instance line is an enforcement setting, which an app holding it restores`, `› refuses an app without config.manage an archive naming a secret the instance would ask to be set again, which an app holding it restores`, `› holds a backup restore to the same rule: it restores while the instance stores the backup's settings, and needs config.manage once one is gone`.
 
@@ -404,11 +404,19 @@ If a caller that does not hold `config.manage` sends `POST /restore` or `POST /b
 
 When the server refuses a restore under `archive/restore-settings-permission`, the server MUST write none of the archive's items, files and settings.
 
-**Tests:** `compliance/restore-settings-permission.test.ts › refuses an app without config.manage an archive that would store a setting, writing no item, file or setting, where the same archive without it restores`, `› refuses an app without config.manage an archive whose only instance line is an enforcement setting, which an app holding it restores`, `› refuses an app without config.manage an archive naming a secret the instance would ask to be set again, which an app holding it restores`, `› holds a backup restore to the same rule: it restores while the instance stores the backup's settings, and needs config.manage once one is gone`.
+**Tests:** `compliance/restore-settings-permission.test.ts › refuses an app without config.manage an archive that would store a setting, writing no item, file or setting, where the same archive without it restores`, `› refuses an app without config.manage an archive whose only instance line is an enforcement setting, which an app holding it restores`, `› refuses an app without config.manage an archive naming a secret the instance would ask to be set again, which an app holding it restores`, `› judges a restore's settings after every write admitted before it, and places no file when it refuses`, `› holds a backup restore to the same rule: it restores while the instance stores the backup's settings, and needs config.manage once one is gone`.
+
+### `archive/restore-settings-permission-admitted`
+
+When the server judges a restore under `archive/restore-settings-permission`, the server MUST judge it on the settings that every write it admitted before the restore leaves.
+
+**Reason:** a change at `/config` that the server accepted before the restore began lands before the restore is judged, so a refusal comes before the restore places any file.
+
+**Tests:** `compliance/restore-settings-permission.test.ts › judges a restore's settings after every write admitted before it, and places no file when it refuses`.
 
 ### `archive/restore-settings-permission-none`
 
-When a caller that holds `backups.manage` but not `config.manage` restores an archive whose settings the instance already stores or this server does not have, the server MUST restore the archive.
+When an app's access token that `keys-and-oauth/step-up-recent` admits to `POST /restore` or `POST /backups/{instance_id}/{name}/restore`, and that does not hold `config.manage`, sends that restore for an archive whose settings the instance already stores or this server does not have, the server MUST restore the archive as it would for a token that also holds `config.manage`.
 
 **Reason:** such an archive stores no setting, so `archive/restore-settings-permission` does not hold it back.
 

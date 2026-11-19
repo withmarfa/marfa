@@ -26,6 +26,7 @@ use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{connectors, edge_types, sources, stored, tables, types};
 use crate::app::{provenance, restore_running};
+use crate::db::Write;
 use intake::{Intake, LineFile, Received};
 
 /// What an archive never holds, each with the kind a client reads and what the owner does.
@@ -310,18 +311,25 @@ impl App {
             } = received;
             let judged = (
                 app.clone(),
+                caller.clone(),
                 registrations.settings.clone(),
                 registrations.secrets.clone(),
                 registrations.enforcement.clone(),
             );
-            let would_store = app
-                .db
-                .read(move |tx| {
-                    let (app, settings, secrets, enforcement) = judged;
-                    stored::restoring(tx, &app, &settings, &secrets, enforcement.as_ref())
+            // On the writer, so every write admitted before the hold has landed.
+            app.db
+                .write(Write::own().unsynced(), move |tx| {
+                    let (app, caller, settings, secrets, enforcement) = judged;
+                    let caller = caller.current(tx, &app.clock.stamp())?;
+                    caller.require_settings_restore(&stored::restoring(
+                        tx,
+                        &app,
+                        &settings,
+                        &secrets,
+                        enforcement.as_ref(),
+                    )?)
                 })
                 .await?;
-            caller.require_settings_restore(&would_store)?;
             let placed = app.place_restored(carried, absent).await?;
             let lacking: Vec<String> = placed
                 .missing
