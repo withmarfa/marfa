@@ -53,6 +53,15 @@ enum Files {
     Keep,
 }
 
+/// Whether a pass that read the whole folder goes on to let go of the
+/// missing files past the grace, or only journals them for a confirmation
+/// to decide.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Journal {
+    Sweep,
+    Hold,
+}
+
 /// What a pass has read from the copy before it walks the directory.
 struct ScanStart {
     report: ScanReport,
@@ -75,6 +84,7 @@ struct ScanState {
     /// When the pass began, before it captured any file's size and time.
     began: std::time::SystemTime,
     full: bool,
+    journal: Journal,
     guard: Guard,
     scope: Option<Scoping>,
     skipped_keys: Vec<String>,
@@ -234,7 +244,14 @@ impl Folder {
     }
 
     pub fn scan(&self) -> Result<ScanReport> {
-        self.scan_as(true, None, Files::Write, Reading::Walk)
+        self.scan_as(true, None, Files::Write, Reading::Walk, Journal::Sweep)
+    }
+
+    /// A quick pass that journals each missing file and lets go of none, so
+    /// a confirmation alone decides on the files it confirms. A renamed file
+    /// is still found, since its new path has no binding and so is read.
+    pub(super) fn scan_holding_missing(&self) -> Result<ScanReport> {
+        self.scan_as(false, None, Files::Write, Reading::Walk, Journal::Hold)
     }
 
     /// `scan`, but no file in the directory is written, moved or removed: a
@@ -243,7 +260,7 @@ impl Folder {
     /// temporary file a crashed write left stays, all for a pass that writes
     /// files.
     pub(super) fn scan_keeping_files(&self) -> Result<ScanReport> {
-        self.scan_as(true, None, Files::Keep, Reading::Walk)
+        self.scan_as(true, None, Files::Keep, Reading::Walk, Journal::Sweep)
     }
 
     /// A watch's pass. Short of `full`, it skips a file whose size, time and
@@ -262,7 +279,7 @@ impl Folder {
         settle: Duration,
         reading: Reading<'_>,
     ) -> Result<ScanReport> {
-        self.scan_as(full, Some(settle), Files::Write, reading)
+        self.scan_as(full, Some(settle), Files::Write, reading, Journal::Sweep)
     }
 
     fn scan_as(
@@ -271,6 +288,7 @@ impl Folder {
         settle: Option<Duration>,
         mode: Files,
         reading: Reading<'_>,
+        journal: Journal,
     ) -> Result<ScanReport> {
         self.read_limit_if_holding();
         let start = match self.scan_root()? {
@@ -296,6 +314,7 @@ impl Folder {
             ControlFlow::Continue(scan) => scan,
         };
         scan.reread_embeds = reread_embeds;
+        scan.journal = journal;
         if self.read_unchanged_and_documents(&mut scan)?.is_break() {
             // Nothing has been written yet, so a walk can take over.
             let again = if keep {
@@ -303,7 +322,7 @@ impl Folder {
             } else {
                 Reading::Walk
             };
-            return self.scan_as(full, settle, mode, again);
+            return self.scan_as(full, settle, mode, again, journal);
         }
         self.count_unchanged(&mut scan);
         self.read_rest(&mut scan)?;
@@ -556,6 +575,7 @@ impl Folder {
         Ok(ControlFlow::Continue(ScanState {
             began,
             full,
+            journal: Journal::Sweep,
             guard,
             scope,
             skipped_keys: Vec::new(),
@@ -1588,7 +1608,10 @@ impl Folder {
             report.missing += 1;
         }
         if !incomplete && self.root_gone().is_none() {
-            self.sweep_journal(settings, peers, scan.full, report)?;
+            report.swept = true;
+            if scan.journal == Journal::Sweep {
+                self.sweep_journal(settings, peers, scan.full, report)?;
+            }
         } else {
             self.note_kept_look_passed()?;
         }
