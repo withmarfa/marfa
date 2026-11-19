@@ -1548,7 +1548,7 @@ If the database refuses the write that the `database_write` probe makes, with an
 
 If the disk store refuses to look for a blob, or its folder or its `.marfa-store` marker is missing, or the marker names another store, then the server MUST answer the `blob_storage` component of `GET /health` as `down`.
 
-**Reason:** a store that cannot be reached is not healthy because it holds no blob: every name is absent from a folder that is gone. A folder that holds another store's marker is not this instance's store, and the server writes nothing there.
+**Reason:** the server uses the marker to identify its own store. A missing or mismarked folder cannot serve its blobs.
 
 **Tests:** `compliance/health.test.ts › answers 503 with blob storage down when the disk store refuses, and 200 once it answers`, `› answers the disk component degraded, never down, and blob storage down, when the free space cannot be read and the store refuses, and ok once both are cleared`, `compliance/blob-store-folders.test.ts › answers blob storage down while the folder holds another store's marker, and ok when it holds the server's own`.
 

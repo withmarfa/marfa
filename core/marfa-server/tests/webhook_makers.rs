@@ -435,9 +435,6 @@ async fn a_maker_alone_leaves_slots_free_for_a_maker_whose_delivery_falls_due_la
     instance.sender_released();
 }
 
-/// A delivery whose maker's key is revoked while its receiver's name is looked up, beside one
-/// whose maker's key stands. Both lookups take as long, so the standing maker's delivery
-/// arriving says the revoked maker's attempt had its turn.
 async fn deliveries_during_a_lookup(change: impl AsyncFnOnce(&Instance, &str)) -> (usize, usize) {
     let instance = Instance::start().await;
     let writer = instance.key("writer", true).await;

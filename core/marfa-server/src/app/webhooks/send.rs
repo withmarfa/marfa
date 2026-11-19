@@ -218,12 +218,10 @@ async fn write(
 pub enum Ended {
     /// What the attempt met is recorded, or there was nothing to send.
     Settled,
-    /// No lookup slot came free, so the delivery is left due, unrecorded and with no attempt spent.
+    /// The delivery stays due, without spending an attempt.
     Deferred,
 }
 
-/// Reads the delivery's standing now: its subscription, its maker's authority and what the maker
-/// may see of the event.
 async fn prepared(app: &App, id: &str) -> Result<Prepared> {
     let at = app.clock.stamp();
     let cache = app.catalog_handle();
@@ -279,12 +277,9 @@ pub async fn attempt(app: Arc<App>, id: String, maker: String, spent: bool) -> R
 }
 
 enum Sending {
-    /// No lookup slot came free for the maker and the delivery may still wait.
     Deferred,
-    /// The delivery stopped being one to send while its address was looked up.
     Cancel(&'static str),
     Gone,
-    /// The delivery as last read before it went out, and how the attempt ended.
     Done(Box<Ready>, Attempted),
 }
 
@@ -304,7 +299,6 @@ async fn send(app: &App, id: &str, ready: Box<Ready>, maker: &str, spent: bool) 
         Reach::NoSlot => return Ok(Sending::Deferred),
         Reach::NotPublic => return Ok(Sending::Done(ready, Attempted::NotPublic)),
     };
-    // The lookup waited, so what the delivery may send is read again and decides the send.
     let ready = match prepared(app, id).await? {
         Prepared::Gone => return Ok(Sending::Gone),
         Prepared::Cancel(reason) => return Ok(Sending::Cancel(reason)),
