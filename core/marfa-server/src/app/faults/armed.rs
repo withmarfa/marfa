@@ -155,9 +155,33 @@ pub struct Released {
     names: Vec<String>,
 }
 
+/// Each admitted write's number and audit action, in the order the writer runs them.
+type Queue = Arc<Mutex<Vec<(u64, Option<&'static str>)>>>;
+
 #[derive(Debug, Default)]
 pub struct Faults {
     armed: Mutex<Vec<Armed>>,
+    queued: Queue,
+    next_queued: AtomicU64,
+}
+
+/// A write the writer has admitted and not yet started, listed until it is dropped.
+pub struct QueuedWrite {
+    queued: Queue,
+    number: u64,
+}
+
+impl QueuedWrite {
+    pub fn started(self) {}
+}
+
+impl Drop for QueuedWrite {
+    fn drop(&mut self) {
+        self.queued
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|(number, _)| *number != self.number);
+    }
 }
 
 fn point(kind: Kind, name: &str) -> Option<&'static Point> {
@@ -559,6 +583,28 @@ impl Faults {
                 fired: fault.fired,
                 held_when_answered: fault.held_when_answered.clone(),
             })
+            .collect()
+    }
+
+    pub fn queue_write(&self, action: Option<&'static str>) -> QueuedWrite {
+        let number = self.next_queued.fetch_add(1, Ordering::SeqCst);
+        self.queued
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((number, action));
+        QueuedWrite {
+            queued: self.queued.clone(),
+            number,
+        }
+    }
+
+    /// The audit action of each write waiting on the writer, in the order it will run.
+    pub fn queued_writes(&self) -> Vec<Option<&'static str>> {
+        self.queued
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|(_, action)| *action)
             .collect()
     }
 

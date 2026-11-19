@@ -44,9 +44,9 @@ import { createServer } from "node:net";
  * negative step. The adapter keeps the offset in the state directory and
  * passes it back on the next boot, so a restarted server does not go back in
  * time. `fault set` arms a named fault, `fault clear` removes one or all, and
- * `fault list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`,
- * with `held_when_answered` on a `release` fault that has acted. A server
- * starts with no fault.
+ * `fault list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}],"queued_writes":[..]}`,
+ * with `held_when_answered` on a `release` fault that has acted and the audit
+ * action of each write waiting on the writer. A server starts with no fault.
  *
  * The state directory holds the SQLite file, the blob folder, the server log
  * (what the server wrote to stdout, which is JSON lines only), what it wrote
@@ -1203,7 +1203,7 @@ async function clearFault(state: string, name?: string): Promise<void> {
   console.log(`[marfa-server] fault cleared: ${name ?? "all"}`);
 }
 
-/** What is armed, and how many callers wait at each hold. */
+/** What is armed, how many callers wait at each hold, and what waits on the writer. */
 async function listFaults(state: string): Promise<string> {
   return JSON.stringify(await hook(state, "/_control/test/faults"));
 }

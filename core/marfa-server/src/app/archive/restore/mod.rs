@@ -21,11 +21,12 @@ use crate::app::blobs::Scratch;
 use crate::app::blobs::restore as blobs;
 use crate::app::catalog::{self, Snapshot};
 use crate::app::edges::write::Writing;
-use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM};
+use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM, HOLD_RESTORE_SETTINGS};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{connectors, edge_types, sources, stored, tables, types};
 use crate::app::{provenance, restore_running};
+use crate::db::Write;
 use intake::{Intake, LineFile, Received};
 
 /// What an archive never holds, each with the kind a client reads and what the owner does.
@@ -308,6 +309,28 @@ impl App {
                 unknown_kinds,
                 ..
             } = received;
+            let judged = (
+                app.clone(),
+                caller.clone(),
+                registrations.settings.clone(),
+                registrations.secrets.clone(),
+                registrations.enforcement.clone(),
+            );
+            app.faults.hold(HOLD_RESTORE_SETTINGS, None).await;
+            // On the writer, so every write admitted before the hold has landed.
+            app.db
+                .write(Write::own().unsynced(), move |tx| {
+                    let (app, caller, settings, secrets, enforcement) = judged;
+                    let caller = caller.current(tx, &app.clock.stamp())?;
+                    caller.require_settings_restore(&stored::restoring(
+                        tx,
+                        &app,
+                        &settings,
+                        &secrets,
+                        enforcement.as_ref(),
+                    )?)
+                })
+                .await?;
             let placed = app.place_restored(carried, absent).await?;
             let lacking: Vec<String> = placed
                 .missing
@@ -332,6 +355,13 @@ impl App {
                         .require_step_up(Permission::BackupsManage, &started_at)?;
                     unit.fanning(false, |unit| {
                         let tx = unit.tx();
+                        unit.caller.require_settings_restore(&stored::restoring(
+                            tx,
+                            &settings,
+                            &registrations.settings,
+                            &registrations.secrets,
+                            registrations.enforcement.as_ref(),
+                        )?)?;
                         let before = catalog::current(&cache, tx, Snapshot::Pending)?;
                         let types_plan = types::write::plan_restored(&before, &registrations.types)?;
                         let edges_plan =

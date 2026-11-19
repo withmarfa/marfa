@@ -268,6 +268,22 @@ impl Caller {
         }
     }
 
+    /// A restore stores settings only for a caller that may change them at `/config`.
+    pub fn require_settings_restore(&self, settings: &[String]) -> Result<()> {
+        if settings.is_empty() || self.holds(Permission::ConfigManage) {
+            return Ok(());
+        }
+        Err(Refusal::new(
+            Code::Forbidden,
+            format!(
+                "Restoring this archive would store settings, which requires the config.manage permission: {}.",
+                settings.join(", ")
+            ),
+        )
+        .with_detail("required_scope", Permission::ConfigManage.word())
+        .with_detail("settings", settings.to_vec()))
+    }
+
     /// A key has no sign-in to renew, so it is refused rather than challenged.
     pub fn require_step_up(&self, permission: Permission, at: &str) -> Result<()> {
         match self {

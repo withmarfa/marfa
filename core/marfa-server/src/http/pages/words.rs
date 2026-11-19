@@ -116,7 +116,7 @@ const POWERS: [(&str, PowerWords); 14] = [
         PowerWords {
             title: "See, take, adopt and restore backups",
             note: Some(
-                "Restoring adds the items, types and settings from any backup or archive this app chooses, including browser origins, rate limits and retention periods, whatever else it can reach.",
+                "This app can restore items and types outside its usual access. If a restore would add settings, the app also needs permission to change Marfa's settings.",
             ),
         },
     ),

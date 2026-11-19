@@ -11,6 +11,7 @@ macro_rules! point_list {
         HOLD_BULK_PAGE = Hold "bulk-page" Nth;
         HOLD_EXPORT_PAGE = Hold "export-page" Nth;
         HOLD_EXPORT_CHECK = Hold "export-check" Nth;
+        HOLD_RESTORE_SETTINGS = Hold "restore:settings" None;
         HOLD_RESTORE_ITEM = Hold "restore:item" Nth;
         HOLD_RESTORE_COMMIT = Hold "restore:before-commit" None;
         HOLD_BACKUP_READ = Hold "backup:read" None;
