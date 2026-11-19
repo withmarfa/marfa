@@ -3717,13 +3717,13 @@ If the audit record of a browser session's end cannot be committed, then the ser
 
 ## Acts that need a recent sign-in
 
-Four acts restore a whole archive or backup, move where people sign in or change whether the server may reach private addresses, so they ask that a person signed in within the last five minutes, as RFC 9470 describes: `POST /restore` and `POST /backups/{instance_id}/{name}/restore`, which take `backups.manage`, and a `PUT /config` or `PATCH /config` that moves `sign_in_address` or changes `allow_private_addresses`, which take `config.manage`. An app's access token is dated by the browser session that approved the authorization or device code it came from: a session begins when the owner signs in by password or passkey, or confirms it is them (`authentication/recent-refusal`).
+These acts restore a whole archive or backup, move where people sign in, change whether the server may reach private addresses or change where files and backups go, so they ask that a person signed in within the last five minutes, as RFC 9470 describes: `POST /restore` and `POST /backups/{instance_id}/{name}/restore`, which take `backups.manage`, and a `PUT /config` or `PATCH /config` that moves `sign_in_address`, changes `allow_private_addresses` or changes any of `backup_path`, `object_store_bucket`, `object_store_endpoint`, `object_store_region`, `object_store_path_style` and `object_store_prefix`, which take `config.manage`. A write changes a setting when the value stored for it after the write, in its plain spelling, differs from the one stored before, or only one of the two exists: `null`, an empty value and a `PUT /config` that leaves out a stored setting each change it, and the value already stored does not (`instance/destination-unchanged`). An app's access token is dated by the browser session that approved the authorization or device code it came from: a session begins when the owner signs in by password or passkey, or confirms it is them (`authentication/recent-refusal`).
 
 ### `keys-and-oauth/step-up-recent`
 
 When an app's access token that holds the permission an act in this section takes, and whose browser session began at most 300 seconds before the request, sends that act, the server MUST make the act as it would for the private local command.
 
-**Tests:** `compliance/step-up.test.ts › restores an archive and a backup, and changes allow_private_addresses, when its owner signed in within five minutes`, `› is judged by its own sign-in when the same app holds a token from an older sign-in and one from a newer`, `› is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`.
+**Tests:** `compliance/step-up.test.ts › restores an archive and a backup, and changes allow_private_addresses, when its owner signed in within five minutes`, `› is judged by its own sign-in when the same app holds a token from an older sign-in and one from a newer`, `› is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within five minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
 
 ### `keys-and-oauth/step-up-challenge`
 
@@ -3731,19 +3731,19 @@ If an app's access token that holds the permission an act in this section takes,
 
 **Reason:** RFC 9470 section 3: the app sends the person through the authorization endpoint with `max_age`, or asks for a device code with `max_age` (`keys-and-oauth/device-max-age-sign-in`), and asks again with the new token. A session dated after the request is one the server's clock cannot place, so it is not taken as recent.
 
-**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`.
+**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within five minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
 
 ### `keys-and-oauth/step-up-challenge-header`
 
 When the server answers `401 insufficient_user_authentication`, the server MUST carry `WWW-Authenticate: Bearer error="insufficient_user_authentication", max_age="300"`.
 
-**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`.
+**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within five minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
 
 ### `keys-and-oauth/step-up-writes-nothing`
 
 When the server answers an act in this section `401 insufficient_user_authentication`, the server MUST NOT store any part of the act.
 
-**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`, `› writes no item at a challenged archive restore or a challenged backup restore, though the same restores by a token whose owner signed in just now write it`.
+**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`, `› writes no item at a challenged archive restore or a challenged backup restore, though the same restores by a token whose owner signed in just now write it`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within five minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
 
 ### `keys-and-oauth/step-up-permission-first`
 
@@ -3773,13 +3773,13 @@ If an API key that holds the permission an act in this section takes sends that 
 
 **Reason:** a key is not issued through a sign-in, so it has none to renew, and a challenge would send a client that follows it into a loop. A person makes the act from an app they signed in to, or with the private local command.
 
-**Tests:** `compliance/step-up.test.ts › refuses a key, even one holding every permission the acts take, with 403 app_sign_in_required and never a challenge`, `compliance/instance-addresses.test.ts › is refused to a key, which has no sign-in to renew`, `compliance/destination-addresses.test.ts › refuses a key holding config.manage the switch, which an app whose owner signed in just now changes`, `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key without backups.manage at each door`, `compliance/restore-archive.test.ts › refuses a key, which has no sign-in to renew`.
+**Tests:** `compliance/step-up.test.ts › refuses a key, even one holding every permission the acts take, with 403 app_sign_in_required and never a challenge`, `compliance/instance-addresses.test.ts › is refused to a key, which has no sign-in to renew`, `compliance/destination-addresses.test.ts › refuses a key holding config.manage the switch, which an app whose owner signed in just now changes`, `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key without backups.manage at each door`, `compliance/restore-archive.test.ts › refuses a key, which has no sign-in to renew`, `compliance/destination-step-up.test.ts › is refused a change to backup_path or an object_store_ setting that says where files go, by PATCH, PUT, null or a PUT that leaves it out, with 403 app_sign_in_required, and changes nothing`.
 
 ### `keys-and-oauth/step-up-socket`
 
 When the private local command sends an act in this section, the server MUST make it without asking for any sign-in.
 
-**Tests:** `compliance/step-up.test.ts › keeps the four acts on the private socket with no challenge`.
+**Tests:** `compliance/step-up.test.ts › keeps the four acts on the private socket with no challenge`, `compliance/destination-step-up.test.ts › changes where files and backups go with no sign-in`.
 
 ## Audit records
 

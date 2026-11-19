@@ -6451,27 +6451,27 @@ export interface components {
             addresses: string[];
             /** @description The address people sign in at, an origin with no path. Absent: this computer's own address. */
             sign_in_address?: string;
-            /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. */
+            /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Changing it needs a sign-in from the last five minutes. Absent: no backup folder. */
             backup_path?: string;
-            /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups: a name of 1 to 255 ASCII letters, digits, dots, colons, hyphens and underscores, other than `.` and `..`. Absent: no object store. */
+            /** @description The bucket of an S3-compatible object store that also keeps each file and the backups: 1 to 255 ASCII letters, digits, `.`, `:`, `-` and `_`, other than `.` and `..`. Changing it needs a sign-in from the last five minutes. Absent: no object store. */
             object_store_bucket?: string;
             /**
-             * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Absent: `us-east-1`.
+             * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Changing it needs a sign-in from the last five minutes. Absent: `us-east-1`.
              * @default us-east-1
              */
             object_store_region: string;
             /**
              * Format: uri
-             * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it.
+             * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Changing it needs a sign-in from the last five minutes. Absent: the store's provider chooses it.
              */
             object_store_endpoint?: string;
             /**
-             * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name given without the bucket. Absent: `true`.
+             * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name given without the bucket. Changing it needs a sign-in from the last five minutes. Absent: `true`.
              * @default true
              */
             object_store_path_style: boolean;
             /**
-             * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`.
+             * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Changing it needs a sign-in from the last five minutes. Absent: `marfa`.
              * @default marfa
              */
             object_store_prefix: string;
@@ -34957,27 +34957,27 @@ export interface operations {
                     confirm_sign_in_address_change?: boolean;
                     /** @description `true` moves the sign-in address without first checking that it answers as this instance, for a host that answers only after the move. Only the private local command can send it. */
                     skip_sign_in_address_check?: boolean;
-                    /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. */
+                    /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Changing it needs a sign-in from the last five minutes. Absent: no backup folder. */
                     backup_path?: string;
-                    /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups: a name of 1 to 255 ASCII letters, digits, dots, colons, hyphens and underscores, other than `.` and `..`. Absent: no object store. */
+                    /** @description The bucket of an S3-compatible object store that also keeps each file and the backups: 1 to 255 ASCII letters, digits, `.`, `:`, `-` and `_`, other than `.` and `..`. Changing it needs a sign-in from the last five minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: no object store. */
                     object_store_bucket?: string;
                     /**
-                     * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Absent: `us-east-1`.
+                     * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Changing it needs a sign-in from the last five minutes. Absent: `us-east-1`.
                      * @default us-east-1
                      */
                     object_store_region?: string;
                     /**
                      * Format: uri
-                     * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it.
+                     * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Changing it needs a sign-in from the last five minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: the store's provider chooses it.
                      */
                     object_store_endpoint?: string;
                     /**
-                     * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name given without the bucket. Absent: `true`.
+                     * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name given without the bucket. Changing it needs a sign-in from the last five minutes. Absent: `true`.
                      * @default true
                      */
                     object_store_path_style?: boolean;
                     /**
-                     * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`.
+                     * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Changing it needs a sign-in from the last five minutes. Absent: `marfa`.
                      * @default marfa
                      */
                     object_store_prefix?: string;
@@ -34991,7 +34991,7 @@ export interface operations {
                      * @default false
                      */
                     allow_private_addresses?: boolean;
-                    /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
+                    /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. A `PUT` that leaves it out keeps it, unless the `PUT` changes `object_store_bucket` or `object_store_endpoint`; `PATCH` with `null` removes it. */
                     object_store_secret_access_key?: string;
                     /**
                      * Format: uri
@@ -35214,7 +35214,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't hold `config.manage`, which `details.required_scope` names, or the body sets `skip_sign_in_address_check`, which only the private local command can send.
-             *     - `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
+             *     - `app_sign_in_required`: the change needs a recent sign-in, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
              */
             403: {
                 headers: {
@@ -35444,27 +35444,27 @@ export interface operations {
                     confirm_sign_in_address_change?: boolean;
                     /** @description `true` moves the sign-in address without first checking that it answers as this instance, for a host that answers only after the move. Only the private local command can send it. */
                     skip_sign_in_address_check?: boolean;
-                    /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Absent: no backup folder. `null` removes it, so the server's default applies. */
+                    /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Changing it needs a sign-in from the last five minutes. Absent: no backup folder. `null` removes it, so the server's default applies. */
                     backup_path?: string | null;
-                    /** @description The bucket of an S3-compatible object store that keeps a second copy of each file and the backups: a name of 1 to 255 ASCII letters, digits, dots, colons, hyphens and underscores, other than `.` and `..`. Absent: no object store. `null` removes it, so the server's default applies. */
+                    /** @description The bucket of an S3-compatible object store that also keeps each file and the backups: 1 to 255 ASCII letters, digits, `.`, `:`, `-` and `_`, other than `.` and `..`. Changing it needs a sign-in from the last five minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: no object store. `null` removes it, so the server's default applies. */
                     object_store_bucket?: string | null;
                     /**
-                     * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Absent: `us-east-1`. `null` removes it, so the server's default applies.
+                     * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Changing it needs a sign-in from the last five minutes. Absent: `us-east-1`. `null` removes it, so the server's default applies.
                      * @default us-east-1
                      */
                     object_store_region?: string | null;
                     /**
                      * Format: uri
-                     * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Absent: the store's provider chooses it. `null` removes it, so the server's default applies.
+                     * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Changing it needs a sign-in from the last five minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: the store's provider chooses it. `null` removes it, so the server's default applies.
                      */
                     object_store_endpoint?: string | null;
                     /**
-                     * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name given without the bucket. Absent: `true`. `null` removes it, so the server's default applies.
+                     * @description `true` if the object store at `object_store_endpoint` is addressed by path rather than by host. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name given without the bucket. Changing it needs a sign-in from the last five minutes. Absent: `true`. `null` removes it, so the server's default applies.
                      * @default true
                      */
                     object_store_path_style?: boolean | null;
                     /**
-                     * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Absent: `marfa`. `null` removes it, so the server's default applies.
+                     * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Changing it needs a sign-in from the last five minutes. Absent: `marfa`. `null` removes it, so the server's default applies.
                      * @default marfa
                      */
                     object_store_prefix?: string | null;
@@ -35478,7 +35478,7 @@ export interface operations {
                      * @default false
                      */
                     allow_private_addresses?: boolean | null;
-                    /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. `null` or an empty string removes it. */
+                    /** @description The secret access key for the object store, with no whitespace around it. Marfa never returns it. `null` or an empty string removes it, and so does a change to `object_store_bucket` or `object_store_endpoint` that doesn't set it. */
                     object_store_secret_access_key?: string | null;
                     /**
                      * Format: uri
@@ -35701,7 +35701,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't hold `config.manage`, which `details.required_scope` names, or the body sets `skip_sign_in_address_check`, which only the private local command can send.
-             *     - `app_sign_in_required`: the change moves the sign-in address or changes `allow_private_addresses`, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
+             *     - `app_sign_in_required`: the change needs a recent sign-in, and you are an API key. A person makes it from an app they signed in to, or with the private local command.
              */
             403: {
                 headers: {
