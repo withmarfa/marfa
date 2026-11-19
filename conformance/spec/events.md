@@ -6,7 +6,7 @@ Every rule about a stream is about the plain stream unless it says otherwise. Th
 
 ## Event types
 
-Every event and stream frame the server sends is a row of the table below, which is written from the server's own event names and so cannot differ from them. An event is also the `event:` of its frame. A row's last column names the statements that hold each write to its event, and each of them has a fixture. A write that no row names announces nothing: those the contract states are the writes of `events/settings-silent`, `connectors/agreements-silent-live` and `inbound-webhooks/receipt-no-event`, and a write that changes nothing (`versions/unchanged-silent`).
+Every event and stream frame the server sends is a row of the table below, which is written from the server's own event names and so cannot differ from them. An event is also the `event:` of its frame. A row's last column names the statements that hold the event, including any that say when it is not sent, and each of them has a fixture. A write that no row names announces nothing: those the contract states are the writes of `events/settings-silent`, `connectors/agreements-silent-live` and `inbound-webhooks/receipt-no-event`, and a write that changes nothing (`versions/unchanged-silent`).
 
 <!-- event-types-table:start -->
 

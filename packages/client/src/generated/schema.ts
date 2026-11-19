@@ -12495,7 +12495,7 @@ export interface operations {
     listOccurrences: {
         parameters: {
             query: {
-                /** @description Window start. A date-time needs a zone or offset; a date is UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days of its `timezone` or UTC. */
+                /** @description A date-time needs seconds and a zone or offset; a date is UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days of its `timezone` or UTC. */
                 from: string;
                 /** @description Window end, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time. */
                 to: string;
