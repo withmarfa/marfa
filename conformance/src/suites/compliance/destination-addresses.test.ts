@@ -131,11 +131,7 @@ describe("where the server may send", () => {
       const server = await bootFreshServer("switch-literals", PUBLIC_ONLY);
       try {
         const socket = socketOf(server);
-        const keys = [
-          "heartbeat_url",
-          "posthog_host",
-          "object_store_endpoint",
-        ];
+        const keys = ["heartbeat_url", "posthog_host", "object_store_endpoint"];
         // The PostHog host is https and set with its token, so the switch is
         // the one rule it can break.
         const scheme = (key: string) =>

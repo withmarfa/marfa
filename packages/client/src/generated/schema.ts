@@ -5908,11 +5908,11 @@ export interface components {
          */
         AttentionConcern: {
             /**
-             * @description health: degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expiring; backup: none kept, off or failing; setting: a secret to set again; clock: ahead or behind; fault: a fault Marfa met in the last 24 hours, since it started; unavailable: no answer.
+             * @description health: degraded or down; job: last run failed; connector: failed, problems or quiet; folder: sync problems; key: expiring; backup: none, off or failing; setting: secret to set again; clock: ahead or behind; fault: met lately; unavailable: no answer.
              * @enum {string}
              */
             kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "setting" | "clock" | "fault" | "unavailable";
-            /** @description The component, job, connector, folder, or key ID, the check that couldn't answer, a backup concern such as `no_backup_destination`, `run` or `store`, a secret setting's key, a clock concern `clock_ahead` or `clock_behind`, or a fault's kind and where it happened, such as `database:POST /items/{id}`, `panic:job backup` or `internal:webhooks schedule`, with `other` counting faults in more places than are listed. */
+            /** @description The component, job, connector, folder or key ID, the check that couldn't answer, a backup concern such as `store`, a secret setting's key, `clock_ahead` or `clock_behind`, or a fault's kind and place, such as `database:POST /items/{id}`, or `other`. */
             reference: string;
             /** @description A short name for the concern. */
             title: string;
