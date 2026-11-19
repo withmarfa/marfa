@@ -626,18 +626,27 @@ describe("folder clock and scan boundaries", () => {
     };
     await quiet();
 
+    const patches = () =>
+      harness.server.requests.filter(
+        (request) =>
+          request.method === "PATCH" && request.pathname.startsWith("/items/"),
+      ).length;
+    const sent = patches();
     writeFileSync(
       join(dir, "one.md"),
       readFileSync(join(dir, "one.md"), "utf8").replace("words", "edited"),
     );
-    // A pass looks at the files the events it has heard name, and the edit's
-    // event may reach the watch after the first pass the clock allows.
-    let edited = rendered;
-    for (let pass = 0; pass < 4 && edited === rendered; pass += 1) {
-      await nextPass(harness);
-      edited = await device.hooks.reached("folder-render");
-    }
-    expect(edited - rendered).toBe(1);
+    // The edit's notifications can reach the watch after those of the settings
+    // writes before it, so passes run until one has sent the edit.
+    await vi.waitFor(
+      async () => {
+        await nextPass(harness);
+        expect(patches(), "no pass sent the edit").toBe(sent + 1);
+      },
+      { timeout: 20_000, interval: 0 },
+    );
+    const edited = await device.hooks.reached("folder-render");
+    expect(edited - rendered, "the edit was not rendered once").toBe(1);
     rendered = edited;
     await quiet();
     const contents = Object.fromEntries(
