@@ -74,6 +74,8 @@ mod remove_tests;
 mod replace_tests;
 #[cfg(test)]
 mod request_limit_tests;
+#[cfg(test)]
+mod resend_tests;
 mod row_writes;
 mod scaffold;
 #[cfg(test)]

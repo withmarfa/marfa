@@ -622,13 +622,13 @@ fn a_reading_handle_that_is_renewed_writes_nothing_and_keeps_working() {
     answers(&server);
     let (dir, writer, reader) = writer_and_reader(&server);
     let sent_as = |core: &Core| {
-        store::meta_get(&core.conn().unwrap(), "upload_sent_as/queued")
+        store::meta_get(&core.conn().unwrap(), "sent_as/queued")
             .unwrap()
             .unwrap()
     };
     let first = store::credential_digest("Bearer k");
     let fresh = store::credential_digest("Bearer fresh");
-    store::meta_set(&writer.conn().unwrap(), "upload_sent_as/queued", &first).unwrap();
+    store::meta_set(&writer.conn().unwrap(), "sent_as/queued", &first).unwrap();
     let before = store_bytes(&dir);
     let renewed = || {
         server.on(

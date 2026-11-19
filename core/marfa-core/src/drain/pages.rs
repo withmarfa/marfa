@@ -572,6 +572,7 @@ fn send_page(
         generation,
         stop,
     } = *sender;
+    let credential = store::credential_digest(&http.authorization());
     let (sent, payloads, tagged) = {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
@@ -596,9 +597,11 @@ fn send_page(
                 continue;
             }
             store::mark_sent(&tx, &now.id)?;
+            store::record_sent_as(&tx, &now.id, &credential)?;
             let tags = still_carried(&tx, &now.id, &candidate.tags)?;
             for tag in &tags {
                 store::mark_sent(&tx, &tag.id)?;
+                store::record_sent_as(&tx, &tag.id, &credential)?;
             }
             let names = tags_of(&tags);
             if let (false, Some(object)) = (names.is_empty(), payload.as_object_mut()) {

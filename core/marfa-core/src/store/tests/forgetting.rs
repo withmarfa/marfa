@@ -323,14 +323,16 @@ fn forgetting_named_rows_cleans_only_their_own_effect_slots() {
     for id in ["named", "kept", "orphan"] {
         meta_set(&conn, &format!("dead_effect/{id}"), "x").unwrap();
         meta_set(&conn, &format!("chosen_tier/{id}"), "library").unwrap();
-        meta_set(&conn, &format!("upload_sent_as/{id}"), "x").unwrap();
+        meta_set(&conn, &format!("sent_as/{id}"), "x").unwrap();
+        meta_set(&conn, &format!("sent_source/{id}"), "x").unwrap();
         meta_set(&conn, &format!("cleared_time/{id}"), "1").unwrap();
     }
     assert_eq!(forget_answered_ids(&conn, &named(&["named"])).unwrap(), 1);
     for prefix in [
         "dead_effect/",
         "chosen_tier/",
-        "upload_sent_as/",
+        "sent_as/",
+        "sent_source/",
         "cleared_time/",
     ] {
         assert!(

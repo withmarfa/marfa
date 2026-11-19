@@ -130,7 +130,77 @@ When a drain sends a write again that it sent before, a device MUST send it unde
 
 **Reason:** an attempt whose answer the device never read may have taken effect, and only the same key lets the server answer the next attempt from its record. A release mints a fresh key only where the server holds an answer under the key that applied none of the write (`queue-and-verdicts/release-fresh-key`, `queue-and-verdicts/rows-release-key-spent`, `queue-and-verdicts/undo-release-key-spent`). A server on another contract version says whether that answer applied the write (`queue-and-verdicts/contract-changed-accepted`, `queue-and-verdicts/contract-changed-key-spent`).
 
-**Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `device/grant-recovery.test.ts › keeps an edit blocked for $kind $level until its grant returns`, `device/versioned-deletes-live.test.ts › replays a lost delete answer without deleting a restored newer item`, `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
+**Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `device/grant-recovery.test.ts › keeps an edit blocked for $kind $level until its grant returns`, `device/versioned-deletes-live.test.ts › replays a lost delete answer without deleting a restored newer item`, `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`, `device/resend-credential-live.test.ts › sends again under the same key an edit and a delete whose answers were lost, and the server answers each from its record`.
+
+### `queue-and-verdicts/resend-read-first`
+
+When a drain comes to a write it sent before under a credential other than its current one, a renewed access token counting as the credential it replaced, a device MUST read what the server holds of the write's subject before it sends the write again, unless the write is a create that names its id, an edge create, a write to a table's rows or an upload.
+
+**Reason:** the server holds an idempotency key to the credential that sent it (`items/idempotency-credential`), so under another credential the same key runs the write afresh: an edit the server applied would be applied again, and a delete refused as one of an item already in the bin. A renewed token is the same credential (`items/idempotency-signed-in`). A create that names its id and an edge create are answered for what they made whoever repeats them (`items/create-repeat`, `edges/id-repeat`), a row write is answered by its row keys and values (`tables/rows-put-repeat`), and an upload is sent again under its own rule (`queue-and-verdicts/upload-sent-as-writer`), so these go again unread. A create by natural key is read by that key, under the source the server stamped it with.
+
+**Tests:** `device/resend-credential-live.test.ts › settles an edit and a delete whose answers were lost under a replaced key from what the server holds, writing neither again`, `› sends again under the replaced key's successor an edit and a delete the server never received, and each is applied once`.
+
+### `queue-and-verdicts/resend-read-holds`
+
+When the read of `queue-and-verdicts/resend-read-first` finds that the server holds what the write asks for, a device MUST give the write the verdict `accepted` without sending it again.
+
+**Reason:** the write was applied under the credential that sent it. An edit is held when its subject's version is past the one it was based on and each field it sends has the value it sent. A delete is held when its subject is in the bin, a restore when its subject is out of it, a lifecycle move when the item is in the state it names, a tag or extension write when the server has the tags or the document it sent, and an edge edit when the edge's version is past the one it was based on with each value it sent. A create by natural key is held when an item has that key and each field it sends, and, where it made the item rather than merged into one, the state and place it sends; each edge type it names holds exactly the targets it sends, read to the end of the listing that continues a block of the item read (`edges/hydrate-cursor`). A write the server does not hold goes again (`queue-and-verdicts/resend-names-version`), except where `queue-and-verdicts/resend-create-elsewhere` or `queue-and-verdicts/resend-create-hidden` holds it.
+
+**Tests:** `device/resend-credential-live.test.ts › settles an edit and a delete whose answers were lost under a replaced key from what the server holds, writing neither again`, `› settles a move to the bin whose answer was lost under a replaced key from the item it finds in the bin, sending nothing again`, `› settles a create whose edge type holds more targets than one block of an item read carries from every page, sending nothing again`.
+
+### `queue-and-verdicts/resend-read-any-state`
+
+When a device reads an item for `queue-and-verdicts/resend-read-first`, a device MUST ask for it in every state.
+
+**Reason:** the server answers a read by id `404` for an item in the bin (`items/get-missing`), so a delete or a move to the bin that landed would read as one the server never received, and sent again it is refused as a move from the bin to the bin.
+
+**Tests:** `device/resend-credential-live.test.ts › settles a move to the bin whose answer was lost under a replaced key from the item it finds in the bin, sending nothing again`, `› settles an edit and a delete whose answers were lost under a replaced key from what the server holds, writing neither again`.
+
+### `queue-and-verdicts/resend-removal-unseen`
+
+If the read of `queue-and-verdicts/resend-read-first` answers `404` for the subject of a delete, an edge delete or a move to the bin, then a device MUST leave the write unsent in that drain and count one refusal against it.
+
+**Reason:** the server answers `404` for a subject that is gone and for one the credential may not read (`items/get-missing`), so the read cannot tell a removal that landed from one that never did, and an `accepted` would tell the person an item is gone that may still be there. The fifth refusal makes the write `dead` (`queue-and-verdicts/refusal-ceiling-dead`), which the person withdraws, and only a drain under the credential that sent it sends it again under its key.
+
+**Tests:** `device/resend-credential-live.test.ts › leaves a delete unsettled and unsent where the replaced key's successor cannot read the item it deletes`.
+
+### `queue-and-verdicts/resend-removal-failure`
+
+When a device leaves a write unsent under `queue-and-verdicts/resend-removal-unseen`, a device MUST give the write `404` as its last failure.
+
+**Tests:** `device/resend-credential-live.test.ts › leaves a delete unsettled and unsent where the replaced key's successor cannot read the item it deletes`.
+
+### `queue-and-verdicts/resend-create-elsewhere`
+
+If the read of `queue-and-verdicts/resend-read-first` does not find that the server holds a create by natural key that names no source, and the device knows only one of the current credential's own source and the source the server stamped the create with when it was first sent, or knows both and they differ, then a device MUST leave the write unsent in that drain and count one refusal against it.
+
+**Reason:** the server stamps a create that names no source with the sending credential's own source (`items/source-own`), so sent again under a credential of another source, a create that landed would make a second item under the same natural key. The read can miss a create that landed: the item may have moved since, or hold what this credential may not read. A device learns a credential's own source from `GET /keys/current`, which does not name one for a signed-in app's token (`keys-and-oauth/current-key-app`). Where it knows neither source, both credentials are taken as tokens of one app, which the server stamps with that app's source, so the create goes again: the server answers it from its record of the key for the same app and person (`items/idempotency-signed-in`), and otherwise merges it into the item by its natural key. A copy moved between the tokens of two different apps sends it under another source, and a create that landed then makes a second item. The fifth refusal makes the write `dead` (`queue-and-verdicts/refusal-ceiling-dead`), which the person withdraws, and only a drain under the credential that sent it sends it again under its key.
+
+**Tests:** `device/resend-credential-live.test.ts › leaves a create naming no source unsent where the replaced key's successor has another source, making no second item`, `› sends again under a new sign-in of the same app a create naming no source whose answer was lost, and settles it with the one item the server answers from its record`.
+
+### `queue-and-verdicts/resend-create-hidden`
+
+If the read of `queue-and-verdicts/resend-read-first` finds a create by natural key's item with each field the create sends, and an edge type the create names shows only some of the targets the create sends and no other target, then a device MUST leave the write unsent in that drain and count one refusal against it.
+
+**Reason:** the server leaves out of a read an edge the credential may not read (`edges/hydrate`), so a missing target may be hidden rather than absent. Sent again, the create would replace edges this credential cannot see, or, on an item it merged into, meet a version the create itself moved and be blocked as a conflict.
+
+**Tests:** `device/resend-credential-live.test.ts › leaves a create unsent where the replaced key's successor may not read an edge type it names`.
+
+### `queue-and-verdicts/resend-names-version`
+
+When a device sends again, after the read of `queue-and-verdicts/resend-read-first` found its subject, a tag write that adds or removes one tag, a lifecycle move, a restore, or a create by natural key on an item it held when it first sent the create, a device MUST name the version of the subject it held when it first sent the write, on that send and every later send under the same key.
+
+**Reason:** under the new credential the server runs the write afresh, so without a version it would act on an item changed in a way the copy had not read when it first sent the write; named, the server answers `409 version_conflict` and the write is blocked `conflict_unresolved` (`queue-and-verdicts/conflict-blocks`). The server's fingerprint of a key covers the query and body, so every send under the key names the same version. A version moves with an item's properties and type, never with its tags or state, so another device's tag or lifecycle change is not caught, and a tag write that replaces every tag and an extension write, whose operations take no version, can land over newer work of their own kind.
+
+**Tests:** `device/resend-credential-live.test.ts › sends a tag the server never received again naming the version it was sent at, and blocks it as a conflict once the item has moved`.
+
+### `queue-and-verdicts/resend-read-unanswered`
+
+If the read of `queue-and-verdicts/resend-read-first` gets no answer, then a device MUST NOT send the write in that drain.
+
+**Reason:** without the read the device cannot tell an applied write from one the server never received. The write keeps no verdict and a later drain reads its subject again.
+
+**Tests:** `device/resend-credential-live.test.ts › leaves an edit whose answer was lost under a replaced key unsent and waiting while the read of what the server holds gets no answer`.
 
 ### `queue-and-verdicts/sent-write-unchanged`
 

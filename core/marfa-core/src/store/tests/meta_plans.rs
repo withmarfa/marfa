@@ -99,7 +99,7 @@ fn a_prefix_lookup_on_meta_never_reads_the_whole_table() {
     pending_landings(&conn).unwrap();
     forget_removals(&conn).unwrap();
     forget_answered(&conn).unwrap();
-    move_uploads_sent_as(&conn, "a", "b").unwrap();
+    move_sent_as(&conn, "a", "b").unwrap();
     read_of_row_owed_elsewhere(&conn, "id").unwrap();
     clear_slice(&conn).unwrap();
     start_refill(&conn).unwrap();

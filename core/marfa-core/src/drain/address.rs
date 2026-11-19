@@ -47,6 +47,25 @@ impl Owned {
         }
     }
 
+    /// Names `version`, so the server refuses the write `version_conflict`
+    /// where its subject has moved on: in the body of a create, and in the
+    /// query of a tag or lifecycle door.
+    pub(super) fn at_version(mut self, kind: WriteKind, version: Option<i64>) -> Result<Owned> {
+        let Some(version) = version else {
+            return Ok(self);
+        };
+        if kind == WriteKind::CreateItem {
+            let mut body: serde_json::Value = serde_json::from_str(&self.body)?;
+            if let Some(body) = body.as_object_mut() {
+                body.entry("version").or_insert(version.into());
+            }
+            self.body = body.to_string();
+        } else {
+            self.params.push(("version".into(), version.to_string()));
+        }
+        Ok(self)
+    }
+
     pub(super) fn outgoing(&self) -> Outgoing<'_> {
         Outgoing {
             method: self.method,

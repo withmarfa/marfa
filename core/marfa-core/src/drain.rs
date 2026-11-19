@@ -16,6 +16,7 @@ mod create_edges;
 mod pages;
 mod read_back;
 mod report;
+mod resend;
 mod rows;
 mod send;
 mod settle;

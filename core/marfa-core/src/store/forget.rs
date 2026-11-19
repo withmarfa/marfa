@@ -1,6 +1,6 @@
 //! Forgetting answered writes and discarding writes.
 
-use super::attachments::{BYTES_ABSENT, UPLOAD_SENT_AS};
+use super::attachments::BYTES_ABSENT;
 use super::dead::effect_key;
 use super::laying::put_back;
 use super::marks::{item_held, pinned, unpin};
@@ -10,7 +10,9 @@ use super::reach::{edge_write_ends, let_go_of_ends};
 use super::rows::remove_item;
 use super::stamps::{Owed, owe_read_back, settle_read_back};
 use super::verdicts::{RECEIPT_PENDING, held_for, take_out};
-use super::write_state::{chosen_tier_key, cleared_time_key};
+use super::write_state::{
+    RESENT_AT_VERSION, SENT_AS, SENT_AT_VERSION, SENT_SOURCE, forget_write_state,
+};
 use crate::error::CoreError;
 use crate::model::{EdgeDraft, Subject, Verdict, WriteKind};
 use rusqlite::{Connection, named_params, params};
@@ -209,7 +211,10 @@ pub(super) fn forget_answered_inner(
                 for prefix in [
                     "dead_effect/",
                     "chosen_tier/",
-                    UPLOAD_SENT_AS,
+                    SENT_AS,
+                    SENT_SOURCE,
+                    SENT_AT_VERSION,
+                    RESENT_AT_VERSION,
                     "cleared_time/",
                     "bytes_sent_again/",
                 ] {
@@ -338,8 +343,7 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         for write in batch.iter().rev() {
             conn.execute("DELETE FROM queue WHERE id = ?1", [write])?;
             meta_delete(conn, &effect_key(write))?;
-            meta_delete(conn, &chosen_tier_key(write))?;
-            meta_delete(conn, &cleared_time_key(write))?;
+            forget_write_state(conn, write)?;
         }
         return Ok(true);
     }
@@ -359,8 +363,7 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         }
         conn.execute("DELETE FROM queue WHERE id = ?1", [id])?;
         meta_delete(conn, &effect_key(id))?;
-        meta_delete(conn, &chosen_tier_key(id))?;
-        meta_delete(conn, &cleared_time_key(id))?;
+        forget_write_state(conn, id)?;
         return Ok(true);
     };
     take_out(conn, &row, &held, "discarded")?;
@@ -427,6 +430,7 @@ pub fn withdraw_edge_writes(
         ends.extend(edge_write_ends(conn, &row.id)?);
         conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
         meta_delete(conn, &effect_key(&row.id))?;
+        forget_write_state(conn, &row.id)?;
     }
     for row in &rows {
         put_back(conn, row)?;

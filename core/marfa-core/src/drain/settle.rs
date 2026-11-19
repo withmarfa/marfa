@@ -1009,6 +1009,17 @@ fn settle_delivered(
             }
         }
     };
+    let (answer, shape) = found_answer(row, shape, read);
+    settle_success(core, stop, row, &answer, shape, pass, true, None)
+}
+
+/// The answer to a write the server holds as done: `read`, its subject as
+/// the server holds it, where its door answers with the subject.
+pub(super) fn found_answer(
+    row: &QueuedWrite,
+    shape: Shape,
+    read: Option<serde_json::Value>,
+) -> (Answer, Shape) {
     let (body, shape) = match read {
         Some(mut found) => {
             found["acknowledged"] = serde_json::Value::Bool(true);
@@ -1025,7 +1036,7 @@ fn settle_delivered(
         replayed: true,
         contract_named: true,
     };
-    settle_success(core, stop, row, &answer, shape, pass, true, None)
+    (answer, shape)
 }
 
 /// A natural-key receipt settles independently of the current read authority.

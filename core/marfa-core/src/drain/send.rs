@@ -14,7 +14,10 @@ use super::classify::{
 };
 use super::read_back::{ReachChange, read_owed_backs, reconcile};
 use super::report::DrainReport;
-use super::settle::{Settled, committed, finish_counted, receipt_key, settle, verdict_of};
+use super::resend::{self, Judged};
+use super::settle::{
+    Settled, committed, finish_counted, found_answer, receipt_key, settle, verdict_of,
+};
 use super::{create_edges, pages, rows};
 use super::{judged, read_limit_refused};
 use crate::error::{ContractRefusal, CoreError};
@@ -424,7 +427,8 @@ pub(super) fn send_queue(
         // Read again where the body was decided, so the answer is taken as
         // the answer to the body sent.
         let decided;
-        let row = if serde_json::from_str::<serde_json::Value>(&payload)? == row.body {
+        let body: serde_json::Value = serde_json::from_str(&payload)?;
+        let row = if body == row.body {
             row
         } else {
             decided = store::queued_write(&*core.conn()?, &row.id)?
@@ -536,119 +540,214 @@ pub(super) fn send_queue(
                 }
             }
         };
-        // The connection is not held across the send, or `queue`, read while
-        // a drain runs, would wait on the network.
-        crate::catch_up::refuse_if_stopped(stop)?;
-        let resent = {
-            // Before the send: one whose answer never arrives has still
-            // reached the server, and treating it as unsent would write twice.
-            let mut conn = core.conn()?;
-            let tx = conn.transaction()?;
-            let resent = !store::unsent(&tx, &row.id)?;
-            store::mark_sent(&tx, &row.id)?;
-            rows::mark_joined(&tx, row, &batched)?;
-            tx.commit()?;
-            if row.kind == WriteKind::UploadBlob {
-                store::record_upload_sent_as(
-                    &conn,
-                    &row.id,
-                    &store::credential_digest(&http.authorization()),
-                )?;
-            }
-            resent
+        let credential = store::credential_digest(&http.authorization());
+        let owes_judging = matches!(sendable, Sendable::Json(..)) && {
+            let conn = core.conn()?;
+            core.write_down_renewals(&conn)?;
+            resend::owed(&conn, row, &body, &credential)?
         };
-        let (answer, shape) = {
-            let write = telemetry::operation!("write", kind, status);
-            telemetry::record!(write, kind = row.kind.as_str());
-            // Left behind at a stop where sending it again cannot write twice,
-            // so a server that never answers, as one taking an upload can,
-            // does not hold the drain: the row stays sent under its key, and
-            // the next drain sends it again.
-            let sent = match sendable {
-                Sendable::Json(outgoing, shape) => {
-                    let owned = Owned::of(&outgoing);
-                    let answer = crate::catch_up::ask_unless_stopped(stop, http, move |http| {
-                        http.send(&owned.outgoing())
-                    });
-                    (answer, shape)
+        // Named by a send under a credential other than the one that first
+        // sent it, from then on under its key.
+        let mut resent_at = None;
+        let applied = if !owes_judging {
+            None
+        } else if pass.changed() {
+            // The server would refuse the read; the write waits for the
+            // copy built again.
+            waiting.insert(row.id.clone());
+            report.undelivered += 1;
+            continue;
+        } else {
+            let own = lookups.own.clone().flatten();
+            match resend::judge(core, http, stop, row, &body, own.as_deref()) {
+                Ok(Judged::Applied(found)) => Some(found),
+                Ok(Judged::Send { read }) => {
+                    if read {
+                        resent_at = store::sent_at_version(&*core.conn()?, &row.id)?;
+                    }
+                    None
                 }
-                Sendable::Upload { bytes, mime_type } => {
-                    let answer = crate::catch_up::ask_unless_stopped(stop, http, move |http| {
-                        upload(http, bytes, &mime_type)
-                    });
-                    (answer, Shape::Blob)
+                Ok(Judged::Undecided { reason, status }) => {
+                    let refusals = store::count_refusal(&*core.conn()?, &row.id)?;
+                    let mut settled = finish_counted(core, row, refusals, None)?;
+                    // After the count and the verdict, which each clear it.
+                    store::note_last_failure(
+                        &*core.conn()?,
+                        &row.id,
+                        &LastFailure::of(status, reason.as_bytes()),
+                    )?;
+                    if settled.verdict.is_none() {
+                        settled.reason = Some(reason);
+                        waiting.insert(row.id.clone());
+                    }
+                    answers.insert(row.id.clone(), settled.verdict);
+                    report.undelivered += 1;
+                    put_verdict(report, replacing, verdict_of(row, &settled, None));
+                    continue;
                 }
-            };
-            telemetry::ended!(
-                write,
-                sent.0.as_ref(),
-                |answer| {
-                    outcome = if answer.is_environmental() {
-                        "unavailable"
-                    } else {
-                        "answered"
-                    },
-                    status = answer.status,
+                Err(error) if error == CoreError::Canceled => return Err(error),
+                Err(CoreError::CopyExpired { reason, server }) if reason == INSTANCE_CHANGED => {
+                    return Err(left_for_another_instance(core, row, generation, server)?);
+                }
+                Err(error) => match failed(error) {
+                    Failed::Fatal(error) => return Err(error),
+                    Failed::Unanswered(CoreError::Unauthorized { server, .. }) => {
+                        park_for_credential(core, report, server)?;
+                        break;
+                    }
+                    Failed::Unanswered(error) => {
+                        telemetry::degraded!(&error);
+                        report.unavailable = Some(format!(
+                            "the server could not say whether it holds the write {}, sent before under another credential, so it was not sent again: {}",
+                            row.id,
+                            unavailable_by(&error).unwrap_or_else(|| error.to_string())
+                        ));
+                        report.limited = error.is_limit_named();
+                        waited(report, error.retry_after().map(|wait| wait.as_secs()));
+                        waiting.insert(row.id.clone());
+                        report.undelivered += 1;
+                        continue;
+                    }
+                    // A read refused for good says nothing of the write,
+                    // which the server answers for itself.
+                    Failed::Refused(_) => None,
                 },
-                unanswered ends_the_drain
-            );
-            sent
+            }
         };
-        if row.kind == WriteKind::CreateItem {
-            lookups.forget(&row.body);
-        }
-        // Not read, so the write stays sent and unanswered; every later
-        // answer would come from the same server.
-        let answer = match answer {
-            // Ahead of the classification, which would refuse the write for
-            // good. The copy is built again from the instance now at the
-            // origin, which holds the write until a person releases it, and
-            // has seen no attempt of it, so it is judged there afresh.
-            Err(CoreError::CopyExpired { reason, server }) if reason == INSTANCE_CHANGED => {
+        let applied = applied.and_then(|found| match &sendable {
+            Sendable::Json(_, shape) => Some(found_answer(row, *shape, found)),
+            Sendable::Upload { .. } => None,
+        });
+        let taken_as_applied = applied.is_some();
+        let (answer, shape, resent) = 'sent: {
+            // Taken as the answer the first send lost; nothing goes again.
+            if let Some((answer, shape)) = applied {
+                if row.kind == WriteKind::CreateItem {
+                    lookups.forget(&row.body);
+                }
+                break 'sent (Ok(answer), shape, true);
+            }
+            // The connection is not held across the send, or `queue`, read while
+            // a drain runs, would wait on the network.
+            crate::catch_up::refuse_if_stopped(stop)?;
+            let (resent, named_version) = {
+                // Before the send: one whose answer never arrives has still
+                // reached the server, and treating it as unsent would write twice.
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
-                crate::row_writes::leave_unsent(&tx, &row.id)?;
-                let error = crate::catch_up::expire_for_another_instance(&tx, generation, server)?;
+                let resent = !store::unsent(&tx, &row.id)?;
+                store::mark_sent(&tx, &row.id)?;
+                rows::mark_joined(&tx, row, &batched)?;
+                store::record_sent_as(&tx, &row.id, &credential)?;
+                if row.kind == WriteKind::CreateItem
+                    && body.get("source").is_none()
+                    && body.get("source_id").is_some()
+                    && let Some(source) = &lookups.own
+                {
+                    store::record_sent_source(&tx, &row.id, source.as_deref())?;
+                }
+                let own = lookups.own.clone().flatten();
+                if !resent
+                    && let Some(version) = resend::version_at_send(&tx, row, &body, own.as_deref())?
+                {
+                    store::record_sent_at_version(&tx, &row.id, version)?;
+                }
+                if let Some(version) = resent_at {
+                    store::record_resent_at_version(&tx, &row.id, version)?;
+                }
+                let named_version = store::resent_at_version(&tx, &row.id)?;
                 tx.commit()?;
-                return Err(error);
-            }
-            // The server acted on nothing, so a first attempt leaves the write
-            // unsent, and only one sent before keeps an outcome unknown.
-            Err(CoreError::ContractMismatch {
-                origin,
-                served,
-                expected,
-                status,
-                write_sent,
-                refusal: ContractRefusal::Declined,
-            }) => {
-                let refusal = if resent {
-                    ContractRefusal::DeclinedAfterEarlierAttempt
-                } else {
-                    let mut conn = core.conn()?;
-                    let tx = conn.transaction()?;
-                    crate::row_writes::leave_unsent(&tx, &row.id)?;
-                    tx.commit()?;
-                    ContractRefusal::Declined
+                (resent, named_version)
+            };
+            let (answer, shape) = {
+                let write = telemetry::operation!("write", kind, status);
+                telemetry::record!(write, kind = row.kind.as_str());
+                // Left behind at a stop where sending it again cannot write twice,
+                // so a server that never answers, as one taking an upload can,
+                // does not hold the drain: the row stays sent under its key, and
+                // the next drain sends it again.
+                let sent = match sendable {
+                    Sendable::Json(outgoing, shape) => {
+                        let owned = Owned::of(&outgoing).at_version(row.kind, named_version)?;
+                        let answer = crate::catch_up::ask_unless_stopped(stop, http, move |http| {
+                            http.send(&owned.outgoing())
+                        });
+                        (answer, shape)
+                    }
+                    Sendable::Upload { bytes, mime_type } => {
+                        let answer = crate::catch_up::ask_unless_stopped(stop, http, move |http| {
+                            upload(http, bytes, &mime_type)
+                        });
+                        (answer, Shape::Blob)
+                    }
                 };
-                return Err(CoreError::ContractMismatch {
+                telemetry::ended!(
+                    write,
+                    sent.0.as_ref(),
+                    |answer| {
+                        outcome = if answer.is_environmental() {
+                            "unavailable"
+                        } else {
+                            "answered"
+                        },
+                        status = answer.status,
+                    },
+                    unanswered ends_the_drain
+                );
+                sent
+            };
+            if row.kind == WriteKind::CreateItem {
+                lookups.forget(&row.body);
+            }
+            // Not read, so the write stays sent and unanswered; every later
+            // answer would come from the same server.
+            let answer = match answer {
+                Err(CoreError::CopyExpired { reason, server }) if reason == INSTANCE_CHANGED => {
+                    return Err(left_for_another_instance(core, row, generation, server)?);
+                }
+                // The server acted on nothing, so a first attempt leaves the write
+                // unsent, and only one sent before keeps an outcome unknown.
+                Err(CoreError::ContractMismatch {
                     origin,
                     served,
                     expected,
                     status,
                     write_sent,
-                    refusal,
-                });
-            }
-            Err(error) if ends_the_drain(&error) || error == CoreError::Canceled => {
-                return Err(error);
-            }
-            answer => answer,
+                    refusal: ContractRefusal::Declined,
+                }) => {
+                    let refusal = if resent {
+                        ContractRefusal::DeclinedAfterEarlierAttempt
+                    } else {
+                        let mut conn = core.conn()?;
+                        let tx = conn.transaction()?;
+                        crate::row_writes::leave_unsent(&tx, &row.id)?;
+                        tx.commit()?;
+                        ContractRefusal::Declined
+                    };
+                    return Err(CoreError::ContractMismatch {
+                        origin,
+                        served,
+                        expected,
+                        status,
+                        write_sent,
+                        refusal,
+                    });
+                }
+                Err(error) if ends_the_drain(&error) || error == CoreError::Canceled => {
+                    return Err(error);
+                }
+                answer => answer,
+            };
+            (answer, shape, resent)
         };
         if let Ok(answer) = &answer {
             waited(report, answer.retry_after_seconds);
         }
-        let class = refine(row, &payload, &answer, classify(&answer));
+        let class = if taken_as_applied {
+            Classified::Success
+        } else {
+            refine(row, &payload, &answer, classify(&answer))
+        };
         let environmental = class == Classified::Environmental;
         let landed = matches!(class, Classified::Landed { .. } | Classified::Delivered);
         let taken = match store_fault(row) {
@@ -1071,13 +1170,6 @@ fn payload_to_send(
     if row.kind != WriteKind::CreateItem {
         return Ok(Ok(payload));
     }
-    let tier = {
-        let conn = core.conn()?;
-        match store::chosen_tier(&conn, &row.id)? {
-            Some(tier) if store::unsent(&conn, &row.id)? => tier,
-            _ => return Ok(Ok(payload)),
-        }
-    };
     let mut body: serde_json::Value = serde_json::from_str(&payload)?;
     let text = |key: &str| {
         body.get(key)
@@ -1087,11 +1179,20 @@ fn payload_to_send(
     let (Some(r#type), Some(source_id)) = (text("type"), text("source_id")) else {
         return Ok(Ok(payload));
     };
+    // Learned for every send: under another credential, the source it was
+    // stamped with is where a read finds what it made.
     if text("source").is_none()
         && let Err(error) = own_source(core, http, stop, lookups)?
     {
         return Ok(Err(error));
     }
+    let tier = {
+        let conn = core.conn()?;
+        match store::chosen_tier(&conn, &row.id)? {
+            Some(tier) if store::unsent(&conn, &row.id)? => tier,
+            _ => return Ok(Ok(payload)),
+        }
+    };
     let known = match lookups.source(&body) {
         // The lookup's schema refuses an empty value.
         Some(source) if !source.is_empty() && !source_id.is_empty() => {
@@ -1119,6 +1220,24 @@ fn payload_to_send(
         store::set_unsent_payload(&*core.conn()?, &row.id, &decided)?;
     }
     Ok(Ok(decided))
+}
+
+/// Another instance answers at the origin. Ahead of the classification,
+/// which would refuse the write for good, the copy is expired: it is built
+/// again from that instance, which holds the write until a person releases
+/// it and has seen no attempt of it, so the write is judged there afresh.
+fn left_for_another_instance(
+    core: &Core,
+    row: &QueuedWrite,
+    generation: u64,
+    server: Option<Box<crate::error::ServerAnswer>>,
+) -> Result<CoreError> {
+    let mut conn = core.conn()?;
+    let tx = conn.transaction()?;
+    crate::row_writes::leave_unsent(&tx, &row.id)?;
+    let error = crate::catch_up::expire_for_another_instance(&tx, generation, server)?;
+    tx.commit()?;
+    Ok(error)
 }
 
 /// The credential's own source, which the server stamps a write naming none
