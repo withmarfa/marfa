@@ -318,7 +318,7 @@ pub async fn start(app: &Arc<App>, caller: &Caller) -> Result<Value> {
             Ok(())
         })
         .await;
-    // Once begun, the update runs even if the empty commit after the decision failed.
+    // Once begun, the update runs even if the commit after the decision failed.
     let job = begun.lock().unwrap_or_else(PoisonError::into_inner).take();
     match job {
         Some(job) => run(app.clone(), job),
