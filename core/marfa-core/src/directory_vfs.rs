@@ -11,6 +11,26 @@ unsafe extern "C" {
     fn marfa_directory_vfs_register(fd: i32, name: *const std::ffi::c_char) -> i32;
     fn marfa_directory_vfs_unregister(name: *const std::ffi::c_char);
     fn marfa_directory_vfs_supported(fd: i32) -> i32;
+    fn marfa_plain_path_supported(fd: i32) -> i32;
+    #[cfg(all(test, target_vendor = "apple"))]
+    fn marfa_plain_path_name_supported(name: *const std::ffi::c_char) -> i32;
+}
+
+fn admitted(result: i32) -> Result<()> {
+    #[cfg(debug_assertions)]
+    let result = if crate::fault::fails(|| "unlocked-filesystem")
+        || crate::fault::named("unlocked-filesystem").is_some()
+    {
+        rusqlite::ffi::SQLITE_NOTFOUND
+    } else {
+        result
+    };
+    if result != rusqlite::ffi::SQLITE_OK {
+        return Err(CoreError::Invalid(
+            "a store cannot be kept on this platform or filesystem: it must lock files".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) struct DirectoryVfs {
@@ -21,13 +41,14 @@ pub(crate) struct DirectoryVfs {
 impl DirectoryVfs {
     pub(crate) fn supported(directory: &File) -> Result<()> {
         // SAFETY: the descriptor belongs to `directory`, which is open for the call.
-        let result = unsafe { marfa_directory_vfs_supported(directory.as_raw_fd()) };
-        if result != rusqlite::ffi::SQLITE_OK {
-            return Err(CoreError::Invalid(
-                "folder storage is unavailable on this platform or filesystem".into(),
-            ));
-        }
-        Ok(())
+        admitted(unsafe { marfa_directory_vfs_supported(directory.as_raw_fd()) })
+    }
+
+    /// The admission of a store reached by a plain path, which refuses only
+    /// the file systems known not to lock.
+    pub(crate) fn plain_path_supported(directory: &File) -> Result<()> {
+        // SAFETY: the descriptor belongs to `directory`, which is open for the call.
+        admitted(unsafe { marfa_plain_path_supported(directory.as_raw_fd()) })
     }
 
     pub(crate) fn new(directory: &File) -> Result<Self> {
@@ -117,6 +138,23 @@ mod tests {
         OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX
+    }
+
+    #[cfg(target_vendor = "apple")]
+    #[test]
+    fn a_plain_path_is_refused_on_apple_only_by_the_names_of_file_systems_that_do_not_lock() {
+        let admitted = |name: &str| {
+            let name = CString::new(name).unwrap();
+            // SAFETY: `name` is a NUL-terminated string that outlives the call.
+            unsafe { marfa_plain_path_name_supported(name.as_ptr()) == rusqlite::ffi::SQLITE_OK }
+        };
+        for name in ["apfs", "hfs", "macfuse", "osxfuse", "fuse-t", "exfat"] {
+            assert!(admitted(name), "{name} was refused");
+        }
+        // The witness: the same check refuses what does not lock.
+        for name in ["nfs", "smbfs", "afpfs", "webdav"] {
+            assert!(!admitted(name), "{name} was admitted");
+        }
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
-use marfa_telemetry::host::{Capture, capture_url};
+use marfa_telemetry::host::capture_url;
 use serde_json::Value as Json;
 
 #[cfg(feature = "test-hooks")]
@@ -255,7 +255,7 @@ impl Entry {
             )?),
             Rule::CaptureHost => {
                 let host = if self.is_secret() { text } else { text.trim() };
-                capture_url(host, Capture::Events).ok_or_else(|| {
+                capture_url(host).ok_or_else(|| {
                     "must be an https URL, or an http URL on this machine, with no user name \
                      or password"
                         .to_string()
@@ -828,7 +828,7 @@ impl Snapshot {
         let host = self.get(POSTHOG_HOST)?;
         let token = self.get(POSTHOG_PROJECT_TOKEN)?;
         Some(Receiver {
-            url: capture_url(host.expose(), Capture::Events)?,
+            url: capture_url(host.expose())?,
             token: token.expose().to_string(),
         })
     }

@@ -3,13 +3,11 @@ import { gunzipSync } from "node:zlib";
 import { expect } from "vitest";
 
 /**
- * Where a server or the command line under test reports an unhandled fault,
- * in the places a fixture can read: the log records and spans it exports over
- * OTLP, and the exceptions it sends to error tracking. One receiver on the
- * loopback address is all three, so a fixture boots its
- * server with {@link FaultSinks.env} and reads what arrived. The command line
- * posts a single event to PostHog's capture path, where the server posts a
- * batch to capture v1.
+ * Where a server under test reports an unhandled fault, in the places a
+ * fixture can read: the log records and spans it exports over OTLP, and the
+ * exceptions it sends to error tracking. One receiver on the loopback address
+ * is all three, so a fixture boots its server with {@link FaultSinks.env} and
+ * reads what arrived. The server posts a batch to PostHog's capture v1.
  */
 export interface FaultSinks {
   /**
@@ -22,6 +20,8 @@ export interface FaultSinks {
   readonly traces: Record<string, unknown>[];
   readonly logRecords: Record<string, unknown>[];
   readonly trackedErrors: Record<string, unknown>[];
+  /** Bodies posted to any other path, so a fixture can show nothing else was sent. */
+  readonly elsewhere: Record<string, unknown>[];
   /** The headers of each batch the server posted to capture v1, in order. */
   readonly trackedHeaders: Record<string, string | string[] | undefined>[];
   sentLogRecords(): {
@@ -44,8 +44,6 @@ export interface FaultSinks {
       request_id?: string;
       method?: string;
       path?: string;
-      command?: string;
-      exit_code?: number;
       error_code?: string;
       $exception_list?: { type: string; value: string }[];
     };
@@ -93,6 +91,7 @@ export async function startFaultSinks(): Promise<FaultSinks> {
   const traces: Record<string, unknown>[] = [];
   const logRecords: Record<string, unknown>[] = [];
   const trackedErrors: Record<string, unknown>[] = [];
+  const elsewhere: Record<string, unknown>[] = [];
   const trackedHeaders: FaultSinks["trackedHeaders"][number][] = [];
   const receiver: Server = createServer((request, response) => {
     const chunks: Buffer[] = [];
@@ -112,8 +111,7 @@ export async function startFaultSinks(): Promise<FaultSinks> {
         else if (path.startsWith(CAPTURE_V1)) {
           trackedErrors.push(parsed);
           trackedHeaders.push({ ...request.headers });
-        } else if (path.startsWith("/i/v0/e/"))
-          trackedErrors.push({ batch: [parsed] });
+        } else elsewhere.push(parsed);
       } finally {
         response
           .writeHead(200, { "Content-Type": "application/json" })
@@ -139,6 +137,7 @@ export async function startFaultSinks(): Promise<FaultSinks> {
     traces,
     logRecords,
     trackedErrors,
+    elsewhere,
     trackedHeaders,
     sentLogRecords() {
       type Batch = {

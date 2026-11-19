@@ -1,29 +1,22 @@
-//! Two reports of a command run, each asked for by settings of its own.
-//! Traces go over OTLP when the standard `OTEL_EXPORTER_OTLP_*` variables name
-//! where to send them, and a failed run's exception goes to PostHog when
-//! `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` are set, whether or
-//! not a collector is. `OTEL_SDK_DISABLED=true` turns both off. With neither
-//! asked for nothing here starts: no subscriber, no thread, no request, and
-//! no output of its own.
+//! Traces of a command run, sent over OTLP when the standard
+//! `OTEL_EXPORTER_OTLP_*` variables name where to send them.
+//! `OTEL_SDK_DISABLED=true` turns them off. With no endpoint set nothing here
+//! starts: no subscriber, no thread, no request, and no output of its own.
 //!
 //! A run is one trace. Its root span is named for the command path
 //! (`marfa items create`), the core's spans hang beneath it, and a failure
 //! adds an `error` event with the CLI's error code and the exit code. What
-//! leaves the process is the allowlist in `layer` and the event `posthog`
-//! builds: the command path, exit and error codes, counts, outcomes and
-//! durations, and PostHog's project token in its own field. Never an
-//! argument, another credential, an address, an item's content or an error's
-//! message.
+//! leaves the process is the allowlist in `layer`: the command path, exit and
+//! error codes, counts, outcomes and durations. Never an argument, a
+//! credential, an address, an item's content or an error's message.
 //!
 //! This module and its children are the only files in the binary that name
 //! `tracing`.
 
 mod carried;
-mod describe;
 mod export;
 mod layer;
 mod otlp;
-mod posthog;
 mod settings;
 
 use std::sync::Arc;
@@ -35,7 +28,6 @@ use crate::error::CliError;
 use crate::interrupt::INTERRUPTED;
 
 use export::{Exporter, Sink};
-use posthog::Fault;
 use settings::{Identity, Reading, Settings};
 
 pub use carried::{FILE_ENV, FILE_NAME, carry, load as load_carried};
@@ -43,7 +35,6 @@ pub use carried::{FILE_ENV, FILE_NAME, carry, load as load_carried};
 /// One run of one command.
 pub struct Run {
     live: Option<Live>,
-    exceptions: Option<posthog::Reporter>,
 }
 
 struct Live {
@@ -55,10 +46,8 @@ struct Live {
 /// Starts telemetry for `command`, the path of a command's names as clap
 /// parsed them, if the environment asks for it.
 ///
-/// Traces and exception reports are asked for by different settings, and
-/// each is off without its own. A malformed endpoint turns off the traces
-/// only, and a malformed PostHog host the exception reports only; either is
-/// said on standard error unless `json` is set.
+/// A malformed endpoint turns traces off and is said on standard error
+/// unless `json` is set.
 pub fn start(command: &str, json: bool) -> Run {
     start_with(command, json, |name| std::env::var(name).ok())
 }
@@ -68,7 +57,7 @@ fn start_with(command: &str, json: bool, get: impl Fn(&str) -> Option<String>) -
         return Run::off();
     }
     let identity = settings::identity(&get);
-    let live = match settings::read(&get, identity.clone()) {
+    let live = match settings::read(&get, identity) {
         Reading::Off => None,
         Reading::Ignored(variable) => {
             if !json {
@@ -80,30 +69,7 @@ fn start_with(command: &str, json: bool, get: impl Fn(&str) -> Option<String>) -
         }
         Reading::On(settings) => live(command, &settings),
     };
-    Run {
-        exceptions: exceptions(command, json, &identity, &get),
-        live,
-    }
-}
-
-/// PostHog's trouble is said on standard error unless `json` is set, as a
-/// collector's is.
-fn exceptions(
-    command: &str,
-    json: bool,
-    identity: &Identity,
-    get: &impl Fn(&str) -> Option<String>,
-) -> Option<posthog::Reporter> {
-    match posthog::read(get, resource(identity), identity.timeout) {
-        posthog::Reading::Off => None,
-        posthog::Reading::Said(said) => {
-            if !json {
-                crate::errln!("marfa: {said}");
-            }
-            None
-        }
-        posthog::Reading::On(posthog) => Some(posthog::Reporter::new(posthog, command)),
-    }
+    Run { live }
 }
 
 fn resource(identity: &Identity) -> otlp::Resource {
@@ -160,10 +126,7 @@ const PANICKED: u8 = 101;
 
 impl Run {
     fn off() -> Run {
-        Run {
-            live: None,
-            exceptions: None,
-        }
+        Run { live: None }
     }
 
     /// Runs the command inside the run's root span, so that the core's spans
@@ -181,26 +144,19 @@ impl Run {
     /// command has said or will exit with.
     pub fn finish(self, status: u8, error: Option<&CliError>) {
         let failure = failed(status, error, crate::new_build::ended_for_it());
-        let fault = error.filter(|error| error.is_fault()).map(Fault::Error);
-        self.end(status, failure, error.map(CliError::code), fault);
+        self.end(status, failure, error.map(CliError::code));
     }
 
     /// Ends a run whose command panicked, which leaves the process with the
     /// status Rust gives a panic. The panic's message and location are not
-    /// reported: either can carry content.
+    /// recorded: either can carry content.
     pub fn panicked(self) {
-        self.end(PANICKED, true, Some("panic"), Some(Fault::Panic));
+        self.end(PANICKED, true, Some("panic"));
     }
 
     /// `code` names the error the trace records a failure by, where there is
-    /// one; only a `fault` is reported to PostHog.
-    fn end(self, status: u8, failure: bool, code: Option<&str>, fault: Option<Fault>) {
-        // Sent beside the trace's last send, not after it, so that the two
-        // together wait no longer than one timeout.
-        let exception = self
-            .exceptions
-            .zip(fault)
-            .and_then(|(reporter, fault)| reporter.report(status, fault));
+    /// one.
+    fn end(self, status: u8, failure: bool, code: Option<&str>) {
         if let Some(live) = self.live {
             live.root.record("exit_code", u64::from(status));
             if failure {
@@ -224,9 +180,6 @@ impl Run {
             }
             drop(live.root);
             live.exporter.close(live.budget);
-        }
-        if let Some(exception) = exception {
-            exception.wait();
         }
     }
 }
@@ -274,60 +227,31 @@ mod tests {
         })
     }
 
-    const POSTHOG: [(&str, &str); 2] = [
-        ("MARFA_POSTHOG_HOST", "http://127.0.0.1:9"),
-        ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_token"),
-    ];
-
     #[test]
     fn with_no_setting_a_run_starts_nothing() {
         let run = started(&[]);
         assert!(run.live.is_none());
-        assert!(run.exceptions.is_none());
         assert_eq!(run.within(|| 7), 7);
         run.finish(3, None);
-    }
-
-    #[test]
-    fn posthog_alone_asks_for_the_exception_and_not_the_trace() {
-        let run = started(&POSTHOG);
-        assert!(run.live.is_none());
-        assert!(run.exceptions.is_some());
     }
 
     /// The trace side is shown by the binary's own tests: starting one sets
     /// the process's global subscriber, which a unit test must not.
     #[test]
-    fn a_malformed_endpoint_leaves_the_exception_and_a_malformed_host_leaves_no_exception() {
-        let mut env = POSTHOG.to_vec();
-        env.push(("OTEL_EXPORTER_OTLP_ENDPOINT", "not a url"));
-        let run = started(&env);
-        assert!(run.live.is_none());
-        assert!(run.exceptions.is_some());
-
-        let run = started(&[
-            ("OTEL_EXPORTER_OTLP_ENDPOINT", "not a url"),
-            ("MARFA_POSTHOG_HOST", "ftp://posthog.example"),
-            ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_token"),
-        ]);
-        assert!(run.live.is_none());
-        assert!(run.exceptions.is_none());
-    }
-
-    #[test]
-    fn a_disabled_sdk_turns_off_both_reports() {
-        let mut env = POSTHOG.to_vec();
-        env.push(("OTEL_SDK_DISABLED", "true"));
-        let run = started(&env);
-        assert!(run.live.is_none());
-        assert!(run.exceptions.is_none());
-
-        env.push(("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9"));
-        let run = started(&env);
-        assert!(run.live.is_none());
-        assert!(run.exceptions.is_none());
-        // The witness: without the switch, PostHog alone is asked for.
-        assert!(started(&POSTHOG).exceptions.is_some());
+    fn a_malformed_endpoint_and_a_disabled_sdk_start_no_trace() {
+        assert!(
+            started(&[("OTEL_EXPORTER_OTLP_ENDPOINT", "not a url")])
+                .live
+                .is_none()
+        );
+        assert!(
+            started(&[
+                ("OTEL_SDK_DISABLED", "true"),
+                ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:9"),
+            ])
+            .live
+            .is_none()
+        );
     }
 
     /// The privacy rule is kept by one place naming `tracing`, so a field can

@@ -4,7 +4,7 @@
 
 - **Commands, options and exit codes:** `marfa --help`, and the same text in [COMMANDS.md](COMMANDS.md), which is generated from it. `marfa operations` maps each published operation to its command, but `GET /oauth/authorize`, which an app opens in a person's browser.
 - **What the binary does:** the contract states it, in `conformance/spec/cli.md` (requests, profiles, credentials, output and telemetry), `device.md` (the working copy), `queue-and-verdicts.md` (the queue and its drain) and the `folder-` chapters (folders, the watch and syncing from login).
-- **What it sends to a collector or to PostHog:** [core/TELEMETRY.md](../TELEMETRY.md).
+- **What it sends to a collector:** [core/TELEMETRY.md](../TELEMETRY.md).
 - **What a program on the machine can read:** the [record of folder watches](FOLDER-WATCH-RECORD.md), and the server's [folder health reports](FOLDER-HEALTH.md).
 
 This page holds the rest: the limits and timings the contract leaves to the binary, and how to run it unattended.
