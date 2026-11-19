@@ -344,7 +344,9 @@ pub(crate) fn pin_unless_declared(
     id: &str,
 ) -> Result<()> {
     let declared = match store::slice(tx)? {
-        Some((types, slice_tier)) if store::slice_takes(catalog, &types, slice_tier, r#type, tier) => {
+        Some((types, slice_tier))
+            if store::slice_takes(catalog, &types, slice_tier, r#type, tier) =>
+        {
             match store::slice_query(tx)? {
                 Some(query) => crate::slice::judge_held(
                     tx,

@@ -774,8 +774,7 @@ fn replay(
     let catalog = ask_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
     let mut catalog = adopt(core, context, &catalog, catalog_changed)?;
-    let mut opening =
-        crate::restored::Opening::read(&*core.conn()?, &cursor, !context.building())?;
+    let mut opening = crate::restored::Opening::read(&*core.conn()?, &cursor, !context.building())?;
     let mut frames = open(http, &opening.from(), STREAM_HARD_BOUND)?;
     let mut opened_under = http.authorization();
     refuse_if_stopped(stop)?;
@@ -836,15 +835,7 @@ fn replay(
                     Heard::AgedOut => {
                         drop(frames);
                         crate::restored::forget_anchor(core)?;
-                        return replay(
-                            core,
-                            http,
-                            context,
-                            idle,
-                            stop,
-                            catalog_changed,
-                            behind,
-                        );
+                        return replay(core, http, context, idle, stop, catalog_changed, behind);
                     }
                 }
                 if let Some(reason) = diverged(kind, &payload, &report.cursor) {

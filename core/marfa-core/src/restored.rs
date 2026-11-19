@@ -53,8 +53,8 @@ impl Opening {
     /// aside with the server instead, and asks from its cursor alone.
     pub(crate) fn read(conn: &Connection, cursor: &str, anchored: bool) -> Result<Self> {
         let cursor = crate::reach::cursor(cursor).ok_or_else(crate::reach::invalid)?;
-        let anchor = store::restored::anchor(conn)?
-            .filter(|(id, _)| anchored && (1..=cursor).contains(id));
+        let anchor =
+            store::restored::anchor(conn)?.filter(|(id, _)| anchored && (1..=cursor).contains(id));
         Ok(Self {
             cursor,
             settled: anchor.is_none(),
@@ -145,8 +145,12 @@ pub(crate) fn went_back(
         let lost = match receipt.subject {
             Subject::Item => item_lost(
                 &receipt,
-                read_item(http, stop, &receipt.id)?
-                    .map(|row| (row.item.version, row.item.state == ItemState::Trashed.as_str())),
+                read_item(http, stop, &receipt.id)?.map(|row| {
+                    (
+                        row.item.version,
+                        row.item.state == ItemState::Trashed.as_str(),
+                    )
+                }),
             ),
             Subject::Edge => edge_lost(
                 &receipt,
@@ -234,13 +238,13 @@ fn against(held: (i64, &str), server: Option<(i64, &str)>) -> Against {
 
 enum LostItem {
     Create(Item),
-    Update { held: Item, server: Item },
+    Update { held: Item, server: Box<Item> },
     Remove(Item),
 }
 
 enum LostEdge {
     Create(Edge),
-    Update { held: Edge, server: Edge },
+    Update { held: Edge, server: Box<Edge> },
     Remove(Edge),
 }
 
@@ -335,7 +339,10 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
                     && server.version == held.version
                     && kept_tags(&held) != kept_tags(&server)
                 {
-                    lost.items.push(LostItem::Update { held, server });
+                    lost.items.push(LostItem::Update {
+                        held,
+                        server: Box::new(server),
+                    });
                 }
             }
             // Out of the bin and out of `revoked` alone: no create makes a
@@ -346,7 +353,10 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
             Against::Gone => {}
             Against::Behind => {
                 let Some(server) = server else { continue };
-                lost.items.push(LostItem::Update { held, server });
+                lost.items.push(LostItem::Update {
+                    held,
+                    server: Box::new(server),
+                });
             }
         }
     }
@@ -364,7 +374,10 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
             Against::Gone => lost.edges.push(LostEdge::Create(held)),
             Against::Behind => {
                 let Some(server) = server else { continue };
-                lost.edges.push(LostEdge::Update { held, server });
+                lost.edges.push(LostEdge::Update {
+                    held,
+                    server: Box::new(server),
+                });
             }
         }
     }
@@ -608,11 +621,7 @@ fn keep_create(
     store::restored::follow_nothing(tx, &create)?;
     kept.push(create.clone());
     if !held.tags.is_empty() {
-        kept.push(queue_tags(
-            tx,
-            held,
-            std::slice::from_ref(&create),
-        )?);
+        kept.push(queue_tags(tx, held, std::slice::from_ref(&create))?);
     }
     Ok(create)
 }
@@ -843,13 +852,28 @@ mod tests {
     #[test]
     fn a_row_moved_on_by_another_writer_is_the_same_and_one_behind_is_not() {
         let held = (3, "2026-11-19T10:00:00.000Z");
-        assert_eq!(against(held, Some((3, "2026-11-19T10:00:00.000Z"))), Against::Same);
-        assert_eq!(against(held, Some((4, "2026-11-19T10:00:01.000Z"))), Against::Same);
-        assert_eq!(against(held, Some((2, "2026-11-19T09:00:00.000Z"))), Against::Behind);
+        assert_eq!(
+            against(held, Some((3, "2026-11-19T10:00:00.000Z"))),
+            Against::Same
+        );
+        assert_eq!(
+            against(held, Some((4, "2026-11-19T10:00:01.000Z"))),
+            Against::Same
+        );
+        assert_eq!(
+            against(held, Some((2, "2026-11-19T09:00:00.000Z"))),
+            Against::Behind
+        );
         // A restored server that took a write since can reach the same
         // version with other content, and a later version made earlier.
-        assert_eq!(against(held, Some((3, "2026-11-19T10:05:00.000Z"))), Against::Behind);
-        assert_eq!(against(held, Some((4, "2026-11-19T09:00:00.000Z"))), Against::Behind);
+        assert_eq!(
+            against(held, Some((3, "2026-11-19T10:05:00.000Z"))),
+            Against::Behind
+        );
+        assert_eq!(
+            against(held, Some((4, "2026-11-19T09:00:00.000Z"))),
+            Against::Behind
+        );
         assert_eq!(against(held, None), Against::Gone);
     }
 
@@ -882,7 +906,10 @@ mod tests {
         let print = store::restored::event_print("item.updated", &taken);
         let mut same = anchored(7, 7, &print);
         assert_eq!(same.from(), "6");
-        assert_eq!(same.heard("stream_cursor", None, &payload(None)), Heard::Take);
+        assert_eq!(
+            same.heard("stream_cursor", None, &payload(None)),
+            Heard::Take
+        );
         assert_eq!(same.heard("item.updated", Some("7"), &taken), Heard::Again);
         assert_eq!(
             same.heard("item.updated", Some("8"), &payload(Some(("b", 1, at)))),
@@ -939,7 +966,10 @@ mod tests {
         let mut opening = anchored(7, 5, "x");
         let mut marker = payload(None);
         marker.min_retained_id = Some("8".into());
-        assert_eq!(opening.heard("catchup_too_old", None, &marker), Heard::AgedOut);
+        assert_eq!(
+            opening.heard("catchup_too_old", None, &marker),
+            Heard::AgedOut
+        );
         marker.min_retained_id = Some("9".into());
         let mut opening = anchored(7, 5, "x");
         assert_eq!(opening.heard("catchup_too_old", None, &marker), Heard::Take);

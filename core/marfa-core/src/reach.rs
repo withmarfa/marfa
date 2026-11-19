@@ -237,7 +237,8 @@ impl Context {
                 == Some(crate::model::HydrateRestart::HeadAgedOut)
                 && (!self.building || store::refilling(tx)?);
             let cursor = store::meta_get(tx, store::META_EVENT_CURSOR)?;
-            if crate::catch_up::divergence(reason) == Some(crate::model::HydrateRestart::HeadPastLog)
+            if crate::catch_up::divergence(reason)
+                == Some(crate::model::HydrateRestart::HeadPastLog)
             {
                 store::restored::hold_copy(tx)?;
             }

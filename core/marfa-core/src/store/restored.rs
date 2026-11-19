@@ -283,7 +283,12 @@ pub(crate) fn hold_copy(conn: &Connection) -> Result<(), CoreError> {
                 continue;
             }
             let held = beneath_item(conn, &item.id)?.unwrap_or(item);
-            hold(conn, Subject::Item, &held.id, &serde_json::to_string(&held)?)?;
+            hold(
+                conn,
+                Subject::Item,
+                &held.id,
+                &serde_json::to_string(&held)?,
+            )?;
         }
     }
     let edges: Vec<(String, String, String)> = conn
@@ -340,7 +345,9 @@ pub(crate) fn holds_back(conn: &Connection) -> Result<bool, CoreError> {
 pub(crate) fn held_back(conn: &Connection) -> Result<(Vec<Item>, Vec<Edge>), CoreError> {
     let mut statement = conn.prepare("SELECT subject, row FROM held_back ORDER BY subject, id")?;
     let rows = statement
-        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
         .collect::<Result<Vec<_>, _>>()?;
     let (mut items, mut edges) = (Vec::new(), Vec::new());
     for (subject, row) in rows {
