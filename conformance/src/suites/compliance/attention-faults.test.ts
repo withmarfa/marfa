@@ -41,7 +41,7 @@ beforeAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
-  await server.stop();
+  await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
 async function mint(
@@ -269,18 +269,20 @@ it(
       { method: "DELETE" },
     );
     expect(gone.status).toBe(200);
-    await server.advanceClock(2 * 3_600_000);
 
     const fromMemory = "database:PATCH /items/{id}";
     await server.setFault("refuse:write");
     try {
+      // No write lands from here, so only the clock at the attempt can tell
+      // that the key has expired since the list was last read.
+      await server.advanceClock(2 * 3_600_000);
       const refused = await fetch(`${server.apiUrl}/items/${note}`, {
         method: "PATCH",
         headers: {
           authorization: `Bearer ${writer}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ properties: { title: "refused" } }),
+        body: JSON.stringify({ version: 1, properties: { title: "refused" } }),
       });
       expect(refused.status).toBe(500);
 

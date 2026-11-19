@@ -32,8 +32,8 @@ beforeAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
-  await server.stop();
-  await sinks.close();
+  await server?.stop();
+  await sinks?.close();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 /** A key registered as a connector under `name`. */
@@ -93,6 +93,13 @@ it(
   "sends one ConnectorRunFailed report for a connector's failed run, naming nothing of it, and none for problems or silence",
   async () => {
     const troubled = await connector(`Troubled ${randomUUID()}`);
+    const held = await call(
+      troubled.key,
+      `/connectors/${troubled.id}/hold`,
+      "POST",
+      { process: "p" },
+    );
+    expect(held.status).toBe(200);
     const put = await call(
       troubled.key,
       `/connectors/${troubled.id}/state`,

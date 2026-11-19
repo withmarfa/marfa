@@ -227,13 +227,13 @@ describe("a receipt whose storing fails on a database fault", () => {
     expectFixedFailure(JSON.stringify(log), "SQLITE_IOERR", forbidden);
     holdsNone(serverOutput(server.stateDir));
 
-    const listed = await controlRequest(server.controlSocket, "/attention");
-    expect(listed.status).toBe(200);
-    const faults = (listed.body as { data: { kind: string }[] }).data.filter(
-      (entry) => entry.kind === "fault",
-    );
+    const attention = await controlRequest(server.controlSocket, "/attention");
+    expect(attention.status).toBe(200);
+    const faults = (
+      attention.body as { data: { kind: string }[] }
+    ).data.filter((entry) => entry.kind === "fault");
     expect(faults.length).toBeGreaterThan(0);
-    holdsNone(JSON.stringify(listed.body));
+    holdsNone(JSON.stringify(attention.body));
 
     const record = await until(
       "the fault's telemetry log record",
