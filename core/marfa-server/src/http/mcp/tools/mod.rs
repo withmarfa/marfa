@@ -1,19 +1,27 @@
 //! Validates tool arguments and dispatches with the caller's credential.
 
+mod apps;
 mod audit;
+mod backups;
 mod bulk;
+mod connectors;
 mod create;
 mod delete;
 mod docs;
+mod files;
 mod find;
 mod get;
 mod health;
 mod keys;
+mod maintain;
 mod moving;
 mod overview;
 mod revoke;
 mod rows;
+mod settings;
+mod sign_ins;
 mod sources;
+mod trash;
 mod types;
 mod update;
 mod views;
@@ -82,6 +90,19 @@ fn definitions() -> Vec<(Group, Definition)> {
         (Group::Admin, revoke::definition()),
         (Group::Admin, webhooks::list_definition()),
         (Group::Admin, webhooks::manage_definition()),
+        (Group::Admin, settings::read_definition()),
+        (Group::Admin, settings::change_definition()),
+        (Group::Admin, trash::definition()),
+        (Group::Admin, apps::list_definition()),
+        (Group::Admin, apps::narrow_definition()),
+        (Group::Admin, backups::list_definition()),
+        (Group::Admin, backups::take_definition()),
+        (Group::Admin, maintain::definition()),
+        (Group::Admin, connectors::list_definition()),
+        (Group::Admin, connectors::endpoint_definition()),
+        (Group::Admin, files::definition()),
+        (Group::Admin, sign_ins::list_definition()),
+        (Group::Admin, sign_ins::rename_definition()),
     ]
 }
 
@@ -121,6 +142,14 @@ fn offered(caller: &Caller, name: &str) -> bool {
         audit::NAME => caller.may_read_audit(),
         keys::LIST_NAME | keys::MANAGE_NAME | revoke::NAME => caller.may_use_key_door(),
         webhooks::LIST_NAME | webhooks::MANAGE_NAME => caller.may_manage_webhooks(),
+        settings::READ_NAME | settings::CHANGE_NAME => caller.may_change_settings(),
+        trash::NAME => caller.may_purge_items(),
+        apps::LIST_NAME | apps::NARROW_NAME => caller.may_manage_apps(),
+        backups::LIST_NAME | backups::TAKE_NAME => caller.may_manage_backups(),
+        maintain::NAME => caller.may_maintain(),
+        connectors::LIST_NAME | connectors::ENDPOINT_NAME => caller.may_manage_connectors(),
+        files::NAME => caller.may_manage_files(),
+        sign_ins::LIST_NAME | sign_ins::RENAME_NAME => caller.may_manage_sign_ins(),
         _ => false,
     }
 }
@@ -214,13 +243,26 @@ async fn run(
         docs::NAME => docs::run(arguments),
         sources::LIST_NAME => sources::list(app, caller, arguments).await,
         sources::NAME_NAME => sources::name(app, caller, arguments).await,
-        health::NAME => health::run(app, caller).await,
+        health::NAME => health::run(app, caller, arguments).await,
         audit::NAME => audit::run(app, caller, arguments).await,
         keys::LIST_NAME => keys::list(app, caller).await,
         keys::MANAGE_NAME => keys::manage(app, caller, arguments).await,
         revoke::NAME => revoke::run(app, caller, arguments).await,
         webhooks::LIST_NAME => webhooks::list(app, caller).await,
         webhooks::MANAGE_NAME => webhooks::manage(app, caller, arguments).await,
+        settings::READ_NAME => settings::read(app, caller).await,
+        settings::CHANGE_NAME => settings::change(app, caller, arguments).await,
+        trash::NAME => trash::run(app, caller, arguments).await,
+        apps::LIST_NAME => apps::list(app, caller).await,
+        apps::NARROW_NAME => apps::narrow(app, caller, arguments).await,
+        backups::LIST_NAME => backups::list(app, caller).await,
+        backups::TAKE_NAME => backups::take(app, caller).await,
+        maintain::NAME => maintain::run(app, caller, arguments).await,
+        connectors::LIST_NAME => connectors::list(app, caller, arguments).await,
+        connectors::ENDPOINT_NAME => connectors::make_endpoint(app, caller, arguments).await,
+        files::NAME => files::run(app, caller, arguments).await,
+        sign_ins::LIST_NAME => sign_ins::list(app, caller).await,
+        sign_ins::RENAME_NAME => sign_ins::rename(app, caller, arguments).await,
         _ => Err(Stop::invalid("No tool has this name.")),
     }
 }

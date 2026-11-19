@@ -1,7 +1,7 @@
 mod authorize;
 mod device;
 mod discovery;
-mod grants;
+pub(super) mod grants;
 mod token;
 
 use std::sync::Arc;

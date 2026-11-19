@@ -29,4 +29,36 @@ impl Caller {
     pub fn may_manage_webhooks(&self) -> bool {
         self.holds(Permission::WebhooksManage)
     }
+
+    pub fn may_change_settings(&self) -> bool {
+        self.holds(Permission::ConfigManage)
+    }
+
+    pub fn may_purge_items(&self) -> bool {
+        self.holds(Permission::ItemsPurge)
+    }
+
+    pub fn may_manage_apps(&self) -> bool {
+        self.holds(Permission::GrantsManage)
+    }
+
+    pub fn may_manage_backups(&self) -> bool {
+        self.holds(Permission::BackupsManage)
+    }
+
+    pub fn may_maintain(&self) -> bool {
+        self.holds(Permission::InstanceMaintain)
+    }
+
+    pub fn may_manage_connectors(&self) -> bool {
+        self.holds(Permission::ConnectorsManage)
+    }
+
+    pub fn may_manage_files(&self) -> bool {
+        self.holds(Permission::BlobsManage)
+    }
+
+    pub fn may_manage_sign_ins(&self) -> bool {
+        self.holds(Permission::SignInsManage)
+    }
 }

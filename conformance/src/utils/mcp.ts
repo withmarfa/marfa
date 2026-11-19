@@ -132,13 +132,41 @@ export const EVERY_CREDENTIAL_SCHEMA_TOOLS = [
   "marfa_sources",
 ];
 
-/** The tools `/mcp/admin` adds for a credential that may use each. */
+const KEY_TOOLS = ["marfa_keys", "marfa_manage_key", "marfa_revoke_key"];
+
+/** The tools `/mcp/admin` lists to a credential that holds each permission. */
+export const ADMIN_TOOLS_BY_PERMISSION: Readonly<Record<string, string[]>> = {
+  "audit.read": ["marfa_audit"],
+  "backups.manage": ["marfa_backups", "marfa_take_backup"],
+  "blobs.manage": ["marfa_files"],
+  "config.manage": ["marfa_change_settings", "marfa_settings"],
+  "connectors.manage": [
+    "marfa_connectors",
+    "marfa_health",
+    "marfa_make_endpoint",
+  ],
+  "grants.manage": ["marfa_apps", "marfa_narrow_app"],
+  "instance.maintain": ["marfa_maintain"],
+  "instance.read": ["marfa_health"],
+  "items.purge": ["marfa_trash"],
+  "keys.manage": KEY_TOOLS,
+  "keys.mint": KEY_TOOLS,
+  "sign_ins.manage": ["marfa_rename_sign_in", "marfa_sign_ins"],
+  "webhooks.manage": ["marfa_manage_webhook", "marfa_webhooks"],
+};
+
+/** The tools `/mcp/admin` adds for a credential that holds every permission. */
 export const ADMIN_TOOLS = [
-  "marfa_audit",
-  "marfa_health",
-  "marfa_keys",
-  "marfa_manage_key",
-  "marfa_manage_webhook",
-  "marfa_revoke_key",
-  "marfa_webhooks",
-];
+  ...new Set(Object.values(ADMIN_TOOLS_BY_PERMISSION).flat()),
+].sort();
+
+/** The tools `/mcp/admin` adds for a credential that holds these permissions. */
+export function adminToolsFor(permissions: readonly string[]): string[] {
+  return [
+    ...new Set(
+      permissions.flatMap(
+        (permission) => ADMIN_TOOLS_BY_PERMISSION[permission] ?? [],
+      ),
+    ),
+  ].sort();
+}

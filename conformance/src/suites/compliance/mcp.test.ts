@@ -13,6 +13,8 @@ import {
 } from "../../utils/setup.js";
 import {
   ADMIN_TOOLS,
+  ADMIN_TOOLS_BY_PERMISSION,
+  adminToolsFor,
   ALL_TOOLS,
   callTool,
   connectMcp,
@@ -924,7 +926,7 @@ describe("the schema and admin endpoints", () => {
       expect(await toolNames(admin)).toEqual(
         [
           ...ALL_TOOLS,
-          ...ADMIN_TOOLS.filter((t) => t !== "marfa_health"),
+          ...adminToolsFor(["audit.read", "keys.mint", "webhooks.manage"]),
         ].sort(),
       );
     } finally {
@@ -956,6 +958,29 @@ describe("the schema and admin endpoints", () => {
       expect(await toolNames(admin)).toEqual(ADMIN_TOOLS);
       const health = toolResult(await callTool(admin, "marfa_health", {}));
       expect(health.health).toMatchObject({ status: expect.any(String) });
+      // None of the withheld tasks is a choice any tool offers.
+      const { tools } = await admin.client.listTools();
+      const choices = (name: string, field: string): unknown[] => {
+        const schema = tools.find((tool) => tool.name === name)?.inputSchema as
+          { properties: Record<string, { enum?: unknown[] }> } | undefined;
+        return schema?.properties[field]?.enum ?? [];
+      };
+      expect(choices("marfa_maintain", "action")).toEqual([
+        "run_housekeeping",
+        "cancel_job",
+      ]);
+      expect(choices("marfa_rename_sign_in", "kind")).toEqual([
+        "sign_in",
+        "passkey",
+      ]);
+      const withheld =
+        /purge|empty|revoke_app|end_sign|remove|delete_connector|clear|retire|drop|adopt|restore|export|claim|recover|password|passkey|update_server|clock/;
+      // The witness: the pattern matches the names of the withheld tasks.
+      expect(withheld.test("marfa_purge_trash")).toBe(true);
+      expect(withheld.test("marfa_adopt_backup_folder")).toBe(true);
+      expect(
+        tools.map((tool) => tool.name).filter((name) => withheld.test(name)),
+      ).toEqual([]);
     } finally {
       await admin.close();
     }
@@ -1049,15 +1074,7 @@ describe("the schema and admin endpoints", () => {
     const management = process.env.MARFA_MANAGEMENT_KEY;
     if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
     const manager = new MarfaClient({ baseUrl: apiUrl, apiKey: management });
-    const keys = ["marfa_keys", "marfa_manage_key", "marfa_revoke_key"];
-    const cases: [string, string[]][] = [
-      ["instance.read", ["marfa_health"]],
-      ["connectors.manage", ["marfa_health"]],
-      ["audit.read", ["marfa_audit"]],
-      ["keys.mint", keys],
-      ["keys.manage", keys],
-      ["webhooks.manage", ["marfa_webhooks", "marfa_manage_webhook"]],
-    ];
+    const cases = Object.entries(ADMIN_TOOLS_BY_PERMISSION);
     for (const [permission, tools] of cases) {
       const label = `${ctx.source}-admin-${permission}`;
       const minted = await manager.createKey({
@@ -1086,19 +1103,32 @@ describe("the schema and admin endpoints", () => {
     }
   });
 
-  it("marks marfa_create and marfa_manage_webhook as reaching outside the instance and no other tool", async () => {
+  it("marks each tool that can send something outside the instance as reaching outside it, and no other tool", async () => {
+    const management = process.env.MARFA_MANAGEMENT_KEY;
+    if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
+    const manager = new MarfaClient({ baseUrl: apiUrl, apiKey: management });
+    const label = `${ctx.source}-open-world`;
+    const minted = await manager.createKey({
+      label,
+      source: label,
+      permissions: Object.keys(ADMIN_TOOLS_BY_PERMISSION),
+      type_permissions: {},
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const everyAdmin = await connectMcp(
+      apiUrl,
+      minted.data.key,
+      "2026-07-28",
+      "/mcp/admin",
+    );
     const admin = await connectMcp(
       apiUrl,
       await keyWith(
-        "open-world",
+        "open-world-writer",
         { "*": "write" },
         {
-          permissions: [
-            "schema.write",
-            "audit.read",
-            "keys.mint",
-            "webhooks.manage",
-          ],
+          permissions: ["schema.write", "audit.read", "webhooks.manage"],
           metadata_permissions: { "*": "write" },
         },
       ),
@@ -1111,19 +1141,117 @@ describe("the schema and admin endpoints", () => {
       "2026-07-28",
       "/mcp/schema",
     );
+    // A file fetched from a web address, a webhook, a backup to an object
+    // store, the heartbeat and an error webhook each reach outside.
+    const outward = [
+      "marfa_change_settings",
+      "marfa_create",
+      "marfa_maintain",
+      "marfa_manage_webhook",
+      "marfa_take_backup",
+    ];
     try {
-      for (const connection of [admin, schema]) {
+      const seen = new Set<string>();
+      for (const connection of [admin, everyAdmin, schema]) {
         const { tools } = await connection.client.listTools();
         for (const tool of tools) {
+          seen.add(tool.name);
           expect(tool.annotations?.openWorldHint, tool.name).toBe(
-            tool.name === "marfa_create" ||
-              tool.name === "marfa_manage_webhook",
+            outward.includes(tool.name),
           );
         }
       }
+      // The witness: every outward tool was listed and judged.
+      for (const name of outward) {
+        expect(seen.has(name), name).toBe(true);
+      }
     } finally {
       await admin.close();
+      await everyAdmin.close();
       await schema.close();
+    }
+  });
+});
+
+describe("a tool the endpoint does not list to the credential", () => {
+  it("answers Unknown tool to a call of an admin tool the credential is not offered, where a credential offered it runs it", async () => {
+    const management = process.env.MARFA_MANAGEMENT_KEY;
+    if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
+    const manager = new MarfaClient({ baseUrl: apiUrl, apiKey: management });
+    const label = `${ctx.source}-unlisted`;
+    const minted = await manager.createKey({
+      label,
+      source: label,
+      permissions: ["items.purge"],
+      type_permissions: {},
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const purger = await connectMcp(
+      apiUrl,
+      minted.data.key,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    const owner = await connectMcp(
+      apiUrl,
+      management,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      // The witness: a credential offered the tool runs it.
+      toolResult(await callTool(owner, "marfa_settings", {}));
+      expect(await toolNames(purger)).not.toContain("marfa_settings");
+      await expect(callTool(purger, "marfa_settings", {})).rejects.toThrow(
+        /Unknown tool: marfa_settings/,
+      );
+    } finally {
+      await purger.close();
+      await owner.close();
+    }
+  });
+});
+
+describe("the owner-task tools' annotations", () => {
+  it("marks narrowing an app and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only", async () => {
+    const management = process.env.MARFA_MANAGEMENT_KEY;
+    if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
+    const admin = await connectMcp(
+      apiUrl,
+      management,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      const { tools } = await admin.client.listTools();
+      const hints = new Map(tools.map((tool) => [tool.name, tool.annotations]));
+      for (const name of ["marfa_narrow_app", "marfa_maintain"]) {
+        expect(hints.get(name)?.destructiveHint, name).toBe(true);
+        expect(hints.get(name)?.readOnlyHint, name).toBe(false);
+      }
+      for (const name of [
+        "marfa_change_settings",
+        "marfa_take_backup",
+        "marfa_make_endpoint",
+        "marfa_rename_sign_in",
+      ]) {
+        expect(hints.get(name)?.destructiveHint, name).toBe(false);
+        expect(hints.get(name)?.readOnlyHint, name).toBe(false);
+      }
+      for (const name of [
+        "marfa_settings",
+        "marfa_trash",
+        "marfa_apps",
+        "marfa_backups",
+        "marfa_connectors",
+        "marfa_files",
+        "marfa_sign_ins",
+      ]) {
+        expect(hints.get(name)?.readOnlyHint, name).toBe(true);
+      }
+    } finally {
+      await admin.close();
     }
   });
 });

@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { v7 as uuidv7 } from "uuid";
 import {
   approvedApp,
   bootFreshServer,
@@ -9,7 +10,23 @@ import {
 } from "../../utils/fresh-server.js";
 import { controlRequest } from "../../utils/control-request.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import {
+  callTool,
+  connectMcp,
+  toolError,
+  toolResult,
+  type McpConnection,
+  type ToolAnswer,
+} from "../../utils/mcp.js";
 import { tempFolder } from "../../utils/temp-folder.js";
+import {
+  DAY_MS,
+  movedClock,
+  QUIET_SCHEDULE,
+  quiet,
+  writerOf,
+} from "../../utils/moved-clock.js";
+import { waitFor } from "../../utils/wait.js";
 
 /**
  * The owner's tasks, open to any credential that holds the permission each
@@ -31,7 +48,12 @@ beforeAll(async () => {
   });
 }, FRESH_SERVER_TIMEOUT_MS);
 
+const connections: McpConnection[] = [];
+const ownServers: FreshServer[] = [];
+
 afterAll(async () => {
+  await Promise.all(connections.map((connection) => connection.close()));
+  await Promise.all(ownServers.map((own) => own.stop()));
   await server.stop();
   rmSync(backups, { recursive: true, force: true });
 }, FRESH_SERVER_TIMEOUT_MS);
@@ -608,4 +630,795 @@ describe("owner tasks", () => {
       ).toBe(200);
     }
   });
+});
+
+async function admin(credential: string): Promise<McpConnection> {
+  const connection = await connectMcp(
+    server.apiUrl,
+    credential,
+    "2026-07-28",
+    "/mcp/admin",
+  );
+  connections.push(connection);
+  return connection;
+}
+
+/** The tool refused with the code the API refused the same request with. */
+function expectSameRefusal(
+  api: { status: number; body: Record<string, unknown> },
+  answer: ToolAnswer,
+  label: string,
+) {
+  expect(api.status, `${label} ${JSON.stringify(api.body)}`).toBeGreaterThan(
+    399,
+  );
+  expect(toolError(answer).code, label).toBe(
+    (api.body.error as { code: string }).code,
+  );
+}
+
+/** What each step-up setting is set to by a request a key makes. */
+const STEP_UP_SETTINGS: Record<string, unknown> = {
+  sign_in_address: "https://elsewhere.example",
+  allow_private_addresses: true,
+  object_store_bucket: "another-bucket",
+  object_store_endpoint: "https://store.example",
+  object_store_region: "eu-west-1",
+  object_store_path_style: false,
+  object_store_prefix: "elsewhere",
+  backup_path: "/tmp/elsewhere",
+};
+
+/** An item the key writes, by its title. */
+async function made(key: string, title: string, type = "core.note") {
+  const answer = await call(key, "POST", "/items", {
+    type,
+    properties: { title },
+  });
+  expect(answer.status, JSON.stringify(answer.body)).toBe(201);
+  return (answer.body.item as { id: string }).id;
+}
+
+/** A connector the key registers, by its name. */
+async function registered(key: string, name: string): Promise<string> {
+  const answer = await call(key, "POST", "/connectors", { name });
+  expect(answer.status, JSON.stringify(answer.body)).toBe(201);
+  return answer.body.id as string;
+}
+
+describe("the owner tasks at /mcp/admin", () => {
+  it("refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes", async () => {
+    const { key } = await mint({ permissions: ["config.manage"] });
+    const connection = await admin(key);
+    const before = await call(key, "GET", "/config/settings");
+    expect(before.status, JSON.stringify(before.body)).toBe(200);
+    for (const [name, value] of Object.entries(STEP_UP_SETTINGS)) {
+      const refused = toolError(
+        await callTool(connection, "marfa_change_settings", {
+          settings: { [name]: value },
+        }),
+      );
+      expect(refused.code, name).toBe("app_sign_in_required");
+      expect(String(refused.message), name).toContain(name);
+      // Named beside a setting that does not exist, in either order, or beside
+      // a name, the call is refused the same way.
+      for (const settings of [
+        { a_typo: 1, [name]: value },
+        { [name]: value, a_typo: 1 },
+      ]) {
+        const mixed = toolError(
+          await callTool(connection, "marfa_change_settings", {
+            name: "Named beside a step-up setting",
+            settings,
+          }),
+        );
+        expect(mixed.code, `${name} ${JSON.stringify(settings)}`).toBe(
+          "app_sign_in_required",
+        );
+      }
+    }
+    // The witness: the same typo without a step-up setting is a refused setting.
+    expect(
+      toolError(
+        await callTool(connection, "marfa_change_settings", {
+          settings: { a_typo: 1 },
+        }),
+      ).code,
+    ).toBe("validation_error");
+    const after = await call(key, "GET", "/config/settings");
+    expect(after.body).toEqual(before.body);
+    // The API refuses a key the same way.
+    const api = await call(key, "PATCH", "/config", {
+      sign_in_address: STEP_UP_SETTINGS.sign_in_address,
+    });
+    expect(api.status).toBe(403);
+    expect((api.body.error as { code: string }).code).toBe(
+      "app_sign_in_required",
+    );
+    // The witness: a setting that is not a step-up act changes, and returns.
+    const changed = toolResult(
+      await callTool(connection, "marfa_change_settings", {
+        name: "Named by a tool",
+        settings: { trash_retention_days: 61 },
+      }),
+    );
+    expect(changed.name).toBe("Named by a tool");
+    const read = toolResult(
+      await callTool(connection, "marfa_settings", {}),
+    ) as { name: string; settings: { key: string; value: unknown }[] };
+    expect(read.name).toBe("Named by a tool");
+    expect(
+      read.settings.find((line) => line.key === "trash_retention_days")?.value,
+    ).toBe(61);
+    toolResult(
+      await callTool(connection, "marfa_change_settings", {
+        name: null,
+        settings: { trash_retention_days: null },
+      }),
+    );
+    expect((await call(key, "GET", "/config/settings")).body).toEqual(
+      before.body,
+    );
+  });
+
+  it("refuses a setting that does not exist in the settings tool, as the API does", async () => {
+    const { key } = await mint({ permissions: ["config.manage"] });
+    const connection = await admin(key);
+    const answer = await callTool(connection, "marfa_change_settings", {
+      settings: { no_such_setting: 1 },
+    });
+    expect(toolError(answer).code).toBe("validation_error");
+    const api = await call(key, "PATCH", "/config", { no_such_setting: 1 });
+    expectSameRefusal(api, answer, "no_such_setting");
+  });
+
+  it("lists only the bin's items of the types a credential reads in the trash tool, as the API does", async () => {
+    const run = randomUUID();
+    const writer = await mint({ ...EVERY_TYPE });
+    const binned: Record<string, string> = {};
+    for (const type of ["core.note", "core.task"]) {
+      binned[type] = await made(writer.key, `listed ${type} ${run}`, type);
+      expect(
+        (await call(writer.key, "DELETE", `/items/${binned[type]}`)).status,
+      ).toBe(200);
+    }
+    const purger = await mint({
+      permissions: ["items.purge"],
+      type_permissions: { "core.note": "write" },
+    });
+    const listed = toolResult(
+      await callTool(await admin(purger.key), "marfa_trash", { q: run }),
+    ) as { items: { id: string }[]; next_cursor: string | null };
+    const api = await call(purger.key, "GET", `/trash?q=${run}`);
+    expect(listed.items.map((row) => row.id)).toEqual(
+      (api.body.data as { id: string }[]).map((row) => row.id),
+    );
+    expect(listed.items.map((row) => row.id)).toEqual([binned["core.note"]]);
+    expect(listed.next_cursor).toBeNull();
+    // The witness: the owner reads both in the bin.
+    const owner = (await local("GET", `/trash?q=${run}`)).body.data as {
+      id: string;
+    }[];
+    expect(owner.map((row) => row.id).sort()).toEqual(
+      Object.values(binned).sort(),
+    );
+  });
+
+  it("pages the trash that does not fit one answer, each page continuing where the last stopped", async () => {
+    const run = randomUUID();
+    const writer = await mint({ ...EVERY_TYPE });
+    const long = "a long title ".repeat(160);
+    const count = 150;
+    for (let index = 0; index < count; index += 1) {
+      const id = await made(writer.key, `${run} ${String(index)} ${long}`);
+      expect((await call(writer.key, "DELETE", `/items/${id}`)).status).toBe(
+        200,
+      );
+    }
+    const purger = await mint({
+      permissions: ["items.purge"],
+      type_permissions: { "core.note": "write" },
+    });
+    const connection = await admin(purger.key);
+    const whole = await call(
+      purger.key,
+      "GET",
+      `/trash?q=${run}&limit=${String(count)}`,
+    );
+    const expected = (whole.body.data as { id: string }[]).map((row) => row.id);
+    expect(expected).toHaveLength(count);
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const args: Record<string, unknown> = { q: run, limit: count };
+      if (cursor !== null) args.cursor = cursor;
+      const page = toolResult(
+        await callTool(connection, "marfa_trash", args),
+      ) as { items: { id: string }[]; next_cursor: string | null };
+      expect(page.items.length).toBeGreaterThan(0);
+      seen.push(...page.items.map((row) => row.id));
+      cursor = page.next_cursor;
+      pages += 1;
+    } while (cursor !== null && pages < count);
+    // More than one page, so a page was cut short and its cursor followed it.
+    expect(pages).toBeGreaterThan(1);
+    expect(seen).toEqual(expected);
+  });
+
+  it("refuses a search longer than the API takes in the trash tool, with the API's code", async () => {
+    const { key } = await mint({
+      permissions: ["items.purge"],
+      type_permissions: { "core.note": "write" },
+    });
+    const connection = await admin(key);
+    const longest = "x".repeat(500);
+    expect((await call(key, "GET", `/trash?q=${longest}`)).status).toBe(200);
+    toolResult(await callTool(connection, "marfa_trash", { q: longest }));
+    const tooLong = `${longest}x`;
+    const api = await call(key, "GET", `/trash?q=${tooLong}`);
+    expect(api.status).toBe(400);
+    expectSameRefusal(
+      api,
+      await callTool(connection, "marfa_trash", { q: tooLong }),
+      "a search of 501 characters",
+    );
+  });
+
+  it("lists and narrows an app's grant through the tools, refusing a stale expectation as the API does", async () => {
+    const app = await approvedApp(server, ["core.note:write"]);
+    const { key } = await mint({ permissions: ["grants.manage"] });
+    const connection = await admin(key);
+    const listed = toolResult(await callTool(connection, "marfa_apps", {})) as {
+      apps: { id: string; client_id: string; scopes: string[] }[];
+    };
+    const grant = listed.apps.find((row) => row.client_id === app.clientId)!;
+    expect(grant, JSON.stringify(listed)).toBeDefined();
+    const stale = await callTool(connection, "marfa_narrow_app", {
+      id: grant.id,
+      scopes: ["core.note:read"],
+      expected_scopes: ["core.note:read"],
+    });
+    expectSameRefusal(
+      await call(key, "PATCH", `/grants/${grant.id}`, {
+        scopes: ["core.note:read"],
+        expected_scopes: ["core.note:read"],
+      }),
+      stale,
+      "a stale expectation",
+    );
+    const writes = () =>
+      call(app.token, "GET", "/items?type=core.note&limit=1");
+    expect((await writes()).status).toBe(200);
+    const done = toolResult(
+      await callTool(connection, "marfa_narrow_app", {
+        id: grant.id,
+        scopes: ["core.note:read"],
+        expected_scopes: grant.scopes,
+      }),
+    );
+    expect(done.scopes).toEqual(["core.note:read"]);
+    expect((await writes()).status).toBe(401);
+    const read = (await call(key, "GET", "/grants")).body.data as {
+      id: string;
+      scopes: string[];
+    }[];
+    expect(read.find((row) => row.id === grant.id)?.scopes).toEqual([
+      "core.note:read",
+    ]);
+  });
+
+  it("refuses an app task the API refuses, with the API's code", async () => {
+    const { key } = await mint({ permissions: ["grants.manage"] });
+    const connection = await admin(key);
+    expectSameRefusal(
+      await call(key, "PATCH", "/grants/no-such-grant", {
+        scopes: [],
+        expected_scopes: [],
+      }),
+      await callTool(connection, "marfa_narrow_app", {
+        id: "no-such-grant",
+        scopes: [],
+        expected_scopes: [],
+      }),
+      "narrow",
+    );
+    expectSameRefusal(
+      await call(key, "PATCH", "/grants/no-such-grant", { scopes: [] }),
+      await callTool(connection, "marfa_narrow_app", {
+        id: "no-such-grant",
+        scopes: [],
+      }),
+      "narrow without the expected scopes",
+    );
+  });
+
+  it("lists and renames a sign-in through the tools", async () => {
+    const other = await mint({});
+    const { key } = await mint({ permissions: ["sign_ins.manage"] });
+    const connection = await admin(key);
+    const listed = toolResult(
+      await callTool(connection, "marfa_sign_ins", {}),
+    ) as { sign_ins: { id: string }[]; passkeys: unknown[] };
+    expect(listed.sign_ins.map((row) => row.id)).toContain(other.id);
+    expect(Array.isArray(listed.passkeys)).toBe(true);
+    const renamed = toolResult(
+      await callTool(connection, "marfa_rename_sign_in", {
+        kind: "sign_in",
+        id: other.id,
+        name: "Renamed by a tool",
+      }),
+    );
+    expect((renamed.sign_in as { name: string }).name).toBe(
+      "Renamed by a tool",
+    );
+    const api = (await call(key, "GET", "/owner/sign-ins")).body.data as {
+      id: string;
+      name: string;
+    }[];
+    expect(api.find((row) => row.id === other.id)?.name).toBe(
+      "Renamed by a tool",
+    );
+    expect((await call(other.key, "GET", "/keys/current")).status).toBe(200);
+  });
+
+  it("refuses a sign-in or passkey task the API refuses, with the API's code", async () => {
+    const { key } = await mint({ permissions: ["sign_ins.manage"] });
+    const connection = await admin(key);
+    expectSameRefusal(
+      await call(key, "PATCH", "/owner/sign-ins/no-such-sign-in", {
+        name: "Renamed",
+      }),
+      await callTool(connection, "marfa_rename_sign_in", {
+        kind: "sign_in",
+        id: "no-such-sign-in",
+        name: "Renamed",
+      }),
+      "rename a sign-in",
+    );
+    expectSameRefusal(
+      await call(key, "PATCH", "/owner/passkeys/no-such-passkey", {
+        name: "Renamed",
+      }),
+      await callTool(connection, "marfa_rename_sign_in", {
+        kind: "passkey",
+        id: "no-such-passkey",
+        name: "Renamed",
+      }),
+      "rename a passkey",
+    );
+  });
+
+  it("lists backups and takes one now through the tools, with the API's answers", async () => {
+    const { key } = await mint({ permissions: ["backups.manage"] });
+    const connection = await admin(key);
+    const before = toolResult(
+      await callTool(connection, "marfa_backups", {}),
+    ) as { backups: unknown[] };
+    const api = await call(key, "GET", "/backups");
+    expect(before.backups).toHaveLength((api.body.data as unknown[]).length);
+    const taken = toolResult(
+      await callTool(connection, "marfa_take_backup", {}),
+    );
+    expect(taken.backup).toBeDefined();
+    const after = toolResult(
+      await callTool(connection, "marfa_backups", {}),
+    ) as { backups: unknown[] };
+    expect(after.backups.length).toBeGreaterThan(before.backups.length);
+  });
+
+  it("runs housekeeping and cancels a job through the maintenance tool, refusing as the API does", async () => {
+    const { key } = await mint({ permissions: ["instance.maintain"] });
+    const connection = await admin(key);
+    const unknown = await callTool(connection, "marfa_maintain", {
+      action: "run_housekeeping",
+      name: "no-such-job",
+    });
+    expectSameRefusal(
+      await call(key, "POST", "/housekeeping/no-such-job/run"),
+      unknown,
+      "unknown housekeeping",
+    );
+    const id = uuidv7();
+    expectSameRefusal(
+      await call(key, "POST", `/items/bulk-actions/jobs/${id}/cancel`),
+      await callTool(connection, "marfa_maintain", {
+        action: "cancel_job",
+        id,
+      }),
+      "cancel a job",
+    );
+    const reader = await mint({ permissions: ["instance.read"] });
+    const listed = (await call(reader.key, "GET", "/housekeeping")).body
+      .data as { name: string }[];
+    expect(listed.length).toBeGreaterThan(0);
+    const named = listed[0]!.name;
+    const maintainer = await mint({ permissions: ["instance.maintain"] });
+    const api = await call(
+      maintainer.key,
+      "POST",
+      `/housekeeping/${named}/run`,
+    );
+    const run = await callTool(connection, "marfa_maintain", {
+      action: "run_housekeeping",
+      name: named,
+    });
+    expect(run.isError, JSON.stringify(run.body)).toBe(api.status >= 400);
+  });
+
+  it("adds what instance.read opens to the health tool, and only for a credential that holds it", async () => {
+    const reader = await mint({ permissions: ["instance.read"] });
+    const opened = [
+      "attention",
+      "housekeeping_jobs",
+      "metrics",
+      "storage",
+      "update",
+    ];
+    const read = toolResult(
+      await callTool(await admin(reader.key), "marfa_health", {}),
+    );
+    for (const name of opened) {
+      expect(read[name], name).toBeDefined();
+    }
+    expect(read.unread).toBeUndefined();
+    const update = await call(reader.key, "GET", "/update");
+    expect(update.status).toBe(200);
+    expect(Object.keys(read.update as object).sort()).toEqual(
+      Object.keys(update.body).sort(),
+    );
+    // The witness: another permission that lists the tool does not add them,
+    // and names the bulk job it asked for and may not read.
+    const connectors = await mint({ permissions: ["connectors.manage"] });
+    const plain = toolResult(
+      await callTool(await admin(connectors.key), "marfa_health", {}),
+    );
+    expect(plain.health).toBeDefined();
+    expect(plain.connectors).toBeDefined();
+    for (const name of opened) {
+      expect(plain[name], name).toBeUndefined();
+    }
+    expect(plain.unread).toBeUndefined();
+    const asked = toolResult(
+      await callTool(await admin(connectors.key), "marfa_health", {
+        job_id: uuidv7(),
+      }),
+    ) as Record<string, unknown> & { unread: { read: string; code: string }[] };
+    expect(asked.unread).toEqual([
+      expect.objectContaining({ read: "job", code: "forbidden" }),
+    ]);
+    expect(asked.connectors).toBeDefined();
+  });
+
+  it("answers each part of the health tool on its own, so a bulk job it cannot read leaves the others", async () => {
+    const reader = await mint({ permissions: ["instance.read"] });
+    const connection = await admin(reader.key);
+    const parts = [
+      "connectors",
+      "attention",
+      "housekeeping_jobs",
+      "metrics",
+      "storage",
+      "update",
+    ];
+    // The witness: without a job_id every part answers and nothing is unread.
+    const whole = toolResult(await callTool(connection, "marfa_health", {}));
+    for (const name of parts) {
+      expect(whole[name], name).toBeDefined();
+    }
+    expect(whole.unread).toBeUndefined();
+    const missing = uuidv7();
+    const job = toolResult(
+      await callTool(connection, "marfa_health", { job_id: missing }),
+    ) as Record<string, unknown> & { unread: { read: string; code: string }[] };
+    const api = await call(
+      reader.key,
+      "GET",
+      `/items/bulk-actions/jobs/${missing}`,
+    );
+    expect(api.status).toBeGreaterThan(399);
+    expect(job.unread).toEqual([
+      expect.objectContaining({
+        read: "job",
+        code: (api.body.error as { code: string }).code,
+      }),
+    ]);
+    for (const name of parts) {
+      expect(job[name], name).toBeDefined();
+    }
+  });
+
+  it("lists a connector with its runs and makes an endpoint for it, refusing as the API does", async () => {
+    const owner = await mint({ permissions: ["connectors.manage"] });
+    const id = await registered(owner.key, "Read through a tool");
+    const reported = await call(owner.key, "POST", `/connectors/${id}/runs`, {
+      outcome: "succeeded",
+      started_at: "2026-01-01T00:00:00.000Z",
+      finished_at: "2026-01-01T00:01:00.000Z",
+    });
+    expect(reported.status, JSON.stringify(reported.body)).toBe(201);
+    const connection = await admin(owner.key);
+    const listed = toolResult(
+      await callTool(connection, "marfa_connectors", {}),
+    ) as { connectors: { id: string }[] };
+    expect(listed.connectors.map((row) => row.id)).toContain(id);
+    const one = toolResult(
+      await callTool(connection, "marfa_connectors", { id }),
+    ) as {
+      runs: { id: string }[];
+      runs_next_cursor: string | null;
+      endpoints: { id: string }[];
+    };
+    const runs = await call(owner.key, "GET", `/connectors/${id}/runs`);
+    expect(one.runs.map((run) => run.id)).toEqual(
+      (runs.body.data as { id: string }[]).map((run) => run.id),
+    );
+    expect(one.runs).toHaveLength(1);
+    expect(one.runs_next_cursor).toBeNull();
+    expect(one.endpoints).toEqual([]);
+    const missing = uuidv7();
+    expectSameRefusal(
+      await call(owner.key, "GET", `/connectors/${missing}`),
+      await callTool(connection, "marfa_connectors", { id: missing }),
+      "read",
+    );
+    expectSameRefusal(
+      await call(owner.key, "POST", `/connectors/${missing}/endpoints`, {
+        label: "Deliveries",
+      }),
+      await callTool(connection, "marfa_make_endpoint", {
+        id: missing,
+        label: "Deliveries",
+      }),
+      "make an endpoint",
+    );
+    const made = toolResult(
+      await callTool(connection, "marfa_make_endpoint", {
+        id,
+        label: "Deliveries",
+      }),
+    ) as { endpoint: { id: string } };
+    const endpoints = await call(
+      owner.key,
+      "GET",
+      `/connectors/${id}/endpoints`,
+    );
+    expect(
+      (endpoints.body.data as { id: string }[]).map((row) => row.id),
+    ).toEqual([made.endpoint.id]);
+  });
+
+  it("pages a connector's runs that do not fit one answer, each page continuing where the last stopped", async () => {
+    const owner = await mint({ permissions: ["connectors.manage"] });
+    const id = await registered(owner.key, "Runs paged through a tool");
+    const count = 24;
+    for (let index = 0; index < count; index += 1) {
+      const minute = String(index).padStart(2, "0");
+      const reported = await call(owner.key, "POST", `/connectors/${id}/runs`, {
+        outcome: "failed",
+        started_at: `2026-01-01T00:${minute}:00.000Z`,
+        finished_at: `2026-01-01T00:${minute}:30.000Z`,
+        summary: `run ${minute} `.repeat(250).slice(0, 2000),
+        error: `failed ${minute} `.repeat(200).slice(0, 2000),
+      });
+      expect(reported.status, JSON.stringify(reported.body)).toBe(201);
+    }
+    const whole = await call(
+      owner.key,
+      "GET",
+      `/connectors/${id}/runs?limit=200`,
+    );
+    const expected = (whole.body.data as { id: string }[]).map((run) => run.id);
+    expect(expected).toHaveLength(count);
+    const connection = await admin(owner.key);
+    const seen: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const args: Record<string, unknown> = { id, runs_limit: count };
+      if (cursor !== null) args.runs_cursor = cursor;
+      const page = toolResult(
+        await callTool(connection, "marfa_connectors", args),
+      ) as { runs: { id: string }[]; runs_next_cursor: string | null };
+      expect(page.runs.length).toBeGreaterThan(0);
+      seen.push(...page.runs.map((run) => run.id));
+      cursor = page.runs_next_cursor;
+      pages += 1;
+    } while (cursor !== null && pages < count);
+    // More than one page, so a page was cut short and its cursor followed it.
+    expect(pages).toBeGreaterThan(1);
+    expect(seen).toEqual(expected);
+  });
+
+  it("answers a connector's metadata with its first page of runs only, so every page of a connector with many declared types stays within the budget", async () => {
+    const owner = await mint({ permissions: ["connectors.manage"] });
+    const declared = Array.from(
+      { length: 900 },
+      (_, n) => `acme.declared.${"t".repeat(38)}${String(n).padStart(4, "0")}`,
+    );
+    const created = await call(owner.key, "POST", "/connectors", {
+      name: "Many declared types",
+      read_only_types: declared,
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const id = created.body.id as string;
+    const count = 6;
+    for (let index = 0; index < count; index += 1) {
+      const reported = await call(owner.key, "POST", `/connectors/${id}/runs`, {
+        outcome: "succeeded",
+        started_at: `2026-01-01T00:0${String(index)}:00.000Z`,
+        finished_at: `2026-01-01T00:0${String(index)}:30.000Z`,
+        summary: `run ${String(index)}`,
+      });
+      expect(reported.status, JSON.stringify(reported.body)).toBe(201);
+    }
+    const whole = await call(owner.key, "GET", `/connectors/${id}`);
+    expect(whole.body.read_only_types).toEqual(declared);
+    const expected = (
+      (await call(owner.key, "GET", `/connectors/${id}/runs?limit=200`)).body
+        .data as { id: string }[]
+    ).map((run) => run.id);
+    expect(expected).toHaveLength(count);
+
+    const connection = await admin(owner.key);
+    const seen: string[] = [];
+    const sizes: number[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const args: Record<string, unknown> = { id, runs_limit: 2 };
+      if (cursor !== null) args.runs_cursor = cursor;
+      const answer = await callTool(connection, "marfa_connectors", args);
+      const page = toolResult(answer) as {
+        connector?: {
+          read_only_types: string[];
+          read_only_types_left_out?: number;
+        };
+        endpoints?: unknown[];
+        runs: { id: string }[];
+        runs_next_cursor: string | null;
+      };
+      sizes.push(answer.text.length);
+      expect(page.runs.length).toBeGreaterThan(0);
+      seen.push(...page.runs.map((run) => run.id));
+      if (pages === 0) {
+        const kept = page.connector?.read_only_types ?? [];
+        expect(page.endpoints).toEqual([]);
+        expect(kept.length).toBeGreaterThan(0);
+        expect(kept).toEqual(declared.slice(0, kept.length));
+        expect(
+          kept.length + (page.connector?.read_only_types_left_out ?? 0),
+        ).toBe(declared.length);
+      } else {
+        expect(page.connector).toBeUndefined();
+        expect(page.endpoints).toBeUndefined();
+      }
+      cursor = page.runs_next_cursor;
+      pages += 1;
+    } while (cursor !== null && pages < count);
+    expect(pages).toBe(3);
+    expect(seen).toEqual(expected);
+    for (const size of sizes) expect(size).toBeLessThanOrEqual(40_000);
+    // The witness: a connector that declares few types answers them all.
+    const other = await mint({ permissions: ["connectors.manage"] });
+    const small = await registered(other.key, "Few declared types");
+    const read = toolResult(
+      await callTool(await admin(other.key), "marfa_connectors", { id: small }),
+    ) as { connector: Record<string, unknown> };
+    expect(read.connector.read_only_types).toEqual([]);
+    expect(read.connector.read_only_types_left_out).toBeUndefined();
+  });
+
+  it("lists a file's copies through the files tool, as the API does", async () => {
+    const { key } = await mint({
+      ...EVERY_TYPE,
+      permissions: ["blobs.manage"],
+    });
+    const connection = await admin(key);
+    const upload = await fetch(`${server.apiUrl}/blobs`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "text/plain",
+      },
+      body: `a file whose copy is kept ${randomUUID()}`,
+    });
+    expect(upload.status, await upload.clone().text()).toBeLessThan(300);
+    const hash = ((await upload.json()) as { hash: string }).hash;
+    const copiesOf = async () =>
+      (await call(key, "GET", `/blobs/${hash}/copies`)).body.data as {
+        store_id: string;
+        kind: string;
+      }[];
+    // The upload wakes replication, which places the backup folder's copy
+    // on its own clock: read once both stores hold one.
+    const settled = await waitFor("the backup folder's copy", async () => {
+      const copies = await copiesOf();
+      return copies.some((copy) => copy.kind === "folder") ? copies : undefined;
+    });
+    const listed = toolResult(
+      await callTool(connection, "marfa_files", { hash }),
+    ) as { copies: { store_id: string }[] };
+    expect(listed.copies.map((copy) => copy.store_id).sort()).toEqual(
+      settled.map((copy) => copy.store_id).sort(),
+    );
+  });
+
+  it(
+    "runs the trash's retention through the maintenance tool, removing only what the retention makes eligible and no chosen item",
+    async () => {
+      // A server of its own: the item's age is a clock the file's server keeps.
+      const own = await bootFreshServer(
+        "owner-tasks-retention",
+        QUIET_SCHEDULE,
+      );
+      ownServers.push(own);
+      const connection = await (async () => {
+        const minted = await controlRequest(own.controlSocket, "/keys", {
+          method: "POST",
+          body: {
+            label: "owner tasks retention",
+            source: "retention-maintainer",
+            permissions: ["instance.maintain", "items.purge"],
+            type_permissions: { "core.note": "write" },
+          },
+        });
+        expect(minted.status, JSON.stringify(minted.body)).toBe(201);
+        const opened = await connectMcp(
+          own.apiUrl,
+          (minted.body as unknown as Minted).key,
+          "2026-07-28",
+          "/mcp/admin",
+        );
+        connections.push(opened);
+        return opened;
+      })();
+      await quiet(own, ["trash-purge"]);
+      const writer = writerOf(own);
+      const config = (await writer.getConfig()).data as Record<string, unknown>;
+      expect(
+        (await writer.updateConfig({ ...config, trash_retention_days: 1 }))
+          .status,
+      ).toBe(200);
+      const binned = async (title: string) => {
+        const made = await writer.createItem({
+          type: "core.note",
+          properties: { body: title },
+        });
+        expect(made.ok, JSON.stringify(made.error)).toBe(true);
+        expect((await writer.deleteItem(made.data.item.id)).ok).toBe(true);
+        return made.data.item.id;
+      };
+      const inBin = async (id: string) =>
+        (await writer.getItem(id, "trashed")).status === 200;
+      const old = await binned("trashed before the retention ended");
+      await movedClock(own).advance(2 * DAY_MS);
+      const recent = await binned("trashed inside the retention period");
+      // The witness: both are in the bin, and the tool names no item to purge.
+      expect(await inBin(old)).toBe(true);
+      expect(await inBin(recent)).toBe(true);
+      const { tools } = await connection.client.listTools();
+      expect(
+        tools
+          .filter((tool) => /purge|empty/.test(tool.name))
+          .map((tool) => tool.name),
+      ).toEqual([]);
+      const maintain = tools.find((tool) => tool.name === "marfa_maintain");
+      expect(
+        Object.keys(maintain?.inputSchema.properties ?? {}).sort(),
+      ).toEqual(["action", "id", "name"]);
+
+      const run = toolResult(
+        await callTool(connection, "marfa_maintain", {
+          action: "run_housekeeping",
+          name: "trash-purge",
+        }),
+      ) as { ended: { outcome: string } };
+      expect(run.ended.outcome).toBe("succeeded");
+      // Eligible by the policy: gone for good. Inside the retention: still there.
+      expect((await writer.getItem(old, "any")).status).toBe(404);
+      expect(await inBin(recent)).toBe(true);
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
 });

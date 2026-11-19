@@ -44,11 +44,6 @@ pub fn definition() -> Definition {
 
 pub fn run(arguments: Map<String, Value>) -> Outcome {
     let query = text(&arguments, "query").unwrap_or_default();
-    if query.chars().count() > MAX_QUERY {
-        return Err(Stop::invalid(format!(
-            "query must be at most {MAX_QUERY} characters."
-        )));
-    }
     let search = Url::parse_with_params(SEARCH, [("q", query.as_str())])
         .map_err(|_| Stop::invalid("query cannot be put in an address."))?;
     Ok(json!({

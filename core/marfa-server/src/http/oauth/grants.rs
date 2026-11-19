@@ -16,7 +16,10 @@ use crate::http::query;
 const NARROW_FIELDS: [&str; 2] = ["scopes", "expected_scopes"];
 const MOST_SCOPES: usize = 1_000;
 
-fn scopes_in(body: &Map<String, Value>, field: &'static str) -> Result<ScopeSet, Refusal> {
+pub(in crate::http) fn scopes_in(
+    body: &Map<String, Value>,
+    field: &'static str,
+) -> Result<ScopeSet, Refusal> {
     let Some(sent) = body.get(field) else {
         return Err(
             Refusal::new(Code::MissingRequiredField, format!("{field} is required."))

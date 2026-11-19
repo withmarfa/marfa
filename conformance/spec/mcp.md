@@ -2,7 +2,7 @@
 
 The MCP endpoint, `/mcp`, serves Marfa's tools to an agent over Streamable HTTP. A request carries an API key or an app's access token as a Bearer credential, and every tool call is a call to the API with that credential. The tools are `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_read_rows`, `marfa_create`, `marfa_update`, `marfa_write_rows` and `marfa_delete`.
 
-Two more endpoints serve the same tools and a group of their own. `/mcp/schema` adds `marfa_save_type`, `marfa_save_view`, `marfa_move_items`, `marfa_bulk_save`, `marfa_search_docs`, `marfa_sources` and `marfa_name_source`, for shaping what the instance holds. `/mcp/admin` adds `marfa_health`, `marfa_audit`, `marfa_keys`, `marfa_manage_key`, `marfa_revoke_key`, `marfa_webhooks` and `marfa_manage_webhook`, for running it. Unless a statement names an endpoint, it holds at all three.
+Two more endpoints serve the same tools and a group of their own. `/mcp/schema` adds `marfa_save_type`, `marfa_save_view`, `marfa_move_items`, `marfa_bulk_save`, `marfa_search_docs`, `marfa_sources` and `marfa_name_source`, for shaping what the instance holds. `/mcp/admin` adds `marfa_health`, `marfa_audit`, the key and webhook tools, and the owner's tasks that `mcp/tools-for-admin` names, for running it. Unless a statement names an endpoint, it holds at all three.
 
 ## Who may call it
 
@@ -82,25 +82,95 @@ When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mc
 
 ### `mcp/tools-for-admin`
 
-When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, and `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`.
+When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_backups` and `marfa_take_backup` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors` and `marfa_make_endpoint` while it holds `connectors.manage`, `marfa_files` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
+
+**Reason:** a credential that holds a permission can do the owner task it opens through the API, so an agent holding it does the same from MCP, except for the tasks `mcp/tools-withheld` names.
 
 **Tests:** `compliance/mcp.test.ts › lists each admin tool at /mcp/admin only to a credential that holds its permission`, `› lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists each admin tool at /mcp/admin to a credential that holds only one of the permissions that opens it`.
 
+### `mcp/health-instance-read`
+
+While a credential holds `instance.read`, the server MUST add to the answer of `marfa_health` what needs the owner's attention, the housekeeping jobs, the metrics, the file storage diagnostics, whether a newer server is available, and the status of the bulk job a `job_id` names.
+
+**Reason:** these are the reads `instance.read` opens at the API, so the tool answers what the credential may read there. The settings and their values are read with `marfa_settings`.
+
+**Tests:** `compliance/owner-tasks.test.ts › adds what instance.read opens to the health tool, and only for a credential that holds it`.
+
+### `mcp/health-parts`
+
+If the server cannot read one part of the answer to `marfa_health`, then the server MUST answer every other part it read and name the part it could not read, with its error code, in `unread`.
+
+**Reason:** a bulk job that does not exist, or one part that fails, says nothing about the rest, and a down instance is when health matters most.
+
+**Tests:** `compliance/owner-tasks.test.ts › answers each part of the health tool on its own, so a bulk job it cannot read leaves the others`, `› adds what instance.read opens to the health tool, and only for a credential that holds it`.
+
+### `mcp/connector-runs`
+
+When `marfa_connectors` is called with an `id`, the server MUST answer the connector's runs as `GET /connectors/{id}/runs` lists them.
+
+**Tests:** `compliance/owner-tasks.test.ts › lists a connector with its runs and makes an endpoint for it, refusing as the API does`, `› pages a connector's runs that do not fit one answer, each page continuing where the last stopped`.
+
+### `mcp/connector-metadata-once`
+
+When `marfa_connectors` is called with an `id` and a `runs_cursor`, the server MUST answer the runs without the connector and its endpoints.
+
+**Reason:** the connector and its endpoints are the same on every page, and repeating them on each page spends the room the runs need.
+
+**Tests:** `compliance/owner-tasks.test.ts › answers a connector's metadata with its first page of runs only, so every page of a connector with many declared types stays within the budget`.
+
+### `mcp/connector-types-fit`
+
+If the types a connector declares do not fit the first answer of `marfa_connectors` for its `id`, then the server MUST answer the declared types that fit, in the order the connector holds them, and the number it left out in `read_only_types_left_out`.
+
+**Reason:** a connector may declare a thousand types, and the answer must stay within what a client hands to the model whole; `GET /connectors/{id}` lists every one.
+
+**Tests:** `compliance/owner-tasks.test.ts › answers a connector's metadata with its first page of runs only, so every page of a connector with many declared types stays within the budget`.
+
+### `mcp/page-continues`
+
+When `marfa_trash` or `marfa_connectors` answers a page of rows, the server MUST answer a cursor that continues right after the last row the answer holds if and only if another row follows that row.
+
+**Reason:** an agent reads a long list a page at a time, and a page cut short without its cursor loses the rest of the list.
+
+**Tests:** `compliance/owner-tasks.test.ts › pages a connector's runs that do not fit one answer, each page continuing where the last stopped`, `› pages the trash that does not fit one answer, each page continuing where the last stopped`.
+
+### `mcp/page-fits`
+
+If the rows of a page that `marfa_trash` or `marfa_connectors` answers do not all fit one answer, then the server MUST answer fewer rows, except that a single row that alone exceeds the room is answered alone.
+
+**Reason:** the answer stays within what a client hands to the model whole, and a page always holds a row, so the cursor advances past a row too long to share a page.
+
+**Tests:** `compliance/owner-tasks.test.ts › pages a connector's runs that do not fit one answer, each page continuing where the last stopped`, `› pages the trash that does not fit one answer, each page continuing where the last stopped`.
+
 ### `mcp/tools-withheld`
 
-The server MUST NOT list at any MCP endpoint a tool that purges items, exports the instance, restores a backup, claims the instance, changes the instance's settings, manages the owner, passkeys or sign-ins, manages file storage or runs housekeeping.
+The server MUST NOT list at any MCP endpoint a tool that purges chosen items or empties the trash, revokes an app, ends a sign-in, removes a passkey, deletes a connector, clears a connector's state, retires an inbound endpoint, removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
 
-**Reason:** each of these can lose what the owner keeps or lock the owner out, and the owner does them from the command line, not through an agent.
+**Reason:** an agent's confirmation of a change that cannot be undone must bind every effect of the change to the state the owner saw, and the confirmations for purging, emptying, revoking, ending, removing, deleting, clearing, retiring and adopting do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
 
-**Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`.
+**Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`, `compliance/owner-tasks.test.ts › runs the trash's retention through the maintenance tool, removing only what the retention makes eligible and no chosen item`.
+
+### `mcp/settings-step-up-withheld`
+
+If a `marfa_change_settings` call names `sign_in_address`, `allow_private_addresses`, `object_store_bucket`, `object_store_endpoint`, `object_store_region`, `object_store_path_style`, `object_store_prefix` or `backup_path`, then the server MUST answer the call with the tool error code `app_sign_in_required`.
+
+**Reason:** the owner changes where people sign in, whether the server reaches private addresses and where it keeps files and backups from the command line or after a recent sign-in, never on a key's say-so. A setting that is not one of these changes through the tool as it does through `PATCH /config`.
+
+**Tests:** `compliance/owner-tasks.test.ts › refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes`.
+
+### `mcp/settings-step-up-unchanged`
+
+If a `marfa_change_settings` call names a setting that `mcp/settings-step-up-withheld` lists, then the server MUST NOT change any setting.
+
+**Tests:** `compliance/owner-tasks.test.ts › refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes`.
 
 ### `mcp/open-world-hint`
 
-When the server lists its tools, the server MUST annotate `marfa_create` and `marfa_manage_webhook` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
+When the server lists its tools, the server MUST annotate `marfa_create`, `marfa_manage_webhook`, `marfa_take_backup`, `marfa_maintain` and `marfa_change_settings` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
 
-**Reason:** `marfa_create` fetches a file from a web address the agent gives it, and `marfa_manage_webhook` has the instance send events to one; a client asks the person differently before a tool that reaches outside the instance.
+**Reason:** `marfa_create` fetches a file from a web address the agent gives it, `marfa_manage_webhook` has the instance send events to one, `marfa_take_backup` can upload a backup to an object store, `marfa_maintain` can send the heartbeat, and `marfa_change_settings` can set where errors are sent; a client asks the person differently before a tool that reaches outside the instance.
 
-**Tests:** `compliance/mcp.test.ts › marks marfa_create as reaching outside the instance and no other tool`, `› marks marfa_create and marfa_manage_webhook as reaching outside the instance and no other tool`.
+**Tests:** `compliance/mcp.test.ts › marks marfa_create as reaching outside the instance and no other tool`, `› marks each tool that can send something outside the instance as reaching outside it, and no other tool`.
 
 ## Calling a tool
 
@@ -108,9 +178,17 @@ When the server lists its tools, the server MUST annotate `marfa_create` and `ma
 
 When a tool call reads or writes, the server MUST apply the permissions, refusals and limits of the API operation that read or write is.
 
-**Reason:** a tool is another door to what the API guards, so a credential the API refuses is refused by the tool with the same `code`, and no tool is a way round a rule the API holds.
+**Reason:** a tool is another door to what the API guards, so a credential the API refuses is refused by the tool with the same `code`, and no tool is a way round a rule the API holds. A tool the server does not list to a credential is not called at all (`mcp/unlisted-tool`).
 
-**Tests:** `compliance/mcp.test.ts › refuses marfa_create for a type the credential only reads, as POST /items does`, `› refuses a change that needs schema.write at /mcp/schema, as PUT /types/{id} does`, `› refuses marfa_revoke_key for a key beyond its credential's reach, as DELETE /keys/{id} does`.
+**Tests:** `compliance/mcp.test.ts › refuses marfa_create for a type the credential only reads, as POST /items does`, `› refuses a change that needs schema.write at /mcp/schema, as PUT /types/{id} does`, `› refuses marfa_revoke_key for a key beyond its credential's reach, as DELETE /keys/{id} does`, `compliance/owner-tasks.test.ts › refuses a setting that does not exist in the settings tool, as the API does`, `› lists only the bin's items of the types a credential reads in the trash tool, as the API does`, `› refuses a search longer than the API takes in the trash tool, with the API's code`, `› refuses an app task the API refuses, with the API's code`, `› refuses a sign-in or passkey task the API refuses, with the API's code`, `› lists a connector with its runs and makes an endpoint for it, refusing as the API does`, `› runs housekeeping and cancels a job through the maintenance tool, refusing as the API does`.
+
+### `mcp/unlisted-tool`
+
+If a credential calls a tool that the endpoint does not list to it, then the server MUST answer the JSON-RPC error `-32602` with the message `Unknown tool:` and the tool's name.
+
+**Reason:** a credential learns of a tool only from the list it is given, so a tool outside that list does not exist for it, and the answer says nothing of which permission would open it.
+
+**Tests:** `compliance/mcp.test.ts › answers Unknown tool to a call of an admin tool the credential is not offered, where a credential offered it runs it`.
 
 ### `mcp/unknown-argument`
 
