@@ -804,7 +804,8 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
                     }
                     rows::purge(tx, &hash, &unit.at)?;
                     unit.audit("blob", hash.as_str(), Some(json!({})))?;
-                    gone.push(hash);
+                    let queued = rows::queued_deletions(tx, &hash)?;
+                    gone.push((hash, queued));
                 }
                 Ok(gone)
             })
@@ -816,16 +817,28 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
                 Vec::new()
             }
         };
-        for hash in &gone {
+        let mut left = Vec::with_capacity(gone.len());
+        for (hash, queued) in gone {
+            let mut deleted = HashSet::new();
             for store in app.blobs.attached() {
-                if let Err(failure) = app.retry_deletion(&store, hash).await {
-                    tracing::warn!(?failure, "A purged blob's bytes wait for a later run");
+                match app.retry_deletion(&store, &hash).await {
+                    Ok(()) => {
+                        deleted.insert(store.id().to_string());
+                    }
+                    Err(failure) => {
+                        tracing::warn!(?failure, "A purged blob's bytes wait for a later run");
+                    }
                 }
             }
+            // A deletion queued later under the same name belongs to a new upload of the bytes.
+            let rest = queued
+                .into_iter()
+                .filter(|deletion| !deleted.contains(&deletion.store_id))
+                .collect::<Vec<_>>();
+            left.push((hash, rest));
         }
-        let purged = u64::try_from(gone.len()).unwrap_or(u64::MAX);
-        // Read from what is queued, whichever stores were attached while the run deleted.
-        let waiting = app.db.read(move |tx| rows::waiting(tx, &gone)).await?;
+        let purged = u64::try_from(left.len()).unwrap_or(u64::MAX);
+        let waiting = app.db.read(move |tx| rows::waiting(tx, &left)).await?;
         (purged, waiting)
     } else {
         (0, 0)

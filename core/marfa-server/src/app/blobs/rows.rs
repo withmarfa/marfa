@@ -685,14 +685,48 @@ pub fn queued_objects(
         .collect::<rusqlite::Result<_>>()?)
 }
 
-/// How many of `hashes` still have bytes queued for deletion in any store.
-pub fn waiting(tx: &Transaction<'_>, hashes: &[Hash]) -> Result<u64> {
-    let mut statement =
-        tx.prepare_cached("SELECT EXISTS (SELECT 1 FROM blob_pending_deletions WHERE hash = ?1)")?;
+/// One queued deletion, told apart from a later one under the same name by when it was queued.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Queued {
+    pub store_id: String,
+    pub object: String,
+    pub queued_at: String,
+}
+
+/// The deletions queued for `hash` in any store.
+pub fn queued_deletions(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<Queued>> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT store_id, object, queued_at FROM blob_pending_deletions WHERE hash = ?1",
+        )?
+        .query_map([hash.as_str()], |row| {
+            Ok(Queued {
+                store_id: row.get(0)?,
+                object: row.get(1)?,
+                queued_at: row.get(2)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// How many of the blobs still have one of the deletions given for them queued, unchanged.
+pub fn waiting(tx: &Transaction<'_>, blobs: &[(Hash, Vec<Queued>)]) -> Result<u64> {
+    let mut statement = tx.prepare_cached(
+        "SELECT 1 FROM blob_pending_deletions \
+         WHERE hash = ?1 AND store_id = ?2 AND object = ?3 AND queued_at = ?4",
+    )?;
     let mut count = 0u64;
-    for hash in hashes {
-        if statement.query_row([hash.as_str()], |row| row.get::<_, bool>(0))? {
-            count += 1;
+    for (hash, queued) in blobs {
+        for deletion in queued {
+            if statement.exists(params![
+                hash.as_str(),
+                deletion.store_id,
+                deletion.object,
+                deletion.queued_at
+            ])? {
+                count += 1;
+                break;
+            }
         }
     }
     Ok(count)
