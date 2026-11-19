@@ -1819,7 +1819,7 @@ pub(crate) fn rows(core: &Core, item: &str, table: &str, asked: &RowsAsked) -> R
         }
     }
     let http = core.http()?;
-    let confirm = crate::catch_up::confirm_each_attempt(core, http, &crate::NEVER_STOPPED);
+    let confirm = crate::catch_up::confirm_each_attempt(core, http);
     Ok(marked(
         http.table_rows(item, table, &params, Some(&confirm))?,
         false,
@@ -1853,7 +1853,7 @@ pub(crate) fn row(core: &Core, item: &str, table: &str, row: &str) -> Result<Val
         }
     }
     let http = core.http()?;
-    let confirm = crate::catch_up::confirm_each_attempt(core, http, &crate::NEVER_STOPPED);
+    let confirm = crate::catch_up::confirm_each_attempt(core, http);
     Ok(marked(
         http.table_row(item, table, row, Some(&confirm))?,
         false,
@@ -1876,7 +1876,7 @@ pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>)
         .into_iter()
         .collect();
     let http = core.http()?;
-    let confirm = crate::catch_up::confirm_each_attempt(core, http, &crate::NEVER_STOPPED);
+    let confirm = crate::catch_up::confirm_each_attempt(core, http);
     Ok(marked(
         http.table_totals(item, table, &params, Some(&confirm))?,
         false,

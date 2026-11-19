@@ -1009,31 +1009,20 @@ pub(crate) fn refuse_an_old_server(http: &Http, stop: &AtomicBool) -> Result<()>
     ask_unless_stopped(stop, http, Http::served).map(drop)
 }
 
-/// The instance may change during credential renewal. The root is read on the
-/// calling thread, so a stop raised meanwhile ends the call `Canceled` once
-/// the read returns, within the transport's own timeout, and drops its answer:
-/// a thread left behind would hold the copy's writer lock after the core was
-/// dropped. The stop is read again once the instance is confirmed, which can
-/// wait on the store, so no request follows a stop raised meanwhile.
+/// The instance may change during credential renewal: before each attempt the
+/// root is read and the copy's generation and instance are checked.
 pub(crate) fn confirm_each_attempt<'a>(
     core: &'a Core,
     http: &'a Http,
-    stop: &'a AtomicBool,
 ) -> impl Fn(Stage) -> Result<()> + 'a {
-    move |stage| {
-        refuse_if_stopped(stop)?;
-        match stage {
-            Stage::Attempt => {
-                let Some(generation) = held_generation(core)? else {
-                    return Ok(());
-                };
-                let served = http.served();
-                refuse_if_stopped(stop)?;
-                confirm_served(core, &served?, generation)?;
-                refuse_if_stopped(stop)
-            }
-            Stage::Renewal => Ok(()),
+    move |stage| match stage {
+        Stage::Attempt => {
+            let Some(generation) = held_generation(core)? else {
+                return Ok(());
+            };
+            confirm_served(core, &http.served()?, generation)
         }
+        Stage::Renewal => Ok(()),
     }
 }
 

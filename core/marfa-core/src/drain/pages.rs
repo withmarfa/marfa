@@ -713,15 +713,20 @@ fn send_page(
     let Some(created) = created(lane, &sent, answer.as_ref().ok()) else {
         return Ok(false);
     };
-    settle(core, stop, pass, report, standing, lane, &created)?;
-    for (row, entry) in &created {
-        // A create the page settles goes before its tags, as on the walk; one
-        // it leaves to the walk leaves its tags to it too.
-        let accepted = standing.answers.get(&row.id) == Some(&Some(Verdict::Accepted));
-        if let (true, Some(tags)) = (accepted, tagged.get(&row.id)) {
-            settle_carried(core, report, standing, tags, entry)?;
+    // A stop ends the drain after the creates it left owed have their tags
+    // settled, so the next drain sends neither on its own door.
+    let settled = settle(core, stop, pass, report, standing, lane, &created);
+    if matches!(settled, Ok(()) | Err(CoreError::Canceled)) {
+        for (row, entry) in &created {
+            // A create the page settles goes before its tags, as on the walk;
+            // one it leaves to the walk leaves its tags to it too.
+            let accepted = standing.answers.get(&row.id) == Some(&Some(Verdict::Accepted));
+            if let (true, Some(tags)) = (accepted, tagged.get(&row.id)) {
+                settle_carried(core, report, standing, tags, entry)?;
+            }
         }
     }
+    settled?;
     Ok(true)
 }
 

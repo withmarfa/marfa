@@ -802,10 +802,12 @@ fn a_lookup_waiting_for_a_renewal_that_fails_starts_none_of_its_own_once_stopped
     let dir = tempfile::tempdir().unwrap();
     let core = copy_in_keyed(&server, dir.path(), "k");
     let started = Arc::new(AtomicUsize::new(0));
-    let counted = Arc::clone(&started);
+    let failed = Arc::new(AtomicBool::new(false));
+    let (counted, failing) = (Arc::clone(&started), Arc::clone(&failed));
     core.renew_credential_with(Box::new(move |_| {
         if counted.fetch_add(1, Ordering::SeqCst) == 0 {
             std::thread::sleep(std::time::Duration::from_millis(500));
+            failing.store(true, Ordering::SeqCst);
             return Err(CoreError::Network("the renewal failed".into()));
         }
         Ok("fresh".into())
@@ -816,10 +818,10 @@ fn a_lookup_waiting_for_a_renewal_that_fails_starts_none_of_its_own_once_stopped
     }
     let stop = AtomicBool::new(false);
     let http = core.http().unwrap();
-    let confirm = crate::catch_up::confirm_each_attempt(&core, http, &stop);
     let ended = std::thread::scope(|scope| {
-        let lookups =
-            [ITEM, OTHER_ITEM].map(|id| scope.spawn(|| http.item_checked(id, Some(&confirm))));
+        let lookups = [ITEM, OTHER_ITEM].map(|id| {
+            scope.spawn(|| crate::catch_up::item_checked_unless_stopped(&core, http, &stop, id))
+        });
         for path in &paths {
             server.wait_for(path, 1, std::time::Duration::from_secs(2));
         }
@@ -830,22 +832,24 @@ fn a_lookup_waiting_for_a_renewal_that_fails_starts_none_of_its_own_once_stopped
         stop.store(true, Ordering::SeqCst);
         lookups.map(|lookup| lookup.join().unwrap().unwrap_err())
     });
+    assert!(
+        ended
+            .iter()
+            .all(|error| matches!(error, CoreError::Canceled)),
+        "{ended:?}"
+    );
+    // The renewal the stop found under way fails after the calls have ended,
+    // which is when the lookup that waited on it would renew for itself.
+    let by = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !failed.load(Ordering::SeqCst) {
+        assert!(std::time::Instant::now() < by, "the witness never failed");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
     assert_eq!(
         started.load(Ordering::SeqCst),
         1,
         "a lookup renewed the credential after the stop"
-    );
-    assert!(
-        ended
-            .iter()
-            .any(|error| matches!(error, CoreError::Canceled)),
-        "{ended:?}"
-    );
-    assert!(
-        ended
-            .iter()
-            .any(|error| matches!(error, CoreError::RenewalFailed(_))),
-        "the witness did not fail a renewal: {ended:?}"
     );
 }
 
