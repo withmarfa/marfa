@@ -2,6 +2,7 @@
 //! cannot answer is itself an entry, so an empty list always means every check found nothing.
 
 pub mod faults;
+mod memory;
 
 use std::collections::HashSet;
 use std::future::Future;
@@ -21,10 +22,12 @@ use super::events::Event;
 use super::faults::{FAIL_ATTENTION, HOLD_ATTENTION};
 use super::housekeeping::{Report, Run};
 use super::refusal::{Code, Refusal, Result};
+use super::unit::Unit;
 use super::{App, folders, health, housekeeping, keys, webhooks};
 use crate::app::clock::{Stamp, Standing};
 use crate::telemetry::{Finished, Kind, RequestSpan};
 use faults::Entry;
+use memory::{Key, Mark, Memory};
 
 const CHECK_WAIT: Duration = Duration::from_secs(3);
 const SOON_MS: i64 = 7 * housekeeping::DAY_MS;
@@ -514,6 +517,7 @@ pub struct Order {
     begun: AtomicU64,
     looked: Arc<AtomicU64>,
     pub reported: Arc<faults::Faults>,
+    told: Arc<Memory>,
 }
 
 fn fault_concern(entry: &Entry) -> Concern {
@@ -654,26 +658,87 @@ fn raised_event(concern: &Concern) -> Event<'static> {
     }
 }
 
+/// What an announcing write did: the entries it announced and the marks it settled.
+#[derive(Default)]
+struct Written {
+    raised: usize,
+    failed_runs: usize,
+    settled: Vec<(Key, u64)>,
+}
+
+fn key_of(concern: &Concern) -> Key {
+    (concern.kind.to_string(), concern.reference.clone())
+}
+
+/// Records a new entry, and announces it unless its `attention.raised` went from memory.
+/// One on its way there is left for a later write, so it is never told twice.
+fn record_new(
+    unit: &Unit<'_, '_>,
+    concern: &Concern,
+    mark: Option<Mark>,
+    written: &mut Written,
+) -> Result<()> {
+    match mark {
+        Some(Mark::Pending(_)) => return Ok(()),
+        Some(Mark::Sent(serial)) => written.settled.push((key_of(concern), serial)),
+        None => {
+            unit.announce(&raised_event(concern))?;
+            written.raised += 1;
+            written.failed_runs += usize::from(concern.failed_run);
+        }
+    }
+    remember(unit.tx(), concern.kind, &concern.reference, &unit.at)
+}
+
+/// Drops the marks of entries the newest check no longer finds, so one that comes back is
+/// announced. A fault is judged by the faults standing now, since one can be met after a check.
+fn forget_gone(app: &App, gathered: &Gathered) {
+    let standing = app.attention.reported.references(app.clock.now_ms());
+    let looked = &app.attention.looked;
+    app.attention.told.retain(|(kind, reference)| {
+        if looked.load(Ordering::Acquire) != gathered.order {
+            return true;
+        }
+        if kind == FAULT {
+            return standing.contains(reference);
+        }
+        gathered.unknown.contains(&kind.as_str())
+            || gathered
+                .concerns
+                .iter()
+                .any(|concern| concern.kind == kind && concern.reference == *reference)
+    });
+}
+
 /// Writes only when an entry is new or gone, decided again in the write unless a newer check looked.
 async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
+    forget_gone(app, gathered);
     let looking = gathered.clone();
     let standing = app.attention.reported.references(app.clock.now_ms());
-    let changed = app
+    let (fresh, gone) = app
         .db
         .read(move |tx| {
-            Ok(!unannounced(tx, &looking)?.is_empty()
-                || !forgotten(tx, &looking, &standing)?.is_empty())
+            let fresh: Vec<Concern> = unannounced(tx, &looking)?.into_iter().cloned().collect();
+            Ok((fresh, !forgotten(tx, &looking, &standing)?.is_empty()))
         })
         .await?;
-    if !changed {
+    let told = app.attention.told.clone();
+    let waiting = |concern: &Concern| {
+        matches!(
+            told.get(concern.kind, &concern.reference),
+            Some(Mark::Pending(_))
+        )
+    };
+    if !gone && fresh.iter().all(waiting) {
         return Ok(0);
     }
     let (writing, looked) = (gathered.clone(), app.attention.looked.clone());
     let reported = app.attention.reported.clone();
     let written = app
         .write(&Caller::Server, WRITE_ACTION, move |unit| {
+            let mut written = Written::default();
             if looked.load(Ordering::Acquire) > writing.order {
-                return Ok((0, 0));
+                return Ok(written);
             }
             let tx = unit.tx();
             let now_ms = unit.instant.ms();
@@ -683,82 +748,95 @@ async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
                     params![kind, reference],
                 )?;
             }
-            let sent: HashSet<String> = reported
-                .from_memory(now_ms)
-                .into_iter()
-                .map(|(reference, _)| reference)
-                .collect();
-            let (mut raised, mut failed_runs) = (0, 0);
-            for concern in unannounced(tx, &writing)? {
-                remember(tx, concern.kind, &concern.reference, &unit.at)?;
-                if concern.kind == FAULT && sent.contains(&concern.reference) {
-                    continue;
+            let marks = told.snapshot();
+            // A failed commit that landed left its row, and the log delivers that entry.
+            let rows: HashSet<Key> = announced(tx)?.into_iter().collect();
+            for (key, mark) in &marks {
+                if let Mark::Sent(serial) = mark
+                    && rows.contains(key)
+                {
+                    written.settled.push((key.clone(), *serial));
                 }
-                unit.announce(&raised_event(concern))?;
-                raised += 1;
-                failed_runs += usize::from(concern.failed_run);
             }
-            Ok((raised, failed_runs))
+            for concern in unannounced(tx, &writing)? {
+                let mark = marks.get(&key_of(concern)).copied();
+                record_new(unit, concern, mark, &mut written)?;
+            }
+            Ok(written)
         })
-        .await?;
-    let (raised, failed_runs) = written;
-    if failed_runs > 0 {
+        .await;
+    let written = match written {
+        Ok(written) => written,
+        Err(refused) => {
+            if database_failed(&refused)
+                && app.attention.looked.load(Ordering::Acquire) <= gathered.order
+            {
+                send_from_memory(app, &fresh);
+            }
+            return Err(refused);
+        }
+    };
+    app.attention.told.settle(&written.settled);
+    if written.failed_runs > 0 {
         let (settings, at) = (app.settings.live(), app.clock.stamp());
-        for _ in 0..failed_runs {
+        for _ in 0..written.failed_runs {
             app.telemetry.report_connector_failure(&settings, &at);
         }
     }
-    Ok(raised)
+    Ok(written.raised)
 }
 
-/// Whether a refused write met a database that fails, and certainly did not commit.
+/// Whether a write that would announce new entries failed in the database, refused or at a
+/// commit whose outcome is unknown.
 fn database_failed(refused: &Refusal) -> bool {
-    let failed = refused.code == Code::InsufficientStorage
+    refused.commit_failed
+        || refused.code == Code::InsufficientStorage
         || refused
             .fault
             .as_ref()
-            .is_some_and(|fault| fault.kind == Kind::Database);
-    failed && !refused.commit_failed
+            .is_some_and(|fault| fault.kind == Kind::Database)
 }
 
-/// Announces a fault entry at once. Where the database fails, the entry goes to the webhooks
-/// from memory instead, and is recorded unannounced once a write lands.
+/// Sends each new entry's `attention.raised` straight to the webhooks, unless it is on its way
+/// there or went already. A commit that failed may have landed, so the log can deliver one too.
+fn send_from_memory(app: &Arc<App>, concerns: &[Concern]) {
+    for concern in concerns {
+        if let Some(pending) = app.attention.told.begin(concern.kind, &concern.reference) {
+            webhooks::tell_from_memory(app, concern.to_event(), Box::new(move || pending.handed()));
+        }
+    }
+}
+
+/// Announces a fault entry at once, or sends it from memory where the database fails.
 fn raise_fault(app: &Arc<App>, entry: Entry) {
     let app = app.clone();
+    app.attention.told.forget(FAULT, &entry.reference);
     tokio::spawn(async move {
         let concern = fault_concern(&entry);
-        let reported = app.attention.reported.clone();
+        let told = app.attention.told.clone();
         let writing = concern.clone();
         let first_ms = entry.first_ms;
         let written = app
             .write(&Caller::Server, WRITE_ACTION, move |unit| {
+                let mut written = Written::default();
                 let tx = unit.tx();
-                for (reference, _) in reported.from_memory(unit.instant.ms()) {
-                    if announced_at(tx, &reference)?.is_none() {
-                        remember(tx, FAULT, &reference, &unit.at)?;
-                    }
-                }
                 if let Some(at) = announced_at(tx, &writing.reference)? {
                     if Stamp::read(&at)?.ms() >= first_ms {
-                        return Ok(());
+                        return Ok(written);
                     }
                     tx.execute(
                         "DELETE FROM attention_announced WHERE kind = ?1 AND reference = ?2",
                         params![FAULT, writing.reference],
                     )?;
                 }
-                remember(tx, FAULT, &writing.reference, &unit.at)?;
-                unit.announce(&raised_event(&writing))
+                let mark = told.get(FAULT, &writing.reference);
+                record_new(unit, &writing, mark, &mut written)?;
+                Ok(written)
             })
             .await;
         match written {
-            Ok(()) => {}
-            Err(refused) if database_failed(&refused) => {
-                app.attention
-                    .reported
-                    .sent_from_memory(&entry.reference, first_ms);
-                webhooks::tell_from_memory(&app, concern.to_event());
-            }
+            Ok(written) => app.attention.told.settle(&written.settled),
+            Err(refused) if database_failed(&refused) => send_from_memory(&app, &[concern]),
             Err(refused) => {
                 tracing::warn!(error = %refused, "A fault's attention entry was not announced");
             }

@@ -31,12 +31,15 @@ const WAITS: [Duration; 3] = [
 /// in that time is used as it last stood.
 const CATCH_UP: Duration = Duration::from_secs(2);
 
+/// Called once the entry is handed to a subscription's send, and dropped uncalled when it is not.
+pub type Handed = Box<dyn FnOnce() + Send>;
+
 #[derive(Debug)]
 pub struct Roster {
     listeners: ArcSwap<Vec<Listener>>,
     /// The commit count the list was read after.
     read_after: watch::Sender<u64>,
-    queue: OnceLock<mpsc::Sender<Value>>,
+    queue: OnceLock<mpsc::Sender<(Value, Handed)>>,
 }
 
 impl Default for Roster {
@@ -60,11 +63,12 @@ pub fn start(app: &Arc<App>) {
 }
 
 /// Queues a new entry, its `attention` as an `attention.raised` event carries it.
-pub fn tell(app: &App, attention: Value) {
+pub fn tell(app: &App, attention: Value, handed: Handed) {
     let Some(queue) = app.webhooks.roster.queue.get() else {
+        tracing::warn!("An attention entry was not sent from memory: the sender has not started");
         return;
     };
-    if queue.try_send(attention).is_err() {
+    if queue.try_send((attention, handed)).is_err() {
         tracing::warn!("An attention entry was not sent from memory: too many were waiting");
     }
 }
@@ -100,12 +104,12 @@ async fn stopped(stopping: &mut watch::Receiver<bool>) {
     let _ = stopping.wait_for(|stopping| *stopping).await;
 }
 
-async fn send_queued(app: Arc<App>, mut waiting: mpsc::Receiver<Value>) {
+async fn send_queued(app: Arc<App>, mut waiting: mpsc::Receiver<(Value, Handed)>) {
     let mut stopping = app.stopping();
     loop {
-        let attention = tokio::select! {
+        let (attention, handed) = tokio::select! {
             next = waiting.recv() => match next {
-                Some(attention) => attention,
+                Some(next) => next,
                 None => return,
             },
             () = stopped(&mut stopping) => return,
@@ -114,8 +118,14 @@ async fn send_queued(app: Arc<App>, mut waiting: mpsc::Receiver<Value>) {
         let mut read_after = app.webhooks.roster.read_after.subscribe();
         let caught_up = read_after.wait_for(|count| *count >= committed);
         let _ = tokio::time::timeout(CATCH_UP, caught_up).await;
+        let listeners = app.webhooks.roster.listeners.load_full();
+        if listeners.is_empty() {
+            tracing::info!("An attention entry was not sent from memory: no webhook could hear it");
+            continue;
+        }
+        handed();
         let mut sending = JoinSet::new();
-        for listener in app.webhooks.roster.listeners.load().iter() {
+        for listener in listeners.iter() {
             sending.spawn(deliver(app.clone(), listener.clone(), attention.clone()));
         }
         let (mut delivered, mut undelivered) = (0u32, 0u32);
@@ -235,5 +245,133 @@ async fn once(app: &App, listener: &Listener, attention: &Value, delivery_id: &s
         },
         Ok(Outcome::Unreachable | Outcome::TimedOut) => Tried::Again,
         Err(()) => Tried::Given,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::app::access::Maker;
+    use crate::settings::{Environment, Settings};
+
+    async fn started() -> (TempDir, Arc<App>) {
+        let dir = TempDir::new().unwrap();
+        let database = dir.path().join("marfa.db");
+        let blobs = dir.path().join("blobs");
+        let socket = dir.path().join("s.sock");
+        let pairs = [
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+            ("MARFA_TEST_HOOKS", "true"),
+        ];
+        let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
+        (dir, App::start(settings).await.unwrap())
+    }
+
+    /// Counts how often a told entry was handed to a send, and how often it was dropped unsent.
+    #[derive(Clone, Default)]
+    struct Counts {
+        handed: Arc<AtomicUsize>,
+        dropped: Arc<AtomicUsize>,
+    }
+
+    struct Guard {
+        counts: Counts,
+        handed: bool,
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let count = if self.handed {
+                &self.counts.handed
+            } else {
+                &self.counts.dropped
+            };
+            count.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl Counts {
+        fn told(&self) -> Handed {
+            let guard = Guard {
+                counts: self.clone(),
+                handed: false,
+            };
+            Box::new(move || {
+                let mut guard = guard;
+                guard.handed = true;
+            })
+        }
+
+        fn read(&self) -> (usize, usize) {
+            (
+                self.handed.load(Ordering::SeqCst),
+                self.dropped.load(Ordering::SeqCst),
+            )
+        }
+
+        async fn settled(&self) -> (usize, usize) {
+            for _ in 0..200 {
+                let read = self.read();
+                if read != (0, 0) {
+                    return read;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            self.read()
+        }
+    }
+
+    fn entry() -> Value {
+        serde_json::json!({ "kind": "fault", "reference": "database:job backup" })
+    }
+
+    #[tokio::test]
+    async fn an_entry_past_a_full_queue_is_dropped_unsent() {
+        let (_dir, app) = started().await;
+        let (queue, _waiting) = mpsc::channel(QUEUE);
+        app.webhooks.roster.queue.set(queue).unwrap();
+        let counts = Counts::default();
+        for _ in 0..QUEUE {
+            tell(&app, entry(), counts.told());
+        }
+        assert_eq!(counts.read(), (0, 0));
+        tell(&app, entry(), counts.told());
+        assert_eq!(counts.read(), (0, 1));
+    }
+
+    #[tokio::test]
+    async fn an_entry_told_before_the_sender_starts_is_dropped_unsent() {
+        let (_dir, app) = started().await;
+        let counts = Counts::default();
+        tell(&app, entry(), counts.told());
+        assert_eq!(counts.read(), (0, 1));
+    }
+
+    #[tokio::test]
+    async fn a_sender_started_while_reads_fail_has_no_list_and_drops_the_entry_unsent() {
+        let (_dir, app) = started().await;
+        app.faults.set("refuse:read", None).unwrap();
+        start(&app);
+        let counts = Counts::default();
+        tell(&app, entry(), counts.told());
+        assert_eq!(counts.settled().await, (0, 1));
+
+        // The witness: with a list, the same entry is handed to a send.
+        app.webhooks.roster.listeners.store(Arc::new(vec![Listener {
+            webhook_id: "w".into(),
+            maker: Maker::Key("k".into()),
+            url: "http://127.0.0.1:9/hook".into(),
+            secret: "s".into(),
+            expires_at: None,
+        }]));
+        let counts = Counts::default();
+        tell(&app, entry(), counts.told());
+        assert_eq!(counts.settled().await, (1, 0));
     }
 }

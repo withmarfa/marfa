@@ -68,8 +68,6 @@ pub struct Entry {
     pub count: u64,
     pub first_ms: i64,
     pub last_ms: i64,
-    /// Sent from memory while the database failed, so it is recorded and never announced.
-    pub from_memory: bool,
 }
 
 impl Entry {
@@ -132,7 +130,6 @@ impl Faults {
             count: 1,
             first_ms: now_ms,
             last_ms: now_ms,
-            from_memory: false,
         };
         if held.entries.len() < MAX_PLACES {
             let entry = fresh(reference.clone(), Some((kind, place)));
@@ -168,30 +165,6 @@ impl Faults {
         self.standing(now_ms)
             .into_iter()
             .map(|entry| entry.reference)
-            .collect()
-    }
-
-    /// Marks the entry first met at `first_ms` as sent from memory, unless it has since gone.
-    pub fn sent_from_memory(&self, reference: &str, first_ms: i64) {
-        let mut held = self.held();
-        let Held { entries, overflow } = &mut *held;
-        let entry = match entries.get_mut(reference) {
-            Some(entry) => Some(entry),
-            None => overflow
-                .as_mut()
-                .filter(|entry| entry.reference == reference),
-        };
-        if let Some(entry) = entry.filter(|entry| entry.first_ms == first_ms) {
-            entry.from_memory = true;
-        }
-    }
-
-    /// The entries sent from memory that stand at `now_ms`, each with when it was first met.
-    pub fn from_memory(&self, now_ms: i64) -> Vec<(String, i64)> {
-        self.standing(now_ms)
-            .into_iter()
-            .filter(|entry| entry.from_memory)
-            .map(|entry| (entry.reference, entry.first_ms))
             .collect()
     }
 }
@@ -259,15 +232,5 @@ mod tests {
             overflow.title(),
             "Faults in more places than are listed, 3 times"
         );
-    }
-
-    #[test]
-    fn only_the_entry_that_failed_to_record_is_marked_sent_from_memory() {
-        let faults = Faults::default();
-        let entry = faults.record(Kind::Database, &JOB, 0).unwrap();
-        faults.sent_from_memory(&entry.reference, entry.first_ms + 1);
-        assert!(faults.from_memory(0).is_empty());
-        faults.sent_from_memory(&entry.reference, entry.first_ms);
-        assert_eq!(faults.from_memory(0), [(entry.reference, 0)]);
     }
 }

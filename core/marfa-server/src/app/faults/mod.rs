@@ -46,6 +46,7 @@ macro_rules! point_list {
         FAIL_COMMIT = Fail "commit" Write;
         FAIL_COMMIT_FULL = Fail "commit-full" Write;
         FAIL_COMMIT_ACK = Fail "commit-ack" Write;
+        FAIL_COMMIT_LANDED = Fail "commit-landed" Write;
         FAIL_SESSION_LOOKUP = Fail "session-lookup" Nth;
         FAIL_SESSION_DELETE = Fail "session-delete" Nth;
         FAIL_SESSION_USE = Fail "session-use" Nth;
