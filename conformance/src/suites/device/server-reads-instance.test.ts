@@ -8,7 +8,10 @@ import {
   answers,
   bulkGetOf,
   certifiedRead,
+  copyIncompleteReplay,
+  copyItemEvent,
   copyLiveReplay,
+  copyReplay,
   refusal,
   typeCatalog,
   wireItem,
@@ -21,7 +24,9 @@ import { ON_MACOS } from "../../utils/platform.js";
 import type { Outcome } from "../../device/protocol.js";
 import {
   BUILT_FOR,
+  type Answer,
   type RecordedRequest,
+  type SseFrame,
 } from "../../device/scripted-server.js";
 import {
   KEY,
@@ -488,6 +493,14 @@ describe("a look at read_only while a stream is held", () => {
 
 const EXPIRED = refusal(401, "unauthorized", "expired");
 const SECOND = "01a00000-0000-7000-8000-00000000000b";
+const THIRD = "01a00000-0000-7000-8000-00000000000c";
+
+const CREDENTIAL_ENDED: SseFrame = {
+  event: "stream_incomplete",
+  data: { event_type: "stream_incomplete", reason: "credential_ended" },
+};
+/** The read of the log's head, ended before it names the head. */
+const HEAD_ENDED: Answer = { kind: "sse", frames: [CREDENTIAL_ENDED] };
 
 /** A call whose request the server refuses once for an expired credential. */
 interface Renewed {
@@ -495,6 +508,16 @@ interface Renewed {
   args: string[];
   /** Whether the copy is hydrated before the call. */
   held: boolean;
+  /** Whether `script` runs before the hydration, for a stream whose answers follow the hydration's own. */
+  early?: boolean;
+  /** Scripts answers the hydration's own `/events` answers follow, for a read it makes itself. */
+  before?: (server: Harness["server"]) => void;
+  /** What a hydration's question about the head answers, made afresh for each run. */
+  replay?: () => (cursor: string) => Answer;
+  /** Whether the hydration's second page goes unrefused, so the only renewal is the stream's. */
+  pageKept?: boolean;
+  /** Whether a hydration is cut off at its second page before the call, so the call resumes it. */
+  interrupted?: boolean;
   /** Scripts the refused request, and anything the hydration needs. */
   script: (server: Harness["server"]) => void;
   /** The request refused, then sent again. */
@@ -528,6 +551,102 @@ const RENEWED: Record<string, Renewed> = {
       ),
     repeats: (request) => request.pathname === `/items/${ITEM}`,
   },
+  "a catch-up whose stream ends for its credential": {
+    args: ["catch-up"],
+    held: true,
+    early: true,
+    script: (server) =>
+      server.copyAnswer(
+        "GET",
+        "/events",
+        copyIncompleteReplay("12", [
+          copyItemEvent("11", "item.created", wireItem({ id: SECOND })),
+          CREDENTIAL_ENDED,
+        ]),
+        copyLiveReplay("12", [
+          copyItemEvent("12", "item.created", wireItem({ id: THIRD })),
+        ]),
+      ),
+    repeats: (request) =>
+      request.pathname === "/events" &&
+      request.headers["last-event-id"] !== undefined,
+  },
+  "a catch-up whose stream ends again before an event": {
+    args: ["catch-up"],
+    held: true,
+    early: true,
+    script: (server) =>
+      server.copyAnswer(
+        "GET",
+        "/events",
+        copyIncompleteReplay("12", [
+          copyItemEvent("11", "item.created", wireItem({ id: SECOND })),
+          CREDENTIAL_ENDED,
+        ]),
+        copyIncompleteReplay("12", [CREDENTIAL_ENDED]),
+        copyLiveReplay("12", [
+          copyItemEvent("12", "item.created", wireItem({ id: THIRD })),
+        ]),
+      ),
+    repeats: (request) =>
+      request.pathname === "/events" &&
+      request.headers["last-event-id"] !== undefined,
+  },
+  "a hydration whose first read of the head ends for its credential": {
+    args: ["hydrate", "--type", "core.note", "--tier", "library"],
+    held: false,
+    pageKept: true,
+    before: (server) => server.copyAnswer("GET", "/events", HEAD_ENDED),
+    script: () => undefined,
+    repeats: (request) =>
+      request.pathname === "/events" &&
+      request.headers["last-event-id"] === undefined,
+  },
+  "a hydration whose second read of the head ends for its credential": {
+    args: ["hydrate", "--type", "core.note", "--tier", "library"],
+    held: false,
+    pageKept: true,
+    before: (server) =>
+      server.copyAnswer("GET", "/events", HEAD_ENDED, HEAD_ENDED),
+    script: () => undefined,
+    repeats: (request) =>
+      request.pathname === "/events" &&
+      request.headers["last-event-id"] === undefined,
+  },
+  "a hydration whose question about the head ends for its credential": {
+    args: ["hydrate", "--type", "core.note", "--tier", "library"],
+    held: false,
+    pageKept: true,
+    interrupted: true,
+    replay: () => {
+      let asked = 0;
+      return (cursor) =>
+        asked++ === 0
+          ? copyIncompleteReplay(cursor, [CREDENTIAL_ENDED])
+          : copyReplay(cursor, []);
+    },
+    script: () => undefined,
+    repeats: (request) =>
+      request.pathname === "/events" &&
+      request.headers["last-event-id"] !== undefined,
+  },
+  "a hydration whose second question about the head ends for its credential": {
+    args: ["hydrate", "--type", "core.note", "--tier", "library"],
+    held: false,
+    pageKept: true,
+    interrupted: true,
+    replay: () => {
+      let asked = 0;
+      return (cursor) =>
+        asked++ < 2
+          ? copyIncompleteReplay(cursor, [CREDENTIAL_ENDED])
+          : copyReplay(cursor, []);
+    },
+    script: () => undefined,
+    repeats: (request) =>
+      request.pathname === "/events" &&
+      request.headers["last-event-id"] !== undefined,
+  },
   "a hydration": {
     args: ["hydrate", "--type", "core.note", "--tier", "library"],
     held: false,
@@ -539,7 +658,11 @@ const RENEWED: Record<string, Renewed> = {
 
 // This fixture uses a macOS keychain file for the renewable credential.
 describe("a request repeated after a credential renewal", ON_MACOS, () => {
-  async function repeated(name: string, replacedAtRenewal: boolean) {
+  async function repeated(
+    name: string,
+    replacedAtRenewal: boolean,
+    signInEnds = false,
+  ) {
     const renewed = RENEWED[name]!;
     harness = await startHarness("server-reads-renewal");
     const { server, device } = harness;
@@ -548,6 +671,8 @@ describe("a request repeated after a credential renewal", ON_MACOS, () => {
       answers.root(Number(BUILT_FOR), instance),
     );
     let pageRefused = false;
+    let cut = renewed.interrupted === true;
+    renewed.before?.(server);
     scriptHydration(server, {
       head: "10",
       items: {
@@ -561,15 +686,26 @@ describe("a request repeated after a credential renewal", ON_MACOS, () => {
       // One item a page, so a hydration's second page follows its head.
       pageSize: 1,
       drop: () => {
-        if (renewed.held || pageRefused) return false;
+        if (cut) {
+          cut = false;
+          return true;
+        }
+        if (renewed.held || renewed.pageKept || pageRefused) return false;
         pageRefused = true;
         return EXPIRED;
       },
       instance: () => instance,
+      ...(renewed.replay ? { replay: renewed.replay() } : {}),
     });
+    if (renewed.early) renewed.script(server);
     if (renewed.held) value(await device.hydrate(["core.note"], "library"));
-    renewed.script(server);
+    if (renewed.interrupted) {
+      const first = await device.hydrate(["core.note"], "library");
+      expect(first.ok, "the hydration was not interrupted").toBe(false);
+    }
+    if (!renewed.early) renewed.script(server);
     server.answer("POST", "/token", () => {
+      if (signInEnds) return answers.validation("invalid_grant", "ended");
       if (replacedAtRenewal) instance = REPLACED;
       return {
         kind: "json",
@@ -603,11 +739,12 @@ describe("a request repeated after a credential renewal", ON_MACOS, () => {
       }),
       keychain,
     ]);
+    const before = server.requests.length;
     try {
       const result = await new Cli(requireBinary(), server.url, KEY)
         .as(undefined)
         .run(["--json", "device", "--db", device.store, ...renewed.args]);
-      const reached = server.requests.filter(renewed.repeats);
+      const reached = server.requests.slice(before).filter(renewed.repeats);
       const renewal = server.requests.findIndex(
         (request) => request.pathname === "/token",
       );
@@ -663,10 +800,89 @@ describe("a request repeated after a credential renewal", ON_MACOS, () => {
     ).toEqual(["GET /"]);
   }
 
+  it("ends a catch-up as it does without a renewal when renewing its sign-in after its stream ended for its credential ends the sign-in", async () => {
+    const ended = await repeated(
+      "a catch-up whose stream ends for its credential",
+      false,
+      true,
+    );
+    expect(ended.result.code, ended.result.stderr).toBe(5);
+    expect(ended.result.stderr).toContain("unauthorized");
+    expect(
+      ended.reached,
+      "the stream was opened again after the sign-in ended",
+    ).toHaveLength(1);
+  });
+  it("reads on from the last event it took, and holds each event once, after a catch-up's stream ends for its credential", async () => {
+    const ran = await repeated(
+      "a catch-up whose stream ends for its credential",
+      false,
+    );
+    expect(ran.result.code, ran.result.stderr).toBe(0);
+    expect(
+      ran.reached.map((request) => request.headers["last-event-id"]),
+      "the stream was not opened again from the last event taken",
+    ).toEqual(["10", "11"]);
+    const held = value(await harness!.device.list()).map((item) => item.id);
+    expect(held.filter((id) => id === SECOND)).toHaveLength(1);
+    expect(held.filter((id) => id === THIRD)).toHaveLength(1);
+  });
+  it("ends a catch-up with its stream's reason, after one renewal, when the stream ends again before an event", async () => {
+    const ran = await repeated(
+      "a catch-up whose stream ends again before an event",
+      false,
+    );
+    expect(ran.result.code, ran.result.stderr).toBe(5);
+    expect(ran.result.stderr).toContain("unauthorized");
+    expect(
+      ran.reached,
+      "the stream was opened a third time, or not a second",
+    ).toHaveLength(2);
+  });
+  async function hydratedAfterRenewal(name: string, reads: number) {
+    const ran = await repeated(name, false);
+    expect(ran.result.code, ran.result.stderr).toBe(0);
+    expect(
+      ran.reached,
+      "the stream was not read again, so the check below proves nothing",
+    ).toHaveLength(reads);
+    const held = value(await harness!.device.list()).map((item) => item.id);
+    expect(held.filter((id) => id === ITEM)).toHaveLength(1);
+    expect(held.filter((id) => id === SECOND)).toHaveLength(1);
+  }
+  async function endedAfterOneRenewal(name: string) {
+    const ran = await repeated(name, false);
+    expect(ran.result.code, ran.result.stderr).toBe(5);
+    expect(ran.result.stderr).toContain("unauthorized");
+    expect(
+      ran.reached,
+      "the stream was read a third time, or not a second",
+    ).toHaveLength(2);
+  }
+  it("reads the head of the log again after renewing its sign-in when a hydration's first read ends for its credential", () =>
+    hydratedAfterRenewal(
+      "a hydration whose first read of the head ends for its credential",
+      2,
+    ));
+  it("asks the log again after renewing its sign-in when a hydration's question about the head ends for its credential", () =>
+    hydratedAfterRenewal(
+      "a hydration whose question about the head ends for its credential",
+      3,
+    ));
+  it("ends a hydration with its stream's reason when a second read of the head ends for its credential", () =>
+    endedAfterOneRenewal(
+      "a hydration whose second read of the head ends for its credential",
+    ));
+  it("ends a hydration with its stream's reason when a second question about the head ends for its credential", () =>
+    endedAfterOneRenewal(
+      "a hydration whose second question about the head ends for its credential",
+    ));
   it("confirms the instance again before it repeats a table read after a credential renewal", () =>
     confirmsAgain("a table read"));
   it("confirms the instance again before it repeats a pin after a credential renewal", () =>
     confirmsAgain("a pin"));
   it("confirms the instance again before a hydration sends its next request after a credential renewal", () =>
     confirmsAgain("a hydration"));
+  it("confirms the instance again before it opens a stream again after a credential renewal", () =>
+    confirmsAgain("a catch-up whose stream ends for its credential"));
 });
