@@ -211,6 +211,10 @@ it("writes each file new to a second directory as the directory that made it wro
   trackItem(ctx, elsewhere.data.item.id);
 
   const notes = linked();
+  const styled = `${title("Styled")}.md`;
+  // A full time at midnight stays a full time, and each style shows again.
+  notes.files[styled] =
+    `---\ntitle: ${styled.replace(/\.md$/, "")}\nlanguage: 'en'\noccurred_at: 2026-10-11T00:00:00.000Z\ntags:\n  - alpha\n  - beta\nnotes: |\n  First line.\n  Second line.\n---\nThe body.\n`;
   const first = await made(folder, notes.files);
   const second = await followed(folder);
 
@@ -225,6 +229,7 @@ it("writes each file new to a second directory as the directory that made it wro
     expect(there[name], name).toBe(here[name]);
   }
   expect(there[notes.session]).toContain("\nstarts_at:\nends_at:\n");
+  expect(there[styled]).toContain("\noccurred_at: 2026-10-11T00:00:00.000Z\n");
 });
 
 it("sends a file's form on its placement, holding each key's style and no value or comment", async () => {
