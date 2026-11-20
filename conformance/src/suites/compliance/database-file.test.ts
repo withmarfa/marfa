@@ -704,7 +704,7 @@ describe("starting on a database this build did not write", () => {
           expect(text, cause).toMatch(/start (this build )?on a fresh file/i);
           expect(text, cause).toContain("restore the archive there");
           expect(text, cause).toMatch(
-            /restore reads archive versions from 1 through its own, and refuses a later version or an archive written before/i,
+            /restore reads archive versions from 1 through its own\. It refuses an archive at a later version, and one whose manifest\.json names no format/i,
           );
         });
       }

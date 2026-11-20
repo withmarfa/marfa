@@ -16,6 +16,7 @@ mod lines;
 pub mod lists;
 mod made;
 mod names;
+mod paused;
 pub(crate) mod placement;
 mod preserve;
 mod pull;
@@ -30,6 +31,7 @@ mod unmatched;
 pub use beneath::BeneathReport;
 pub(crate) use first::waiting;
 pub use first::{FirstSync, Synced};
+pub(crate) use paused::paused;
 pub use pull::{PullReport, copy_changed};
 pub use removal::{Confirmed, Restored};
 mod health;
@@ -45,7 +47,7 @@ mod watch;
 mod watch_record;
 mod watched;
 pub use every::{
-    Every, EveryFolder, HANDED_OVER, MISSING, RETRY_HANDED, Unwatched, follows, watch_every,
+    Every, EveryFolder, HANDED_OVER, MISSING, PAUSED, RETRY_HANDED, Unwatched, follows, watch_every,
 };
 pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
@@ -235,6 +237,9 @@ pub struct Folder {
     /// Set by `allow_additions` for the next scan alone and never stored, so
     /// a scan that does not run leaves nothing for a later one to take.
     every_addition: std::sync::atomic::AtomicBool,
+    /// How many directories a watch of this open could not register, as the
+    /// watch last found them. Zero where no watch runs.
+    unwatched: std::sync::atomic::AtomicUsize,
     /// Why the store this open found was refused, where the open replaced it.
     replaced: Option<String>,
 }
@@ -504,6 +509,7 @@ impl Folder {
             last_reads: std::sync::Mutex::default(),
             inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
+            unwatched: std::sync::atomic::AtomicUsize::new(0),
             replaced: None,
         };
         let row = added.row_on_server()?;
@@ -638,6 +644,7 @@ impl Folder {
             last_reads: std::sync::Mutex::default(),
             inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
+            unwatched: std::sync::atomic::AtomicUsize::new(0),
             replaced,
         })
     }
@@ -653,7 +660,18 @@ impl Folder {
     /// Reads the store without claiming it, so it answers beside a running
     /// watch and never keeps one from starting.
     pub fn status_of(root: impl AsRef<Path>) -> Result<StatusReport> {
-        Folder::reading(root.as_ref())?.status()
+        let folder = Folder::reading(root.as_ref())?;
+        let mut report = folder.status()?;
+        report.sync_paused = folder.is_paused()?;
+        report.unwatched = folder.observed_health().map_or(0, |observed| {
+            observed
+                .problems
+                .iter()
+                .filter(|problem| problem.code == health::Code::Unwatched)
+                .map(|problem| problem.count)
+                .sum()
+        });
+        Ok(report)
     }
 
     /// The folder at `root` with a store opened to read only.
@@ -688,6 +706,7 @@ impl Folder {
             last_reads: std::sync::Mutex::default(),
             inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
+            unwatched: std::sync::atomic::AtomicUsize::new(0),
             replaced: None,
         })
     }
@@ -894,6 +913,7 @@ impl Folder {
     }
 
     pub fn hydrate(&self) -> Result<crate::model::HydrateReport> {
+        self.refuse_while_paused()?;
         self.hydrate_until(&crate::NEVER_STOPPED)
     }
 
@@ -4572,6 +4592,122 @@ mod tests {
         assert!(!folder.confirm_first_sync().unwrap());
         assert!(!matches!(folder.pull(), Err(CoreError::FirstSyncWaiting)));
         assert!(!matches!(folder.drain(), Err(CoreError::FirstSyncWaiting)));
+    }
+
+    #[test]
+    fn a_paused_directory_refuses_every_sync_and_watch_and_reports_it_until_it_resumes() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let state = dir.path().join(STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        let core = Core::open(state.join("core.sqlite"), None).unwrap();
+        settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        std::fs::write(dir.path().join("note.md"), "# Note\n").unwrap();
+        let folder = Folder::open(dir.path(), None).unwrap();
+        let paused =
+            |error: std::result::Result<(), CoreError>| matches!(error, Err(CoreError::SyncPaused));
+        let stop = AtomicBool::new(false);
+
+        // The witness: before the pause none of these is refused for it.
+        assert!(!folder.is_paused().unwrap());
+        assert!(!paused(folder.pull().map(drop)));
+
+        assert!(folder.pause_sync().unwrap());
+        assert!(
+            !folder.pause_sync().unwrap(),
+            "a second pause changes nothing"
+        );
+        assert!(paused(folder.sync().map(drop)));
+        assert!(paused(folder.send_only().map(drop)));
+        assert!(paused(folder.pull().map(drop)));
+        assert!(matches!(
+            folder.watch(&stop, |_| Ok::<(), ()>(())),
+            Err(WatchError::Core(CoreError::SyncPaused))
+        ));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("note.md")).unwrap(),
+            "# Note\n",
+            "the pause leaves the directory as it was"
+        );
+        let reported = folder.observed_health().unwrap();
+        assert!(
+            reported
+                .problems
+                .iter()
+                .any(|problem| problem.code == health::Code::Paused && problem.count == 1)
+        );
+        assert!(Folder::paused_at(dir.path()));
+        drop(folder);
+
+        // Kept in the directory's own store, so a new open still finds it.
+        let folder = Folder::open(dir.path(), None).unwrap();
+        assert!(folder.is_paused().unwrap());
+        assert!(Folder::paused_at(dir.path()));
+
+        assert!(folder.resume_sync().unwrap());
+        assert!(
+            !folder.resume_sync().unwrap(),
+            "resuming a directory that runs changes nothing"
+        );
+        assert!(!paused(folder.pull().map(drop)));
+        assert!(
+            !folder
+                .observed_health()
+                .unwrap()
+                .problems
+                .iter()
+                .any(|problem| problem.code == health::Code::Paused)
+        );
+        assert!(!Folder::paused_at(dir.path()));
+    }
+
+    #[test]
+    fn a_folder_reports_the_directories_it_cannot_watch_until_it_can() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let state = dir.path().join(STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        let core = Core::open(state.join("core.sqlite"), None).unwrap();
+        settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        let folder = Folder::open(dir.path(), None).unwrap();
+        let unwatched = |folder: &Folder| {
+            folder.observed_health().and_then(|snapshot| {
+                snapshot
+                    .problems
+                    .iter()
+                    .find(|problem| problem.code == health::Code::Unwatched)
+                    .map(|problem| problem.count)
+            })
+        };
+
+        // The witness: a folder that watches everything reports none.
+        folder.health_observe(false, true, None, None, false);
+        assert_eq!(unwatched(&folder), None);
+
+        folder
+            .unwatched
+            .store(3, std::sync::atomic::Ordering::SeqCst);
+        folder.health_observe(false, true, None, None, false);
+        assert_eq!(unwatched(&folder), Some(3));
+
+        folder
+            .unwatched
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        folder.health_observe(false, true, None, None, false);
+        assert_eq!(unwatched(&folder), None);
+
+        // A watch that ends leaves the stored report saying none.
+        folder
+            .unwatched
+            .store(3, std::sync::atomic::Ordering::SeqCst);
+        folder.health_observe(false, true, None, None, false);
+        assert_eq!(
+            unwatched(&folder),
+            Some(3),
+            "the witness: the report says so"
+        );
+        drop(watch::Uncounted(&folder));
+        assert_eq!(unwatched(&folder), None);
     }
 
     /// A folder holding one bound note per name, scanned until the notes are

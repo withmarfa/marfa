@@ -624,10 +624,10 @@ async fn an_entry_a_tar_tool_adds_is_skipped_and_named_in_the_answer() {
 }
 
 #[tokio::test]
-async fn a_manifest_written_before_0_1_is_refused_naming_the_build_that_wrote_it() {
+async fn a_manifest_with_no_format_is_refused_naming_the_build_that_wrote_it() {
     let folder = TempDir::new().unwrap();
     let origin = Instance::start(folder.path(), &[]).await;
-    origin.note("written before 0.1").await;
+    origin.note("written with no format").await;
     let archive = with_manifest(entries(&origin.archive().await), |manifest| {
         manifest.remove("format");
         manifest.insert("written_by".into(), "marfa-server 0.0.70".into());
@@ -637,8 +637,8 @@ async fn a_manifest_written_before_0_1_is_refused_naming_the_build_that_wrote_it
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
     assert_eq!(
         refused.body["error"]["message"],
-        "This archive was written by marfa-server 0.0.70, before Marfa 0.1, and this build \
-         cannot read it."
+        "This archive was written by marfa-server 0.0.70, and its manifest.json names no format, \
+         which only releases before 0.0.72 left out, so this build cannot read it."
     );
     assert_eq!(
         refused.body["error"]["details"]["written_by"],

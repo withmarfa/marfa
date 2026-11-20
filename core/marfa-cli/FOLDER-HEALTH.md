@@ -14,6 +14,7 @@ A receipt time and its age describe when the server received a report. They do n
 - `paused_removals` counts paused removals from disk and from the server separately from conflicts.
 - `first_sync_waiting` says that the person has not confirmed the initial content sync.
 - `problems` contains current counts under a closed set of safe codes. A conflict counts while a local conflicted copy remains tagged `conflicted-copy` and linked through `derived-from`; keeping its bytes after resolving that marker does not keep the count.
+- `problems` can also hold `unwatched` and `paused`. `unwatched` counts the directories a watch of the folder's directory cannot register with the system's file watch, as when the system's limit of watches is used up. A change inside one is not heard as it happens, so while the count stands the watch reads those directories again on a short interval. It is absent once every directory is registered. `paused` has a count of 1 while the person has paused the directory's sync with `marfa folders pause`, and is absent once `marfa folders resume` runs. Either one keeps `last_success_at` from moving.
 
 An unreadable directory counts once under `unreadable`; known files held beneath that directory are not counted again. Directly unreadable files count separately. A directory that disappears during the inventory is a current `held_file` problem. Intentional package exclusions are not inventory failures. An incomplete inventory prevents a new full-success time, retains prior known upload counts, and can increase them for newly observed pending files. Those retained counts are observations, not a complete current inventory. A complete readable inventory recomputes the counts and clears resolved directory problems.
 
@@ -21,7 +22,7 @@ Reports contain no local paths, file contents, item IDs, hashes, or raw error me
 
 ## Delivery
 
-`folders push` makes a bounded reporting attempt after its content work. `folders watch` sends reports independently of content passes, on meaningful changes and its regular full pass. A reporting failure does not stop content sync or clear a content problem.
+`folders push` makes a bounded reporting attempt after its content work, and so do `folders pause` and `folders resume`. `folders watch` sends reports independently of content passes, on meaningful changes and its regular full pass. A reporting failure does not stop content sync or clear a content problem.
 
 The local store keeps the newest pending report and its sequence before sending it. A restart retains that report. New observations replace older pending observations; a retry sends the exact payload captured for that attempt. An obsolete receipt cannot remove a newer pending report. A copy restored from an older backup refreshes its local observation and allocates a sequence above the server's last receipt.
 

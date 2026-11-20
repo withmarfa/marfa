@@ -6,7 +6,7 @@ use std::path::Path;
 
 pub use marfa_rules::update_record::{
     ASK_LIMIT, Folder, LOCK, MARFA, Outcome, Pending, SERVER, cannot_put_back, finish_swap,
-    keep_aside, next_marfa, previous_of, put_back, run_within, sync_folder,
+    keep_aside, keep_served_release, next_marfa, previous_of, put_back, run_within, sync_folder,
 };
 
 use crate::settings::DatabasePath;
@@ -49,6 +49,7 @@ pub enum Settled {
 /// why the old release cannot run again.
 pub fn settle(
     record: &Folder,
+    database: Option<&Path>,
     running: &str,
     at: &str,
     cannot_put_back: &dyn Fn(&Pending) -> Option<String>,
@@ -136,6 +137,12 @@ pub fn settle(
             if let Err(error) = record.clear_pending() {
                 tracing::warn!("The update's record could not be cleared: {error}");
             }
+            // Release `from` said it opens the database, and may keep no record of its own.
+            if let Some(Err(error)) = database.map(|file| keep_served_release(file, from)) {
+                tracing::warn!(
+                    "The release put back could not be named beside the database: {error}"
+                );
+            }
             end(
                 record,
                 at,
@@ -168,6 +175,8 @@ pub fn settle(
 mod tests {
     use std::fs;
     use std::path::PathBuf;
+
+    use marfa_rules::update_record::served_release;
 
     use super::*;
 
@@ -214,6 +223,10 @@ mod tests {
             self.dir.join("bin")
         }
 
+        fn database(&self) -> PathBuf {
+            self.dir.join("data/marfa.db")
+        }
+
         fn text(&self, name: &str) -> String {
             fs::read_to_string(self.bin().join(name)).unwrap()
         }
@@ -228,11 +241,19 @@ mod tests {
 
         fn settle_asking(&self, cannot: &dyn Fn(&Pending) -> Option<String>) -> Settled {
             // An empty file stands for a program that does not run.
-            settle(&self.record, "0.0.75", AT, cannot, &|program| {
-                fs::read_to_string(program)
-                    .ok()
-                    .filter(|said| !said.is_empty())
-            })
+            let database = self.database();
+            settle(
+                &self.record,
+                Some(&database),
+                "0.0.75",
+                AT,
+                cannot,
+                &|program| {
+                    fs::read_to_string(program)
+                        .ok()
+                        .filter(|said| !said.is_empty())
+                },
+            )
         }
 
         fn last(&self) -> (String, String) {
@@ -263,10 +284,18 @@ mod tests {
     fn a_swap_that_lost_the_new_marfa_is_reported_and_put_back_and_never_called_succeeded() {
         let case = Case::new("half");
         fs::remove_file(next_marfa(&case.bin())).unwrap();
+        // The new release served on the database before it was found not whole.
+        fs::create_dir_all(case.dir.join("data")).unwrap();
+        keep_served_release(&case.database(), "0.0.75").unwrap();
         assert_eq!(case.settle(Some(1)), Settled::PutBack);
         assert_eq!(case.text(SERVER), "marfa-server 0.0.74");
         assert_eq!(case.text(MARFA), "marfa 0.0.74");
         assert_eq!(case.record.pending().unwrap(), None);
+        // Release 0.0.74 may keep no record of its own, so the one it is put back on names it.
+        assert_eq!(
+            served_release(&case.database()).unwrap().as_deref(),
+            Some("0.0.74")
+        );
         let (outcome, reason) = case.last();
         assert_eq!(outcome, "rolled_back");
         assert!(
@@ -379,7 +408,7 @@ mod tests {
     #[test]
     fn a_server_of_another_release_settles_nothing() {
         let case = Case::new("other");
-        let settled = settle(&case.record, "0.0.74", AT, &|_| None, &|_| None);
+        let settled = settle(&case.record, None, "0.0.74", AT, &|_| None, &|_| None);
         assert_eq!(settled, Settled::Nothing);
         assert!(case.record.pending().unwrap().is_some());
         assert!(next_marfa(&case.bin()).exists());

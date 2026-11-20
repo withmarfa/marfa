@@ -1,7 +1,10 @@
 //! `marfa server`: a Marfa server on this machine, run natively or in Docker.
 //!
-//! The install is a folder holding `.env` (name, release, port, runtime, how the
-//! server is reached) and `marfa.env` (the server's secrets and proxy trust).
+//! The install is a folder holding `.env` (name, port, runtime, how the server is
+//! reached, and the release) and `marfa.env` (the server's secrets and proxy trust). A Docker
+//! install runs the release `.env` names. A native install is on the release that last served
+//! its database, which that server names beside the database; a database that only releases up
+//! to 0.0.85 served has no such name, so its release cannot be told.
 
 mod account;
 pub(crate) mod address;
@@ -22,10 +25,11 @@ mod service;
 mod systemd;
 mod tailscale;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, Subcommand, ValueEnum};
+use marfa_rules::update_record::names_a_release;
 
 use crate::error::CliError;
 use crate::output::Printer;
@@ -61,13 +65,31 @@ pub enum ServerCommand {
     /// question has a flag, and `--yes` or a non-terminal answers none: the
     /// flag or the default is used.
     Install(InstallArgs),
-    /// Move the server to the release now installed.
+    /// Move the server to another release, newer or older.
     ///
-    /// Before Marfa 0.1, a release does not promise to open the database of another release, so a
-    /// newer release needs a new install, and this moves a server only between builds of one
-    /// release. A native server runs the `marfa-server` installed beside this `marfa`. A Docker
-    /// install moves to the release you name with `--release`, or to this binary's own. It
-    /// refuses an older release than the one installed.
+    /// A native server moves to the release of the `marfa-server` installed beside this `marfa`.
+    /// A Docker install moves to the release you name with `--release`, or to this binary's own.
+    /// This is the only command that changes the release an install is on: `install`, `start`
+    /// and `restart` keep it there. A native install is on the release that last served its
+    /// database, and a Docker install on the image `.env` names.
+    ///
+    /// Before Marfa 0.1, a release may not read another release's database. This command first
+    /// asks the release it moves to, newer or older, whether it opens the install's database
+    /// and settings, and changes nothing when it does not. When the programs the service runs
+    /// were already replaced, the error says how to put back the release the install is on. When
+    /// a release up to 0.0.85 last served the database, which names none, the error says the
+    /// release cannot be told and gives the general way back. A release that could not be asked
+    /// is started, and a Docker install whose new release then refuses the database starts its
+    /// earlier release again. A Docker image before 0.0.76 cannot be asked, so it is refused.
+    /// The way to move is then to export, make a new install of the other release and restore
+    /// the archive there. A release that changes how the database is laid out keeps a copy of
+    /// it first, as `marfa.db.before-upgrade` beside it.
+    ///
+    /// To go back to an earlier release, install it the way you installed marfa and run this
+    /// command with its `marfa`, or with `--release` for Docker.
+    ///
+    /// `marfa update start` has the server update itself to a release it found, with the same
+    /// checks. This command moves an install to a release you have installed yourself.
     Upgrade(UpgradeArgs),
     /// Whether the server runs, its release and address, and whether it is claimed.
     ///
@@ -83,6 +105,17 @@ pub enum ServerCommand {
     Status(DirArgs),
     /// Start the server, if it is not running.
     ///
+    /// A native install stays on the release that last served its database.
+    /// A `marfa` of another release is refused, and so is a start after the
+    /// programs the service runs were replaced in place, as Homebrew and the
+    /// install script do, while an earlier release ran or after it stopped.
+    /// `marfa server upgrade` moves the install. A `marfa` of the same
+    /// release at another path is named there while the program the service
+    /// runs is still in place; once that program is gone, `marfa server
+    /// upgrade` names the new one. When a release up to 0.0.85 last served the database, which
+    /// names none, the release the install is on cannot be told, and `marfa server upgrade`
+    /// moves it.
+    ///
     /// On a Mac with a Docker install, this starts Docker's engine first if it
     /// is down: it is what the login agent runs.
     Start(StartArgs),
@@ -93,7 +126,8 @@ pub enum ServerCommand {
     ///
     /// It does what `stop` and then `start` do, and prints what each prints.
     /// It exits as `start` does, so a server that did not come back healthy
-    /// is an error here too.
+    /// is an error here too. A `marfa` that `start` refuses is refused before
+    /// the server is stopped.
     Restart(StartArgs),
     /// Run the server in the foreground. This is what the service runs.
     ///
@@ -198,8 +232,9 @@ pub struct InstallArgs {
     docker: bool,
     /// The release of the image to run, such as `0.0.22`, for `--docker`. The
     /// default is this binary's own version, and for a server already
-    /// installed, the release it runs. A native server runs the release
-    /// installed beside this `marfa`.
+    /// installed, the release it is on: another release is refused, and
+    /// `marfa server upgrade` moves the install. A native server runs the
+    /// release installed beside this `marfa`.
     #[arg(long, value_name = "VERSION")]
     release: Option<String>,
     /// How the server is reached. Asked when not given. `local`: only this
@@ -253,8 +288,9 @@ pub struct InstallArgs {
 pub struct UpgradeArgs {
     #[command(flatten)]
     dir: DirArgs,
-    /// The release to move to, for a Docker install. The default is this
-    /// binary's own version. A native server moves to the release installed.
+    /// The release to move to, newer or older, for a Docker install. The
+    /// default is this binary's own version. A native server moves to the
+    /// release installed beside this `marfa`.
     #[arg(long, value_name = "VERSION")]
     release: Option<String>,
     /// How long to wait for the server to answer, in seconds.
@@ -302,7 +338,11 @@ pub fn run(command: ServerCommand, out: &Printer) -> Result<(), CliError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct State {
     name: String,
-    release: String,
+    /// The `MARFA_RELEASE` line. A Docker install runs this image, which only
+    /// `marfa server upgrade` changes. A native install is on the release that last served its
+    /// database. Releases up to 0.0.85 do not update this line when they update themselves, so
+    /// a native install's status shows it as recorded, and no decision reads it.
+    release: Option<String>,
     port: u16,
     access: Access,
     https_port: Option<u16>,
@@ -316,6 +356,15 @@ struct State {
     external: bool,
     /// The server starts at login or at boot.
     autostart: bool,
+}
+
+impl State {
+    /// The release a Docker install's image is.
+    fn image(&self) -> &str {
+        self.release
+            .as_deref()
+            .expect("a Docker install records its release")
+    }
 }
 
 struct Folder {
@@ -581,9 +630,15 @@ impl Folder {
                     .map_err(|_| CliError::Usage("MARFA_HTTPS_PORT in .env is not a port".into()))
             })
             .transpose()?;
+        let release = match runtime {
+            Runtime::Docker => Some(field("MARFA_RELEASE")?),
+            Runtime::Native => dotenv
+                .get("MARFA_RELEASE")
+                .filter(|release| names_a_release(release)),
+        };
         let state = State {
             name: field("MARFA_NAME")?,
-            release: field("MARFA_RELEASE")?,
+            release,
             port,
             access,
             https_port,
@@ -634,15 +689,17 @@ fn parse_release(release: &str) -> Option<(u64, u64, u64)> {
     parts.next().is_none().then_some(version)
 }
 
-/// A newer release may have updated the database in a way an older one does
-/// not know, so the server never goes back to an older one.
-fn refuse_older(installed: &str, target: &str) -> Result<(), CliError> {
-    if parse_release(target) < parse_release(installed) {
-        return Err(CliError::Usage(format!(
-            "{installed} is installed and {target} is older. A newer release may have updated the database in a way an older one does not know, so the server will not go back: start the older release on the copy of the database the upgrade took, or on a backup. Delete `marfa.db-wal` and `marfa.db-shm` before you put it in place, because SQLite applies a log it finds beside the database (https://docs.marfa.so/run/upgrade)"
-        )));
-    }
-    Ok(())
+/// Only `marfa server upgrade` moves an install to another release, newer or older, because it
+/// first asks that release whether it opens the database. `runs` is the release the install
+/// runs, and `to` the one a command would have moved it to, which `asked` names.
+fn moved_only_by_upgrade(runs: &str, asked: &str, to: &str, upgrade: &str) -> CliError {
+    CliError::Usage(format!(
+        "this install runs {runs} and {asked} {to}: `{upgrade}` moves it to {to}, once {to} has said it opens the database"
+    ))
+}
+
+fn shell_word(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
 }
 
 fn own_release() -> Option<String> {

@@ -8157,7 +8157,7 @@
             "items": {
               "$ref": "#/components/schemas/FolderStatusProblem"
             },
-            "maxItems": 8,
+            "maxItems": 10,
             "description": "The current problem counts, each code once; an empty list means none were observed."
           }
         },
@@ -8187,9 +8187,11 @@
               "held_file",
               "unavailable",
               "root_gone",
-              "settings_invalid"
+              "settings_invalid",
+              "unwatched",
+              "paused"
             ],
-            "description": "conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable entry; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings."
+            "description": "What is wrong: an unresolved `conflict`, a `refused` write, a `credential_refused`, an `unreadable` entry, a `held_file`, an `unavailable` sync, `root_gone`, `settings_invalid`, an `unwatched` part, or the sync is `paused`."
           },
           "count": {
             "type": "integer",
@@ -8381,7 +8383,7 @@
             "items": {
               "$ref": "#/components/schemas/FolderStatusProblem"
             },
-            "maxItems": 8,
+            "maxItems": 10,
             "description": "The current problem counts, each code once; an empty list means none were observed."
           },
           "received_at": {
@@ -65370,7 +65372,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
+            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before 0.0.72 or a later version, or has an invalid line or one over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -66809,7 +66811,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the backup doesn't read, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
+            "description": "- `validation_error`: the backup doesn't read, lacks or repeats an entry, is from before 0.0.72 or a later version, or has an invalid line or one over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
             "content": {
               "application/json": {
                 "schema": {

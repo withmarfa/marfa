@@ -188,7 +188,14 @@ pub fn settle_when_up(app: &Arc<App>) {
                 Some(file) => pending::cannot_put_back(pending, file, &[]),
                 None => Some("this server has no database file".to_string()),
             };
-            pending::settle(&record, &running, &at, &cannot, &reports)
+            pending::settle(
+                &record,
+                database.as_deref(),
+                &running,
+                &at,
+                &cannot,
+                &reports,
+            )
         })
         .await;
         if let Ok(Settled::PutBack) = settled {

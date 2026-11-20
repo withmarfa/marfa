@@ -301,7 +301,8 @@ enum Command {
     /// them unless `--state` names other states.
     ///
     /// A build restores every archive version up to its own and refuses a later
-    /// one, or one written before Marfa 0.1, naming the build that wrote it.
+    /// one, or one whose `manifest.json` names no format or another format, as
+    /// every release before 0.0.72 wrote, naming the build or the format.
     /// An entry the build does not know, such as one a tar tool adds, is
     /// skipped, and the answer names it in `entries_skipped`, which the command
     /// also prints.

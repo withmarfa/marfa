@@ -1236,7 +1236,7 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
     match held.get("format") {
         None => {
             return Err(invalid(format!(
-                "This archive was written by {writer}, before Marfa 0.1, and this build cannot read it."
+                "This archive was written by {writer}, and its {MANIFEST} names no format, which only releases before 0.0.72 left out, so this build cannot read it."
             ))
             .with_detail("entry", MANIFEST)
             .with_detail("written_by", written_by));
@@ -1347,12 +1347,12 @@ mod tests {
     const COUNTS: &str = r#""file_count":0,"item_count":0,"version_count":0,"edge_count":0,"row_count":0,"blob_count":0,"type_count":0,"edge_type_count":0,"type_icon_count":0,"source_count":0,"setting_count":0,"enforcement_count":0,"connector_state_count":0,"connector_agreement_count":0"#;
 
     #[test]
-    fn a_manifest_with_no_format_is_refused_as_written_before_0_1() {
+    fn a_manifest_with_no_format_is_refused_naming_the_build_that_wrote_it() {
         let refused = manifest(br#"{"version":1,"written_by":"marfa-server 0.0.70","blobs":{}}"#)
             .unwrap_err();
         assert_eq!(
             refused.message,
-            "This archive was written by marfa-server 0.0.70, before Marfa 0.1, and this build cannot read it."
+            "This archive was written by marfa-server 0.0.70, and its manifest.json names no format, which only releases before 0.0.72 left out, so this build cannot read it."
         );
         let refused = manifest(br#"{"version":1}"#).unwrap_err();
         assert!(refused.message.contains("a build that does not say"));

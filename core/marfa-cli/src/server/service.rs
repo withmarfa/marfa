@@ -4,8 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
+use marfa_rules::update_record::{ASK_LIMIT, release_of};
 use serde_json::Value;
 
+use crate::autostart;
 use crate::error::CliError;
 use crate::server::account::{self, Identity};
 use crate::server::docker::Docker;
@@ -153,6 +155,50 @@ impl Service<'_> {
             Manager::Launchd => launchd::installed(self.name, self.dir).is_some(),
             m => systemd::installed(m.scope(), self.name),
         }
+    }
+
+    /// The `marfa` the service's definition runs, as the definition names it.
+    pub fn program(&self) -> Result<PathBuf, String> {
+        let file = match self.manager {
+            Manager::Launchd => launchd::installed(self.name, self.dir),
+            m => systemd::file(m.scope(), self.name)
+                .ok()
+                .filter(|file| file.exists()),
+        }
+        .ok_or_else(|| format!("{} is not installed", self.describe()))?;
+        let written = std::fs::read_to_string(&file)
+            .map_err(|error| format!("{} cannot be read: {error}", file.display()))?;
+        let words = match self.manager {
+            Manager::Launchd => autostart::after(&written, "<key>ProgramArguments</key>")
+                .and_then(|rest| autostart::plist_strings(rest, "</array>")),
+            _ => autostart::line_value(&written, "ExecStart=").and_then(autostart::unquoted),
+        };
+        words
+            .and_then(|words| words.into_iter().next())
+            .map(PathBuf::from)
+            .ok_or_else(|| format!("{} names no program to run", file.display()))
+    }
+
+    /// The release the install runs: that of the `marfa-server` beside the `marfa` the service
+    /// runs, which `server run` starts. A self-update swaps that program in place, so it is the
+    /// one record of the release that cannot fall behind.
+    pub fn release(&self) -> Result<String, String> {
+        let program = self.program()?;
+        let real = std::fs::canonicalize(&program).map_err(|error| {
+            format!(
+                "{} runs {}, which cannot be found: {error}",
+                self.describe(),
+                program.display()
+            )
+        })?;
+        let server = native::find_server(&real).ok_or_else(|| {
+            format!(
+                "{} runs {}, and no marfa-server is beside it",
+                self.describe(),
+                real.display()
+            )
+        })?;
+        release_of(&server, ASK_LIMIT)
     }
 
     /// With `restart` the server is replaced whatever the process ID query says,

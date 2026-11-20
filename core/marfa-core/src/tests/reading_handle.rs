@@ -599,8 +599,10 @@ fn a_reading_open_names_what_is_wrong_with_the_file() {
                 reason,
                 unsent,
                 folder,
+                release,
             } => {
                 assert!(folder.is_none(), "a device store was refused as a folder's");
+                assert_eq!(release, None, "a store with no meta recorded a release");
                 assert_eq!(named, path.display().to_string());
                 assert!(reason.contains(&found), "{reason}");
                 assert_eq!(unsent, None, "a store with no queue was counted");

@@ -1,13 +1,16 @@
 use std::io::ErrorKind;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use marfa_rules::update_record::keep_served_release;
 use tokio::net::{TcpListener, UnixListener};
 use tokio::signal::unix::{Signal, SignalKind, signal};
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::app::auth::claim;
+use crate::app::instance::VERSION;
 use crate::app::{App, blocking, housekeeping, jobs, take_files, updates, webhooks};
 use crate::control_socket::Claim;
 use crate::failure::Failure;
@@ -128,6 +131,17 @@ fn listen(
     ));
 }
 
+/// The command line reads the release an install is on from this while no server runs.
+async fn keep_release(database: PathBuf) {
+    let kept = tokio::task::spawn_blocking(move || keep_served_release(&database, VERSION))
+        .await
+        .map_err(std::io::Error::other)
+        .and_then(|kept| kept);
+    if let Err(error) = kept {
+        tracing::warn!("The release serving the database could not be named beside it: {error}");
+    }
+}
+
 pub async fn run(accepted: Accepted) -> Result<u8, Failure> {
     let fixed = accepted.fixed();
     let (database, blob_path) = (fixed.database.clone(), fixed.blob_path.clone());
@@ -174,6 +188,9 @@ pub async fn run(accepted: Accepted) -> Result<u8, Failure> {
     #[cfg(feature = "test-hooks")]
     if app.settings.start.test_hooks {
         tracing::warn!("Test hooks are on; this instance must hold no real data");
+    }
+    if let Some(database) = app.settings.start.database.file() {
+        keep_release(database).await;
     }
 
     updates::settle_when_up(&app);
