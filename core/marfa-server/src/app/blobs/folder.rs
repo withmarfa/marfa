@@ -1292,6 +1292,22 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn work_on_the_files_area_frees_it_by_the_time_it_answers() {
+        let dir = TempDir::new().unwrap();
+        let folder = unmounted_at(dir.path());
+        for _ in 0..100_000 {
+            let answered = folder
+                .within(Duration::from_secs(15), |_| Ok(()), |()| {})
+                .await;
+            assert!(matches!(answered, Ok(Ok(()))), "{answered:?}");
+            assert!(
+                !folder.claim_unended(),
+                "the files area was still held once its work answered"
+            );
+        }
+    }
+
     /// Claims `folder`'s files area for `id` as an adopt does, undoing a claim given up on.
     async fn claim_within(
         folder: &Arc<Folder>,

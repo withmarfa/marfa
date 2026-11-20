@@ -177,6 +177,8 @@ pub struct Attached {
     folder: Option<Arc<Folder>>,
     /// Why the store `wanted` names is not attached, in the owner's words.
     trouble: Option<String>,
+    /// The follows asked for before this store was tried.
+    asks: u64,
 }
 
 impl Attached {
@@ -237,6 +239,7 @@ impl Attached {
             wanted,
             s3: None,
             folder: None,
+            asks: 0,
             trouble: Some(format!(
                 "{message}. Until the {place} can be used, no file is copied there, no backup is \
                  taken and no file is purged."
@@ -254,6 +257,8 @@ pub struct Blobs {
     following: tokio::sync::Mutex<()>,
     /// A follow is asked for and has not yet read the settings.
     asked: AtomicBool,
+    /// The follows asked for since the start.
+    asks: AtomicU64,
     /// The stores record may not name the store in use. Changed only under `following`.
     record_doubted: AtomicBool,
     /// Reloads of the settings that failed since the last one that published.
@@ -423,6 +428,7 @@ async fn taking(
             s3: None,
             folder: None,
             trouble: None,
+            asks: 0,
         },
         Wanted::Unreadable(keys) => {
             let failure = does_not_read(keys);
@@ -438,6 +444,7 @@ async fn taking(
                 wanted,
                 folder: None,
                 trouble: None,
+                asks: 0,
             },
             Err(failure) => Attached::troubled(wanted, failure),
         },
@@ -461,6 +468,7 @@ async fn taking(
                     wanted,
                     s3: None,
                     trouble: None,
+                    asks: 0,
                 },
                 Ok(Err(failure)) => Attached::troubled(wanted, failure),
                 Err(_) => Attached::troubled(
@@ -486,6 +494,7 @@ async fn refilling(db: &Db, wanted: Wanted, root: &Path) -> std::result::Result<
                     wanted,
                     folder: None,
                     trouble: None,
+                    asks: 0,
                 });
             }
             Ok(Err(refused)) => return Err(refused),
@@ -589,6 +598,7 @@ impl Blobs {
             folder_opened,
             following: tokio::sync::Mutex::new(()),
             asked: AtomicBool::new(false),
+            asks: AtomicU64::new(0),
             record_doubted: AtomicBool::new(false),
             settings_doubted: AtomicU64::new(0),
             instance: instance.to_string(),
@@ -1300,6 +1310,8 @@ impl Intake {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Retry {
     Trouble,
+    /// Tries a troubled store again only if a follow was asked for after it was last tried.
+    Changed,
     /// Only brings the store in use and its record to the committed settings.
     Settle,
 }
@@ -1307,10 +1319,11 @@ pub enum Retry {
 impl App {
     /// A queued follow covers requests made before it reads the settings.
     pub fn ask_stores_to_follow(self: &Arc<App>) {
+        self.blobs.asks.fetch_add(1, Ordering::SeqCst);
         if !self.blobs.asked.swap(true, Ordering::SeqCst) {
             let app = self.clone();
             tokio::spawn(async move {
-                let _ = app.follow_stores(Retry::Trouble).await;
+                let _ = app.follow_stores(Retry::Changed).await;
             });
         }
     }
@@ -1434,6 +1447,8 @@ impl App {
         let mut tried: Option<Wanted> = None;
         let mut kept: Option<Arc<Attached>> = None;
         loop {
+            // Read before the settings, so an ask after this read is never taken as covered.
+            let asks = blobs.asks.load(Ordering::SeqCst);
             let wanted = match self.named_store().await {
                 Ok(wanted) => wanted,
                 Err(refused) => {
@@ -1454,6 +1469,7 @@ impl App {
                 None if current.wanted == wanted
                     && (current.trouble.is_none()
                         || retry == Retry::Settle
+                        || (retry == Retry::Changed && current.asks == asks)
                         || tried.as_ref() == Some(&wanted)) =>
                 {
                     if !blobs.record_doubted.load(Ordering::SeqCst) {
@@ -1477,7 +1493,8 @@ impl App {
                 }
                 None => {
                     tried = Some(wanted.clone());
-                    Arc::new(attach(&self.db, wanted, &blobs.instance, &blobs.kept).await)
+                    let attached = attach(&self.db, wanted, &blobs.instance, &blobs.kept).await;
+                    Arc::new(Attached { asks, ..attached })
                 }
             };
             let generation = match self.record_stores(&next).await {

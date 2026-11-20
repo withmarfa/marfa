@@ -418,6 +418,27 @@ async fn a_store_that_cannot_be_used_is_tried_once_by_each_follow() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_follow_asked_for_by_a_change_does_not_try_again_a_store_tried_since_the_change() {
+    let s3 = FakeS3::start().await;
+    let instance = Instance::start().await;
+    s3.set_mode(Mode::AllNotFound);
+    instance.name(bucket(&s3, "b")).await;
+    instance.settle().await;
+    assert!(instance.app.blobs.trouble().is_some());
+    assert_eq!(s3.requests(&Method::GET, &marker_of("b")), 1);
+
+    // The follow the change asked for, whether it ran before the settle or runs now.
+    instance.app.follow_stores(Retry::Changed).await.unwrap();
+    assert_eq!(s3.requests(&Method::GET, &marker_of("b")), 1);
+
+    // The witness: a change made after the store was tried has it tried again.
+    instance.name(bucket(&s3, "b")).await;
+    instance.app.follow_stores(Retry::Changed).await.unwrap();
+    assert_eq!(s3.requests(&Method::GET, &marker_of("b")), 2);
+    assert!(instance.app.blobs.trouble().is_some());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_folder_the_settings_move_past_while_it_is_attached_is_let_go() {
     let parent = TempDir::new().unwrap();
     let first = folder_in(&parent, "first");
