@@ -790,7 +790,7 @@ pub async fn set_tags(
 ) -> Answer {
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
-        query::only(&uri, &[])?;
+        let version = named_version(&uri)?;
         let sent = only_declared(body.object(Bag::Properties)?, &TAG_FIELDS)?;
         check_item_id(&id)?;
         let tags = sent
@@ -798,11 +798,7 @@ pub async fn set_tags(
             .map(tags_of)
             .transpose()?
             .unwrap_or_default();
-        let change = Change::SetTags {
-            id,
-            tags,
-            version: None,
-        };
+        let change = Change::SetTags { id, tags, version };
         write::run(&door, &who, claim, change).await
     })
     .await

@@ -23155,6 +23155,17 @@
             "in": "path"
           },
           {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "The item version you read. If it differs, no tag changes. Leave it out to replace the tags of the item as it is."
+            },
+            "required": false,
+            "description": "The item version you read. If it differs, no tag changes. Leave it out to replace the tags of the item as it is.",
+            "name": "version",
+            "in": "query"
+          },
+          {
             "name": "Idempotency-Key",
             "in": "header",
             "required": false,
@@ -23227,7 +23238,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `tags` is not a list of valid tags or has more than 100, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `validation_error`: `tags` is not a list of valid tags or has more than 100, `version` is not a whole number of 1 or more, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23338,11 +23349,14 @@
             }
           },
           "409": {
-            "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "description": "`version_conflict`: `version` differs from the item. `current` is the item now; no tag changed.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
                     {
                       "$ref": "#/components/schemas/InstanceChangedRefusal"
                     },

@@ -265,4 +265,52 @@ describe("metadata doors", () => {
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
     expect((await client.getItem(id)).data.metadata.tags).toEqual([]);
   });
+
+  it("replaces tags only when the version named is the item's, and as the item stands when none is named", async () => {
+    const id = await seed();
+    const version = (await client.getItem(id)).data.item.version;
+    const moved = await client.updateItem(id, {
+      version,
+      properties: { body: "changed since the read" },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+
+    const stale = await client.replaceTags(id, { tags: ["late"] }, { version });
+    expect(stale.status).toBe(409);
+    expect(stale.headers.get("X-Error-Code")).toBe("version_conflict");
+    expect(stale.error).toMatchObject({
+      error: { code: "version_conflict" },
+      current: { id, version: version + 1 },
+    });
+    expect((await client.getItem(id)).data.metadata.tags).toEqual([]);
+
+    const matching = await client.replaceTags(
+      id,
+      { tags: ["kept", "also"] },
+      { version: version + 1 },
+    );
+    expect(matching.status, JSON.stringify(matching.error)).toBe(200);
+    await expectMatchesSchema("PUT", "/items/{id}/tags", 200, matching.data);
+    expect(matching.data).toEqual({ tags: ["kept", "also"] });
+
+    const unconditional = await client.replaceTags(id, { tags: ["alone"] });
+    expect(unconditional.status, JSON.stringify(unconditional.error)).toBe(200);
+    expect((await client.getItem(id)).data.metadata.tags).toEqual(["alone"]);
+  });
+
+  it("refuses a version that is not a whole number of 1 or more on a tag replace", async () => {
+    const id = await seed();
+    for (const version of ["0", "-1", "1.5", "abc", ""]) {
+      const refused = await client.rawRequest(
+        `/items/${id}/tags?version=${version}`,
+        { method: "PUT", body: { tags: ["x"] } },
+      );
+      expect(refused.status, `version=${version}`).toBe(400);
+      expect(refused.headers.get("X-Error-Code")).toBe("validation_error");
+      expect(JSON.stringify(refused.error), `version=${version}`).toContain(
+        "version is a whole number of 1 or more",
+      );
+    }
+    expect((await client.getItem(id)).data.metadata.tags).toEqual([]);
+  });
 });

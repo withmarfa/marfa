@@ -2224,17 +2224,29 @@ When a key sends `DELETE /items/{id}/tags/{tag}`, the server MUST remove that ta
 
 ### `items/tags-version-stale`
 
-If `POST /items/{id}/tags` or `DELETE /items/{id}/tags/{tag}` names a `version` query parameter other than the item's current version, then the server MUST answer `409 version_conflict` with the item now in `current`, and change no tag.
+If `POST /items/{id}/tags`, `PUT /items/{id}/tags` or `DELETE /items/{id}/tags/{tag}` names a `version` query parameter other than the item's current version, then the server MUST answer `409 version_conflict` with the item now in `current`, and change no tag.
 
-**Reason:** a tag write leaves the item's version as it is, so without this an agent that read the item could tag it after a change it has not seen.
+**Reason:** a tag write leaves the item's version as it is, so without this an agent that read the item could tag it after a change it has not seen. A tag write by another key does not move the version, so this guard sees a change to the item's content or type, not a change to its tags.
 
-**Tests:** `compliance/metadata-routes.test.ts › changes tags only when the version named is the item's`.
+**Tests:** `compliance/metadata-routes.test.ts › changes tags only when the version named is the item's`, `› replaces tags only when the version named is the item's, and as the item stands when none is named`.
 
 ### `items/tags-version-current`
 
-When `POST /items/{id}/tags` or `DELETE /items/{id}/tags/{tag}` names the item's current version in its `version` query parameter, the server MUST apply the tag write.
+When `POST /items/{id}/tags`, `PUT /items/{id}/tags` or `DELETE /items/{id}/tags/{tag}` names the item's current version in its `version` query parameter, the server MUST apply the tag write.
 
-**Tests:** `compliance/metadata-routes.test.ts › changes tags only when the version named is the item's`.
+**Tests:** `compliance/metadata-routes.test.ts › changes tags only when the version named is the item's`, `› replaces tags only when the version named is the item's, and as the item stands when none is named`.
+
+### `items/tags-replace-unversioned`
+
+When `PUT /items/{id}/tags` names no `version`, the server MUST replace the item's tags as the item stands.
+
+**Tests:** `compliance/metadata-routes.test.ts › replaces tags only when the version named is the item's, and as the item stands when none is named`.
+
+### `items/tags-replace-version-malformed`
+
+If `PUT /items/{id}/tags` names a `version` that is not a whole number of 1 or more, then the server MUST answer `400 validation_error` naming `version`, and change no tag.
+
+**Tests:** `compliance/metadata-routes.test.ts › refuses a version that is not a whole number of 1 or more on a tag replace`.
 
 ### `items/tags-read`
 

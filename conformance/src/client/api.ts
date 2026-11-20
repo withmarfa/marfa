@@ -1440,8 +1440,13 @@ export class MarfaClient {
   async replaceTags(
     id: string,
     input: ReplaceTagsInput,
+    options?: { version?: number },
   ): Promise<ApiResponse<{ tags: string[] }>> {
-    return this.request<{ tags: string[] }>(`/items/${id}/tags`, {
+    const query =
+      options?.version === undefined
+        ? ""
+        : `?version=${String(options.version)}`;
+    return this.request<{ tags: string[] }>(`/items/${id}/tags${query}`, {
       method: "PUT",
       body: input,
     });
