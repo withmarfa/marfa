@@ -1337,4 +1337,87 @@ mod tests {
         assert!(ready(Some(StorageCause::NetworkFileSystem("nfs".into()))));
         assert!(ready(Some(StorageCause::NetworkFileSystem("smbfs".into()))));
     }
+
+    #[test]
+    fn a_directory_that_cannot_be_watched_does_not_send_every_pass_to_walk() {
+        let dir = folder_of(&["notes", "refused"]);
+        let ready = |refused: &[&str]| {
+            let watcher = Refusing {
+                refused: refused.iter().map(|name| dir.path().join(name)).collect(),
+            };
+            let (mut listening, failures) =
+                Listening::by_directory(watcher, dir.path(), reaching(&[])).unwrap();
+            assert_eq!(failures.len(), refused.len());
+            let mut touched = Touched::default();
+            listening.ready(&mut touched);
+            (listening.unwatched().len(), touched.scope().is_none())
+        };
+        // The witness: a watch the system will not trust does make a pass walk.
+        let (_, walks) = {
+            let (mut listening, _) = Listening::by_directory(
+                Refusing {
+                    refused: BTreeSet::new(),
+                },
+                dir.path(),
+                reaching(&[]),
+            )
+            .unwrap();
+            listening.stored(Some(&StorageCause::NetworkFileSystem("nfs".into())));
+            let mut touched = Touched::default();
+            listening.ready(&mut touched);
+            (0, touched.scope().is_none())
+        };
+        assert!(walks);
+        assert_eq!(ready(&[]), (0, false));
+        assert_eq!(ready(&["refused"]), (1, false));
+    }
+
+    #[test]
+    fn the_files_beneath_the_unwatched_directories_are_named_up_to_the_most_a_pass_names() {
+        let dir = folder_of(&["a/deeper", "b", "skipped/inner"]);
+        let root = dir.path();
+        for file in [
+            "a/one.md",
+            "a/deeper/two.md",
+            "b/three.md",
+            "skipped/inner/four.md",
+        ] {
+            std::fs::write(root.join(file), "x").unwrap();
+        }
+        let (listening, _) = Listening::by_directory(
+            Refusing {
+                refused: BTreeSet::new(),
+            },
+            root,
+            reaching(&["skipped/"]),
+        )
+        .unwrap();
+        let named = |directories: &[&str], most: usize| {
+            let directories: Vec<PathBuf> =
+                directories.iter().map(|name| root.join(name)).collect();
+            listening
+                .files_beneath(root, &directories, most)
+                .map(|files| relative(root, &files.into_iter().collect::<Vec<_>>()))
+        };
+        // Everything beneath a directory, none of what a scan leaves out, and
+        // none of a directory that is not named.
+        assert_eq!(
+            named(&["a"], 10),
+            Some(BTreeSet::from([
+                "a/deeper/two.md".to_string(),
+                "a/one.md".to_string()
+            ]))
+        );
+        assert_eq!(named(&["skipped"], 10), Some(BTreeSet::new()));
+        assert_eq!(
+            named(&["a", "b"], 10).map(|files| files.len()),
+            Some(3),
+            "the witness: the same directories under the most name every file"
+        );
+        assert_eq!(
+            named(&["a", "b"], 2),
+            None,
+            "more than the most are left to a walk"
+        );
+    }
 }

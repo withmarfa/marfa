@@ -502,14 +502,16 @@ fn edit_then_pass(
     counted();
     passes
         .hearing_ready(folder, &[rewrite(dir, "n001.md")], |touched| {
+            let uncovered = listening.unwatched();
             listening.ready(touched);
+            folder.name_unwatched(listening, dir, &uncovered, touched);
         })
         .unwrap();
     counted().0
 }
 
 #[test]
-fn a_quick_pass_walks_while_a_directory_is_unwatched_and_is_scoped_again_once_it_is_watched() {
+fn a_quick_pass_while_a_directory_is_unwatched_reads_that_directory_and_no_more_of_the_folder() {
     let mut all = names(12);
     all.push("sub/deep.md".into());
     let (dir, folder, _server, mut passes) = watched(&all);
@@ -526,8 +528,8 @@ fn a_quick_pass_walks_while_a_directory_is_unwatched_and_is_scoped_again_once_it
             "sub/deep.md",
         );
         assert!(
-            captured >= 12,
-            "pass {round} took the metadata of {captured} files"
+            captured < 6,
+            "pass {round} took the metadata of {captured} files, not those it was told of and the unwatched directory's"
         );
         let hash = read_hash(&folder, "sub/deep.md");
         assert!(
@@ -536,8 +538,8 @@ fn a_quick_pass_walks_while_a_directory_is_unwatched_and_is_scoped_again_once_it
         );
     }
 
-    // Registration succeeds: the pass that retries it walks once more, since
-    // nothing named what changed before the watch took hold.
+    // Registration succeeds: the pass that retries it named the unwatched
+    // directory before it was watched, so it stays scoped and finds the edit.
     *refused.borrow_mut() = None;
     let captured = edit_then_pass(
         (dir.path(), &folder),
@@ -546,8 +548,12 @@ fn a_quick_pass_walks_while_a_directory_is_unwatched_and_is_scoped_again_once_it
         "sub/deep.md",
     );
     assert!(
-        captured >= 12,
-        "the pass that watched it took {captured} files"
+        captured < 6,
+        "the pass that watched it took the metadata of {captured} files"
+    );
+    assert!(
+        seen.insert(read_hash(&folder, "sub/deep.md")),
+        "the pass that watched it took no note of the edit"
     );
 
     // The witness: with every directory watched, a quick pass stays scoped.

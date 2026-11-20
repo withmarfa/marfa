@@ -93,8 +93,7 @@ struct Entry {
     /// The code of the error that keeps a listed folder from being watched;
     /// `None` while it is watched or has not been tried.
     reason: Option<String>,
-    /// Whether the person paused the folder's sync, which the watch found
-    /// when it tried the folder. An entry an earlier build wrote has none.
+    /// Whether the person paused the folder's sync.
     #[serde(default)]
     paused: bool,
     last_success_at: Option<String>,

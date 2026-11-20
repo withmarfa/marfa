@@ -664,3 +664,32 @@ impl Touched {
         scope.as_ref().map_or(Reading::Keeping, Reading::Named)
     }
 }
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn named_paths_join_the_scope_until_there_are_more_than_a_pass_looks_at_or_one_is_outside() {
+        let root = Path::new("/folder");
+        let under = |count: usize| (0..count).map(|at| root.join(format!("d/n{at}.md")));
+
+        let mut touched = Touched::default();
+        assert!(touched.name(root, under(3)));
+        let scope = touched.scope().expect("trusted");
+        assert_eq!(scope.keys.len(), 3);
+        assert!(scope.keys.contains("d/n0.md"));
+
+        let mut over = Touched::default();
+        assert!(over.name(root, under(MOST_TOUCHED)));
+        assert!(!over.name(root, under(MOST_TOUCHED + 1)));
+        assert!(over.scope().is_none(), "too many leaves the pass to walk");
+
+        let mut outside = Touched::default();
+        assert!(!outside.name(root, [PathBuf::from("/elsewhere/a.md")]));
+        assert!(
+            outside.scope().is_none(),
+            "a path outside the folder leaves the pass to walk"
+        );
+    }
+}

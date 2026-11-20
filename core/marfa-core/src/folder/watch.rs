@@ -7,7 +7,7 @@ use super::handover::{self, Requests};
 use super::lists::Lists;
 use super::scoped::{MOST_TOUCHED, Reading, Touched};
 use super::selective::Selection;
-use super::watched::{Listening, Reach, settings_file};
+use super::watched::{Directories, Listening, Reach, settings_file};
 use super::{
     Barred, Drained, Flagged, Folder, PullReport, ScanReport, SettingsFileReport, StorageCause,
     Uncarried, Unsure,
@@ -31,10 +31,7 @@ const FULL_PASS: Duration = Duration::from_secs(600);
 /// off every pass for as long as it is written.
 const HELD_MOST: Duration = Duration::from_secs(5);
 
-/// How often a watch looks again at the directories it could not register,
-/// which no event names a change in: a twentieth of the default full pass, so
-/// a change there shows within half a minute, and no oftener, since each look
-/// reads those directories again. Never longer than the folder's own full pass.
+/// How often a watch looks again at the directories it could not register.
 const UNWATCHED_EVERY: Duration = Duration::from_secs(30);
 
 const RETRY_FIRST: Duration = Duration::from_secs(1);
@@ -556,11 +553,7 @@ impl Folder {
 
     /// Keeps the count of directories the watch could not register, and has
     /// the next pass report it where it changed.
-    fn count_unwatched(
-        &self,
-        listening: &Listening<notify::RecommendedWatcher>,
-        telling: &mut Telling,
-    ) {
+    fn count_unwatched<W: Directories>(&self, listening: &Listening<W>, telling: &mut Telling) {
         let now = listening.unwatched().len();
         if self.unwatched.swap(now, Ordering::SeqCst) != now {
             telling.health_changed = true;
@@ -571,9 +564,9 @@ impl Folder {
     /// register, as a quick pass would otherwise miss changes there. Answers
     /// whether it could: more files than a pass looks at by name are left to
     /// the full pass.
-    fn name_unwatched(
+    pub(super) fn name_unwatched<W: Directories>(
         &self,
-        listening: &Listening<notify::RecommendedWatcher>,
+        listening: &Listening<W>,
         root: &Path,
         uncovered: &[PathBuf],
         touched: &mut Touched,
@@ -2015,6 +2008,31 @@ mod tests {
         assert!(gate(HELD_MOST - Duration::from_millis(1)).reads_first(now));
         // Witness: past the ceiling the gate is asked whatever waits.
         assert!(!gate(HELD_MOST).reads_first(now));
+    }
+
+    #[test]
+    fn a_tick_leaves_a_folder_at_rest_be_until_the_look_at_what_cannot_be_watched_is_due() {
+        let at_rest = |unwatched_due: Option<Instant>| Telling {
+            at_rest: true,
+            unwatched_due,
+            ..Telling::default()
+        };
+        // With nothing unwatched, a tick starts no pass: the watch wakes itself for nothing.
+        assert!(at_rest(None).rests(false, false));
+        let now = crate::clock::now();
+        assert!(at_rest(Some(now + Duration::from_secs(60))).rests(false, false));
+        // The witness: a look that is due ends the rest.
+        assert!(!at_rest(Some(now)).rests(false, false));
+        assert_eq!(
+            unwatched_every(Duration::from_secs(600)),
+            UNWATCHED_EVERY,
+            "a look comes well inside the default full pass"
+        );
+        assert_eq!(
+            unwatched_every(Duration::from_secs(10)),
+            Duration::from_secs(10),
+            "and never later than a shorter full pass"
+        );
     }
 
     #[test]

@@ -4659,6 +4659,42 @@ mod tests {
         assert!(!Folder::paused_at(dir.path()));
     }
 
+    #[test]
+    fn a_folder_reports_the_directories_it_cannot_watch_until_it_can() {
+        let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let state = dir.path().join(STATE_DIR);
+        std::fs::create_dir_all(&state).unwrap();
+        let core = Core::open(state.join("core.sqlite"), None).unwrap();
+        settings_file::bind(&core, "01a00000-0000-7000-8000-000000000001").unwrap();
+        drop(core);
+        let folder = Folder::open(dir.path(), None).unwrap();
+        let unwatched = |folder: &Folder| {
+            folder.observed_health().and_then(|snapshot| {
+                snapshot
+                    .problems
+                    .iter()
+                    .find(|problem| problem.code == health::Code::Unwatched)
+                    .map(|problem| problem.count)
+            })
+        };
+
+        // The witness: a folder that watches everything reports none.
+        folder.health_observe(false, true, None, None, false);
+        assert_eq!(unwatched(&folder), None);
+
+        folder
+            .unwatched
+            .store(3, std::sync::atomic::Ordering::SeqCst);
+        folder.health_observe(false, true, None, None, false);
+        assert_eq!(unwatched(&folder), Some(3));
+
+        folder
+            .unwatched
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+        folder.health_observe(false, true, None, None, false);
+        assert_eq!(unwatched(&folder), None);
+    }
+
     /// A folder holding one bound note per name, scanned until the notes are
     /// at rest: the first scan binds each and writes its id line, the second
     /// takes in what the first wrote and records each file's size and time.
