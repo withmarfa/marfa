@@ -125,11 +125,11 @@ When the newer release can't read the database, move by export and restore:
 
 1. While the earlier release runs, export the data with `marfa export --output marfa-export.tar`.
 2. Make a new install of the newer release in another `--dir`, with its own port.
-3. Restore the archive there with `marfa restore marfa-export.tar`.
+3. Restore the archive into the new install with `marfa restore marfa-export.tar`, pointed at that install, such as through its private socket with `--socket` (see [Claim the server](#claim-the-server)).
 
-A restore reads every archive version up to its own. It refuses an archive whose `manifest.json` names no format, which only releases before 0.0.72 wrote, and names the release that wrote it.
+A restore reads every archive version up to its own. It refuses an archive that a release before 0.0.72 wrote: its `manifest.json` names no format, or a format other than `marfa-archive`.
 
-A release that refuses a database changes nothing in it, says in its log why it refused, and exits with status 78. `marfa server run` then stays up and idle, so nothing starts the server again into the same refusal. Read the reason with `marfa server status`, or `docker logs <name>`. To go back, install the release that wrote the database again, then run `marfa server start`. [Railway](railway.md#choose-a-release) pins its image the same way.
+A release that refuses a database changes nothing in it, says in its log why it refused, and exits with status 78. `marfa server run` then stays up and idle, so nothing starts the server again into the same refusal. Read the reason with `marfa server status`, or `docker logs <name>`. To go back, install the release that wrote the database again, then run `marfa server restart`. [Railway](railway.md#choose-a-release) pins its image the same way.
 
 ## Remove the server
 
