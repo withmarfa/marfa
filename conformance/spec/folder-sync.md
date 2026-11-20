@@ -226,11 +226,19 @@ If the server refuses one folder’s credential during a watch of every folder, 
 
 ### `folder-sync/watch-every-instance-changed-held`
 
-While a watch of every folder holds a folder whose watch ended because its server answers as another Marfa instance, the CLI MUST NOT send that server a request for the folder until the folder's credential, its server or its `.marfa/folder.yaml` changes.
+While a watch of every folder holds a folder whose watch ended because its server answers as another Marfa instance, and the folder's credential, its server and its `.marfa/folder.yaml` stay as they were, the CLI MUST NOT send that server a request for the folder other than one read of the server's root an hour.
 
-**Reason:** Opening the folder again would only meet the other instance again.
+**Reason:** Opening the folder again would only meet the other instance again, and a server that answers as the folder's own instance again, as after a proxy that pointed at the wrong instance is fixed, is found within the hour.
 
-**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
+**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`, `› reads only the root of a folder another instance answers for, at each timed look, and watches it again once its own instance answers`.
+
+### `folder-sync/watch-every-instance-back-reopens`
+
+When the hourly read of the root of a folder that a watch of every folder holds for another Marfa instance finds the instance the folder's working copy names, the CLI MUST watch the folder again.
+
+**Reason:** The folder and its key are reachable again, so holding it would leave it out of step with no fault left to fix.
+
+**Tests:** `device/folders-watch-every.test.ts › reads only the root of a folder another instance answers for, at each timed look, and watches it again once its own instance answers`.
 
 ### `folder-sync/watch-every-joins`
 

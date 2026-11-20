@@ -187,6 +187,20 @@ pub fn is_instance_changed(error: &CoreError) -> bool {
     matches!(error, CoreError::CopyExpired { reason, .. } if reason == crate::http::INSTANCE_CHANGED)
 }
 
+impl Folder {
+    /// Whether the folder's server answers, at its root, as the instance the
+    /// folder's copy names, read with one request. A copy that names no
+    /// instance has nothing to compare.
+    pub fn answers_as_its_instance(&self) -> Result<bool, CoreError> {
+        let held = crate::store::meta_get(&*self.core.conn()?, crate::store::META_INSTANCE_ID)?
+            .filter(|held| !held.is_empty());
+        let Some(held) = held else {
+            return Ok(true);
+        };
+        Ok(self.core.http()?.served()?.instance_id == held)
+    }
+}
+
 #[derive(Default)]
 struct FollowHealth {
     generation: u64,
@@ -3034,6 +3048,17 @@ mod backoff_tests {
         );
         let said = instance_changed_said(&server.url());
         assert!(said.contains(&server.url()) && said.contains("marfa folders add"));
+    }
+
+    #[test]
+    fn a_stopped_folder_reads_the_root_once_to_learn_whether_its_instance_is_back() {
+        let (_dir, folder, server) = online_folder(nothing_found());
+        server.on("/", vec![root(OTHER_INSTANCE)]);
+        assert!(!folder.answers_as_its_instance().unwrap());
+        // The witness: the instance the copy names answers again.
+        server.on("/", vec![root(crate::scripted::INSTANCE)]);
+        assert!(folder.answers_as_its_instance().unwrap());
+        assert_eq!(server.seen("/").len(), 2, "one read of the root each");
     }
 
     #[test]

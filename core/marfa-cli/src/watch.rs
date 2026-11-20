@@ -113,6 +113,9 @@ struct Opened {
     /// The folder's settings file as it stood when another instance was found
     /// at its server, which is tried again only once one of them changes.
     settings: Option<Vec<u8>>,
+    /// When the server of a folder held for another instance has its root
+    /// read again.
+    look_at: Option<Instant>,
     conflicts: folders::Conflicts,
 }
 
@@ -145,6 +148,24 @@ impl Machine {
             .and_then(|opened| opened.refused.clone())
     }
 
+    /// Whether the root of a folder held for another instance is to be read
+    /// now, which moves the next read an hour on.
+    fn look_due(&self, dir: &Path, now: Instant) -> bool {
+        let mut folders = self.folders();
+        let Some(opened) = folders.get_mut(dir) else {
+            return false;
+        };
+        let due = opened
+            .refused
+            .as_ref()
+            .is_some_and(|refused| refused.code == INSTANCE_CHANGED)
+            && opened.look_at.is_some_and(|at| now >= at);
+        if due {
+            opened.look_at = Some(now + instance_look());
+        }
+        due
+    }
+
     /// The credential refusal a folder met, kept while no credential is held,
     /// so the person sees one reason until a new one is kept.
     fn ended_while_absent(&self, dir: &Path, error: &CliError) -> Option<Unwatched> {
@@ -164,6 +185,7 @@ impl Machine {
                 bearer,
                 refused: None,
                 settings: None,
+                look_at: None,
                 conflicts: folders::Conflicts::default(),
             },
         );
@@ -178,6 +200,17 @@ impl Machine {
 const CREDENTIAL_ENDED: [&str; 2] = ["unauthorized", "signed_out"];
 
 const INSTANCE_CHANGED: &str = "instance_changed";
+
+/// How often a folder held for another instance has its server's root read,
+/// to learn whether the folder's own instance answers there again.
+const INSTANCE_LOOK: Duration = Duration::from_secs(3600);
+
+/// [`INSTANCE_LOOK`], or in a debug build the milliseconds a fixture names.
+fn instance_look() -> Duration {
+    marfa_core::fault::named("instance-look")
+        .and_then(|ms| ms.parse().ok())
+        .map_or(INSTANCE_LOOK, Duration::from_millis)
+}
 
 fn settings_of(dir: &Path) -> Option<Vec<u8>> {
     std::fs::read(
@@ -210,10 +243,17 @@ impl EveryFolder for Machine {
                 .unwrap_or_else(|| unwatched(&error))
         })?;
         let (server, bearer) = (session.server.url.clone(), session.server.key.clone());
-        if let Some(refused) = self.still_refused(dir, &server, &bearer) {
+        let looking = match self.still_refused(dir, &server, &bearer) {
+            Some(refused) if self.look_due(dir, Instant::now()) => Some(refused),
+            Some(refused) => return Err(refused),
+            None => None,
+        };
+        let folder = folders::opened(dir, Some(session)).map_err(|error| unwatched(&error))?;
+        if let Some(refused) = looking
+            && !folder.answers_as_its_instance().unwrap_or(false)
+        {
             return Err(refused);
         }
-        let folder = folders::opened(dir, Some(session)).map_err(|error| unwatched(&error))?;
         self.opened_with(dir, server, bearer);
         Ok(folder)
     }
@@ -226,6 +266,7 @@ impl EveryFolder for Machine {
         {
             opened.refused = Some(reason.clone());
             opened.settings = instance_changed.then(|| settings_of(dir)).flatten();
+            opened.look_at = instance_changed.then(|| Instant::now() + instance_look());
         }
     }
 
@@ -373,7 +414,7 @@ fn not_watched(reason: &Unwatched) -> String {
         )
     } else if reason.code == INSTANCE_CHANGED {
         format!(
-            "not watched: {message}; it is tried again only once its key, its server or its settings change"
+            "not watched: {message}; its server is asked once an hour whether the folder's instance answers there again, and it is tried again at once if its key, its server or its settings change"
         )
     } else {
         format!("not watched: {message}; trying again")
@@ -1159,7 +1200,39 @@ mod tests {
             machine.still_refused(dir, "https://one.test", "first"),
             None
         );
-        assert!(not_watched(&changed).contains("tried again only once"));
+        assert!(not_watched(&changed).contains("an hour"));
+    }
+
+    #[test]
+    fn a_folder_another_instance_answers_for_has_its_root_read_once_an_hour() {
+        let machine = Machine {
+            named: Named::default(),
+            json: false,
+            registry: PathBuf::from("folders.json"),
+            folders: Mutex::default(),
+        };
+        let dir = Path::new("/notes");
+        let changed = Unwatched {
+            code: INSTANCE_CHANGED.into(),
+            message: marfa_core::folder::instance_changed_said("https://one.test"),
+        };
+        machine.opened_with(dir, "https://one.test".into(), "first".into());
+        let stopped = Instant::now();
+        machine.ended(dir, &changed);
+        let minutes = |count: u64| stopped + Duration::from_secs(60 * count);
+        let looks = [0, 5, 30, 59, 61, 62, 90, 121, 122, 125]
+            .into_iter()
+            .filter(|&at| machine.look_due(dir, minutes(at)))
+            .collect::<Vec<_>>();
+        assert_eq!(looks, [61, 121]);
+        // The witness: a folder held for its credential is never looked at.
+        let refused = Unwatched {
+            code: "unauthorized".into(),
+            message: "refused".into(),
+        };
+        machine.opened_with(dir, "https://one.test".into(), "first".into());
+        machine.ended(dir, &refused);
+        assert!(!machine.look_due(dir, minutes(600)));
     }
 
     #[test]

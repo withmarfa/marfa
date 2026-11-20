@@ -16,6 +16,7 @@ import {
   copyItemEvent,
   refusal,
   answers,
+  SCRIPTED_INSTANCE,
   wireItem,
 } from "../../device/marfa-answers.js";
 import {
@@ -886,6 +887,71 @@ describe("a watch of every folder", () => {
       const status = await b.folder.status();
       expect(JSON.stringify(status)).toContain("another Marfa instance");
       expect(JSON.stringify(status)).toContain(b.server.url);
+    });
+
+    it("reads only the root of a folder another instance answers for, at each timed look, and watches it again once its own instance answers", async () => {
+      const a = await folderHarness("every-look-a", {
+        settings: tagged("a"),
+      });
+      made.push(a);
+      scriptFolderWrites(a);
+      const b = await folderHarness("every-look-b", {
+        settings: tagged("b"),
+        registry: a.registry,
+      });
+      made.push(b);
+      scriptFolderWrites(b);
+      const keychain = ownKeychain();
+      cleanups.push(keychain.remove);
+      keepKey(keychain.path, b.server.url, "device-fixture-key-kept-for-b");
+      let instance = "11111111-1111-7111-8111-111111111111";
+      b.server.answer("GET", "/", () =>
+        answers.root(Number(BUILT_FOR), instance),
+      );
+      put(b, "Waits.md", "---\ntitle: Waits\n---\nfor its own instance\n");
+      const watch = hold(
+        a.folder.watchEvery({
+          MARFA_KEYCHAIN: keychain.path,
+          // A debug binary retries a folder every 200 ms and looks at the
+          // root of one held for another instance every second, not hourly.
+          MARFA_TEST_FAULT: "watch-retry=200,instance-look=1000",
+        }),
+      );
+      await vi.waitFor(() => {
+        const stopped = linesFor(watch, b.dir).filter(
+          (line) => line.code === "instance_changed",
+        );
+        expect(stopped, watch.stdout).toHaveLength(1);
+      }, WAIT);
+      const sent = b.server.requests.length;
+      // About fifteen retries of the folder and three looks pass while this waits.
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      const asked = b.server.requests
+        .slice(sent)
+        .map((request) => `${request.method} ${request.pathname}`);
+      expect(
+        asked.filter((request) => request !== "GET /"),
+        "a held folder's server was asked more than its root",
+      ).toEqual([]);
+      // The witness: the timed look reads the root, and no more than once a second.
+      expect(asked.length).toBeGreaterThanOrEqual(1);
+      expect(asked.length).toBeLessThanOrEqual(4);
+      const watchedSinceStop = () =>
+        linesFor(watch, b.dir)
+          .slice(
+            linesFor(watch, b.dir).findIndex(
+              (line) => line.code === "instance_changed",
+            ),
+          )
+          .some((line) => line.watching === true);
+      expect(watchedSinceStop()).toBe(false);
+
+      instance = SCRIPTED_INSTANCE;
+      await vi.waitFor(() => {
+        expect(watchedSinceStop(), watch.stdout).toBe(true);
+        expect(sentTitles(b)).toContain("Waits");
+      }, WAIT);
+      expect(watch.running(), watch.stderr).toBe(true);
     });
 
     it("keeps each folder with its own server and credential, and one server down stops only its folder", async () => {
