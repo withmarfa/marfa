@@ -766,7 +766,7 @@ async fn an_adopt_whose_request_goes_away_after_its_record_still_claims_the_fold
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_claim_that_does_not_answer_holds_back_an_adopt_through_a_link_to_the_same_folder() {
+async fn a_marker_that_does_not_answer_holds_back_an_adopt_through_a_link_to_the_same_folder() {
     let parent = TempDir::new().unwrap();
     let instance = Instance::start().await;
     let (folder, _) = replaced(&instance, &parent).await;
@@ -788,32 +788,20 @@ async fn a_claim_that_does_not_answer_holds_back_an_adopt_through_a_link_to_the_
         .unwrap();
     let first = instance.app.blobs.folder().unwrap();
     let area = instance.area(&folder);
-    fs::create_dir_all(&area).unwrap();
     let marker = area.join(MARKER);
 
-    instance.app.faults.set("hold:stores-swap", None).unwrap();
-    let adopting = tokio::spawn({
-        let instance = instance.clone();
-        async move {
-            instance
-                .send(Method::POST, "/backups/folder/adopt", None)
-                .await
-        }
-    });
-    instance.reached("hold:stores-swap").await;
-    stall_at(&marker);
-    instance.app.faults.clear(Some("hold:stores-swap"));
-    let writer = read_stalls(&marker).await;
-    let adopted = adopting.await.unwrap();
-    // The stalled claim keeps the FIFO open, and a look at the folder now finds no marker.
-    fs::remove_file(&marker).unwrap();
+    instance.app.faults.set("hold:folder-marker", None).unwrap();
+    let adopted = instance
+        .send(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    instance.reached("hold:folder-marker").await;
     let switched = instance.patch(json!({ "backup_path": link })).await;
     let followed = instance.app.follow_stores(Retry::Settle).await;
     let through_link = instance
         .send(Method::POST, "/backups/folder/adopt", None)
         .await;
-    // The claim waiting on the marker finishes now and writes it.
-    drop(writer);
+    // The claim waiting to make its marker finishes now.
+    instance.app.faults.clear(Some("hold:folder-marker"));
     for _ in 0..500 {
         if !first.claim_unended() {
             break;
@@ -988,7 +976,8 @@ async fn an_adopt_whose_folder_does_not_answer_refuses_and_lets_a_later_settings
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn an_adopt_whose_claim_does_not_answer_refuses_and_its_late_marker_agrees_with_the_record() {
+async fn an_adopt_whose_marker_does_not_answer_refuses_and_its_late_marker_agrees_with_the_record()
+{
     let parent = TempDir::new().unwrap();
     let instance = Instance::start().await;
     let (folder, old) = replaced(&instance, &parent).await;
@@ -998,10 +987,9 @@ async fn an_adopt_whose_claim_does_not_answer_refuses_and_its_late_marker_agrees
         .set("store-check-deadline", Some("300"))
         .unwrap();
     let area = instance.area(&folder);
-    fs::create_dir_all(&area).unwrap();
     let marker = area.join(MARKER);
 
-    instance.app.faults.set("hold:stores-swap", None).unwrap();
+    instance.app.faults.set("hold:folder-marker", None).unwrap();
     let mut adopting = tokio::spawn({
         let instance = instance.clone();
         async move {
@@ -1010,10 +998,7 @@ async fn an_adopt_whose_claim_does_not_answer_refuses_and_its_late_marker_agrees
                 .await
         }
     });
-    instance.reached("hold:stores-swap").await;
-    stall_at(&marker);
-    instance.app.faults.clear(Some("hold:stores-swap"));
-    let writer = read_stalls(&marker).await;
+    instance.reached("hold:folder-marker").await;
     let answered = tokio::time::timeout(Duration::from_secs(3), &mut adopting).await;
     let follow = tokio::time::timeout(
         Duration::from_secs(3),
@@ -1026,9 +1011,8 @@ async fn an_adopt_whose_claim_does_not_answer_refuses_and_its_late_marker_agrees
         instance.send(Method::POST, "/backups/folder/adopt", None),
     )
     .await;
-    // The claim waiting on the marker finishes now and writes it.
-    fs::remove_file(&marker).unwrap();
-    drop(writer);
+    // The claim waiting to make its marker finishes now.
+    instance.app.faults.clear(Some("hold:folder-marker"));
     let adopted = match answered {
         Ok(adopted) => adopted.unwrap(),
         Err(_) => adopting.await.unwrap(),

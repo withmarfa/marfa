@@ -312,9 +312,9 @@ pub struct Judged {
 }
 
 impl Judged {
-    /// Whether the blob folder is there, and the server's account owns it.
-    pub fn has_blob_folder(&self) -> bool {
-        self.blob_folder.is_some()
+    /// The blob folder as it was opened, where it is there and the server's account owns it.
+    pub fn blob_folder(&self) -> Option<&File> {
+        self.blob_folder.as_ref().map(|(opened, _)| opened)
     }
 
     /// Makes what is the server's private, once nothing refuses the start.
@@ -403,18 +403,35 @@ impl Kept {
         })
     }
 
-    pub fn blobs_opened(&self) -> Result<(), Failure> {
+    /// Makes a blob folder the store made at the start private, through `opened`, the
+    /// descriptor the store locked and writes through.
+    pub fn blobs_opened(&self, opened: &File) -> Result<(), Failure> {
         if !self.blobs_made {
             return Ok(());
         }
-        let me = me();
-        let reached = walk(&self.blobs, me)?;
-        let path = reached.path();
-        match open(&path, true)? {
-            Some(opened) if reached.missing.is_empty() => secure_blob_folder(&opened, &path, me),
-            _ => Err(refused(&path, "is not there")),
-        }
+        secure_blob_folder(opened, &self.blobs, me())
     }
+}
+
+/// Opens a blob folder that came back after the start, judged as the start judges it, with
+/// nothing changed.
+pub fn open_returned_blob_folder(path: &Path) -> Result<File, Failure> {
+    let me = me();
+    let reached = walk(path, me)?;
+    let path = reached.path();
+    match open(&path, true)? {
+        Some(opened) if reached.missing.is_empty() => {
+            judge_blob_folder(&opened, &path, me)?;
+            Ok(opened)
+        }
+        _ => Err(refused(&path, "is not there")),
+    }
+}
+
+/// Makes the blob folder `opened`, which the store has locked, private through the same
+/// descriptor, so a folder put at its path meanwhile is left as it was.
+pub fn secure_returned_blob_folder(opened: &File, path: &Path) -> Result<(), Failure> {
+    secure_blob_folder(opened, path, me())
 }
 
 fn open(path: &Path, folder: bool) -> Result<Option<File>, Failure> {

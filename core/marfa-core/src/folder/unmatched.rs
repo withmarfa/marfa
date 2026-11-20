@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::Serialize;
 
-use super::{Folder, copy_changed, lists::Lists, plainly_inside, state};
+use super::{Folder, copy_changed, lists::Lists, plainly_inside, pull::TakenAway, state};
 use crate::Result;
 
 /// A file the folder keeps whose item the folder's query does not match.
@@ -118,7 +118,7 @@ impl Folder {
                 continue;
             }
             match self.take_away(&row, &mut context) {
-                Ok(Some(ended)) => {
+                Ok(TakenAway::Ended(ended)) => {
                     done.ended += ended;
                     done.removed.push(entry(&row, None));
                     if state::bound_to_item(&*self.core.conn()?, &row.item_id)?.is_none() {
@@ -131,10 +131,11 @@ impl Folder {
                         }
                     }
                 }
-                Ok(None) => done.kept.push(entry(
+                Ok(TakenAway::Kept) => done.kept.push(entry(
                     &row,
                     Some("it changed while it was being removed".into()),
                 )),
+                Ok(TakenAway::Refused(reason)) => done.kept.push(entry(&row, Some(reason))),
                 Err(error) if copy_changed(&error) => return Err(error),
                 Err(error) => done.kept.push(entry(&row, Some(error.to_string()))),
             }

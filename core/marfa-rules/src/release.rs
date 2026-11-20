@@ -2,8 +2,8 @@
 
 /// The oldest server release this core works with, as the root's `version`
 /// writes it. A change that makes the core depend on a server change raises it.
-/// 0.0.78 is the first release with `POST /items/counts`.
-pub const OLDEST_SERVER: &str = "0.0.78";
+/// 0.0.86 is the first release whose `PUT /items/{id}/tags` takes `read_tags`.
+pub const OLDEST_SERVER: &str = "0.0.86";
 
 /// Whether the release a server names is older than [`OLDEST_SERVER`]. A name
 /// that is not three whole numbers, and `0.0.0`, which an unstamped build
@@ -42,8 +42,8 @@ mod tests {
         assert!(is_too_old("0.0.74"));
         assert!(is_too_old("0.0.70"));
         assert!(!is_too_old(OLDEST_SERVER));
-        assert!(is_too_old("0.0.77"));
-        assert!(!is_too_old("0.0.79"));
+        assert!(is_too_old("0.0.85"));
+        assert!(!is_too_old("0.0.87"));
         assert!(!is_too_old("0.1.0"));
         assert!(!is_too_old("1.0.0"));
     }

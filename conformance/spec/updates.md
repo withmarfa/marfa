@@ -230,6 +230,14 @@ If the CLI cannot count a start of the new release in the update's record, then 
 
 **Tests:** waiting on #3177.
 
+### `updates/record-folder-private`
+
+When `marfa server run` makes the install's data folder, the `update` folder in it that holds the update's record, or a file in that `update` folder, the CLI MUST make it readable and writable by its own account alone, whatever umask it runs under.
+
+**Reason:** a service manager may start `marfa server run` under a umask that opens new folders to the account's group, and the server refuses to start on a folder on the way to its database that another account can write to (`instance/files-way-guarded`).
+
+**Tests:** waiting on #3177.
+
 ### `updates/start-waits-for-last-server`
 
 If a server of the install still holds the lock on its database, its blob folder or its control socket 30 seconds after a start of the new release begins, then the CLI MUST end `marfa server run` with status 75, without counting the start or putting the old release back.

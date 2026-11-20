@@ -18,7 +18,7 @@ mod enrichment;
 use super::bulk::{Counts, Entered, Entry, Note, Page, rollback};
 use super::file_fields;
 use super::index;
-use super::plan::{self, Act, Asked, Gate, Moving, invalid_transition, require_version};
+use super::plan::{self, Act, Asked, Gate, Moving, Purging, invalid_transition, require_version};
 use super::rows::{self, Landed, Moved, NewRow};
 use super::{
     Item, Keys, Selected, Snapshot, Writer, check_keys, link_in, metadata_for, metadata_text,
@@ -129,7 +129,7 @@ pub enum Change {
     SetTags {
         id: String,
         tags: Vec<String>,
-        version: Option<i64>,
+        read_tags: Option<Vec<String>>,
     },
     AddTags {
         id: String,
@@ -308,6 +308,35 @@ pub async fn purge_owned(
         })
     })
     .await
+}
+
+/// What purging the rows the owner chose came to.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Chosen {
+    /// Every row of the walk was taken: this many.
+    Purged(usize),
+    /// A chosen row is gone, out of the bin or out of reach, the walk outgrew the cap, or `agree`
+    /// refused the walk.
+    Changed,
+}
+
+/// Purges one walk from the chosen rows in the caller's write, once `agree` accepts its digest.
+pub fn purge_chosen(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    ids: &[String],
+    agree: impl FnOnce(&str) -> Result<bool>,
+) -> Result<Chosen> {
+    unit.fanning(true, |unit| {
+        let job = Job {
+            unit,
+            catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
+            read_only: unit.read_only()?,
+            claim: None,
+            server_own: false,
+        };
+        job.chosen(ids, agree)
+    })
 }
 
 /// With a `claim`, the answer is recorded under it in the same transaction.
@@ -610,6 +639,16 @@ pub(super) fn stale_bare(row: &Item, named: i64) -> Result<Refusal> {
     .with_member("current", row.state_named()?))
 }
 
+fn stale_tags(row: &Item) -> Result<Refusal> {
+    Ok(Refusal::new(
+        Code::VersionConflict,
+        "The item's tags differ from the tags named as read. Re-read the item and send again with \
+         the tags it holds."
+            .to_string(),
+    )
+    .with_member("current", row.state_named()?))
+}
+
 /// A state change writes no version, so a job checks the state it matched as well.
 fn left_state(matched: &str, now: &str) -> Refusal {
     Refusal::new(
@@ -797,7 +836,11 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             Change::Folder(change) => self.folder(change),
             Change::Put(put) => self.put(*put),
             Change::Update(update) => self.update(*update),
-            Change::SetTags { id, tags, version } => self.set_tags(&id, tags, version),
+            Change::SetTags {
+                id,
+                tags,
+                read_tags,
+            } => self.set_tags(&id, tags, read_tags),
             Change::AddTags { id, tags, version } => self.add_tags(&id, tags, version),
             Change::RemoveTag { id, tag, version } => self.remove_tag(&id, &tag, version),
             Change::SetExtension {
@@ -1942,12 +1985,23 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         })
     }
 
-    fn set_tags(&self, id: &str, tags: Vec<String>, version: Option<i64>) -> Result<Done> {
+    fn set_tags(
+        &self,
+        id: &str,
+        tags: Vec<String>,
+        read_tags: Option<Vec<String>>,
+    ) -> Result<Done> {
         let tx = self.unit.tx();
-        let row = self.tag_row(id, version)?;
+        let row = self.tag_row(id, None)?;
         let tags = distinct(&tags);
-        let before = rows::tags(tx, row.seq)?.len();
-        validation::tag_count(before, tags.len()).map_err(ruled)?;
+        let held = rows::tags(tx, row.seq)?;
+        if let Some(read) = read_tags {
+            let read: std::collections::HashSet<&String> = read.iter().collect();
+            if read != held.iter().collect() {
+                return Err(stale_tags(&row)?);
+            }
+        }
+        validation::tag_count(held.len(), tags.len()).map_err(ruled)?;
         rows::set_tags(tx, row.seq, &tags)?;
         self.tags_landed(&row, json!({ "tags": tags }))
     }
@@ -2385,8 +2439,15 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 version,
             }],
         )?;
+        let mut done = self.purged_walk(&plan.purging)?;
+        done.carried.retain(|carried| *carried != id);
+        Ok(done)
+    }
+
+    /// Takes every row of the walk, all in this write.
+    fn purged_walk(&self, walk: &[Purging]) -> Result<RowDone> {
         let mut done = RowDone::default();
-        for purging in &plan.purging {
+        for purging in walk {
             let item = &purging.item;
             done.bytes = done
                 .bytes
@@ -2398,11 +2459,31 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             }
             purge(self.unit, item)?;
             self.unit.audit("item", &item.id, None)?;
-            if item.id != id {
-                done.carried.push(item.id.clone());
-            }
+            done.carried.push(item.id.clone());
         }
         Ok(done)
+    }
+
+    fn chosen(&self, ids: &[String], agree: impl FnOnce(&str) -> Result<bool>) -> Result<Chosen> {
+        let plan = match plan::chosen(&self.gate(), ids) {
+            Ok(plan) => plan,
+            Err(refusal)
+                if matches!(
+                    refusal.code,
+                    Code::ItemNotFound | Code::InvalidTransition | Code::BulkCapExceeded
+                ) =>
+            {
+                return Ok(Chosen::Changed);
+            }
+            Err(refusal) => return Err(refusal),
+        };
+        let (digest, _) = plan::walk_held(self.unit.tx(), &plan.purging)?;
+        if !agree(&digest)? {
+            return Ok(Chosen::Changed);
+        }
+        let done = self.purged_walk(&plan.purging)?;
+        index::settle(self.unit.tx(), &self.catalog.rules)?;
+        Ok(Chosen::Purged(done.carried.len()))
     }
 
     fn retarget(&self, id: &str, settings: Map<String, Value>) -> Result<Done> {
@@ -2520,12 +2601,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             OwnerAct::Purge => self.caller().require(Permission::ItemsPurge)?,
             OwnerAct::Trash | OwnerAct::Restore => self.caller().require_local()?,
         }
-        let levers = self.caller().levers()?;
-        let row = rows::by_id(self.unit.tx(), &id)?
-            .filter(|row| !super::is_system(&row.type_id))
-            .filter(|row| self.caller().may_read_type(&row.type_id))
-            .filter(|row| levers.lists(&self.catalog.rules, &row.type_id, &row.source))
-            .ok_or_else(not_found)?;
+        let row = self.gate().owner_row(&id)?;
         let summary = summary_of(self.unit.tx(), &self.catalog, &row)?;
         if row.version != version {
             let conflict = Done {

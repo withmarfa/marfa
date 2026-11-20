@@ -209,6 +209,14 @@ pub(super) fn tags_for_index(conn: &Connection, id: &str) -> Result<Vec<String>,
     Ok(rows.collect::<Result<Vec<String>, _>>()?)
 }
 
+/// In the order the row holds them, as a read of the row lists them.
+pub fn tags_held(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
+    let mut statement =
+        conn.prepare_cached("SELECT tag FROM tags WHERE item_id = ?1 ORDER BY position")?;
+    let rows = statement.query_map([id], |row| row.get::<_, String>(0))?;
+    Ok(rows.collect::<Result<Vec<String>, _>>()?)
+}
+
 /// `ids` holds no repeat.
 pub(super) fn tags_for(
     conn: &Connection,

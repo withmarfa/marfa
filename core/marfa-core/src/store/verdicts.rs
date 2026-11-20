@@ -15,7 +15,9 @@ use super::reach::{edge_write_ends, let_go_of_ends};
 use super::removing::refuse_removing;
 use super::rows::WAITING;
 use super::time::{now_iso, now_millis};
-use super::write_state::{cleared_time_key, forget_versions_named, forget_write_state, unsent};
+use super::write_state::{
+    cleared_time_key, forget_read_tags, forget_versions_named, forget_write_state, unsent,
+};
 use crate::error::CoreError;
 use crate::model::{BlockedReason, QueuedWrite, Subject, Verdict, WriteKind};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -469,6 +471,9 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     if fresh_key_on_release(verdict, reason.as_deref()) {
         crate::row_writes::spend_key(conn, &batch[0])?;
         forget_versions_named(conn, &batch[0])?;
+        if kind.parse::<WriteKind>()? == WriteKind::ReplaceTags {
+            forget_read_tags(conn, &batch[0])?;
+        }
     }
     if rows {
         for write in &batch {

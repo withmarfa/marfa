@@ -11,7 +11,7 @@ A release is a git tag `v<version>` on a commit of `main`. Pushing the tag runs 
 
 - Every manifest in the tree carries `0.0.0`, and `ci/version-fields.test.ts` refuses any other. A version exists only as a tag. `release.yml` stamps it into every manifest in its own checkout with `scripts/release/stamp-version.sh`; never run that script in yours.
 - The next version is the highest released `v*` tag plus a patch (`0.1.3` then `0.1.4`), or the next minor at patch 0 (`0.1.3` then `0.2.0`), which is for a breaking change. `Read the version` accepts nothing else. It refuses a version that goes back, skips one, repeats a released one, or has a major above 0 (a `1.x` needs the gate changed on purpose). The first `v0.1.0` follows the last `0.0.N` this way, and no `0.0.N` is released after it.
-- Find the highest tag:
+- Find the highest tag (a version in `scripts/release/abandoned-versions` is tagged but never released, so the gate passes over it and the previous release is the highest tag not listed there):
 
   ```bash
   git ls-remote --tags --refs origin 'refs/tags/v*' | sed 's#.*/v##' | sort -V | tail -1
@@ -32,7 +32,7 @@ A release is a git tag `v<version>` on a commit of `main`. Pushing the tag runs 
    gh run list --workflow core.yml --branch main --json headSha,status,conclusion,createdAt --limit 10
    ```
 
-4. Check that the previous tag is a published release, not a draft (`gh release view v<previous version> --json isDraft`). `Read the version` refuses a version whose predecessor is only tagged, or that is itself released already.
+4. Check that the previous tag is a published release, not a draft (`gh release view v<previous version> --json isDraft`). `Read the version` refuses a version whose predecessor is only tagged and not listed in `scripts/release/abandoned-versions`, or that is itself released already.
 5. If the database schema (`core/marfa-server/src/db/migrations/`) or the archive layout changed since the previous release, write down what an owner must do before upgrading. Every release's notes start with the same `scripts/release/upgrade-note.md`, so add the words to this release's notes once it is public (step 4 of [Check the release](#check-the-release)).
 6. The contract version is the integer in `info.version` of `openapi.json`, and it changes only with a break. Change it in a pull request merged before step 1, so the commit you tag and its CI run carry it: for the release that cuts `v0.1.0`, set it to 1 and run `pnpm generate`, and for a new minor that breaks compatibility, raise it by one the same way.
 7. To prove a change to the release itself or to the native pins before tagging, run a dry run on the commit and wait for it:
@@ -117,7 +117,7 @@ Each job is named as GitHub shows it.
   - A package npm has never published stops the job before anything is published. Its first version is published by hand from the run's artifacts, with a trusted publisher set to this repository, `release.yml` and the environment `release`: that is a maintainer's step, so stop and say so; never publish it yourself.
 - **`Update the Homebrew tap`** fails when `HOMEBREW_TAP` is `publish` and the secret `HOMEBREW_TAP_TOKEN` is missing. Set it, as a secret of the `release` environment (until it is moved there, a repository secret also reaches other workflows), to a fine-grained token with Contents read and write on `withmarfa/homebrew-tap`, then re-run the job. If several releases' tap jobs failed, re-run them oldest first: the job does not refuse to move the formula back to an older version.
 - **A re-run of `Publish`** attests again, which adds attestations and removes none; a file or digest then has more than one, all from this repository's workflow.
-- **A fix that needs a code change** cannot reach a tag that already ran. `Read the version` refuses the next version while this one is tagged and not released, so stop and bring it to a maintainer.
+- **A fix that needs a code change** cannot reach a tag that already ran. `Read the version` refuses the next version while this one is tagged and not released. Abandon the version instead: in a pull request, add it to `scripts/release/abandoned-versions` with the reason, merge the fix, and tag the next version on a green `main`. Nothing for the abandoned version may already be public.
 
 ## Never
 

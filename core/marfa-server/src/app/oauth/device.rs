@@ -21,6 +21,7 @@ use crate::app::auth::allowance::{self, DEVICE_CODE_ISSUED};
 use crate::app::auth::limits::{
     admit, device_code_lanes, device_lookup_lanes, device_owner_lanes, hold_to,
 };
+use crate::app::auth::return_to::encoded;
 use crate::app::catalog::{self, Snapshot};
 use crate::app::clock::Stamp;
 use crate::app::faults::DEVICE_OWNER_INSTANCE_LANE;
@@ -29,6 +30,7 @@ use crate::app::refusal::{Code as RefusalCode, Refusal, Result};
 use crate::db::Write;
 
 const CODE_WRITE: &str = "auth.device_code.issued";
+pub const CONSENT_PATH: &str = "/auth/device/consent";
 
 pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answered<Value>> {
     hold_to(
@@ -129,12 +131,12 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
         })
         .await?;
     let origin = app.addresses().sign_in().origin().to_string();
-    let encoded: String = url::form_urlencoded::byte_serialize(user_code.as_bytes()).collect();
+    let complete = format!("{origin}/auth/device?user_code={}", encoded(&user_code));
     Ok(Ok(json!({
         "device_code": device_code,
         "user_code": user_code,
         "verification_uri": format!("{origin}/auth/device"),
-        "verification_uri_complete": format!("{origin}/auth/device?user_code={encoded}"),
+        "verification_uri_complete": complete,
         "expires_in": DEVICE_CODE_SECONDS,
         "interval": DEVICE_INTERVAL_SECONDS,
     })))

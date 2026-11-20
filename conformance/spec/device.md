@@ -1576,13 +1576,21 @@ If a catch-up or a held stream reaches the head, and in the last 30 days the ser
 
 **Tests:** `device/server-restored.test.ts › ends the catch-up where the server no longer holds an item it accepted from this device`, `device/server-restored-live.test.ts › keeps an item made since the backup, blocked until released, where the copy had not caught up past it`, `› puts back an edit the restored server lost to an item it still holds`, `› removes again an edge the restored server holds after this device deleted it`, `› puts back in the bin an item the restored server holds out of it after this device trashed it`, `› keeps an item made since the backup, with an edit the restored server refused before the copy expired waiting on its create`, `› reads no item again after this device trashed it and another client took it out of the bin`, `device/contract.test.ts › keeps an item a 404 naming no contract says is gone, since a proxy's says nothing of the server's items`.
 
+### `device/expire-rows-lost`
+
+If a catch-up or a held stream reaches the head, and in the last 30 days the server answered a row write from this device whose batch no `rows.changed` event the device took since has carried, and the server now lacks a row that write changed or holds it at an earlier `updated_at` than the answer's `last_activity_at`, or holds a row that write deleted at an earlier `updated_at` than the delete's answer, then a device MUST end the catch-up or the held stream `copy_expired`.
+
+**Reason:** a server restored to the point the copy's cursor holds gives a log level with the cursor, so the stream itself shows nothing the server lost. Rows carry no version, so the time the answer gives the item's rows is the only mark of the write. An undo of a batch counts as a row write. The device reads the rows of each such write by id once for each stream, after the replay. A row at the same `updated_at` or later counts as held. A row write whose answer the device does not hold leaves nothing to read, so a restore that lost only that write is found only by the log.
+
+**Tests:** `device/server-restored-live.test.ts › keeps the rows this device wrote and removed since the backup, blocked until released, where the copy had not caught up past them`, `› sends a row write queued before the restore once the kept rows are withdrawn, refusing none of it`.
+
 ### `device/expire-write-unreadable`
 
-If the read of an item or edge under `device/expire-write-lost` or `device/restored-kept` is answered with a body that does not read as the item or edge, or refused with a `4xx` status other than `401`, `404`, `408`, `425` or `429`, then a device MUST take each write from this device to that item or edge that the server answered before the read as one the server holds.
+If the read of an item or edge under `device/expire-write-lost` or `device/restored-kept`, or of a table's rows under `device/expire-rows-lost`, is answered with a body that does not read as the item, the edge or a page of rows, or refused with a `4xx` status other than `401`, `404`, `408`, `425` or `429`, then a device MUST take each write from this device to that item, edge or table that the server answered before the read as one the server holds.
 
 **Reason:** such an answer is about that one read, and a later read would answer the same, so a write the device cannot check does not end every catch-up for 30 days, and does not end the hydration that compares it. The device reads it no more for those writes, removals included, and does not put it back after a restore.
 
-**Tests:** `device/server-restored.test.ts › sets aside a write whose item the server answers %s, and reads it no more`.
+**Tests:** `device/server-restored.test.ts › sets aside a write whose item the server answers %s, and reads it no more`, `device/server-restored-live.test.ts › sets aside a row write whose rows the restored server answers 400 validation_failed, and reads them no more`.
 
 ### `device/read-back-missing-kept`
 
@@ -1594,11 +1602,19 @@ When the read after an answer or a refusal finds no item or edge, the server's b
 
 ### `device/restored-kept`
 
-When a device hydrates a copy it expired under `device/expire-log-behind`, `device/expire-last-event-other` or `device/expire-write-lost`, or that a refill clears under `device/refill-restart-clears` or `device/refill-restored-clears`, a device MUST queue a write for each item, item's tags, edge and removal the copy held that the server now lacks or holds at an earlier point, and an upload for each file such a write names whose bytes the cache holds.
+When a device hydrates a copy it expired under `device/expire-log-behind`, `device/expire-last-event-other`, `device/expire-write-lost` or `device/expire-rows-lost`, or that a refill clears under `device/refill-restart-clears` or `device/refill-restored-clears`, a device MUST queue a write for each item, item's tags, edge and removal the copy held that the server now lacks or holds at an earlier point, and an upload for each file such a write names whose bytes the cache holds.
 
 **Reason:** the work a person did after the point the server was restored to is in the copy and nowhere else. The device keeps only what it held: an item the copy held in the bin or revoked is not created again, a purge is not put back, a removal is put back only where this device made it, and a copy built again from another instance keeps nothing. An item or edge the server holds at a later time than the copy did, at a later version, or at the same version with the same fields, was moved on by another writer, and nothing of it is kept.
 
 **Tests:** `device/server-restored-live.test.ts › keeps an item made since the backup, blocked until released, where the copy had not caught up past it`, `› keeps an item made since the backup where the server's log ends behind the copy's cursor`, `› keeps an item made since the backup where the restored server has written past the copy's cursor`, `› puts back an edit the restored server lost to an item it still holds`, `› removes again an edge the restored server holds after this device deleted it`, `› puts back the tags the restored server lost from an item it still holds`, `› puts back in the bin an item the restored server holds out of it after this device trashed it`, `› keeps a file attached since the backup, with an upload of the bytes the restored server lacks`, `› keeps nothing of a change another client made at the version the copy held`, `device/refill.test.ts › clears rather than fill again where the log ends before the head its refill started from`, `› clears rather than fill again where the server was restored before its refill began`.
+
+### `device/restored-kept-tags-read`
+
+When a device queues a tag replace under `device/restored-kept`, a device MUST name as `read_tags` the tags the server held when the copy was compared with it, and for an item it queues the create of, none.
+
+**Reason:** the replace is judged against the tags the server holds (`items/tags-replace-read-stale`). The tags the server held at the comparison are the ones the person's work was judged against, so another writer's change to them since makes the replace a conflict the person sees, and the copy keeps the person's tags. A create the device queues carries no tags, so the row it makes holds none until the replace lands.
+
+**Tests:** `device/server-restored-live.test.ts › puts back the tags the restored server lost from an item it still holds`, `› puts back the tags of an item made since the backup, named as the tags the item it makes holds`, `› puts back an edit and a tag change together on the tags the restored server holds, and blocks the tags where another writer changed them since`.
 
 ### `device/restored-checked-before-clear`
 
@@ -1624,6 +1640,14 @@ When a device queues a create under `device/restored-kept`, a device MUST queue 
 
 **Tests:** `device/server-restored-live.test.ts › keeps an item made since the backup, with an edit the restored server refused before the copy expired waiting on its create`.
 
+### `device/restored-waiting-replace-unread`
+
+When a device makes a tag replace wait on a create queued under `device/restored-kept`, a device MUST remove the tags the replace read (`queue-and-verdicts/replace-tags-names-read`) from it.
+
+**Reason:** the server lost the item those tags were read from, and the create puts it back without them, so a replace that named them would be refused as a conflict with work the person already made.
+
+**Tests:** `device/server-restored-live.test.ts › sends a tag replace the restored server refused, once its item is made again, naming no tags it read`.
+
 ### `device/restored-kept-blocked`
 
 When a device queues a write under `device/restored-kept`, a device MUST give it the verdict `blocked` with the reason `server_restored`.
@@ -1637,6 +1661,30 @@ When a device queues a write under `device/restored-kept`, a device MUST give it
 While a write queued under `device/restored-kept` creates an item, a device MUST NOT send another write queued for that item before it.
 
 **Tests:** `device/server-restored-live.test.ts › keeps an item made since the backup, blocked until released, where the copy had not caught up past it`.
+
+### `device/restored-rows-kept`
+
+When a device fills whole again a table of a copy it hydrated under `device/restored-kept` or `device/restored-checked-before-clear`, a device MUST queue under `device/restored-kept` row writes to that table that put each row the copy held that the server now lacks or holds at an earlier `updated_at`, and delete each row this device deleted that the server holds at an earlier `updated_at` than the delete.
+
+**Reason:** rows carry no version. A row the server holds at a later `updated_at` was moved on by another writer. A copy the log, `device/expire-write-lost` or `device/expire-rows-lost` shows went back compares every row it held, and there one at the same `updated_at` is the row the copy held only with the same values and the same withheld columns; any other row, or one whose time does not read, counts as lost. A copy checked under `device/restored-checked-before-clear` compares only the tables that writes no event showed name, and in them the rows those writes changed and the rows this device deleted. There no restore was found, and a row set aside is the copy's own, which may lack another writer's change that the server holds at the same `updated_at`, so a row counts as lost only where the server lacks it or holds it at an earlier `updated_at`, as under `device/expire-rows-lost`. The device sets aside the rows those writes name before anything clears the table or fills it again, whatever the reason. The device compares a table once a fill has made it whole from the server's rows alone, however many fills that takes, and keeps the rows it set aside first through a second restore found before then. Only a table the copy held whole or was filling, of an item no create waits for that is neither read-only nor of a `system.` type, is compared; a table the copy holds past its cap or no longer holds keeps nothing. What the server answered of a row write this device sent before the comparison is laid on the rows set aside, at the answer's `last_activity_at` where it changed the row, so the comparison judges each row as the server last answered it (`device/restored-rows-held`). A row a write that has no answer yet changes is compared with that write laid on it, by its values alone where a restore was found. A row another writer removes while the rows are set aside is let go. A put keeps the columns withheld from the key as the server holds them (`tables/rows-withheld-put-kept`), so a row the server lacks is put back without them. An undo's answer gives no values, so a row an undo changed is let go, not compared. An undo carries no operations, so one sent before the rows were set aside and unanswered at the comparison is not laid on them, and a row it deleted can come back as a blocked put. A row another writer deleted, whose event aged out before the fill, counts as lost, as an item another device purged does under `device/restored-checked-before-clear`. Where a restore was found, a row another writer changed at the same `updated_at` as the copy's, with other values, counts as lost, so the copy's row is kept as a blocked write the person can withdraw. A restore of an archive that brings back a row this device deleted, at that row's own earlier `updated_at`, also counts as lost, so the delete is queued again, blocked. A row patch the restored server took before the device found the restore is applied to the row the server went back to, at a later `updated_at`, so the columns it did not name read as moved on and are not kept.
+
+**Tests:** `device/server-restored-live.test.ts › keeps the rows this device wrote and removed since the backup, blocked until released, where the copy had not caught up past them`, `› keeps the rows this device wrote since the backup where the restored server has written past the copy's cursor, and nothing of a table it holds as the copy did`.
+
+### `device/restored-rows-first`
+
+While a row write queued under `device/restored-rows-kept` waits, a device MUST NOT send another row write to the same table before it.
+
+**Reason:** the kept rows are what the person wrote before the restore was found, so the writes queued to the table since go after them: a kept put sent after a later patch of the row would replace the columns the patch changed. They do not depend on the kept rows, so withdrawing those refuses none of them.
+
+**Tests:** `device/server-restored-live.test.ts › sends a row write queued before the restore once the kept rows are withdrawn, refusing none of it`.
+
+### `device/restored-rows-held`
+
+While the rows a copy held of a table are set aside under `device/restored-rows-kept` and not yet compared, a device MUST NOT send a row write to that table.
+
+**Reason:** the server would take the write at a later `updated_at`, and the comparison would read the row as moved on by another writer and keep nothing of the columns the write did not name, which the restored server lost. A drain between the hydration and the fill that compares the table therefore leaves its row writes unsent, and they go after the rows kept (`device/restored-rows-first`).
+
+**Tests:** `device/server-restored-live.test.ts › holds a row write queued before the restore until the rows set aside are compared, so the values the restored server lost in the row's other columns are kept`.
 
 ### `device/restored-kept-interrupted`
 

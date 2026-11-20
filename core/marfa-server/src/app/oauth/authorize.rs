@@ -20,7 +20,7 @@ use super::{Answered, CODE_SECONDS, MS_PER_SECOND, Problem, issuer};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::Visit;
-use crate::app::auth::return_to::kept;
+use crate::app::auth::return_to::{kept, through_sign_in};
 use crate::app::catalog::{self, Snapshot};
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code as RefusalCode, Refusal, Result};
@@ -29,16 +29,14 @@ use crate::db::Write;
 
 const CODE_WRITE: &str = "auth.code.issued";
 const CONSENT_PATH: &str = "/auth/consent";
-const REQUEST_PATH: &str = "/oauth/authorize";
+pub const REQUEST_PATH: &str = "/oauth/authorize";
 const NO_DESTINATION: &str = "/auth/error?error=invalid_redirect";
 const NO_CLIENT: &str = "/auth/error?error=invalid_client";
 
 /// `path` is read by the rule every `return_to` is, since a link's own is outside its signature.
 pub fn sign_in_then(app: &App, path: &str) -> String {
     let origin = app.addresses().sign_in().origin().to_string();
-    let back = kept(path, &origin);
-    let encoded: String = url::form_urlencoded::byte_serialize(back.as_bytes()).collect();
-    format!("/auth/sign-in?return_to={encoded}")
+    through_sign_in(&kept(path, &origin))
 }
 
 /// `return_to` goes first, so one riding in `link` is never the one read.

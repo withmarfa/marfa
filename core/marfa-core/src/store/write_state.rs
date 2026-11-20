@@ -191,6 +191,27 @@ pub(super) fn forget_versions_named(conn: &Connection, id: &str) -> Result<(), C
     super::meta::meta_delete(conn, &format!("{RESENT_AT_VERSION}{id}"))
 }
 
+/// A tag replace released under a fresh key, or sent over an item a kept
+/// create puts back, names no tags it read.
+pub(crate) fn forget_read_tags(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    let payload: String =
+        conn.query_row_cached("SELECT payload FROM queue WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })?;
+    let mut body: serde_json::Value = serde_json::from_str(&payload)?;
+    if body
+        .as_object_mut()
+        .and_then(|object| object.remove("read_tags"))
+        .is_some()
+    {
+        conn.execute_cached(
+            "UPDATE queue SET payload = ?2 WHERE id = ?1",
+            params![id, serde_json::to_string(&body)?],
+        )?;
+    }
+    Ok(())
+}
+
 fn version_at(conn: &Connection, key: &str) -> Result<Option<i64>, CoreError> {
     meta_get(conn, key)?
         .map(|version| {

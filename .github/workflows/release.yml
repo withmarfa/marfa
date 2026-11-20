@@ -132,6 +132,16 @@ jobs:
           # The remote is read without a pipe, whose empty answer would fail the
           # step unexplained.
           remote_tags=$(git ls-remote --tags --refs origin 'refs/tags/v*')
+          abandoned=" "
+          while read -r line || [ -n "$line" ]; do
+            line="${line%%#*}"
+            line="${line//[[:space:]]/}"
+            [ -z "$line" ] || abandoned+="$line "
+          done < scripts/release/abandoned-versions
+          if [[ "$abandoned" == *" $version "* ]]; then
+            echo "::error::$version is listed in scripts/release/abandoned-versions, so it is never released."
+            exit 1
+          fi
           previous=""
           previous_key=-1
           above=()
@@ -140,6 +150,14 @@ jobs:
             tag="${ref#refs/tags/v}"
             [[ "$tag" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]] || continue
             tag_key=$(key "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+            if [[ "$abandoned" == *" $tag "* ]]; then
+              state=$(released "$tag")
+              if [ "$state" = "true" ]; then
+                echo "::error::$tag is released, so scripts/release/abandoned-versions cannot list it."
+                exit 1
+              fi
+              continue
+            fi
             if [ "$tag_key" -lt "$want" ] && [ "$tag_key" -gt "$previous_key" ]; then
               previous="$tag"
               previous_key="$tag_key"
@@ -166,6 +184,13 @@ jobs:
             IFS=. read -r _ previous_minor previous_patch <<< "$previous"
             next_patch="0.$previous_minor.$((previous_patch + 1))"
             next_minor="0.$((previous_minor + 1)).0"
+            # An abandoned version takes its number with it.
+            while [[ "$abandoned" == *" $next_patch "* ]]; do
+              next_patch="0.$previous_minor.$((${next_patch##*.} + 1))"
+            done
+            while [[ "$abandoned" == *" $next_minor "* ]]; do
+              next_minor="0.$((previous_minor + 1)).$((${next_minor##*.} + 1))"
+            done
             allowed="$next_patch, or $next_minor for a breaking change"
             ok=$([ "$version" = "$next_patch" ] || [ "$version" = "$next_minor" ] && echo true || echo false)
           fi

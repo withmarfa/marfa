@@ -615,6 +615,47 @@ pub(super) fn touch(tx: &Transaction<'_>, item: &Item, at: &str) -> Result<Item>
     stored(tx, &item.id)
 }
 
+/// How many items the bin holds of each type and source, leaving out `system.*` types.
+pub(super) fn binned_counts(tx: &Transaction<'_>) -> Result<Vec<(String, String, i64)>> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT type, source, count(*) FROM items \
+             WHERE state = 'trashed' AND type NOT GLOB 'system.*' GROUP BY type, source",
+        )?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// What an item holds beside its own row: its earlier versions, its tags and its extensions.
+pub(super) struct Holding {
+    pub versions: i64,
+    /// In the item's order.
+    pub tags: Vec<String>,
+    /// Each namespace with its data as stored, by namespace.
+    pub extensions: Vec<(String, Vec<u8>)>,
+}
+
+pub(super) fn holding(tx: &Transaction<'_>, seq: i64) -> Result<Holding> {
+    let versions = tx
+        .prepare_cached("SELECT count(*) FROM item_versions WHERE item_seq = ?1")?
+        .query_row([seq], |row| row.get(0))?;
+    let tags = tx
+        .prepare_cached("SELECT tag FROM item_tags WHERE item_seq = ?1 ORDER BY position, tag")?
+        .query_map([seq], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let extensions = tx
+        .prepare_cached(
+            "SELECT namespace, data FROM item_extensions WHERE item_seq = ?1 ORDER BY namespace",
+        )?
+        .query_map([seq], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(Holding {
+        versions,
+        tags,
+        extensions,
+    })
+}
+
 pub(super) type Position = (String, String);
 
 pub(super) fn newest(

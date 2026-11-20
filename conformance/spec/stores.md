@@ -172,6 +172,42 @@ While a disk folder is as `stores/returned-folder-taken` describes, the server M
 
 **Tests:** `compliance/one-server.test.ts › stores nothing in a returned folder another server has open, still serves its files and reports it, and stores again once that server ends`, `› stores nothing in a returned folder that cannot be locked, still serves its files and reports it, and stores again once it can be`.
 
+### `stores/folder-replaced-refused`
+
+While the blob folder's path names a folder other than the one the server took for its disk store, even one that holds the store's marker, when a credential that may upload sends `POST /blobs`, the server MUST answer `503 blob_store_unavailable`.
+
+**Reason:** a folder put at the path may be another server's, or a copy that would part from the one the server keeps writing; the folder it took is the one it writes in.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a blob folder put in place of the one the server took, says blob storage is down, and stores again once that folder is back`.
+
+### `stores/folder-replaced-untouched`
+
+While the blob folder's path names a folder other than the one the server took for its disk store, the server MUST NOT write or remove a file in the folder at that path.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a blob folder put in place of the one the server took, says blob storage is down, and stores again once that folder is back`.
+
+### `stores/folder-replaced-health`
+
+While the blob folder's path names a folder other than the one the server took for its disk store, the server MUST answer the `blob_storage` component of `GET /health` as `down`.
+
+**Reason:** nothing can be stored until the folder the server took is back at its path.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a blob folder put in place of the one the server took, says blob storage is down, and stores again once that folder is back`.
+
+### `stores/folder-replaced-back`
+
+When the folder the server took for its disk store is back at the blob folder's path, the server MUST store blobs in it again, without a restart.
+
+**Tests:** `compliance/one-server.test.ts › stores nothing in a blob folder put in place of the one the server took, says blob storage is down, and stores again once that folder is back`.
+
+### `stores/folder-shared-health`
+
+Where the blob folder is on a network file system, the server MUST answer the `blob_storage` component of `GET /health` as `degraded`, with a reason that names the file system.
+
+**Reason:** the locks of a network file system may not reach a server on another machine, so only the owner can keep a second server off the folder.
+
+**Tests:** waiting on #3116.
+
 ### `stores/unread-setting-folder-returns`
 
 When the folder of the disk store that `stores/unread-setting-store-kept` keeps listed holds that store's marker again and `stores/returned-folder-taken` does not describe it, the server MUST serve and store blobs through that store, without a restart.

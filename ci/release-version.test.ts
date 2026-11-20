@@ -1,6 +1,7 @@
 // Exercises the workflow's version gate.
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -38,6 +39,8 @@ interface World {
   drafts?: string[];
   /** What the compare answers, relative to the previous release. */
   relation?: string;
+  /** The lines of `scripts/release/abandoned-versions`. */
+  abandoned?: string[];
 }
 
 interface Run {
@@ -53,6 +56,11 @@ function release(world: World, run: Run) {
     const bin = join(directory, "bin");
     const output = join(directory, "output");
     writeFileSync(output, "");
+    mkdirSync(join(directory, "scripts", "release"), { recursive: true });
+    writeFileSync(
+      join(directory, "scripts", "release", "abandoned-versions"),
+      (world.abandoned ?? []).join("\n"),
+    );
     const stub = (name: string, body: string) => {
       writeFileSync(join(directory, `${name}.sh`), body);
       chmodSync(join(directory, `${name}.sh`), 0o755);
@@ -94,6 +102,7 @@ esac
 ${script ?? "exit 1"}`,
       ],
       {
+        cwd: directory,
         encoding: "utf8",
         env: {
           PATH: `${bin}:${process.env.PATH ?? ""}`,
@@ -275,6 +284,69 @@ describe("the version a tag names", () => {
     const shell = release(world, { dispatch: "0.0.72; echo hacked" });
     expect(shell.status).toBe(1);
     expect(shell.said).not.toContain("hacked\n");
+  });
+
+  it("passes over an abandoned version to the release before it", () => {
+    const world = {
+      tags: ["0.0.84", "0.0.85", "0.0.86"],
+      released: ["0.0.84"],
+      abandoned: ["# Never released.", "0.0.85  # a comment", ""],
+    };
+    const run = tagged("0.0.86", world);
+    expect(run.status, run.said).toBe(0);
+    expect(run.output).toBe("version=0.0.86\n");
+    const minor = tagged("0.1.0", {
+      ...world,
+      tags: ["0.0.84", "0.0.85", "0.1.0"],
+    });
+    expect(minor.status, minor.said).toBe(0);
+  });
+
+  it("still waits for a version that is only tagged and not abandoned", () => {
+    refused(
+      tagged("0.0.86", {
+        tags: ["0.0.84", "0.0.85", "0.0.86"],
+        released: ["0.0.84"],
+        abandoned: ["0.0.83"],
+      }),
+      "0.0.85 is tagged but not released",
+    );
+  });
+
+  it("refuses an abandoned version itself", () => {
+    refused(
+      tagged("0.0.85", {
+        tags: ["0.0.84", "0.0.85"],
+        released: ["0.0.84"],
+        abandoned: ["0.0.85"],
+      }),
+      "0.0.85 is listed in scripts/release/abandoned-versions",
+    );
+  });
+
+  it("refuses a list that names a released version", () => {
+    refused(
+      tagged("0.0.86", {
+        tags: ["0.0.84", "0.0.85", "0.0.86"],
+        released: ["0.0.84", "0.0.85"],
+        abandoned: ["0.0.85"],
+      }),
+      "0.0.85 is released, so scripts/release/abandoned-versions cannot list it",
+    );
+  });
+
+  it("reads the committed list as versions only", () => {
+    const listed = readFileSync(
+      join(ROOT, "scripts", "release", "abandoned-versions"),
+      "utf8",
+    )
+      .split("\n")
+      .map((line) => line.replace(/#.*/, "").trim())
+      .filter(Boolean);
+    expect(listed).toContain("0.0.85");
+    for (const version of listed) {
+      expect(version).toMatch(/^0\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+    }
   });
 
   it("refuses a run that is not at a tag ref", () => {

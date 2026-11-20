@@ -652,6 +652,259 @@ pub(crate) fn lay_table(conn: &Connection, item: &str, table: &str) -> Result<()
     Ok(())
 }
 
+/// Where any write is laid over the row: the ids `answered` reads one by one.
+pub(crate) fn laid_or_beneath(conn: &Connection, item: &str, table: &str) -> Result<Vec<String>> {
+    let mut query = conn.prepare_cached(
+        "SELECT id FROM rows_laid WHERE item_id = ?1 AND name = ?2
+         UNION SELECT id FROM rows_beneath WHERE item_id = ?1 AND name = ?2",
+    )?;
+    let rows = query.query_map(params![item, table], |row| row.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// The row as the server last answered it, as `(body, withheld, updated_at)`:
+/// beneath the writes laid over it, with each the server took laid back on at
+/// its batch's time. `None` where the server holds none.
+pub(crate) fn answered(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+    id: &str,
+) -> Result<Option<(String, Option<String>, String)>> {
+    let under = match beneath(conn, item, table, id)? {
+        Some(under) => under,
+        None => held_row(conn, item, table, id)?,
+    };
+    let mut query = conn.prepare_cached(
+        "SELECT ops, at FROM rows_laid
+          WHERE item_id = ?1 AND name = ?2 AND id = ?3 AND batch IS NOT NULL
+          ORDER BY seq",
+    )?;
+    let taken = query
+        .query_map(params![item, table, id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut row = under;
+    for (ops, at) in taken {
+        let ops = queued_ops(&json!({ "operations": serde_json::from_str::<Value>(&ops)? }))?;
+        row = apply(row, &ops, id, &at);
+    }
+    let (body, withheld, updated_at) = stored(row.as_ref())?;
+    Ok(body.map(|body| (body, withheld, updated_at.unwrap_or_default())))
+}
+
+/// A row as `(body, withheld, updated_at)`.
+pub(crate) type RowText = (String, Option<String>, String);
+
+/// `row` with the operations on it in `ops` laid over it at `at`, or at its
+/// own time where `at` is `None`. `None` where they leave no row.
+pub(crate) fn laid_on(
+    row: Option<RowText>,
+    ops: &[Op],
+    id: &str,
+    at: Option<&str>,
+) -> Result<Option<RowText>> {
+    let row = row
+        .map(|(body, withheld, updated_at)| read_held(&body, withheld.as_deref(), updated_at))
+        .transpose()?;
+    let at = at
+        .map(str::to_string)
+        .or_else(|| row.as_ref().map(|row| row.updated_at.clone()))
+        .unwrap_or_default();
+    let row = apply(row, ops, id, &at);
+    let (body, withheld, updated_at) = stored(row.as_ref())?;
+    Ok(body.map(|body| (body, withheld, updated_at.unwrap_or_default())))
+}
+
+/// The operations on the row of the row writes sent with no answer
+/// recorded, oldest first.
+pub(crate) fn unanswered_ops(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+    id: &str,
+) -> Result<Vec<Op>> {
+    let mut query = conn.prepare_cached(&format!(
+        "SELECT l.ops FROM rows_laid l JOIN queue q ON q.id = l.write_id
+          WHERE l.item_id = ?1 AND l.name = ?2 AND l.id = ?3 AND l.batch IS NULL
+            AND {UNANSWERED}
+          ORDER BY l.seq"
+    ))?;
+    let laid = query
+        .query_map(params![item, table, id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut ops = Vec::new();
+    for laid in laid {
+        ops.extend(queued_ops(
+            &json!({ "operations": serde_json::from_str::<Value>(&laid)? }),
+        )?);
+    }
+    Ok(ops)
+}
+
+/// The most a kept write carries, so the drain can join it to no other and
+/// still send it whole.
+const KEPT_BYTES: usize = crate::http::REQUEST_LIMIT / 2;
+
+/// Queues `ops` on the table as writes blocked `server_restored`
+/// (`device/restored-rows-kept`): sent before every row write to the table
+/// not yet sent, and laid beneath them. A write that follows one only orders
+/// behind it, so withdrawing a kept write refuses none of them.
+pub(crate) fn keep(conn: &Connection, item: &str, table: &str, ops: &[Op]) -> Result<Vec<String>> {
+    if ops.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut chunks: Vec<Vec<Op>> = Vec::new();
+    let mut bytes = 0;
+    for op in ops {
+        let size = op.printed().to_string().len();
+        match chunks.last_mut() {
+            Some(chunk) if chunk.len() < rows::MAX_OPERATIONS && bytes + size <= KEPT_BYTES => {
+                chunk.push(op.clone());
+                bytes += size;
+            }
+            _ => {
+                chunks.push(vec![op.clone()]);
+                bytes = size;
+            }
+        }
+    }
+    let waiting = format!(
+        "kind IN ('{}', '{}') AND item_id = ?1 AND row_table = ?2
+         AND (verdict IS NULL OR verdict IN ('{}', '{}'))",
+        WriteKind::WriteRows.as_str(),
+        WriteKind::UndoRows.as_str(),
+        Verdict::Blocked.as_str(),
+        Verdict::Dead.as_str(),
+    );
+    // A write already sent cannot be held back, so the kept ones follow it.
+    let mut ahead: Option<String> = conn
+        .query_row_cached(
+            &format!("SELECT id FROM queue WHERE {waiting} AND sent = 1 ORDER BY seq DESC LIMIT 1"),
+            params![item, table],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let heads: Vec<String> = {
+        let mut query = conn.prepare_cached(&format!(
+            "SELECT id FROM queue AS w WHERE {waiting} AND sent = 0
+               AND NOT EXISTS (SELECT 1 FROM queue AS a
+                                WHERE a.id = w.follows AND a.sent = 0 AND a.item_id = w.item_id
+                                  AND a.row_table = w.row_table AND a.kind IN ('{}', '{}')
+                                  AND (a.verdict IS NULL OR a.verdict IN ('{}', '{}')))",
+            WriteKind::WriteRows.as_str(),
+            WriteKind::UndoRows.as_str(),
+            Verdict::Blocked.as_str(),
+            Verdict::Dead.as_str(),
+        ))?;
+        let rows = query.query_map(params![item, table], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let behind: Vec<String> = {
+        let mut query = conn.prepare_cached(&format!(
+            "SELECT id FROM queue WHERE {waiting} AND sent = 0 ORDER BY seq"
+        ))?;
+        let rows = query.query_map(params![item, table], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let lowest: Option<i64> = conn.query_row_cached(
+        "SELECT MIN(seq) FROM rows_laid WHERE item_id = ?1 AND name = ?2",
+        params![item, table],
+        |row| row.get(0),
+    )?;
+    let depends_on = store::untaken_creates_for_item(conn, item)?;
+    let count = chunks.len() as i64;
+    let mut kept = Vec::with_capacity(chunks.len());
+    for (at, chunk) in (0_i64..).zip(&chunks) {
+        let payload = json!({ "operations": chunk.iter().map(Op::printed).collect::<Vec<_>>() });
+        let queued = store::enqueue(
+            conn,
+            &store::NewWrite {
+                kind: WriteKind::WriteRows,
+                item_id: Some(item),
+                to_id: None,
+                edge_id: None,
+                namespace: None,
+                tag: None,
+                blob: None,
+                base_version: None,
+                payload: &payload.to_string(),
+                depends_on: &depends_on,
+            },
+        )?;
+        conn.execute_cached(
+            "UPDATE queue SET row_table = ?2, follows = ?3 WHERE id = ?1",
+            params![queued.id, table, ahead],
+        )?;
+        let seq = match lowest {
+            Some(lowest) => lowest - count + at,
+            None => {
+                conn.query_row_cached("SELECT seq FROM queue WHERE id = ?1", [&queued.id], |row| {
+                    row.get(0)
+                })?
+            }
+        };
+        record_laid(conn, &queued.id, seq, item, table, chunk, &queued.queued_at)?;
+        store::record_verdict(
+            conn,
+            &queued.id,
+            &store::Answered {
+                verdict: Verdict::Blocked,
+                reason: Some(crate::model::BlockedReason::ServerRestored.as_str()),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+        ahead = Some(queued.id.clone());
+        kept.push(queued.id);
+    }
+    for head in heads {
+        conn.execute_cached(
+            "UPDATE queue SET follows = ?2 WHERE id = ?1",
+            params![head, ahead],
+        )?;
+    }
+    put_ahead(conn, &kept, &behind)?;
+    Ok(kept)
+}
+
+/// Gives the kept writes the places in the queue of the unsent row writes to
+/// their table, which move behind them, laid at their new places: a drain
+/// walks the queue in `seq` order and sends the row writes behind one it
+/// sends in the same request.
+fn put_ahead(conn: &Connection, kept: &[String], behind: &[String]) -> Result<()> {
+    if behind.is_empty() {
+        return Ok(());
+    }
+    let order: Vec<&String> = kept.iter().chain(behind).collect();
+    let mut places = Vec::with_capacity(order.len());
+    for id in &order {
+        let seq: i64 =
+            conn.query_row_cached("SELECT seq FROM queue WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })?;
+        places.push(seq);
+    }
+    places.sort_unstable();
+    // Out of the way first, as `seq` is the key and every place is taken.
+    for id in &order {
+        conn.execute_cached("UPDATE queue SET seq = -seq WHERE id = ?1", [id])?;
+    }
+    for (at, (id, seq)) in order.iter().zip(places).enumerate() {
+        conn.execute_cached("UPDATE queue SET seq = ?2 WHERE id = ?1", params![id, seq])?;
+        // `clashes` reads a write's own operations by this place. The kept
+        // writes stay laid beneath every write to the table.
+        if at >= kept.len() {
+            conn.execute_cached(
+                "UPDATE rows_laid SET seq = ?2 WHERE write_id = ?1",
+                params![id, seq],
+            )?;
+        }
+    }
+    Ok(())
+}
+
 /// In a writer's transaction, after a row write's verdict changed.
 pub(crate) fn flush(conn: &Connection) -> Result<()> {
     let dirty: Vec<(String, String, String)> = {
@@ -840,6 +1093,28 @@ fn take_seen_beneath(conn: &Connection, batch: &str) -> Result<BTreeMap<String, 
     Ok(kept)
 }
 
+/// Keeps `batch` as seen while a sent row write to the table awaits its
+/// answer, which may be the batch's own.
+pub(crate) fn seen_first(conn: &Connection, item: &str, table: &str, batch: &str) -> Result<()> {
+    let waiting = conn
+        .prepare_cached(&format!(
+            "SELECT 1 FROM queue q WHERE q.kind = ?1 AND q.item_id = ?2 AND q.row_table = ?3
+               AND {UNANSWERED} LIMIT 1"
+        ))?
+        .query_row(params![WriteKind::WriteRows.as_str(), item, table], |_| {
+            Ok(())
+        })
+        .optional()?
+        .is_some();
+    if waiting {
+        conn.execute_cached(
+            "INSERT OR IGNORE INTO rows_seen (batch, item_id, name) VALUES (?1, ?2, ?3)",
+            params![batch, item, table],
+        )?;
+    }
+    Ok(())
+}
+
 /// A batch no laid write names is kept while a sent write awaits its answer.
 pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &str) -> Result<()> {
     let released: Vec<String> = {
@@ -850,22 +1125,10 @@ pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &
         rows.collect::<rusqlite::Result<_>>()?
     };
     if released.is_empty() {
-        let waiting = conn
-            .prepare_cached(&format!(
-                "SELECT 1 FROM queue q WHERE q.kind = ?1 AND q.item_id = ?2 AND q.row_table = ?3
-                   AND {UNANSWERED} LIMIT 1"
-            ))?
-            .query_row(params![WriteKind::WriteRows.as_str(), item, table], |_| {
-                Ok(())
-            })
-            .optional()?
-            .is_some();
-        if waiting {
-            conn.execute_cached(
-                "INSERT OR IGNORE INTO rows_seen (batch, item_id, name) VALUES (?1, ?2, ?3)",
-                params![batch, item, table],
-            )?;
-        }
+        return seen_first(conn, item, table, batch);
+    }
+    // A table still filling takes the server's rows as they come.
+    if !whole(conn, item, table)? {
         return Ok(());
     }
     let ids: BTreeSet<String> = released.into_iter().collect();
@@ -999,6 +1262,8 @@ pub(crate) fn taken(
         _ => None,
     };
     let laid = whole(conn, item, table)?;
+    // Kept until its event too, so rows set aside while the table fills hold it.
+    let filling = tables::state(conn, item, table)?.as_deref() == Some(tables::FILLING);
     let mut written = Vec::with_capacity(writes.len());
     let mut conflicts = Vec::with_capacity(writes.len());
     for taken in writes {
@@ -1026,7 +1291,7 @@ pub(crate) fn taken(
         let write = taken.write;
         let ids: BTreeSet<&str> = ops.iter().map(Op::id).collect();
         for id in ids {
-            let waits = laid && kept_whole && changed.contains(id) && !seen;
+            let waits = (laid || filling) && kept_whole && changed.contains(id) && !seen;
             if laid && kept_whole && !changed.contains(id) {
                 let under = beneath(conn, item, table, id)?.flatten();
                 let at = under.as_ref().map(|row| row.updated_at.clone());
@@ -1460,6 +1725,68 @@ mod tests {
     fn seen(conn: &Connection, batch: &str, row: &str) {
         before_batch(conn, "item", "steps", batch, [row]).unwrap();
         applied_batch(conn, "item", "steps", batch).unwrap();
+    }
+
+    #[test]
+    fn a_write_moved_behind_kept_rows_still_finds_the_change_it_did_not_see() {
+        const A: &str = "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70";
+        const B: &str = "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f71";
+        // Unkept first: the witness that the same write conflicts.
+        for kept in [false, true] {
+            let conn = store::testing::conn();
+            conn.execute(
+                "INSERT INTO item_tables (item_id, name, state) VALUES ('item', 'steps', 'whole')",
+                [],
+            )
+            .unwrap();
+            // Another writer moved the count on after the person read it.
+            let theirs = Held {
+                values: values(json!({ "count": 5 })),
+                withheld: Vec::new(),
+                updated_at: "2026-11-19T10:00:00.000Z".into(),
+            };
+            set_beneath(&conn, "item", "steps", A, Some(&theirs)).unwrap();
+            let ops = json!([{ "op": "patch", "id": A, "values": { "count": 2 } }]);
+            conn.execute(
+                "INSERT INTO queue (seq, id, kind, item_id, row_table, idempotency_key, payload, sent, queued_at, read)
+                 VALUES (1, 'w', 'write_rows', 'item', 'steps', 'w', ?1, 0, 'at', ?2)",
+                params![
+                    json!({ "operations": ops }).to_string(),
+                    json!({ "rows": { A: { "count": 1 } } }).to_string()
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO rows_laid (write_id, seq, item_id, name, id, ops, at)
+                 VALUES ('w', 1, 'item', 'steps', ?1, ?2, 'at')",
+                [A, &ops.to_string()],
+            )
+            .unwrap();
+            if kept {
+                keep(&conn, "item", "steps", &[Op::Delete { id: B.into() }]).unwrap();
+            }
+            let write = store::queued_write(&conn, "w").unwrap().unwrap();
+            let results = [json!({ "id": A, "outcome": "patched" })];
+            let conflicts = taken(
+                &conn,
+                "item",
+                "steps",
+                None,
+                &[Taken {
+                    write: &write,
+                    results: &results,
+                }],
+            )
+            .unwrap();
+            assert_eq!(
+                conflicts,
+                vec![vec![RowConflict {
+                    row: A.into(),
+                    column: "count".into(),
+                }]],
+                "kept {kept}"
+            );
+        }
     }
 
     #[test]

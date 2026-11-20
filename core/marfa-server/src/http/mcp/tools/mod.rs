@@ -7,6 +7,7 @@ mod bulk;
 mod connectors;
 mod create;
 mod delete;
+mod delete_connector;
 mod docs;
 mod files;
 mod find;
@@ -16,6 +17,8 @@ mod keys;
 mod maintain;
 mod moving;
 mod overview;
+mod purge;
+mod retire_endpoint;
 mod revoke;
 mod rows;
 mod settings;
@@ -102,6 +105,7 @@ fn definitions() -> Vec<(Home, Definition)> {
         (Home::Admin(Task::Settings), settings::read_definition()),
         (Home::Admin(Task::Settings), settings::change_definition()),
         (Home::Admin(Task::Trash), trash::definition()),
+        (Home::Admin(Task::Trash), purge::definition()),
         (Home::Admin(Task::Apps), apps::list_definition()),
         (Home::Admin(Task::Apps), apps::narrow_definition()),
         (Home::Admin(Task::Backups), backups::list_definition()),
@@ -111,6 +115,11 @@ fn definitions() -> Vec<(Home, Definition)> {
         (
             Home::Admin(Task::Connectors),
             connectors::endpoint_definition(),
+        ),
+        (Home::Admin(Task::Connectors), retire_endpoint::definition()),
+        (
+            Home::Admin(Task::Connectors),
+            delete_connector::definition(),
         ),
         (Home::Admin(Task::Files), files::definition()),
         (Home::Admin(Task::SignIns), sign_ins::list_definition()),
@@ -260,6 +269,7 @@ async fn run(
         settings::READ_NAME => settings::read(app, caller).await,
         settings::CHANGE_NAME => settings::change(app, caller, arguments).await,
         trash::NAME => trash::run(app, caller, arguments).await,
+        purge::NAME => purge::run(app, caller, arguments).await,
         apps::LIST_NAME => apps::list(app, caller).await,
         apps::NARROW_NAME => apps::narrow(app, caller, arguments).await,
         backups::LIST_NAME => backups::list(app, caller).await,
@@ -267,6 +277,8 @@ async fn run(
         maintain::NAME => maintain::run(app, caller, arguments).await,
         connectors::LIST_NAME => connectors::list(app, caller, arguments).await,
         connectors::ENDPOINT_NAME => connectors::make_endpoint(app, caller, arguments).await,
+        retire_endpoint::NAME => retire_endpoint::run(app, caller, arguments).await,
+        delete_connector::NAME => delete_connector::run(app, caller, arguments).await,
         files::NAME => files::run(app, caller, arguments).await,
         sign_ins::LIST_NAME => sign_ins::list(app, caller).await,
         sign_ins::RENAME_NAME => sign_ins::rename(app, caller, arguments).await,

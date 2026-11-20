@@ -16,7 +16,8 @@ use rusqlite::{Transaction, params};
 
 use super::access::Caller;
 use super::backups::{BackupHealth, StoreFault};
-use super::blobs::disk::Disk;
+use super::blobs::disk::{Disk, PENDING};
+use super::blobs::folder::Folder;
 use super::connectors::{self, Reason};
 use super::events::Event;
 use super::faults::{FAIL_ATTENTION, HOLD_ATTENTION};
@@ -245,11 +246,17 @@ async fn healthy(app: &Arc<App>) -> Result<Vec<Concern>> {
         })
         .collect();
     found.extend(backing(report.backups()));
-    found.extend(
-        app.blobs
-            .folder()
-            .and_then(|folder| unlocked(&folder.files())),
-    );
+    if let Some(folder) = app.blobs.folder() {
+        found.extend(
+            health::bounded(move || {
+                let mut found = locking(&folder.files());
+                found.extend(claim_kept(&folder));
+                found
+            })
+            .await
+            .unwrap_or_default(),
+        );
+    }
     found.extend(secrets_to_set(&app.settings.live()));
     Ok(found)
 }
@@ -272,6 +279,72 @@ fn secrets_to_set(settings: &crate::settings::Snapshot) -> Vec<Concern> {
             ),
         })
         .collect()
+}
+
+/// What keeps the backup folder's files area from being this server's alone. It blocks.
+fn locking(files: &Disk) -> Vec<Concern> {
+    let folder = files.root().display().to_string();
+    let backup = |reference: &str, title: &str, description: String| Concern {
+        kind: "backup",
+        failed_run: false,
+        reference: reference.to_string(),
+        title: title.to_string(),
+        description,
+    };
+    let mut found: Vec<Concern> = unlocked(files).into_iter().collect();
+    // A folder that is not there is the backup store's own entry.
+    if files.reachable()
+        && let Some(why) = files.unwritable()
+    {
+        found.push(backup(
+            "folder_lock_lost",
+            "The backup folder is not this server's alone",
+            format!(
+                "The server stopped copying files to {folder}: {why}. Stop any other Marfa \
+                 server that uses the backup folder, then restart this one."
+            ),
+        ));
+    }
+    if let Some(fs) = files.shared() {
+        found.push(backup(
+            "folder_shared",
+            "The backup folder is on a network file system",
+            format!(
+                "{folder} is on a network file system ({fs}), whose locks may not keep out a \
+                 Marfa server on another machine. A copy of this instance started there could \
+                 remove the files this one is still copying. Keep the backup folder on a disk \
+                 of this machine, or make sure only one server uses it."
+            ),
+        ));
+    }
+    if let Some(note) = files.lock_note() {
+        found.push(backup(
+            "folder_lock_restored",
+            "The backup folder's lock file was put back",
+            format!(
+                "Something other than this server changed {folder}: {note}. Check that no other \
+                 program or server changes the backup folder."
+            ),
+        ));
+    }
+    found
+}
+
+/// An adopt's claim the server kept in a files area that takes no locks. It blocks.
+fn claim_kept(folder: &Folder) -> Option<Concern> {
+    folder.kept_claim().map(|id| Concern {
+        kind: "backup",
+        failed_run: false,
+        reference: "folder_claim_kept".to_string(),
+        title: "The backup folder keeps an adopt's claim".to_string(),
+        description: format!(
+            "{} holds the claim of an adopt for the store {id}, which the record does not name. \
+             The server did not remove it: the folder is not locked, so the claim may be another \
+             Marfa server's. Stop any other server that uses the backup folder, then remove {}.",
+            folder.files().root().display(),
+            folder.files().root().join(PENDING).display()
+        ),
+    })
 }
 
 /// A backup folder whose files area another server could use too, since it took no lock.
@@ -1071,5 +1144,35 @@ mod tests {
         let locked = dir.path().join("locked");
         let held = Disk::open(&locked, Place::BackupFiles, None).unwrap();
         assert!(unlocked(&held).is_none());
+    }
+
+    #[test]
+    fn an_adopts_claim_kept_in_a_folder_without_locks_asks_for_a_look_until_it_is_removed() {
+        let (recorded, other) = (
+            uuid::Uuid::now_v7().to_string(),
+            uuid::Uuid::now_v7().to_string(),
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let folder = crate::app::blobs::folder::claimed_for(dir.path(), &recorded, &other);
+        // The witness: a locked folder removes the claim and asks for nothing.
+        folder.settle(Some(recorded.clone())).unwrap();
+        assert!(claim_kept(&folder).is_none());
+
+        let dir = tempfile::tempdir().unwrap();
+        let folder = crate::app::blobs::folder::claimed_for(dir.path(), &recorded, &other);
+        crate::server_lock::without_locks(|| folder.settle(Some(recorded.clone()))).unwrap();
+        let concern = claim_kept(&folder).expect("no entry for a kept claim");
+        assert_eq!(
+            (concern.kind, concern.reference.as_str()),
+            ("backup", "folder_claim_kept")
+        );
+        let pending = folder.files().root().join(PENDING);
+        assert!(
+            concern.description.contains(&pending.display().to_string()),
+            "{}",
+            concern.description
+        );
+        std::fs::remove_file(&pending).unwrap();
+        assert!(claim_kept(&folder).is_none());
     }
 }

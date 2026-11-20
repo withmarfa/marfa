@@ -401,6 +401,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     let kept = files::kept(identity);
     match identity {
         Some(identity) => files::prepare_root_folder(&folder.dir, identity)?,
+        None if runtime == Runtime::Native => marfa_acl::make_private_folders(&folder.dir)?,
         None => std::fs::create_dir_all(&folder.dir)?,
     }
 

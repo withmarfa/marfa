@@ -81,6 +81,7 @@ mod request_limit_tests;
 #[cfg(test)]
 mod resend_tests;
 mod restored;
+mod restored_rows;
 mod row_writes;
 mod scaffold;
 #[cfg(test)]

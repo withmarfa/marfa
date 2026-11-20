@@ -45,6 +45,7 @@ interface Component {
 
 interface Health {
   status: string;
+  claimed: boolean | null;
   components: Record<string, Component>;
 }
 
@@ -118,6 +119,23 @@ describe("GET /health when a component is down", () => {
     const after = await until(isOk);
     expect(after.httpStatus).toBe(200);
     expect(after.body.components.database?.status).toBe("ok");
+  }, 120_000);
+
+  it("answers claimed true to a caller with no credential, and null while the database refuses a read", async () => {
+    const before = await until(isOk);
+    expect(before.body.claimed).toBe(true);
+
+    await server!.setFault("refuse:read");
+    let down: Answer;
+    try {
+      down = await until((answer) => answer.httpStatus === 503);
+    } finally {
+      await server!.clearFault("refuse:read");
+    }
+    expect(down.body.components.database?.status).toBe("down");
+    expect(down.body).toHaveProperty("claimed", null);
+
+    expect((await until(isOk)).body.claimed).toBe(true);
   }, 120_000);
 
   it("answers 503 with the database write down when the database refuses a write, and 200 once it takes one", async () => {

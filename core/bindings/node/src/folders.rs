@@ -186,6 +186,7 @@ pub struct ConfirmedFolder {
     pub removed: i64,
     pub added: i64,
     pub unsure: Vec<UnsureFile>,
+    pub refused: Vec<UnsureFile>,
 }
 #[napi(object)]
 pub struct RestoredRemoval {
@@ -576,6 +577,14 @@ impl Task for ConfirmFolder {
                 added: count(confirmed.added as u64),
                 unsure: confirmed
                     .unsure
+                    .into_iter()
+                    .map(|file| UnsureFile {
+                        path: file.path,
+                        reason: file.reason,
+                    })
+                    .collect(),
+                refused: confirmed
+                    .refused
                     .into_iter()
                     .map(|file| UnsureFile {
                         path: file.path,

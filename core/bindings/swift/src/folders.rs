@@ -298,6 +298,9 @@ pub struct ConfirmedFolder {
     pub added: u64,
     /// Files not let go, because the other folders could not all be read.
     pub unsure: Vec<UnsureFile>,
+    /// Paused files the volume could not take away safely, which stay
+    /// paused.
+    pub refused: Vec<UnsureFile>,
 }
 
 /// What cancelling a paused removal did.
@@ -533,6 +536,14 @@ guarded! {
                 added: confirmed.added as u64,
                 unsure: confirmed
                     .unsure
+                    .into_iter()
+                    .map(|file| UnsureFile {
+                        path: file.path,
+                        reason: file.reason,
+                    })
+                    .collect(),
+                refused: confirmed
+                    .refused
                     .into_iter()
                     .map(|file| UnsureFile {
                         path: file.path,

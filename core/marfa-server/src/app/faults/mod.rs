@@ -62,6 +62,8 @@ macro_rules! point_list {
         HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
         HOLD_STORES_RECORD = Hold "stores-record" None;
         HOLD_STORES_SWAP = Hold "stores-swap" None;
+        HOLD_FOLDER_MARKER = Hold "folder-marker" None;
+        HOLD_FOLDER_SETTLE = Hold "folder-settle" None;
         FAIL_STORES_RECORD = Fail "stores-record" Nth;
         FAIL_STORES_RECORD_LOST = Fail "stores-record-lost" Nth;
         FAIL_SETTINGS_RELOAD = Fail "settings-reload" Nth;

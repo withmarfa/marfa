@@ -142,6 +142,7 @@ export interface UpdateItemInput {
 
 export interface ReplaceTagsInput {
   tags?: string[];
+  read_tags?: string[];
 }
 
 /**

@@ -265,4 +265,102 @@ describe("metadata doors", () => {
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
     expect((await client.getItem(id)).data.metadata.tags).toEqual([]);
   });
+
+  it("replaces tags only when the tags named as read are the item's, in any order, and as the item stands when none are named", async () => {
+    const id = await seed();
+    const added = await client.addTags(id, ["one", "two"]);
+    expect(added.status, JSON.stringify(added.error)).toBe(200);
+    // Another key adds a tag after the reader read the item. A tag write
+    // leaves the item's version as it is.
+    const version = (await client.getItem(id)).data.item.version;
+    const other = await client.addTags(id, ["added-between"]);
+    expect(other.status, JSON.stringify(other.error)).toBe(200);
+    expect((await client.getItem(id)).data.item.version).toBe(version);
+
+    const stale = await client.replaceTags(id, {
+      tags: ["mine"],
+      read_tags: ["one", "two"],
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.headers.get("X-Error-Code")).toBe("version_conflict");
+    expect(stale.error).toMatchObject({
+      error: { code: "version_conflict" },
+      current: { id, version },
+    });
+    expect((await client.getItem(id)).data.metadata.tags).toEqual([
+      "one",
+      "two",
+      "added-between",
+    ]);
+
+    // The same tags in another order, and one named twice, are the same set.
+    const matching = await client.replaceTags(id, {
+      tags: ["mine", "also"],
+      read_tags: ["added-between", "two", "one", "two"],
+    });
+    expect(matching.status, JSON.stringify(matching.error)).toBe(200);
+    await expectMatchesSchema("PUT", "/items/{id}/tags", 200, matching.data);
+    expect(matching.data).toEqual({ tags: ["mine", "also"] });
+
+    // An item that holds no tags is matched by an empty list.
+    const cleared = await client.replaceTags(id, { tags: [] });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    const empty = await client.replaceTags(id, {
+      tags: ["from-empty"],
+      read_tags: [],
+    });
+    expect(empty.status, JSON.stringify(empty.error)).toBe(200);
+
+    const unconditional = await client.replaceTags(id, { tags: ["alone"] });
+    expect(unconditional.status, JSON.stringify(unconditional.error)).toBe(200);
+    expect((await client.getItem(id)).data.metadata.tags).toEqual(["alone"]);
+  });
+
+  it("replaces tags on an item whose content changed since the read when the tags did not", async () => {
+    const id = await seed();
+    await client.addTags(id, ["held"]);
+    const version = (await client.getItem(id)).data.item.version;
+    const moved = await client.updateItem(id, {
+      version,
+      properties: { body: "changed since the read" },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    const replaced = await client.replaceTags(id, {
+      tags: ["mine"],
+      read_tags: ["held"],
+    });
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
+    expect((await client.getItem(id)).data.metadata.tags).toEqual(["mine"]);
+  });
+
+  it("refuses a tags replace whose read tags are not a list of strings", async () => {
+    const id = await seed();
+    for (const read_tags of ["held", [1], 5, null, {}]) {
+      const refused = await client.rawRequest(`/items/${id}/tags`, {
+        method: "PUT",
+        body: { tags: ["x"], read_tags },
+      });
+      expect(refused.status, JSON.stringify(read_tags)).toBe(400);
+      expect(refused.headers.get("X-Error-Code")).toBe("validation_error");
+      expect(JSON.stringify(refused.error)).toContain("read_tags");
+    }
+    expect((await client.getItem(id)).data.metadata.tags).toEqual([]);
+  });
+
+  it("answers a key reused with other read tags as another request, and replays the same request", async () => {
+    const id = await seed();
+    const send = (read_tags: string[]) =>
+      client.rawRequest<{ tags: string[] }>(`/items/${id}/tags`, {
+        method: "PUT",
+        headers: { "Idempotency-Key": `read-tags-${ctx.runId}-${id}` },
+        body: { tags: ["mine"], read_tags },
+      });
+    const first = await send([]);
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const replayed = await send([]);
+    expect(replayed.status, JSON.stringify(replayed.error)).toBe(200);
+    const other = await send(["something"]);
+    expect(other.status).toBe(422);
+    expect(other.headers.get("X-Error-Code")).toBe("idempotency_key_reused");
+  });
 });

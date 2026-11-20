@@ -36,7 +36,7 @@ const SPAN_GAP: i64 = 100;
 const REREAD_PAGE: i64 = 1000;
 
 const OWED: &str = "owed";
-const FILLING: &str = "filling";
+pub(crate) const FILLING: &str = "filling";
 pub(crate) const WHOLE: &str = "whole";
 const ONLINE: &str = "online";
 
@@ -195,7 +195,8 @@ fn drop_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
     Ok(())
 }
 
-fn owe_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
+pub(crate) fn owe_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
+    crate::restored_rows::hold_named(conn, Some((item, table)))?;
     empty_rows(conn, item, table)?;
     set_state(conn, item, table, OWED, None)
 }
@@ -260,6 +261,7 @@ pub(crate) fn drop_item(conn: &Connection, item: &str) -> Result<()> {
 
 /// Owes every table again, for a copy that missed events.
 pub(crate) fn owe_again(conn: &Connection) -> Result<()> {
+    crate::restored_rows::hold_named(conn, None)?;
     crate::row_writes::forget_all(conn)?;
     conn.execute_batch(
         "DELETE FROM table_rows;
@@ -592,6 +594,7 @@ pub(crate) fn past_cap(conn: &Connection, item: &str, table: &str) -> Result<boo
 fn become_whole(conn: &Connection, item: &str, table: &str) -> Result<()> {
     set_state(conn, item, table, WHOLE, None)?;
     crate::row_writes::unjudge(conn, item, table, None)?;
+    crate::restored_rows::keep_lost(conn, item, table)?;
     crate::row_writes::lay_table(conn, item, table)?;
     past_cap(conn, item, table)?;
     Ok(())
@@ -896,7 +899,10 @@ fn advance(
 // The caller holds the stream, excluding events between a page's read and write.
 pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<FillReport> {
     let filled = || -> Result<FillReport> {
-        crate::busy::transaction(core, context, stop, reconcile_all)?;
+        crate::busy::transaction(core, context, stop, |tx| {
+            reconcile_all(tx)?;
+            crate::restored_rows::let_go_unheld(tx)
+        })?;
         let mut pass = Pass::default();
         loop {
             crate::catch_up::refuse_if_stopped(stop)?;
@@ -979,6 +985,20 @@ fn read_named(
     ids: &[String],
     found: &mut dyn FnMut(String, Value),
 ) -> Result<bool> {
+    read_named_or(core, http, item, table, ids, invalid, found)
+}
+
+/// `read_named`, failing with `off_shape` on a page that does not read as
+/// rows.
+pub(crate) fn read_named_or(
+    core: &Core,
+    http: &Http,
+    item: &str,
+    table: &str,
+    ids: &[String],
+    off_shape: fn() -> CoreError,
+    found: &mut dyn FnMut(String, Value),
+) -> Result<bool> {
     let mut ids = ids.to_vec();
     ids.sort_unstable();
     ids.dedup();
@@ -1010,10 +1030,13 @@ fn read_named(
                 other => other?,
             };
             let Some(Value::Array(rows)) = page.get("data") else {
-                return Err(invalid());
+                return Err(off_shape());
             };
             for row in rows {
-                let id = row.get("id").and_then(Value::as_str).ok_or_else(invalid)?;
+                let id = row
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(off_shape)?;
                 if wanted.contains(id) {
                     found(id.to_string(), row.clone());
                 }

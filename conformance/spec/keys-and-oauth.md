@@ -2951,7 +2951,7 @@ If the sign-in form's attempt is refused by a sign-in limit, then the server MUS
 
 ### `keys-and-oauth/sign-in-lockout-page`
 
-When `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after_seconds` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up, and says that a passkey signs in during the lock.
+While an instance has an owner, when `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after_seconds` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up, and says that a passkey signs in during the lock.
 
 **Reason:** A fixed number of minutes would be wrong for one of the two limits, and the passkey is the way in that a password lock does not close (`authentication/passkey-password-lock`).
 
@@ -3169,11 +3169,11 @@ When `GET /auth/device` carries `error=invalid_code`, the server MUST answer a p
 
 ### `keys-and-oauth/device-code-expired`
 
-When `GET /auth/device` carries `error=expired_code`, the server MUST answer a page saying the code has expired and to start again on the device for a new one.
+When `GET /auth/device` carries `error=expired_code`, the server MUST answer a page saying the code has expired and to start connecting again in the app or on the device for a new one.
 
-**Reason:** Checking what was typed cannot put an expired code right, so the page sends the person back to the device and not to the keyboard. The server answers this only while it still holds the expired code.
+**Reason:** Checking what was typed cannot put an expired code right, so the page sends the person back to the device and not to the keyboard. The server answers this only while it still holds the expired code. A code can also end while the person claims a new instance on the way to approving it.
 
-**Tests:** `compliance/sign-in-surface.test.ts › says an unknown code as wrong or expired, and a code the server holds as expired as expired`.
+**Tests:** `compliance/sign-in-surface.test.ts › says an unknown code as wrong or expired, and a code the server holds as expired as expired`, `compliance/claim-from-app.test.ts › says to start connecting again in the app when the device code ended during setup`.
 
 ### `keys-and-oauth/device-code-lifetime`
 
@@ -3343,13 +3343,13 @@ When the device approval page offers access to a web client, the server MUST nam
 
 ### `keys-and-oauth/sign-in-username-kept`
 
-When a sign-in through the form fails, the server MUST redirect the browser to the sign-in page carrying the typed username.
+While an instance has an owner, when a sign-in through the form fails, the server MUST redirect the browser to the sign-in page carrying the typed username.
 
 **Tests:** `compliance/sign-in-surface.test.ts › returns the typed username after a wrong password, and never the password`.
 
 ### `keys-and-oauth/sign-in-username-shown`
 
-When the sign-in page is opened carrying a username, the server MUST show that username in the username field.
+While an instance has an owner, when the sign-in page is opened carrying a username, the server MUST show that username in the username field.
 
 **Tests:** `compliance/sign-in-surface.test.ts › returns the typed username after a wrong password, and never the password`.
 
@@ -3363,7 +3363,7 @@ The server MUST NOT carry a typed password in the sign-in form's redirect or sho
 
 ### `keys-and-oauth/sign-in-names-app`
 
-When an authorization the instance signed, whose window is open, sends a person to the sign-in page, the server MUST name the app on it.
+While an instance has an owner, when an authorization the instance signed, whose window is open, sends a person to the sign-in page, the server MUST name the app on it.
 
 **Reason:** A person signing in for an app should be able to see which app it is.
 

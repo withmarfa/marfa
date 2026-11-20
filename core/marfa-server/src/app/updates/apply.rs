@@ -1,6 +1,7 @@
 //! Fetches a release, checks it, and swaps its programs in, keeping the old ones.
 
 use std::fs::{self, File};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -256,6 +257,7 @@ pub(super) fn claim(job: &Job) -> Result<File, String> {
         .create(true)
         .truncate(false)
         .write(true)
+        .mode(0o600)
         .open(job.programs.join(pending::LOCK))
         .map_err(|error| {
             format!(
@@ -322,12 +324,15 @@ pub fn run(feed: &Feed, job: &Job, stage: &dyn Fn(&'static str)) -> Result<(), S
     let _claim = claim(job)?;
     clear_staging(&job.programs)?;
     let staging = job.programs.join(format!("{STAGING}{}", job.version));
-    fs::create_dir(&staging).map_err(|error| {
-        format!(
-            "A folder to unpack release {} in could not be made beside the programs: {error}.",
-            job.version
-        )
-    })?;
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&staging)
+        .map_err(|error| {
+            format!(
+                "A folder to unpack release {} in could not be made beside the programs: {error}.",
+                job.version
+            )
+        })?;
     let done = prepare(feed, job, &staging, stage).and_then(|schema| {
         stage(SWAPPING);
         swap(&staging, job, schema)
