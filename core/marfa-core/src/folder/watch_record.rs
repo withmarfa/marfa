@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Folder;
 use super::health::{Problem, Snapshot};
-use super::landing::land_at;
+use super::landing::land_owned_at;
 use super::registry::{Registry, open_lock, resolved};
 use super::watch::{Raise, WatchEnd, WatchError, WatchEvent};
 use crate::directory::Directory;
@@ -536,12 +536,9 @@ fn publish(path: &Path, pid: u32, mut mine: Process, wait: Duration) -> Result<L
         processes,
     })
     .map_err(|error| failed("write", &error))?;
-    land_at(
-        &directory,
-        name,
-        |file, _| std::io::Write::write_all(file, &bytes),
-        |_| true,
-    )
+    land_owned_at(&directory, name, |file, _| {
+        std::io::Write::write_all(file, &bytes)
+    })
     .map_err(|error| failed("write", &error))?;
     Ok(Landed::Written(stamped))
 }

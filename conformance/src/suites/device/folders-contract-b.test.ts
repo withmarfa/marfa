@@ -1,6 +1,7 @@
 import {
   existsSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
   mkdirSync,
@@ -132,6 +133,34 @@ it.each(["trashed", "archived"] as const)(
     expect(existsSync(join(harness.dir, "Note 3.md"))).toBe(true);
   },
 );
+
+it("reports a paused pull removal the volume refused, and keeps it paused", async () => {
+  harness = await departing("contract-b-confirm-refused");
+  const paused = await harness.folder.pull();
+  expect(paused.ok && paused.value.paused).toBe(3);
+  const refused = await fault("rename-new-unsupported=Note 0.md", () =>
+    harness!.folder.confirm(),
+  );
+  expect(refused.ok, JSON.stringify(refused)).toBe(true);
+  if (!refused.ok) return;
+  expect(refused.value.removed).toBe(2);
+  expect(
+    refused.value.refused.map((file) => file.path),
+    "a removal the volume refused went unreported",
+  ).toEqual(["Note 0.md"]);
+  expect(refused.value.refused[0]!.reason).toMatch(
+    /rename a file without replacing another/,
+  );
+  expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(true);
+  const status = await harness.folder.status();
+  expect(status.ok && status.value.paused.pull).toBe(1);
+  // The witness: where the volume takes it, the same confirmation does.
+  const confirmed = await harness.folder.confirm();
+  expect(
+    confirmed.ok && [confirmed.value.removed, confirmed.value.refused],
+  ).toEqual([1, []]);
+  expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(false);
+});
 
 it.each(["trashed", "archived"] as const)(
   "restores a paused pull removal of %s items into a held state",
@@ -1383,10 +1412,13 @@ it.each(["ignore", "dot directory"])(
   },
 );
 
-describe("exFAT permissions", ON_MACOS, () => {
-  it("leaves file and item executable values alone on an exFAT volume", async () => {
-    harness = await fileHarness("contract-b-exfat");
-    expect((await harness.folder.pull()).ok).toBe(true);
+describe("exFAT volumes", ON_MACOS, () => {
+  /** Moves the harness's folder onto an exFAT volume of its own, and runs
+   *  `check` there, detaching the volume after. */
+  async function onExfat(
+    made: FolderHarness,
+    check: (dir: string) => Promise<void>,
+  ) {
     const scratch = tempFolder("marfa-exfat-");
     const mount = join(scratch, "volume");
     mkdirSync(mount);
@@ -1416,15 +1448,27 @@ describe("exFAT permissions", ON_MACOS, () => {
       attached = true;
       detachImageAtCleanup(mount);
       const dir = join(mount, "notes");
-      cpSync(harness.dir, dir, { recursive: true });
-      rmSync(harness.dir, { recursive: true });
-      harness.dir = dir;
-      harness.folder = new CliFolder(dir, {
+      cpSync(made.dir, dir, { recursive: true });
+      rmSync(made.dir, { recursive: true });
+      made.dir = dir;
+      made.folder = new CliFolder(dir, {
         binary: requireBinary(),
-        url: harness.server.url,
+        url: made.server.url,
         key: KEY,
-        registry: harness.registry,
+        registry: made.registry,
       });
+      await check(dir);
+    } finally {
+      if (attached) detachImage(mount);
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+
+  it("leaves file and item executable values alone on an exFAT volume", async () => {
+    harness = await fileHarness("contract-b-exfat");
+    expect((await harness.folder.pull()).ok).toBe(true);
+    await onExfat(harness, async (dir) => {
+      if (!harness) return;
       const path = join(dir, "file.bin");
       chmodSync(path, 0o644);
       expect(statSync(path).mode & 0o100).toBe(0o100);
@@ -1441,9 +1485,60 @@ describe("exFAT permissions", ON_MACOS, () => {
       expect((await harness.folder.pull()).ok).toBe(true);
       expect(statSync(path).mode & 0o777).toBe(originalMode);
       expect(readFileSync(path, "utf8")).toBe("file bytes");
-    } finally {
-      if (attached) detachImage(mount);
-      rmSync(scratch, { recursive: true, force: true });
-    }
+    });
+  });
+
+  it("leaves an existing file unwritten, and a trashed item's file in place, on an exFAT volume", async () => {
+    const [kept, going] = [row(0), row(1)];
+    harness = await folderHarness("contract-b-exfat-replace", {
+      items: { "core.note": [kept, going] },
+      events: [
+        copyReplay("3", [
+          copyItemEvent(
+            "2",
+            "item.updated",
+            wireItem({
+              ...kept.item,
+              version: 2,
+              properties: {
+                ...kept.item.properties,
+                body: "changed elsewhere\n",
+              },
+            }),
+          ),
+          copyItemEvent(
+            "3",
+            "item.trashed",
+            wireItem({ ...going.item, state: "trashed" }),
+          ),
+        ]),
+      ],
+    });
+    scriptFolderWrites(harness);
+    expect((await harness.folder.pull()).ok).toBe(true);
+    await onExfat(harness, async (dir) => {
+      if (!harness) return;
+      const before = readFileSync(join(dir, "Note 0.md"), "utf8");
+      const caught = await harness.folder.device().catchUp();
+      expect(caught.ok && caught.value.applied).toBe(2);
+      const pulled = await harness.folder.pull();
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      if (!pulled.ok) return;
+      expect(
+        [pulled.value.rewritten, pulled.value.removed, pulled.value.unwritten],
+        "a pull replaced or removed a file on a volume that can neither swap names nor rename without replacing",
+      ).toEqual([0, 0, 2]);
+      expect(readFileSync(join(dir, "Note 0.md"), "utf8")).toBe(before);
+      expect(existsSync(join(dir, "Note 1.md"))).toBe(true);
+      expect(
+        pulled.value.flagged.map((file) => [file.path, file.flag]).sort(),
+      ).toEqual([
+        ["Note 0.md", "unwritten"],
+        ["Note 1.md", "unwritten"],
+      ]);
+      expect(
+        readdirSync(dir).filter((name) => name.startsWith(".marfa-")),
+      ).toEqual([]);
+    });
   });
 });

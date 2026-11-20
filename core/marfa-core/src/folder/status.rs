@@ -165,13 +165,19 @@ impl Folder {
         };
         let lists = settings.lists()?;
         let walked = walked.unwrap_or_else(|| self.walked(&lists));
+        let waiting = self.displaced_paths()?;
         let (snapshot, disk, pull, unmatched, added, outside) = {
             let conn = self.core.conn()?;
             (
                 // As the next scan settles any write a crash cut off.
                 state::every_bound(&conn)?
                     .into_iter()
-                    .filter_map(|row| state::settled(&row, &self.root_dir).unwrap_or(Some(row)))
+                    .filter_map(|row| {
+                        if waiting.contains(&row.path) {
+                            return Some(row);
+                        }
+                        state::settled(&row, &self.root_dir).unwrap_or(Some(row))
+                    })
                     .collect::<Vec<_>>(),
                 state::paused(&conn, state::Removal::Disk)?,
                 state::paused(&conn, state::Removal::Pull)?,
@@ -226,6 +232,18 @@ impl Folder {
                 .map(|row| row.item_id.as_str());
             files
                 .push(FileStatus::new(&held.path, item_id, "held").because(held.flag, held.reason));
+        }
+        for kept in self
+            .unsettled(&walked.kept)?
+            .into_iter()
+            .map(|(_, flagged)| flagged)
+            .chain(self.walked_kept(&walked.kept))
+        {
+            if seen.insert(kept.path.clone()) {
+                files.push(
+                    FileStatus::new(&kept.path, None, "held").because(kept.flag, kept.reason),
+                );
+            }
         }
         for (path, key) in paths.iter().zip(&keys) {
             seen.insert(key.clone());
