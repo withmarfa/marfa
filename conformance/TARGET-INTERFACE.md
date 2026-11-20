@@ -201,8 +201,8 @@ stays because that thing is what it checks.
   on the database and the blob folder once their lock files are removed or
   replaced" removes and replaces those lock files while the server runs, as a
   clean-up or a restore by hand would. "a database another program has open"
-  holds a database open in SQLite from the fixture's own process before a
-  start, and "stores nothing in a blob folder put in place of the one the
+  holds a read snapshot of a database in SQLite from the fixture's own process
+  through a start, and "stores nothing in a blob folder put in place of the one the
   server took" moves the blob folder away while the server runs and puts a folder holding its marker
   at the path. No door or fault does either.
 - `compliance/backup-folder.test.ts`, "lists in attention a files folder put

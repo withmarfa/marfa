@@ -2304,9 +2304,9 @@ If the server starts on a blob folder that another running server has open, then
 
 ### `instance/open-database-held-lock-lost`
 
-If the server starts on a database file that another running server has open, after the file `<database file>.server-lock` beside it was removed or replaced, then the server MUST refuse to start.
+If the server starts on a database file that another running Marfa server has open, after the file `<database file>.server-lock` beside it was removed or replaced, then the server MUST refuse to start.
 
-**Reason:** a clean-up, a restore by hand or a sync tool can remove the lock file, and SQLite's own mark of an open database still shows that a process has the file. Without its lock file the server cannot tell that process is a Marfa server, so it names it as `instance/open-database-in-use-named` says.
+**Reason:** a clean-up, a restore by hand or a sync tool can remove the lock file, and SQLite's own mark of an open database still shows the process that has the file, which the server knows as a Marfa server by its program's name. The system reports one process that has the file, so while another program also has it open, the server may be told of that program instead and start.
 
 **Tests:** `compliance/one-server.test.ts › is refused on the database and the blob folder once their lock files are removed or replaced, and leaves the upload in progress, which lands`.
 
@@ -2318,25 +2318,17 @@ If the server starts on a blob folder that another running server has open, afte
 
 **Tests:** `compliance/one-server.test.ts › is refused on the database and the blob folder once their lock files are removed or replaced, and leaves the upload in progress, which lands`.
 
-### `instance/open-database-in-use`
+### `instance/open-database-other-program`
 
-If the server starts on a database file that another process holds open in SQLite's write-ahead-log mode, then the server MUST refuse to start.
+When the server starts on a database file that a program other than a Marfa server has open, such as a reader holding a snapshot, the server MUST NOT refuse to start for that program.
 
-**Reason:** a server and another program writing one database through two logs damage it. A program such as the `sqlite3` shell may read the database while the server is stopped, and is closed first.
+**Reason:** a backup tool, a `sqlite3` shell or a script may read the database while its server restarts, and a supervisor starts the server again at once. SQLite lets a server and readers share the file through one log.
 
-**Tests:** `compliance/one-server.test.ts › is refused, naming that program's process, and opened once it closes`.
-
-### `instance/open-database-in-use-named`
-
-When the server refuses to start under `instance/open-database-in-use`, the server MUST name in its log message the database file and the id of the process that holds it open.
-
-**Reason:** the owner finds that process and closes it.
-
-**Tests:** `compliance/one-server.test.ts › is refused, naming that program's process, and opened once it closes`.
+**Tests:** `compliance/one-server.test.ts › is not refused while another program has the database open, and opens it`, `compliance/database-file.test.ts › leaves the writes in the log while another connection holds a snapshot, and the next start answers every one of them`.
 
 ### `instance/open-held-named`
 
-When the server refuses to start under `instance/open-database-held`, `instance/open-blobs-held` or `instance/open-blobs-held-lock-lost`, the server MUST name in its log message the database file or the blob folder it was given and say that another server has it open.
+When the server refuses to start under `instance/open-database-held`, `instance/open-blobs-held`, `instance/open-database-held-lock-lost` or `instance/open-blobs-held-lock-lost`, the server MUST name in its log message the database file or the blob folder it was given and say that another server has it open.
 
 **Reason:** the owner stops the other server or gives this one files of its own, and needs to know which.
 

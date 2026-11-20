@@ -131,8 +131,11 @@ impl Lock {
         let lock = sibling(&path, SERVER_LOCK);
         // The lock file alone does not hold once it is removed or replaced; SQLite's own mark
         // of an open database does.
-        if let Some(pid) = opened_elsewhere(&path) {
-            return Err(Failure::start(held_elsewhere(&label, &lock, pid)));
+        if let Some(pid) = opened_by_another_server(&path) {
+            return Err(Failure::start(format!(
+                "{label} is open in another Marfa server (process {pid}). Stop that server, or \
+                 give this one a database of its own."
+            )));
         }
         if let Some(folder) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(folder).map_err(|error| {
@@ -178,11 +181,12 @@ impl Lock {
     }
 }
 
-/// The process other than this one that has the database at `path` open, where one does. SQLite
-/// in WAL mode keeps a read lock on byte 128 of `<db>-shm` while a connection has the database
-/// open. Closing the descriptor drops this process's own record locks on that file, so it runs
-/// before this process opens the database. It blocks.
-fn opened_elsewhere(path: &Path) -> Option<libc::pid_t> {
+/// The process of another Marfa server that has the database at `path` open, where one does.
+/// SQLite in WAL mode keeps a read lock on byte 128 of `<db>-shm` while a connection has the
+/// database open. The system reports one holder, which may be another program while a server also
+/// has it open. Closing the descriptor drops this process's own record locks on that file, so it
+/// runs before this process opens the database. It blocks.
+fn opened_by_another_server(path: &Path) -> Option<libc::pid_t> {
     use std::os::fd::AsRawFd as _;
     let shm = without_waiting(&sibling(path, "-shm")).ok()?;
     // SAFETY: `flock` is plain integers, for which all zeroes is a valid value.
@@ -194,7 +198,12 @@ fn opened_elsewhere(path: &Path) -> Option<libc::pid_t> {
     // SAFETY: the descriptor is open, and F_GETLK only writes into `probe`, which outlives the
     // call.
     let answered = unsafe { libc::fcntl(shm.as_raw_fd(), libc::F_GETLK, &mut probe) };
-    (answered == 0 && i64::from(probe.l_type) != i64::from(libc::F_UNLCK)).then_some(probe.l_pid)
+    if answered != 0 || i64::from(probe.l_type) == i64::from(libc::F_UNLCK) {
+        return None;
+    }
+    // A holder in another PID namespace, or holding an OFD lock, has no pid here.
+    let pid = probe.l_pid;
+    (pid > 0 && same_program(pid)).then_some(pid)
 }
 
 /// Opens `path` to read; a FIFO planted there does not hold the open up.
@@ -206,47 +215,46 @@ fn without_waiting(path: &Path) -> std::io::Result<File> {
         .open(path)
 }
 
-/// Why the database another process has open is refused, naming that process.
-fn held_elsewhere(label: &str, lock: &Path, pid: libc::pid_t) -> String {
-    // Another process in another PID namespace is not named.
-    if pid <= 0 {
-        return format!(
-            "{label} is open in another process. Stop it, or give this server a database of its \
-             own."
-        );
-    }
-    let server = without_waiting(lock).is_ok_and(|file| {
-        matches!(
-            server_lock::try_lock(&file),
-            Err(std::fs::TryLockError::WouldBlock)
-        )
-    });
-    if server {
-        return format!(
-            "{label} is open in another Marfa server (process {pid}). Stop that server, or give \
-             this one a database of its own."
-        );
-    }
-    match process_name(pid) {
-        Some(name) => format!(
-            "{label} is open in another process, {name} (process {pid}). Stop it, or give this \
-             server a database of its own."
-        ),
-        None => format!(
-            "{label} is open in another process (process {pid}). Stop it, or give this server a \
-             database of its own."
-        ),
+/// Whether process `pid` runs a program of this server's name, by its executable's file name, or
+/// by its short name where the executable cannot be read, as for another account's process.
+fn same_program(pid: libc::pid_t) -> bool {
+    let own = std::process::id().cast_signed();
+    match (executable_name(pid), executable_name(own)) {
+        (Some(theirs), Some(ours)) => theirs == ours,
+        _ => short_name(pid).is_some_and(|theirs| short_name(own) == Some(theirs)),
     }
 }
 
 #[cfg(target_os = "linux")]
-fn process_name(pid: libc::pid_t) -> Option<String> {
+fn executable_name(pid: libc::pid_t) -> Option<std::ffi::OsString> {
+    let path = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    let name = path.file_name()?.as_bytes();
+    // A program replaced on disk, as an upgrade does, keeps running under its old name.
+    let name = name.strip_suffix(b" (deleted)").unwrap_or(name);
+    Some(std::ffi::OsStr::from_bytes(name).to_owned())
+}
+
+#[cfg(target_os = "linux")]
+fn short_name(pid: libc::pid_t) -> Option<String> {
     let name = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
     Some(name.trim().to_string()).filter(|name| !name.is_empty())
 }
 
 #[cfg(target_os = "macos")]
-fn process_name(pid: libc::pid_t) -> Option<String> {
+fn executable_name(pid: libc::pid_t) -> Option<std::ffi::OsString> {
+    let mut buffer = [0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+    // SAFETY: `buffer` is writable for the length given, and `proc_pidpath` writes no more.
+    let written =
+        unsafe { libc::proc_pidpath(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    let written = usize::try_from(written).ok().filter(|count| *count > 0)?;
+    let path = Path::new(std::ffi::OsStr::from_bytes(
+        buffer.get(..written).unwrap_or(&buffer),
+    ));
+    path.file_name().map(std::ffi::OsStr::to_owned)
+}
+
+#[cfg(target_os = "macos")]
+fn short_name(pid: libc::pid_t) -> Option<String> {
     let mut buffer = [0u8; 256];
     // SAFETY: `buffer` is writable for the length given, and `proc_name` writes no more.
     let written = unsafe { libc::proc_name(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
@@ -255,7 +263,12 @@ fn process_name(pid: libc::pid_t) -> Option<String> {
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn process_name(_pid: libc::pid_t) -> Option<String> {
+fn executable_name(_pid: libc::pid_t) -> Option<std::ffi::OsString> {
+    None
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn short_name(_pid: libc::pid_t) -> Option<String> {
     None
 }
 

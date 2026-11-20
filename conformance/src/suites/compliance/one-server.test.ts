@@ -13,7 +13,7 @@ import {
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { MarfaClient } from "../../client/api.js";
+import { MarfaClient } from "../../client/api.js";
 import { controlRequest } from "../../utils/control-request.js";
 import {
   bootFreshServer,
@@ -207,7 +207,7 @@ describe("a second server on a running server's files", () => {
     const onDatabase = await refused({ MARFA_DATABASE_PATH: first.sqlitePath });
     expect(onDatabase.code, onDatabase.output).toBe(1);
     expect(onDatabase.output).toContain(
-      `${first.sqlitePath} is open in another`,
+      `${first.sqlitePath} is open in another Marfa server`,
     );
     const onFolder = await refused({ MARFA_BLOB_PATH: folder });
     expect(onFolder.code, onFolder.output).toBe(1);
@@ -494,32 +494,44 @@ describe("a blob folder that returns to a server started without it", () => {
 });
 
 describe("a database another program has open", () => {
-  it("is refused, naming that program's process, and opened once it closes", async () => {
+  it("is not refused while another program has the database open, and opens it", async () => {
     const dir = tempFolder("marfa-in-use-");
     removals.push(dir);
     const file = join(dir, "marfa.db");
     const program = new DatabaseSync(file);
+    const tables = () =>
+      program.prepare("SELECT count(*) AS n FROM sqlite_schema").get()?.n;
     try {
       program.exec("PRAGMA journal_mode = WAL");
-      program.prepare("SELECT count(*) FROM sqlite_schema").get();
-      const second = await refused({ MARFA_DATABASE_PATH: file });
-      expect(second.code, second.output).toBe(1);
-      expect(second.output).toContain(`${file} is open in another process`);
-      expect(second.output).toContain(`(process ${String(process.pid)})`);
+      program.exec("BEGIN");
+      expect(tables()).toBe(0);
+
+      const opened = await bootFreshServer("one-server-in-use", {
+        ...DISK_ONLY,
+        MARFA_DATABASE_PATH: file,
+      });
+      try {
+        expect(
+          (await controlRequest(opened.controlSocket, "/health")).status,
+        ).toBe(200);
+        // The witness that the program held its snapshot through the start:
+        // it still reads the file as it was before the server made its tables.
+        expect(tables()).toBe(0);
+        const client = new MarfaClient({
+          baseUrl: opened.apiUrl,
+          apiKey: opened.workingKey,
+        });
+        const created = await client.createItem({
+          type: "core.note",
+          source: "one-server-in-use",
+          properties: { body: "written while another program reads" },
+        });
+        expect(created.status, JSON.stringify(created.error)).toBe(201);
+      } finally {
+        await opened.stop();
+      }
     } finally {
       program.close();
-    }
-
-    const opened = await bootFreshServer("one-server-in-use", {
-      ...DISK_ONLY,
-      MARFA_DATABASE_PATH: file,
-    });
-    try {
-      expect(
-        (await controlRequest(opened.controlSocket, "/health")).status,
-      ).toBe(200);
-    } finally {
-      await opened.stop();
     }
   }, 180_000);
 });
