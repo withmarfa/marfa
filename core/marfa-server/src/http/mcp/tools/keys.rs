@@ -48,7 +48,7 @@ pub fn manage_definition() -> Definition {
     Definition {
         name: MANAGE_NAME,
         title: "Make or narrow a key",
-        description: "Use to make an API key for an app or script, or to narrow what a key may reach. A key never gets more than this credential holds; a new key that names no permissions or maps gets all of it, so name only what the key needs. Set `owner_key` to make the owner's own key, which an app's disconnection leaves working; an app needs `keys.manage` for it. Name `sources` to let a key write under other sources; an app needs `keys.manage` for any it does not hold. Making a key returns its secret once: give it to the person, who keeps it.",
+        description: "Use to make an API key for an app or script, or to narrow what a key may reach. A key never gets more than this credential holds; a new key that names no permissions or maps gets all of it, so name only what the key needs. Set `owner_key` to make the owner's own key, which an app's disconnection leaves working; an app needs `keys.manage` for it. Name `sources` to let a key also write under other sources; one this credential cannot write under needs `keys.manage`. Making a key returns its secret once: give it to the person, who keeps it.",
         input: json!({
             "type": "object",
             "properties": {
