@@ -238,6 +238,22 @@ When `marfa server run` makes the install's data folder, the `update` folder in 
 
 **Tests:** waiting on #3177.
 
+### `updates/run-files-private`
+
+When `marfa server run` creates a file or a folder without a mode of its own, the CLI MUST make it readable and writable by its own account alone, whatever umask the CLI started under.
+
+**Reason:** a service manager may start `marfa server run` under a umask that opens new files and folders to the account's group, and what the CLI makes in the install's folders is the owner's.
+
+**Tests:** waiting on #3177.
+
+### `updates/install-parents-guarded`
+
+When `marfa server install` makes a folder above the install folder, the CLI MUST make it writable by its own account alone, whatever umask it runs under.
+
+**Reason:** the server refuses to start on a folder on the way to its database that another account can write to (`instance/files-way-guarded`), and a folder made under a umask that opens new folders to the account's group is one.
+
+**Tests:** waiting on #3177.
+
 ### `updates/start-waits-for-last-server`
 
 If a server of the install still holds the lock on its database, its blob folder or its control socket 30 seconds after a start of the new release begins, then the CLI MUST end `marfa server run` with status 75, without counting the start or putting the old release back.

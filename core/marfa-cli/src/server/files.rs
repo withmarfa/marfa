@@ -405,7 +405,7 @@ fn check_parents(dir: &Path, trusted: u32) -> Result<(), CliError> {
 pub fn prepare_root_folder(dir: &Path, account: Identity) -> Result<(), CliError> {
     check_parents(dir, 0)?;
     if let Some(parent) = dir.parent() {
-        fs::create_dir_all(parent)?;
+        marfa_acl::make_open_folders(parent)?;
     }
     match fs::DirBuilder::new().mode(0o750).create(dir) {
         Ok(()) => {}
@@ -790,8 +790,12 @@ mod tests {
             uid: 41_001,
             gid: 41_002,
         };
-        let dir = scratch("root-layout").join("marfa");
+        // SAFETY: `umask` takes a mask and cannot fail.
+        unsafe { libc::umask(0o077) };
+        let above = scratch("root-layout").join("srv");
+        let dir = above.join("marfa");
         prepare_root_folder(&dir, account).unwrap();
+        assert_eq!(mode(&above), 0o755, "a folder made above is open to read");
         let folder = fs::metadata(&dir).unwrap();
         assert_eq!((folder.uid(), folder.gid()), (0, 41_002));
         assert_eq!(mode(&dir), 0o750);

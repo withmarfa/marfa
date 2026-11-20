@@ -5408,14 +5408,66 @@ fn an_install_and_a_run_under_an_open_umask_keep_the_folders_on_the_way_private(
         )
     };
     assert_eq!(
-        mode(&rig.state.join("server-env")),
-        "664",
-        "the witness: the server started under the umask"
+        mode(&rig.home().join("Library/Logs/Marfa")),
+        "775",
+        "the witness: the install ran under the umask"
     );
     let record = rig.update_record();
     let data = rig.dir.join("data");
     let made = [&rig.dir, &data, &record, &record.join("supervisor.lock")].map(|path| mode(path));
     assert_eq!(made, ["700", "700", "700", "600"]);
+}
+
+/// What `marfa server run` makes with a plain create call is private whatever umask it starts
+/// under: here the folder of the server's log, which an install makes before and a reinstall
+/// leaves.
+#[test]
+fn a_run_under_an_open_umask_makes_what_it_creates_private() {
+    let rig = Rig::new("u-umask-run");
+    rig.isolate();
+    rig.umask.set(Some(0o002));
+    rig.native_installed(&["--access", "local"]);
+    let logs = rig.home().join("Library/Logs/Marfa");
+    let made = || fs::metadata(&logs).unwrap().permissions().mode() & 0o777;
+    assert_eq!(
+        made(),
+        0o775,
+        "the witness: a plain create is opened by the umask"
+    );
+    fs::remove_dir_all(&logs).unwrap();
+    let mut child = rig.run_server(&[]);
+    let status = ended(&mut child, 20).expect("run did not end");
+    assert_eq!(status.code(), Some(0), "{}", rig.run_said());
+    assert_eq!(made(), 0o700);
+    let log = fs::read_dir(&logs)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|extension| extension == "log"))
+        .expect("the server's log");
+    assert_eq!(
+        fs::metadata(log).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}
+
+/// The server refuses a folder on the way to its data that group or others can write, and needs
+/// no more of one above the install folder than that.
+#[test]
+fn folders_made_above_the_install_folder_are_not_writable_by_others_under_any_umask() {
+    for mask in [0o002, 0o077] {
+        let mut rig = Rig::new(&format!("u-parents-{mask:o}"));
+        rig.isolate();
+        rig.umask.set(Some(mask));
+        let above = rig.root.join("srv");
+        rig.dir = above.join("marfa");
+        rig.native_installed(&["--access", "local"]);
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            (mode(&above), mode(&rig.dir)),
+            (0o755, 0o700),
+            "under umask {mask:o}"
+        );
+    }
 }
 
 #[test]
