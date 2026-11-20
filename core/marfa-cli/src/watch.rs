@@ -534,7 +534,7 @@ fn ended(server: &str, error: WatchError<CliError>) -> CliError {
         WatchError::CredentialRefused(error) => refused_credential(server, &error),
         WatchError::FollowEnded(error) => CliError::Watch(
             format!(
-                "the server's changes stopped reaching this folder: {}",
+                "the server's changes stopped reaching this directory: {}",
                 output::printable(&error.to_string())
             ),
             error.answer().map(Box::new),
@@ -630,7 +630,7 @@ fn tell(
         }
         WatchEvent::QueryWaits { error, wait } => {
             say.note(&format!(
-                "the folder's changed query waits: the items it now holds could not be fetched ({error}); trying again in {wait:?}"
+                "the directory's changed query waits: the items it now holds could not be fetched ({error}); trying again in {wait:?}"
             ));
             Ok(())
         }
@@ -675,8 +675,8 @@ fn refused_credential(server: &str, said: &CoreError) -> CliError {
         server: said.answer().map(Box::new),
         code: "credential_refused".into(),
         message: format!(
-            "the server at {server} refused this watch's credential ({said}), so the watch stopped; \
-             changes not yet sent wait until a working credential is kept, and the next watch or push sends them"
+            "{}, and the next watch or push sends them",
+            marfa_core::folder::credential_refused_said(server, said)
         ),
     })
 }
@@ -1006,7 +1006,7 @@ mod tests {
         // A watch that ends otherwise does not hold its credential back.
         let ended = Unwatched {
             code: "not_found".into(),
-            message: "the server's changes stopped reaching this folder".into(),
+            message: "the server's changes stopped reaching this directory".into(),
         };
         machine.opened_with(dir, "https://one.test".into(), "third".into());
         machine.ended(dir, &ended);

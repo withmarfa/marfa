@@ -712,7 +712,7 @@ describe("settings and folder reporting", () => {
       });
       await vi.waitFor(
         () =>
-          expect(watch.stderr).toContain("the folder's changed query waits"),
+          expect(watch.stderr).toContain("the directory's changed query waits"),
         { timeout: 20_000, interval: 100 },
       );
       expect(existsSync(join(harness!.dir, "Saved.md"))).toBe(false);

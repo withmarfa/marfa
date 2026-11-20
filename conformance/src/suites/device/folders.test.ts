@@ -3218,7 +3218,7 @@ describe("files and items", () => {
           { timeout: 20_000, interval: 100 },
         );
         expect(watching.stderr).toContain(
-          "the server's changes stopped reaching this folder",
+          "the server's changes stopped reaching this directory",
         );
         expect(watching.stderr).toContain("forbidden");
       } finally {

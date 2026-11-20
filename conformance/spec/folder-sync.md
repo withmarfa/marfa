@@ -122,7 +122,7 @@ When a folder watch hydration receives an answer no retry can change, the CLI MU
 
 ### `folder-sync/watch-unretryable-failure-reason-said`
 
-When a folder watch hydration receives an answer no retry can change, the CLI MUST report why server changes stopped reaching the folder.
+When a folder watch hydration receives an answer no retry can change, the CLI MUST report why server changes stopped reaching the directory.
 
 **Tests:** `device/folders.test.ts › ends the watch and says so when its hydration meets an answer no retry changes`.
 
@@ -272,7 +272,7 @@ When `folders status` runs and no current entry in the record of folder watches 
 
 ### `folder-sync/independent-folders`
 
-When files in different folders are scanned, a device MUST keep each folder's queued writes separate.
+When files in different directories are scanned, a device MUST keep each directory's queued writes separate.
 
 **Tests:** `device/folders.test.ts › keeps each folder's state and queue to itself`.
 
@@ -370,7 +370,7 @@ If another program's writes to a directory's store keep a folder watch from writ
 
 ### `folder-sync/pull-flagged-items`
 
-When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a device MUST include the item's ID, intended path or retained file path, flag and reason in the pull report's `flagged` entries, using `retained` as the flag for a file it could not let go to another folder.
+When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a device MUST include the item's ID, intended path or retained file path, flag and reason in the pull report's `flagged` entries, using `retained` as the flag for a file it could not let go to another directory.
 
 **Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › refuses to write a file outside the folder`, `device/folders.test.ts › does not write over a file it never wrote`, `device/folders-placement.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`, `device/folders-placement.test.ts › writes no file where its placement would make it another kind of file`, `device/folders-placement.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
@@ -562,19 +562,19 @@ When a folder's drain begins and the folder's queue holds an edge create the ser
 
 ### `folder-sync/conflict-file-report`
 
-When `folders push` or a `folders watch` pass receives a `conflicted` verdict for an edit to a file in that folder, the CLI MUST name the file in its text output.
+When `folders push` or a `folders watch` pass receives a `conflicted` verdict for an edit to a file in that directory, the CLI MUST name the file in its text output.
 
 **Tests:** `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`, `cli/folder.test.ts › says a conflicted edit while watching, and where its text went`, `device/folders.test.ts › names the file a conflicted edit's text went to, in a push`, `device/folders.test.ts › says a conflicted edit while watching, and that its copy is not a file yet`.
 
 ### `folder-sync/conflict-copy-file`
 
-When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has a file in that folder, the CLI MUST name that file as the destination of the edit's text.
+When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has a file in that directory, the CLI MUST name that file as the destination of the edit's text.
 
 **Tests:** `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`, `cli/folder.test.ts › says a conflicted edit while watching, and where its text went`, `device/folders.test.ts › names the file a conflicted edit's text went to, in a push`.
 
 ### `folder-sync/conflict-copy-pending`
 
-When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has no file in that folder yet, the CLI MUST say that the copy is not a file in the folder yet.
+When `folders push` or `folders watch` reports a conflicted edit whose conflicted copy has no file in that directory yet, the CLI MUST say that the copy is not a file in the directory yet.
 
 **Tests:** `device/folders.test.ts › says a conflicted edit while watching, and that its copy is not a file yet`.
 
@@ -592,7 +592,7 @@ When `folders push` or `folders watch` has reported a conflicted write, the CLI 
 
 ### `folder-sync/conflict-other-item`
 
-When a conflicted write belongs to an item with no file in the watched or pushed folder, the CLI MUST NOT report that conflict as the folder's.
+When a conflicted write belongs to an item with no file in the watched or pushed directory, the CLI MUST NOT report that conflict as the directory's.
 
 **Tests:** `device/folders.test.ts › does not name a conflict on a write that is no file of the folder's, in a push`, `device/folders.test.ts › does not name a conflict on a write that is no file of the folder's, in a watch`.
 
@@ -602,7 +602,7 @@ A send-only run is `folders push --send-only`.
 
 ### `folder-sync/send-only-scans-and-sends`
 
-When `folders push` is given `--send-only`, the CLI MUST send the writes that a scan of the folder queues.
+When `folders push` is given `--send-only`, the CLI MUST send the writes that a scan of the directory queues.
 
 **Reason:** a person who adds files or edits them while away can send them without the server's items arriving in the directory.
 
@@ -610,13 +610,13 @@ When `folders push` is given `--send-only`, the CLI MUST send the writes that a 
 
 ### `folder-sync/send-only-writes-no-file`
 
-When `folders push` is given `--send-only`, the CLI MUST NOT write a file into the folder's directory outside its `.marfa` state directory.
+When `folders push` is given `--send-only`, the CLI MUST NOT write a file into the directory outside its `.marfa` state directory.
 
 **Tests:** `device/folders-send-only.test.ts › sends a file made here and writes no file into the directory, where a push writes the server's item`, `device/folders-send-only.test.ts › hydrates a copy that never was first, which writes no file, and then sends`, `device/folders-placement.test.ts › sends a renamed note's new name as its title in a send-only run, which leaves the file's bytes, and a push after it rewrites the title line`, `device/folders-placement.test.ts › leaves an old buffer saved where another Mac moved the file from where it is in a send-only run, and takes it in the push after`.
 
 ### `folder-sync/send-only-removes-no-file`
 
-When `folders push` is given `--send-only`, the CLI MUST NOT remove a file from the folder's directory.
+When `folders push` is given `--send-only`, the CLI MUST NOT remove a file from the directory.
 
 **Tests:** `device/folders-send-only.test.ts › removes no file whose item has left, where a push removes it`, `device/folders-placement.test.ts › leaves the temporary file a crashed pull left in a send-only run, and removes it in the push after`.
 
@@ -730,7 +730,7 @@ When a folder watch receives the server’s contract-named credential refusal, t
 
 ### `folder-sync/watch-credential-exit-reason-said`
 
-When a folder watch receives the server’s contract-named credential refusal, the CLI MUST say that writes wait for a working credential.
+When a folder watch receives the server’s contract-named credential refusal, the CLI MUST say that changes not yet sent wait for a working credential.
 
 **Tests:** `device/folders.test.ts › stops a watch whose credential is refused, with the credential's exit`.
 

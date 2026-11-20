@@ -1998,6 +1998,28 @@ describe("adding a directory to follow a folder named by its title", () => {
     ]);
     expect(added.folder).toBe(id);
     expect(await listed()).toEqual([...before, added.dir]);
+
+    // The title is matched as the server lists it: inner whitespace collapsed.
+    const suffix = unique("wide");
+    const spaced = await makeFolder(`Wide  gap ${suffix}`);
+    const raw = await c.cli.refused([
+      "folders",
+      "add",
+      join(dir, "spaced-raw"),
+      "--folder",
+      `Wide  gap ${suffix}`,
+      "--yes",
+    ]);
+    expect(raw.envelope.error.code).toBe("invalid");
+    const collapsed = await c.cli.json<{ folder: string }>([
+      "folders",
+      "add",
+      join(dir, "spaced"),
+      "--folder",
+      `Wide gap ${suffix}`,
+      "--yes",
+    ]);
+    expect(collapsed.folder).toBe(spaced);
   });
 
   it("refuses a title no folder has, naming the title, and adds nothing", async () => {

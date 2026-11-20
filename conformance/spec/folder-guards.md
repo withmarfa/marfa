@@ -128,7 +128,7 @@ When a folder assesses a large removal, a device MUST pause it only when its fil
 
 When a folder assesses a large removal whose file count exceeds `removal_threshold.ceiling`, defaulting to 100, a device MUST pause it, whatever share of bound files it is.
 
-**Reason:** in a large folder a quarter is hundreds of files, too many to lose without being asked.
+**Reason:** in a large directory a quarter is hundreds of files, too many to lose without being asked.
 
 **Tests:** `device/folders-contract-b.test.ts › pauses a pass that removes more than 100 files whatever their share, judging each pass alone`.
 
@@ -142,31 +142,31 @@ When a folder assesses a large removal, a device MUST judge only the files that 
 
 ### `folder-guards/disk-removal-paused`
 
-When missing folder files exceed the large-removal threshold, including files still inside the grace period, a device MUST count the missing files as `paused`.
+When files missing from a directory exceed the large-removal threshold, including files still inside the grace period, a device MUST count the missing files as `paused`.
 
 **Tests:** `device/folders.test.ts › pauses a large removal made on disk`, `device/folders.test.ts › says a paused removal once while watching`.
 
 ### `folder-guards/disk-removal-paused-deletions-unsent`
 
-When missing folder files exceed the large-removal threshold, including files still inside the grace period, a device MUST NOT send their deletions.
+When files missing from a directory exceed the large-removal threshold, including files still inside the grace period, a device MUST NOT send their deletions.
 
 **Tests:** `device/folders.test.ts › pauses a large removal made on disk`, `device/folders.test.ts › says a paused removal once while watching`.
 
 ### `folder-guards/pull-removal-paused`
 
-When owned folder files eligible for removal after their items depart exceed the large-removal threshold, a device MUST retain those files.
+When owned files in a directory eligible for removal after their items depart exceed the large-removal threshold, a device MUST retain those files.
 
 **Tests:** `device/folders.test.ts › pauses a large removal from another device`, `device/folders-contract-b.test.ts › confirms a paused pull removal of %s items`, `device/folders-frontmatter.test.ts › counts toward a large removal when it leaves with its document`.
 
 ### `folder-guards/pull-removal-paused-paused-count`
 
-When owned folder files eligible for removal after their items depart exceed the large-removal threshold, a device MUST count those files as `paused`.
+When owned files in a directory eligible for removal after their items depart exceed the large-removal threshold, a device MUST count those files as `paused`.
 
 **Tests:** `device/folders.test.ts › pauses a large removal from another device`, `device/folders-contract-b.test.ts › confirms a paused pull removal of %s items`, `device/folders-frontmatter.test.ts › counts toward a large removal when it leaves with its document`.
 
 ### `folder-guards/confirm-moves-first`
 
-When a paused disk removal is confirmed, a device MUST check other folders for each missing file.
+When a paused disk removal is confirmed, a device MUST check other directories on the machine for each missing file.
 
 **Tests:** `device/folders-one-mac.test.ts › looks for a paused removal's files in the other folders before confirming it`.
 
@@ -190,15 +190,15 @@ When a missing file returns before its paused removal is confirmed, a device MUS
 
 ### `folder-guards/confirm-renamed-file`
 
-When a missing file returns to its folder under another name before its paused removal is confirmed, a device MUST keep the file's item bound to the returned file.
+When a missing file returns to its directory under another name before its paused removal is confirmed, a device MUST keep the file's item bound to the returned file.
 
-**Reason:** a confirmation lets go only of what a fresh scan of the whole folder finds under no name, as an ordinary removal does, so a rename stays a rename and the item keeps its ID.
+**Reason:** a confirmation lets go only of what a fresh scan of the whole directory finds under no name, as an ordinary removal does, so a rename stays a rename and the item keeps its ID.
 
 **Tests:** `device/folders-contract-b.test.ts › keeps the item of a paused removal's file that returned under another name`.
 
 ### `folder-guards/confirm-unread-folder`
 
-If a paused disk removal is confirmed while part of the folder cannot be read, then a device MUST leave each missing file's item undeleted.
+If a paused disk removal is confirmed while part of the directory cannot be read, then a device MUST leave each missing file's item undeleted.
 
 **Reason:** an unread directory can hold the file under any name.
 
@@ -206,7 +206,7 @@ If a paused disk removal is confirmed while part of the folder cannot be read, t
 
 ### `folder-guards/confirm-unread-folder-unsure-count`
 
-If a paused disk removal is confirmed while part of the folder cannot be read, then a device MUST report each missing file in `unsure`.
+If a paused disk removal is confirmed while part of the directory cannot be read, then a device MUST report each missing file in `unsure`.
 
 **Tests:** `device/folders-contract-b.test.ts › keeps a paused removal unsure while part of the folder cannot be read`.
 
@@ -226,31 +226,31 @@ If a paused disk removal is confirmed while a missing file's path cannot be read
 
 ### `folder-guards/confirm-uncertain-file`
 
-When a paused disk removal is confirmed but an unavailable peer folder prevents ruling out a move, a device MUST leave the file’s item undeleted.
+When a paused disk removal is confirmed but an unavailable peer directory prevents ruling out a move, a device MUST leave the file’s item undeleted.
 
 **Tests:** `device/folders-contract-b.test.ts › keeps confirmed missing files unsure while another registered folder is unavailable`.
 
 ### `folder-guards/confirm-uncertain-file-unsure-count`
 
-When a paused disk removal is confirmed but an unavailable peer folder prevents ruling out a move, a device MUST report the file in `unsure` for a later pass.
+When a paused disk removal is confirmed but an unavailable peer directory prevents ruling out a move, a device MUST report the file in `unsure` for a later pass.
 
 **Tests:** `device/folders-contract-b.test.ts › keeps confirmed missing files unsure while another registered folder is unavailable`.
 
 ### `folder-guards/confirm-deletes-queued`
 
-When a paused disk removal is confirmed after reading the whole folder and a missing file's path, the file is found under no name in the folder or in any other folder, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of the item for the next push.
+When a paused disk removal is confirmed after reading the whole directory and a missing file's path, the file is found under no name in the directory or in any other directory on the machine, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of the item for the next push.
 
 **Tests:** `device/folders.test.ts › lets a paused removal go once confirmed, or puts it back`, `device/folders-one-mac.test.ts › looks for a paused removal's files in the other folders before confirming it`, `device/folders-one-mac.test.ts › confirms a large removal of file items and sends their deletes without pausing again`.
 
 ### `folder-guards/confirm-pull-removes`
 
-When a paused pull removal is confirmed and the files still contain their folder’s written bytes, a device MUST remove the departed files.
+When a paused pull removal is confirmed and the files still contain their directory’s written bytes, a device MUST remove the departed files.
 
 **Tests:** `device/folders-contract-b.test.ts › confirms a paused pull removal of %s items`.
 
 ### `folder-guards/confirm-pull-removes-removed-count`
 
-When a paused pull removal is confirmed and the files still contain their folder’s written bytes, a device MUST count the departed files as `removed`.
+When a paused pull removal is confirmed and the files still contain their directory’s written bytes, a device MUST count the departed files as `removed`.
 
 **Tests:** `device/folders-contract-b.test.ts › confirms a paused pull removal of %s items`.
 
@@ -390,7 +390,7 @@ While a file is held under `folder-files/lost-item-unchanged-held` and the queue
 
 ### `folder-guards/over-limit-held`
 
-If a folder file's write is larger than the server's limit (`queue-and-verdicts/request-over-limit-unsent`), then a device MUST report the file as `refused`, with a reason naming the size of its request and the limit.
+If a file's write is larger than the server's limit (`queue-and-verdicts/request-over-limit-unsent`), then a device MUST report the file as `refused`, with a reason naming the size of its request and the limit.
 
 **Tests:** `cli/request-size.test.ts › holds a file past the limit, sends none of it and delivers what is beside it`.
 
@@ -462,7 +462,7 @@ When a folder status reads a document that would have the warning `folder-guards
 
 ### `folder-guards/status-local`
 
-When the CLI reads a folder’s status, the CLI MUST answer from the folder’s disk and local store without contacting the server.
+When the CLI reads a folder’s status, the CLI MUST answer from the directory’s disk and local store without contacting the server.
 
 **Tests:** `device/folders-contract-b.test.ts › reads status from disk and the held copy without contacting the server`.
 
@@ -552,9 +552,9 @@ When the CLI answers `folders status` in plain text, the CLI MUST list each file
 
 ### `folder-guards/addition-threshold`
 
-When a scan finds new files that would create items, a device MUST pause them only when their count exceeds both `addition_threshold.files` and `addition_threshold.fraction` of the folder's bound files, defaulting to 50 and 0.25.
+When a scan finds new files that would create items, a device MUST pause them only when their count exceeds both `addition_threshold.files` and `addition_threshold.fraction` of the directory's bound files, defaulting to 50 and 0.25.
 
-**Reason:** A person who drops a handful of files into a folder means to; one who drops thousands may have chosen the wrong folder.
+**Reason:** A person who drops a handful of files into a directory means to; one who drops thousands may have chosen the wrong directory.
 
 **Tests:** `device/folders-additions.test.ts › is held past both default halves of the threshold and sent at them`.
 

@@ -2,7 +2,7 @@
 
 A folder is a `system.folder` item on the instance, with its settings, query and ID. A directory is a place on a machine's disk that follows a folder, with a working copy and a queue. A statement about what a device does on disk says directory; one about what the instance holds says folder. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
 
-This chapter holds what a file on disk is to a folder: its identity and placement, how a folder writes, recovers and deletes files, how it treats paths and links, and how it takes in another folder's file.
+This chapter holds what a file on disk is to a folder: its identity and placement, how a folder writes, recovers and deletes files, how it treats paths and links, and how it takes in another directory's file.
 
 ## File identity
 
@@ -98,7 +98,7 @@ When an editor replaces a bound file at the same path and then renames it, a dev
 
 ### `folder-files/copy-binding-precedence`
 
-When files in one folder claim the same item ID, a device MUST prefer the file identified by the existing binding.
+When files in one directory claim the same item ID, a device MUST prefer the file identified by the existing binding.
 
 **Tests:** `device/folders-identity.test.ts › keeps the id with the file its binding names`, `device/folders-identity.test.ts › keeps the id with the original an editor saved without its line, over a copy carrying it`.
 
@@ -164,7 +164,7 @@ When an unbound file has no unique usable filesystem identity, a device MUST tre
 
 ### `folder-files/identity-admitted-files`
 
-When deciding whether file identities are unique, a device MUST consider only files the folder admits.
+When deciding whether file identities are unique, a device MUST consider only files the directory admits.
 
 **Tests:** `device/folders-identity.test.ts › resolves identity over the files it holds, not every file in the tree`.
 
@@ -210,7 +210,7 @@ When a file matches the old placement and bytes of an item the query no longer h
 
 ### `folder-files/identity-takeback-peer`
 
-When another folder has taken in an item, a device MUST NOT take back that item for a copy at its former placement.
+When another directory has taken in an item, a device MUST NOT take back that item for a copy at its former placement.
 
 **Tests:** `device/folders-one-mac.test.ts › takes no file back by its bytes for an item another folder on the Mac took in`.
 
@@ -566,7 +566,7 @@ When evaluating folder membership, a device MUST use the query independently of 
 
 ### `folder-files/placement-current-path`
 
-When an item has a file bound in the folder but no placement edge, a device MUST keep that file at its current path.
+When an item has a file bound in the directory but no placement edge, a device MUST keep that file at its current path.
 
 **Tests:** `device/folders-contract-extra-c.test.ts › keeps an unplaced file at its checked-out path instead of its title`.
 
@@ -628,7 +628,7 @@ When a scan sends a missing file's item deletion or finds its item already trash
 
 ### `folder-files/placement-last-binding`
 
-When a bound file moves or is renamed within its folder and its placement edge still exists, a device MUST update that `in-folder` edge rather than end it and create another.
+When a bound file moves or is renamed within its directory and its placement edge still exists, a device MUST update that `in-folder` edge rather than end it and create another.
 
 **Reason:** A move changes the placement path without creating a new relationship.
 
@@ -648,7 +648,7 @@ When an item's purge removes its placement from the working copy, a device MUST 
 
 ### `folder-files/placement-held-transfer`
 
-When a file moves to a folder that does not hold its item but its original folder's query still holds the item, a device MUST retain the original folder's placement.
+When a file moves to a directory whose folder does not hold its item but its original folder's query still holds the item, a device MUST retain the original folder's placement.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a folder's placement of an item it holds when its file is moved to a folder that does not`.
 
@@ -704,7 +704,7 @@ When a scan follows a device's own file write, a device MUST NOT treat that writ
 
 ### `folder-files/write-whole`
 
-When a device writes a document, file item, settings file or file transferred from another folder, a device MUST publish complete bytes or leave the previous file intact.
+When a device writes a document, file item, settings file or file transferred from another directory, a device MUST publish complete bytes or leave the previous file intact.
 
 **Tests:** `device/folders-identity.test.ts › writes a file whole beside it and renames it over, so a failed write leaves the old one`, `device/folders-one-mac.test.ts › keeps a file a crash cut off taking in where it was, and journals no delete`, `device/folders-identity.test.ts › keeps its settings file its own when a crash cuts off writing it`, `device/folders-placement.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`.
 
@@ -740,7 +740,7 @@ When a crashed writer is no longer running, a device MUST remove its abandoned t
 
 ### `folder-files/write-crash-take-in`
 
-When taking in another folder's file crashes before landing, a device MUST preserve the source file without journaling a deletion.
+When taking in another directory's file crashes before landing, a device MUST preserve the source file without journaling a deletion.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file a crash cut off taking in where it was, and journals no delete`.
 
@@ -846,7 +846,7 @@ When a bound file disappears, a device MUST defer its item deletion for the five
 
 ### `folder-files/delete-grace-keeps-watch-awake`
 
-While the rename grace of a missing file in a watched folder runs, a device MUST go on running passes until a pass has decided the file's deletion.
+While the rename grace of a missing file in a watched directory runs, a device MUST go on running passes until a pass has decided the file's deletion.
 
 **Reason:** a pass that measures the grace once at its sweep and again at its end can pass the file over and then rest, so no pass decides the deletion until a file event or the next full pass.
 
@@ -860,7 +860,7 @@ When a file returns at its own path or a new name within the rename grace, a dev
 
 ### `folder-files/delete-remote-revives`
 
-When another device changes a deleted item in content its file shows during the rename grace and no other registered folder holds the file's move, a device MUST restore the file from the changed item.
+When another device changes a deleted item in content its file shows during the rename grace and no other registered directory holds the file's move, a device MUST restore the file from the changed item.
 
 **Reason:** A file another folder holds as this one moved is the item's file there, and written back here it would read there as a copy (`folder-files/moved-not-revived`, `folder-files/uncertain-move-no-replacement`). A file whose move cannot be told yet comes back once no folder holds it (`folder-files/missing-file-changed-revives`). A file whose folders both hold its item is not a move (`folder-files/item-in-folders-delete`), so it is written back.
 
@@ -932,7 +932,7 @@ When a folder pull does not write an item's file under `folder-files/pull-missin
 
 ### `folder-files/pull-missing-file-moved-keeps-item`
 
-When a bound file moves within a folder between a folder scan and the pull that follows it, a device MUST bind the moved file to the same item at the next scan.
+When a bound file moves within a directory between a folder scan and the pull that follows it, a device MUST bind the moved file to the same item at the next scan.
 
 **Tests:** `device/folders-pass-writeback.test.ts › does not write back a file moved after the scan, and the next scan follows the move`, `› does not write back a file renamed with its title line after the scan, and keeps its item`, `› keeps the edit of a file moved and edited after the scan, and makes no second item`, `› writes back none of a burst of files moved and deleted after the scan`, `device/binding-folders-clock.test.ts › writes back no file moved between a watch pass's scan and its pull, and follows the move on the next pass`.
 
@@ -1010,25 +1010,25 @@ When a folder inventory is incomplete because an entry cannot be read or identif
 
 ### `folder-files/root-gone-scan-report`
 
-When a scan detects that the directory has been replaced since the folder was opened, a device MUST report the reason in `root_gone`.
+When a scan detects that the directory has been replaced since the directory was opened, a device MUST report the reason in `root_gone`.
 
 **Tests:** `device/folders-contract-a.test.ts › reports root_gone and ignores a replacement directory while watching`.
 
 ### `folder-files/root-gone-no-replacement-edit`
 
-While the opened folder's directory is replaced by a different directory, a device MUST NOT send item or settings edits read from that replacement.
+While the opened directory is replaced by a different directory, a device MUST NOT send item or settings edits read from that replacement.
 
 **Tests:** `device/folders-contract-a.test.ts › reports root_gone and ignores a replacement directory while watching`.
 
 ### `folder-files/root-gone-no-replacement-write`
 
-While the opened folder's directory is replaced by a different directory, a device MUST leave the replacement's files unchanged.
+While the opened directory is replaced by a different directory, a device MUST leave the replacement's files unchanged.
 
 **Tests:** `device/folders-contract-a.test.ts › reports root_gone and ignores a replacement directory while watching`.
 
 ### `folder-files/root-gone-pull-report`
 
-When a pull detects that the root directory disappeared or was replaced after the folder was opened, a device MUST report the reason in `root_gone`.
+When a pull detects that the root directory disappeared or was replaced after the directory was opened, a device MUST report the reason in `root_gone`.
 
 **Tests:** `device/binding-folders-placement.test.ts › reports root_gone when a retained folder's directory is replaced before its pull`.
 
@@ -1284,7 +1284,7 @@ When a folder pull cannot read a departed item’s file to verify its bytes, a d
 
 ### `folder-files/unmatched-file-kept`
 
-When an item leaves a folder’s query for a reason other than its state or purge and no other folder takes its file, a device MUST retain the bound file.
+When an item leaves a folder’s query for a reason other than its state or purge and no other directory takes its file, a device MUST retain the bound file.
 
 **Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed query leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its query elsewhere, flagged, and sends its edits to it`.
 
@@ -1320,13 +1320,13 @@ When removal of unmatched files names a file retained under `folder-files/new-fi
 
 ### `folder-files/unmatched-file-kept-unmatched-count`
 
-When an item leaves a folder’s query for a reason other than its state or purge and no other folder takes its file, a device MUST count the file as `unmatched`.
+When an item leaves a folder’s query for a reason other than its state or purge and no other directory takes its file, a device MUST count the file as `unmatched`.
 
 **Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed query leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its query elsewhere, flagged, and sends its edits to it`.
 
 ### `folder-files/unmatched-file-edits`
 
-When a bound folder file’s item no longer matches the query, a device MUST continue sending edits to that item.
+When a bound file’s item no longer matches the query, a device MUST continue sending edits to that item.
 
 **Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed query leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its query elsewhere, flagged, and sends its edits to it`.
 
@@ -1338,7 +1338,7 @@ When a bound unmatched folder item changes, a device MUST keep its existing file
 
 ### `folder-files/replaced-binding-unpinned`
 
-When another item takes a bound folder file’s path, a device MUST release the old item’s binding pin unless another file or edge still requires it.
+When another item takes a bound file’s path, a device MUST release the old item’s binding pin unless another file or edge still requires it.
 
 **Tests:** `device/folders-identity.test.ts › lets go of the pin of an item whose file's path another item takes`.
 
@@ -1370,7 +1370,7 @@ When the bytes of a bound file item change in a folder, a device MUST queue an u
 
 ### `folder-files/binary-title-preserved`
 
-When a bound folder file item is renamed and its title differs from its old file name, a device MUST retain the item’s title.
+When a bound file item is renamed and its title differs from its old file name, a device MUST retain the item’s title.
 
 **Tests:** `device/folders-placement.test.ts › keeps a title somebody set when the file moves`.
 
@@ -1412,7 +1412,7 @@ When the server refuses the credential while a folder pull fetches file bytes, a
 
 ### `folder-files/blob-cache-released`
 
-When a folder file holds its item’s bytes and no pending upload needs them, a device MUST release any duplicate copy of those bytes kept beside the working copy.
+When a file holds its item’s bytes and no pending upload needs them, a device MUST release any duplicate copy of those bytes kept beside the working copy.
 
 **Tests:** `device/folders-placement.test.ts › keeps no copy beside the store of bytes its file holds, and fetches them again when asked`.
 
@@ -1424,25 +1424,25 @@ When an item outside the file types carries `blob_ref`, a device MUST render it 
 
 ### `folder-files/lost-item-file-kept`
 
-When a folder file’s create is refused and the copy loses the item, a device MUST preserve the person’s file.
+When a file’s create is refused and the copy loses the item, a device MUST preserve the person’s file.
 
 **Tests:** `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
 
 ### `folder-files/lost-item-edit-retried`
 
-When the person changes or moves a folder file whose item the copy no longer holds, a device MUST queue the file as a new item under a new device-minted ID.
+When the person changes or moves a file whose item the copy no longer holds, a device MUST queue the file as a new item under a new device-minted ID.
 
 **Tests:** `device/folders-identity.test.ts › queues a file whose item the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › queues a file whose item the copy lost again once it moves`.
 
 ### `folder-files/lost-item-unchanged-held`
 
-While a folder file whose item the copy no longer holds stays unchanged at its path, a device MUST report the file as lost.
+While a file whose item the copy no longer holds stays unchanged at its path, a device MUST report the file as lost.
 
 **Tests:** `device/folders-identity.test.ts › queues a file whose item the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`, `device/folders.test.ts › pulls again after a rebuild at the drain after the pull, writing what the new reach holds and keeping a file it no longer reads`.
 
 ### `folder-files/lost-create-not-repeated`
 
-While a folder file whose item the copy no longer holds stays unchanged at its path, a device MUST NOT queue another create.
+While a file whose item the copy no longer holds stays unchanged at its path, a device MUST NOT queue another create.
 
 **Tests:** `device/folders-identity.test.ts › queues a file whose item the copy lost again once it changes, and says so`, `device/folders-identity.test.ts › keeps a file the folder never wrote whose create was refused, inside one push`.
 
@@ -1460,7 +1460,7 @@ When a live file has taken a lost file’s former path, a device MUST requeue th
 
 ### `folder-files/lost-item-watch-notice`
 
-While a folder file stays bound to an item the copy no longer holds, the CLI MUST say its lost-item watch notice only once.
+While a file stays bound to an item the copy no longer holds, the CLI MUST say its lost-item watch notice only once.
 
 **Tests:** `device/folders-identity.test.ts › says in words when a file is bound to an item that is gone, once while watching`.
 
@@ -1472,7 +1472,7 @@ When a folder save conflicts with the same device’s earlier save, a device MUS
 
 ### `folder-files/own-conflict-retried`
 
-When a folder file’s newer save was set aside against the same device’s earlier save, a device MUST submit the retained bytes at the next scan as an edit based on the item’s current version.
+When a file’s newer save was set aside against the same device’s earlier save, a device MUST submit the retained bytes at the next scan as an edit based on the item’s current version.
 
 **Tests:** `device/folders-placement.test.ts › keeps a file whose newest save conflicted with its own earlier one, and sends it again`.
 
@@ -1488,69 +1488,69 @@ When a directory is admitted, a device MUST retain that opened directory as the 
 
 ### `folder-files/directory-components-no-follow`
 
-When opening a folder or any directory below it, a device MUST refuse a symbolic link at the folder's own directory entry, in every path component below it, and in every path component that a later `..` climbs back out of.
+When opening a directory or any directory below it, a device MUST refuse a symbolic link at the directory's own entry, in every path component below it, and in every path component that a later `..` climbs back out of.
 
 **Tests:** `device/folders-one-mac.test.ts › admits parent components without skipping a preceding symlink`, `device/folders-one-mac.test.ts › refuses a folder reached through a symlink and preserves its registry identity`, `device/folders-contract-b.test.ts › does not scan a symlinked file or directory even when included`, `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › refuses a folder named through a link that a later parent component climbs back out of`.
 
 ### `folder-files/root-linked-ancestor-resolved`
 
-When a folder is added through a path in which every symbolic link is a directory above the folder that no later `..` climbs back out of, and every directory that a `..` climbs back out of exists, a device MUST admit the folder at the path with those links resolved.
+When a directory is added through a path in which every symbolic link is a directory above the directory that no later `..` climbs back out of, and every directory that a `..` climbs back out of exists, a device MUST admit the directory at the path with those links resolved.
 
-**Reason:** The directories above a folder are outside it and belong to the person, and the operating system links some of them, such as `/var` and `/tmp` on macOS.
+**Reason:** The directories above a directory are outside it and belong to the person, and the operating system links some of them, such as `/var` and `/tmp` on macOS.
 
 **Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`.
 
 ### `folder-files/linked-path-reaches-folder`
 
-When a command other than an add or a removal names an existing folder by a path that the machine’s folder registry does not list, in which every symbolic link is a directory above the folder that no later `..` climbs back out of, every directory that a `..` climbs back out of exists, and no listed folder path reaches the same directory only through a symbolic link, a device MUST work the folder at the path with those links resolved.
+When a command other than an add or a removal names an existing directory by a path that the machine’s folder registry does not list, in which every symbolic link is a directory above the directory that no later `..` climbs back out of, every directory that a `..` climbs back out of exists, and no listed directory's path reaches the same directory only through a symbolic link, a device MUST work the directory at the path with those links resolved.
 
 **Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`.
 
 ### `folder-files/ambiguous-path-refused`
 
-If a command other than an add or a removal names a folder by a path that the machine’s folder registry does not list, and a listed folder path reaches the same directory only through a symbolic link, then a device MUST refuse the path with `invalid`.
+If a command other than an add or a removal names a directory by a path that the machine’s folder registry does not list, and a listed directory's path reaches the same directory only through a symbolic link, then a device MUST refuse the path with `invalid`.
 
-**Reason:** The path could mean the folder at that directory or the listed folder whose directory the link replaced.
+**Reason:** The path could mean the directory at that directory or the listed directory whose directory the link replaced.
 
 **Tests:** `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
 
 ### `folder-files/listed-link-refused`
 
-If a symbolic link now stands in the path at which the machine’s folder registry lists a folder, then a device MUST refuse every command other than an add or a removal that names the folder by that path with `invalid`.
+If a symbolic link now stands in the path at which the machine’s folder registry lists a directory, then a device MUST refuse every command other than an add or a removal that names the directory by that path with `invalid`.
 
 **Tests:** `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
 
 ### `folder-files/listed-link-refusal-names-other`
 
-If a device refuses a path because a symbolic link now stands in the path at which the machine’s folder registry lists a folder, and that listed path now leads to the directory of another listed folder, then a device MUST name the other folder's listed path in the refusal's message.
+If a device refuses a path because a symbolic link now stands in the path at which the machine’s folder registry lists a directory, and that listed path now leads to another listed directory, then a device MUST name the other directory's listed path in the refusal's message.
 
-**Reason:** The person can then tell that the directory the link leads to holds another folder, not the one the path names.
+**Reason:** The person can then tell that the directory the link leads to holds another directory, not the one the path names.
 
 **Tests:** `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`, `cli/folder.test.ts › names the listed folder a link has replaced, and the other folder it leads to, when refusing its path`.
 
 ### `folder-files/listed-link-refusal-no-redirect`
 
-If a device refuses a path because the path's own directory entry, or one that a later `..` climbs back out of, is a symbolic link, and a path at which the machine’s folder registry lists a folder reaches some directory only through a symbolic link, then a device MUST NOT give that directory, or a directory inside it, in the refusal's message as the one to name instead.
+If a device refuses a path because the path's own directory entry, or one that a later `..` climbs back out of, is a symbolic link, and a path at which the machine’s folder registry lists a directory reaches some directory only through a symbolic link, then a device MUST NOT give that directory, or a directory inside it, in the refusal's message as the one to name instead.
 
-**Reason:** Where a link has replaced the listed folder's directory or a directory above it, the listed path, and any link or chain of links the person made to it or to a directory inside it, can lead to another folder's directory. A person following the advice would then work on that folder, such as by removing its state.
+**Reason:** Where a link has replaced the listed directory's directory or a directory above it, the listed path, and any link or chain of links the person made to it or to a directory inside it, can lead to another directory's directory. A person following the advice would then work on that directory, such as by removing its state.
 
 **Tests:** `cli/folder.test.ts › names the listed folder a link has replaced, and the other folder it leads to, when refusing its path`, `cli/folder.test.ts › never offers the directory a relinked listing now leads to when refusing a link to that listing`, `cli/folder.test.ts › never offers a folder inside the directory a relinked listing now leads to when refusing a link into that listing`.
 
 ### `folder-files/root-link-refused-invalid`
 
-If a folder is named through a path with a symbolic link at the folder's own directory entry, in a path component below it, or in a path component that a later `..` climbs back out of, other than to remove the folder by the path at which the machine’s folder registry lists it, then a device MUST refuse the path with `invalid`.
+If a directory is named through a path with a symbolic link at the directory's own entry, in a path component below it, or in a path component that a later `..` climbs back out of, other than to remove the directory by the path at which the machine’s folder registry lists it, then a device MUST refuse the path with `invalid`.
 
 **Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › refuses a folder named through a link that a later parent component climbs back out of`.
 
 ### `folder-files/root-link-refusal-named`
 
-If a folder is named through a path with a symbolic link at the folder's own directory entry, in a path component below it, or in a path component that a later `..` climbs back out of, other than to remove the folder by the path at which the machine’s folder registry lists it, and no earlier `..` climbs back out of a directory that does not exist, then a device MUST name the first such link in the refusal's message.
+If a directory is named through a path with a symbolic link at the directory's own entry, in a path component below it, or in a path component that a later `..` climbs back out of, other than to remove the directory by the path at which the machine’s folder registry lists it, and no earlier `..` climbs back out of a directory that does not exist, then a device MUST name the first such link in the refusal's message.
 
 **Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › refuses a folder named through a link that a later parent component climbs back out of`.
 
 ### `folder-files/root-missing-climb-refused`
 
-If a folder is named through a path in which a `..` climbs back out of a directory that does not exist, then a device MUST refuse the path with `invalid`.
+If a directory is named through a path in which a `..` climbs back out of a directory that does not exist, then a device MUST refuse the path with `invalid`.
 
 **Reason:** Such a path cannot be checked without creating the directory it climbs out of.
 
@@ -1558,7 +1558,7 @@ If a folder is named through a path in which a `..` climbs back out of a directo
 
 ### `folder-files/root-missing-climb-creates-nothing`
 
-If a folder is named through a path in which a `..` climbs back out of a directory that does not exist, then a device MUST NOT create any directory on that path.
+If a directory is named through a path in which a `..` climbs back out of a directory that does not exist, then a device MUST NOT create any directory on that path.
 
 **Tests:** `cli/folder.test.ts › refuses a path that climbs out of a directory that does not exist, and makes nothing`.
 
@@ -1578,7 +1578,7 @@ When a folder's removal deletes its administrative state, a device MUST clear th
 
 ### `folder-files/empty-state-not-nested-folder`
 
-When a directory contains an empty `.marfa` directory without `core.sqlite`, a device MUST admit its eligible contents as ordinary folder contents.
+When a directory contains an empty `.marfa` directory without `core.sqlite`, a device MUST admit its eligible contents as ordinary directory contents.
 
 **Tests:** `device/folders-contract-a.test.ts › admits contents beside empty administrative directories`.
 
@@ -1594,7 +1594,7 @@ When a directory's root has no usable nonzero birth timestamp, a device MUST ref
 
 ### `folder-files/executable-created`
 
-When a folder admits a file item on a volume preserving executable permissions, a device MUST set `executable: true` if its owner can execute it and omit the property otherwise.
+When a directory admits a file item on a volume preserving executable permissions, a device MUST set `executable: true` if its owner can execute it and omit the property otherwise.
 
 **Tests:** `device/folders.test.ts › keeps a file's executable permission`, `compliance/types.test.ts › declares executable on core.file, which every file type inherits`.
 
@@ -1612,19 +1612,19 @@ Where a device has established that the volume preserves executable permissions 
 
 ### `folder-files/executable-owner-edit-kept`
 
-When a bound file’s executable permission changes after the folder scan read it, a device MUST preserve the person’s permission through a pull for the next scan to send.
+When a bound file’s executable permission changes after the directory scan read it, a device MUST preserve the person’s permission through a pull for the next scan to send.
 
 **Tests:** `device/folders.test.ts › gives a pulled file the permission its item holds`.
 
 ### `folder-files/permission-probe-failed`
 
-Where a volume does not preserve executable permissions or the folder cannot establish that it does, a device MUST leave executable permissions unchanged on the item.
+Where a volume does not preserve executable permissions or the directory cannot establish that it does, a device MUST leave executable permissions unchanged on the item.
 
 **Tests:** `device/folders-contract-b.test.ts › leaves executable permissions alone when its permission probe fails`, `device/folders-contract-b.test.ts › leaves file and item executable values alone on an exFAT volume`.
 
 ### `folder-files/permission-probe-failed-file-preserved`
 
-Where a volume does not preserve executable permissions or the folder cannot establish that it does, a device MUST leave executable permissions unchanged on the file.
+Where a volume does not preserve executable permissions or the directory cannot establish that it does, a device MUST leave executable permissions unchanged on the file.
 
 **Tests:** `device/folders-contract-b.test.ts › leaves executable permissions alone when its permission probe fails`, `device/folders-contract-b.test.ts › leaves file and item executable values alone on an exFAT volume`.
 
@@ -1660,7 +1660,7 @@ Where a device runs on macOS, when quarantine marking fails for downloaded file 
 
 ### `folder-files/quarantine-failure-existing-file`
 
-Where a device runs on macOS, when quarantine marking fails before making an existing folder file runnable, a device MUST retain the file’s existing permissions.
+Where a device runs on macOS, when quarantine marking fails before making an existing file runnable, a device MUST retain the file’s existing permissions.
 
 **Tests:** `device/folders-contract-b.test.ts › keeps an existing file nonexecutable when quarantine marking fails`.
 
@@ -1680,31 +1680,31 @@ Where a device runs on macOS, when a folder pull renders a document, a device MU
 
 ### `folder-files/saved-back-binding`
 
-When a file is saved back at a path whose binding remains after another folder took its file, a device MUST treat it as the bound item until that binding is released.
+When a file is saved back at a path whose binding remains after another directory took its file, a device MUST treat it as the bound item until that binding is released.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps a file saved back where another folder took the item's file from as the item's while its binding lasts`.
 
 ### `folder-files/moved-file-not-trashed`
 
-When a missing folder file is found in another registered folder as the same file by identity, carried ID or unambiguous bytes, a device MUST release the missing file’s binding, unless `folder-files/moved-binding-kept` keeps it.
+When a missing file is found in another registered directory as the same file by identity, carried ID or unambiguous bytes, a device MUST release the missing file’s binding, unless `folder-files/moved-binding-kept` keeps it.
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
 
 ### `folder-files/moved-file-not-trashed-item-preserved`
 
-When a missing folder file is found in another registered folder as the same file by identity, carried ID or unambiguous bytes, a device MUST NOT trash the item.
+When a missing file is found in another registered directory as the same file by identity, carried ID or unambiguous bytes, a device MUST NOT trash the item.
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › finds a file moved into a dot-led directory the other folder includes`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file moved in by copy and delete by the bytes the folder it left bound`, `device/folders-one-mac.test.ts › does not trash a file moved to another folder and saved there anew`, `device/folders-one-mac.test.ts › does not trash an unmatched file moved by copy and delete into a folder that holds its item`, `device/folders-one-mac.test.ts › follows identical files moved by identity, and makes identical copies new items`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
 
 ### `folder-files/moved-file-count`
 
-When a scan releases a missing folder file’s binding because it found the file in another registered folder, a device MUST count the file as `moved_away`.
+When a scan releases a missing file’s binding because it found the file in another registered directory, a device MUST count the file as `moved_away`.
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
 
 ### `folder-files/moved-carried-id-utf16`
 
-When a file in another registered folder starts with a UTF-16 byte-order mark, or with a frontmatter fence encoded as UTF-16 and no mark, a device MUST read the file's carried ID as UTF-16 text.
+When a file in another registered directory starts with a UTF-16 byte-order mark, or with a frontmatter fence encoded as UTF-16 and no mark, a device MUST read the file's carried ID as UTF-16 text.
 
 **Reason:** An editor that saves a moved file again as UTF-16 changes both its identity and its bytes, so its carried ID is all that shows where it came from. Read as UTF-8, the move is taken for a deletion and the item is deleted on the server.
 
@@ -1712,19 +1712,19 @@ When a file in another registered folder starts with a UTF-16 byte-order mark, o
 
 ### `folder-files/peer-owned-bytes-not-move`
 
-When another folder’s equal bytes belong to a different item, a device MUST NOT identify that file as the missing file’s move.
+When another directory’s equal bytes belong to a different item, a device MUST NOT identify that file as the missing file’s move.
 
 **Tests:** `device/folders-one-mac.test.ts › does not take another folder's file with the same bytes for a moved one`.
 
 ### `folder-files/both-folders-copy`
 
-When two folder queries both hold an item and each folder has its own bound file, a device MUST NOT interpret either file as the other’s move.
+When two folder queries both hold an item and each directory has its own bound file, a device MUST NOT interpret either file as the other’s move.
 
 **Tests:** `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
 
 ### `folder-files/missing-file-trashed`
 
-When a missing folder file’s deletion grace expires, no other folder holds the moved file, no other file present in the same folder is bound to its item and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
+When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
 
 **Reason:** the files of one sweep are decided before any of them is trashed, so files deleted together are all trashed, whichever the sweep reaches first and whether they link one another. A link line in a file shows the note it names by title, and a note already trashed by the same sweep would otherwise read as a change made elsewhere.
 
@@ -1732,13 +1732,13 @@ When a missing folder file’s deletion grace expires, no other folder holds the
 
 ### `folder-files/missing-file-trashed-path-reported`
 
-When a missing folder file’s deletion grace expires, no other folder holds the moved file, no other file present in the same folder is bound to its item and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
+When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
 
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
 
 ### `folder-files/missing-file-changed-revives`
 
-When a device finds a missing folder file in no other registered folder past its rename grace, or on confirming its paused removal, and another device has changed the file's item in content the file showed while the folder's query still holds the item, a device MUST restore the file from the changed item.
+When a device finds a missing file in no other registered directory past its rename grace, or on confirming its paused removal, and another device has changed the file's item in content the file showed while the folder's query still holds the item, a device MUST restore the file from the changed item.
 
 **Reason:** The change is newer than the person's deletion, which no other device has heard of yet, so it wins as it does inside the grace (`folder-files/delete-remote-revives`). A pull writes no file back while its move cannot be told (`folder-files/uncertain-move-no-replacement`), so a change made inside the grace may show only once the move is told. The device tells the change from its working copy alone, with no server and no held bytes, so a scan that reaches no server decides it too: a file item by whether its item still names the blob the folder last wrote or sent the file as, and a document by whether its item still shows what the folder last agreed. It decides on everything it read of the item, its version, tags and edges, and queues the deletion only while the working copy still holds exactly that, so a change heard while it decides is decided again rather than trashed with it.
 
@@ -1752,19 +1752,19 @@ When a missing file is trashed after no other directory holds it, the CLI MUST s
 
 ### `folder-files/uncertain-move-deferred`
 
-When a missing folder file could be in unreadable registered folders or several files elsewhere have its bytes, a device MUST defer its deletion.
+When a missing file could be in unreadable registered directories or several files elsewhere have its bytes, a device MUST defer its deletion.
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › keeps an unreadable file moved to another folder before its next scan`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
 
 ### `folder-files/uncertain-move-deferred-unsure-reported`
 
-When a missing folder file could be in unreadable registered folders or several files elsewhere have its bytes, a device MUST name the uncertainty in `unsure`.
+When a missing file could be in unreadable registered directories or several files elsewhere have its bytes, a device MUST name the uncertainty in `unsure`.
 
 **Tests:** `device/folders-one-mac.test.ts › holds a delete where several files in another folder have its bytes`, `device/folders-one-mac.test.ts › holds a delete while another folder cannot be read whole`, `device/folders-one-mac.test.ts › keeps an unreadable file moved to another folder before its next scan`, `device/folders-one-mac.test.ts › holds a delete while the registry cannot be read, and an add writes it afresh`.
 
 ### `folder-files/uncertain-move-no-replacement`
 
-While a missing folder file could be in unreadable registered folders or among several files elsewhere with its bytes, a device MUST NOT write the file again.
+While a missing file could be in unreadable registered directories or among several files elsewhere with its bytes, a device MUST NOT write the file again.
 
 **Reason:** written again here, the moved file would read as a copy there and become a new item. Within the rename grace, the grace sweep then tells a move from a deletion (`folder-files/uncertain-move-deferred`, `folder-files/missing-file-trashed`), and a pass looks for the file again (`folder-files/kept-file-looked-again`). A file found nowhere whose item changed elsewhere comes back then (`folder-files/missing-file-changed-revives`).
 
@@ -1772,31 +1772,31 @@ While a missing folder file could be in unreadable registered folders or among s
 
 ### `folder-files/kept-file-looked-again`
 
-While a folder watch keeps a missing folder file's binding past the rename grace because it cannot tell where the file went, or because another folder has yet to take it, a device MUST look for the file in the other registered folders again no later than one minute after its last look, whatever the folder's full-pass interval.
+While a folder watch keeps a missing file's binding past the rename grace because it cannot tell where the file went, or because another directory has yet to take it, a device MUST look for the file in the other registered directories again no later than one minute after its last look, whatever the folder's full-pass interval.
 
-**Reason:** a delete or a move whose direction was uncertain waited for the next full pass, which is ten minutes by default. Looking walks every other registered folder, so a quick pass looks only once a minute and a watch at rest wakes for it then, where a look at every pass would walk them each time.
+**Reason:** a delete or a move whose direction was uncertain waited for the next full pass, which is ten minutes by default. Looking walks every other registered directory, so a quick pass looks only once a minute and a watch at rest wakes for it then, where a look at every pass would walk them each time.
 
 **Tests:** `device/binding-folders-clock.test.ts › decides a delete it could not tell from a move in a quick pass once the registry can be read, with no full pass`.
 
 ### `folder-files/uncertain-move-not-text`
 
-When another registered folder holds a file whose bytes can be read but are not UTF-8, a device MUST treat that folder's inventory as complete.
+When another registered directory holds a file whose bytes can be read but are not UTF-8, a device MUST treat that directory's inventory as complete.
 
-**Reason:** The file is held on its own (`folder-documents/unreadable-no-write`), so it is no doubt about where another folder's missing file went, and a deletion of a missing file that waited on it would wait for as long as the file stays.
+**Reason:** The file is held on its own (`folder-documents/unreadable-no-write`), so it is no doubt about where another directory's missing file went, and a deletion of a missing file that waited on it would wait for as long as the file stays.
 
 **Tests:** `device/folders-one-mac.test.ts › confirms a large removal while another folder holds files that are not text`, `device/folders-one-mac.test.ts › holds a file that is not text on its own, and takes it in once it can be read`.
 
 ### `folder-files/moved-arrival-bytes`
 
-When a file that carries no ID arrives from another folder whose missing-file binding of a file item uniquely identifies it by identity or bytes, a device MUST bind the arriving file to that file item.
+When a file that carries no ID arrives from another directory whose missing-file binding of a file item uniquely identifies it by identity or bytes, a device MUST bind the arriving file to that file item.
 
-**Reason:** a file item's file carries nothing that names its item, so only the other folder's binding can, whatever the file's name. A pull can place a file item at a document name (`.md`, `.markdown` or `.txt`).
+**Reason:** a file item's file carries nothing that names its item, so only the other directory's binding can, whatever the file's name. A pull can place a file item at a document name (`.md`, `.markdown` or `.txt`).
 
 **Tests:** `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
 
 ### `folder-files/moved-arrival-text-note`
 
-When a file at a name other than `.md` or `.markdown` (in any letter case) arrives from another folder whose missing-file binding of a note uniquely identifies it by identity, or by the bytes of a note's file that was at a name other than `.md` or `.markdown`, a device MUST bind the arriving file to that note.
+When a file at a name other than `.md` or `.markdown` (in any letter case) arrives from another directory whose missing-file binding of a note uniquely identifies it by identity, or by the bytes of a note's file that was at a name other than `.md` or `.markdown`, a device MUST bind the arriving file to that note.
 
 **Reason:** a note at a `.txt` name carries no ID line, so only its identity or its bytes follow it.
 
@@ -1804,109 +1804,109 @@ When a file at a name other than `.md` or `.markdown` (in any letter case) arriv
 
 ### `folder-files/moved-arrival-markdown-new`
 
-When a file at a `.md` or `.markdown` name (in any letter case) that carries no ID arrives from another folder, where the file it left was a note bound by identity or bytes or a new note whose ID line was never written, a device MUST admit the arriving file as a new item.
+When a file at a `.md` or `.markdown` name (in any letter case) that carries no ID arrives from another directory, where the file it left was a note bound by identity or bytes or a new note whose ID line was never written, a device MUST admit the arriving file as a new item.
 
-**Reason:** a note's Markdown file carries its ID line, so a Markdown file without one is not that note's file. A `.txt` note moved to another folder as `.md` is a new item there. A new note moved before its ID line is written has no item bound to it, and the folder it left cannot name an item the arriving file belongs to, so the receiving folder admits it with every edit made before and after the move. What the folder it left does with the original item is stated apart (`folder-files/moved-new-note-original-trashed`, `folder-files/moved-new-note-original-written-back`). Every way tried to bind a file that has no ID line yet opened a worse failure than this second item.
+**Reason:** a note's Markdown file carries its ID line, so a Markdown file without one is not that note's file. A `.txt` note moved to another directory as `.md` is a new item there. A new note moved before its ID line is written has no item bound to it, and the directory it left cannot name an item the arriving file belongs to, so the receiving directory admits it with every edit made before and after the move. What the directory it left does with the original item is stated apart (`folder-files/moved-new-note-original-trashed`, `folder-files/moved-new-note-original-written-back`). Every way tried to bind a file that has no ID line yet opened a worse failure than this second item.
 
 **Tests:** `device/folders-one-mac.test.ts › makes a new item of a text note moved to another folder as Markdown, and keeps its words`, `device/folders-one-mac.test.ts › makes a second item of a new note moved before its id line is written, and keeps its edits`.
 
 ### `folder-files/moved-new-note-original-trashed`
 
-When a folder has sent a new note as an item but has not written the file's ID line, the file moves to another registered folder, the folder it left finds the file in no folder past its deletion grace, and the item, rendered, holds nothing the file did not show, a device MUST queue deletion of the item in the folder it left.
+When a directory has sent a new note as an item but has not written the file's ID line, the file moves to another registered directory, the directory it left finds the file in no directory past its deletion grace, and the item, rendered, holds nothing the file did not show, a device MUST queue deletion of the item in the directory it left.
 
-**Reason:** the receiving folder admits the moved file as a new item (`folder-files/moved-arrival-markdown-new`), and no file carries the original's ID line except the receiving folder's own write of it, so the missing file is a deletion of what it showed (`folder-files/missing-file-trashed`). The original's words are in the new item. A file that begins with a header showing the properties the item holds, such as its `title`, shows all of it.
+**Reason:** the receiving directory admits the moved file as a new item (`folder-files/moved-arrival-markdown-new`), and no file carries the original's ID line except the receiving folder's own write of it, so the missing file is a deletion of what it showed (`folder-files/missing-file-trashed`). The original's words are in the new item. A file that begins with a header showing the properties the item holds, such as its `title`, shows all of it.
 
 **Tests:** `cli/folder.test.ts › trashes the original item of a new note moved to another folder before its ID line, where the file showed what the item holds`.
 
 ### `folder-files/moved-new-note-original-written-back`
 
-When a folder has sent a new note as an item but has not written the file's ID line, the file moves to another registered folder, the folder it left finds the file in no folder, and the item, rendered, holds a property the file did not show, a device MUST write the item's file again in the folder it left.
+When a directory has sent a new note as an item but has not written the file's ID line, the file moves to another registered directory, the directory it left finds the file in no directory, and the item, rendered, holds a property the file did not show, a device MUST write the item's file again in the directory it left.
 
-**Reason:** the receiving folder admits the moved file as a new item (`folder-files/moved-arrival-markdown-new`), so the missing file is read as the file of an item that holds more than it showed (`folder-files/missing-file-changed-revives`), not as a deletion of what the file showed. A file with a heading or plain text shows no `title`, and the item holds one the folder took from the file. Both folders then hold both items, each with the words it was sent with.
+**Reason:** the receiving directory admits the moved file as a new item (`folder-files/moved-arrival-markdown-new`), so the missing file is read as the file of an item that holds more than it showed (`folder-files/missing-file-changed-revives`), not as a deletion of what the file showed. A file with a heading or plain text shows no `title`, and the item holds one the directory took from the file. Both directories then hold both items, each with the words it was sent with.
 
 **Tests:** `cli/folder.test.ts › writes back the original item of a new note moved to another folder before its ID line, where the file showed less than the item holds (%s)`.
 
 ### `folder-files/moved-file-item-bytes`
 
-When a file item's missing folder file has unambiguous bytes in a file that carries no ID in another registered folder, a device MUST identify that file as the missing file's move, whatever either file's name.
+When a file item's missing file has unambiguous bytes in a file that carries no ID in another registered directory, a device MUST identify that file as the missing file's move, whatever either file's name.
 
-**Reason:** the folder that file is in takes it as the file item by those bytes (`folder-files/moved-arrival-bytes`), so a delete would trash the item that folder now holds. A note's missing Markdown file is still found only by its identity or its ID line.
+**Reason:** the directory that file is in takes it as the file item by those bytes (`folder-files/moved-arrival-bytes`), so a delete would trash the item that directory now holds. A note's missing Markdown file is still found only by its identity or its ID line.
 
 **Tests:** `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`.
 
 ### `folder-files/moved-binding-kept`
 
-While a missing folder file is found in another registered folder in a file that carries no ID and that folder would take as the item, that folder’s lists take it, it has not bound it, and it has no file of the item, a device MUST keep the missing file’s binding.
+While a missing file is found in another registered directory in a file that carries no ID and that directory would take as the item, that directory’s lists take it, it has not bound it, and it has no file of the item, a device MUST keep the missing file’s binding.
 
-**Reason:** the other folder knows a file that carries no ID as the item only by this binding (`folder-files/moved-arrival-bytes`, `folder-files/moved-arrival-text-note`). Released before that folder scans, the binding cannot name the item there, and a folder whose query still holds the item writes its file again, so the moved file becomes a new item. A Markdown file without an ID line is a new item there (`folder-files/moved-arrival-markdown-new`), so its binding is not kept.
+**Reason:** the other directory knows a file that carries no ID as the item only by this binding (`folder-files/moved-arrival-bytes`, `folder-files/moved-arrival-text-note`). Released before that directory scans, the binding cannot name the item there, and a directory whose folder's query still holds the item writes its file again, so the moved file becomes a new item. A Markdown file without an ID line is a new item there (`folder-files/moved-arrival-markdown-new`), so its binding is not kept.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`.
 
 ### `folder-files/moved-awaiting-peer`
 
-While a scan keeps a missing folder file’s binding under `folder-files/moved-binding-kept`, a pull leaves a missing folder file unwritten under `folder-files/moved-not-revived`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST count the item as `elsewhere`.
+While a scan keeps a missing file’s binding under `folder-files/moved-binding-kept`, a pull leaves a missing file unwritten under `folder-files/moved-not-revived`, or another registered directory holds a file that carries the ID of an item this directory has not bound and that directory has not bound the file, a device MUST count the item as `elsewhere`.
 
-**Reason:** a watch pulls at every pass while an item counts as `elsewhere`, so past the rename grace it reads where the scan found the missing file instead of looking in the other folders itself. A quick pass keeps the last scan’s finding until a minute has passed since the last look, and a full pass looks again, so a watch releases the binding within a minute of the other folder binding the file, whatever the folder's full-pass interval (`folder-files/kept-file-looked-again`).
+**Reason:** a watch pulls at every pass while an item counts as `elsewhere`, so past the rename grace it reads where the scan found the missing file instead of looking in the other directories itself. A quick pass keeps the last scan’s finding until a minute has passed since the last look, and a full pass looks again, so a watch releases the binding within a minute of the other directory binding the file, whatever the folder's full-pass interval (`folder-files/kept-file-looked-again`).
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`, `device/folders-one-mac.test.ts › follows a move by copy and delete, by id and by bytes`, `device/folders-one-mac.test.ts › makes no second item when another device changes a moved file's item inside the grace`.
 
 ### `folder-files/moved-awaiting-peer-no-replacement`
 
-While a scan keeps a missing folder file’s binding under `folder-files/moved-binding-kept`, or another registered folder holds a file that carries the ID of an item this folder has not bound and that folder has not bound the file, a device MUST NOT write a replacement file.
+While a scan keeps a missing file’s binding under `folder-files/moved-binding-kept`, or another registered directory holds a file that carries the ID of an item this directory has not bound and that directory has not bound the file, a device MUST NOT write a replacement file.
 
-**Reason:** written anew, the file would make the moved file read as a copy in the other folder.
+**Reason:** written anew, the file would make the moved file read as a copy in the other directory.
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item when a file item both folders hold moves between them and the %s folder scans first`.
 
 ### `folder-files/moved-not-revived`
 
-While a missing folder file is found in another registered folder, by its identity, by the ID it carries or as the one file there with its bytes, a device MUST NOT write the missing file again from another device's change.
+While a missing file is found in another registered directory, by its identity, by the ID it carries or as the one file there with its bytes, a device MUST NOT write the missing file again from another device's change.
 
-**Reason:** written again, the file makes the moved file read as a copy in the folder it went to, which then admits it as a second item (`folder-files/cross-folder-copy`). The change still reaches the item, since the moved file merges it once that folder binds it. A file whose folders both hold its item, each with its own file, is not a move (`folder-files/item-in-folders-delete`), and is written back under `folder-files/delete-remote-revives`.
+**Reason:** written again, the file makes the moved file read as a copy in the directory it went to, which then admits it as a second item (`folder-files/cross-folder-copy`). The change still reaches the item, since the moved file merges it once that directory binds it. A file whose folders both hold its item, each with its own file, is not a move (`folder-files/item-in-folders-delete`), and is written back under `folder-files/delete-remote-revives`.
 
 **Tests:** `device/folders-one-mac.test.ts › makes no second item when another device changes a moved file's item inside the grace`.
 
 ### `folder-files/move-keeps-item`
 
-When a file bound to an item moves to another registered folder and that folder binds no other file to the item, a device MUST bind the moved file to that item, whether or not the receiving folder's query holds it, except where `folder-files/moved-arrival-markdown-new` or `folder-files/cross-folder-hidden-item` admits the file as a new item.
+When a file bound to an item moves to another registered directory and that directory binds no other file to the item, a device MUST bind the moved file to that item, whether or not the receiving folder's query holds it, except where `folder-files/moved-arrival-markdown-new` or `folder-files/cross-folder-hidden-item` admits the file as a new item.
 
-**Reason:** the person moved a file, not the note it carries. The folder the file left trashes the item only once no registered folder holds the file (`folder-files/missing-file-trashed`). A file whose ID is still in a file left in the first folder is a copy (`folder-files/cross-folder-copy`) and is not a move. An item the server will not show to the receiving folder cannot be bound there, so its file is a new item (`folder-files/cross-folder-hidden-item`).
+**Reason:** the person moved a file, not the note it carries. The directory the file left trashes the item only once no registered directory holds the file (`folder-files/missing-file-trashed`). A file whose ID is still in a file left in the first directory is a copy (`folder-files/cross-folder-copy`) and is not a move. An item the server will not show to the receiving directory cannot be bound there, so its file is a new item (`folder-files/cross-folder-hidden-item`).
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › keeps one item, and every edit made before and after the move, of a bound file moved to another folder`, `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
 
 ### `folder-files/move-no-second-item`
 
-When a file bound to an item moves to another registered folder, a device MUST NOT admit the moved file as a new item, unless the receiving folder binds another file to the item, or `folder-files/moved-arrival-markdown-new` or `folder-files/cross-folder-hidden-item` admits it.
+When a file bound to an item moves to another registered directory, a device MUST NOT admit the moved file as a new item, unless the receiving directory binds another file to the item, or `folder-files/moved-arrival-markdown-new` or `folder-files/cross-folder-hidden-item` admits it.
 
-**Reason:** a second item would hold the person's words twice and leave the first to be trashed with the edits made since. A receiving folder that binds another file to the item holds a copy (`folder-files/cross-folder-copy`). A Markdown file that carries no ID line is no note's file, and its words are kept in the new item. An item the server will not show to the receiving folder is not there to hold the words, so the file becomes a new item.
+**Reason:** a second item would hold the person's words twice and leave the first to be trashed with the edits made since. A receiving directory that binds another file to the item holds a copy (`folder-files/cross-folder-copy`). A Markdown file that carries no ID line is no note's file, and its words are kept in the new item. An item the server will not show to the receiving directory is not there to hold the words, so the file becomes a new item.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps one item, and every edit made before and after the move, of a bound file moved to another folder`, `device/folders-one-mac.test.ts › makes no second item when another device changes a moved file's item inside the grace`.
 
 ### `folder-files/move-keeps-edits`
 
-When a file bound to an item moves to another registered folder and the moved file stays bound to that item, a device MUST deliver to the item every edit made to the file before the move and every edit made to it after.
+When a file bound to an item moves to another registered directory and the moved file stays bound to that item, a device MUST deliver to the item every edit made to the file before the move and every edit made to it after.
 
-**Reason:** an edit read before the move reaches the item whether the move came before or after the scan that read it, and the receiving folder reads the edits made after. An edit the folder it left had queued and not yet sent is sent beside the receiving folder's own read of the same words from the same version, so the server keeps the later send as a conflicted copy of the item with the same words. No edit is lost, and the move itself makes no item. Where the moved file becomes a new item instead (`folder-files/moved-arrival-markdown-new`, `folder-files/cross-folder-hidden-item`), the edits go to the new item.
+**Reason:** an edit read before the move reaches the item whether the move came before or after the scan that read it, and the receiving directory reads the edits made after. An edit the directory it left had queued and not yet sent is sent beside the receiving folder's own read of the same words from the same version, so the server keeps the later send as a conflicted copy of the item with the same words. No edit is lost, and the move itself makes no item. Where the moved file becomes a new item instead (`folder-files/moved-arrival-markdown-new`, `folder-files/cross-folder-hidden-item`), the edits go to the new item.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps one item, and every edit made before and after the move, of a bound file moved to another folder`, `device/folders-one-mac.test.ts › keeps an edit already queued in the folder a bound file left, and makes no item for the move`.
 
-## Another folder's files
+## Another directory's files
 
 ### `folder-files/cross-folder-copy`
 
-When a file’s ID already appears in another folder and the receiving folder already binds that item or its query excludes the item, a device MUST admit the arriving file as a new item.
+When a file’s ID already appears in another directory and the receiving directory already binds that item or its query excludes the item, a device MUST admit the arriving file as a new item.
 
 **Tests:** `device/folders-one-mac.test.ts › tells a copy into another folder from a move`.
 
 ### `folder-files/cross-folder-member-adopted`
 
-When a file arrives with an ID held by the receiving folder’s query and that folder has no file for the item, a device MUST bind the arriving file to the existing item.
+When a file arrives with an ID held by the receiving folder’s query and that directory has no file for the item, a device MUST bind the arriving file to the existing item.
 
 **Tests:** `device/folders-one-mac.test.ts › takes a copy into a folder that holds the item and has no file of it as the item's file`.
 
 ### `folder-files/cross-folder-item-read`
 
-When a file arrives with an ID held only by another folder’s copy and no file elsewhere still carries it, a device MUST read and pin the item from the server before binding it as the same item.
+When a file arrives with an ID held only by another directory’s copy and no file elsewhere still carries it, a device MUST read and pin the item from the server before binding it as the same item.
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`, `device/folders-one-mac.test.ts › gives a fresh id to a moved file whose item the server will not show, and pins one it shows`, `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
@@ -1916,13 +1916,13 @@ When the server will not show the item named by a moved file’s ID, a device MU
 
 **Tests:** `device/folders-one-mac.test.ts › gives a fresh id to a moved file whose item the server will not show, and pins one it shows`.
 
-## Taking in another folder’s file
+## Taking in another directory’s file
 
 ### `folder-files/copy-holds-bound`
 
 Where a folder's copy has a query, a device MUST hold every item that a file of the folder is bound to, whether or not the query takes the item.
 
-**Reason:** a scan of another folder on the same machine tells a file moved from this folder by whether this folder's copy holds the file's item.
+**Reason:** a scan of another directory on the same machine tells a file moved from this directory by whether this directory's copy holds the file's item.
 
 **Tests:** `device/folders-copy-shrink.test.ts › keeps an item a file is bound to when an event takes it out of the query`, `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
@@ -1930,7 +1930,7 @@ Where a folder's copy has a query, a device MUST hold every item that a file of 
 
 Where a folder's copy has a query, when a scan finds a file whose `marfa_id` names an item the copy does not hold and the server holds that item for the folder's key, a device MUST send the file as an edit of that item, not as a new item.
 
-**Reason:** a narrowed copy leaves out items the folder does not show, so a file restored from a backup, copied from another Mac or moved from a folder that is not registered can name an item the server holds. A new item would duplicate it under another id.
+**Reason:** a narrowed copy leaves out items the folder does not show, so a file restored from a backup, copied from another Mac or moved from a directory that is not registered can name an item the server holds. A new item would duplicate it under another id.
 
 **Tests:** `device/folders-copy-shrink.test.ts › sends the file as an edit of the item its id names, not as a new item`, `› sends the same file as an edit from a copy that is not narrowed`.
 
@@ -1952,45 +1952,45 @@ Where a folder's copy has a query, when the server has answered that it shows no
 
 ### `folder-files/take-in-file`
 
-When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST take that file into its placement.
+When another registered directory no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST take that file into its placement.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folder-files/take-in-file-taken-count`
 
-When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST count the file as `taken`.
+When another registered directory no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST count the file as `taken`.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folder-files/moved-unmatched-taken-back`
 
-When a file moves into a registered folder whose query does not hold its item for a reason other than the item's state, the file is unchanged since the folder it left wrote it, and the query of the folder it left holds the item, a device MUST take the file back into the folder it left once the rename grace has passed.
+When a file moves into a registered directory whose query does not hold its item for a reason other than the item's state, the file is unchanged since the directory it left wrote it, and the query of the directory it left holds the item, a device MUST take the file back into the directory it left once the rename grace has passed.
 
-**Reason:** the person moved a file, not the note, and the receiving folder keeps the file as `unmatched` (`folder-files/unmatched-file-kept`), so the item would show in no folder it belongs to. The folder it left holds the item without a file and takes the file as it takes one another folder let go (`folder-files/take-in-file`), so the item stays one item at one version, and trashes nothing (`folder-files/move-keeps-item`). A folder whose query leaves the item out by its state keeps the file, as it keeps a file of an item that left it by its state (`folder-files/take-in-file`).
+**Reason:** the person moved a file, not the note, and the receiving directory keeps the file as `unmatched` (`folder-files/unmatched-file-kept`), so the item would show in no directory it belongs to. The directory it left holds the item without a file and takes the file as it takes one another directory let go (`folder-files/take-in-file`), so the item stays one item at one version, and trashes nothing (`folder-files/move-keeps-item`). A folder whose query leaves the item out by its state keeps the file, as it keeps a file of an item that left it by its state (`folder-files/take-in-file`).
 
 **Tests:** `cli/folder.test.ts › takes a note's file back into the folder it left, and says so, when the folder it was moved into does not hold the note`, `cli/folder.test.ts › leaves a note's file in the folder it was moved into when that folder's query leaves the note out by its state`.
 
 ### `folder-files/moved-unmatched-taken-back-count`
 
-When a device takes a file back into the folder it left under `folder-files/moved-unmatched-taken-back`, a device MUST count the file as `taken` in the pull report of that folder.
+When a device takes a file back into the directory it left under `folder-files/moved-unmatched-taken-back`, a device MUST count the file as `taken` in the pull report of that directory.
 
 **Tests:** `cli/folder.test.ts › takes a note's file back into the folder it left, and says so, when the folder it was moved into does not hold the note`.
 
 ### `folder-files/take-in-edited-source-kept`
 
-When another folder’s let-go file was edited since that folder last read it, a device MUST leave the source file for its own folder to send.
+When another directory’s let-go file was edited since that folder last read it, a device MUST leave the source file for its own directory to send.
 
 **Tests:** `device/folders-one-mac.test.ts › does not take in a let-go file edited since its folder last read it`.
 
 ### `folder-files/take-in-state-excluded`
 
-When an item left another folder by state, a device MUST NOT take in that folder’s file as a non-state departure.
+When an item left another directory by state, a device MUST NOT take in that directory’s file as a non-state departure.
 
 **Tests:** `device/folders-one-mac.test.ts › does not take in the file of an item that left its folder by state`.
 
 ### `folder-files/take-in-attachment-excluded`
 
-When a document in another registered folder embeds an item or has it attached, that folder has a file of the document, and that folder's query still holds the document or the receiving folder's query does not, a device MUST NOT take in that folder's file of the item.
+When a document in another registered directory embeds an item or has it attached, that directory has a file of the document, and that folder's query still holds the document or the receiving folder's query does not, a device MUST NOT take in that directory's file of the item.
 
 **Reason:** the file is the document's attachment there, whatever folder holds the item on its own, so taking it in would take it from beside its document.
 
@@ -1998,9 +1998,9 @@ When a document in another registered folder embeds an item or has it attached, 
 
 ### `folder-files/take-in-attachment-with-document`
 
-When a document moves from another registered folder's query into a folder's query, and the other folder has a file of an item the document embeds or has attached, a device MUST take in that file for the folder the document moved to, as it takes in the document's own file.
+When a document moves from another registered directory's query into a folder's query, and the other directory has a file of an item the document embeds or has attached, a device MUST take in that file for the folder the document moved to, as it takes in the document's own file.
 
-**Reason:** the other folder no longer writes the file once its document leaves, so a file written anew instead would leave the other folder's copy unmatched for good.
+**Reason:** the other directory no longer writes the file once its document leaves, so a file written anew instead would leave the other directory's copy unmatched for good.
 
 **Tests:** `device/folders-one-mac.test.ts › moves a note's attachment with the note to another notes folder when %s hears first`.
 
@@ -2030,13 +2030,13 @@ When a move-in is refused because its destination became occupied, a device MUST
 
 ### `folder-files/take-in-journal-ownership`
 
-When a folder adopts matching destination bytes or takes in another folder’s file, a device MUST clear the arriving item’s journal entry.
+When a folder adopts matching destination bytes or takes in another directory’s file, a device MUST clear the arriving item’s journal entry.
 
 **Tests:** `device/folders-one-mac.test.ts › preserves ownership for an identical move destination ($mode, previous binding $previous)`.
 
 ### `folder-files/take-in-previous-journal-kept`
 
-When a folder adopts matching destination bytes or takes in another folder’s file, a device MUST preserve any previous owner’s deletion journal entry.
+When a folder adopts matching destination bytes or takes in another directory’s file, a device MUST preserve any previous owner’s deletion journal entry.
 
 **Tests:** `device/folders-one-mac.test.ts › preserves ownership for an identical move destination ($mode, previous binding $previous)`.
 
@@ -2090,55 +2090,55 @@ When a successful move-in copy cannot remove its source, a device MUST leave the
 
 ### `folder-files/retained-source-reported`
 
-When a copied source remains in its original folder because removal is denied, a device MUST retain the file’s unmatched status.
+When a copied source remains in its original directory because removal is denied, a device MUST retain the file’s unmatched status.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folder-files/retained-source-reported-unwritten-count`
 
-When a copied source remains in its original folder because removal is denied, a device MUST report the file as `unwritten`.
+When a copied source remains in its original directory because removal is denied, a device MUST report the file as `unwritten`.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folder-files/retained-source-reported-bytes-preserved`
 
-When a copied source remains in its original folder because removal is denied, a device MUST NOT rewrite the file.
+When a copied source remains in its original directory because removal is denied, a device MUST NOT rewrite the file.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folder-files/retained-source-later-removal`
 
-When removal of a retained copied source becomes possible and its identity and bytes still belong to the original folder, a device MUST remove the source.
+When removal of a retained copied source becomes possible and its identity and bytes still belong to the original directory, a device MUST remove the source.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folder-files/retained-source-item-preserved`
 
-When removal of a retained copied source becomes possible and its identity and bytes still belong to the original folder, a device MUST NOT trash the item.
+When removal of a retained copied source becomes possible and its identity and bytes still belong to the original directory, a device MUST NOT trash the item.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folder-files/retained-source-edit-kept`
 
-When the person edits a retained copied source before its removal becomes possible, a device MUST preserve the edit for that source folder to send.
+When the person edits a retained copied source before its removal becomes possible, a device MUST preserve the edit for that source directory to send.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
 ### `folder-files/let-go-existing-peer`
 
-When another registered folder already holds its own file for an item this folder no longer holds, a device MUST remove this folder’s unchanged owned file.
+When another registered directory already holds its own file for an item this folder no longer holds, a device MUST remove this directory’s unchanged owned file.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folder-files/let-go-existing-peer-let-go-count`
 
-When another registered folder already holds its own file for an item this folder no longer holds, a device MUST count this folder’s file as `let_go`.
+When another registered directory already holds its own file for an item this folder no longer holds, a device MUST count this directory’s file as `let_go`.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folder-files/let-go-attachment-kept`
 
-While a document in a folder embeds an item or has it attached, a device MUST NOT let go of that folder's file of the item because another registered folder holds its own file for the item.
+While a document in a folder embeds an item or has it attached, a device MUST NOT let go of that folder's file of the item because another registered directory holds its own file for the item.
 
 **Reason:** the pull that lets the file go writes it again beside its document, so every pull would remove and write the same file.
 
@@ -2146,9 +2146,9 @@ While a document in a folder embeds an item or has it attached, a device MUST NO
 
 ### `folder-files/let-go-attachment-with-document`
 
-When this folder no longer holds an item or any document the item is attached to, and another registered folder's query holds a document the item is attached to and that folder has its own file of the item, a device MUST remove this folder's unchanged owned file of the item and count it as `let_go`.
+When this folder no longer holds an item or any document the item is attached to, and another registered directory's query holds a document the item is attached to and that directory has its own file of the item, a device MUST remove this directory's unchanged owned file of the item and count it as `let_go`.
 
-**Reason:** the other folder writes the file beside the document it holds, so a file kept here would stay unmatched for good.
+**Reason:** the other directory writes the file beside the document it holds, so a file kept here would stay unmatched for good.
 
 **Tests:** `device/folders-one-mac.test.ts › moves a note's attachment with the note to another notes folder when %s hears first`.
 
@@ -2160,12 +2160,12 @@ When a bound unmatched file is missing from disk, a device MUST leave the missin
 
 ### `folder-files/item-in-folders-editable`
 
-When two folder queries hold one item, a device MUST keep each folder’s bound file editable through that folder’s own queue.
+When two folder queries hold one item, a device MUST keep each directory’s bound file editable through that directory’s own queue.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps two folders' files for one item editable`.
 
 ### `folder-files/item-in-folders-delete`
 
-When the person deletes either of two files whose folders both hold the item, a device MUST trash the item after the deletion grace rather than treat the other folder’s file as a move.
+When the person deletes either of two files whose folders both hold the item, a device MUST trash the item after the deletion grace rather than treat the other directory’s file as a move.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps two folders' files for one item editable`, `device/folders-one-mac.test.ts › trashes a file item deleted where both folders hold it`.

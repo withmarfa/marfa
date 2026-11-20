@@ -133,7 +133,7 @@ pub enum WatchError<E> {
     /// The server refused the credential, so nothing the watch sends can
     /// land until a working one replaces it.
     CredentialRefused(CoreError),
-    /// The server's changes stopped reaching the folder.
+    /// The server's changes stopped reaching the directory.
     FollowEnded(CoreError),
     /// The directory could not be watched.
     Unwatchable(String),
@@ -152,6 +152,15 @@ impl<E> From<CoreError> for WatchError<E> {
     fn from(error: CoreError) -> Self {
         WatchError::Core(error)
     }
+}
+
+/// What a watch says when the server refuses its credential: where, why, and
+/// that it stopped with changes not yet sent still waiting.
+pub fn credential_refused_said(server: &str, said: &CoreError) -> String {
+    format!(
+        "the server at {server} refused this watch's credential ({said}), so the watch stopped; \
+         changes not yet sent wait until a working credential is kept"
+    )
 }
 
 #[derive(Default)]
@@ -1717,6 +1726,20 @@ fn hydrated_by_the_follow(error: &CoreError) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_refused_credential_is_said_with_the_server_and_what_waits() {
+        let said = super::credential_refused_said(
+            "https://one.test",
+            &crate::CoreError::SignedOut {
+                origin: "https://one.test".into(),
+            },
+        );
+        assert!(
+            said.starts_with("the server at https://one.test refused this watch's credential (")
+        );
+        assert!(said.ends_with("changes not yet sent wait until a working credential is kept"));
+    }
+
     #[test]
     fn a_follow_that_ends_signed_out_is_the_credentials_and_one_that_ends_otherwise_is_not() {
         use super::{WatchError, follow_ended};

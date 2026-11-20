@@ -26,7 +26,7 @@ When a quick folder scan reads a file carrying the ID of an otherwise skipped fi
 
 ### `folder-speed/scan-read-race-retried`
 
-When a folder file changes while a watch scan reads it, a device MUST read it again at a subsequent pass rather than treat the concurrent save as already scanned.
+When a file changes while a watch scan reads it, a device MUST read it again at a subsequent pass rather than treat the concurrent save as already scanned.
 
 **Tests:** `device/binding-folders-clock.test.ts › reads a save made during a scan on a subsequent pass`.
 
@@ -66,7 +66,7 @@ If folder settings name a `full_pass_interval_seconds` that is not a whole numbe
 
 ### `folder-speed/watch-quiet-pass-unrendered`
 
-When a quick or full pass of a folder watch finds no file changed on disk and sends or takes in no write, while the working copy and the folder's record of its files are as they were when the watch's previous pull began, that pull wrote, moved or removed no file and left none unwritten or waiting on another folder, every path where a symbolic link, a package or another folder kept that pull from writing is still kept so for the same reason, and `folder-speed/watch-hourly-full-render` does not apply, a device MUST NOT render any folder file.
+When a quick or full pass of a folder watch finds no file changed on disk and sends or takes in no write, while the working copy and the folder's record of its files are as they were when the watch's previous pull began, that pull wrote, moved or removed no file and left none unwritten or waiting on another folder, every path where a symbolic link, a package or another folder kept that pull from writing is still kept so for the same reason, and `folder-speed/watch-hourly-full-render` does not apply, a device MUST NOT render any file.
 
 **Reason:** a pass can start every second while a folder changes, and a pull renders every file the folder holds to compare it with the disk, so a watch on a quiet folder of hundreds of files would spend the processor on rendering what it already wrote.
 
@@ -82,7 +82,7 @@ When a folder watch's pull follows an earlier pull of the same watch that ran to
 
 ### `folder-speed/watch-hourly-full-render`
 
-When an hour has passed since a folder watch's pull last rendered every folder file, a device MUST run a pull at the watch's next pass and render every folder file in it, even where the pass finds nothing changed.
+When an hour has passed since a folder watch's pull last rendered every file, a device MUST run a pull at the watch's next pass and render every file in it, even where the pass finds nothing changed.
 
 **Reason:** the choice of `folder-speed/watch-pull-renders-reached` follows what a file renders from, and a full render at least once an hour finds and rewrites a file whose source that choice missed.
 
@@ -92,7 +92,7 @@ When an hour has passed since a folder watch's pull last rendered every folder f
 
 ### `folder-speed/busy-watch-progress`
 
-While a folder receives changes more frequently than its settle window, a device MUST continue watch passes that send other files.
+While a directory receives changes more frequently than its settle window, a device MUST continue watch passes that send other files.
 
 **Tests:** `device/folders.test.ts › keeps syncing both ways while a file changes twice a second`, `device/folders.test.ts › sends a file being copied in only once it stops changing, while every other file goes on`.
 
@@ -144,6 +144,6 @@ When a non-document file is renamed while its bytes are still settling, a device
 
 ### `folder-speed/still-changing-notice`
 
-While a folder file never settles enough for the watch to read it, the CLI MUST say once that the file is still changing and has not been sent.
+While a file never settles enough for the watch to read it, the CLI MUST say once that the file is still changing and has not been sent.
 
 **Tests:** `device/folders.test.ts › says once that a file which never stops changing has not been sent`.
