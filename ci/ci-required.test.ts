@@ -799,6 +799,16 @@ describe("what a change runs", () => {
       [...PACKAGES, "types-freshness", "clients-freshness", ...RUST],
     ],
     [
+      "a file in the icons folder that is not an icon set, which the freshness job would find",
+      ["core/marfa-rules/icons/stray.json"],
+      ["quick-checks", "types-freshness"],
+    ],
+    [
+      "a note in the icons folder, which the freshness job would find",
+      ["core/marfa-rules/icons/README.md"],
+      ["quick-checks", "types-freshness", "version-fields"],
+    ],
+    [
       "the score script",
       ["conformance/scripts/rust-score.ts"],
       [

@@ -313,6 +313,20 @@ pub(super) fn register_edges(edges: &[Source]) -> Result<Vec<Obj>, Vec<String>> 
         } else if !is_kebab_word(&id) {
             problems.push("a shipped edge type is one lowercase kebab word".into());
         }
+        if !row
+            .get("label")
+            .and_then(Value::as_str)
+            .is_some_and(|label| !label.trim().is_empty())
+        {
+            problems.push("label: a shipped edge type names its label".into());
+        }
+        if let Some(reverse) = row.get("reverse_name").and_then(Value::as_str)
+            && !is_kebab_word(reverse)
+        {
+            problems.push(format!(
+                "reverse_name: \"{reverse}\" is not one lowercase kebab word"
+            ));
+        }
         for side in ["from_type_constraints", "to_type_constraints"] {
             if row
                 .get(side)
@@ -594,8 +608,14 @@ pub(super) struct Written {
 
 pub(super) fn write(root: &Path) -> Result<Written, Vec<String>> {
     let (type_sources, edge_sources) = shipped_sources(root).map_err(|e| vec![e])?;
-    let types = register_types(&type_sources)?;
-    let edges = register_edges(&edge_sources)?;
+    let (types, edges) = match (register_types(&type_sources), register_edges(&edge_sources)) {
+        (Ok(types), Ok(edges)) => (types, edges),
+        (types, edges) => {
+            let mut refused = types.err().unwrap_or_default();
+            refused.extend(edges.err().unwrap_or_default());
+            return Err(refused);
+        }
+    };
     let tables: HashMap<String, Value> = type_sources
         .iter()
         .filter_map(|(_, row)| {
@@ -854,6 +874,23 @@ mod tests {
             refused.contains("note.json: core.note: fields.body"),
             "{refused}"
         );
+    }
+
+    #[test]
+    fn a_bad_item_type_and_a_bad_edge_type_are_both_named_with_every_fault() {
+        let copy = Copy::new();
+        copy.edit("note.json", |row| {
+            row["fields"]["body"]["type"] = Value::String("no-such-kind".into());
+        });
+        copy.edit("edges/about.json", |row| {
+            row["cardinality"] = Value::String("sideways".into());
+        });
+        let refused = write(&copy.0).err().unwrap().join("\n");
+        assert!(
+            refused.contains("note.json: core.note: fields.body"),
+            "{refused}"
+        );
+        assert!(refused.contains("about.json: about:"), "{refused}");
     }
 
     #[test]

@@ -1913,6 +1913,38 @@ mod folder {
     }
 
     #[test]
+    fn a_shipped_edge_file_is_refused_for_no_label_or_a_reverse_name_that_is_not_a_kebab_word() {
+        let file = |extra: Value| {
+            let mut definition = json!({"id": "reviews", "label": "Reviews", "reverse_label": "R", "cardinality": "many-to-many"});
+            if let (Some(definition), Some(extra)) = (definition.as_object_mut(), extra.as_object())
+            {
+                definition.extend(extra.clone());
+            }
+            ("reviews.json".to_string(), row(definition))
+        };
+        assert!(register_edges(&[file(json!({"reverse_name": "reviewed-by"}))]).is_ok());
+        for bad in ["reviewed_by", "Reviewed-by", "reviewed--by", "-reviewed"] {
+            let refused = register_edges(&[file(json!({"reverse_name": bad}))]).unwrap_err();
+            assert!(
+                refused.iter().any(|line| line.contains("reverse_name")),
+                "{bad}: {refused:?}"
+            );
+        }
+        let mut without = file(json!({}));
+        without.1.remove("label");
+        let refused = register_edges(&[without]).unwrap_err();
+        assert!(
+            refused.iter().any(|line| line.contains("label")),
+            "{refused:?}"
+        );
+        let refused = register_edges(&[file(json!({"label": ""}))]).unwrap_err();
+        assert!(
+            refused.iter().any(|line| line.contains("label")),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
     fn a_wrongly_named_edge_file_has_every_fault_listed_with_its_file() {
         let both = |id: &str| {
             (
