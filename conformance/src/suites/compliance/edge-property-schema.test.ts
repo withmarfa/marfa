@@ -767,7 +767,7 @@ describe("null and format", () => {
     expect(refused.error?.error.code, JSON.stringify(fault)).toBe(
       "invalid_schema",
     );
-    expect(named(refused.error), JSON.stringify(fault)).toEqual([path]);
+    expect(named(refused.error?.error), JSON.stringify(fault)).toEqual([path]);
     const listed = await client.listEdgeTypes();
     expect(listed.data.data.map((t) => t.id)).not.toContain(id);
 
@@ -805,7 +805,9 @@ describe("null and format", () => {
     });
     expect(empty.status).toBe(400);
     expect(empty.error?.error.code).toBe("invalid_schema");
-    expect(named(empty.error)).toEqual(["property_schema.kind.enum_values"]);
+    expect(named(empty.error?.error)).toEqual([
+      "property_schema.kind.enum_values",
+    ]);
   });
 
   it("refuses enum_values on a property that is not an enum, naming the property", async () => {
@@ -830,7 +832,7 @@ describe("null and format", () => {
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("invalid_schema");
-    expect(named(refused.error)).toEqual([
+    expect(named(refused.error?.error)).toEqual([
       "property_schema.list.items_type",
       "property_schema.pick.enum_values",
     ]);
