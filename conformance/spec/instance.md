@@ -52,7 +52,7 @@ Where a destination is set and `backup_interval_seconds` is 0, when `GET /attent
 
 **Reason:** an interval of 0 is a choice, and it is told differently from having nowhere to put a backup.
 
-**Tests:** `compliance/backups.test.ts › says in attention that no backups are kept and how to set one, and says an interval of 0 differently`.
+**Tests:** `compliance/backups.test.ts › says in attention that no backups are kept and how to set one, and says an interval of 0 differently`, `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
 
 ### `instance/attention-backup-destination-set`
 
@@ -3566,6 +3566,14 @@ While the address rules refuse the server's requests to an attached object store
 **Reason:** a refused store takes no copy and no backup, and only the switch or the store's address can change that, so the owner reads which one decides it where every other unusable destination is reported (`instance/backup-health-unusable`).
 
 **Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`, `› names the credentials fetch, not the store's address, when the address rules refuse it for an object store with no access key, and keeps that store attached`.
+
+### `instance/object-store-refused-ends`
+
+When the address rules stop refusing the server's requests to an attached object store, the server MUST answer `GET /health` with `backups.store_error` `null` and `backups.reason` not `destination_unusable`, whether or not a run of `blob-replicate` has ended since.
+
+**Reason:** the last copy run's refusal says what the store did then, so health that kept repeating it would name an address rule that no longer refuses.
+
+**Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
 
 ### `instance/object-store-refused-credentials`
 

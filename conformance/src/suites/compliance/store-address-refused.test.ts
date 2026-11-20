@@ -179,11 +179,14 @@ describe("an object store the address rules refuse", () => {
         expect(String(refused.store_error)).not.toMatch(/credentials/);
         const store = await stillAttached(operator, id);
         expect(store.error).toBe(refused.store_error);
+        // Both concerns show: a refused store does not hide that backups are off.
         const concerns = (await attentionOf(server)).filter(
           (concern) =>
-            concern.kind === "backup" && concern.reference === "store",
+            concern.kind === "backup" &&
+            ["store", "turned_off"].includes(concern.reference),
         );
-        expect(concerns.map((concern) => concern.title)).toEqual([
+        expect(concerns.map((concern) => concern.title).sort()).toEqual([
+          "Scheduled backups are turned off",
           "The backup destination cannot be used",
         ]);
 
@@ -223,6 +226,13 @@ describe("an object store the address rules refuse", () => {
 
         // The witness: once the host is public again, the same store is used and the file goes.
         await server.setFault(PUBLIC_AGAIN);
+        // A run that reaches the store ends the refusal, and health stops saying it at once,
+        // though the last copy run still holds the refusal's text.
+        await runJob(operator, "blob-integrity");
+        const cleared = await backups(operator);
+        expect(cleared.store_error).toBeNull();
+        expect(cleared.reason).toBe("turned_off");
+        expect((await stillAttached(operator, id)).error).toBeNull();
         await replicateUntilCaughtUp(operator, "the waiting file's copy");
         expect(
           (await operator.listBlobCopies(waiting.data.hash)).data.data,

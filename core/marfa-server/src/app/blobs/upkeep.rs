@@ -498,6 +498,11 @@ async fn copy_missing(app: &Arc<App>, run: &Run) -> Result<Report> {
     if copied == 0 && !refused.is_empty() {
         failure = Some(refused.values().cloned().collect::<Vec<_>>().join(" "));
         result["refused"] = json!(refused);
+        if let Some(s3) = app.blobs.refused()
+            && refused.contains_key(s3.id())
+        {
+            result["address_refused"] = json!([s3.id()]);
+        }
     }
     Ok(Report {
         result,

@@ -37,7 +37,6 @@ use super::faults::{
     Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS, HOLD_BLOB_READ, HOLD_BLOB_WRITE, HOLD_STORES_RECORD,
     HOLD_STORES_SWAP, Lie,
 };
-use super::outbound::store::Refused;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use super::{housekeeping, provenance, stored};
@@ -324,28 +323,27 @@ async fn object_store(
             }
         }
         Marker::Silent(_) | Marker::Refused(_)
-            if unfilled.is_none() && bucket.refused().is_some() =>
+            if unfilled.is_none()
+                && let Some(why) = bucket.refused() =>
         {
             let locator = settings.locator();
             let recorded = db
                 .read(move |tx| rows::object_store_at(tx, &locator))
                 .await
                 .map_err(started)?;
-            match (recorded, bucket.refused()) {
+            match recorded {
                 // Health and the store list read the refusal from the store itself.
-                (Some(id), _) => Ok(bucket.named(id)),
-                (None, why) => Err(refused(format!(
-                    "cannot be reached: {}",
-                    why.map_or("the request was refused", Refused::reason)
-                ))),
+                Some(id) => Ok(bucket.named(id)),
+                None => Err(refused(format!("cannot be reached: {}", why.reason()))),
             }
         }
         Marker::Silent(error) => {
             if let Some(root) = unfilled {
-                return Err(folder_missing(
-                    root,
-                    ", and the object store did not answer",
-                ));
+                let why = match bucket.refused() {
+                    Some(why) => format!(", and the object store is refused: {}", why.reason()),
+                    None => ", and the object store did not answer".to_string(),
+                };
+                return Err(folder_missing(root, &why));
             }
             let locator = settings.locator();
             let recorded = db
@@ -2124,5 +2122,40 @@ mod tests {
         assert!(attached.s3.is_none());
         let trouble = attached.trouble.unwrap();
         assert!(trouble.contains("object store"), "{trouble}");
+    }
+
+    fn local_name_settings(private_allowed: bool) -> ObjectStoreSettings {
+        ObjectStoreSettings {
+            endpoint: Some("http://localhost:1".to_string()),
+            private_allowed,
+            ..signed_settings("us-east-1".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_start_over_an_emptied_blob_folder_names_the_address_rules_that_refused_the_store() {
+        let db = database();
+        let refused = object_store(&db, &local_name_settings(false), Some(Path::new("/blobs")))
+            .await
+            .unwrap_err();
+        assert!(
+            refused.message.contains("allow_private_addresses"),
+            "{}",
+            refused.message
+        );
+        assert!(
+            !refused.message.contains("did not answer"),
+            "{}",
+            refused.message
+        );
+        // The witness: with the rules allowing the address, the same store is one that did not answer.
+        let silent = object_store(&db, &local_name_settings(true), Some(Path::new("/blobs")))
+            .await
+            .unwrap_err();
+        assert!(
+            silent.message.contains("did not answer"),
+            "{}",
+            silent.message
+        );
     }
 }

@@ -3279,7 +3279,7 @@ export interface components {
                  */
                 status: "ok" | "incomplete" | "failing" | "off";
                 /**
-                 * @description Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0, also given beside `failing`.
+                 * @description Why backups are `off` or `failing`: `no_backup_destination` when none is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0. `destination_unusable` comes before `turned_off`.
                  * @enum {string}
                  */
                 reason?: "no_backup_destination" | "turned_off" | "destination_unusable";
@@ -22081,7 +22081,8 @@ export interface operations {
                      *           "kind": "disk",
                      *           "locator": "/var/lib/marfa/blobs",
                      *           "attached_at": "2026-10-03T09:34:00.198Z",
-                     *           "detached_at": null
+                     *           "detached_at": null,
+                     *           "error": null
                      *         }
                      *       ],
                      *       "next_cursor": null,
