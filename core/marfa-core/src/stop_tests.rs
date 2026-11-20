@@ -37,7 +37,7 @@ pub(crate) fn copy_in_keyed(server: &Scripted, dir: &std::path::Path, key: &str)
     scripted_copy(server, core)
 }
 
-fn scripted_copy(server: &Scripted, core: Core) -> Arc<Core> {
+pub(crate) fn scripted_copy(server: &Scripted, core: Core) -> Arc<Core> {
     {
         let conn = core.conn().unwrap();
         store::meta_set(&conn, store::META_EVENT_CURSOR, "10").unwrap();

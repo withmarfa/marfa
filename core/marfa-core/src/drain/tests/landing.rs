@@ -63,6 +63,7 @@ fn a_create_drawn_to_a_create_that_lands_on_a_held_row_carries_over_and_draws_to
         retry_after_seconds: None,
         replayed: false,
         contract_named: true,
+        request_id: None,
     });
     let settled = land(
         &core,
@@ -599,6 +600,7 @@ fn natural_key_landing_admits_source_excluded_row_under_its_moved_pin() {
         retry_after_seconds: None,
         replayed: false,
         contract_named: true,
+        request_id: None,
     });
     let settled = land(
         &core,
@@ -664,6 +666,7 @@ fn natural_key_receipt_keeps_dependent_work_until_certified_landing() {
         retry_after_seconds: None,
         replayed: false,
         contract_named: true,
+        request_id: None,
     });
     let settled = land(
         &core,
@@ -788,6 +791,7 @@ fn unfound_landing(
         retry_after_seconds: None,
         replayed: false,
         contract_named: true,
+        request_id: None,
     });
     land(
         &core,
@@ -1226,6 +1230,7 @@ fn natural_key_landing_on_a_row_in_the_bin_keeps_waiting() {
         retry_after_seconds: None,
         replayed: false,
         contract_named: true,
+        request_id: None,
     });
     let settled = land(
         &core,

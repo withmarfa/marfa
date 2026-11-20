@@ -968,6 +968,7 @@ mod tests {
                 status: 403,
                 code: Some("type_not_permitted".into()),
                 details: Some(serde_json::json!({ "grant": "core.note" })),
+                request_id: None,
             })),
         };
         let envelope = refused_credential("https://one.test", &said).envelope();

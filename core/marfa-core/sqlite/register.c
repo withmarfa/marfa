@@ -101,3 +101,24 @@ SQLITE_API int marfa_directory_vfs_supported(int fd){
   return SQLITE_NOTFOUND;
 #endif
 }
+
+/* A store reached by a plain path is refused only where SQLite cannot lock or
+** map shared memory: on Apple the file systems whose lock style has no real
+** locks, named as Linux names NFS and SMB. Other file systems, FUSE included,
+** are admitted; one that cannot use WAL answers the old journal mode, which
+** the store's own open refuses.
+*/
+SQLITE_API int marfa_plain_path_name_supported(const char *name){
+  if( !strcmp(name, "nfs") || !strcmp(name, "smbfs") || !strcmp(name, "afpfs") || !strcmp(name, "webdav") ) return SQLITE_NOTFOUND;
+  return SQLITE_OK;
+}
+
+SQLITE_API int marfa_plain_path_supported(int fd){
+#if defined(__APPLE__)
+  struct statfs info;
+  if( fstatfs(fd, &info) ) return SQLITE_IOERR_FSTAT;
+  return marfa_plain_path_name_supported(info.f_fstypename);
+#else
+  return marfa_directory_vfs_supported(fd);
+#endif
+}

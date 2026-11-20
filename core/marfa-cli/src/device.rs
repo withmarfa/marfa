@@ -201,8 +201,8 @@ pub enum DeviceCommand {
     /// copy, and until a hydration has filled it again, the search covers
     /// the items the copy holds and says it is stale. Each is said on
     /// standard error, and under --json as `completeness`, `partial`,
-    /// `stale` or `complete`, beside `hits`. With `--view`, a copy that is
-    /// not whole is refused.
+    /// `stale` or `complete`, beside `data`, which holds the hits, and
+    /// `next_cursor`. With `--view`, a copy that is not whole is refused.
     Search {
         /// Words to look for, matched as the server matches them: all must
         /// match, the last as a prefix, and a query in double quotes is a
@@ -371,8 +371,8 @@ pub enum DeviceCommand {
     /// Set aside a store SQLite cannot read, and make a new one in its place
     /// that carries every write its queue lets be read.
     ///
-    /// The damaged store and its logs move to `PATH.damaged-N` beside it, for
-    /// the first N no file holds, and are never deleted. Each write carried
+    /// The damaged store and its logs move to `PATH.damaged-N` beside it (beside
+    /// the file a symbolic link at `PATH` leads to), for the first N no file holds, and are never deleted. Each write carried
     /// keeps its id and idempotency key, its body, its base version and its
     /// verdict, and the new store keeps the server and instance the old one
     /// was built from and the bytes kept beside the store. The answer counts
@@ -492,7 +492,8 @@ pub enum ItemsCommand {
     /// and until a hydration has filled it again, the list holds the items
     /// the copy holds and says it is stale. Each is said on standard error,
     /// and under --json as `completeness`, `partial`, `stale` or `complete`,
-    /// beside `items`. With `--view`, a copy that is not whole is refused.
+    /// beside `data`, which holds the items, and `next_cursor`. With `--view`,
+    /// a copy that is not whole is refused.
     List(ListArgs),
     /// One item by id, with its properties and tags.
     ///
@@ -506,9 +507,10 @@ pub enum ItemsCommand {
     /// in the order named.
     ///
     /// An id the copy does not hold is left out, and so is an item in the
-    /// bin unless `--include-bin`. Under --json the answer is `items` beside
-    /// `completeness`, as `items list` answers; while a hydration fills the
-    /// copy it is `partial`, since an item left out may be still to arrive.
+    /// bin unless `--include-bin`. Under --json the answer is `data`,
+    /// `next_cursor` and `completeness`, as `items list` answers; while a
+    /// hydration fills the copy `completeness` is `partial`, since an item
+    /// left out may be still to arrive.
     #[command(name = "bulk-get")]
     BulkGet {
         /// The item ids.

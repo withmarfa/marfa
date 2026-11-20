@@ -27,7 +27,7 @@ import {
 /**
  * While `allow_private_addresses` is off, the heartbeat, the PostHog host
  * and the object store reach only public addresses, as webhooks do, and only
- * the private local process turns it on. Every receiver here, and the run's
+ * an owner, or an app whose owner signed in just now, turns it on. Every receiver here, and the run's
  * object store, listens on loopback; a receiver named `localhost` is a name
  * that leads there, which only a lookup can judge.
  */
@@ -358,7 +358,7 @@ describe("where the server may send", () => {
   );
 
   it(
-    "takes an object store on a private address once the private local process turns the switch on, and not before",
+    "takes an object store on a private address once a write to /config turns the switch on, and not before",
     async () => {
       const endpoint = process.env.MARFA_OBJECT_STORE_ENDPOINT;
       const bucket = process.env.MARFA_OBJECT_STORE_BUCKET;

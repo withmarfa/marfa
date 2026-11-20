@@ -58,6 +58,8 @@ export default [
       "**/dist/",
       // The generated client, whose shape is openapi-typescript's.
       "packages/client/src/generated/",
+      // Consumer projects the packaging test type-checks against the built package.
+      "packages/client/consumers/",
       "**/coverage/",
       "**/node_modules/",
       // Nested worktrees are separate checkouts that run their own lint;

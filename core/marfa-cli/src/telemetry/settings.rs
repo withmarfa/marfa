@@ -1,8 +1,6 @@
 //! What the standard `OTEL_*` variables say, read once and before anything
-//! else happens. Whether traces are asked for depends on the endpoint; the
-//! identity a report travels under, and the time it may take, do not, so an
-//! exception report has them without one. How each variable reads is
-//! `marfa-telemetry`'s, which the server follows too.
+//! else happens. Whether traces are asked for depends on the endpoint. How
+//! each variable reads is `marfa-telemetry`'s, which the server follows too.
 
 use marfa_telemetry::environment::text;
 use marfa_telemetry::identity;
@@ -32,8 +30,7 @@ pub struct Settings {
     pub identity: Identity,
 }
 
-/// The timeout, service name and resource attributes, which no endpoint is
-/// needed for.
+/// The timeout, service name and resource attributes.
 pub fn identity(get: &impl Fn(&str) -> Option<String>) -> Identity {
     identity::identity(get, DEFAULT_SERVICE, Signal::Traces)
 }

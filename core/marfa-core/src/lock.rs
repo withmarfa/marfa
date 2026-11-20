@@ -28,6 +28,8 @@ pub struct WriterLock {
     /// is not `Sync` and the bindings hand a `Core` across threads.
     _claim: Mutex<Option<Connection>>,
     handle: Handle,
+    /// A reading handle asked for, not one that lost the writer role.
+    opened_to_read: bool,
     /// Another lock held for as long as this one.
     _with: Option<Box<WriterLock>>,
 }
@@ -39,10 +41,13 @@ impl WriterLock {
             return Ok(WriterLock {
                 _claim: Mutex::new(None),
                 handle: Handle::Writer,
+                opened_to_read: false,
                 _with: None,
             });
         };
-        let path = lock_path(&linked(store)?);
+        let store = linked(store)?;
+        admit_file_system(&store)?;
+        let path = lock_path(&store);
         crate::owner_only(&path)?;
         Self::claim_opened(
             &path.display().to_string(),
@@ -159,6 +164,7 @@ impl WriterLock {
             Ok(()) => Ok(Some(WriterLock {
                 _claim: Mutex::new(Some(claim)),
                 handle: Handle::Writer,
+                opened_to_read: false,
                 _with: None,
             })),
             Err(error) if is_busy(&error) => Ok(Some(WriterLock::reader())),
@@ -178,7 +184,16 @@ impl WriterLock {
         WriterLock {
             _claim: Mutex::new(None),
             handle: Handle::Reader,
+            opened_to_read: false,
             _with: None,
+        }
+    }
+
+    /// `reader`, for a handle the caller opened to read only.
+    pub(crate) fn opened_to_read() -> WriterLock {
+        WriterLock {
+            opened_to_read: true,
+            ..Self::reader()
         }
     }
 
@@ -195,6 +210,7 @@ impl WriterLock {
     pub fn refuse_unless_writer(&self) -> Result<(), CoreError> {
         match self.handle {
             Handle::Writer => Ok(()),
+            Handle::Reader if self.opened_to_read => Err(CoreError::OpenedToRead),
             Handle::Reader => Err(CoreError::ReadingHandle),
         }
     }
@@ -206,6 +222,30 @@ pub(crate) fn lock_path(store: &Path) -> std::path::PathBuf {
     let mut name = store.as_os_str().to_owned();
     name.push(".writer-lock");
     std::path::PathBuf::from(name)
+}
+
+/// Refuses a store on a file system that does not lock files, where a
+/// successful `BEGIN EXCLUSIVE` would not mean no other process holds the
+/// writer role. A folder that is not there is left to the open that follows, which names it.
+#[cfg(unix)]
+fn admit_file_system(store: &Path) -> Result<(), CoreError> {
+    let holder = store
+        .parent()
+        .filter(|holder| !holder.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    match std::fs::File::open(holder) {
+        Ok(folder) => crate::directory_vfs::DirectoryVfs::plain_path_supported(&folder),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(CoreError::Store(format!(
+            "{} cannot be read: {error}",
+            holder.display()
+        ))),
+    }
+}
+
+#[cfg(not(unix))]
+fn admit_file_system(_store: &Path) -> Result<(), CoreError> {
+    Ok(())
 }
 
 /// The file a symbolic link at `store`'s own name leads to, followed as
@@ -733,6 +773,26 @@ mod tests {
         let name = "request-lock";
         std::fs::write(temp.path().join(name), b"not a SQLite database").unwrap();
         assert!(WriterLock::held_named(&vfs, name).is_err());
+    }
+
+    #[test]
+    fn a_handle_opened_to_read_says_so_and_one_that_lost_the_writer_names_the_other() {
+        let chosen = WriterLock::opened_to_read()
+            .refuse_unless_writer()
+            .unwrap_err();
+        assert_eq!(chosen, CoreError::OpenedToRead);
+        assert!(
+            chosen.to_string().contains("opened to read only"),
+            "{chosen}"
+        );
+        assert!(!chosen.to_string().contains("another process"), "{chosen}");
+
+        let lost = WriterLock::reader().refuse_unless_writer().unwrap_err();
+        assert_eq!(lost, CoreError::ReadingHandle);
+        assert!(lost.to_string().contains("another process"), "{lost}");
+
+        assert_eq!(chosen.code(), "reading_handle");
+        assert_eq!(lost.code(), "reading_handle");
     }
 
     #[test]

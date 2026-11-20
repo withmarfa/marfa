@@ -34,6 +34,11 @@ pub enum CliError {
     /// The core's `ReadingHandle`, said of the folder rather than its store.
     #[error("{}", marfa_core::folder::held_by_another(.0))]
     FolderHeld(std::path::PathBuf),
+    /// The core's `OpenedToRead`, said of the command line's `--reader`.
+    #[error(
+        "the working copy was opened with --reader, which only reads: run the command without --reader to write"
+    )]
+    OpenedWithReader,
     /// `FolderHeld`, for a command that asked the process holding the folder
     /// to let it go and waited.
     #[error("{}", marfa_core::folder::not_handed_over(.0))]
@@ -55,6 +60,9 @@ pub enum CliError {
         message: String,
         retry_after_seconds: Option<u64>,
         details: Option<Box<serde_json::Value>>,
+        /// The server's `X-Request-ID` for this answer, which a report of the
+        /// problem can quote.
+        request_id: Option<String>,
     },
     #[error("{0}")]
     Usage(String),
@@ -218,24 +226,28 @@ impl From<CoreError> for CliError {
                     code,
                     message,
                     details,
+                    request_id,
                 } => Self::Refused {
                     status,
                     code,
                     message,
                     retry_after_seconds: None,
                     details,
+                    request_id,
                 },
                 CoreError::RateLimited {
                     code,
                     message,
                     retry_after_seconds,
                     details,
+                    request_id,
                 } => Self::Refused {
                     status: 429,
                     code,
                     message,
                     retry_after_seconds,
                     details,
+                    request_id,
                 },
                 CoreError::SignedOut { origin } => Self::SignedOut { origin },
                 CoreError::NoKeychain(reason) => Self::NoKeychain(reason),
@@ -248,12 +260,14 @@ impl From<CoreError> for CliError {
                 code,
                 message,
                 details,
+                request_id,
             } => Self::Refused {
                 status,
                 code,
                 message,
                 retry_after_seconds: None,
                 details,
+                request_id,
             },
             CoreError::Redirected {
                 origin,
@@ -266,6 +280,7 @@ impl From<CoreError> for CliError {
             },
             // The credential that held a stream has ended: a new one is the
             // way on, and a retry with this one is not.
+            CoreError::OpenedToRead => Self::OpenedWithReader,
             CoreError::StreamIncomplete { reason, .. } if reason == "credential_ended" => {
                 Self::CredentialEnded
             }
@@ -349,7 +364,7 @@ macro_rules! own_codes {
 
 own_codes! {
     CliError::Io(_) => "io",
-    CliError::FolderHeld(_) | CliError::FolderNotHandedOver(_) => "reading_handle",
+    CliError::FolderHeld(_) | CliError::FolderNotHandedOver(_) | CliError::OpenedWithReader => "reading_handle",
     CliError::Watch(..) => "watch",
     CliError::ClosedOutput => "closed_output",
     CliError::Usage(_) => "usage",
@@ -385,15 +400,6 @@ pub(crate) fn refused_code(status: u16) -> &'static str {
         429 => "rate_limited",
         _ => "server",
     }
-}
-
-/// An answer status the client should never cause, nor meet unrecognised,
-/// that is not the server's own failure: a `405` or a `415`. A status
-/// `refused_code` names is a refusal by design, and one
-/// `marfa_core::environmental_status` takes in (a `408`, a `425` or any `5xx`)
-/// is the environment's, and the server reports its own failures.
-fn unexpected_status(status: u16) -> bool {
-    refused_code(status) == "server" && !marfa_core::environmental_status(status)
 }
 
 /// Every name `refused_code` answers.
@@ -469,6 +475,7 @@ impl CliError {
                 | CoreError::HydrationIncomplete
                 | CoreError::NoCatalog
                 | CoreError::ReadingHandle
+                | CoreError::OpenedToRead
                 | CoreError::WrongSchema { .. }
                 | CoreError::StoreDamaged { .. }
                 | CoreError::UnsentDiffers { .. }
@@ -508,34 +515,8 @@ impl CliError {
             | CliError::CredentialEnded => Exit::Credential,
             CliError::NoKeychain(_)
             | CliError::FolderHeld(_)
-            | CliError::FolderNotHandedOver(_) => Exit::Local,
-        }
-    }
-
-    /// Whether this is a fault, to be reported to error tracking: what the
-    /// command line or the core itself got wrong, and nothing the server or
-    /// the environment did. A fault is a panic the core caught, the local
-    /// store failing for a reason of its own, an answer that cannot be read,
-    /// or an answer status the client should never cause (`unexpected_status`).
-    /// Never a refusal by design (a named `4xx`, a usage error, a missing
-    /// credential) nor anything `CoreError::is_environmental` counts (offline,
-    /// a timeout, a `408`, a `425`, any `5xx`, a full disk). A panic of the
-    /// command line's own is reported by `telemetry::Run::panicked`.
-    pub fn is_fault(&self) -> bool {
-        match self {
-            CliError::CatchUp { error, .. }
-            | CliError::BinPartlyEmptied { error, .. }
-            | CliError::SecretRefused { error } => error.is_fault(),
-            CliError::Core(CoreError::RenewalFailed(cause)) => {
-                CliError::from(*cause.clone()).is_fault()
-            }
-            CliError::Core(CoreError::Server { status, .. }) | CliError::Refused { status, .. } => {
-                unexpected_status(*status)
-            }
-            CliError::Core(CoreError::Fault(_) | CoreError::Decoding(_) | CoreError::Store(_)) => {
-                true
-            }
-            _ => false,
+            | CliError::FolderNotHandedOver(_)
+            | CliError::OpenedWithReader => Exit::Local,
         }
     }
 
@@ -551,11 +532,13 @@ impl CliError {
                 status,
                 code,
                 details,
+                request_id,
                 ..
             } => Some(ServerAnswer {
                 status: *status,
                 code: (code != marfa_core::UNREAD_CODE).then(|| code.clone()),
                 details: details.as_deref().cloned(),
+                request_id: request_id.clone(),
             }),
             // The body, and so the code, was not read.
             CliError::ContractMismatch {
@@ -565,6 +548,12 @@ impl CliError {
             | CliError::Redirected { status, .. } => Some(*ServerAnswer::status_only(*status)),
             _ => None,
         }
+    }
+
+    /// The server's `X-Request-ID` for the answer that refused, where the
+    /// command read one.
+    pub fn request_id(&self) -> Option<String> {
+        self.server().and_then(|answer| answer.request_id)
     }
 
     fn local(&self) -> Option<(&str, Option<&serde_json::Value>)> {
@@ -595,9 +584,14 @@ impl CliError {
     }
 
     pub fn envelope(&self) -> serde_json::Value {
-        let server = self
-            .server()
-            .map(|answer| serde_json::json!({ "status": answer.status, "code": answer.code, "details": answer.details }));
+        let server = self.server().map(|answer| {
+            serde_json::json!({
+                "status": answer.status,
+                "code": answer.code,
+                "details": answer.details,
+                "request_id": answer.request_id,
+            })
+        });
         let local = self
             .local()
             .map(|(code, details)| serde_json::json!({ "code": code, "details": details }));
@@ -719,10 +713,13 @@ pub const DRAIN_EXITS: &str = "`marfa device drain` prints its complete report o
 /// What a failed catch-up adds to its refusal, said after the drain.
 pub const CATCH_UP_FAILED: &str = "When `marfa device catch-up` fails, the refusal says whether the catch-up had already changed the catalog the copy holds; the copy keeps that change. With --json, the refusal carries this as \"catalog_changed\" beside \"exit\".";
 
+/// What a refusal from the server adds to its message, said after the catch-up.
+pub const REQUEST_ID_SAID: &str = "When the server refuses a command, the refusal ends with the server's `X-Request-ID` on a line of its own, `Request ID: <id>`; quote it when you report the problem. With --json the refusal carries it as \"server.request_id\". A failure the command line met without a server's answer shows none.";
+
 /// The refusal `--json` prints, said after the drain and the catch-up: what
 /// it is, its shape, and the words before the codes its `error.code` can be.
 pub const JSON_REFUSAL: &str = "With --json a refusal is the last line of stderr, one JSON object, after any plain lines such as a warning or the write line:";
-pub const JSON_REFUSAL_SHAPE: &str = r#"{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}"#;
+pub const JSON_REFUSAL_SHAPE: &str = r#"{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...,"request_id":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}"#;
 pub const JSON_REFUSAL_CODES: &str = "where error.code is one of:";
 
 /// The width the help wraps an exit code's meaning to, continuing under its first word.
@@ -763,7 +760,7 @@ pub fn exit_codes_help() -> &'static str {
         }
         let codes = codes().join(", ");
         help.push_str(&format!(
-            "\n{DRAIN_EXITS}\n\n{CATCH_UP_FAILED}\n\n{JSON_REFUSAL}\n  {JSON_REFUSAL_SHAPE}\n{JSON_REFUSAL_CODES} {codes}."
+            "\n{DRAIN_EXITS}\n\n{CATCH_UP_FAILED}\n\n{REQUEST_ID_SAID}\n\n{JSON_REFUSAL}\n  {JSON_REFUSAL_SHAPE}\n{JSON_REFUSAL_CODES} {codes}."
         ));
         help
     })
@@ -779,6 +776,7 @@ mod tests {
             code: "code".into(),
             message: String::new(),
             retry_after_seconds: None,
+            request_id: None,
             details: None,
         }
     }
@@ -790,6 +788,7 @@ mod tests {
             code: "setup_proof_invalid".into(),
             message: "Setup proof is invalid, expired, spent or replaced".into(),
             retry_after_seconds: None,
+            request_id: None,
             details: None,
         };
         assert_eq!(wrong_code.exit(), Exit::Refused);
@@ -1097,6 +1096,7 @@ mod tests {
             message: "slow down".into(),
             retry_after_seconds: Some(7),
             details: Some(Box::new(serde_json::json!({ "scope": "key" }))),
+            request_id: None,
         });
         let envelope = error.envelope();
         assert_eq!(envelope["error"]["code"], "rate_limited");
@@ -1157,6 +1157,7 @@ mod tests {
             code: "bulk_atomic_rollback".into(),
             message: "entry 3 failed".into(),
             retry_after_seconds: None,
+            request_id: None,
             details: Some(Box::new(serde_json::json!({ "index": 3 }))),
         };
         let envelope = direct.envelope();
@@ -1173,6 +1174,7 @@ mod tests {
             status,
             code: Some(code.into()),
             details: None,
+            request_id: None,
         }))
     }
 
@@ -1183,6 +1185,7 @@ mod tests {
                 status,
                 code: Some(code.into()),
                 details,
+                request_id: None,
             }))
         };
         let expired = CliError::Core(CoreError::CopyExpired {
@@ -1233,7 +1236,7 @@ mod tests {
     #[test]
     fn an_answer_whose_body_did_not_read_names_no_code_as_the_core_does() {
         let text = "<html>bad gateway</html>";
-        let unread = crate::remote::refused(502, text, None).envelope();
+        let unread = crate::remote::refused(502, text, None, None).envelope();
         assert_eq!(unread["error"]["server"]["status"], 502);
         assert!(unread["error"]["server"]["code"].is_null(), "{unread}");
         let through_core = CliError::Core(CoreError::Server {
@@ -1241,6 +1244,7 @@ mod tests {
             code: marfa_core::UNREAD_CODE.into(),
             message: text.into(),
             details: None,
+            request_id: None,
         })
         .envelope();
         assert_eq!(unread["error"]["server"], through_core["error"]["server"]);
@@ -1248,6 +1252,7 @@ mod tests {
         let read = crate::remote::refused(
             502,
             r#"{"error":{"code":"upstream_failed","message":"m"}}"#,
+            None,
             None,
         )
         .envelope();
@@ -1416,6 +1421,7 @@ mod tests {
                 code: "ancestor_unavailable".into(),
                 message: "the server said no".into(),
                 details: None,
+                request_id: None,
             })
         };
         for (status, code) in [
@@ -1441,58 +1447,6 @@ mod tests {
         for status in [408, 425, 500, 502, 503] {
             assert_eq!(through_core(status).exit(), Exit::Environment, "{status}");
             assert_eq!(through_core(status).code(), "server", "{status}");
-        }
-    }
-
-    #[test]
-    fn a_fault_is_what_the_cli_or_the_core_got_wrong_and_never_the_server_or_the_environment() {
-        let answered = |status| {
-            CliError::Core(CoreError::Server {
-                status,
-                code: "code".into(),
-                message: String::new(),
-                details: None,
-            })
-        };
-        for status in [405, 415] {
-            assert!(refused(status).is_fault(), "{status}");
-            assert!(answered(status).is_fault(), "{status}");
-        }
-        for status in [
-            400, 401, 403, 404, 408, 409, 413, 422, 425, 429, 500, 502, 503, 507,
-        ] {
-            assert!(!refused(status).is_fault(), "{status}");
-            assert!(!answered(status).is_fault(), "{status}");
-        }
-        for status in [408, 425, 503, 507] {
-            assert_eq!(refused(status).exit(), Exit::Environment, "{status}");
-        }
-        for core in [
-            CoreError::Fault("a panic".into()),
-            CoreError::Store("a constraint".into()),
-            CoreError::Decoding("not JSON".into()),
-        ] {
-            assert!(CliError::Core(core.clone()).is_fault(), "{core:?}");
-            let renewed = CliError::Core(CoreError::RenewalFailed(Box::new(core.clone())));
-            assert!(renewed.is_fault(), "{core:?}");
-            let caught = CliError::CatchUp {
-                error: Box::new(CliError::Core(core.clone())),
-                catalog_changed: false,
-            };
-            assert!(caught.is_fault(), "{core:?}");
-        }
-        for not in [
-            CliError::Core(CoreError::Invalid("bad input".into())),
-            CliError::Core(CoreError::Network("offline".into())),
-            CliError::Core(CoreError::StorageFull("full".into())),
-            CliError::Core(CoreError::Canceled),
-            CliError::Usage("wrong".into()),
-            CliError::NoCredential {
-                origin: "https://example.com".into(),
-                profile: None,
-            },
-        ] {
-            assert!(!not.is_fault(), "{not:?}");
         }
     }
 }

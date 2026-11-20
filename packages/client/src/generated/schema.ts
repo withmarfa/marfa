@@ -365,7 +365,7 @@ export interface paths {
         };
         /**
          * List the trash
-         * @description Returns a page of trash summaries, newest creation first, without item content, of the types you can read. Requires `items.purge`.
+         * @description Returns a page of trash summaries, newest creation first, without item content, of the types you can write. Requires `items.purge`.
          */
         get: operations["listTrash"];
         put?: never;
@@ -387,7 +387,7 @@ export interface paths {
         put?: never;
         /**
          * Empty the trash
-         * @description Empties one page of the trash: deletes up to 200 items of the types you can read permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed meanwhile may remain. Requires `items.purge`.
+         * @description Empties one page of the trash: deletes up to 200 items of the types you can write permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed meanwhile may remain. Requires `items.purge`.
          */
         post: operations["emptyTrash"];
         delete?: never;
@@ -12528,9 +12528,9 @@ export interface operations {
     listOccurrences: {
         parameters: {
             query: {
-                /** @description Window start, ISO 8601. No zone means UTC; a date is its UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days in its `timezone`, else UTC. */
+                /** @description A date-time needs seconds and a zone or offset; a date is UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days of its `timezone` or UTC. */
                 from: string;
-                /** @description Window end, ISO 8601, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time. */
+                /** @description Window end, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time. */
                 to: string;
                 /** @description Only return events of this type, or of the event types a wildcard matches. Names one type. */
                 type?: string;

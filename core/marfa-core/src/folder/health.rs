@@ -932,6 +932,7 @@ impl Folder {
                         reply.contract.is_some(),
                         &reply.body,
                         reply.retry_after_seconds,
+                        reply.request_id,
                     ));
                 }
                 Ok(reply)
@@ -1472,6 +1473,7 @@ pub(in crate::folder) mod tests {
             code: "rate_limited".into(),
             message: "limited".into(),
             details: None,
+            request_id: None,
         });
         assert!(state.retry_at >= millis() + 89_000);
     }

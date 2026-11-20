@@ -2,6 +2,8 @@
 
 The TypeScript SDK for a Marfa instance, generated from the repository's `openapi.json`. Paths, parameters, bodies and answers are typed from the document: a path the document does not name, or a required parameter left out, does not compile. Ranges and formats the document states only in prose are the server's to refuse.
 
+The package loads through `import` and through `require`, so it works in an ES module project and in a CommonJS one, including a TypeScript project compiled with `module` set to `node16` or `nodenext`.
+
 ```ts
 import { createClient, pages } from "@withmarfa/client";
 

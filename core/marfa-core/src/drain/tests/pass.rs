@@ -161,6 +161,7 @@ fn local_renewal_failure_preserves_queued_intent_without_counting() {
             code: "invalid_scope".into(),
             message: "refused scope".into(),
             details: None,
+            request_id: None,
         },
         CoreError::Server {
             status: 400,
@@ -169,6 +170,7 @@ fn local_renewal_failure_preserves_queued_intent_without_counting() {
             details: Some(Box::new(
                 serde_json::json!({ "required_scope": "items.read" }),
             )),
+            request_id: None,
         },
     ] {
         let server = crate::scripted::Scripted::start();
@@ -282,6 +284,7 @@ fn rate_limited_renewal_reports_its_wait_without_counting_the_write() {
                 message: "wait before renewing".into(),
                 retry_after_seconds: requested,
                 details: None,
+                request_id: None,
             })
         }));
         let before = core.queue().unwrap();

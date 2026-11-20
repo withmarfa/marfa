@@ -61,7 +61,7 @@ pub struct Event<'a> {
 }
 
 impl Event<'_> {
-    pub fn json(&self) -> Value {
+    fn json(&self) -> Value {
         let mut exception = json!({
             "type": self.exception.kind,
             "value": self.exception.value,
@@ -107,15 +107,6 @@ impl Event<'_> {
         event["options"] = json!({ "process_person_profile": false });
         event
     }
-}
-
-pub fn single(token: &str, event: &Event) -> Value {
-    let mut body = Map::new();
-    body.insert("api_key".into(), token.into());
-    if let Value::Object(fields) = event.json() {
-        body.extend(fields);
-    }
-    Value::Object(body)
 }
 
 /// A capture v1 body; the token travels in `Authorization`, never in the body.
@@ -209,10 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn a_single_event_carries_the_token_and_a_batch_carries_none() {
-        let one = single("phc_x", &event(None, &[]));
-        assert_eq!(one["api_key"], "phc_x");
-        assert_eq!(one["event"], "$exception");
+    fn a_batch_carries_no_token() {
         let many = batch(
             "2026-11-19T10:00:00Z",
             vec![event(None, &[]).v1("0193a5f0-0000-7000-8000-000000000000")],

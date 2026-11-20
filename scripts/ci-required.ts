@@ -693,7 +693,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
  * holds it to the config's own `ignores`.
  */
 export const ESLINT_IGNORED =
-  /^(core|conformance)\/|^packages\/client\/src\/generated\/|(^|\/)(dist|coverage|node_modules|_local|_tmp|_ignore)\/|^\.claude\/worktrees\//;
+  /^(core|conformance)\/|^packages\/client\/(src\/generated|consumers)\/|(^|\/)(dist|coverage|node_modules|_local|_tmp|_ignore)\/|^\.claude\/worktrees\//;
 
 /** What `eslint .` reads: JavaScript and TypeScript outside its ignores. */
 function linted(path: string): boolean {
