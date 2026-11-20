@@ -155,7 +155,7 @@ impl Folder {
         let waiting = report
             .as_ref()
             .and_then(|said| Some((&said.path, said.waiting.as_ref()?)))
-            .map(serde_json::to_string)
+            .map(|waiting| serde_json::to_string(&waiting))
             .transpose()?;
         let conn = self.core.conn()?;
         // Only a change is written, so a pass that finds the same reason
