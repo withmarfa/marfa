@@ -4694,6 +4694,19 @@ mod tests {
             .store(0, std::sync::atomic::Ordering::SeqCst);
         folder.health_observe(false, true, None, None, false);
         assert_eq!(unwatched(&folder), None);
+
+        // A watch that ends leaves the stored report saying none.
+        folder
+            .unwatched
+            .store(3, std::sync::atomic::Ordering::SeqCst);
+        folder.health_observe(false, true, None, None, false);
+        assert_eq!(
+            unwatched(&folder),
+            Some(3),
+            "the witness: the report says so"
+        );
+        drop(watch::Uncounted(&folder));
+        assert_eq!(unwatched(&folder), None);
     }
 
     /// A folder holding one bound note per name, scanned until the notes are

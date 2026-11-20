@@ -212,4 +212,38 @@ describe("a paused directory", () => {
     );
     expect(watching.running()).toBe(true);
   });
+
+  it("keeps a running watch of the directory going while it is paused, says so, and syncs a change once it is resumed", async () => {
+    harness = await seeded("pause-watch-stays");
+    const watching = harness.folder.watch();
+    held.push(watching);
+    await vi.waitFor(
+      () =>
+        expect(
+          existsSync(join(harness!.dir, "Seed.md")),
+          watching.stdout + watching.stderr,
+        ).toBe(true),
+      WAIT,
+    );
+
+    expect((await harness.folder.pause()).ok).toBe(true);
+    await vi.waitFor(
+      () => expect(reasons(watching.stdout + watching.stderr)).toContain("paused"),
+      WAIT,
+    );
+    put(harness, "During.md", "during\n");
+    await new Promise((settled) => setTimeout(settled, 3_000));
+    expect(watching.running(), watching.stdout + watching.stderr).toBe(true);
+    expect(sentTitles(harness), "a paused watch sent a file").toEqual([]);
+
+    expect((await harness.folder.resume()).ok).toBe(true);
+    await vi.waitFor(
+      () =>
+        expect(sentTitles(harness!), watching.stdout + watching.stderr).toEqual(
+          ["During"],
+        ),
+      WAIT,
+    );
+    expect(watching.running()).toBe(true);
+  });
 });

@@ -102,11 +102,11 @@ While a watch cannot register some directories beneath a folder's directory, a d
 
 ### `folder-speed/unwatched-look-scope`
 
-When a watch looks at the directories it cannot register, a device MUST read only files beneath those directories, and files that events name.
+When a watch looks at the directories it cannot register, a device MUST read only files beneath those directories, files that events name, and files it judges again whatever their bytes say, such as a file with a change journaled or held.
 
 **Reason:** The cost of looking grows with the part that cannot be watched, not with the folder.
 
-**Tests:** `device/folders-unwatched.test.ts › finds a change in a directory it cannot watch at its own interval, reading none of the files it can watch`.
+**Tests:** `device/folders-unwatched.test.ts › finds a change in a directory it cannot watch at its own interval, reading none of the files it can watch`, `device/folders-unwatched.test.ts › finds a change in a directory it cannot watch beneath which lie more files than a pass names`.
 
 ### `folder-speed/unwatched-look-paced`
 

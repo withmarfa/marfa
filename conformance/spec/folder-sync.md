@@ -308,7 +308,7 @@ While a directory's sync is paused, the CLI MUST refuse `folders push`, with or 
 
 ### `folder-sync/pause-nothing-changes`
 
-While a directory's sync is paused, a device MUST NOT write a file into the directory, change what the directory's store keeps of its files, or send a write to the server for it.
+While a directory's sync is paused, a device MUST NOT write a file into the directory, change what the directory's store keeps of its files, or send a change to the directory's files to the server for it.
 
 **Reason:** A pause must change nothing, so that what the person resumes is the directory as it stood.
 
@@ -319,6 +319,14 @@ While a directory's sync is paused, a device MUST NOT write a file into the dire
 While a directory's sync is paused, the CLI MUST refuse `folders watch` of that directory, naming `folders resume`.
 
 **Tests:** `device/folders-pause.test.ts › refuses a watch of the directory, naming resume, and watches it again once resumed`.
+
+### `folder-sync/pause-running-watch-stays`
+
+While a directory's sync is paused after a `folders watch` of that directory has started, the CLI MUST keep the watch running, say that the directory is paused, and watch the directory again once it is resumed.
+
+**Reason:** A pause is a person's choice for a while, so it does not end the watch they would have to start again.
+
+**Tests:** `device/folders-pause.test.ts › keeps a running watch of the directory going while it is paused, says so, and syncs a change once it is resumed`.
 
 ### `folder-sync/pause-watch-skipped`
 

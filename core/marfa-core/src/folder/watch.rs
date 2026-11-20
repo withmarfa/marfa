@@ -343,7 +343,7 @@ impl Folder {
 
         let mut gate = Gate::new(crate::clock::now());
         let mut telling = Telling::default();
-        let _unwatched = Uncounted(&self.unwatched);
+        let _unwatched = Uncounted(self);
         self.count_unwatched(&listening, &mut telling);
         let mut last_full: Option<Instant> = None;
         let mut send_again_at = self.kept_wait();
@@ -1355,13 +1355,16 @@ fn unwatched_every(full_every: Duration) -> Duration {
     UNWATCHED_EVERY.min(full_every)
 }
 
-/// Sets the count of unwatched directories back to none as a watch ends, so
-/// no report says what the watch no longer knows.
-struct Uncounted<'a>(&'a std::sync::atomic::AtomicUsize);
+/// Where a watch ends, sets the count of unwatched directories back to none
+/// and reports once, so no report says what no watch knows.
+pub(super) struct Uncounted<'a>(pub(super) &'a Folder);
 
 impl Drop for Uncounted<'_> {
     fn drop(&mut self) {
-        self.0.store(0, Ordering::SeqCst);
+        if self.0.unwatched.swap(0, Ordering::SeqCst) > 0 {
+            self.0.health_observe(false, true, None, None, false);
+            self.0.health_send();
+        }
     }
 }
 

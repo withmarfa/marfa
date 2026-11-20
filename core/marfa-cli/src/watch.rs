@@ -322,6 +322,37 @@ fn handed_over() -> Value {
     })
 }
 
+const PAUSED_LINE: &str = "this directory's sync is paused; it is watched again once `marfa folders resume` lets it go on";
+
+fn paused_line() -> Value {
+    serde_json::json!({
+        "watching": false,
+        "code": marfa_core::folder::PAUSED,
+        "reason": PAUSED_LINE,
+    })
+}
+
+/// How often a paused directory's pause is read again.
+const PAUSE_LOOK: Duration = Duration::from_secs(1);
+
+/// Waits until the pause of the directory at `root` ends, or the directory
+/// goes, answering `false` where the watch was stopped first.
+fn resumed(root: &Path, stop: &std::sync::atomic::AtomicBool) -> bool {
+    let mut looked = Instant::now();
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return false;
+        }
+        if looked.elapsed() >= PAUSE_LOOK {
+            looked = Instant::now();
+            if !Folder::is_at(root) || !Folder::paused_at(root) {
+                return true;
+            }
+        }
+        std::thread::sleep(POLL);
+    }
+}
+
 fn taken_back() -> Value {
     serde_json::json!({ "watching": true, "taken_back": true })
 }
@@ -429,8 +460,14 @@ fn keep_in_step(
     let mut let_go = false;
     // What to say once the folder is watched again.
     let mut back: Option<Back> = None;
+    // Whether the watch has begun: a directory paused before it did is refused,
+    // and one paused under it is waited for.
+    let mut begun = false;
     loop {
-        let end = {
+        let paused = begun && folder.is_paused()?;
+        let end = (if paused {
+            Ok(WatchEnd::HandedOver)
+        } else {
             let tell_event = |event: WatchEvent| {
                 if let WatchEvent::Watching { .. } = &event {
                     if let (false, Some(limit)) = (timed, stop_after) {
@@ -458,16 +495,27 @@ fn keep_in_step(
                 Some(record) => record.watch_folder(&folder, stop, tell_event),
                 None => folder.watch_handing_over(stop, tell_event),
             }
-        }
+        })
         .map_err(|error| ended(url, error))?;
         if end == WatchEnd::Stopped {
             return Ok(());
         }
+        begun = true;
         // The path it was opened by, which reaches it however it was named.
         let root = folder.root().to_path_buf();
         let listed = Folder::listed_at(&root);
         drop(folder);
-        if !let_go {
+        if paused {
+            let_go = true;
+            say.line(paused_line(), || PAUSED_LINE.into())?;
+            if let Some(record) = record {
+                record.unwatched(&root, Some(marfa_core::folder::PAUSED));
+            }
+            if !resumed(&root, stop) {
+                return Ok(());
+            }
+            back = Some(Back::Watching);
+        } else if !let_go {
             let_go = true;
             say.line(handed_over(), || HANDED_OVER_LINE.into())?;
         }
@@ -481,11 +529,13 @@ fn keep_in_step(
         .map_err(|error| ended(url, error))?;
         folder = match taken {
             TakeBack::Folder { folder, held } => {
-                back = Some(if held {
-                    Back::Watching
-                } else {
-                    Back::TakenBack
-                });
+                if held || !paused {
+                    back = Some(if held {
+                        Back::Watching
+                    } else {
+                        Back::TakenBack
+                    });
+                }
                 *folder
             }
             TakeBack::Stopped => return Ok(()),

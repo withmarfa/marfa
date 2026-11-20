@@ -157,6 +157,34 @@ describe("a watch that cannot watch part of a directory", () => {
     expect(sentCreates(made).length).toBeGreaterThan(0);
   });
 
+  it("finds a change in a directory it cannot watch beneath which lie more files than a pass names", async () => {
+    const { made, refusal } = await folderWithUnwatched("unwatched-many");
+    harness = made;
+    for (let at = 0; at < 300; at += 1) {
+      put(
+        made,
+        `${UNWATCHED}/many/Note ${at}.md`,
+        `---\ntitle: Note ${at}\n---\nnote ${at}\n`,
+      );
+    }
+    expect((await made.folder.push()).ok).toBe(true);
+    const watching = watchWith(made, refusal, SHORT);
+    await vi.waitFor(
+      () => expect(problemCodes(made), watching.stderr).toContain("unwatched"),
+      WAIT,
+    );
+    put(
+      made,
+      `${UNWATCHED}/many/Late.md`,
+      "---\ntitle: Late\n---\nwritten where no event comes\n",
+    );
+    await vi.waitFor(
+      () => expect(sentTitles(made), watching.stderr).toContain("Late"),
+      WAIT,
+    );
+    expect(watching.running(), watching.stderr).toBe(true);
+  });
+
   it("does not look at a directory it cannot watch before its interval while nothing else changes", async () => {
     const { made, refusal } = await folderWithUnwatched("unwatched-interval");
     harness = made;
