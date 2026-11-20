@@ -561,8 +561,8 @@ pub(super) fn settle_success(
         same_attempt(&tx, row)?;
         check_read_back(&tx, &read)?;
         restore_settled_overlay(&tx, row, &read)?;
-        // Only a row this copy minted and has held since it showed it at 0:
-        // an answer naming another id landed on a row made elsewhere.
+        // Only a row this copy minted and holds as the answer settles: an
+        // answer naming another id landed on a row made elsewhere.
         let mut made_here = None;
         if let Some(parsed) = &item {
             if row.kind == WriteKind::CreateItem

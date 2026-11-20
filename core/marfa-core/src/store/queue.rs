@@ -309,8 +309,8 @@ pub fn untaken_creates_for_item(
 }
 
 /// Whether a create of `item_id` that this copy showed at version 0 has yet
-/// to have its answer taken: unanswered, held, or answered with the read that
-/// settles it still owed. The edits behind it move onto the version it made
+/// to have its answer taken: unanswered, blocked, dead, or answered with the
+/// read that settles it still owed. The edits behind it move onto the version it made
 /// when its answer is taken.
 pub fn own_create_untaken(conn: &Connection, item_id: &str) -> Result<bool, CoreError> {
     for row in read_writes(
