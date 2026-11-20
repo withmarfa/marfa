@@ -437,7 +437,7 @@ async fn a_run_time_is_strict_rfc_3339() {
 async fn an_owner_session_cookie_reaches_no_connector_door_and_the_private_socket_does() {
     let instance = Instance::start().await;
     let connector = instance.connector().await;
-    let claim = json!({ "email": "owner@example.test", "password": "the first password" });
+    let claim = json!({ "username": "owner", "password": "the first password" });
     let claimed = instance
         .local(Method::POST, "/_control/setup/claim", Some(claim.clone()))
         .await;

@@ -65,7 +65,7 @@ pub enum Turn<'a> {
     /// Checked, in this queue.
     Check(Queue),
     /// Not checked: holds a place and a turn as a check does, in the open queue, or with an
-    /// email, in that email's own queue shaped like it.
+    /// username, in that username's own queue shaped like it.
     StandIn(Option<&'a str>),
 }
 
@@ -166,10 +166,10 @@ impl Line {
     }
 }
 
-/// Each email's stand-in line, with how many attempts hold it.
+/// Each username's stand-in line, with how many attempts hold it.
 type StandIns = Arc<Mutex<HashMap<String, (Arc<Line>, usize)>>>;
 
-/// A hold on one email's stand-in line; the last one out removes it.
+/// A hold on one username's stand-in line; the last one out removes it.
 struct StandIn {
     stand_ins: StandIns,
     key: String,
@@ -400,7 +400,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_open_queue_refuses_any_email_alike_and_never_holds_up_the_owner() {
+    async fn the_open_queue_refuses_any_username_alike_and_never_holds_up_the_owner() {
         let passwords = Arc::new(Passwords::default());
         let hash = passwords.hash("a good long password".into()).await.unwrap();
         let _lane = passwords

@@ -74,7 +74,7 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
         {
             let view = SignedIn {
                 instance_name: name,
-                email: found.email,
+                username: found.username,
                 continue_to: return_to,
             };
             return Ok(pages::signed_in(&view)?.into_response());
@@ -86,7 +86,7 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
     };
     let view = SignIn {
         instance_name: name,
-        email: shown(field("email")),
+        username: shown(field("username")),
         return_to,
         authorization: sent.map(|_| link),
         app: app_name,
@@ -109,6 +109,7 @@ pub async fn setup(State(app): State<Arc<App>>, headers: HeaderMap) -> Answer {
         pages::setup_details(&SetupDetails {
             instance_name: name,
             name: String::new(),
+            username: String::new(),
             email: String::new(),
             errors: SetupFieldErrors::default(),
             notice: None,
@@ -217,6 +218,7 @@ pub async fn exchange_refused(app: &App, refusal: &Refusal) -> Result<Response> 
 #[derive(Clone, Debug, Default)]
 pub struct Typed {
     pub name: String,
+    pub username: String,
     pub email: String,
 }
 
@@ -225,6 +227,7 @@ impl Typed {
         let text = |name: &str| shown(fields.get(name).and_then(Value::as_str));
         Typed {
             name: text("name"),
+            username: text("username"),
             email: text("email"),
         }
     }
@@ -237,6 +240,7 @@ fn field_errors(refusal: &Refusal) -> Option<SetupFieldErrors> {
         let message = error.get("message")?.as_str()?.to_owned();
         match error.get("path")?.as_str()? {
             "name" => found.name = Some(message),
+            "username" => found.username = Some(message),
             "email" => found.email = Some(message),
             "password" => found.password = Some(message),
             _ => return None,
@@ -272,6 +276,7 @@ async fn details_page(app: &App, refusal: &Refusal, typed: Typed) -> Result<Opti
     let view = SetupDetails {
         instance_name: name,
         name: typed.name,
+        username: typed.username,
         email: typed.email,
         errors,
         notice,

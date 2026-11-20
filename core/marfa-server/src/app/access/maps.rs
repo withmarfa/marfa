@@ -28,7 +28,7 @@ impl Level {
     }
 }
 
-const PROFILE_ROWS: [&str; 3] = ["name", "email", "avatar"];
+const PROFILE_ROWS: [&str; 4] = ["name", "username", "email", "avatar"];
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Map(serde_json::Map<String, Value>);
@@ -186,7 +186,7 @@ impl Axis {
                 .or_else(|| map.exact("*"))
                 .unwrap_or(Level::None),
             Axis::Metadata => map.widest(name),
-            Axis::Profile if name == "email" => map
+            Axis::Profile if name == "username" => map
                 .exact(name)
                 .unwrap_or(Level::None)
                 .max(map.exact("*").unwrap_or(Level::None).min(Level::Read)),
@@ -244,7 +244,7 @@ impl Axis {
                 Some("The level must be read, write or none.")
             }
             Axis::Profile if name != "*" && !PROFILE_ROWS.contains(&name) => {
-                Some("The name must be name, email, avatar or *.")
+                Some("The name must be name, username, email, avatar or *.")
             }
             Axis::Edge | Axis::Extension | Axis::Metadata | Axis::Profile
                 if !matches!(word, Some("read" | "write")) =>
@@ -388,11 +388,12 @@ mod tests {
     }
 
     #[test]
-    fn the_profile_wildcard_reads_the_email_and_only_its_own_entry_writes_it() {
+    fn the_profile_wildcard_reads_the_username_and_only_its_own_entry_writes_it() {
         let wild = map(json!({ "*": "write" }));
-        assert_eq!(Axis::Profile.level(&wild, "email"), Level::Read);
-        let named = map(json!({ "*": "read", "email": "write" }));
-        assert_eq!(Axis::Profile.level(&named, "email"), Level::Write);
+        assert_eq!(Axis::Profile.level(&wild, "username"), Level::Read);
+        assert_eq!(Axis::Profile.level(&wild, "email"), Level::Write);
+        let named = map(json!({ "*": "read", "username": "write" }));
+        assert_eq!(Axis::Profile.level(&named, "username"), Level::Write);
         assert_eq!(Axis::Profile.level(&named, "name"), Level::Read);
     }
 
@@ -476,7 +477,7 @@ mod tests {
                 Axis::Profile,
                 json!({"name":"read"}),
                 json!({"*":"read"}),
-                Some("profile.email:read"),
+                Some("profile.username:read"),
             ),
             (
                 Axis::Profile,
@@ -535,7 +536,7 @@ mod tests {
             paths(Axis::Edge, json!({"about":"none"})),
             ["edge_permissions.about"]
         );
-        assert!(paths(Axis::Profile, json!({"email":"write"})).is_empty());
+        assert!(paths(Axis::Profile, json!({"username":"write","email":"write"})).is_empty());
         assert_eq!(
             paths(Axis::Profile, json!({"age":"read"})),
             ["profile_permissions.age"]

@@ -32,7 +32,7 @@ use tower::ServiceExt;
 use url::Url;
 
 const ORIGIN: &str = "http://127.0.0.1:8600";
-const EMAIL: &str = "owner@example.test";
+const USERNAME: &str = "owner";
 const PASSWORD: &str = "the first password";
 const CALLBACK: &str = "http://127.0.0.1:9/callback";
 const WEB_CALLBACK: &str = "https://app.example/callback";
@@ -165,7 +165,7 @@ impl Instance {
     async fn signed_in() -> Instance {
         let dir = TempDir::new().unwrap();
         let app = boot(&dir).await;
-        let claim = json!({ "email": EMAIL, "password": PASSWORD });
+        let claim = json!({ "username": USERNAME, "password": PASSWORD });
         let claimed = send(
             control(app.clone()),
             post_json("/_control/setup/claim", &claim),
@@ -1572,7 +1572,7 @@ async fn the_expired_go_and_a_rotated_token_waits_for_its_own_end() {
 #[tokio::test]
 async fn an_expired_browser_session_goes_and_a_live_one_stays() {
     let instance = Instance::signed_in().await;
-    let claim = json!({ "email": EMAIL, "password": PASSWORD });
+    let claim = json!({ "username": USERNAME, "password": PASSWORD });
     let again = post_json("/auth/sign-in", &claim);
     assert_eq!(instance.send(again).await.status, StatusCode::OK);
     let sessions = "SELECT count(*) FROM sign_ins";
@@ -1854,7 +1854,7 @@ impl Instance {
 
     /// Whoever holds the instance's own cookie stays signed in.
     async fn sign_in_again(&self) -> String {
-        let claim = json!({ "email": EMAIL, "password": PASSWORD });
+        let claim = json!({ "username": USERNAME, "password": PASSWORD });
         let signed_in = self.send(post_json("/auth/sign-in", &claim)).await;
         assert_eq!(signed_in.status, StatusCode::OK, "{}", signed_in.text);
         signed_in.cookie().unwrap()
@@ -1999,7 +1999,7 @@ async fn a_wrong_password_keeps_the_app_on_the_sign_in_page() {
             "/auth/sign-in",
             Some(&instance.cookie),
             &[
-                ("email", EMAIL),
+                ("username", USERNAME),
                 ("password", "not the password"),
                 ("return_to", &return_to),
                 ("authorization", &authorization),
@@ -2012,7 +2012,7 @@ async fn a_wrong_password_keeps_the_app_on_the_sign_in_page() {
         .send(get(&again, Some(&instance.cookie)))
         .await
         .text;
-    assert!(page.contains("That email or password"), "{page}");
+    assert!(page.contains("That username or password"), "{page}");
     assert!(page.contains(APP_NAME), "{page}");
     assert!(page.contains("name=\"password\""), "{page}");
     assert!(hidden_field(&page, "authorization").is_some(), "{page}");
@@ -2906,9 +2906,9 @@ async fn a_device_code_outlives_its_client_and_its_page_says_so() {
 }
 
 #[tokio::test]
-async fn every_door_takes_the_scope_that_writes_the_sign_in_email() {
+async fn every_door_takes_the_scope_that_writes_the_username() {
     let instance = Instance::signed_in().await;
-    let asked = "core.note:read profile.email:write";
+    let asked = "core.note:read profile.username:write";
     let registered = instance
         .send(post_json(
             "/oauth/register",

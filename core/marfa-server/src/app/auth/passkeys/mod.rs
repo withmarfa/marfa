@@ -161,7 +161,12 @@ pub async fn begin_adding(app: Arc<App>, caller: &Caller) -> Result<Begun> {
             let owner = owner::read(tx)?.ok_or_else(owner::not_found)?;
             let (creation, state) = party
                 .webauthn
-                .start_passkey_registration(user_handle(&owner)?, &owner.email, &owner.name, None)
+                .start_passkey_registration(
+                    user_handle(&owner)?,
+                    &owner.username,
+                    &owner.name,
+                    None,
+                )
                 .map_err(|_| Refusal::internal("a passkey registration did not start"))?;
             let mut options = options_of(&creation.public_key)?;
             ask_for_a_resident_key(&mut options, store::credentials_of(tx, &party.host)?);
@@ -426,9 +431,9 @@ pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Resul
                 Note {
                     action: SIGNED_IN,
                     resource_type: "owner",
-                    resource_id: &proven.owner.email,
+                    resource_id: &proven.owner.username,
                     details: Some(json!({
-                        "email": proven.owner.email,
+                        "username": proven.owner.username,
                         "method": "passkey",
                         "passkey_id": proven.passkey_id,
                     })),
@@ -484,9 +489,9 @@ pub async fn confirm(
             Note {
                 action: SIGNED_IN,
                 resource_type: "owner",
-                resource_id: &proven.owner.email,
+                resource_id: &proven.owner.username,
                 details: Some(json!({
-                    "email": proven.owner.email,
+                    "username": proven.owner.username,
                     "method": "passkey",
                     "passkey_id": proven.passkey_id,
                     "confirmed_session": session.id,
