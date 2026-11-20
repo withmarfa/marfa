@@ -39,6 +39,18 @@ const WRITER_LOOK_MOST: Duration = Duration::from_secs(60);
 /// How often a watch looks again at the directories it could not register.
 const UNWATCHED_EVERY: Duration = Duration::from_secs(30);
 
+/// Whether `kind` says a file's bytes may have changed. A read, which Linux
+/// reports and macOS does not, says nothing: a pass's own look at a file it
+/// set aside would otherwise wake the next pass.
+fn wrote(kind: &notify::EventKind) -> bool {
+    use notify::event::{AccessKind, AccessMode};
+    match kind {
+        notify::EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        notify::EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 
 /// The longest a watch waits before trying a failed hydration again, unless
@@ -454,6 +466,7 @@ impl Folder {
                         crate::fault::hold(|| "folder-file-changed");
                         telling.health_changed = true;
                     } else if event.paths.iter().any(|path| landing::is_reserved(path))
+                        && wrote(&event.kind)
                         && self.retains()?
                     {
                         // A program wrote to a file a pull set aside, which
@@ -3017,6 +3030,34 @@ mod tests {
 
 /// A real watch over a scripted server, on the manual clock, so a fixed
 /// simulated time can be counted in passes and requests.
+
+#[cfg(test)]
+mod wrote_tests {
+    use notify::EventKind;
+    use notify::event::{AccessKind, AccessMode, CreateKind, DataChange, ModifyKind};
+
+    #[test]
+    fn a_read_of_a_set_aside_file_is_not_a_write_and_a_closed_write_is() {
+        // A pass reading the file it set aside: Linux reports these, and
+        // they woke a pass every tick.
+        assert!(!super::wrote(&EventKind::Access(AccessKind::Open(
+            AccessMode::Read
+        ))));
+        assert!(!super::wrote(&EventKind::Access(AccessKind::Close(
+            AccessMode::Read
+        ))));
+        assert!(!super::wrote(&EventKind::Access(AccessKind::Any)));
+        // The witness: a program's write still counts.
+        assert!(super::wrote(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
+        assert!(super::wrote(&EventKind::Modify(ModifyKind::Data(
+            DataChange::Any
+        ))));
+        assert!(super::wrote(&EventKind::Create(CreateKind::File)));
+    }
+}
+
 #[cfg(all(test, debug_assertions))]
 mod backoff_tests {
     use super::*;
