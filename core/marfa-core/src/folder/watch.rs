@@ -2976,10 +2976,9 @@ mod backoff_tests {
     use super::*;
     use crate::folder::WatchRecord;
     use crate::folder::held_links_tests::{nothing_found, online_folder};
-    use crate::scripted::{json, root};
+    use crate::scripted::root;
 
     const OTHER_INSTANCE: &str = "11111111-1111-7111-8111-111111111111";
-    const FOLDER: &str = "/items/01a00000-0000-7000-8000-000000000001";
 
     /// Ten simulated minutes, a second at a time, giving the watch a moment
     /// of real time at each step for what it sends.
@@ -3039,7 +3038,9 @@ mod backoff_tests {
     #[test]
     fn passes_that_keep_failing_back_off_and_a_real_change_ends_the_wait() {
         let (_dir, folder, server) = online_folder(nothing_found());
-        server.on(FOLDER, vec![json(503, r#"{"error":{"code":"unavailable","message":"scripted"}}"#)]);
+        std::fs::write(folder.root().join("Waiting.md"), "a write the server never takes\n").unwrap();
+        // Every request now meets a closed port.
+        drop(server);
         crate::clock::set_manual(true);
         crate::fault::observe(true);
         let (stop, ended) = (AtomicBool::new(false), AtomicBool::new(false));
