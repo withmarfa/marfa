@@ -496,6 +496,8 @@ fn reaches_every_key(remote: &Remote) -> Result<bool, CliError> {
             .split_whitespace()
             .any(|scope| scope == "keys.manage"));
     }
+    // The mint's own root check would come too late: this read is sent first.
+    remote.hold_root()?;
     match remote.json(&current_request()) {
         Ok(key) => Ok(key
             .get("permissions")
