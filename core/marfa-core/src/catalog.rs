@@ -339,8 +339,7 @@ impl CatalogExt for Catalog {
             && let Some(host) = store::naming_host(conn, id)?
         {
             let host_name = self
-                .display(&host.r#type, &host.properties)
-                .name
+                .display_name(&host.r#type, &host.properties)
                 .unwrap_or_else(|| "Untitled".into());
             return Ok(marfa_rules::display::part_display(
                 properties,
