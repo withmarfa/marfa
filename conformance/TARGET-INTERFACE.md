@@ -198,6 +198,10 @@ stays because that thing is what it checks.
   folder away while the server is stopped and move it back while it runs,
   because only a disk that goes away and returns does that. One gives the
   folder's lock file a second name, which no door or fault does.
+- `device/working-copy.test.ts` and `device/folders-refused-store-live.test.ts`
+  set the release a store records in its meta, or remove it, and set its schema
+  version, to leave the store as another build would have: no door makes a store
+  another build saved.
 - `device/binding-reading-handle-writes-nothing.test.ts` compares the store
   file and its write-ahead log before and after the last connection closes.
   It opens a writable SQLite connection as a control. The binding exposes

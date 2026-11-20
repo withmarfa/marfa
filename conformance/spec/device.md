@@ -4338,6 +4338,42 @@ When a device refuses a store `wrong_schema` and its queue holds a write the ser
 
 **Tests:** `device/working-copy.test.ts › names a write of a kind this build does not send, among the writes a store of another version holds`.
 
+### `device/store-records-release`
+
+When a device opens a store as a writer, a device MUST record in the store the release it was built as.
+
+**Reason:** a build that later refuses the store (`device/wrong-schema`) can then name the release that last saved it, which a person who has upgraded no longer has. The record is a value, not a change of shape, so a build that does not read it opens the store as before.
+
+**Tests:** `device/working-copy.test.ts › records the release it was built as in a store it opens as a writer, and records it again where another build had`.
+
+### `device/wrong-schema-names-release`
+
+When a device refuses a store `wrong_schema` and the store records the release that last saved it, a device MUST name that release.
+
+**Tests:** `device/working-copy.test.ts › names the release that last saved a store another build made, and says to install it where the store holds writes unsent`.
+
+### `device/wrong-schema-release-unknown`
+
+When a device refuses a store `wrong_schema` and the store records no release, a device MUST say that the release that last saved it is not known.
+
+**Reason:** a store made by a build that recorded no release gives nothing to name, and a person who is told so does not look for a release the message never gave.
+
+**Tests:** `device/working-copy.test.ts › says the release is not known for a store another build made that records none`.
+
+### `device/wrong-schema-install-release`
+
+When a device refuses a store `wrong_schema` that holds a write the server has not taken and records the release that last saved it, a device MUST say to install that release with `MARFA_VERSION` set to it and the install script.
+
+**Reason:** only the build that made the store can send the writes it holds (`device/wrong-schema-no-delete`), and a person who upgraded with Homebrew or the install script no longer has that build.
+
+**Tests:** `device/working-copy.test.ts › names the release that last saved a store another build made, and says to install it where the store holds writes unsent`.
+
+### `device/wrong-schema-upgrade-after`
+
+When a device refuses a store `wrong_schema` that holds a write the server has not taken and records the release that last saved it, a device MUST say to upgrade again only once the store holds none.
+
+**Tests:** `device/working-copy.test.ts › names the release that last saved a store another build made, and says to install it where the store holds writes unsent`.
+
 ### `device/wrong-schema-lists`
 
 When a device is asked for the writes a store holds that the server has not taken, a device MUST list each, waiting, blocked, refused or dead, with its id, kind, item and body, whichever build made the store.

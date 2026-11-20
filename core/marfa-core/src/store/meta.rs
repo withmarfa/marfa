@@ -84,6 +84,17 @@ pub const META_COPY_REVISION: &str = "copy_revision";
 /// same path.
 pub const META_STORE_ID: &str = "store_id";
 
+/// The release the build that last opened the store as its writer was made as,
+/// so a build that refuses the store can name it. Data, not shape: a build
+/// that does not read it opens the store as before.
+pub const META_RELEASE: &str = "release";
+
+/// The release this build was made as; `0.0.0` in a build no release stamped.
+pub const RELEASE: &str = env!("CARGO_PKG_VERSION");
+
+/// What a build no release stamped records as its release.
+pub const DEVELOPMENT_RELEASE: &str = "0.0.0";
+
 /// The latest change of an edge `edge_changes` no longer records
 /// (`prune_edge_changes`).
 pub const META_EDGE_CHANGES_FLOOR: &str = "edge_changes_floor";

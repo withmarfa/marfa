@@ -580,6 +580,28 @@ When a device refuses a directory's store `wrong_schema` because it holds a writ
 
 **Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`, `› leaves a folder's store another build made while it holds a delete the server gave up on that no file records, and the folder's files`.
 
+### `folder-setup/refused-store-names-release`
+
+When a device refuses a directory's store `wrong_schema` and the store records the release that last saved it, a device MUST name that release.
+
+**Reason:** a store records the release as a device does (`device/store-records-release`).
+
+**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`.
+
+### `folder-setup/refused-store-release-unknown`
+
+When a device refuses a directory's store `wrong_schema` and the store records no release, a device MUST say that the release that last saved it is not known.
+
+**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made whose unsent writes cannot be counted`.
+
+### `folder-setup/refused-store-install-release`
+
+When a device refuses a directory's store `wrong_schema` and tells the person to use the build that made the store, and the store records the release that last saved it, a device MUST say to install that release with `MARFA_VERSION` set to it and the install script.
+
+**Reason:** a person who upgraded with Homebrew or the install script no longer has the build that made the store.
+
+**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`.
+
 ### `folder-setup/refused-store-unrecorded-advice`
 
 When a device refuses a directory's store `wrong_schema` because it holds a write still to be sent or an answer the folder has yet to record, a device MUST say that a write the server refused or gave up on that a push leaves goes only when the folder is removed with the build that made the store and added again, and that a file whose deletion the server never took then comes back and must be deleted again.

@@ -187,6 +187,99 @@ fn an_empty_file_is_made_a_store_at_this_version() {
     assert!(held_shape(&conn).unwrap().contains_key("queue"));
 }
 
+fn release_of(path: &Path) -> Option<String> {
+    let conn = Connection::open(path).unwrap();
+    meta_get(&conn, META_RELEASE).unwrap()
+}
+
+#[test]
+fn a_writer_records_the_release_it_was_built_as_each_time_it_opens_the_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    drop(open(&path).unwrap());
+    assert_eq!(release_of(&path).as_deref(), Some(RELEASE));
+
+    // The witness: another release's record stays until a writer opens it,
+    // and a reader leaves it alone.
+    meta_set(&Connection::open(&path).unwrap(), META_RELEASE, "0.0.1").unwrap();
+    drop(open_to_read(&path).unwrap());
+    assert_eq!(release_of(&path).as_deref(), Some("0.0.1"));
+    drop(open(&path).unwrap());
+    assert_eq!(release_of(&path).as_deref(), Some(RELEASE));
+
+    // A store that records none, as an earlier build left it, gets one.
+    Connection::open(&path)
+        .unwrap()
+        .execute("DELETE FROM meta WHERE key = ?1", [META_RELEASE])
+        .unwrap();
+    drop(open(&path).unwrap());
+    assert_eq!(release_of(&path).as_deref(), Some(RELEASE));
+}
+
+#[test]
+fn a_store_holding_a_meta_key_this_build_does_not_read_opens_as_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    drop(open(&path).unwrap());
+    meta_set(
+        &Connection::open(&path).unwrap(),
+        "kept_by_another_build",
+        "x",
+    )
+    .unwrap();
+    let conn = open(&path).unwrap();
+    assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
+    assert_eq!(
+        meta_get(&conn, "kept_by_another_build").unwrap().as_deref(),
+        Some("x")
+    );
+}
+
+#[test]
+fn a_refused_store_names_the_release_that_last_saved_it_whoever_reads_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    {
+        let conn = open(&path).unwrap();
+        queue_one(&conn);
+        meta_set(&conn, META_RELEASE, "0.0.80").unwrap();
+    }
+    at_version(&path, SCHEMA_VERSION + 1);
+    let named = |error: CoreError| match error {
+        CoreError::WrongSchema { ref release, .. } => (release.clone(), error.to_string()),
+        other => panic!("refused as {other:?}"),
+    };
+    for error in [
+        open(&path).err().unwrap(),
+        open_to_read(&path).err().unwrap(),
+        refusal(&path).unwrap().unwrap(),
+    ] {
+        let (release, said) = named(error);
+        assert_eq!(release.as_deref(), Some("0.0.80"));
+        assert!(
+            said.contains("`MARFA_VERSION=0.0.80` with the install script"),
+            "{said}"
+        );
+    }
+    assert_eq!(
+        release_of(&path).as_deref(),
+        Some("0.0.80"),
+        "refusing the store recorded this build's release in it"
+    );
+
+    // The witness: a store that records none says so.
+    Connection::open(&path)
+        .unwrap()
+        .execute("DELETE FROM meta WHERE key = ?1", [META_RELEASE])
+        .unwrap();
+    let (release, said) = named(open(&path).err().unwrap());
+    assert_eq!(release, None);
+    assert!(
+        said.contains("the release that last saved it is not known"),
+        "{said}"
+    );
+}
+
 #[test]
 fn two_programs_making_one_store_at_once_both_open_it() {
     let dir = tempfile::tempdir().unwrap();

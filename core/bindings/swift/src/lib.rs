@@ -3576,6 +3576,7 @@ mod tests {
                 reason: text(),
                 unsent: None,
                 folder: None,
+                release: None,
             },
             E::StoreDamaged {
                 path: text(),
@@ -4032,6 +4033,7 @@ mod tests {
                     reason: text(),
                     unsent: Some(1),
                     folder: None,
+                    release: None,
                 }
                 .into(),
                 "WrongSchema",

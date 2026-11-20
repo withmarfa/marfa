@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -2072,6 +2073,116 @@ describe("the working copy belongs to one server", () => {
     expect(queuedRows(), "refusing the store changed its queue").toEqual(
       before,
     );
+  });
+
+  it("records the release it was built as in a store it opens as a writer, and records it again where another build had", async () => {
+    harness = await hydratedHarness("store-release", {
+      items: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const built = execFileSync(requireBinary(), ["--version"], {
+      encoding: "utf8",
+    })
+      .trim()
+      .replace(/^marfa /, "");
+    expect(built, "the build names no release").toMatch(/^\d+\.\d+\.\d+/);
+    const recorded = (): string | undefined => {
+      const reading = new DatabaseSync(harness!.device.store);
+      try {
+        const row = reading
+          .prepare("SELECT value FROM meta WHERE key = 'release'")
+          .get() as { value: string } | undefined;
+        return row?.value;
+      } finally {
+        reading.close();
+      }
+    };
+    expect(recorded(), "a writer left no release in the store").toBe(built);
+
+    // The witness: a store another release last saved holds that release
+    // until a writer opens it.
+    const store = new DatabaseSync(harness.device.store);
+    try {
+      store.exec("UPDATE meta SET value = '0.0.1' WHERE key = 'release'");
+    } finally {
+      store.close();
+    }
+    expect(recorded()).toBe("0.0.1");
+    expect((await harness.device.get("n1")).ok).toBe(true);
+    expect(recorded(), "a writer kept the release another build recorded").toBe(
+      built,
+    );
+  });
+
+  it("names the release that last saved a store another build made, and says to install it where the store holds writes unsent", async () => {
+    harness = await hydratedHarness("store-release-named", {
+      items: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const queued = await harness.device.create({
+      type: "core.note",
+      properties: { title: "unsent", body: "unsent" },
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    const store = new DatabaseSync(harness.device.store);
+    try {
+      store.exec(
+        "UPDATE meta SET value = '0.0.80' WHERE key = 'release'; PRAGMA user_version = 0",
+      );
+    } finally {
+      store.close();
+    }
+    for (const [opened, device] of [
+      ["writer", harness.device],
+      ["reader", harness.device.reopen({ reader: true })],
+    ] as const) {
+      const refused = await device.queue();
+      expect(refused.ok, `a ${opened} opened the store`).toBe(false);
+      if (refused.ok) continue;
+      expect(refused.refusal.code, refused.refusal.raw).toBe("wrong_schema");
+      expect(
+        refused.refusal.raw,
+        `the ${opened}'s refusal does not name the release`,
+      ).toContain("0.0.80");
+      expect(
+        refused.refusal.raw,
+        `the ${opened}'s refusal does not say how to install the release`,
+      ).toContain("`MARFA_VERSION=0.0.80` with the install script");
+      expect(
+        refused.refusal.raw,
+        `the ${opened}'s refusal does not say to send the writes before upgrading again`,
+      ).toContain("upgrade again only once");
+    }
+  });
+
+  it("says the release is not known for a store another build made that records none", async () => {
+    harness = await hydratedHarness("store-release-unknown", {
+      items: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const queued = await harness.device.create({
+      type: "core.note",
+      properties: { title: "unsent", body: "unsent" },
+    });
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    const store = new DatabaseSync(harness.device.store);
+    try {
+      store.exec(
+        "DELETE FROM meta WHERE key = 'release'; PRAGMA user_version = 0",
+      );
+    } finally {
+      store.close();
+    }
+    const refused = await harness.device.queue();
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal.code, refused.refusal.raw).toBe("wrong_schema");
+    expect(refused.refusal.raw).toContain("1 write");
+    expect(
+      refused.refusal.raw,
+      "the refusal does not say the release is not known",
+    ).toContain("release that last saved it is not known");
+    expect(
+      refused.refusal.raw,
+      "the refusal names a release to install for a store that records none",
+    ).not.toContain("MARFA_VERSION");
   });
 
   it("names a blocked write among the writes a store of another version holds unsent", async () => {
