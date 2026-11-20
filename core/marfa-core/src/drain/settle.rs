@@ -109,53 +109,45 @@ pub(super) fn move_edits_behind(
     Ok(())
 }
 
-/// A delete or tag replace behind this device's own answered write moves on to
-/// the version that write made, only where the answer holds all it read.
-fn move_versioned_behind(
+fn move_deletes_behind(
     conn: &rusqlite::Connection,
     row: &QueuedWrite,
     answered: &WireItem,
     acknowledged: bool,
 ) -> Result<()> {
-    for kind in [WriteKind::DeleteItem, WriteKind::ReplaceTags] {
-        for (id, base) in store::unsent_writes_behind(conn, row, &answered.id, kind)? {
-            if base.is_none_or(|base| base >= answered.version) {
-                continue;
+    for (id, base) in store::unsent_writes_behind(conn, row, &answered.id, WriteKind::DeleteItem)? {
+        if base.is_none_or(|base| base >= answered.version) {
+            continue;
+        }
+        // A new row's first receipt confirms only this device's create.
+        // Later receipts must still hold everything the delete read.
+        let own_create = row.kind == WriteKind::CreateItem
+            && !acknowledged
+            && answered.version == 1
+            && base == Some(0);
+        let unchanged = if let Some(read) = store::read_of(conn, &id)? {
+            if own_create {
+                let mut read: serde_json::Value = serde_json::from_str(&read)?;
+                // These fields are fixed by the create, never by an edit behind it.
+                // Keep the later local edits in the rest of the delete's read.
+                read["source"] = serde_json::json!(answered.source);
+                read["occurred_at"] = serde_json::json!(answered.occurred_at);
+                read["schema_version"] = serde_json::json!(answered.schema_version);
+                store::record_read(conn, &id, &read)?;
             }
-            // A new row's first receipt confirms only this device's create.
-            // Later receipts must still hold everything the write read.
-            let own_create = row.kind == WriteKind::CreateItem
-                && !acknowledged
-                && answered.version == 1
-                && base == Some(0);
-            let unchanged = if let Some(read) = store::read_of(conn, &id)? {
-                if own_create {
-                    let mut read: serde_json::Value = serde_json::from_str(&read)?;
-                    // These fields are fixed by the create, never by an edit behind it.
-                    // Keep the later local edits in the rest of the write's read.
-                    read["source"] = serde_json::json!(answered.source);
-                    read["occurred_at"] = serde_json::json!(answered.occurred_at);
-                    read["schema_version"] = serde_json::json!(answered.schema_version);
-                    store::record_read(conn, &id, &read)?;
-                }
-                let read: WireItem = serde_json::from_str(&read)?;
-                read.properties == answered.properties
-                    && read.r#type == answered.r#type
-                    && read.tier == answered.tier
-                    && read.source == answered.source
-                    && read.source_id == answered.source_id
-                    && read.occurred_at == answered.occurred_at
-                    && read.schema_version == answered.schema_version
-            } else {
-                false
-            };
-            if own_create || unchanged {
-                if kind == WriteKind::ReplaceTags {
-                    store::rebase_column(conn, &id, answered.version)?;
-                } else {
-                    store::rebase(conn, &id, answered.version)?;
-                }
-            }
+            let read: WireItem = serde_json::from_str(&read)?;
+            read.properties == answered.properties
+                && read.r#type == answered.r#type
+                && read.tier == answered.tier
+                && read.source == answered.source
+                && read.source_id == answered.source_id
+                && read.occurred_at == answered.occurred_at
+                && read.schema_version == answered.schema_version
+        } else {
+            false
+        };
+        if own_create || unchanged {
+            store::rebase(conn, &id, answered.version)?;
         }
     }
     Ok(())
@@ -605,7 +597,7 @@ pub(super) fn settle_success(
                 },
             )?;
             if matches!(verdict, Verdict::Accepted | Verdict::Merged) {
-                move_versioned_behind(&tx, row, &parsed.item, parsed.acknowledged)?;
+                move_deletes_behind(&tx, row, &parsed.item, parsed.acknowledged)?;
             }
             if verdict == Verdict::Conflicted
                 && row.kind == WriteKind::UpdateItem

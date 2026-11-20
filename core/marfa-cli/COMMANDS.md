@@ -787,7 +787,6 @@ marfa items tags replace [OPTIONS] <ID> [TAGS]...
 
 | Option | Description |
 | --- | --- |
-| `--version <VERSION>` | The item version you read. If the item has changed since, the tags stay as they are. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa items edges

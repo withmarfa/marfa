@@ -800,7 +800,7 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
         // it went under answers nothing the write is owed.
         store::restored::send_afresh(tx, &row.id)?;
         let over_create = match row.kind {
-            WriteKind::UpdateItem | WriteKind::DeleteItem | WriteKind::ReplaceTags => row
+            WriteKind::UpdateItem | WriteKind::DeleteItem => row
                 .item_id
                 .as_ref()
                 .is_some_and(|item| created.contains_key(item)),
@@ -811,13 +811,8 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
             _ => false,
         };
         if over_create && row.base_version.is_some() {
-            // A create makes version 1. A tag replace names its version in
-            // its query, so its body stays as written.
-            if row.kind == WriteKind::ReplaceTags {
-                store::rebase_column(tx, &row.id, 1)?;
-            } else {
-                store::rebase(tx, &row.id, 1)?;
-            }
+            // A create makes version 1.
+            store::rebase(tx, &row.id, 1)?;
         }
         if refused_missing {
             kept.push(row.id);
@@ -927,11 +922,8 @@ fn keep_create(
     store::restored::follow_nothing(tx, &create)?;
     kept.push(create.clone());
     if !held.tags.is_empty() {
-        // On the placeholder every waiting create shows, which its answer
-        // moves on to the version the create made.
-        let mut read = held.clone();
-        read.version = 0;
-        kept.push(queue_tags(tx, held, &read, std::slice::from_ref(&create))?);
+        // The create carries no tags, so the row it makes holds none.
+        kept.push(queue_tags(tx, held, &[], std::slice::from_ref(&create))?);
     }
     Ok(create)
 }
@@ -976,17 +968,7 @@ fn keep_update(
         )?);
     }
     if kept_tags(held) != kept_tags(server) {
-        // Read as the row stands once the update above lands, so the update's
-        // own answer moves the replace on to the version it made.
-        let mut read = server.clone();
-        if changed {
-            read.properties = edit.properties.clone();
-            read.r#type = held.r#type.clone();
-            read.tier = held.tier.or(server.tier);
-            read.source_id = held.source_id.clone().or(read.source_id);
-            read.occurred_at = held.occurred_at.clone();
-        }
-        kept.push(queue_tags(tx, held, &read, &[])?);
+        kept.push(queue_tags(tx, held, &server.tags, &[])?);
     }
     if held.state != server.state
         && held.state != ItemState::Revoked
@@ -997,26 +979,23 @@ fn keep_update(
     Ok(())
 }
 
-/// Based on the version `read` holds, which the server refuses the replace
-/// on where another writer has moved the row since.
-fn queue_tags(tx: &Connection, held: &Item, read: &Item, depends_on: &[String]) -> Result<String> {
+/// `read` are the tags the server held when the copy was compared with it:
+/// the replace is refused if another writer has changed them by the time a
+/// person releases it.
+fn queue_tags(
+    tx: &Connection,
+    held: &Item,
+    read: &[String],
+    depends_on: &[String],
+) -> Result<String> {
     let payload = crate::model::TagsWrite {
         tags: held.tags.clone(),
     }
-    .payload()?;
+    .payload(read)?;
     store::hold_beneath_item(tx, &held.id)?;
     store::replace_tags(tx, &held.id, &held.tags)?;
     store::reindex_item(tx, &held.id)?;
-    let queued = enqueue(
-        tx,
-        WriteKind::ReplaceTags,
-        held,
-        Some(read.version),
-        &payload,
-        depends_on,
-    )?;
-    store::record_read(tx, &queued, &serde_json::to_value(read)?)?;
-    Ok(queued)
+    enqueue(tx, WriteKind::ReplaceTags, held, None, &payload, depends_on)
 }
 
 /// Moves the row the server holds as `server` to `state`, as `delete_item`,

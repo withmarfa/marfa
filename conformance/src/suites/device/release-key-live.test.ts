@@ -217,8 +217,7 @@ it("sends a set-aside write again under its key once a caller releases it, so th
   const other = await note("witness");
   const { url, sent, fate } = await proxy(
     (request) =>
-      request.method === "PUT" &&
-      request.url?.split("?")[0] === `/items/${id}/tags`,
+      request.method === "PUT" && request.url === `/items/${id}/tags`,
   );
   const device = await deviceAt("release-key-aside", url);
   const write = value(await device.replaceTags(id, ["mine"]));
@@ -373,8 +372,7 @@ it(
     const { id } = ((await made.json()) as { item: { id: string } }).item;
     const { url, sent, fate } = await proxy(
       (request) =>
-        request.method === "PUT" &&
-        request.url?.split("?")[0] === `/items/${id}/tags`,
+        request.method === "PUT" && request.url === `/items/${id}/tags`,
       () => server.apiUrl,
     );
     const store = newStore("release-key-contract");

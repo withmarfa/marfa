@@ -190,7 +190,7 @@ If the read of `queue-and-verdicts/resend-read-first` finds a create by natural 
 
 When a device sends again, after the read of `queue-and-verdicts/resend-read-first` found its subject, a tag write that adds or removes one tag, a lifecycle move, a restore, or a create by natural key on an item it held when it first sent the create, a device MUST name the version of the subject it held when it first sent the write, on that send and every later send under the same key.
 
-**Reason:** under the new credential the server runs the write afresh, so without a version it would act on an item changed in a way the copy had not read when it first sent the write; named, the server answers `409 version_conflict` and the write is blocked `conflict_unresolved` (`queue-and-verdicts/conflict-blocks`). The server's fingerprint of a key covers the query and body, so every send under the key names the same version. A version moves with an item's properties and type, never with its tags or state, so another device's tag or lifecycle change is not caught, and an extension write, whose operation takes no version, can land over newer work of its own kind. A tag write that replaces every tag names the version it was queued on, on every send (`queue-and-verdicts/replace-tags-sends-version`).
+**Reason:** under the new credential the server runs the write afresh, so without a version it would act on an item changed in a way the copy had not read when it first sent the write; named, the server answers `409 version_conflict` and the write is blocked `conflict_unresolved` (`queue-and-verdicts/conflict-blocks`). The server's fingerprint of a key covers the query and body, so every send under the key names the same version. A version moves with an item's properties and type, never with its tags or state, so another device's tag or lifecycle change is not caught, and an extension write, whose operation takes no version, can land over newer work of its own kind. A tag write that replaces every tag names the tags it read instead (`queue-and-verdicts/replace-tags-names-read`).
 
 **Tests:** `device/resend-credential-live.test.ts › sends a tag the server never received again naming the version it was sent at, and blocks it as a conflict once the item has moved`.
 
@@ -602,7 +602,23 @@ When a caller releases an `undo_rows` write `blocked` `key_spent`, `conflict_unr
 
 ## The version a write carries
 
-An update names the version it was made against, and a delete names the version it removes, and a tag replace names the version it read, so the server can tell whether the item has moved since (`versions.md`).
+An update names the version it was made against, and a delete names the version it removes, so the server can tell whether the item has moved since (`versions.md`).
+
+### `queue-and-verdicts/replace-tags-names-read`
+
+When a caller queues a tag replace of an item the copy holds, a device MUST carry in the write, as `read_tags`, the tags the copy held for the item when the write was queued, this device's own earlier tag writes included, so that every send of the write names them.
+
+**Reason:** a tag write leaves an item's version as it is (`versions/metadata-keeps-version`), so a version cannot show that another writer changed the tags since the copy read them. The server refuses a replace whose `read_tags` are not the tags it holds (`items/tags-replace-read-stale`), and a replace made behind this device's own tag writes names the tags they leave, so it does not conflict with them. The body is part of what the server fingerprints a key by, so every send under a key names the same tags.
+
+**Tests:** `device/tags-read-live.test.ts › sends a tag replace naming the tags it read, and blocks it as a conflict once another key has changed them`, `› sends a tag replace queued behind this device's own tag write, update and create on the tags those writes leave`, `› sends a tag replace of an item whose content another key changed since the read when its tags did not change`.
+
+### `queue-and-verdicts/replace-tags-released-unconditional`
+
+When a caller releases a tag replace blocked `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST send it under a fresh key with no `read_tags`.
+
+**Reason:** the person released it knowing the item's tags had changed, so the replace is to make the tags what the copy holds, as it would with no `read_tags`; sent with them, the server would refuse it again for as long as the tags differ, and nothing could release the block.
+
+**Tests:** `device/tags-read-live.test.ts › sends a tag replace naming the tags it read, and blocks it as a conflict once another key has changed them`.
 
 ### `queue-and-verdicts/update-needs-version`
 
@@ -667,38 +683,6 @@ If a delete comes to be sent with no version the server confirmed, then a device
 **Reason:** a delete of this device's own create that the server answered as a repeat holds only the placeholder version a local create carries, which no server mints.
 
 **Tests:** `device/queue.test.ts › refuses unsent a delete whose version no answer confirmed`.
-
-### `queue-and-verdicts/replace-tags-sends-version`
-
-When a drain sends a tag replace, a device MUST send as its `version` the version of the item the copy held when the replace was queued, or the version a later answer moved it onto under `queue-and-verdicts/replace-tags-follows-answer`, on that send and on every later send of the write.
-
-**Reason:** the server refuses a tag replace whose version the item has left (`items/tags-version-stale`), so a replace never overwrites tags beside content its person never saw. A version moves with an item's properties and type, never with its tags, so a change to the tags alone by another writer is not caught. The version is part of the request the server fingerprints a key by, so every send under a key names the same one.
-
-**Tests:** `device/tags-version-live.test.ts › sends a tag replace on the version it read, and blocks it as a conflict once the item has moved`.
-
-### `queue-and-verdicts/replace-tags-follows-answer`
-
-When this device's earlier write of an item is answered `accepted` or `merged` with the item at a version past that of a later unsent tag replace of the item, holding the content the replace read or being the first answer to this device's own create, a device MUST send the replace on the version of that answer.
-
-**Reason:** the content the replace was made against is then exactly what the item holds, so a person's own update or create does not make the replace that follows it a conflict. The content compared is the one `queue-and-verdicts/delete-follows-answer` names.
-
-**Tests:** `device/tags-version-live.test.ts › sends a tag replace queued behind its own update and its own create on the version they made`.
-
-### `queue-and-verdicts/replace-tags-unseen-content-kept`
-
-When an answer to an earlier write of an item carries content its later unsent tag replace did not read, a device MUST leave the replace on the version it carried.
-
-**Reason:** the server then refuses the replace, and tags are not written over content another device wrote by a person who never saw it.
-
-**Tests:** `device/tags-version-live.test.ts › sends a tag replace on the version it read, and blocks it as a conflict once the item has moved`.
-
-### `queue-and-verdicts/replace-tags-unconfirmed-refused`
-
-If a tag replace comes to be sent with no version the server confirmed, then a device MUST refuse it without sending it.
-
-**Reason:** a replace of this device's own create that the server answered as a repeat holds only the placeholder version a local create carries, which no server mints.
-
-**Tests:** `device/queue.test.ts › refuses unsent a tag replace whose version no answer confirmed`.
 
 ### `queue-and-verdicts/merge-null-leaves`
 
@@ -1712,7 +1696,7 @@ When the server answers a write `409 version_conflict`, a device MUST block it `
 
 **Reason:** the server resolves a colliding update in the same write (`versions/auto-resolved`) but for one that also moves the type (`versions/auto-type-move`), and refuses a delete of an item that has moved; a device cannot resolve it itself and the same request is refused the same way. A delete blocked so keeps the newer item intact.
 
-**Tests:** `device/classification.test.ts › blocks a conflict the server declined to resolve`, `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/versioned-deletes-live.test.ts › guards a queued delete through %s`, `device/queue.test.ts › blocks a move that collides with a write it did not read, keeping it`, `device/tags-version-live.test.ts › sends a tag replace on the version it read, and blocks it as a conflict once the item has moved`.
+**Tests:** `device/classification.test.ts › blocks a conflict the server declined to resolve`, `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/versioned-deletes-live.test.ts › guards a queued delete through %s`, `device/queue.test.ts › blocks a move that collides with a write it did not read, keeping it`, `device/tags-read-live.test.ts › sends a tag replace naming the tags it read, and blocks it as a conflict once another key has changed them`.
 
 ## A renewal a drain meets
 

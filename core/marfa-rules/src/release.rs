@@ -2,7 +2,8 @@
 
 /// The oldest server release this core works with, as the root's `version`
 /// writes it. A change that makes the core depend on a server change raises it.
-/// 0.0.86 is the first release whose `PUT /items/{id}/tags` takes `version`.
+/// 0.0.86 is the first release whose `PUT /items/{id}/tags` takes `read_tags`;
+/// an older one refuses the field as an undeclared body key.
 pub const OLDEST_SERVER: &str = "0.0.86";
 
 /// Whether the release a server names is older than [`OLDEST_SERVER`]. A name

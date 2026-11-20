@@ -153,9 +153,6 @@ pub(super) fn readiness(
     if row.kind == WriteKind::DeleteItem && row.base_version.is_none_or(|version| version <= 0) {
         return Readiness::RefusedWith("the delete has no confirmed server version to remove; read the item before deleting it".into());
     }
-    if row.kind == WriteKind::ReplaceTags && row.base_version.is_none_or(|version| version <= 0) {
-        return Readiness::RefusedWith("the tag replace has no confirmed server version to replace on; read the item before replacing its tags".into());
-    }
     Readiness::Ready
 }
 
@@ -264,23 +261,11 @@ pub(super) fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door
             vec!["edges".into(), edge_id()?.into()],
             Shape::Plain,
         ),
-        WriteKind::ReplaceTags => Ok(Door::Json(
-            Outgoing {
-                method: Method::Put,
-                segments: vec!["items".into(), item_id()?.into(), "tags".into()],
-                params: vec![(
-                    "version".into(),
-                    row.base_version
-                        .ok_or_else(|| {
-                            CoreError::Invalid("a tag replace carries no read version".into())
-                        })?
-                        .to_string(),
-                )],
-                body: payload,
-                idempotency_key: &row.idempotency_key,
-            },
+        WriteKind::ReplaceTags => to(
+            Method::Put,
+            vec!["items".into(), item_id()?.into(), "tags".into()],
             Shape::Plain,
-        )),
+        ),
         WriteKind::AddTag => to(
             Method::Post,
             vec!["items".into(), item_id()?.into(), "tags".into()],
