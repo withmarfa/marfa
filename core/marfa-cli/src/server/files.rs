@@ -790,8 +790,6 @@ mod tests {
             uid: 41_001,
             gid: 41_002,
         };
-        // SAFETY: `umask` takes a mask and cannot fail.
-        unsafe { libc::umask(0o077) };
         let above = scratch("root-layout").join("srv");
         let dir = above.join("marfa");
         prepare_root_folder(&dir, account).unwrap();
