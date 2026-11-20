@@ -188,10 +188,11 @@ stays because that thing is what it checks.
   and looks inside it. A store is its folder, so the folder and its marker
   are the subject.
 - `compliance/mcp-file-acts.test.ts` swaps the backup folder for an empty one
-  at its path and back, adds entries to it, takes the right to write or read
-  from its files folder, and reads and writes the store's marker there. The
-  folder that an adopt confirms, and the marker it writes, are the subject,
-  and no door or fault replaces a folder or changes it between two calls.
+  at its path and back, adds entries to it, replaces its `files` folder with a
+  link, takes the right to write or read from its files folder, and reads and
+  writes the store's marker there. The folder that an adopt confirms, and the
+  marker it writes, are the subject, and no door or fault replaces a folder or
+  changes it between two calls.
 - `compliance/blob-store-rebuild.test.ts` moves the disk store's folder away
   before a restart. No door or fault removes a store's folder.
 - `compliance/one-server.test.ts` makes a second hard link to the database and

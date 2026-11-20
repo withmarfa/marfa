@@ -243,7 +243,7 @@ async function fileItem(
     properties: { blob_ref: uploaded.data.hash, mime_type: "text/plain" },
   });
   expect(item.status, JSON.stringify(item.error)).toBe(201);
-  return { hash: uploaded.data.hash, bytes, id: item.data.id };
+  return { hash: uploaded.data.hash, bytes, id: item.data.item.id };
 }
 
 async function kinds(server: FreshServer, hash: string): Promise<string[]> {
@@ -938,7 +938,8 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
     expect(backup.status, JSON.stringify(backup.error)).toBe(200);
     const everything = await everythingClient(folder);
     const purge = async (id: string): Promise<void> => {
-      expect((await everything.deleteItem(id)).status).toBe(200);
+      const trashed = await everything.deleteItem(id);
+      expect(trashed.status, JSON.stringify(trashed.error)).toBe(200);
       const purged = await everything.purgeItem(id);
       expect(purged.status, JSON.stringify(purged.error)).toBe(200);
     };
@@ -962,23 +963,27 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
     await marked();
     const store = await folderStore();
     const { operator } = clientsFor(folder);
-    const file = await fileItem(folder, `queued ${randomUUID()}`);
-    await replicateUntilCaughtUp(operator, `the folder's copy of ${file.hash}`);
-    // The folder's copy is removed while its bytes cannot be deleted, then fails to be made again.
-    await folder.setFault("fail:blob-delete");
-    const dropped = await operator.deleteBlobCopy(file.hash, store.id);
-    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
-    expect(await fired(folder, "fail:blob-delete")).toBe(1);
-    await folder.clearFault("fail:blob-delete");
+    const queued = await fileItem(folder, `queued ${randomUUID()}`);
+    const failed = await fileItem(folder, `not copied ${randomUUID()}`);
+    await replicateUntilCaughtUp(operator, `the folder's copies of both`);
+    // The folder's copy of one is removed, then fails to be made again.
+    const removed = await operator.deleteBlobCopy(failed.hash, store.id);
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
     await folder.setFault("fail:backup-folder-write");
     await runJob(operator, "blob-replicate", "either");
     expect(await fired(folder, "fail:backup-folder-write")).toBeGreaterThan(0);
     await folder.clearFault("fail:backup-folder-write");
-    expect(await kinds(folder, file.hash)).toEqual(["disk"]);
+    expect(await kinds(folder, failed.hash)).toEqual(["disk"]);
+    // Last, since a replication run first retries the deletions queued.
+    await folder.setFault("fail:blob-delete");
+    const dropped = await operator.deleteBlobCopy(queued.hash, store.id);
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+    expect(await fired(folder, "fail:blob-delete")).toBe(1);
+    await folder.clearFault("fail:blob-delete");
 
     await loseTheDisk();
     const shown = await call(backupsAdmin, ADOPT, {});
-    expect(shown.forgets).toMatchObject({
+    expect(shown.forgets, JSON.stringify(shown.forgets)).toMatchObject({
       pending_deletions: 1,
       copy_failures: 1,
     });
