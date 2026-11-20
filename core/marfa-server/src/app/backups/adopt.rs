@@ -136,11 +136,16 @@ fn unanswered(root: &str, what: &str) -> Refusal {
 
 fn looked_at_failed(root: &str, error: &std::io::Error) -> Refusal {
     tracing::warn!(%error, "The backup folder could not be looked at to adopt it");
+    let next = if error.kind() == std::io::ErrorKind::PermissionDenied {
+        "Make the folder writable by the server, then try again."
+    } else {
+        "Check that its disk is mounted and answering, then try again."
+    };
     Refusal::new(
         Code::BlobStoreUnavailable,
         format!(
             "The backup folder {root} failed while it was looked at, so nothing was adopted: \
-             {error}"
+             {error}. {next}"
         ),
     )
 }
