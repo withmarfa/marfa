@@ -419,7 +419,10 @@ fn copy_before_upgrade(
     let needed =
         pages("page_count")?.saturating_sub(pages("freelist_count")?) * pages("page_size")?;
     let reserve = reserve_of(conn, options, label)?;
-    let folder = path.parent().unwrap_or(Path::new("."));
+    let folder = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let free = match faults.free(Volume::Database) {
         Some(set) => set,
         None => volume::free_bytes(folder),

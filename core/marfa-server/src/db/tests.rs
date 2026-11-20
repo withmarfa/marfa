@@ -1937,18 +1937,33 @@ async fn a_new_database_is_made_with_login_after() {
 #[tokio::test]
 async fn a_database_named_by_a_uri_that_asks_for_rw_is_upgraded_with_its_copy() {
     let place = folder();
-    db_open(&options(&place.file, &MIGRATIONS[..1]), Arc::default())
+    upgraded_by_uri(
+        &place.file,
+        &format!("file:{}?mode=rw", place.file.display()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_database_named_by_a_bare_file_name_uri_is_upgraded_with_its_copy() {
+    let place = folder();
+    std::env::set_current_dir(place.file.parent().unwrap()).unwrap();
+    upgraded_by_uri(&place.file, "file:marfa.db?mode=rw").await;
+}
+
+async fn upgraded_by_uri(file: &Path, uri: &str) {
+    db_open(&options(file, &MIGRATIONS[..1]), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
         .await;
-    Connection::open(&place.file)
+    Connection::open(file)
         .unwrap()
         .execute_batch("INSERT INTO instance (key, value) VALUES ('kept', 'yes');")
         .unwrap();
     let by_uri = Options {
-        path: DatabasePath::Uri(format!("file:{}?mode=rw", place.file.display())),
-        ..options(&place.file, MIGRATIONS)
+        path: DatabasePath::Uri(uri.to_string()),
+        ..options(file, MIGRATIONS)
     };
 
     db_open(&by_uri, Arc::default())
@@ -1957,6 +1972,6 @@ async fn a_database_named_by_a_uri_that_asks_for_rw_is_upgraded_with_its_copy() 
         .close()
         .await;
 
-    assert!(has_login_after(&place.file));
-    assert!(copy_of(&place.file).exists());
+    assert!(has_login_after(file));
+    assert!(copy_of(file).exists());
 }
