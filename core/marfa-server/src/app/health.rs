@@ -354,16 +354,28 @@ async fn blob_storage(app: &Arc<App>) -> Component {
     let looked = bounded(move || {
         app.faults.hold_blocking(HOLD_DISK_PROBE);
         if app.faults.refusing(REFUSE_BLOB_STORE) || !app.blobs.folder_reachable() {
-            return Some("the blob folder is missing or holds no marker of this store");
+            return Some((
+                Status::Down,
+                "the blob folder is missing or holds no marker of this store".to_string(),
+            ));
         }
-        app.blobs
-            .folder_unlockable()
-            .then_some("the blob folder could not be locked, so no file can be stored")
+        if let Some(why) = app.blobs.folder_unwritable() {
+            return Some((Status::Down, why));
+        }
+        app.blobs.folder_shared().map(|fs| {
+            (
+                Status::Degraded,
+                format!(
+                    "the blob folder is on a network file system ({fs}), whose locks may not \
+                     keep out a Marfa server on another machine; keep it on a disk of this one"
+                ),
+            )
+        })
     })
     .await;
     match looked {
         Some(None) => Component::ok(None),
-        Some(Some(fault)) => Component::not_ok(Status::Down, fault),
+        Some(Some((status, fault))) => Component::not_ok(status, fault),
         None => Component::silent("blob folder answer"),
     }
 }

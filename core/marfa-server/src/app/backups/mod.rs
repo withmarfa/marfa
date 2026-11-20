@@ -32,11 +32,12 @@ use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
 use super::blobs::{Attached, Blob, Hash, Kept, Retry, Wanted, folder_shortfall, unsettled};
 use super::clock::Stamp;
 use super::faults::{
-    HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE, HOLD_STORES_RECORD, HOLD_STORES_SWAP,
+    FAIL_STORES_RECORD, HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE, HOLD_FOLDER_MARKER,
+    HOLD_STORES_RECORD, HOLD_STORES_SWAP,
 };
 use super::housekeeping::{self, Report, Run};
 use super::refusal::{Code, Refusal, Result};
-use crate::db::Write;
+use crate::db::{Write, io_refusal};
 use crate::settings::registry::BACKUP_INTERVAL_SECONDS;
 
 pub use found::survey_folder;
@@ -1407,6 +1408,38 @@ impl App {
             }
         }
         let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
+        let deadline = self.blobs.check();
+        // The folder is claimed, under its lock, before any record is forgotten.
+        let claiming = id.clone();
+        let claimed = folder
+            .within(
+                deadline,
+                move |folder| folder.claim(&claiming),
+                |claim| {
+                    if let Err(error) = claim.undo() {
+                        tracing::warn!(%error, "A claim on the backup folder that was given up on was not undone");
+                    }
+                },
+            )
+            .await;
+        let claim = match claimed {
+            Some(Ok(claim)) => claim,
+            Some(Err(error)) => {
+                let code = if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    Code::Conflict
+                } else {
+                    Code::BlobStoreUnavailable
+                };
+                return Err(Refusal::new(
+                    code,
+                    format!(
+                        "The backup folder {root} could not be claimed, so nothing was adopted: \
+                         {error}."
+                    ),
+                ));
+            }
+            None => return Err(unanswered("did not answer in time, so nothing was adopted")),
+        };
         let (locator, at) = (old.root().display().to_string(), self.clock.stamp());
         let (forgotten, new_id) = (old_id.clone(), id.clone());
         let (standing, checking, named) =
@@ -1424,19 +1457,42 @@ impl App {
                     tx, &forgotten, &new_id, &locator, &at,
                 )?;
                 housekeeping::bring_forward(tx, REPLICATION, &at)?;
+                if checking.faults.fail(FAIL_STORES_RECORD, None) {
+                    return Err(io_refusal());
+                }
                 Ok((copies, backups))
             })
             .await;
         let (copies, backups) = match written {
             Ok(counted) => counted,
-            Err(refusal) => {
-                if refusal.commit_failed
-                    && let Err(refused) = self.retake_folder(folder).await
-                {
-                    tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unchecked");
-                    self.blobs.doubt_record();
+            Err(refusal) if refusal.commit_failed => {
+                // The record may name the new store or the old: the claim is settled against it.
+                drop(claim);
+                self.blobs.doubt_record();
+                if let Err(refused) = self.settle_folder(folder).await {
+                    tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unsettled");
                 }
                 return Err(refusal);
+            }
+            Err(refusal) => {
+                let undone = folder.within(deadline, move |_| claim.undo(), |()| {}).await;
+                let why = match undone {
+                    Some(Ok(())) => return Err(refusal),
+                    Some(Err(error)) => error.to_string(),
+                    None => "it did not answer in time".to_string(),
+                };
+                tracing::warn!(reason = %why, "The claim of an adopt that recorded nothing was not undone");
+                self.blobs.doubt_record();
+                return Err(Refusal {
+                    message: format!(
+                        "{} Nothing was adopted, but the backup folder {root} keeps this adopt's \
+                         claim, which was not undone: {why}. The server removes it once the \
+                         folder answers.",
+                        refusal.message
+                    )
+                    .into(),
+                    ..refusal
+                });
             }
         };
         self.faults.hold(HOLD_STORES_SWAP, None).await;
@@ -1445,9 +1501,22 @@ impl App {
             counted(backups, "backup", "backups"),
             counted(copies, "file copy", "file copies"),
         );
-        match folder.claim_within(id.clone(), self.blobs.check()).await {
+        let faults = self.faults.clone();
+        let promoted = folder
+            .within(
+                deadline,
+                move |folder| {
+                    faults.hold_blocking(&HOLD_FOLDER_MARKER);
+                    folder.swap(claim.promote()?);
+                    Ok(())
+                },
+                |()| {},
+            )
+            .await;
+        match promoted {
             Some(Ok(())) => {}
             Some(Err(error)) => {
+                self.blobs.doubt_record();
                 return Err(Refusal::new(
                     Code::BlobStoreUnavailable,
                     format!(
@@ -1458,10 +1527,7 @@ impl App {
                 ));
             }
             None => {
-                if let Err(refused) = self.retake_folder(folder).await {
-                    tracing::error!(%refused, "An adopt whose claim did not answer left the backup folder unchecked");
-                    self.blobs.doubt_record();
-                }
+                self.blobs.doubt_record();
                 return Err(unanswered(&format!(
                     "did not answer in time when it was given the new store's marker. {forgot} \
                      Backups wait until it answers"

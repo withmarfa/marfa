@@ -128,6 +128,12 @@ impl Lock {
             return Ok(Lock(None));
         };
         let label = Target::of(database).label();
+        let lock = sibling(&path, SERVER_LOCK);
+        // The lock file alone does not hold once it is removed or replaced; SQLite's own mark
+        // of an open database does.
+        if let Some(pid) = opened_elsewhere(&path) {
+            return Err(Failure::start(held_elsewhere(&label, &lock, pid)));
+        }
         if let Some(folder) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(folder).map_err(|error| {
                 Failure::start(format!(
@@ -136,7 +142,6 @@ impl Lock {
                 ))
             })?;
         }
-        let lock = sibling(&path, SERVER_LOCK);
         let file = server_lock::take(&lock).map_err(|untaken| match untaken {
             Untaken::Held => Failure::start(format!(
                 "{label} is open in another Marfa server. Stop that server, or give this one a \
@@ -171,6 +176,88 @@ impl Lock {
     pub(super) fn into_file(self) -> Option<File> {
         self.0
     }
+}
+
+/// The process other than this one that has the database at `path` open, where one does. SQLite
+/// in WAL mode keeps a read lock on byte 128 of `<db>-shm` while a connection has the database
+/// open. Closing the descriptor drops this process's own record locks on that file, so it runs
+/// before this process opens the database. It blocks.
+fn opened_elsewhere(path: &Path) -> Option<libc::pid_t> {
+    use std::os::fd::AsRawFd as _;
+    let shm = without_waiting(&sibling(path, "-shm")).ok()?;
+    // SAFETY: `flock` is plain integers, for which all zeroes is a valid value.
+    let mut probe: libc::flock = unsafe { std::mem::zeroed() };
+    probe.l_type = libc::F_WRLCK as _;
+    probe.l_whence = libc::SEEK_SET as _;
+    probe.l_start = 128;
+    probe.l_len = 1;
+    // SAFETY: the descriptor is open, and F_GETLK only writes into `probe`, which outlives the
+    // call.
+    let answered = unsafe { libc::fcntl(shm.as_raw_fd(), libc::F_GETLK, &mut probe) };
+    (answered == 0 && i64::from(probe.l_type) != i64::from(libc::F_UNLCK)).then_some(probe.l_pid)
+}
+
+/// Opens `path` to read; a FIFO planted there does not hold the open up.
+fn without_waiting(path: &Path) -> std::io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+}
+
+/// Why the database another process has open is refused, naming that process.
+fn held_elsewhere(label: &str, lock: &Path, pid: libc::pid_t) -> String {
+    // Another process in another PID namespace is not named.
+    if pid <= 0 {
+        return format!(
+            "{label} is open in another process. Stop it, or give this server a database of its \
+             own."
+        );
+    }
+    let server = without_waiting(lock).is_ok_and(|file| {
+        matches!(
+            server_lock::try_lock(&file),
+            Err(std::fs::TryLockError::WouldBlock)
+        )
+    });
+    if server {
+        return format!(
+            "{label} is open in another Marfa server (process {pid}). Stop that server, or give \
+             this one a database of its own."
+        );
+    }
+    match process_name(pid) {
+        Some(name) => format!(
+            "{label} is open in another process, {name} (process {pid}). Stop it, or give this \
+             server a database of its own."
+        ),
+        None => format!(
+            "{label} is open in another process (process {pid}). Stop it, or give this server a \
+             database of its own."
+        ),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn process_name(pid: libc::pid_t) -> Option<String> {
+    let name = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    Some(name.trim().to_string()).filter(|name| !name.is_empty())
+}
+
+#[cfg(target_os = "macos")]
+fn process_name(pid: libc::pid_t) -> Option<String> {
+    let mut buffer = [0u8; 256];
+    // SAFETY: `buffer` is writable for the length given, and `proc_name` writes no more.
+    let written =
+        unsafe { libc::proc_name(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    let written = usize::try_from(written).ok().filter(|count| *count > 0)?;
+    Some(String::from_utf8_lossy(&buffer[..written.min(buffer.len())]).into_owned())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn process_name(_pid: libc::pid_t) -> Option<String> {
+    None
 }
 
 /// Changes nothing but a rollback journal put back; a file with no log is opened immutable.

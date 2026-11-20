@@ -243,11 +243,14 @@ async fn healthy(app: &Arc<App>) -> Result<Vec<Concern>> {
         })
         .collect();
     found.extend(backing(report.backups()));
-    found.extend(
-        app.blobs
-            .folder()
-            .and_then(|folder| unlocked(&folder.files())),
-    );
+    if let Some(folder) = app.blobs.folder() {
+        let files = folder.files();
+        found.extend(
+            health::bounded(move || locking(&files))
+                .await
+                .unwrap_or_default(),
+        );
+    }
     found.extend(secrets_to_set(&app.settings.live()));
     Ok(found)
 }
@@ -270,6 +273,55 @@ fn secrets_to_set(settings: &crate::settings::Snapshot) -> Vec<Concern> {
             ),
         })
         .collect()
+}
+
+/// What keeps the backup folder's files area from being this server's alone. It blocks.
+fn locking(files: &Disk) -> Vec<Concern> {
+    let folder = files.root().display().to_string();
+    let backup = |reference: &str, title: &str, description: String| Concern {
+        kind: "backup",
+        failed_run: false,
+        reference: reference.to_string(),
+        title: title.to_string(),
+        description,
+    };
+    let mut found: Vec<Concern> = unlocked(files).into_iter().collect();
+    // A folder that is not there is the backup store's own entry.
+    if files.reachable()
+        && let Some(why) = files.unwritable()
+    {
+        found.push(backup(
+            "folder_lock_lost",
+            "The backup folder is not this server's alone",
+            format!(
+                "The server stopped copying files to {folder}: {why}. Stop any other Marfa \
+                 server that uses the backup folder, then restart this one."
+            ),
+        ));
+    }
+    if let Some(fs) = files.shared() {
+        found.push(backup(
+            "folder_shared",
+            "The backup folder is on a network file system",
+            format!(
+                "{folder} is on a network file system ({fs}), whose locks may not keep out a \
+                 Marfa server on another machine. A copy of this instance started there could \
+                 remove the files this one is still copying. Keep the backup folder on a disk \
+                 of this machine, or make sure only one server uses it."
+            ),
+        ));
+    }
+    if let Some(note) = files.lock_note() {
+        found.push(backup(
+            "folder_lock_restored",
+            "The backup folder's lock file was put back",
+            format!(
+                "Something other than this server changed {folder}: {note}. Check that no other \
+                 program or server changes the backup folder."
+            ),
+        ));
+    }
+    found
 }
 
 /// A backup folder whose files area another server could use too, since it took no lock.

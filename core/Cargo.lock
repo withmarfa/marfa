@@ -2896,6 +2896,7 @@ dependencies = [
  "rcgen",
  "reqwest",
  "rusqlite",
+ "rustix",
  "rustls",
  "rustls-platform-verifier",
  "serde",

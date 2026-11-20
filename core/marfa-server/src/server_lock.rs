@@ -1,9 +1,11 @@
 //! A lock a running server holds on a file of its own; the kernel lets it go when the process ends.
 
-use std::fs::{File, OpenOptions, Permissions, TryLockError};
-use std::io::{self, ErrorKind};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::fs::{File, OpenOptions, TryLockError};
+use std::io;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::Path;
+
+use rustix::fs::{AtFlags, Mode, OFlags};
 
 const PRIVATE_FILE: u32 = 0o600;
 
@@ -17,52 +19,65 @@ pub enum Untaken {
     Refused(String),
 }
 
-fn me() -> u32 {
+pub(crate) fn me() -> u32 {
     // SAFETY: `geteuid` takes nothing and cannot fail.
     unsafe { libc::geteuid() }
 }
 
-fn unsupported(error: &io::Error) -> bool {
+pub(crate) fn unsupported(error: &io::Error) -> bool {
     matches!(
         error.raw_os_error(),
         Some(code) if code == libc::ENOTSUP || code == libc::EOPNOTSUPP || code == libc::ENOLCK
     )
 }
 
-/// A FIFO planted at the path would block the open, and a link would lock a file elsewhere.
-fn open(path: &Path) -> Result<File, Untaken> {
-    let flags = libc::O_NOFOLLOW | libc::O_NONBLOCK;
-    let made = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .mode(PRIVATE_FILE)
-        .custom_flags(flags)
-        .open(path);
-    match made {
-        Ok(file) => {
-            file.set_permissions(Permissions::from_mode(PRIVATE_FILE))
-                .map_err(|error| Untaken::Refused(format!("could not be made private: {error}")))?;
-            Ok(file)
-        }
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => OpenOptions::new()
-            .read(true)
-            .write(true)
-            .custom_flags(flags)
-            .open(path)
-            .map_err(|error| Untaken::Refused(format!("could not be opened: {error}"))),
-        Err(error) => Err(Untaken::Refused(format!("could not be opened: {error}"))),
+/// A FIFO planted at the name would block the open, and a link would lock a file elsewhere.
+fn open_in(dir: &File, name: &str) -> Result<File, Untaken> {
+    let flags = OFlags::RDWR | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    let opened = |error: rustix::io::Errno| {
+        Untaken::Refused(format!("could not be opened: {}", io::Error::from(error)))
+    };
+    match rustix::fs::openat(
+        dir,
+        name,
+        flags | OFlags::CREATE | OFlags::EXCL,
+        Mode::from_raw_mode(PRIVATE_FILE as _),
+    ) {
+        Ok(made) => Ok(File::from(made)),
+        Err(rustix::io::Errno::EXIST) => rustix::fs::openat(dir, name, flags, Mode::empty())
+            .map(File::from)
+            .map_err(opened),
+        Err(error) => Err(opened(error)),
     }
 }
 
 /// Takes the lock at `path`, a file of the server's account alone that no other name reaches.
 pub fn take(path: &Path) -> Result<File, Untaken> {
-    take_as(path, me())
+    let (dir, name) = parent_of(path)?;
+    take_in(&dir, &name, me())
 }
 
-/// A mount option or a restore can open the server's own file to its group, which a start mends.
-fn take_as(path: &Path, me: u32) -> Result<File, Untaken> {
-    let file = open(path)?;
+fn parent_of(path: &Path) -> Result<(File, String), Untaken> {
+    let unnamed = || Untaken::Refused("does not end in a file name".into());
+    let name = path.file_name().ok_or_else(unnamed)?;
+    let name = name.to_str().ok_or_else(unnamed)?.to_string();
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let dir = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NONBLOCK)
+        .open(parent)
+        .map_err(|error| Untaken::Refused(format!("is in a folder that could not be opened: {error}")))?;
+    Ok((dir, name))
+}
+
+/// Takes the lock file `name` in the folder `dir`. Nothing is changed, past making a missing
+/// file, until the lock is known to be free: a mount option or a restore can open the server's
+/// own file to its group, which is mended only once the lock is taken.
+pub(crate) fn take_in(dir: &File, name: &str, me: u32) -> Result<File, Untaken> {
+    let file = open_in(dir, name)?;
     let unread = |error: io::Error| Untaken::Refused(format!("could not be read: {error}"));
     let held = file.metadata().map_err(unread)?;
     if held.is_file() && held.nlink() == 1 && held.uid() != me {
@@ -76,13 +91,9 @@ fn take_as(path: &Path, me: u32) -> Result<File, Untaken> {
             "must be a file the server's account owns, with one link".into(),
         ));
     }
-    if held.mode() & 0o777 != PRIVATE_FILE {
-        file.set_permissions(Permissions::from_mode(PRIVATE_FILE))
-            .map_err(|error| Untaken::Refused(format!("could not be made private: {error}")))?;
-    }
-    match marfa_acl::grants_by_acl(path) {
-        Ok(false) => {}
-        Ok(true) => {
+    match marfa_acl::reach(&file, me) {
+        Ok(reach) if !reach.itself => {}
+        Ok(_) => {
             return Err(Untaken::Refused(
                 "has an access control list that grants access".into(),
             ));
@@ -93,40 +104,54 @@ fn take_as(path: &Path, me: u32) -> Result<File, Untaken> {
             )));
         }
     }
-    let named = std::fs::symlink_metadata(path).map_err(unread)?;
-    if (named.dev(), named.ino()) != (held.dev(), held.ino()) {
+    let named = rustix::fs::statat(dir, name, AtFlags::SYMLINK_NOFOLLOW)
+        .map_err(|error| unread(error.into()))?;
+    if (named.st_dev as u64, named.st_ino as u64) != (held.dev(), held.ino()) {
         return Err(Untaken::Refused("changed while it was opened".into()));
     }
     match try_lock(&file) {
-        Ok(()) => Ok(file),
-        Err(TryLockError::WouldBlock) => Err(Untaken::Held),
-        Err(TryLockError::Error(error)) if unsupported(&error) => Err(Untaken::Unsupported(error)),
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => return Err(Untaken::Held),
+        Err(TryLockError::Error(error)) if unsupported(&error) => {
+            return Err(Untaken::Unsupported(error));
+        }
         Err(TryLockError::Error(error)) => {
-            Err(Untaken::Refused(format!("could not be taken: {error}")))
+            return Err(Untaken::Refused(format!("could not be taken: {error}")));
         }
     }
+    if held.mode() & 0o777 != PRIVATE_FILE {
+        rustix::fs::fchmod(&file, Mode::from_raw_mode(PRIVATE_FILE as _)).map_err(|error| {
+            Untaken::Refused(format!("could not be made private: {}", io::Error::from(error)))
+        })?;
+    }
+    Ok(file)
 }
 
 #[cfg(test)]
 thread_local! {
-    static NO_LOCKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static NO_LOCKS: std::cell::Cell<Option<i32>> = const { std::cell::Cell::new(None) };
 }
 
 /// Runs `run` as if every file system took no locks, on this thread.
 #[cfg(test)]
 pub fn without_locks<T>(run: impl FnOnce() -> T) -> T {
-    NO_LOCKS.set(true);
+    without_locks_answering(libc::ENOTSUP, run)
+}
+
+/// Runs `run` as if every lock on this thread failed with the error `code`.
+#[cfg(test)]
+pub fn without_locks_answering<T>(code: i32, run: impl FnOnce() -> T) -> T {
+    NO_LOCKS.set(Some(code));
     let ran = run();
-    NO_LOCKS.set(false);
+    NO_LOCKS.set(None);
     ran
 }
 
-fn try_lock(file: &File) -> Result<(), TryLockError> {
+/// Locks `file`, a lock file or a folder, for this open file description alone.
+pub(crate) fn try_lock(file: &File) -> Result<(), TryLockError> {
     #[cfg(test)]
-    if NO_LOCKS.get() {
-        return Err(TryLockError::Error(io::Error::from_raw_os_error(
-            libc::ENOTSUP,
-        )));
+    if let Some(code) = NO_LOCKS.get() {
+        return Err(TryLockError::Error(io::Error::from_raw_os_error(code)));
     }
     file.try_lock()
 }
@@ -134,6 +159,13 @@ fn try_lock(file: &File) -> Result<(), TryLockError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt as _;
+
+    fn take_as(path: &Path, me: u32) -> Result<File, Untaken> {
+        let (dir, name) = parent_of(path)?;
+        take_in(&dir, &name, me)
+    }
 
     #[test]
     fn a_lock_file_with_a_second_link_is_refused() {
