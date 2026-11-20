@@ -7,6 +7,7 @@ mod bulk;
 mod connectors;
 mod create;
 mod delete;
+mod delete_connector;
 mod docs;
 mod files;
 mod find;
@@ -17,6 +18,7 @@ mod maintain;
 mod moving;
 mod overview;
 mod purge;
+mod retire_endpoint;
 mod revoke;
 mod rows;
 mod settings;
@@ -113,6 +115,11 @@ fn definitions() -> Vec<(Home, Definition)> {
         (
             Home::Admin(Task::Connectors),
             connectors::endpoint_definition(),
+        ),
+        (Home::Admin(Task::Connectors), retire_endpoint::definition()),
+        (
+            Home::Admin(Task::Connectors),
+            delete_connector::definition(),
         ),
         (Home::Admin(Task::Files), files::definition()),
         (Home::Admin(Task::SignIns), sign_ins::list_definition()),
@@ -270,6 +277,8 @@ async fn run(
         maintain::NAME => maintain::run(app, caller, arguments).await,
         connectors::LIST_NAME => connectors::list(app, caller, arguments).await,
         connectors::ENDPOINT_NAME => connectors::make_endpoint(app, caller, arguments).await,
+        retire_endpoint::NAME => retire_endpoint::run(app, caller, arguments).await,
+        delete_connector::NAME => delete_connector::run(app, caller, arguments).await,
         files::NAME => files::run(app, caller, arguments).await,
         sign_ins::LIST_NAME => sign_ins::list(app, caller).await,
         sign_ins::RENAME_NAME => sign_ins::rename(app, caller, arguments).await,

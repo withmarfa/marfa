@@ -82,7 +82,7 @@ When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mc
 
 ### `mcp/tools-for-admin`
 
-When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_backups` and `marfa_take_backup` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors` and `marfa_make_endpoint` while it holds `connectors.manage`, `marfa_files` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
+When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_backups` and `marfa_take_backup` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors`, `marfa_make_endpoint`, `marfa_delete_connector` and `marfa_retire_endpoint` while it holds `connectors.manage`, `marfa_files` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
 
 **Reason:** a credential that holds a permission can do the owner task it opens through the API, so an agent holding it does the same from MCP, except for the tasks `mcp/tools-withheld` names.
 
@@ -144,9 +144,9 @@ If the rows of a page that `marfa_trash` or `marfa_connectors` answers do not al
 
 ### `mcp/tools-withheld`
 
-The server MUST NOT list at any MCP endpoint a tool that revokes an app, ends a sign-in, removes a passkey, deletes a connector, clears a connector's state, retires an inbound endpoint, removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
+The server MUST NOT list at any MCP endpoint a tool that revokes an app, ends a sign-in, removes a passkey, removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
 
-**Reason:** an agent's confirmation of a change that cannot be undone must bind every effect of the change to the state the owner saw, and the confirmations for revoking, ending, removing, deleting, clearing, retiring and adopting do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
+**Reason:** an agent's confirmation of a change that cannot be undone must bind every effect of the change to the state the owner saw, and the confirmations for revoking, ending, removing and adopting do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
 
 **Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`, `compliance/owner-tasks.test.ts › runs the trash's retention through the maintenance tool, removing only what the retention makes eligible and no chosen item`.
 
@@ -386,7 +386,7 @@ When the server lists `marfa_purge`, the server MUST annotate it with `destructi
 
 **Reason:** a purge cannot be undone, and a client asks the person differently before a tool that destroys data.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/purge-preview`
 
@@ -571,6 +571,204 @@ If the walk from a `marfa_purge` page would take more than 1,000 items, then the
 If the walk from the first item of a `marfa_purge` page alone would take more than 1,000 items, then the server MUST refuse the call with the tool error code `bulk_cap_exceeded`.
 
 **Tests:** `compliance/mcp-purge.test.ts › previews a smaller page when a page's walk takes more than 1,000 items, and refuses a page whose first item alone does`.
+
+## Deleting a connector and clearing its state
+
+`marfa_delete_connector` deletes a connector's registration, as `DELETE /connectors/{id}` does, or with `part` `state` clears its source's state, problems and agreements, as `DELETE /connectors/{id}/state` does, in two calls: a preview with a `confirm` token, and a call that sends the same `id` and `part` with that token. The statements under "A confirmation of a connector's change" hold for it too.
+
+### `mcp/connector-delete-preview`
+
+When `marfa_delete_connector` is called without `confirm`, the server MUST NOT change the registration, its runs, its source's endpoints and deliveries, or its source's state, problems and agreements.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › deletes nothing when called without a confirmation, and previews what goes and what stays`, `› clears nothing without a confirmation, and clears the state, problems and agreements with the one the preview gave`.
+
+### `mcp/connector-delete-preview-shows`
+
+When `marfa_delete_connector` previews deleting a registration, the server MUST answer under `connector` its `id`, `name`, `description`, `source`, `key_id` and the leading `read_only_types` that fit the answer, with `read_only_types_left_out` counting the rest when any are left out, under `current` whether it is its source's current registration, under `goes_with` the number of its runs and, for the current registration, the source's endpoints and the number of its unhandled and of its handled deliveries, and under `stays` whether the source has state and the number of its agreements.
+
+**Reason:** the person agrees to everything the delete removes, and is told what outlives it. Deleting the registration ends the read-only hold it puts on items of its declared types (`items/read-only-true`).
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › deletes nothing when called without a confirmation, and previews what goes and what stays`, `› refuses a confirmation once another registration took the source since the preview, and keeps the source's endpoints and deliveries when the old registration goes`, `› previews the registration's description and declared read-only types, counting those the answer leaves out`.
+
+### `mcp/connector-delete-confirmed`
+
+When `marfa_delete_connector` is called without `part` and with the `confirm` token its preview gave, by the same credential, within five minutes, while the registration, whether it is current and, for the current registration, the source's endpoints and the set of its unhandled deliveries stand as the preview read them, the server MUST delete the registration as `DELETE /connectors/{id}` does and answer `deleted` as `true`.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › deletes the registration, its runs, endpoints and deliveries with the confirmation the preview gave, and keeps the source's state and agreements`.
+
+### `mcp/connector-delete-runs`
+
+When `marfa_delete_connector` deletes a registration, the server MUST answer under `runs` the number of runs that went with it.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › deletes the registration, its runs, endpoints and deliveries with the confirmation the preview gave, and keeps the source's state and agreements`, `› deletes on a confirmation after the connector sent heartbeats, reported runs and registered again unchanged`.
+
+### `mcp/connector-delete-keeps-state`
+
+When `marfa_delete_connector` deletes a registration, the server MUST keep its source's state, problems and agreements.
+
+**Reason:** they belong to the source, so a connector that registers again for it carries on where it stopped; `part` `state` clears them.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › deletes the registration, its runs, endpoints and deliveries with the confirmation the preview gave, and keeps the source's state and agreements`.
+
+### `mcp/connector-delete-old-registration`
+
+When `marfa_delete_connector` deletes a registration that is not its source's current one, the server MUST keep the source's endpoints and deliveries.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › refuses a confirmation once another registration took the source since the preview, and keeps the source's endpoints and deliveries when the old registration goes`.
+
+### `mcp/connector-delete-activity-unbound`
+
+When the connector only sent heartbeats, took its hold, reported runs, received deliveries and marked them handled, or registered again with the same name, description and declared types between a preview of deleting its registration and the confirmation, the server MUST delete the registration on the confirmation.
+
+**Reason:** a running connector does all of these every few minutes, so a confirmation bound to them would rarely hold. The preview's numbers of runs and of handled deliveries are counted when it is read, and the delete removes all there are when it happens.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › deletes on a confirmation after the connector sent heartbeats, reported runs and registered again unchanged`, `› deletes on a confirmation after a delivery arrived and was marked handled since the preview, removing the handled delivery the preview did not count`.
+
+### `mcp/connector-delete-changed-registration`
+
+If the registration's name, description or declared types, or whether it is its source's current registration, changed since a `marfa_delete_connector` preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and a new preview with a `confirm` token of its own.
+
+**Reason:** the person agreed to delete what the preview showed, and whether the registration is current decides whether the source's endpoints and deliveries go with it.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › refuses a confirmation once the registration changed since the preview`, `› refuses a confirmation once another registration took the source since the preview, and keeps the source's endpoints and deliveries when the old registration goes`.
+
+### `mcp/connector-delete-changed-inbound`
+
+If an endpoint was made or retired, or the set of the source's deliveries that are not handled changed (a delivery arrived and is not handled, or one the preview counted as not handled was marked handled or removed), under a source's current registration since a `marfa_delete_connector` preview of deleting it, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and a new preview with a `confirm` token of its own.
+
+**Reason:** deleting the current registration removes the source's endpoints and every delivery a connector has not handled yet, so the confirmation covers each of them.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › refuses a confirmation once a delivery arrived or was marked handled since the preview, with a new preview`, `› refuses a confirmation once an endpoint was made or retired since the preview`.
+
+### `mcp/connector-state-preview-shows`
+
+When `marfa_delete_connector` previews clearing a state, the server MUST answer under `connector` the registration's `id`, `name`, `source` and `key_id`, under `state` whether the source has state, under `problems` the number of its problems, under `agreements` the number of its agreements and under `waiting` the number of those waiting on a change.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › clears nothing without a confirmation, and clears the state, problems and agreements with the one the preview gave`.
+
+### `mcp/connector-state-confirmed`
+
+When `marfa_delete_connector` is called with `part` `state` and the `confirm` token its preview gave, by the same credential, within five minutes, while the source's state, problems and agreements stand as the preview read them, the server MUST clear them as `DELETE /connectors/{id}/state` does, answer `cleared` as `true` and answer under `agreements` the number of agreements it cleared.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › clears nothing without a confirmation, and clears the state, problems and agreements with the one the preview gave`.
+
+### `mcp/connector-state-changed`
+
+If the source's state or problems, or any of its agreements, changed since a `marfa_delete_connector` preview of clearing its state, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and a new preview.
+
+**Reason:** the agreements are what clearing destroys, and a connector that loses them treats every item as new, so the confirmation covers each one.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › refuses a confirmation once the state or an agreement changed since the preview`.
+
+### `mcp/connector-state-empty`
+
+When `marfa_delete_connector` previews clearing the state of a source that has no state and no agreements, the server MUST answer without a `confirm` token.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › answers a source with no state and no agreements with no confirmation`.
+
+## Retiring an endpoint
+
+`marfa_retire_endpoint` retires a connector's inbound endpoint, as `DELETE /connectors/{id}/endpoints/{endpoint_id}` does, in two calls: a preview with a `confirm` token, and a call that sends the same `id` and `endpoint_id` with that token. The statements under "A confirmation of a connector's change" hold for it too.
+
+### `mcp/endpoint-retire-preview`
+
+When `marfa_retire_endpoint` is called without `confirm`, the server MUST NOT retire the endpoint.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › retires nothing without a confirmation, and retires the endpoint with the one the preview gave, keeping its deliveries`.
+
+### `mcp/endpoint-retire-preview-shows`
+
+When `marfa_retire_endpoint` previews, the server MUST answer under `endpoint` the endpoint as `GET /connectors/{id}/endpoints` lists it and under `unhandled_deliveries` the number of its deliveries that are not handled.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › retires nothing without a confirmation, and retires the endpoint with the one the preview gave, keeping its deliveries`.
+
+### `mcp/endpoint-retire-confirmed`
+
+When `marfa_retire_endpoint` is called with the `confirm` token its preview gave, by the same credential, within five minutes, while the endpoint is live and belongs to the source's current registration, the server MUST retire it as `DELETE /connectors/{id}/endpoints/{endpoint_id}` does and answer `retired` as `true`.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › retires nothing without a confirmation, and retires the endpoint with the one the preview gave, keeping its deliveries`.
+
+### `mcp/endpoint-retire-already`
+
+When `marfa_retire_endpoint` previews an endpoint that is retired already, the server MUST answer `already_retired` as `true` without a `confirm` token.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › answers an endpoint already retired with no confirmation`.
+
+### `mcp/endpoint-retire-changed`
+
+If the endpoint was retired, or its registration stopped being its source's current one, since a `marfa_retire_endpoint` preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale`.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › refuses a confirmation once the endpoint was retired since the preview`, `› refuses a confirmation once the connector no longer holds the endpoint's source`.
+
+## A confirmation of a connector's change
+
+These statements hold for `marfa_delete_connector` and `marfa_retire_endpoint`.
+
+### `mcp/connector-acts-destructive`
+
+When the server lists `marfa_delete_connector` or `marfa_retire_endpoint`, the server MUST annotate it with `destructiveHint` `true` and `readOnlyHint` `false`.
+
+**Reason:** neither change can be undone, and a client asks the person differently before a tool that destroys data.
+
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+
+### `mcp/connector-acts-gone`
+
+If the connector or the endpoint a call with a `confirm` token names no longer exists, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Reason:** the call answers the confirmation it was sent with, so it names nothing as missing.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › refuses a confirmation when the connector is gone, without saying it was not found`.
+
+### `mcp/connector-acts-other-credential`
+
+If a call carries a `confirm` token a preview gave another credential, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › refuses a confirmation another credential got`.
+
+### `mcp/connector-acts-expired`
+
+If a call carries a `confirm` token from a preview more than five minutes earlier, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › refuses a confirmation once five minutes have passed since the preview`.
+
+### `mcp/connector-acts-token-first`
+
+If a call carries a `confirm` token that another credential got, that expired, or that a preview of another connector, `part` or endpoint gave, then the server MUST answer `confirmation_stale` without a new preview.
+
+**Reason:** the server judges the token before it reads what the call names, so a token that does not hold tells the caller nothing about it.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › refuses a confirmation sent for another connector, part or endpoint before reading it`, `› refuses a confirmation once five minutes have passed since the preview`, `› refuses a confirmation another credential got`.
+
+### `mcp/connector-acts-atomic`
+
+If a call with a `confirm` token that holds fails after it has begun its change, then the server MUST leave the registration, its runs, the source's endpoints, deliveries, state, problems and agreements as they were.
+
+**Reason:** a person who agreed to a change must not find part of it done.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › leaves the connector and the confirmation as they were when the confirmed change fails, and changes it without the fault`.
+
+### `mcp/connector-acts-spent-on-commit`
+
+If a call fails before its change commits, then the server MUST make the change on the same `confirm` token when it is sent again within five minutes.
+
+**Reason:** a token is recorded as used in the transaction of the change it allowed, so a change that never happened does not use it up.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › leaves the connector and the confirmation as they were when the confirmed change fails, and changes it without the fault`.
+
+### `mcp/connector-acts-single-use`
+
+If a call carries a `confirm` token that an earlier call already used, then the server MUST NOT change anything on it.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › changes nothing more on a confirmation an earlier call used, and says it already did`.
+
+### `mcp/connector-acts-repeated`
+
+When a call carries a `confirm` token that an earlier call by the same credential used for the same change, within five minutes of the preview, the server MUST answer `already_done` as `true`, with the `runs` or `agreements` that earlier call answered.
+
+**Reason:** a client that did not see the first answer, such as one that timed out, learns that the change landed.
+
+**Tests:** `compliance/mcp-connector-acts.test.ts › changes nothing more on a confirmation an earlier call used, and says it already did`.
 
 ## Moving items to another type
 

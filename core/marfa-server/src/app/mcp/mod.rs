@@ -1,6 +1,7 @@
 //! Confirmation and fetch operations used by MCP tools.
 
 pub mod confirm;
+pub mod connector;
 pub mod fetch;
 pub mod moving;
 pub mod purge;

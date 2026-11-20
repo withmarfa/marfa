@@ -1774,7 +1774,13 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         ("instance.read", &["marfa_health"]),
         (
             "connectors.manage",
-            &["marfa_connectors", "marfa_health", "marfa_make_endpoint"],
+            &[
+                "marfa_connectors",
+                "marfa_delete_connector",
+                "marfa_health",
+                "marfa_make_endpoint",
+                "marfa_retire_endpoint",
+            ],
         ),
         ("audit.read", &["marfa_audit"]),
         (
@@ -1865,6 +1871,14 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         (
             "marfa_make_endpoint",
             json!({ "id": "0192e6a8-7c6e-7000-8000-000000000000" }),
+        ),
+        (
+            "marfa_delete_connector",
+            json!({ "id": "0192e6a8-7c6e-7000-8000-000000000000" }),
+        ),
+        (
+            "marfa_retire_endpoint",
+            json!({ "id": "0192e6a8-7c6e-7000-8000-000000000000", "endpoint_id": "0192e6a8-7c6e-7000-8000-000000000001" }),
         ),
         ("marfa_files", json!({ "hash": "00" })),
         ("marfa_sign_ins", json!({})),
@@ -2317,8 +2331,6 @@ async fn no_tool_offers_a_withheld_owner_task() {
                 "add_passkey",
                 "adopt",
                 "drop",
-                "clear",
-                "retire",
                 "end_sign_in",
                 "remove_passkey",
                 "revoke_app",
