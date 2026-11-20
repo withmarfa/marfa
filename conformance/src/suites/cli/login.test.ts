@@ -206,6 +206,18 @@ describe("the owner", () => {
     expect(me.credential.kind).toBe("token");
     expect(me.credential.from).toBe("MARFA_API_KEY");
     expect(me.credential.person?.username).toBe(TEST_OWNER.username);
+    expect(token.scope.split(" ")).toContain("profile.username:write");
+    for (const username of ["renamed.owner", TEST_OWNER.username]) {
+      const renamed = await c.cli
+        .as(token.access_token)
+        .json<{ username: string }>([
+          "profile",
+          "update",
+          "--username",
+          username,
+        ]);
+      expect(renamed.username).toBe(username);
+    }
     const listed = await c.cli
       .as(token.access_token)
       .json<{ data: unknown[] }>(["items", "list", "--type", "core.note"]);

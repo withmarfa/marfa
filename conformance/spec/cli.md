@@ -828,6 +828,14 @@ If the server answers the poll of the device code that `login` waits on with `in
 
 **Tests:** `cli/login.test.ts › ends a login whose device code the server removed with exit 3, saying to run marfa login again`, `› ends a login whose device code ran out with exit 3, saying to run marfa login again`.
 
+### `cli/login-username-write`
+
+When `login` asks a server whose discovery names `profile.username:write` for a device code, the CLI MUST ask for `profile.username:write`.
+
+**Reason:** `profile:write` reaches the owner's username at read only (`instance-claim/profile-username-named`), so without it an owner signed in with the command line could change the username only on the private local command, and the command line does every owner task.
+
+**Tests:** `cli/login.test.ts › signs in with a device code approved in a browser session, and the token reaches the data plane`.
+
 ### `cli/login-fresh-sign-in`
 
 When a person runs `login` with `--fresh-sign-in`, the CLI MUST send `max_age=0` with its device authorization request.

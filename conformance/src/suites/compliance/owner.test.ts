@@ -976,6 +976,12 @@ describe("claiming through the private socket", () => {
           false,
         );
         await expectMatchesSchema("POST", "/owner", 201, claim.body);
+        const profile = await control("/profile");
+        expect(profile.status).toBe(200);
+        expect(profile.body).toMatchObject({
+          username: longest.toLowerCase(),
+          email: null,
+        });
         const after = await control("/_control/setup/status");
         expect(after.body).toMatchObject({
           claimed: true,
