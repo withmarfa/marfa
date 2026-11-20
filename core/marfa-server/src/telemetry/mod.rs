@@ -167,7 +167,8 @@ impl Telemetry {
     }
 
     /// Reads the settings under the lock, so the newest change wins whichever caller is last. A
-    /// replaced exporter is halted first, so nothing queued under the old settings is sent.
+    /// replaced exporter is halted before this returns, so nothing queued under the old settings
+    /// is sent.
     pub fn follow(&self, settings: &Settings) {
         let Some(started) = self.inner.started.get() else {
             return;
