@@ -588,6 +588,16 @@ pub fn rebase(conn: &Connection, id: &str, version: i64) -> Result<(), CoreError
     Ok(())
 }
 
+/// For a write whose version is named in its query, so its body stays as it
+/// was written.
+pub fn rebase_column(conn: &Connection, id: &str, version: i64) -> Result<(), CoreError> {
+    conn.execute_cached(
+        "UPDATE queue SET base_version = ?2 WHERE id = ?1",
+        params![id, version],
+    )?;
+    Ok(())
+}
+
 /// Only edits never sent: a sent body is fixed by the key it went under, and
 /// a changed one is refused as that key reused.
 pub fn edits_behind(

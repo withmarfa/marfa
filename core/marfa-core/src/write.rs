@@ -1013,7 +1013,9 @@ impl Core {
     }
 
     /// `admitted` are the tags the write adds, each held to the server's
-    /// bound before anything is saved or queued.
+    /// bound before anything is saved or queued. A tag replace is based on
+    /// the version of the row as read, with the row recorded, so the server
+    /// refuses it where another writer has changed the item since.
     fn tag_write(
         &self,
         id: &str,
@@ -1035,6 +1037,11 @@ impl Core {
                 message: format!("{id} is not a row this copy holds"),
             });
         }
+        let held = if kind == WriteKind::ReplaceTags {
+            store::items_by_ids(&conn, &[id.to_string()])?.pop()
+        } else {
+            None
+        };
         let depends_on = store::untaken_creates_for_item(&conn, id)?;
         let tx = conn.transaction()?;
         store::hold_beneath_item(&tx, id)?;
@@ -1053,11 +1060,14 @@ impl Core {
                 namespace: None,
                 tag,
                 blob: None,
-                base_version: None,
+                base_version: held.as_ref().map(|held| held.version),
                 payload,
                 depends_on: &depends_on,
             },
         )?;
+        if let Some(held) = &held {
+            store::record_read(&tx, &queued.id, &serde_json::to_value(held)?)?;
+        }
         tx.commit()?;
         Ok(queued)
     }

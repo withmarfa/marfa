@@ -471,6 +471,69 @@ describe("every write names the version it read", () => {
         ?.query.get("version"),
     ).toBe("1");
   });
+
+  it("refuses unsent a tag replace whose version no answer confirmed", async () => {
+    harness = await hydratedHarness("queue-tags-unconfirmed", {
+      items: held(),
+    });
+    const { device, server } = harness;
+    const repeated = await device.create({
+      type: "core.note",
+      properties: { title: "taken long ago", body: "taken long ago" },
+    });
+    expect(repeated.ok).toBe(true);
+    if (!repeated.ok) return;
+    const repeatedId = repeated.value.item_id ?? "r";
+    const replaced = await device.replaceTags(repeatedId, ["mine"]);
+    expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
+    if (!replaced.ok) return;
+    expect(replaced.value.base_version).toBe(0);
+
+    // The server took the create long ago and another device has edited the
+    // item since, so it answers the create as a repeat, with the item as it
+    // stands: nothing the replace read.
+    const door = new FolderDoor([]);
+    door.create({
+      id: repeatedId,
+      type: "core.note",
+      properties: { title: "taken long ago", body: "taken long ago" },
+    });
+    door.update(repeatedId, {
+      properties: { title: "edited elsewhere" },
+      version: 1,
+    });
+    scriptWrites(server, {
+      create: [
+        (request) => door.create(JSON.parse(request.body) as DoorCreate).answer,
+      ],
+      read: [(request) => door.read(request.pathname.split("/").at(-1) ?? "")],
+    });
+    server.answer("PUT", /^\/items\/[^/]+\/tags$/, () => writeAnswers.ok());
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (!drained.ok) return;
+
+    const verdictOf = (id: string) =>
+      drained.value.verdicts.find((entry) => entry.id === id);
+    expect(
+      [
+        verdictOf(repeated.value.id)?.verdict,
+        verdictOf(repeated.value.id)?.replayed,
+      ],
+      "the create was not answered as a repeat, so nothing below is about a replace no answer confirmed",
+    ).toEqual(["accepted", true]);
+    expect(
+      verdictOf(replaced.value.id)?.verdict,
+      "a replace whose only version was the placeholder of an unanswered create was sent, over an item another device had edited",
+    ).toBe("refused");
+    expect(verdictOf(replaced.value.id)?.reason).toContain(
+      "no confirmed server version",
+    );
+    expect(
+      server.requests.filter((request) => request.method === "PUT"),
+      "the unconfirmed replace went to the server",
+    ).toEqual([]);
+  });
 });
 
 describe("a write is answered once", () => {

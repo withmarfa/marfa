@@ -612,6 +612,12 @@ describe("a server restored behind work this device sent it", () => {
 
       expect(await keptBlocked(w.device)).toEqual([["replace_tags", held.id]]);
       expect(value(await w.device.get(held.id)).tags).toEqual(["kept"]);
+      // Put back on the version the restored server holds, so another
+      // writer's change before it is released is refused, not overwritten.
+      expect(
+        value(await w.device.queue()).find((row) => row.kind === "replace_tags")
+          ?.base_version,
+      ).toBe(before.ok ? before.data.item.version : undefined);
 
       value(await w.device.release({ reason: "server_restored" }));
       value(await w.device.drain());

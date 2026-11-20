@@ -1608,6 +1608,14 @@ When a device hydrates a copy it expired under `device/expire-log-behind`, `devi
 
 **Tests:** `device/server-restored-live.test.ts › keeps an item made since the backup, blocked until released, where the copy had not caught up past it`, `› keeps an item made since the backup where the server's log ends behind the copy's cursor`, `› keeps an item made since the backup where the restored server has written past the copy's cursor`, `› puts back an edit the restored server lost to an item it still holds`, `› removes again an edge the restored server holds after this device deleted it`, `› puts back the tags the restored server lost from an item it still holds`, `› puts back in the bin an item the restored server holds out of it after this device trashed it`, `› keeps a file attached since the backup, with an upload of the bytes the restored server lacks`, `› keeps nothing of a change another client made at the version the copy held`, `device/refill.test.ts › clears rather than fill again where the log ends before the head its refill started from`, `› clears rather than fill again where the server was restored before its refill began`.
 
+### `device/restored-kept-tags-version`
+
+When a device queues a tag replace under `device/restored-kept` for an item the server holds, a device MUST base the replace on the version the server holds.
+
+**Reason:** the replace is sent only when a person releases it, and the server refuses it by then if another writer has changed the item's content since (`queue-and-verdicts/replace-tags-sends-version`), so the restored work does not overwrite work a person has not seen.
+
+**Tests:** `device/server-restored-live.test.ts › puts back the tags the restored server lost from an item it still holds`.
+
 ### `device/restored-checked-before-clear`
 
 When a device hydrates a copy of the same instance and reach that it clears or fills again for any reason other than those `device/restored-kept` names, a device MUST queue under `device/restored-kept` a write for each item and edge the server has lost of a write from this device that no event has shown (`device/expire-write-lost`).

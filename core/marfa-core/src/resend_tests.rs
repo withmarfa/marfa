@@ -427,7 +427,7 @@ fn every_kind() -> Vec<Judged> {
             holds: tags(&["first", "second"]),
             lacks: tags(&["first"]),
             answer: plain(),
-            names: None,
+            names: Some("version=1"),
         },
         Judged {
             write: write_extension,
