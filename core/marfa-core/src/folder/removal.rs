@@ -598,6 +598,7 @@ mod tests {
         refused(folder.scan().map(drop));
         refused(folder.hydrate().map(drop));
         refused(folder.confirm_first_sync().map(drop));
+        refused(folder.plan_first_sync().map(drop));
         assert_eq!(
             kept(folder),
             witness,

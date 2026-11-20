@@ -332,26 +332,6 @@ fn paused_line() -> Value {
     })
 }
 
-/// How often a paused directory's pause is read again.
-const PAUSE_LOOK: Duration = Duration::from_secs(1);
-
-/// Waits until the directory's pause ends; `false` where the watch stopped first.
-fn resumed(root: &Path, stop: &std::sync::atomic::AtomicBool) -> bool {
-    let mut looked = Instant::now();
-    loop {
-        if stop.load(Ordering::SeqCst) {
-            return false;
-        }
-        if looked.elapsed() >= PAUSE_LOOK {
-            looked = Instant::now();
-            if !Folder::is_at(root) || !Folder::paused_at(root) {
-                return true;
-            }
-        }
-        std::thread::sleep(POLL);
-    }
-}
-
 fn taken_back() -> Value {
     serde_json::json!({ "watching": true, "taken_back": true })
 }
@@ -509,7 +489,7 @@ fn keep_in_step(
             if let Some(record) = record {
                 record.unwatched(&root, Some(marfa_core::folder::PAUSED));
             }
-            if !resumed(&root, stop) {
+            if !Folder::wait_resumed(&root, stop) {
                 return Ok(());
             }
             back = Some(Back::Watching);

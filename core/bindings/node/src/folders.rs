@@ -223,6 +223,7 @@ pub enum FolderEvent {
     },
     HandedOver,
     HeldElsewhere,
+    Paused,
     TakenBack,
     Removed,
     Unlisted,
@@ -712,33 +713,48 @@ fn keep_in_step(
 ) -> std::result::Result<(), marfa_core::WatchError<CoreError>> {
     use marfa_core::folder::TakeBack;
     let mut back = false;
+    // A directory paused before the watch began is refused; one paused under it is waited for.
+    let mut begun = false;
     loop {
-        let end = folder.watch_handing_over(stop, |event| {
-            if matches!(
-                event,
-                marfa_core::WatchEvent::Busy { .. }
-                    | marfa_core::WatchEvent::Limited { .. }
-                    | marfa_core::WatchEvent::Missed { .. }
-                    | marfa_core::WatchEvent::Reclaimed { .. }
-                    | marfa_core::WatchEvent::ReclaimFailed(_)
-            ) {
-                return Ok(());
-            }
-            if back && matches!(event, marfa_core::WatchEvent::Watching { .. }) {
-                back = false;
-                tell(Told::Event(Box::new(FolderEvent::TakenBack)));
-                return Ok(());
-            }
-            tell(Told::Event(Box::new(event_of(event)?)));
-            Ok::<(), CoreError>(())
+        let paused = begun && folder.is_paused()?;
+        let end = (if paused {
+            Ok(marfa_core::WatchEnd::HandedOver)
+        } else {
+            folder.watch_handing_over(stop, |event| {
+                if matches!(
+                    event,
+                    marfa_core::WatchEvent::Busy { .. }
+                        | marfa_core::WatchEvent::Limited { .. }
+                        | marfa_core::WatchEvent::Missed { .. }
+                        | marfa_core::WatchEvent::Reclaimed { .. }
+                        | marfa_core::WatchEvent::ReclaimFailed(_)
+                ) {
+                    return Ok(());
+                }
+                if back && matches!(event, marfa_core::WatchEvent::Watching { .. }) {
+                    back = false;
+                    tell(Told::Event(Box::new(FolderEvent::TakenBack)));
+                    return Ok(());
+                }
+                tell(Told::Event(Box::new(event_of(event)?)));
+                Ok::<(), CoreError>(())
+            })
         })?;
         if end == marfa_core::WatchEnd::Stopped {
             return Ok(());
         }
+        begun = true;
         let root = folder.root().to_path_buf();
         let listed = marfa_core::Folder::listed_at(&root);
         drop(folder);
-        tell(Told::Event(Box::new(FolderEvent::HandedOver)));
+        if paused {
+            tell(Told::Event(Box::new(FolderEvent::Paused)));
+            if !marfa_core::Folder::wait_resumed(&root, stop) {
+                return Ok(());
+            }
+        } else {
+            tell(Told::Event(Box::new(FolderEvent::HandedOver)));
+        }
         let taken = marfa_core::Folder::take_back(
             &root,
             listed,

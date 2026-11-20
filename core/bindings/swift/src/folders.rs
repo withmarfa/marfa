@@ -359,8 +359,13 @@ pub enum FolderEvent {
     /// caller waits, with no command or call asking for it. Told once; the
     /// watch takes the folder back once that process lets it go.
     HeldElsewhere,
+    /// The directory's sync was paused with `Folders.pause`, and the watch
+    /// let the folder go and waits, holding nothing, for `Folders.resume`. Told
+    /// once for each pause; the watch takes the folder back once it ends.
+    Paused,
     /// The watch took the folder back and keeps it in step again. It follows
-    /// `HandedOver` or `HeldElsewhere`, and stands in for a second `Watching`.
+    /// `HandedOver`, `HeldElsewhere` or `Paused`, and stands in for a second
+    /// `Watching`.
     TakenBack,
     /// The call the folder was let go to removed the folder from this
     /// machine, so there is nothing to watch. The watch ends.
@@ -712,33 +717,48 @@ fn keep_in_step(
     use marfa_core::folder::TakeBack;
     // The watch has taken the folder back, and its first `Watching` says so.
     let mut back = false;
+    // A directory paused before the watch began is refused; one paused under it is waited for.
+    let mut begun = false;
     loop {
-        let end = folder.watch_handing_over(stop, |event| {
-            if matches!(
-                event,
-                marfa_core::WatchEvent::Busy { .. }
-                    | marfa_core::WatchEvent::Limited { .. }
-                    | marfa_core::WatchEvent::Missed { .. }
-                    | marfa_core::WatchEvent::Reclaimed { .. }
-                    | marfa_core::WatchEvent::ReclaimFailed(_)
-            ) {
-                return Ok(());
-            }
-            if back && matches!(event, marfa_core::WatchEvent::Watching { .. }) {
-                back = false;
-                listener.told(FolderEvent::TakenBack);
-                return Ok(());
-            }
-            listener.told(event_of(event)?);
-            Ok::<(), MarfaError>(())
+        let paused = begun && folder.is_paused()?;
+        let end = (if paused {
+            Ok(marfa_core::WatchEnd::HandedOver)
+        } else {
+            folder.watch_handing_over(stop, |event| {
+                if matches!(
+                    event,
+                    marfa_core::WatchEvent::Busy { .. }
+                        | marfa_core::WatchEvent::Limited { .. }
+                        | marfa_core::WatchEvent::Missed { .. }
+                        | marfa_core::WatchEvent::Reclaimed { .. }
+                        | marfa_core::WatchEvent::ReclaimFailed(_)
+                ) {
+                    return Ok(());
+                }
+                if back && matches!(event, marfa_core::WatchEvent::Watching { .. }) {
+                    back = false;
+                    listener.told(FolderEvent::TakenBack);
+                    return Ok(());
+                }
+                listener.told(event_of(event)?);
+                Ok::<(), MarfaError>(())
+            })
         })?;
         if end == marfa_core::WatchEnd::Stopped {
             return Ok(());
         }
+        begun = true;
         let root = folder.root().to_path_buf();
         let listed = marfa_core::Folder::listed_at(&root);
         drop(folder);
-        listener.told(FolderEvent::HandedOver);
+        if paused {
+            listener.told(FolderEvent::Paused);
+            if !marfa_core::Folder::wait_resumed(&root, stop) {
+                return Ok(());
+            }
+        } else {
+            listener.told(FolderEvent::HandedOver);
+        }
         let taken = marfa_core::Folder::take_back(
             &root,
             listed,

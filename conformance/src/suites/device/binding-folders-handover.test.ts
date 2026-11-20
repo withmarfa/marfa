@@ -115,6 +115,55 @@ describe("folder binding handover", () => {
     },
   );
 
+  it("keeps a running watch of the directory going while it is paused, says so, and syncs a change once it is resumed", async () => {
+    const harness = await watched("binding-pause-watch-stays");
+    const { bound, watch } = harness;
+    const sent = (): number =>
+      harness.server.requests.filter(
+        (request) => request.method === "POST" && request.pathname === "/items",
+      ).length;
+
+    const pausing = bound.pause();
+    await advanceUntil(harness, () => watch.kinds.includes("paused"));
+    expect((await pausing).ok).toBe(true);
+    put(harness, "During.md", "during pause\n");
+    // Long enough for a watch that was going to send it to have done so.
+    for (let step = 0; step < 15; step += 1) {
+      await harness.device.clock.advance(200);
+      await new Promise((settled) => setTimeout(settled, 200));
+    }
+    expect(watch.isOver, "the pause ended the watch").toBe(false);
+    expect(sent(), "a paused watch sent a file").toBe(0);
+    expect(watch.kinds.filter((kind) => kind === "paused")).toHaveLength(1);
+
+    expect((await bound.resume()).ok).toBe(true);
+    await advanceUntil(harness, () => watch.kinds.includes("takenBack"));
+    await advanceUntil(harness, () =>
+      [...harness.served.values()].some((row) =>
+        String(row.properties.body).includes("during pause"),
+      ),
+    );
+    expect(watch.isOver).toBe(false);
+  });
+
+  it("refuses a watch of a directory that is paused before it begins", async () => {
+    const harness = await bindingFolderHarness("binding-pause-watch-refused", {
+      events: [copyLiveReplay("1", [])],
+    });
+    made.push(harness);
+    expect((await harness.bound.pause()).ok).toBe(true);
+    const started = await harness.bound.tryWatch();
+    if (!started.ok) {
+      expect(started.refusal.code).toBe("sync_paused");
+      expect(started.refusal.raw).toContain("folders resume");
+      return;
+    }
+    const ended = await started.value.ended;
+    expect(ended?.code).toBe("sync_paused");
+    expect(ended?.message).toContain("folders resume");
+    expect(started.value.kinds).not.toContain("watching");
+  });
+
   it("refuses an asking call at ten seconds without changing the held folder", async () => {
     const harness = await watched("binding-handover-deadline");
     const { device, bound, watch } = harness;

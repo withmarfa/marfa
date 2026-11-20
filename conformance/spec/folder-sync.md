@@ -316,17 +316,17 @@ While a directory's sync is paused, a device MUST NOT write a file into the dire
 
 ### `folder-sync/pause-watch-refused`
 
-While a directory's sync is paused, the CLI MUST refuse `folders watch` of that directory, naming `folders resume`.
+While a directory's sync is paused, a device MUST refuse a watch of that directory, naming `folders resume`.
 
-**Tests:** `device/folders-pause.test.ts › refuses a watch of the directory, naming resume, and watches it again once resumed`.
+**Tests:** `device/folders-pause.test.ts › refuses a watch of the directory, naming resume, and watches it again once resumed`, `device/binding-folders-handover.test.ts › refuses a watch of a directory that is paused before it begins`.
 
 ### `folder-sync/pause-running-watch-stays`
 
-While a directory's sync is paused after a `folders watch` of that directory has started, the CLI MUST keep the watch running, say that the directory is paused, and watch the directory again once it is resumed.
+While a directory's sync is paused after a watch of that directory has started, a device MUST keep the watch running, say that the directory is paused, and watch the directory again once it is resumed.
 
 **Reason:** A pause is a person's choice for a while, so it does not end the watch they would have to start again.
 
-**Tests:** `device/folders-pause.test.ts › keeps a running watch of the directory going while it is paused, says so, and syncs a change once it is resumed`.
+**Tests:** `device/folders-pause.test.ts › keeps a running watch of the directory going while it is paused, says so, and syncs a change once it is resumed`, `device/binding-folders-handover.test.ts › keeps a running watch of the directory going while it is paused, says so, and syncs a change once it is resumed`.
 
 ### `folder-sync/pause-watch-skipped`
 
