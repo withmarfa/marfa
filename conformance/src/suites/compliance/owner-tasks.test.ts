@@ -658,8 +658,8 @@ function expectSameRefusal(
 }
 
 /** What each setting that needs a recent sign-in is set to by a request a key makes. */
+/** The settings the tool offers that need a recent sign-in; `sign_in_address` is not offered. */
 const STEP_UP_SETTINGS: Record<string, unknown> = {
-  sign_in_address: "https://elsewhere.example",
   allow_private_addresses: true,
   object_store_bucket: "another-bucket",
   object_store_endpoint: "https://store.example",
@@ -707,15 +707,15 @@ describe("the owner tasks at /mcp/admin", () => {
       expect(api.status, name).toBe(403);
       expectSameRefusal(api, answer, name);
     }
-    expect(
-      String(
-        toolError(
-          await callTool(connection, "marfa_change_settings", {
-            settings: { sign_in_address: STEP_UP_SETTINGS.sign_in_address },
-          }),
-        ).message,
-      ),
-    ).toContain("sign_in_address");
+    const withheld = toolError(
+      await callTool(connection, "marfa_change_settings", {
+        settings: { sign_in_address: "https://elsewhere.example" },
+      }),
+    );
+    expect(withheld.code).toBe("not_offered_over_mcp");
+    expect(String(withheld.message)).toContain(
+      "marfa config set sign_in_address",
+    );
     const after = await call(key, "GET", "/config/settings");
     expect(after.body).toEqual(before.body);
     // The witness: a setting that is not a step-up act changes, and returns.

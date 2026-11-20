@@ -354,6 +354,27 @@ async fn answer_signed_in(app: &Arc<App>, owner: &Caller, asked: Asked) -> Resul
                 stands,
                 &Problem::new("consent_required", "This app needs a person's consent."),
             )),
+            (Some(_), prompt)
+                if prompt != Some("consent") && signed_in_before_asked(unit, &client.id)? =>
+            {
+                if reprompt::asks_none(prompt) {
+                    return Ok(asked.refused(
+                        stands,
+                        &Problem::new("login_required", "The person must sign in again."),
+                    ));
+                }
+                let signed = reprompt::signed_request(
+                    &shared,
+                    asked.link_params(&asked.scope),
+                    &reprompt::with_login(prompt),
+                    unit.caller.session(),
+                )?;
+                Ok(sign_in_for(
+                    &shared,
+                    &signed,
+                    &format!("{REQUEST_PATH}?{signed}"),
+                ))
+            }
             (Some(consent), prompt) if prompt != Some("consent") => {
                 unit.audit_also(
                     "auth.grant.reused",
@@ -389,6 +410,14 @@ async fn answer_signed_in(app: &Arc<App>, owner: &Caller, asked: Asked) -> Resul
         }
     })
     .await
+}
+
+fn signed_in_before_asked(unit: &Unit<'_, '_>, client_id: &str) -> Result<bool> {
+    let session = unit
+        .caller
+        .session()
+        .ok_or_else(|| Refusal::internal("an approval has no browser session"))?;
+    reprompt::before_asked(unit.tx(), client_id, session)
 }
 
 fn user_of(unit: &Unit<'_, '_>) -> Result<String> {
@@ -560,6 +589,7 @@ pub async fn decide(
         let back = format!("{CONSENT_PATH}?{link}");
         return Ok(Decided::SignIn(sign_in_for(app, link, &back)));
     };
+    let again = sign_in_for(app, link, &format!("{CONSENT_PATH}?{link}"));
     let cache = app.catalog_handle();
     let shared = app.clone();
     app.write(owner, GRANT_WRITE, move |unit| {
@@ -581,6 +611,9 @@ pub async fn decide(
         };
         if !accept {
             return Ok(Decided::Answered(denied()));
+        }
+        if signed_in_before_asked(unit, &client.id)? {
+            return Ok(Decided::SignIn(again));
         }
         let registries = registries_in(unit, &cache)?;
         let named = narrow(&linked.scope, &registries.allowed()).kept;

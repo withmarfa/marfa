@@ -108,7 +108,16 @@ async function signIn(): Promise<string> {
   return cookie!;
 }
 
-async function exchange(app: App, code: string, verifier: string) {
+interface Tokens {
+  access: string;
+  refresh: string;
+}
+
+async function exchangeTokens(
+  app: App,
+  code: string,
+  verifier: string,
+): Promise<Tokens> {
   const answer = await token(server, {
     grant_type: "authorization_code",
     code,
@@ -117,7 +126,22 @@ async function exchange(app: App, code: string, verifier: string) {
     client_id: app.clientId,
   });
   expect(answer.status, JSON.stringify(answer.body)).toBe(200);
-  return answer.body.access_token!;
+  return {
+    access: answer.body.access_token!,
+    refresh: answer.body.refresh_token!,
+  };
+}
+
+async function exchange(app: App, code: string, verifier: string) {
+  return (await exchangeTokens(app, code, verifier)).access;
+}
+
+function refresh(app: App, refreshToken: string) {
+  return token(server, {
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: app.clientId,
+  });
 }
 
 /** Where an authorization for `app` from the browser `cookie` sends it first. */
@@ -138,8 +162,8 @@ async function authorizing(
   return { landed, verifier: proof.verifier };
 }
 
-/** An access token for `app` from the browser `cookie`, through consent if none covers it. */
-async function connect(app: App, cookie: string): Promise<string> {
+/** Tokens for `app` from the browser `cookie`, through consent if none covers it. */
+async function connectTokens(app: App, cookie: string): Promise<Tokens> {
   let { landed, verifier } = await authorizing(app, cookie);
   if (landed !== undefined && !landed.href.startsWith(CALLBACK)) {
     landed = await decide(
@@ -153,7 +177,112 @@ async function connect(app: App, cookie: string): Promise<string> {
   }
   const code = landed?.searchParams.get("code");
   expect(code, `no code on ${String(landed)}`).toBeTruthy();
-  return exchange(app, code!, verifier);
+  return exchangeTokens(app, code!, verifier);
+}
+
+async function connect(app: App, cookie: string): Promise<string> {
+  return (await connectTokens(app, cookie)).access;
+}
+
+/** The consent page an authorization of `app` from `cookie` opens, asking for consent again. */
+async function consentPage(
+  app: App,
+  cookie: string,
+): Promise<{ page: URL; verifier: string }> {
+  const proof = pkce();
+  const landed = await sentTo(
+    server,
+    await authorize(
+      server,
+      authorizeQuery(app.clientId, SCOPE, proof, {
+        resource: `${origin}/mcp/admin`,
+        prompt: "consent",
+      }),
+      cookie,
+    ),
+  );
+  expect(landed?.pathname, String(landed)).toBe("/auth/consent");
+  return { page: landed!, verifier: proof.verifier };
+}
+
+const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+
+interface DeviceCode {
+  device_code: string;
+  user_code: string;
+  interval: number;
+}
+
+async function registerDeviceApp(): Promise<string> {
+  const registered = await fetch(`${server.apiUrl}/oauth/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "mcp step-up device",
+      application_type: "native",
+      grant_types: [DEVICE_GRANT, "refresh_token"],
+      response_types: [],
+      token_endpoint_auth_method: "none",
+      scope: SCOPE,
+    }),
+  });
+  expect(registered.status).toBe(201);
+  return ((await registered.json()) as { client_id: string }).client_id;
+}
+
+async function askDevice(clientId: string): Promise<DeviceCode> {
+  const response = await fetch(`${server.apiUrl}/oauth/device-authorization`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: clientId, scope: SCOPE }),
+  });
+  expect(response.status).toBe(200);
+  return (await response.json()) as DeviceCode;
+}
+
+function devicePage(userCode: string, cookie: string): Promise<Response> {
+  return fetch(
+    `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
+    { redirect: "manual", headers: { cookie } },
+  );
+}
+
+async function approveDevice(userCode: string, cookie: string): Promise<void> {
+  const shown = await devicePage(userCode, cookie);
+  expect(shown.status, shown.headers.get("location") ?? "").toBe(200);
+  const form = new URLSearchParams({
+    user_code: userCode,
+    decision: "approve",
+  });
+  for (const scope of offeredValues(await shown.text(), "scopes")) {
+    form.append("scopes", scope);
+  }
+  const decided = await fetch(`${server.apiUrl}/auth/device/consent`, {
+    method: "POST",
+    redirect: "manual",
+    headers: {
+      cookie,
+      origin,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: form,
+  });
+  await decided.body?.cancel();
+  expect(decided.status).toBe(200);
+}
+
+async function deviceToken(
+  clientId: string,
+  asked: DeviceCode,
+): Promise<string> {
+  await server.advanceClock(asked.interval * 1000 + 1000);
+  const answer = await token(server, {
+    grant_type: DEVICE_GRANT,
+    device_code: asked.device_code,
+    client_id: clientId,
+  });
+  expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+  return answer.body.access_token!;
 }
 
 async function settingsCall(
@@ -241,7 +370,7 @@ describe("the settings that need a recent sign-in, through the settings tool", (
     expect(api.body.error.details).toEqual({ max_age: RECENT_SIGN_IN_SECONDS });
   });
 
-  it("refuses sign_in_address to an app whose owner signed in just now with app_sign_in_required, and changes nothing", async () => {
+  it("refuses sign_in_address to an app whose owner signed in just now with not_offered_over_mcp and the command that moves it, and changes nothing", async () => {
     const access = await connect(
       await registerApp(server, SCOPE),
       await signIn(),
@@ -253,8 +382,10 @@ describe("the settings that need a recent sign-in, through the settings tool", (
         [SWITCH]: true,
       }),
     );
-    expect(refused.code).toBe("app_sign_in_required");
-    expect(String(refused.message)).toContain("sign_in_address");
+    expect(refused.code).toBe("not_offered_over_mcp");
+    expect(String(refused.message)).toContain(
+      "marfa config set sign_in_address",
+    );
     expect(await stored()).toEqual(before);
     // The witness: the same token changes a setting that needs a recent sign-in.
     toolResult(await settingsCall(access, { [SWITCH]: true }));
@@ -310,76 +441,11 @@ describe("renewing the sign-in the settings tool asked for", () => {
   });
 
   it("sends the browser to sign in again before it approves a device code for the refused app, and the token the code then issues changes the setting", async () => {
-    const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
-    const registered = await fetch(`${server.apiUrl}/oauth/register`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        client_name: "mcp step-up device",
-        application_type: "native",
-        grant_types: [DEVICE_GRANT, "refresh_token"],
-        response_types: [],
-        token_endpoint_auth_method: "none",
-        scope: SCOPE,
-      }),
-    });
-    expect(registered.status).toBe(201);
-    const clientId = ((await registered.json()) as { client_id: string })
-      .client_id;
-    const ask = async () => {
-      const response = await fetch(
-        `${server.apiUrl}/oauth/device-authorization`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/x-www-form-urlencoded" },
-          body: new URLSearchParams({ client_id: clientId, scope: SCOPE }),
-        },
-      );
-      expect(response.status).toBe(200);
-      return (await response.json()) as {
-        device_code: string;
-        user_code: string;
-        interval: number;
-      };
-    };
-    const page = (userCode: string, cookie: string) =>
-      fetch(
-        `${server.apiUrl}/auth/device/consent?user_code=${encodeURIComponent(userCode)}`,
-        { redirect: "manual", headers: { cookie } },
-      );
-    const approve = async (userCode: string, cookie: string) => {
-      const shown = await page(userCode, cookie);
-      expect(shown.status, shown.headers.get("location") ?? "").toBe(200);
-      const form = new URLSearchParams({
-        user_code: userCode,
-        decision: "approve",
-      });
-      for (const scope of offeredValues(await shown.text(), "scopes")) {
-        form.append("scopes", scope);
-      }
-      const decided = await fetch(`${server.apiUrl}/auth/device/consent`, {
-        method: "POST",
-        redirect: "manual",
-        headers: {
-          cookie,
-          origin,
-          "content-type": "application/x-www-form-urlencoded",
-        },
-        body: form,
-      });
-      await decided.body?.cancel();
-      expect(decided.status).toBe(200);
-    };
-    const issued = async (asked: { device_code: string; interval: number }) => {
-      await server.advanceClock(asked.interval * 1000 + 1000);
-      const answer = await token(server, {
-        grant_type: DEVICE_GRANT,
-        device_code: asked.device_code,
-        client_id: clientId,
-      });
-      expect(answer.status, JSON.stringify(answer.body)).toBe(200);
-      return answer.body.access_token!;
-    };
+    const clientId = await registerDeviceApp();
+    const ask = () => askDevice(clientId);
+    const page = devicePage;
+    const approve = approveDevice;
+    const issued = (asked: DeviceCode) => deviceToken(clientId, asked);
 
     const stale = await signIn();
     const first = await ask();
@@ -402,6 +468,105 @@ describe("renewing the sign-in the settings tool asked for", () => {
 
     await approve(asked.user_code, await signIn());
     const renewed = await issued(asked);
+    toolResult(await settingsCall(renewed, { [SWITCH]: true }));
+    expect((await stored())[SWITCH]).toBe(true);
+    toolResult(await settingsCall(renewed, { [SWITCH]: false }));
+  });
+
+  it("refuses with invalid_grant a refresh of a sign-in older than the refusal, and refreshes a token from a new sign-in", async () => {
+    const app = await registerApp(server, SCOPE);
+    const first = await connectTokens(app, await signIn());
+    // The witness: before the refusal, the older sign-in's token refreshes.
+    const before = await refresh(app, first.refresh);
+    expect(before.status, JSON.stringify(before.body)).toBe(200);
+    await server.advanceClock(PAST_RECENT);
+
+    expectRenewalAsked(
+      await settingsCall(before.body.access_token!, { [SWITCH]: true }),
+    );
+
+    const refused = await refresh(app, before.body.refresh_token!);
+    expect(refused.status, JSON.stringify(refused.body)).toBe(400);
+    expect(refused.body.error).toBe("invalid_grant");
+
+    const renewed = await connectTokens(app, await signIn());
+    const again = await refresh(app, renewed.refresh);
+    expect(again.status, JSON.stringify(again.body)).toBe(200);
+    toolResult(
+      await settingsCall(again.body.access_token!, { [SWITCH]: true }),
+    );
+    expect((await stored())[SWITCH]).toBe(true);
+    toolResult(
+      await settingsCall(again.body.access_token!, { [SWITCH]: false }),
+    );
+  });
+
+  it("keeps the renewal where it was when a token from the older sign-in is refused again after the person signed in again", async () => {
+    const clientId = await registerDeviceApp();
+    const stale = await signIn();
+    const first = await askDevice(clientId);
+    await approveDevice(first.user_code, stale);
+    const old = await deviceToken(clientId, first);
+    await server.advanceClock(PAST_RECENT);
+
+    expectRenewalAsked(await settingsCall(old, { [SWITCH]: true }));
+
+    const fresh = await signIn();
+    const second = await askDevice(clientId);
+    await approveDevice(second.user_code, fresh);
+    const renewed = await deviceToken(clientId, second);
+    // The older token's retry comes after the new sign-in.
+    await server.advanceClock(1000);
+    expectRenewalAsked(await settingsCall(old, { [SWITCH]: true }));
+    toolResult(await settingsCall(renewed, { [SWITCH]: true }));
+    expect((await stored())[SWITCH]).toBe(true);
+    toolResult(await settingsCall(renewed, { [SWITCH]: false }));
+
+    const third = await askDevice(clientId);
+    // The witness: the device consent still sends the older browser to sign in.
+    const older = await devicePage(third.user_code, stale);
+    await older.body?.cancel();
+    expect(older.status).toBe(302);
+    const shown = await devicePage(third.user_code, fresh);
+    await shown.body?.cancel();
+    expect(shown.status, shown.headers.get("location") ?? "").toBe(200);
+  });
+
+  it("sends the browser to sign in again when a consent page opened before the refusal is approved, and issues the code after a new sign-in", async () => {
+    const app = await registerApp(server, SCOPE);
+    const stale = await signIn();
+    const access = await connect(app, stale);
+    await server.advanceClock(PAST_RECENT);
+    // The witness: before the refusal, approving an open consent page gives a code.
+    const before = await consentPage(app, stale);
+    expectCodeAtOnce(
+      await decide(server, origin, stale, before.page, true, SCOPE.split(" ")),
+      "before",
+    );
+    const open = await consentPage(app, stale);
+
+    expectRenewalAsked(await settingsCall(access, { [SWITCH]: true }));
+
+    const back = expectSignInAsked(
+      await decide(server, origin, stale, open.page, true, SCOPE.split(" ")),
+      "the page opened before the refusal",
+    );
+    expect(back.startsWith("/auth/consent?"), back).toBe(true);
+    const renewed = await exchange(
+      app,
+      expectCodeAtOnce(
+        await decide(
+          server,
+          origin,
+          await signIn(),
+          open.page,
+          true,
+          SCOPE.split(" "),
+        ),
+        "after the sign-in",
+      ),
+      open.verifier,
+    );
     toolResult(await settingsCall(renewed, { [SWITCH]: true }));
     expect((await stored())[SWITCH]).toBe(true);
     toolResult(await settingsCall(renewed, { [SWITCH]: false }));

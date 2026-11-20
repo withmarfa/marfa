@@ -160,17 +160,17 @@ When `marfa_sign_ins` answers, the server MUST answer as `owner_page` the addres
 
 ### `mcp/settings-step-up-withheld`
 
-If a `marfa_change_settings` call names `sign_in_address`, then the server MUST answer the call with the tool error code `app_sign_in_required`, whatever the credential.
+If a `marfa_change_settings` call names `sign_in_address`, then the server MUST answer the call, whatever the credential, with the tool error code `not_offered_over_mcp` and a message that names `marfa config set sign_in_address`.
 
-**Reason:** moving the sign-in address ends every browser sign-in and every app's sign-in, the calling agent's own connection included, and a passkey belongs to the address it was made at. The owner moves it from the command line or from an app, then signs in again at the new address.
+**Reason:** moving the sign-in address ends every browser sign-in and every app's sign-in, the calling agent's own connection included, and a passkey belongs to the address it was made at. The owner moves it from the command line or from an app, then signs in again at the new address. `not_offered_over_mcp` says that no credential or sign-in makes the call pass, so the agent gives the person the command instead of retrying.
 
-**Tests:** `compliance/mcp-step-up.test.ts › refuses sign_in_address to an app whose owner signed in just now with app_sign_in_required, and changes nothing`, `compliance/owner-tasks.test.ts › refuses a key each setting that needs a recent sign-in in the settings tool with app_sign_in_required, as the API does, and changes nothing, where a setting that is not one changes`.
+**Tests:** `compliance/mcp-step-up.test.ts › refuses sign_in_address to an app whose owner signed in just now with not_offered_over_mcp and the command that moves it, and changes nothing`, `compliance/owner-tasks.test.ts › refuses a key each setting that needs a recent sign-in in the settings tool with app_sign_in_required, as the API does, and changes nothing, where a setting that is not one changes`.
 
 ### `mcp/settings-step-up-unchanged`
 
 If a `marfa_change_settings` call names `sign_in_address`, then the server MUST NOT change any setting.
 
-**Tests:** `compliance/mcp-step-up.test.ts › refuses sign_in_address to an app whose owner signed in just now with app_sign_in_required, and changes nothing`.
+**Tests:** `compliance/mcp-step-up.test.ts › refuses sign_in_address to an app whose owner signed in just now with not_offered_over_mcp and the command that moves it, and changes nothing`.
 
 ### `mcp/settings-step-up-recent`
 
@@ -182,9 +182,9 @@ When an app's access token whose browser session began within the recent sign-in
 
 ### `mcp/settings-step-up-refused`
 
-If an app's access token whose browser session began more than 900 seconds before the call calls `marfa_change_settings` to change `allow_private_addresses`, `backup_path` or an `object_store_` setting that says where files go, then the server MUST answer the tool error code `insufficient_user_authentication` with `details.max_age` set to `900` and change no setting.
+If an app's access token whose browser session began more than 900 seconds before the call calls `marfa_change_settings` to change `allow_private_addresses`, `backup_path` or an `object_store_` setting that says where files go, then the server MUST answer the tool error code `insufficient_user_authentication` with `details.max_age` set to `900`, and write nothing but the app's own consent mark of `mcp/settings-step-up-renewal`.
 
-**Reason:** the tool answers inside a successful MCP response, so the refusal is a tool error rather than the `401` challenge of `keys-and-oauth/step-up-challenge`, and the agent asks the person to reconnect the app.
+**Reason:** the tool answers inside a successful MCP response, so the refusal is a tool error rather than the `401` challenge of `keys-and-oauth/step-up-challenge`, and the agent asks the person to sign in to this app's connection again (re-authenticate it, not only reconnect, which reuses the stored sign-in).
 
 **Tests:** `compliance/mcp-step-up.test.ts › refuses an app whose owner signed in longer ago than the recent sign-in window with insufficient_user_authentication and max_age, as the API does, and changes nothing`.
 
@@ -198,11 +198,27 @@ If an API key calls `marfa_change_settings` to change `allow_private_addresses`,
 
 ### `mcp/settings-step-up-renewal`
 
-When `marfa_change_settings` refuses an app with `insufficient_user_authentication`, the server MUST send to sign in again, before it issues a code or approves a device code for that app, any browser session that began before the refusal.
+When `marfa_change_settings` refuses with `insufficient_user_authentication` an app's access token whose browser session began at or after the time the app's consent already asks a browser session to begin after, or an app whose consent asks for no such time, the server MUST send to sign in again, before it issues a code or approves a device code for that app, any browser session that began before the refusal.
 
-**Reason:** an MCP client cannot send the person through the authorization endpoint with `max_age`, so the app's own next authorization asks for the new sign-in instead, and the token that follows passes. Nothing clears the mark: a browser session begun after the refusal satisfies it at every endpoint.
+**Reason:** an MCP client cannot send the person through the authorization endpoint with `max_age`, so the app's own next authorization asks for the new sign-in instead, and the token that follows passes. Nothing clears the mark: a browser session begun after the refusal satisfies it at every endpoint. The check is made when the code is issued, so a consent page opened before the refusal also asks.
 
-**Tests:** `compliance/mcp-step-up.test.ts › sends the browser to sign in again when the refused app reconnects, and the token it then gets changes the setting`, `› sends the browser to sign in again before it approves a device code for the refused app, and the token the code then issues changes the setting`.
+**Tests:** `compliance/mcp-step-up.test.ts › sends the browser to sign in again when the refused app reconnects, and the token it then gets changes the setting`, `› sends the browser to sign in again before it approves a device code for the refused app, and the token the code then issues changes the setting`, `› sends the browser to sign in again when a consent page opened before the refusal is approved, and issues the code after a new sign-in`.
+
+### `mcp/settings-step-up-renewal-kept`
+
+If `marfa_change_settings` refuses with `insufficient_user_authentication` an app's access token whose browser session began before the time the app's consent already asks a browser session to begin after, then the server MUST leave that time as it is.
+
+**Reason:** a retry by a token from before the person signed in again would otherwise move the time past the new sign-in, and the new connection would be sent to sign in again without end.
+
+**Tests:** `compliance/mcp-step-up.test.ts › keeps the renewal where it was when a token from the older sign-in is refused again after the person signed in again`.
+
+### `mcp/settings-step-up-refresh`
+
+While an app's consent asks a browser session to begin after a time (`mcp/settings-step-up-renewal`), if the app presents a refresh token whose browser session began before that time, then the server MUST refuse the refresh with `invalid_grant`.
+
+**Reason:** a client's reconnect refreshes the stored sign-in rather than asking for a new one, so the refusal sends it to a full authorization, which asks the person to sign in. A refresh token from a sign-in after that time refreshes as before, at every endpoint of the app.
+
+**Tests:** `compliance/mcp-step-up.test.ts › refuses with invalid_grant a refresh of a sign-in older than the refusal, and refreshes a token from a new sign-in`.
 
 ### `mcp/settings-step-up-renewal-own`
 
@@ -252,9 +268,17 @@ When the server lists `marfa_create`, `marfa_take_backup` or `marfa_make_endpoin
 
 ### `mcp/hints-idempotent`
 
-When the server lists `marfa_change_settings`, `marfa_name_source` or `marfa_rename_sign_in`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `false` and `idempotentHint` `true`.
+When the server lists `marfa_name_source` or `marfa_rename_sign_in`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `false` and `idempotentHint` `true`.
 
-**Reason:** each sets a value, so the same call again changes nothing more.
+**Reason:** each sets a name, so the same call again changes nothing more.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/hints-settings`
+
+When the server lists `marfa_change_settings`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `true` and `idempotentHint` `true`.
+
+**Reason:** a setting can make the server remove data or send it elsewhere, such as a shorter `trash_retention_days` that has the next trash job delete items for good, or a new place for backups and files, so a client asks the person first; and the same call again changes nothing more.
 
 **Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
 
@@ -486,7 +510,7 @@ When the server lists `marfa_purge`, the server MUST annotate it with `destructi
 
 **Reason:** a purge cannot be undone, and a client asks the person differently before a tool that destroys data.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, the maintenance tool and changing settings as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/purge-preview`
 
@@ -810,7 +834,7 @@ When the server lists `marfa_delete_connector` or `marfa_retire_endpoint`, the s
 
 **Reason:** neither change can be undone, and a client asks the person differently before a tool that destroys data.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, the maintenance tool and changing settings as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/connector-acts-gone`
 
@@ -998,7 +1022,7 @@ When the server lists `marfa_end_sign_in`, the server MUST annotate it with `des
 
 **Reason:** none of the three can be undone: a browser and an app must sign in again, and a passkey must be added again from a browser.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, the maintenance tool and changing settings as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/end-sign-in-preview`
 

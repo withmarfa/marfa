@@ -1,5 +1,7 @@
 //! `prompt=login` and `max_age`: an authorization request only a new session satisfies.
 
+use rusqlite::Connection;
+
 use super::{CODE_SECONDS, MS_PER_SECOND};
 use super::{signed_link, store};
 use crate::app::App;
@@ -60,12 +62,16 @@ pub(super) async fn began_before_asked(
     let Some(session) = session else {
         return Ok(false);
     };
-    let (client_id, owner_id) = (client_id.to_string(), session.owner_id.clone());
-    let asked = app
-        .db
-        .read(move |tx| store::login_after(tx, &client_id, &owner_id))
-        .await?;
-    Ok(asked.is_some_and(|after| session.created_at.ms() < after.ms()))
+    let (client_id, owner) = (client_id.to_string(), session.clone());
+    app.db
+        .read(move |tx| before_asked(tx, &client_id, &owner))
+        .await
+}
+
+/// Whether the app's consent asks for a browser session begun after `session`.
+pub(super) fn before_asked(tx: &Connection, client_id: &str, session: &Session) -> Result<bool> {
+    Ok(store::login_after(tx, client_id, &session.owner_id)?
+        .is_some_and(|after| session.created_at.ms() < after.ms()))
 }
 
 /// The later of a code's own `max_age` bound and the time the app's consent asks for.

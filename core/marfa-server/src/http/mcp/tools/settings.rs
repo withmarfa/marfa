@@ -19,8 +19,9 @@ pub const CHANGE_NAME: &str = "marfa_change_settings";
 
 const ROOM: usize = ANSWER_BUDGET_CHARS - 2_000;
 
-const SIGN_IN_ADDRESS_WITHHELD: &str = "sign_in_address is not changed from a tool: moving it ends every sign-in, this app's own included, and a passkey belongs to the address it was made at. The owner moves it from the command line or from an app, then signs in again at the new address. Nothing changed.";
-const SIGN_IN_AGAIN: &str = "Ask the person to reconnect this app: Marfa asks them to sign in again, and the new connection may make this change. Nothing changed.";
+const NOT_OFFERED: &str = "not_offered_over_mcp";
+const SIGN_IN_ADDRESS_WITHHELD: &str = "sign_in_address is not changed from a tool: moving it ends every sign-in, this app's own included, and a passkey belongs to the address it was made at. The owner moves it with `marfa config set sign_in_address <address>` or from an app, then signs in again at the new address. Nothing changed.";
+const SIGN_IN_AGAIN: &str = "Ask the person to sign in to this app's connection again (re-authenticate it, not only reconnect): Marfa asks them to sign in, and the new connection may make this change. Nothing changed.";
 
 pub fn read_definition() -> Definition {
     Definition {
@@ -53,7 +54,7 @@ pub fn change_definition() -> Definition {
     Definition {
         name: CHANGE_NAME,
         title: "Change the instance's settings",
-        description: "Use to change the instance's name, its enforcement levers or its settings, as PATCH /config does: a value sets it, null returns it to its default. Changing whether the instance reaches private addresses, where it keeps files or where it backs up needs the person to have signed in to this app recently; if they have not, ask them to reconnect it. Moving sign_in_address is not offered here.",
+        description: "Use to change the instance's name, its enforcement levers or its settings, as PATCH /config does: a value sets it, null returns it to its default. Changing whether the instance reaches private addresses, where it keeps files or where it backs up needs the person to have signed in to this app recently; if they have not, ask them to sign in to this app's connection again (re-authenticate it, not only reconnect). Moving sign_in_address is not offered here.",
         input: json!({
             "type": "object",
             "properties": {
@@ -75,7 +76,7 @@ pub fn change_definition() -> Definition {
         }),
         annotations: json!({
             "readOnlyHint": false,
-            "destructiveHint": false,
+            "destructiveHint": true,
             "idempotentHint": true,
             "openWorldHint": true,
         }),
@@ -113,10 +114,7 @@ pub async fn change(app: &Arc<App>, caller: &Caller, arguments: Map<String, Valu
     }
     if let Some(Value::Object(settings)) = arguments.get("settings") {
         if settings.contains_key(SIGN_IN_ADDRESS.entry.key) {
-            return Err(Stop::coded(
-                "app_sign_in_required",
-                SIGN_IN_ADDRESS_WITHHELD,
-            ));
+            return Err(Stop::coded(NOT_OFFERED, SIGN_IN_ADDRESS_WITHHELD));
         }
         for (key, value) in settings {
             if key == "name" || key == "enforcement" || !ENTRIES.iter().any(|e| e.key == key) {
@@ -152,11 +150,12 @@ async fn ask_sign_in_again(app: &App, caller: &Caller) {
         return;
     };
     let (client_id, owner_id) = (grant.client_id.clone(), grant.owner_id.clone());
+    let signed_in = grant.authenticated_at;
     let clock = app.clock.clone();
     let asked = app
         .db
         .write(Write::own(), move |tx| {
-            store::ask_login_after(tx, &client_id, &owner_id, clock.instant())
+            store::ask_login_after(tx, &client_id, &owner_id, signed_in, clock.instant())
         })
         .await;
     if let Err(refused) = asked {

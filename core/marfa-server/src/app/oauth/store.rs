@@ -255,8 +255,19 @@ fn consent_of(row: &Row<'_>) -> rusqlite::Result<Consent> {
     })
 }
 
-/// Has the app's next authorization ask for a browser session begun at or after `at`.
-pub fn ask_login_after(tx: &Connection, client_id: &str, owner_id: &str, at: Stamp) -> Result<()> {
+/// Has the app's next authorization ask for a browser session begun at or after `at`, unless it
+/// already asks for one begun after `signed_in`, the refused token's sign-in.
+pub fn ask_login_after(
+    tx: &Connection,
+    client_id: &str,
+    owner_id: &str,
+    signed_in: Option<Stamp>,
+    at: Stamp,
+) -> Result<()> {
+    let asked = login_after(tx, client_id, owner_id)?;
+    if asked.is_some_and(|after| signed_in.is_none_or(|signed_in| after.ms() > signed_in.ms())) {
+        return Ok(());
+    }
     tx.execute(
         "UPDATE oauth_consents SET login_after = ?3 \
          WHERE client_id = ?1 AND owner_id = ?2 AND withdrawn_at IS NULL",
