@@ -615,6 +615,28 @@ pub(super) fn touch(tx: &Transaction<'_>, item: &Item, at: &str) -> Result<Item>
     stored(tx, &item.id)
 }
 
+/// How many items the bin holds of each type and source, leaving out `system.*` types.
+pub(super) fn binned_counts(tx: &Transaction<'_>) -> Result<Vec<(String, String, i64)>> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT type, source, count(*) FROM items \
+             WHERE state = 'trashed' AND type NOT GLOB 'system.*' GROUP BY type, source",
+        )?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// How many versions, tags and extensions an item holds.
+pub(super) fn held_counts(tx: &Transaction<'_>, seq: i64) -> Result<(i64, i64, i64)> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT (SELECT count(*) FROM item_versions WHERE item_seq = ?1), \
+             (SELECT count(*) FROM item_tags WHERE item_seq = ?1), \
+             (SELECT count(*) FROM item_extensions WHERE item_seq = ?1)",
+        )?
+        .query_row([seq], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?)
+}
+
 pub(super) type Position = (String, String);
 
 pub(super) fn newest(

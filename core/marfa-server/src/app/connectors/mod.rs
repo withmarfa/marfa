@@ -21,7 +21,7 @@ use crate::app::clock::Stamp;
 pub use read_only::{ReadOnly, Registry};
 pub use request::{Batch, Lookup, Register, Replace, Run, Take, released};
 pub(crate) use request::{Fields, Stray, invalid, missing, required, text};
-pub(crate) use store::Registration;
+pub(crate) use store::{Registration, agreements_on};
 
 const RUNS_KEPT: usize = 100;
 

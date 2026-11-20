@@ -94,6 +94,17 @@ impl<'c> Gate<'_, 'c> {
             .ok_or_else(not_found)
     }
 
+    /// The row as the owner's bin and history doors see it: never `system.*`, and never one the
+    /// credential's source filter leaves out.
+    pub fn owner_row(&self, id: &str) -> Result<Item> {
+        let levers = self.caller.levers()?;
+        rows::by_id(self.tx, id)?
+            .filter(|row| !is_system(&row.type_id))
+            .filter(|row| self.caller.may_read_type(&row.type_id))
+            .filter(|row| levers.lists(&self.catalog.rules, &row.type_id, &row.source))
+            .ok_or_else(not_found)
+    }
+
     pub fn writable_row(&self, id: &str) -> Result<Item> {
         let row = self.readable_row(id)?;
         if row.state == "trashed" {
@@ -427,6 +438,41 @@ fn purged(gate: &Gate<'_, '_>, asked: &[Asked]) -> Result<Plan> {
         purging,
         beneath: HashMap::new(),
     })
+}
+
+/// The rows the owner chose, each as [`Gate::owner_row`] finds it, and one walk from all of them
+/// at once, so a part bound to two chosen hosts goes with them.
+pub(super) fn chosen(gate: &Gate<'_, '_>, ids: &[String]) -> Result<Plan> {
+    gate.caller.require(Permission::ItemsPurge)?;
+    let mut seen = HashSet::new();
+    let mut asked = Vec::with_capacity(ids.len());
+    for id in ids {
+        if seen.insert(id.as_str()) {
+            gate.owner_row(id)?;
+            asked.push(Asked {
+                id: id.clone(),
+                version: None,
+            });
+        }
+    }
+    purged(gate, &asked)
+}
+
+/// Every item and edge the walk takes, at the version it stands at.
+pub(super) fn walk_digest(purging: &[Purging]) -> String {
+    let mut taken: Vec<(char, &str, i64)> = Vec::new();
+    for going in purging {
+        taken.push(('i', going.item.id.as_str(), going.item.version));
+        for (edge, _) in &going.edges {
+            taken.push(('e', edge.id.as_str(), edge.version));
+        }
+    }
+    taken.sort_unstable();
+    let mut digest = Sha256::new();
+    for (kind, id, version) in taken {
+        digest.update(format!("{kind}\0{id}\0{version}\n").as_bytes());
+    }
+    hex::encode(digest.finalize())
 }
 
 pub(super) fn plan(gate: &Gate<'_, '_>, act: Act, asked: &[Asked]) -> Result<Plan> {

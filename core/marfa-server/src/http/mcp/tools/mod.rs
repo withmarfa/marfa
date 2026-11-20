@@ -16,6 +16,7 @@ mod keys;
 mod maintain;
 mod moving;
 mod overview;
+mod purge;
 mod revoke;
 mod rows;
 mod settings;
@@ -93,6 +94,7 @@ fn definitions() -> Vec<(Group, Definition)> {
         (Group::Admin, settings::read_definition()),
         (Group::Admin, settings::change_definition()),
         (Group::Admin, trash::definition()),
+        (Group::Admin, purge::definition()),
         (Group::Admin, apps::list_definition()),
         (Group::Admin, apps::narrow_definition()),
         (Group::Admin, backups::list_definition()),
@@ -143,7 +145,7 @@ fn offered(caller: &Caller, name: &str) -> bool {
         keys::LIST_NAME | keys::MANAGE_NAME | revoke::NAME => caller.may_use_key_door(),
         webhooks::LIST_NAME | webhooks::MANAGE_NAME => caller.may_manage_webhooks(),
         settings::READ_NAME | settings::CHANGE_NAME => caller.may_change_settings(),
-        trash::NAME => caller.may_purge_items(),
+        trash::NAME | purge::NAME => caller.may_purge_items(),
         apps::LIST_NAME | apps::NARROW_NAME => caller.may_manage_apps(),
         backups::LIST_NAME | backups::TAKE_NAME => caller.may_manage_backups(),
         maintain::NAME => caller.may_maintain(),
@@ -253,6 +255,7 @@ async fn run(
         settings::READ_NAME => settings::read(app, caller).await,
         settings::CHANGE_NAME => settings::change(app, caller, arguments).await,
         trash::NAME => trash::run(app, caller, arguments).await,
+        purge::NAME => purge::run(app, caller, arguments).await,
         apps::LIST_NAME => apps::list(app, caller).await,
         apps::NARROW_NAME => apps::narrow(app, caller, arguments).await,
         backups::LIST_NAME => backups::list(app, caller).await,

@@ -18,7 +18,7 @@ mod enrichment;
 use super::bulk::{Counts, Entered, Entry, Note, Page, rollback};
 use super::file_fields;
 use super::index;
-use super::plan::{self, Act, Asked, Gate, Moving, invalid_transition, require_version};
+use super::plan::{self, Act, Asked, Gate, Moving, Purging, invalid_transition, require_version};
 use super::rows::{self, Landed, Moved, NewRow};
 use super::{
     Item, Keys, Selected, Snapshot, Writer, check_keys, link_in, metadata_for, metadata_text,
@@ -308,6 +308,36 @@ pub async fn purge_owned(
         })
     })
     .await
+}
+
+/// What purging the rows the owner chose came to.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Chosen {
+    /// Every row of the walk was taken: this many.
+    Purged(usize),
+    /// A chosen row is gone, out of the bin or out of reach, or `agree` refused the walk.
+    Changed,
+}
+
+/// Purges the rows the owner chose and everything one walk from all of them takes, in the
+/// caller's write, so whatever else that write records commits or fails with the purge.
+/// `agree` sees the digest of the walk before anything is taken.
+pub fn purge_chosen(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    ids: &[String],
+    agree: impl FnOnce(&str) -> Result<bool>,
+) -> Result<Chosen> {
+    unit.fanning(true, |unit| {
+        let job = Job {
+            unit,
+            catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
+            read_only: unit.read_only()?,
+            claim: None,
+            server_own: false,
+        };
+        job.chosen(ids, agree)
+    })
 }
 
 /// With a `claim`, the answer is recorded under it in the same transaction.
@@ -2385,8 +2415,15 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 version,
             }],
         )?;
+        let mut done = self.purged_walk(&plan.purging)?;
+        done.carried.retain(|carried| *carried != id);
+        Ok(done)
+    }
+
+    /// Takes every row of the walk, all in this write.
+    fn purged_walk(&self, walk: &[Purging]) -> Result<RowDone> {
         let mut done = RowDone::default();
-        for purging in &plan.purging {
+        for purging in walk {
             let item = &purging.item;
             done.bytes = done
                 .bytes
@@ -2398,11 +2435,27 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             }
             purge(self.unit, item)?;
             self.unit.audit("item", &item.id, None)?;
-            if item.id != id {
-                done.carried.push(item.id.clone());
-            }
+            done.carried.push(item.id.clone());
         }
         Ok(done)
+    }
+
+    fn chosen(&self, ids: &[String], agree: impl FnOnce(&str) -> Result<bool>) -> Result<Chosen> {
+        let plan = match plan::chosen(&self.gate(), ids) {
+            Ok(plan) => plan,
+            Err(refusal)
+                if matches!(refusal.code, Code::ItemNotFound | Code::InvalidTransition) =>
+            {
+                return Ok(Chosen::Changed);
+            }
+            Err(refusal) => return Err(refusal),
+        };
+        if !agree(&plan::walk_digest(&plan.purging))? {
+            return Ok(Chosen::Changed);
+        }
+        let done = self.purged_walk(&plan.purging)?;
+        index::settle(self.unit.tx(), &self.catalog.rules)?;
+        Ok(Chosen::Purged(done.carried.len()))
     }
 
     fn retarget(&self, id: &str, settings: Map<String, Value>) -> Result<Done> {
@@ -2520,12 +2573,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             OwnerAct::Purge => self.caller().require(Permission::ItemsPurge)?,
             OwnerAct::Trash | OwnerAct::Restore => self.caller().require_local()?,
         }
-        let levers = self.caller().levers()?;
-        let row = rows::by_id(self.unit.tx(), &id)?
-            .filter(|row| !super::is_system(&row.type_id))
-            .filter(|row| self.caller().may_read_type(&row.type_id))
-            .filter(|row| levers.lists(&self.catalog.rules, &row.type_id, &row.source))
-            .ok_or_else(not_found)?;
+        let row = self.gate().owner_row(&id)?;
         let summary = summary_of(self.unit.tx(), &self.catalog, &row)?;
         if row.version != version {
             let conflict = Done {

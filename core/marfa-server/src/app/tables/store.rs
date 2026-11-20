@@ -352,6 +352,15 @@ pub(super) struct Summary {
     pub changed_at: String,
 }
 
+/// Every row of every table the item hosts.
+pub(super) fn rows_held(tx: &Transaction<'_>, seq: i64) -> Result<i64> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT coalesce(sum(row_count), 0) FROM table_summaries WHERE item_seq = ?1",
+        )?
+        .query_row([seq], |row| row.get(0))?)
+}
+
 pub(super) fn summaries(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Summary>> {
     let mut statement = tx.prepare_cached(
         "SELECT table_name, row_count, bytes, last_batch, changed_at FROM table_summaries \

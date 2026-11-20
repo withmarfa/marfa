@@ -362,6 +362,12 @@ pub fn drop_agreement(tx: &Transaction<'_>, source: &str, item_id: &str) -> Resu
         .execute(params![source, item_id])?)
 }
 
+pub fn agreements_on(tx: &Transaction<'_>, item_id: &str) -> Result<i64> {
+    Ok(tx
+        .prepare_cached("SELECT count(*) FROM connector_agreements WHERE item_id = ?1")?
+        .query_row([item_id], |row| row.get(0))?)
+}
+
 pub fn clear_agreements(tx: &Transaction<'_>, source: &str) -> Result<usize> {
     Ok(tx
         .prepare_cached("DELETE FROM connector_agreements WHERE source = ?1")?
