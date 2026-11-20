@@ -804,7 +804,7 @@ Where a volume cannot exchange two names in one step, if a file appears at a fil
 
 ### `folder-files/write-no-exchange-no-replace`
 
-If a volume can neither exchange two names in one step nor rename a file without replacing, then a device MUST leave an existing file unchanged and count its item `unwritten`.
+If a volume can neither exchange two names in one step nor rename a file without replacing, then a device MUST leave an existing file it would replace unchanged and count its item `unwritten`.
 
 **Reason:** with neither, a device cannot replace a file without risking a save the person makes as it does so.
 
