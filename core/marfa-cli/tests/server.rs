@@ -3822,7 +3822,7 @@ fn the_address_for_setup_is_set_only_through_the_private_socket() {
             "claim",
             "--address",
             "https://marfa.example.com",
-            "--email",
+            "--username",
             "a@example.com",
         ][..],
     ] {

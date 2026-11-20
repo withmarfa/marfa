@@ -87,7 +87,7 @@ Each takes `--dir` when the install isn't in the default folder, and `marfa serv
 
 ## Claim the server
 
-`marfa server install` prints a link that claims the server. Open it within five minutes, and choose the owner's email and password. The link works once; run the command again for a new one.
+`marfa server install` prints a link that claims the server. Open it within five minutes, and choose the owner's username and password. The link works once; run the command again for a new one.
 
 For a server you run another way, use the private socket, under the same operating system account as the server. For a native install, the socket is `data/control/marfa.sock` in the install folder; in the container, it's `/data/control/marfa.sock`.
 
@@ -95,7 +95,7 @@ For a server you run another way, use the private socket, under the same operati
 marfa --socket <socket> setup open --address https://marfa.example.com --no-browser
 ```
 
-Open the link it prints. `--address` sets the address people sign in at before the link is made; it doesn't move the address of a server that already has an owner. To finish in the terminal instead, run `setup claim --address <address> --email owner@example.com`, which asks for the password at a hidden prompt. For the container, run the command with `docker exec <container> marfa ...`, adding `-it` for `setup claim`.
+Open the link it prints. `--address` sets the address people sign in at before the link is made; it doesn't move the address of a server that already has an owner. To finish in the terminal instead, run `setup claim --address <address> --username owner`, which asks for the password at a hidden prompt. For the container, run the command with `docker exec <container> marfa ...`, adding `-it` for `setup claim`.
 
 Creating or changing a key, approving an app and restoring an archive need a sign-in within the last fifteen minutes. If yours is older, the page asks you to confirm it's you with your password or a passkey.
 

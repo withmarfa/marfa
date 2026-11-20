@@ -382,7 +382,7 @@ it(
       ).rejects.toThrow("error=invalid_credentials");
       expect(
         await authenticateOwner(open.url, undefined, {
-          email: TEST_OWNER.email,
+          username: TEST_OWNER.username,
           password: "new control-only recovery password",
         }),
       ).toContain("=");

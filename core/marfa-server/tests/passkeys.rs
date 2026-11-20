@@ -22,7 +22,7 @@ use tower::ServiceExt;
 
 const ORIGIN: &str = "http://localhost:8600";
 const HOST: &str = "localhost";
-const EMAIL: &str = "owner@example.test";
+const USERNAME: &str = "owner";
 const PASSWORD: &str = "the first password";
 const MINUTE_MS: u64 = 60_000;
 /// Long enough that a sign-in made before it is no longer recent.
@@ -261,7 +261,7 @@ impl Instance {
             origin: address.to_string(),
             owner: String::new(),
         };
-        let claim = json!({ "email": EMAIL, "password": PASSWORD });
+        let claim = json!({ "username": USERNAME, "password": PASSWORD });
         let reply = instance.control_post("/_control/setup/claim", &claim).await;
         assert_eq!(reply.status, StatusCode::CREATED);
         instance.owner = instance.signed_in().await;
@@ -314,7 +314,7 @@ impl Instance {
     }
 
     async fn signed_in(&self) -> String {
-        let body = json!({ "email": EMAIL, "password": PASSWORD });
+        let body = json!({ "username": USERNAME, "password": PASSWORD });
         let reply = self.post("/auth/sign-in", "", &body).await;
         assert_eq!(reply.status, StatusCode::OK, "{:?}", reply.body);
         reply.cookie().unwrap()
@@ -953,12 +953,12 @@ async fn a_passkey_signs_in_through_a_password_lockout_and_leaves_it_in_place() 
     let instance = Instance::claimed().await;
     let device = Device::new();
     instance.add(&device).await;
-    let wrong = json!({ "email": EMAIL, "password": "not the password" });
+    let wrong = json!({ "username": USERNAME, "password": "not the password" });
     for _ in 0..10 {
         let refused = instance.post("/auth/sign-in", "", &wrong).await;
         assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
     }
-    let right = json!({ "email": EMAIL, "password": PASSWORD });
+    let right = json!({ "username": USERNAME, "password": PASSWORD });
     let held = instance.post("/auth/sign-in", "", &right).await;
     assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS);
 

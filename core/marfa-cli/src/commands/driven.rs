@@ -453,7 +453,7 @@ fn remote_setup_claim_refuses_a_redirect_and_sends_the_documented_body() {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let body = serde_json::json!({"email":"owner@example.com", "password":"test-claim-password", "code":"TEST-SETUP-CODE"});
+    let body = serde_json::json!({"username":"owner", "password":"test-claim-password", "code":"TEST-SETUP-CODE"});
     child
         .stdin
         .take()

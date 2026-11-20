@@ -12,12 +12,12 @@
 <input type="hidden" name="authorization" value="{{ authorization }}">
 {% endif %}
 <div class="field">
-<label for="email">Email</label>
-<input id="email" type="email" name="email" value="{{ view.email }}" autocomplete="username webauthn" autocapitalize="none" spellcheck="false" required{% if view.email.is_empty() %} autofocus{% endif %}{% if has_problem %} aria-describedby="sign-in-problem"{% endif %}>
+<label for="username">Username</label>
+<input id="username" type="text" name="username" value="{{ view.username }}" autocomplete="username webauthn" autocapitalize="none" spellcheck="false" required{% if view.username.is_empty() %} autofocus{% endif %}{% if has_problem %} aria-describedby="sign-in-problem"{% endif %}>
 </div>
 <div class="field">
 <label for="password">Password</label>
-<input id="password" type="password" name="password" autocomplete="current-password" required{% if !view.email.is_empty() %} autofocus{% endif %}{% if has_problem %} aria-describedby="sign-in-problem"{% endif %}>
+<input id="password" type="password" name="password" autocomplete="current-password" required{% if !view.username.is_empty() %} autofocus{% endif %}{% if has_problem %} aria-describedby="sign-in-problem"{% endif %}>
 </div>
 <button type="submit" class="button primary wide">Sign in</button>
 </form>

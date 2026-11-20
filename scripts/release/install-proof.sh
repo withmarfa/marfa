@@ -328,7 +328,7 @@ prove() {
   local port
   port=$(port_of "$1")
   step "$current: install $name at $address"
-  local claim='{"email":"proof@example.com","password":"%s","name":"Install proof"}'
+  local claim='{"username":"proof","password":"%s","name":"Install proof"}'
 
   local runtime=()
   [ "$current" != docker ] || runtime=(--docker)

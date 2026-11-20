@@ -1689,7 +1689,7 @@ describe("what the approval pages say of item types that share a label", () => {
           .replace(/^.*?Profile/, "")
           .trim(),
         page,
-      ).toMatch(/^Your name, email address and avatar/);
+      ).toMatch(/^Your name, username, email address and avatar/);
     }
   });
 

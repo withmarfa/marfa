@@ -2106,7 +2106,7 @@ The server MUST send a `Vary` header that names `Accept` on every answer to `GET
 
 ### `instance/root-page-signed-in`
 
-When the server answers `GET /` with an HTML page to a request that carries the owner's live browser session, the server MUST name the owner's email on the page.
+When the server answers `GET /` with an HTML page to a request that carries the owner's live browser session, the server MUST name the owner's username on the page.
 
 **Reason:** a person who signs in is sent to the root, and a page that still asks them to sign in tells them nothing about what happened.
 

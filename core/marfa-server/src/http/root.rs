@@ -62,7 +62,7 @@ async fn page(app: &Arc<App>, parts: &Parts, name: String) -> Answer {
     {
         let view = Running {
             instance_name: name,
-            email: found.email,
+            username: found.username,
         };
         return Ok(pages::running(&view)?.into_response());
     }

@@ -94,7 +94,7 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         &["setup status", "setup code", "setup open", "setup claim"],
     ),
     (
-        "Read and change the owner's email, name and avatar, or clear the avatar",
+        "Read and change the owner's username, email, name and avatar, or clear the email or the avatar",
         &["profile show", "profile update", "profile avatar"],
     ),
     (

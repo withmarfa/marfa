@@ -133,7 +133,7 @@ const CLAIM: [&str; 5] = [
     "--address",
     "https://marfa.example.com",
 ];
-const OWNER: &str = r#"{"email":"a@example.com","password":"a long enough password"}"#;
+const OWNER: &str = r#"{"username":"owner","password":"a long enough password"}"#;
 
 #[test]
 fn an_unclaimed_instance_takes_the_address_and_then_the_claim() {
@@ -186,8 +186,8 @@ fn input_that_cannot_claim_never_moves_the_address() {
         "claim",
         "--address",
         "https://marfa.example.com",
-        "--email",
-        "a@example.com",
+        "--username",
+        "owner",
     ]);
     assert_eq!(code, 2, "{stderr}");
     assert!(socket.requests().is_empty(), "{:?}", socket.requests());

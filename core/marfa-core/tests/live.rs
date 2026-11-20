@@ -342,13 +342,13 @@ fn app_token(url: &str) -> String {
     )
     .read_to_string()
     .unwrap();
-    let email = std::env::var("MARFA_TEST_OWNER_EMAIL").expect("the boot names its owner");
+    let username = std::env::var("MARFA_TEST_OWNER_USERNAME").expect("the boot names its owner");
     let password = std::env::var("MARFA_TEST_OWNER_PASSWORD").expect("the boot names its owner");
     let origin = sign_in_origin(url);
     let sign_in = ureq::post(format!("{url}/auth/sign-in"))
         .header("Content-Type", "application/json")
         .header("Origin", &origin)
-        .send(serde_json::json!({"email": email, "password": password}).to_string())
+        .send(serde_json::json!({"username": username, "password": password}).to_string())
         .unwrap();
     let cookie = sign_in
         .headers()

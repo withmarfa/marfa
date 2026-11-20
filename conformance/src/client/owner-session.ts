@@ -14,7 +14,7 @@ export function sessionCookieOf(response: Response): string | undefined {
 export async function postSignInForm(
   baseUrl: string,
   origin: string,
-  credentials: { email: string; password: string },
+  credentials: { username: string; password: string },
   headers: Record<string, string> = {},
 ): Promise<Response> {
   return fetch(`${baseUrl}/auth/sign-in`, {
@@ -33,7 +33,7 @@ export async function postSignInForm(
 export async function signInOwnerWithPassword(
   baseUrl: string,
   origin: string,
-  credentials: { email: string; password: string },
+  credentials: { username: string; password: string },
   headers: Record<string, string> = {},
 ): Promise<string> {
   const response = await postSignInForm(baseUrl, origin, credentials, headers);
@@ -56,7 +56,7 @@ export async function signInOwnerWithPassword(
 export async function authenticateOwner(
   baseUrl: string,
   cookie: string | undefined,
-  credentials: { email: string; password: string },
+  credentials: { username: string; password: string },
 ): Promise<string> {
   if (cookie) {
     const current = await fetch(`${baseUrl}/owner/passkeys`, {

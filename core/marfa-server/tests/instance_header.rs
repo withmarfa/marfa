@@ -92,7 +92,7 @@ impl Instance {
             .await;
         assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.body);
         instance.key = minted.body["key"].as_str().unwrap().to_owned();
-        let claim = json!({ "email": "owner@example.test", "password": "the first password" });
+        let claim = json!({ "username": "owner", "password": "the first password" });
         let claimed = instance
             .call(
                 &instance.control,

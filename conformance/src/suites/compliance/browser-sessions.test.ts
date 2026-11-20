@@ -67,7 +67,10 @@ async function signIn(userAgent = "browser-sessions"): Promise<string> {
       origin,
       "user-agent": userAgent,
     },
-    body: JSON.stringify({ email: OWNER.email, password: OWNER.password }),
+    body: JSON.stringify({
+      username: OWNER.username,
+      password: OWNER.password,
+    }),
   });
   expect(response.status).toBe(200);
   const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(

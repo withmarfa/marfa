@@ -10,14 +10,14 @@ use super::sign_in::signed_in_cookies;
 use super::{cookies, redirect, require_safe_caller, with_cookie};
 use crate::app::App;
 use crate::app::auth::claim::{self, Presented, Proof};
-use crate::app::auth::owner::{Details, Owner, incomplete_claim};
+use crate::app::auth::owner::{Details, Owner, optional_text};
 use crate::app::auth::{Visit, own_origins, sign_in};
 use crate::app::refusal::Refusal;
 use crate::http::answer::{Answer, Stopped, json_answer};
 use crate::http::body::{JsonBody, only_declared};
 
 const EXCHANGE_FIELDS: [&str; 2] = ["ticket", "code"];
-const CLAIM_FIELDS: [&str; 4] = ["email", "password", "name", "code"];
+const CLAIM_FIELDS: [&str; 5] = ["username", "password", "name", "email", "code"];
 const RECOVER_FIELDS: [&str; 2] = ["password", "code"];
 const AFTER_CLAIM: &str = "/auth/sign-in";
 
@@ -84,18 +84,20 @@ pub(super) async fn make_claim(
     fields: Map<String, Value>,
 ) -> Result<(Owner, Vec<axum::http::HeaderValue>), Stopped> {
     let fields = only_declared(fields, &CLAIM_FIELDS)?;
-    if fields.get("name").is_some_and(|name| !name.is_string()) {
-        return Err(incomplete_claim().into());
-    }
     let text = |name: &str| fields.get(name).and_then(Value::as_str);
     let password = text("password").unwrap_or("").to_string();
-    let details = Details::new(text("email").unwrap_or(""), text("name"), password.clone())?;
+    let details = Details::new(
+        text("username").unwrap_or(""),
+        optional_text(&fields, "email")?,
+        optional_text(&fields, "name")?,
+        password.clone(),
+    )?;
     let proof = Proof::Presented(presented(headers, text("code")));
     let owner = claim::claim(app, details, proof, visit.clone()).await?;
     if origin::said(headers, &own_origins(app)) != Source::Own {
         return Ok((owner, Vec::new()));
     }
-    let opening = sign_in::with_password(app, owner.email.clone(), password, None, visit).await;
+    let opening = sign_in::with_password(app, owner.username.clone(), password, None, visit).await;
     let cookies = match opening {
         Ok(signed) => signed_in_cookies(app, &signed)?.to_vec(),
         Err(refusal) => {
@@ -132,13 +134,21 @@ pub async fn claim(
 ) -> Answer {
     admit_claim(&app, &headers, &visit).await?;
     let form = body.declares_form();
-    let fields = if form {
+    let mut fields = if form {
         body.form().await?
     } else {
         body.open_object().await?
     };
     let browser = form && origin::said(&headers, &own_origins(&app)) == Source::Own;
     let typed = Typed::of(&fields);
+    if form
+        && fields
+            .get("email")
+            .and_then(Value::as_str)
+            .is_some_and(|email| email.trim().is_empty())
+    {
+        fields.remove("email");
+    }
     let (owner, signed_in) = match make_claim(&app, &headers, visit, fields).await {
         Err(Stopped::Refused(refusal)) if browser && pages::wants_page(&headers) => {
             return Ok(pages::claim_refused(&app, &refusal, typed).await?);

@@ -75,7 +75,7 @@ function signIn(password: string, address: string): Promise<Response> {
       origin,
       [CLIENT_HEADER]: address,
     },
-    body: JSON.stringify({ email: OWNER.email, password }),
+    body: JSON.stringify({ username: OWNER.username, password }),
   });
 }
 
@@ -107,7 +107,7 @@ describe("the sign-in surface", () => {
     // by the door rather than refused.
     const own = await postForm(
       "/auth/sign-in",
-      { email: "", password: "", return_to: "/" },
+      { username: "", password: "", return_to: "/" },
       { origin },
     );
     expect(own.status).toBe(302);
@@ -287,7 +287,7 @@ describe("the sign-in surface", () => {
     expect((await signIn(OWNER.password, "192.0.2.4")).status).toBe(200);
   });
 
-  it("holds one address to ten attempts at one email, and leaves the owner signing in from another", async () => {
+  it("holds one address to ten attempts at one username, and leaves the owner signing in from another", async () => {
     const guesser = "203.0.113.10";
     for (let i = 0; i < 10; i++) {
       expect((await signIn("not the password", guesser)).status).toBe(401);
@@ -468,10 +468,14 @@ async function startAuthorization(name: string): Promise<URL> {
 }
 
 describe("the pages a person reads at sign-in", () => {
-  it("returns the typed email after a wrong password, and never the password", async () => {
+  it("returns the typed username after a wrong password, and never the password", async () => {
     const failed = await postForm(
       "/auth/sign-in",
-      { email: OWNER.email, password: "not-the-password", return_to: "/" },
+      {
+        username: OWNER.username,
+        password: "not-the-password",
+        return_to: "/",
+      },
       { origin, [CLIENT_HEADER]: "192.0.2.51" },
     );
     expect(failed.status).toBe(302);
@@ -479,7 +483,7 @@ describe("the pages a person reads at sign-in", () => {
     expect(location).toContain("error=invalid_credentials");
     expect(location).not.toContain("not-the-password");
     const page = await (await fetch(`${server!.apiUrl}${location}`)).text();
-    expect(pageField(page, "email")?.value).toBe(OWNER.email);
+    expect(pageField(page, "username")?.value).toBe(OWNER.username);
     expect(pageField(page, "password")?.value).toBeUndefined();
     expect(page).not.toContain("not-the-password");
   });
@@ -618,7 +622,7 @@ describe("the pages a person reads at sign-in", () => {
       await fetch(`${server!.apiUrl}/auth/sign-in`, { headers: { cookie } })
     ).text();
     expect(visibleText(page)).toContain("You're signed in");
-    expect(visibleText(page)).toContain(OWNER.email);
+    expect(visibleText(page)).toContain(OWNER.username);
     expect(pageField(page, "password")).toBeUndefined();
 
     const wanted = await startAuthorization("Conformance Again");

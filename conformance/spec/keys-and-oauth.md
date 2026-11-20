@@ -2915,31 +2915,31 @@ When the sign-in form receives a `return_to` that resolves to a path on the inst
 
 ### `keys-and-oauth/sign-in-address-limit`
 
-If one address has made ten counted password sign-in attempts at one email in fifteen minutes, then the server MUST answer its next attempt at that email `429` with `Retry-After`, before it judges the password.
+If one address has made ten counted password sign-in attempts at one username in fifteen minutes, then the server MUST answer its next attempt at that username `429` with `Retry-After`, before it judges the password.
 
 **Reason:** The refusal comes before the password is judged, so it cannot tell anyone whether the password was right.
 
-**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one email, and leaves the owner signing in from another`.
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one username, and leaves the owner signing in from another`.
 
-### `keys-and-oauth/sign-in-address-emails-limit`
+### `keys-and-oauth/sign-in-address-usernames-limit`
 
-If one address has made thirty counted password sign-in attempts in fifteen minutes, at any emails, then the server MUST answer its next attempt at any email `429` with `Retry-After`, before it judges the password.
+If one address has made thirty counted password sign-in attempts in fifteen minutes, at any usernames, then the server MUST answer its next attempt at any username `429` with `Retry-After`, before it judges the password.
 
-**Reason:** An address cannot spread its attempts over many emails, and the count is the same whether or not an email is the owner's (`keys-and-oauth/sign-in-limits-alike`).
+**Reason:** An address cannot spread its attempts over many usernames, and the count is the same whether or not a username is the owner's (`keys-and-oauth/sign-in-limits-alike`).
 
-**Tests:** `compliance/sign-in-door-limits.test.ts › answers password sign-ins at any email alike, the owner's among them, until the address's limit refuses them all`.
+**Tests:** `compliance/sign-in-door-limits.test.ts › answers password sign-ins at any username alike, the owner's among them, until the address's limit refuses them all`.
 
 ### `keys-and-oauth/sign-in-form-limit`
 
 If the sign-in form's attempt is refused by a sign-in limit, then the server MUST redirect with `error=too_many_attempts`.
 
-**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one email, and leaves the owner signing in from another`.
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one username, and leaves the owner signing in from another`.
 
 ### `keys-and-oauth/sign-in-form-limit-cookie`
 
 If the sign-in form's attempt is refused by a sign-in limit, then the server MUST set no session cookie.
 
-**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one email, and leaves the owner signing in from another`.
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one username, and leaves the owner signing in from another`.
 
 ### `keys-and-oauth/sign-in-form-limit-wait`
 
@@ -2947,7 +2947,7 @@ If the sign-in form's attempt is refused by a sign-in limit, then the server MUS
 
 **Reason:** The sign-in page tells the owner how long to wait. The address limit and the limit every address shares end at different times, and an address that has spent both is refused again at the end of the shorter wait.
 
-**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one email, and leaves the owner signing in from another`, `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts in an hour, counting none an address made past its own limit`.
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one username, and leaves the owner signing in from another`, `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts in an hour, counting none an address made past its own limit`.
 
 ### `keys-and-oauth/sign-in-lockout-page`
 
@@ -2967,27 +2967,27 @@ When a password sign-in attempt, or a password sent to `POST /auth/confirm`, pro
 
 ### `keys-and-oauth/sign-in-account-limit`
 
-If every address together has made a hundred counted password sign-in attempts in an hour without a known device cookie, at any emails, then the server MUST answer the next such attempt from any address `429` with `Retry-After`, unless the owner's share (`keys-and-oauth/sign-in-owners-share`) signs it in.
+If every address together has made a hundred counted password sign-in attempts in an hour without a known device cookie, at any usernames, then the server MUST answer the next such attempt from any address `429` with `Retry-After`, unless the owner's share (`keys-and-oauth/sign-in-owners-share`) signs it in.
 
-**Reason:** An attempt one address makes past its own limit is not counted here, so one guessing address cannot fill it. The count is the same whatever email an attempt names (`keys-and-oauth/sign-in-limits-alike`), and a known device (`keys-and-oauth/sign-in-known-device`) and a passkey still sign the owner in while it is spent.
+**Reason:** An attempt one address makes past its own limit is not counted here, so one guessing address cannot fill it. The count is the same whatever username an attempt names (`keys-and-oauth/sign-in-limits-alike`), and a known device (`keys-and-oauth/sign-in-known-device`) and a passkey still sign the owner in while it is spent.
 
-**Tests:** `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts in an hour, counting none an address made past its own limit`, `› holds attempts at every email together to the same hundred, and the owner's right password still signs in`.
+**Tests:** `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts in an hour, counting none an address made past its own limit`, `› holds attempts at every username together to the same hundred, and the owner's right password still signs in`.
 
 ### `keys-and-oauth/sign-in-owners-share`
 
-While the limit every address shares (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in without a known device cookie names the owner's email and the right password, and fewer than a hundred attempts at the owner's email without a known device cookie have been counted in the hour, the server MUST sign the owner in.
+While the limit every address shares (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in without a known device cookie names the owner's username and the right password, and fewer than a hundred attempts at the owner's username without a known device cookie have been counted in the hour, the server MUST sign the owner in.
 
-**Reason:** The owner's right password keeps a share of its own, so the owner can sign in from a new browser while the limit every address shares is spent. While that limit is spent, an attempt that cannot sign the owner in has no password checked: it waits in its email's own queue (`keys-and-oauth/sign-in-decoy-queue`) as long as a checked attempt does and is answered as a wrong password is, so it takes no place from an attempt at the owner's email.
+**Reason:** The owner's right password keeps a share of its own, so the owner can sign in from a new browser while the limit every address shares is spent. While that limit is spent, an attempt that cannot sign the owner in has no password checked: it waits in its username's own queue (`keys-and-oauth/sign-in-decoy-queue`) as long as a checked attempt does and is answered as a wrong password is, so it takes no place from an attempt at the owner's username.
 
-**Tests:** `compliance/sign-in-limits.test.ts › holds attempts at every email together to the same hundred, and the owner's right password still signs in`.
+**Tests:** `compliance/sign-in-limits.test.ts › holds attempts at every username together to the same hundred, and the owner's right password still signs in`.
 
-### `keys-and-oauth/sign-in-owners-email-limit`
+### `keys-and-oauth/sign-in-owners-username-limit`
 
-If a hundred passwords for the owner without a known device cookie have been counted in an hour, counting password sign-in attempts at the owner's email and passwords sent to `POST /auth/confirm`, `POST /auth/owner/password` and `PUT /owner/password`, then the server MUST answer and count the next password sign-in attempt at the owner's email without a known device cookie that has the right password as it answers and counts the same attempt with a wrong password.
+If a hundred passwords for the owner without a known device cookie have been counted in an hour, counting password sign-in attempts at the owner's username and passwords sent to `POST /auth/confirm`, `POST /auth/owner/password` and `PUT /owner/password`, then the server MUST answer and count the next password sign-in attempt at the owner's username without a known device cookie that has the right password as it answers and counts the same attempt with a wrong password.
 
 **Reason:** Every password tried for the owner from a browser the server does not know stays within one hundred an hour, whichever door it comes by (`authentication/password-credential-limit`). A password past that count is not checked, and is answered, counted and recorded as a wrong one, so neither the answer nor a later answer shows whether it was right.
 
-**Tests:** `compliance/sign-in-limits.test.ts › answers the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour`, `› counts the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour`, `compliance/owner-password.test.ts › counts the passwords the doors that need the owner's credential judge in the hundred an hour at the owner's email`.
+**Tests:** `compliance/sign-in-limits.test.ts › answers the owner's right password as a wrong one once a hundred attempts at the owner's username are counted in an hour`, `› counts the owner's right password as a wrong one once a hundred attempts at the owner's username are counted in an hour`, `compliance/owner-password.test.ts › counts the passwords the doors that need the owner's credential judge in the hundred an hour at the owner's username`.
 
 ### `keys-and-oauth/sign-in-device-cookie`
 
@@ -3045,7 +3045,7 @@ If a request carries a device cookie and no session, then the server MUST answer
 
 When one address is held to its sign-in limit, the server MUST still answer a sign-in from another address on the password.
 
-**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one email, and leaves the owner signing in from another`.
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one username, and leaves the owner signing in from another`.
 
 ### `keys-and-oauth/address-ipv6`
 
@@ -3055,19 +3055,35 @@ The server MUST count an IPv6 address by its /64 for the password sign-in limits
 
 ### `keys-and-oauth/sign-in-limits-alike`
 
-When a password sign-in that carries no known device cookie names an email that is not the owner's, the server MUST answer it with the status and `Retry-After` it would answer the same attempt at the owner's email with a wrong password.
+When a password sign-in that carries no known device cookie names a username that is not the owner's, the server MUST answer it with the status and `Retry-After` it would answer the same attempt at the owner's username with a wrong password.
 
-**Reason:** A wrong email and a wrong password are both answered `401`, so no limit may tell them apart and say which email holds the account, before or after the owner changes the password.
+**Reason:** A wrong username and a wrong password are both answered `401`, so no limit may tell them apart and say which username holds the account, before or after the owner changes the password.
 
-**Tests:** `compliance/sign-in-door-limits.test.ts › answers password sign-ins at any email alike, the owner's among them, until the address's limit refuses them all`, `compliance/sign-in-limits.test.ts › answers an address that spent its attempts at two emails alike after the password is changed`.
+**Tests:** `compliance/sign-in-door-limits.test.ts › answers password sign-ins at any username alike, the owner's among them, until the address's limit refuses them all`, `compliance/sign-in-limits.test.ts › answers an address that spent its attempts at two usernames alike after the password is changed`.
+
+### `keys-and-oauth/sign-in-username-malformed`
+
+When a password sign-in names a username that no owner can have, such as the owner's email address, a name with a space or a name of 65 characters, the server MUST answer, count and record it as it answers, counts and records the same attempt at a username that is not the owner's.
+
+**Reason:** Telling a malformed username from a wrong one would tell a person typing the owner's email into the field that it is no username here, and would show a client which names to try.
+
+**Tests:** `compliance/sign-in-limits.test.ts › answers a name that cannot be a username, and the owner's email, as a wrong username, and counts each at its address`.
+
+### `keys-and-oauth/sign-in-username-trimmed`
+
+When a password sign-in names the owner's username in capital letters or with spaces at each end, and sends the right password, the server MUST sign the owner in.
+
+**Reason:** A username is stored and matched in lowercase and trimmed, so a phone's capitalization or a pasted space does not lock the owner out.
+
+**Tests:** `compliance/sign-in-limits.test.ts › answers a name that cannot be a username, and the owner's email, as a wrong username, and counts each at its address`.
 
 ### `keys-and-oauth/sign-in-decoy-queue`
 
-If the queue a password sign-in that carries no known device cookie waits in for its password check is full, then the server MUST answer the sign-in `429` with `Retry-After`, whatever email it names.
+If the queue a password sign-in that carries no known device cookie waits in for its password check is full, then the server MUST answer the sign-in `429` with `Retry-After`, whatever username it names.
 
-**Reason:** Such sign-ins share one queue while the limit every address shares (`keys-and-oauth/sign-in-account-limit`) has room, and after that each email has a queue of its own of the same size. A sign-in at an email with no account still does the work of a password check. Each turn in these queues, whether its password is checked or not, lasts and is answered at the same length of time from when it began, longer than a check almost always takes, or when its check ends if that is later. So neither its time nor its queue tells it from a wrong password, and sign-ins at other emails take no place from the owner's. The owner's own checks, from a known device or a browser session, wait in a queue of their own, so these can never hold them up. A client relies on the queue being bounded and on the refusal, not on its size.
+**Reason:** Such sign-ins share one queue while the limit every address shares (`keys-and-oauth/sign-in-account-limit`) has room, and after that each username has a queue of its own of the same size. A sign-in at a username with no account still does the work of a password check. Each turn in these queues, whether its password is checked or not, lasts and is answered at the same length of time from when it began, longer than a check almost always takes, or when its check ends if that is later. So neither its time nor its queue tells it from a wrong password, and sign-ins at other usernames take no place from the owner's. The owner's own checks, from a known device or a browser session, wait in a queue of their own, so these can never hold them up. A client relies on the queue being bounded and on the refusal, not on its size.
 
-**Tests:** `compliance/sign-in-queue.test.ts › answers a sign-in 429 with Retry-After once the queue of waiting checks is full, at any email, and answers one alone 401`, `› answers sign-ins at one email 429 with Retry-After past the hour every address shares, and turns away at once those its queue has no place for`.
+**Tests:** `compliance/sign-in-queue.test.ts › answers a sign-in 429 with Retry-After once the queue of waiting checks is full, at any username, and answers one alone 401`, `› answers sign-ins at one username 429 with Retry-After past the hour every address shares, and turns away at once those its queue has no place for`.
 
 ### `keys-and-oauth/register-address-limit`
 
@@ -3227,7 +3243,7 @@ When an owner's device code lookup window or the owner lane's collective window 
 
 ### `keys-and-oauth/password-sign-in-answer`
 
-When `POST /auth/sign-in` sends, as JSON, the owner's `email` and `password` and signs the owner in, the server MUST answer `200` with only `{"ok": true}` and set the owner's session cookie, `HttpOnly` and `SameSite=Lax`.
+When `POST /auth/sign-in` sends, as JSON, the owner's `username` and `password` and signs the owner in, the server MUST answer `200` with only `{"ok": true}` and set the owner's session cookie, `HttpOnly` and `SameSite=Lax`.
 
 **Reason:** A script that signs in needs the cookie and nothing else, and the session it opens is listed at `GET /owner/sign-ins`.
 
@@ -3235,7 +3251,7 @@ When `POST /auth/sign-in` sends, as JSON, the owner's `email` and `password` and
 
 ### `keys-and-oauth/password-sign-in-fields`
 
-If `POST /auth/sign-in` sends, as JSON, a key other than `email` and `password`, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`, and set no cookie.
+If `POST /auth/sign-in` sends, as JSON, a key other than `username` and `password`, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`, and set no cookie.
 
 **Tests:** `compliance/sign-in-surface.test.ts › refuses a password sign-in sent as JSON with a field it does not take, and sets no cookie`.
 
@@ -3325,17 +3341,17 @@ When the device approval page offers access to a web client, the server MUST nam
 
 **Tests:** `compliance/web-page-origin.test.ts › names the page's origin on the device approval page, and allows it once approved there`, `› names both origins of a page registered on two, on the consent screen and the device approval page`.
 
-### `keys-and-oauth/sign-in-email-kept`
+### `keys-and-oauth/sign-in-username-kept`
 
-When a sign-in through the form fails, the server MUST redirect the browser to the sign-in page carrying the typed email.
+When a sign-in through the form fails, the server MUST redirect the browser to the sign-in page carrying the typed username.
 
-**Tests:** `compliance/sign-in-surface.test.ts › returns the typed email after a wrong password, and never the password`.
+**Tests:** `compliance/sign-in-surface.test.ts › returns the typed username after a wrong password, and never the password`.
 
-### `keys-and-oauth/sign-in-email-shown`
+### `keys-and-oauth/sign-in-username-shown`
 
-When the sign-in page is opened carrying an email, the server MUST show that email in the email field.
+When the sign-in page is opened carrying a username, the server MUST show that username in the username field.
 
-**Tests:** `compliance/sign-in-surface.test.ts › returns the typed email after a wrong password, and never the password`.
+**Tests:** `compliance/sign-in-surface.test.ts › returns the typed username after a wrong password, and never the password`.
 
 ### `keys-and-oauth/sign-in-no-password`
 
@@ -3343,7 +3359,7 @@ The server MUST NOT carry a typed password in the sign-in form's redirect or sho
 
 **Reason:** A password in an address is kept in history and in logs.
 
-**Tests:** `compliance/sign-in-surface.test.ts › returns the typed email after a wrong password, and never the password`.
+**Tests:** `compliance/sign-in-surface.test.ts › returns the typed username after a wrong password, and never the password`.
 
 ### `keys-and-oauth/sign-in-names-app`
 
@@ -3959,7 +3975,7 @@ When `DELETE /owner/sign-ins/{id}` answers `200`, the server MUST already hold t
 
 ### `keys-and-oauth/audit-failed-sign-in`
 
-When the server refuses a password sign-in because the email or the password is wrong, the server MUST already hold the audit record of the failure, readable at `GET /audit`.
+When the server refuses a password sign-in because the username or the password is wrong, the server MUST already hold the audit record of the failure, readable at `GET /audit`.
 
 **Tests:** `compliance/credential-audit.test.ts › is in the audit log when the refusal of a failed sign-in answers`.
 

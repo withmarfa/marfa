@@ -166,6 +166,7 @@ pub fn title(reach: Reach, pattern: &str, label: Option<&str>) -> String {
         (Reach::Metadata, "metadata.edge_types") => Some("Custom relationship types"),
         (Reach::Profile, "profile") => Some("Profile"),
         (Reach::Profile, "profile.name") => Some("Name"),
+        (Reach::Profile, "profile.username") => Some("Username"),
         (Reach::Profile, "profile.email") => Some("Email address"),
         (Reach::Profile, "profile.avatar") => Some("Avatar"),
         _ => None,
@@ -237,11 +238,13 @@ pub fn description(row: &LevelRow) -> Option<String> {
         (Reach::Metadata, "metadata.types") => "The kinds of item you have defined",
         (Reach::Metadata, "metadata.edge_types") => "The kinds of link you have defined",
         (Reach::Profile, "profile") if writes => {
-            "Read your email address, and read and change your name and avatar"
+            "Read your username, and read and change your name, email address and avatar"
         }
-        (Reach::Profile, "profile") => "Your name, email address and avatar",
+        (Reach::Profile, "profile") => "Your name, username, email address and avatar",
         (Reach::Profile, "profile.name") if writes => "Read and change your name",
         (Reach::Profile, "profile.name") => "Your name",
+        (Reach::Profile, "profile.username") if writes => "Read and change your username",
+        (Reach::Profile, "profile.username") => "Your username",
         (Reach::Profile, "profile.email") if writes => "Read and change your email address",
         (Reach::Profile, "profile.email") => "Your email address",
         (Reach::Profile, "profile.avatar") if writes => "Read and change your avatar",

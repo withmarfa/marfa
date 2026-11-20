@@ -722,6 +722,7 @@ describe("the contract the binary was built for", () => {
         status: 201,
         body: {
           id: "owner",
+          username: "owner",
           email: "a@cyzr.me",
           name: "Owner",
           created_at: "2026-01-01T00:00:00Z",
@@ -740,6 +741,7 @@ describe("the contract the binary was built for", () => {
       return { outcome, claims };
     };
     const body = {
+      username: "owner",
       email: "a@cyzr.me",
       password: "an owner password",
       code: "TEST-SETUP-CODE",
@@ -830,7 +832,7 @@ describe("the contract the binary was built for", () => {
       marfa(
         ["--json", "--url", started.url, "setup", "claim", "--stdin"],
         JSON.stringify({
-          email: "a@cyzr.me",
+          username: "owner",
           password: "an owner password",
           code: "WRONG-CODE",
         }),
@@ -1275,7 +1277,7 @@ const stdinFor: Record<string, string> = {
     new_password: "a new owner password",
   }),
   "setup claim": JSON.stringify({
-    email: "a@cyzr.me",
+    username: "owner",
     password: "an owner password",
     code: "TEST-SETUP-CODE",
   }),
@@ -1852,6 +1854,7 @@ describe("every command holds the server to the contract", () => {
     const socket = await PrivateSocket.start();
     const body = {
       id: "owner",
+      username: "owner",
       email: "a@cyzr.me",
       name: "Owner",
       created_at: WHEN,
@@ -1867,8 +1870,8 @@ describe("every command holds the server to the contract", () => {
           socket.path,
           "profile",
           "update",
-          "--email",
-          "a@cyzr.me",
+          "--username",
+          "owner",
           "--name",
           "Owner",
         ]);
@@ -1976,6 +1979,7 @@ describe("every command holds the server to the contract", () => {
     const avatar = fileOf("owner-avatar.png", "avatar bytes");
     const body = {
       id: "owner",
+      username: "owner",
       email: "a@cyzr.me",
       name: "Owner",
       created_at: WHEN,
