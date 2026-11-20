@@ -40,8 +40,9 @@ import { fileURLToPath } from "node:url";
 
 /** Each output, named for the job that reads it. */
 export const JOBS = [
-  // `Quick checks`. It runs the format check, this classifier's test and the
-  // contract's reference check for any change. `workspace` is the build,
+  // `Quick checks`. It runs the format check, this classifier's test, the
+  // vendor check (`ci/no-vendor-in-product.test.ts`) and the contract's
+  // reference check for any change. `workspace` is the build,
   // typecheck and `Workspace tests`, which run unless the pull request is a
   // draft.
   "quick-checks",
