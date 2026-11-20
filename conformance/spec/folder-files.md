@@ -1960,19 +1960,19 @@ Where a folder's copy has a query, when the server has answered that it shows no
 
 ### `folder-files/take-in-file`
 
-When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST take that file into its placement.
+When a registered folder that follows another `system.folder` no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST take that file into its placement.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folder-files/take-in-file-taken-count`
 
-When another registered folder no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST count the file as `taken`.
+When a registered folder that follows another `system.folder` no longer holds an item for a non-state reason and still holds only its own written file bytes, and the receiving folder’s query holds that item without a file, a device MUST count the file as `taken`.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folder-files/moved-unmatched-taken-back`
 
-When a file moves into a registered folder whose query does not hold its item for a reason other than the item's state, the file is unchanged since the folder it left wrote it, and the query of the folder it left holds the item, a device MUST take the file back into the folder it left once the rename grace has passed.
+When a file moves into a registered folder whose query does not hold its item for a reason other than the item's state, the file is unchanged since a folder that follows another `system.folder` wrote it, and the query of the folder it left holds the item, a device MUST take the file back into the folder it left once the rename grace has passed.
 
 **Reason:** the person moved a file, not the note, and the receiving folder keeps the file as `unmatched` (`folder-files/unmatched-file-kept`), so the item would show in no folder it belongs to. The folder it left holds the item without a file and takes the file as it takes one another folder let go (`folder-files/take-in-file`), so the item stays one item at one version, and trashes nothing (`folder-files/move-keeps-item`). A folder whose query leaves the item out by its state keeps the file, as it keeps a file of an item that left it by its state (`folder-files/take-in-file`).
 
@@ -2142,13 +2142,13 @@ When the person edits a retained copied source before its removal becomes possib
 
 ### `folder-files/let-go-existing-peer`
 
-When another registered folder already holds its own file for an item this folder no longer holds, a device MUST remove this folder’s unchanged owned file.
+When a registered folder that follows another `system.folder` already holds its own file for an item this folder no longer holds, a device MUST remove this folder’s unchanged owned file.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
 ### `folder-files/let-go-existing-peer-let-go-count`
 
-When another registered folder already holds its own file for an item this folder no longer holds, a device MUST count this folder’s file as `let_go`.
+When a registered folder that follows another `system.folder` already holds its own file for an item this folder no longer holds, a device MUST count this folder’s file as `let_go`.
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
@@ -2162,7 +2162,7 @@ While a document in a folder embeds an item or has it attached, a device MUST NO
 
 ### `folder-files/let-go-attachment-with-document`
 
-When this folder no longer holds an item or any document the item is attached to, and another registered folder's query holds a document the item is attached to and that folder has its own file of the item, a device MUST remove this folder's unchanged owned file of the item and count it as `let_go`.
+When this folder no longer holds an item or any document the item is attached to, and the query of a registered folder that follows another `system.folder` holds a document the item is attached to and that folder has its own file of the item, a device MUST remove this folder's unchanged owned file of the item and count it as `let_go`.
 
 **Reason:** the other folder writes the file beside the document it holds, so a file kept here would stay unmatched for good.
 
