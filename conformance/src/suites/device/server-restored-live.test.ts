@@ -80,7 +80,10 @@ interface World {
   answerInstead(answer: Instead): void;
 }
 
-/** An answer the proxy gives in the server's place, by method and path. */
+/**
+ * An answer the proxy gives in the server's place, by method and path, naming
+ * the contract the server's own answers name.
+ */
 type Instead = (
   method: string,
   path: string,
@@ -95,6 +98,7 @@ async function world(
   servers.push(original);
   let upstream = original.apiUrl;
   let instead: Instead = () => undefined;
+  let contract: string | null = null;
   const sent: string[] = [];
   const listener = createServer((request, response) => {
     void (async () => {
@@ -108,6 +112,7 @@ async function world(
       if (given !== undefined) {
         response.writeHead(given.status, {
           "content-type": "application/json",
+          ...(contract === null ? {} : { "x-marfa-contract": contract }),
         });
         response.end(JSON.stringify(given.body));
         return;
@@ -135,6 +140,7 @@ async function world(
           redirect: "manual",
         },
       );
+      contract = answer.headers.get("x-marfa-contract") ?? contract;
       const returned: Record<string, string> = {};
       answer.headers.forEach((kept, name) => {
         if (
@@ -937,11 +943,14 @@ describe("table rows a server restored behind lost", () => {
       expect(
         (await queue(w.device)).find((write) => write.id === later.id),
       ).toMatchObject({ follows: kept?.id, verdict: null });
+      const held = w.sent.length;
       value(await w.device.drain());
       expect(
-        (await serverSteps(w.client(), item))[row],
+        w.sent
+          .slice(held)
+          .filter((line) => line === `POST /items/${item}/tables/steps/rows`),
         "the later write went ahead of the kept one",
-      ).toBe(1);
+      ).toEqual([]);
 
       value(await w.device.withdraw(kept?.id ?? ""));
       value(await w.device.drain());
@@ -1002,11 +1011,14 @@ describe("table rows a server restored behind lost", () => {
       expect(
         (await queue(w.device)).find((write) => write.id === later.id)?.follows,
       ).toBe(kept?.id);
+      const held = w.sent.length;
       value(await w.device.drain());
       expect(
-        (await serverSteps(w.client(), item))[row],
+        w.sent
+          .slice(held)
+          .filter((line) => line === `POST /items/${item}/tables/steps/rows`),
         "the later write went ahead of the kept one",
-      ).toBe(1);
+      ).toEqual([]);
 
       expect(value(await w.device.release({ reason: "server_restored" }))).toBe(
         1,
