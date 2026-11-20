@@ -693,17 +693,9 @@ mod tests {
             let (dir, folder) = scanned_folder();
             let root = dir.path().canonicalize().unwrap();
             let id = changed_on_the_server(&root, &folder);
-            // Version 1 was this device's own edit, so its line alone would
-            // read as behind only by that edit, and the edit would go on 2.
-            folder
-                .core
-                .conn()
-                .unwrap()
-                .execute(
-                    "UPDATE folder_files SET edit_line = 1 WHERE path = 'Notes/Plan.md'",
-                    [],
-                )
-                .unwrap();
+            // The scan's create still waits, so the pull counts version 2 as
+            // this device's own edit, and the file's line alone would put the
+            // edit on 2.
             {
                 let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
                 folder.pull().unwrap();
