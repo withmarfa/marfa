@@ -1755,12 +1755,22 @@ export class CliFolder {
 
   /** Pauses the directory's sync (`folder-sync/pause-command`). */
   async pause(): Promise<Outcome<PauseReport>> {
-    return this.run<PauseReport>(["folders", "pause", this.dir, ...this.server()]);
+    return this.run<PauseReport>([
+      "folders",
+      "pause",
+      this.dir,
+      ...this.server(),
+    ]);
   }
 
   /** Lets a paused directory's sync go on (`folder-sync/resume-command`). */
   async resume(): Promise<Outcome<PauseReport>> {
-    return this.run<PauseReport>(["folders", "resume", this.dir, ...this.server()]);
+    return this.run<PauseReport>([
+      "folders",
+      "resume",
+      this.dir,
+      ...this.server(),
+    ]);
   }
 
   /** Lets the first sync go, or a paused large removal. */

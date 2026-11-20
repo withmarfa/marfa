@@ -52,9 +52,11 @@ describe("a paused directory", () => {
 
     // The witness: a directory that was never paused is not paused, and
     // resuming it changes nothing.
-    expect((await folder.status()).ok && (await folder.status())).toMatchObject({
-      value: { sync_paused: false },
-    });
+    expect((await folder.status()).ok && (await folder.status())).toMatchObject(
+      {
+        value: { sync_paused: false },
+      },
+    );
     expect(await folder.resume()).toEqual({
       ok: true,
       value: { dir: expect.any(String), paused: false, changed: false },
@@ -68,7 +70,9 @@ describe("a paused directory", () => {
       ok: true,
       value: { dir: expect.any(String), paused: true, changed: false },
     });
-    const again = await folder.device().rootText(["folders", "pause", harness.dir]);
+    const again = await folder
+      .device()
+      .rootText(["folders", "pause", harness.dir]);
     expect(again.ok && reasons(again.value)).toContain("already paused");
 
     expect(await folder.resume()).toEqual({
@@ -151,7 +155,9 @@ describe("a paused directory", () => {
     expect(after.ok && after.value.map((entry) => entry.paused)).toEqual([
       true,
     ]);
-    const listText = await harness.folder.device().rootText(["folders", "list"]);
+    const listText = await harness.folder
+      .device()
+      .rootText(["folders", "list"]);
     expect(listText.ok && listText.value).toContain("(paused)");
     expect(lastReport(harness).problems).toEqual([
       { code: "paused", count: 1 },
@@ -185,7 +191,8 @@ describe("a paused directory", () => {
     const refused = harness.folder.watch();
     held.push(refused);
     await vi.waitFor(
-      () => expect(refused.running(), refused.stdout + refused.stderr).toBe(false),
+      () =>
+        expect(refused.running(), refused.stdout + refused.stderr).toBe(false),
       WAIT,
     );
     expect(refused.stdout + refused.stderr).toContain("folders resume");

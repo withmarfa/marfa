@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -49,7 +49,11 @@ async function folderWithUnwatched(
   const refusal = join(tempFolder("marfa-refuse-"), "names");
   writeFileSync(refusal, `${UNWATCHED}\n`);
   put(made, "Watched.md", "---\ntitle: Watched\n---\nwatched\n");
-  put(made, `${UNWATCHED}/below/Inside.md`, "---\ntitle: Inside\n---\ninside\n");
+  put(
+    made,
+    `${UNWATCHED}/below/Inside.md`,
+    "---\ntitle: Inside\n---\ninside\n",
+  );
   expect((await made.folder.push()).ok).toBe(true);
   return { made, refusal };
 }
@@ -100,9 +104,8 @@ describe("a watch that cannot watch part of a directory", () => {
 
     rmSync(refusal);
     await vi.waitFor(
-      () => expect(problemCodes(made), watching.stderr).not.toContain(
-        "unwatched",
-      ),
+      () =>
+        expect(problemCodes(made), watching.stderr).not.toContain("unwatched"),
       WAIT,
     );
     const after = await made.folder.status();
@@ -124,7 +127,10 @@ describe("a watch that cannot watch part of a directory", () => {
     // is one only a full pass reads.
     const kept = join(made.dir, "Watched.md");
     const staged = join(tempFolder("marfa-time-"), "Watched.md");
-    writeFileSync(staged, read(made, "Watched.md").replace("watched", "WATCHED"));
+    writeFileSync(
+      staged,
+      read(made, "Watched.md").replace("watched", "WATCHED"),
+    );
     chmodSync(staged, statSync(kept).mode);
     execFileSync("touch", ["-r", kept, staged]);
     execFileSync("cp", ["-p", staged, kept]);
