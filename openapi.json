@@ -7795,13 +7795,14 @@
               "backup",
               "setting",
               "clock",
+              "fault",
               "unavailable"
             ],
-            "description": "health: degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expiring; backup: none kept, off or failing; setting: a secret to set again; clock: ahead or behind; unavailable: no answer."
+            "description": "health: degraded or down; job: last run failed; connector: failed, problems or quiet; folder: sync problems; key: expiring; backup: none, off or failing; setting: secret to set again; clock: ahead or behind; fault: met lately; unavailable: no answer."
           },
           "reference": {
             "type": "string",
-            "description": "The component, job, connector, folder, or key ID, the check that couldn't answer, a backup concern such as `no_backup_destination`, `run` or `store`, a secret setting's key, or a clock concern `clock_ahead` or `clock_behind`."
+            "description": "The component, job, connector, folder or key ID, the check that couldn't answer, a backup concern such as `store`, a secret setting's key, `clock_ahead` or `clock_behind`, or a fault's kind and place, such as `database:POST /items/{id}`, or `other`."
           },
           "title": {
             "type": "string",
@@ -8967,7 +8968,7 @@
           },
           "error_reporting_enabled": {
             "type": "boolean",
-            "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url`, or both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.",
+            "description": "`true` if exception reports are sent. Enabling requires both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.",
             "default": true
           },
           "heartbeat_enabled": {
@@ -9109,7 +9110,7 @@
           },
           "allow_private_addresses": {
             "type": "boolean",
-            "description": "`true` if Marfa may send webhooks, the heartbeat, error notices, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.",
+            "description": "`true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.",
             "default": false
           },
           "secrets_set": {
@@ -12794,7 +12795,7 @@
       },
       "AttentionEventFrame": {
         "type": "object",
-        "description": "A new entry in what needs the owner's attention, sent once when a check first finds it. You receive it only with `instance.read`, and only on a stream that names no `type` and isn't a copy stream.",
+        "description": "A new entry in what needs the owner's attention, sent once when a check first finds it or Marfa first meets a fault. You receive it only with `instance.read`, and only on a stream that names no `type` and isn't a copy stream.",
         "properties": {
           "event_type": {
             "type": "string",
@@ -12830,7 +12831,9 @@
               "folder",
               "key",
               "backup",
+              "setting",
               "clock",
+              "fault",
               "unavailable"
             ],
             "description": "The entry's `kind`, as `GET /attention` lists it."
@@ -12859,7 +12862,28 @@
             "$ref": "#/components/schemas/AttentionEventFrame"
           },
           {
-            "$ref": "#/components/schemas/WebhookDeliveryAttempt"
+            "type": "object",
+            "properties": {
+              "event_id": {
+                "type": "string",
+                "description": "The event's ID in the log, the same as its `id:` on `GET /events`. Absent from a delivery of a fault sent while the database fails, which no log holds, no delivery list shows and nothing can redeliver.",
+                "example": "1042"
+              },
+              "delivery_id": {
+                "type": "string",
+                "description": "The ID of the delivery, the same on every attempt. Use it to recognize a repeat.",
+                "example": "01a1011f-f893-7259-9825-8ff347398fef"
+              },
+              "delivered_at": {
+                "type": "string",
+                "description": "When Marfa sent this attempt, in UTC.",
+                "example": "2026-10-05T14:12:08.000Z"
+              }
+            },
+            "required": [
+              "delivery_id",
+              "delivered_at"
+            ]
           }
         ]
       },
@@ -20597,20 +20621,20 @@
           {
             "schema": {
               "type": "string",
-              "description": "Window start, ISO 8601. No zone means UTC; a date is its UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days in its `timezone`, else UTC."
+              "description": "A date-time needs seconds and a zone or offset; a date is UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days of its `timezone` or UTC."
             },
             "required": true,
-            "description": "Window start, ISO 8601. No zone means UTC; a date is its UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days in its `timezone`, else UTC.",
+            "description": "A date-time needs seconds and a zone or offset; a date is UTC midnight. An event overlaps if it starts before `to` and ends after this. Its end is `ends_at`, else start plus `duration`. A whole-day event fills whole days of its `timezone` or UTC.",
             "name": "from",
             "in": "query"
           },
           {
             "schema": {
               "type": "string",
-              "description": "Window end, ISO 8601, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time."
+              "description": "Window end, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time."
             },
             "required": true,
-            "description": "Window end, ISO 8601, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time.",
+            "description": "Window end, read as `from` is. The window can span at most 400 days. An event with no length is in the window if it starts at or after `from` and before this time.",
             "name": "to",
             "in": "query"
           },
@@ -21245,7 +21269,7 @@
           "Trash"
         ],
         "summary": "List the trash",
-        "description": "Returns a page of trash summaries, newest creation first, without item content, of the types you can read. Requires `items.purge`.",
+        "description": "Returns a page of trash summaries, newest creation first, without item content, of the types you can write. Requires `items.purge`.",
         "parameters": [
           {
             "schema": {
@@ -21522,7 +21546,7 @@
           "Trash"
         ],
         "summary": "Empty the trash",
-        "description": "Empties one page of the trash: deletes up to 200 items of the types you can read permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed meanwhile may remain. Requires `items.purge`.",
+        "description": "Empties one page of the trash: deletes up to 200 items of the types you can write permanently if their state and version still match. Returns partial results and a continuation cursor. Items trashed meanwhile may remain. Requires `items.purge`.",
         "parameters": [
           {
             "schema": {
@@ -51403,7 +51427,7 @@
                         "$ref": "#/components/schemas/ProfilePermissions"
                       },
                       {
-                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` permits name and avatar changes and implies read; email accepts only `read`. `*` reads every field and writes only name and avatar."
+                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` implies read. `write` on `name` or `avatar` changes it, and only `email` at `write` changes the email address. `*` reads every field and at `write` changes only the name and avatar."
                       }
                     ]
                   },
@@ -52695,7 +52719,7 @@
                         "$ref": "#/components/schemas/ProfilePermissions"
                       },
                       {
-                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` permits name and avatar changes and implies read; email accepts only `read`. `*` reads every field and writes only name and avatar."
+                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` implies read. `write` on `name` or `avatar` changes it, and only `email` at `write` changes the email address. `*` reads every field and at `write` changes only the name and avatar."
                       }
                     ]
                   },
@@ -59772,7 +59796,7 @@
                   },
                   "error_reporting_enabled": {
                     "type": "boolean",
-                    "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url`, or both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.",
+                    "description": "`true` if exception reports are sent. Enabling requires both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.",
                     "default": true
                   },
                   "heartbeat_enabled": {
@@ -59923,7 +59947,7 @@
                   },
                   "allow_private_addresses": {
                     "type": "boolean",
-                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.",
+                    "description": "`true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.",
                     "default": false
                   },
                   "object_store_secret_access_key": {
@@ -59936,12 +59960,6 @@
                     "type": "string",
                     "format": "uri",
                     "description": "The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
-                    "writeOnly": true
-                  },
-                  "error_webhook_url": {
-                    "type": "string",
-                    "format": "uri",
-                    "description": "The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
                     "writeOnly": true
                   },
                   "posthog_host": {
@@ -60548,7 +60566,7 @@
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url`, or both `posthog_host` and `posthog_project_token`. Absent: the environment default applies. `null` removes it, so the server's default applies.",
+                    "description": "`true` if exception reports are sent. Enabling requires both `posthog_host` and `posthog_project_token`. Absent: the environment default applies. `null` removes it, so the server's default applies.",
                     "default": true
                   },
                   "heartbeat_enabled": {
@@ -60762,7 +60780,7 @@
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if Marfa may send webhooks, the heartbeat, error notices, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.",
+                    "description": "`true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.",
                     "default": false
                   },
                   "object_store_secret_access_key": {
@@ -60781,15 +60799,6 @@
                     ],
                     "format": "uri",
                     "description": "The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. `null` or an empty string removes it.",
-                    "writeOnly": true
-                  },
-                  "error_webhook_url": {
-                    "type": [
-                      "string",
-                      "null"
-                    ],
-                    "format": "uri",
-                    "description": "The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. `null` or an empty string removes it.",
                     "writeOnly": true
                   },
                   "posthog_host": {
@@ -61463,7 +61472,7 @@
                     },
                     {
                       "name": "reporting_needs_a_receiver",
-                      "description": "Error reporting and the heartbeat can be turned from off to on only where a receiver is set: error_webhook_url, or posthog_host with posthog_project_token, and heartbeat_url.",
+                      "description": "Error reporting and the heartbeat can be turned from off to on only where a receiver is set: posthog_host with posthog_project_token, and heartbeat_url.",
                       "keys": [
                         "error_reporting_enabled",
                         "heartbeat_enabled"

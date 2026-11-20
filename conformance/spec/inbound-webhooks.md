@@ -970,7 +970,7 @@ When a request to an inbound address carries an `X-Request-ID`, `traceparent`, `
 
 ### `inbound-webhooks/fault-keeps-content`
 
-If storing a receipt fails on a database fault, then the server MUST NOT carry the address, a header, the query string or the body of the receipt in its log, in a notification to the error webhook, in telemetry, on a span or in error tracking.
+If storing a receipt fails on a database fault, then the server MUST NOT carry the address, a header, the query string or the body of the receipt in its log, in what needs the owner's attention, in telemetry, on a span or in error tracking.
 
 **Reason:** `errors/report-log-values` keeps the values a failed statement was bound to out of a report, and a receipt's address and content are among them.
 

@@ -1035,6 +1035,7 @@ pub(super) fn found_answer(
         retry_after_seconds: None,
         replayed: true,
         contract_named: true,
+        request_id: None,
     };
     (answer, shape)
 }

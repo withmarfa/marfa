@@ -430,6 +430,10 @@ fn socket_command(
         .args(args)
         .stdin(Stdio::null())
         .env("MARFA_NO_KEYCHAIN", "1");
+    // `marfa --socket` refuses to run beside these.
+    for name in ["MARFA_API_URL", "MARFA_API_KEY", "MARFA_PROFILE"] {
+        command.env_remove(name);
+    }
     command
 }
 
@@ -555,5 +559,24 @@ mod socket_tests {
             "{said}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_call_as_the_caller_drops_the_variables_that_make_socket_refuse() {
+        let command = socket_command(
+            Path::new("marfa"),
+            Path::new("/"),
+            Path::new("/marfa.sock"),
+            None,
+            &["setup", "status"],
+        );
+        for name in ["MARFA_API_URL", "MARFA_API_KEY", "MARFA_PROFILE"] {
+            assert!(
+                command
+                    .get_envs()
+                    .any(|(key, value)| key == name && value.is_none()),
+                "{name} reaches the child"
+            );
+        }
     }
 }

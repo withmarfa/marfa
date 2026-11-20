@@ -50,7 +50,7 @@ The core records only an operation's name, a count, an `outcome`, a write's kind
 
 ## In the `marfa` binary
 
-The binary enables the feature and installs a subscriber that exports a trace over OTLP, but only when the environment names a collector. With none named, it installs nothing and sends no trace, though a failed command can still send one exception to PostHog. With neither asked for, it starts no thread and sends nothing, and its output and exit codes are what they would be without telemetry.
+The binary enables the feature and installs a subscriber that exports a trace over OTLP, but only when the environment names a collector. With none named, it installs nothing, starts no thread and sends nothing, and its output and exit codes are what they would be without telemetry. The binary sends no PostHog events.
 
 ### Variables
 
@@ -60,14 +60,12 @@ The binary enables the feature and installs a subscriber that exports a trace ov
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`                              | The address the trace goes to, as written. It also turns traces on and takes precedence.                                                                                                                                                |
 | `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Headers as comma-separated `key=value` pairs, values percent-encoded. The traces variable wins for a header both name.                                                                                                                  |
 | `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | Milliseconds one send may take; 2000 by default. The binary waits no longer than this at exit.                                                                                                                                          |
-| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`                  | `always_on` (the default), `always_off`, or `traceidratio` with a ratio from 0 to 1. A `parentbased_` form acts as the sampler it wraps. It does not apply to the PostHog exception.                                                    |
-| `OTEL_SERVICE_NAME`                                               | The service name on the trace and the exception; `marfa-cli` by default. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.                                                                                       |
-| `OTEL_RESOURCE_ATTRIBUTES`                                        | Attributes added to the trace and the exception, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces the command's own of the same name. A list with a pair that cannot be read is ignored whole. |
-| `OTEL_SDK_DISABLED`                                               | `true` turns off both the trace and the exception.                                                                                                                                                                                      |
-| `MARFA_POSTHOG_HOST`                                              | The PostHog host for a failed run's exception. It needs `MARFA_POSTHOG_PROJECT_TOKEN`.                                                                                                                                                  |
-| `MARFA_POSTHOG_PROJECT_TOKEN`                                     | The PostHog project token for those exceptions. It needs `MARFA_POSTHOG_HOST`.                                                                                                                                                          |
+| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`                  | `always_on` (the default), `always_off`, or `traceidratio` with a ratio from 0 to 1. A `parentbased_` form acts as the sampler it wraps.                                                    |
+| `OTEL_SERVICE_NAME`                                               | The service name on the trace; `marfa-cli` by default. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`.                                                                                       |
+| `OTEL_RESOURCE_ATTRIBUTES`                                        | Attributes added to the trace, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces the command's own of the same name. A list with a pair that cannot be read is ignored whole. |
+| `OTEL_SDK_DISABLED`                                               | `true` turns the trace off.                                                                                                                                                                                      |
 
-A malformed `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` turns off the trace for that run and leaves the exception as it was. Without `--json`, the binary prints one line on standard error that names the variable, never its value; with `--json`, it prints nothing. A header, timeout, sampler or ratio that cannot be used is left out, and the default applies.
+A malformed `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` turns off the trace for that run. Without `--json`, the binary prints one line on standard error that names the variable, never its value; with `--json`, it prints nothing. A header, timeout, sampler or ratio that cannot be used is left out, and the default applies.
 
 `folders autostart on` carries the telemetry settings of the shell that runs it to the watch at login, as `conformance/spec/folder-setup.md` states.
 
@@ -89,23 +87,3 @@ The binary posts OTLP/HTTP JSON with the HTTP client it already uses, so it adds
 Spans are sent from a thread of their own, in batches of at most 512 every 5 seconds, so a long-lived command such as `folders watch` reports while it runs. At most 2048 spans wait for a send; past that a span is dropped, and the root's `dropped_spans` counts it. At the end of a run the binary sends what is left and waits up to the timeout. A collector that is unreachable, slow or refusing never changes the output or the exit code, and the binary reports none of those failures.
 
 `folders watch`, `events` and `device changes` run until they are stopped, and the `device` commands that stop on Ctrl-C (`hydrate`, `follow`, `catch-up`, `drain` and the `served` reads) end when stopped. Ctrl-C ends each of these through its normal exit, so the trace is sent first. `folders watch` of one folder, `events` and `device changes` take Ctrl-C only once they are open; before then, and on a second Ctrl-C, the process ends at once and sends nothing. A watch of every folder takes Ctrl-C from the start. `SIGTERM` stops `folders watch` as the first Ctrl-C does. A command with no stop of its own, such as one whose request is in flight, is ended by Ctrl-C and sends nothing, and so is a process that is killed.
-
-## Exceptions to PostHog
-
-A command that ends in a fault can also reach PostHog's error tracking, which groups `$exception` events that a trace does not produce. The binary sends one when `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` are both set and `OTEL_SDK_DISABLED` is not `true`, whether or not an OTLP endpoint is set.
-
-- The host must be an `https` address, or an `http` address on this machine (`localhost`, `127.0.0.0/8` or `::1`), because the project token travels in the request body. `--allow-http` does not widen that. A query or fragment in the host is dropped.
-- With exactly one of the two variables set, a host of another kind, or a host that carries a user name or password, the binary sends nothing and prints one line on standard error that names the variable, never its value, and nothing under `--json`.
-
-A fault is something the command line or the core itself got wrong: a panic, including one the core caught and ended with the code `fault` (`CoreError::Fault`), the local store failing for a reason of its own, an answer that cannot be read, or an answer status that the command line should never cause and that names no refusal, such as `405` or `415`. Nothing the server or the environment did is a fault, and it sends nothing: a refusal by design (a `4xx` answer that names a refusal, a usage error, a missing credential or docs page), a command that Ctrl-C stopped or that ended `canceled`, and anything `CoreError::is_environmental` counts (offline, a timeout, a rate limit, a `408` or `425` answer, any `5xx` answer, which the server reports itself, or full local storage).
-
-A command that panics ends its trace as failed with status 101, sends one event of type `panic`, and lets the panic go on, so its message and exit status are what they would be without telemetry. The panic's message and location are never sent, since either can carry content.
-
-The binary posts one event to `/i/v0/e/` under the host, once, with no retry, no redirect and no reading of the answer past its status. It posts beside the trace's last send, within the same timeout, so a PostHog that is unreachable, slow or refusing changes neither the output nor the exit code and holds the exit no longer than the timeout. A proxy is used as for the trace.
-
-The event names no person. Its distinct ID is random and new for each process, `$process_person_profile` is `false`, `$geoip_disable` is `true`, and the binary stores no ID. Its properties are:
-
-- **The exception:** `$exception_list` with one entry, whose `type` is the CLI's error code and whose `value` is a fixed sentence for that kind of error, and `$exception_level` set to `error`. It has no stack trace.
-- **The run:** `command`, the command's names without any argument (`items create`), `error_code` where there is an error, `exit_code`, `service.name` as the trace's, `service.version`, `$os`, `arch`, `$lib` and `$lib_version`.
-
-The `value` is never the error's message, which can echo a field name, an ID, a path or an address. The project token is in the request body's `api_key` field and nowhere else.

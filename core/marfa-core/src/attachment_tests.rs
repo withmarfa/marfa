@@ -523,7 +523,7 @@ fn removing_fetched_files_is_refused_to_a_reading_handle() {
     let reader = Core::open_reader(&path).unwrap();
     assert!(matches!(
         reader.remove_fetched_files(),
-        Err(CoreError::ReadingHandle)
+        Err(CoreError::OpenedToRead)
     ));
     assert!(core.blob_held(&fetched).unwrap());
 }

@@ -6,6 +6,7 @@ use futures_util::FutureExt;
 use serde_json::json;
 use tokio::sync::watch;
 
+use super::super::attention::faults::Place;
 use super::super::clock::Stamp;
 use super::super::refusal::{Code, Refusal, Result};
 use super::super::{App, restore_running};
@@ -269,10 +270,11 @@ async fn perform(
     done
 }
 
-fn report(app: &App, name: &str, fault: &Arc<Fault>) {
+fn report(app: &Arc<App>, name: &str, fault: &Arc<Fault>) {
     let timestamp = app.clock.stamp();
     let live = app.settings.live();
-    app.telemetry.finish(
+    app.report_fault(
+        Place::Job(name),
         None,
         &Finished {
             request_id: &uuid::Uuid::now_v7().to_string(),

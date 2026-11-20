@@ -8,9 +8,11 @@ use tokio::sync::watch;
 use tokio::task::{Id, JoinSet};
 
 use super::deferred::Deferred;
+use super::roster::{self, Roster};
 use super::schedule::{self, Context, Gap, Pass};
 use super::{send, store};
 use crate::app::App;
+use crate::app::attention::faults::Place;
 use crate::app::catalog;
 use crate::app::connectors::read_only;
 use crate::app::faults::HOLD_WEBHOOK_SCHEDULE;
@@ -37,6 +39,7 @@ pub struct Webhooks {
     stopping: watch::Sender<bool>,
     cut: watch::Sender<bool>,
     running: watch::Sender<bool>,
+    pub(super) roster: Roster,
 }
 
 impl Default for Webhooks {
@@ -45,6 +48,7 @@ impl Default for Webhooks {
             stopping: watch::Sender::new(false),
             cut: watch::Sender::new(false),
             running: watch::Sender::new(false),
+            roster: Roster::default(),
         }
     }
 }
@@ -77,6 +81,7 @@ impl Drop for Running {
 }
 
 pub fn start(app: &Arc<App>) {
+    roster::start(app);
     app.webhooks.running.send_replace(true);
     let running = Running(app.webhooks.running.clone());
     let app = app.clone();
@@ -397,13 +402,14 @@ async fn sleep(rest: Option<Duration>) {
     }
 }
 
-/// A gap is reported as an unhandled fault is: its log line, the error webhook and error tracking.
-fn report(app: &App, gap: Gap) {
+/// A gap is reported as an unhandled fault is: its log line, attention and error tracking.
+fn report(app: &Arc<App>, gap: Gap) {
     let request_id = uuid::Uuid::now_v7().to_string();
     log::unhandled(&request_id, METHOD, PATH, None, gap.describe());
     let timestamp = app.clock.stamp();
     let live = app.settings.live();
-    app.telemetry.finish(
+    app.report_fault(
+        Place::WebhookSchedule,
         None,
         &Finished {
             request_id: &request_id,

@@ -25,14 +25,16 @@ pub use fault::{Fault, Kind, caught, install_panic_hook};
 pub use logs::{Logs, REQUEST_TARGET};
 
 use lane::Lane;
-use sinks::{Notice, Report, Tracked};
+use sinks::{Failed, Raised, Report, Tracked};
 
 use crate::settings::Snapshot;
 use crate::settings::registry::{ALLOW_PRIVATE_ADDRESSES, ERROR_REPORTING_ENABLED};
 
 pub const FLUSH_WITHIN: Duration = Duration::from_millis(750);
+const CONNECTOR_RUN_FAILED: &str = "ConnectorRunFailed";
+const CONNECTOR_RUN_FAILED_VALUE: &str = "A connector reported that its last run failed.";
 
-/// A raw path is here only for the two sinks that name it; a span and a log record
+/// A raw path is here only for the exception report, which names it; a span and a log record
 /// carry the route's template.
 pub struct Finished<'a> {
     pub request_id: &'a str,
@@ -54,7 +56,6 @@ struct Active {
     loggers: Option<SdkLoggerProvider>,
     off: bool,
     exceptions: Lane<Tracked>,
-    webhook: Lane<Notice>,
 }
 
 #[derive(Clone, Default)]
@@ -128,14 +129,12 @@ impl Telemetry {
             }
         }
         let exceptions = sinks::exceptions(pairs);
-        let webhook = sinks::webhook(config.environment.clone());
         let _ = self.active.set(Active {
             tracer,
             tracers,
             loggers,
             off: config.off,
             exceptions,
-            webhook,
         });
         self.follow(settings);
         Guard {
@@ -180,38 +179,55 @@ impl Telemetry {
                 }
                 span.end();
             }
-            let settings = done.settings;
-            if let (Some(fault), true, Some(active)) = (
-                done.fault,
-                settings.get(ERROR_REPORTING_ENABLED),
-                self.active.get(),
-            ) {
-                let report = Report {
-                    fault: fault.clone(),
-                    request_id: done.request_id.to_string(),
-                    method: done.method.to_string(),
-                    path: done.path.to_string(),
-                    error_code: done.error_code.unwrap_or("internal_error").to_string(),
-                    timestamp: done.timestamp.to_string(),
-                    trace,
-                };
-                let private_allowed = settings.get(ALLOW_PRIVATE_ADDRESSES);
-                if let Some(url) = settings.error_notice_url() {
-                    active.webhook.offer(Notice {
-                        report: report.clone(),
-                        url,
-                        private_allowed,
-                    });
-                }
-                if let Some(receiver) = settings.exception_receiver().filter(|_| !active.off) {
-                    active.exceptions.offer(Tracked {
-                        report,
-                        receiver,
-                        private_allowed,
-                    });
-                }
+            if let Some(fault) = done.fault {
+                self.offer(
+                    done.settings,
+                    Report {
+                        raised: Raised::Fault(fault.clone()),
+                        failed: Some(Failed {
+                            request_id: done.request_id.to_string(),
+                            method: done.method.to_string(),
+                            path: done.path.to_string(),
+                            error_code: done.error_code.unwrap_or("internal_error").to_string(),
+                            trace,
+                        }),
+                        timestamp: done.timestamp.to_string(),
+                    },
+                );
             }
         }));
+    }
+
+    /// One report that a connector's run failed, which names no connector, run or error.
+    pub fn report_connector_failure(&self, settings: &Snapshot, timestamp: &str) {
+        self.offer(
+            settings,
+            Report {
+                raised: Raised::Fixed {
+                    kind: CONNECTOR_RUN_FAILED,
+                    value: CONNECTOR_RUN_FAILED_VALUE,
+                },
+                failed: None,
+                timestamp: timestamp.to_string(),
+            },
+        );
+    }
+
+    /// Error tracking takes a report only while the settings name a receiver and allow it.
+    fn offer(&self, settings: &Snapshot, report: Report) {
+        let Some(active) = self.active.get().filter(|active| !active.off) else {
+            return;
+        };
+        if !settings.get(ERROR_REPORTING_ENABLED) {
+            return;
+        }
+        if let Some(receiver) = settings.exception_receiver() {
+            active.exceptions.offer(Tracked {
+                report,
+                receiver,
+                private_allowed: settings.get(ALLOW_PRIVATE_ADDRESSES),
+            });
+        }
     }
 
     pub fn flush(&self, within: Duration) {
@@ -227,7 +243,6 @@ impl Telemetry {
             let _ = provider.shutdown_with_timeout(left());
         }
         active.exceptions.flush(left());
-        active.webhook.flush(left());
     }
 }
 

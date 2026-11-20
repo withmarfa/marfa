@@ -624,6 +624,15 @@ pub fn certified_under(mut answer: Answer, fence: &str) -> Answer {
     answer
 }
 
+/// `answer`, carrying the `X-Request-ID` the server stamps on every answer.
+pub fn with_request_id(mut answer: Answer, id: &str) -> Answer {
+    match &mut answer {
+        Answer::Json { headers, .. } => headers.push(("X-Request-ID".into(), id.into())),
+        _ => panic!("only a JSON answer can carry a request ID"),
+    }
+    answer
+}
+
 pub fn copy_marker(kind: &str, cursor: &str) -> String {
     copy_marker_under(kind, cursor, FENCE)
 }

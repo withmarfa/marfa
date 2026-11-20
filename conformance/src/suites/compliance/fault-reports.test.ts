@@ -15,15 +15,14 @@ import {
 
 /**
  * What the server reports of an unhandled fault that failed a database
- * statement, in the places a fixture can read: its log, its error webhook,
- * the log record and the span's exception event it exports, and the
+ * statement, in the places a fixture can read: its log, the log record and the span's exception event it exports, and the
  * exception it sends to error tracking. Each carries `Database operation
  * failed` and the SQLite result code, and none of the statement, the driver's
  * own message or the values the write was given.
  *
  * **A fault the fixture makes, on a server of its own.** The target fails the
  * statement that stores a write's audit entry, as `internal-error.test.ts`
- * does, and the error webhook names a receiver the fixture runs. The failure
+ * does, and the telemetry settings name a receiver the fixture runs. The failure
  * carries the statement and the values it was bound to, as a real one does,
  * so a report that held them back is the report's doing.
  *
@@ -89,10 +88,7 @@ let fault: Promise<Fault> | undefined;
 /** The key that wrote the fixture's notes, which the failed statement is bound to. */
 let keyId = "";
 
-/**
- * One fault for the file: the webhook sends a given error once a minute, so
- * a second identical fault would not reach the receiver.
- */
+/** One fault for the file, which each report below reads. */
 function faulted(): Promise<Fault> {
   fault ??= (async () => {
     const marker = `marker-${Date.now().toString(36)}`;
@@ -145,23 +141,6 @@ describe("an unhandled fault in which a statement failed", () => {
     expect(log).not.toContain(marker);
     expect(log).not.toContain(STATEMENT);
     expect(log).not.toContain(DRIVER_MESSAGE);
-  });
-
-  it("is sent to the error webhook as a database failure with its SQLite code, and none of the statement, the driver's message or the values", async () => {
-    const { marker, requestId } = await faulted();
-    const sent = await until("the error webhook's notification", () =>
-      sinks!.notifications.find((entry) => entry.request_id === requestId),
-    );
-
-    expect(sent.method).toBe("POST");
-    expect(sent.path).toBe("/items");
-    expectFixedFailure(String(sent.error));
-    expectFixedFailure(JSON.stringify(sent));
-    expect(JSON.stringify(sinks!.notifications)).not.toContain(marker);
-    // One notification for the one fault.
-    expect(
-      sinks!.notifications.filter((entry) => entry.request_id === requestId),
-    ).toHaveLength(1);
   });
 
   it(

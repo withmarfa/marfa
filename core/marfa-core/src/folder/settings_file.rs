@@ -392,6 +392,7 @@ impl Folder {
                 answer.contract_named,
                 &answer.body,
                 answer.retry_after_seconds,
+                answer.request_id.clone(),
             );
             // Only the door's own answers about this edit are a refusal; a
             // failing server, a rate limit, a spent key or anything in front

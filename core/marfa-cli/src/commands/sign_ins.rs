@@ -37,7 +37,8 @@ pub enum SignInsCommand {
     /// with --keep. With no --kind it ends every browser. It refuses, ending
     /// nothing, when a --keep names no sign-in. It ends them one at a time,
     /// carries on past one it cannot end, says how many it ended and names
-    /// each one it could not. Requires `sign_ins.manage`.
+    /// each one it could not, with the server's request ID where it sent one.
+    /// Requires `sign_ins.manage`.
     EndAll {
         /// The kinds to end. Repeat it for several; the default is browser.
         #[arg(long, value_enum, value_name = "KIND")]
@@ -159,7 +160,9 @@ impl Outcome {
             "ids": self.ended,
             "failed": self.failed
                 .iter()
-                .map(|(id, error)| json!({ "id": id, "error": error.to_string() }))
+                .map(|(id, error)| {
+                    json!({ "id": id, "error": error.to_string(), "request_id": error.request_id() })
+                })
                 .collect::<Vec<_>>(),
         })
     }
@@ -169,13 +172,16 @@ impl Outcome {
             1 => "ended 1 sign-in".to_string(),
             count => format!("ended {count} sign-ins"),
         }];
-        lines.extend(self.failed.iter().map(|(id, error)| {
-            format!(
+        for (id, error) in &self.failed {
+            lines.push(format!(
                 "could not end {}: {}",
                 printable(id),
                 printable(&error.to_string())
-            )
-        }));
+            ));
+            if let Some(request_id) = error.request_id() {
+                lines.push(format!("Request ID: {}", printable(&request_id)));
+            }
+        }
         lines.join("\n")
     }
 }
@@ -196,6 +202,7 @@ fn end_chosen(kinds: &[Kind], keep: &[String], remote: &Remote) -> Result<Outcom
                     .join(", ")
             ),
             retry_after_seconds: None,
+            request_id: None,
             details: None,
         });
     }
@@ -371,7 +378,7 @@ mod tests {
         let door = Door::open(vec![
             listing_of(&[("b1", "browser"), ("b2", "browser"), ("b3", "browser")]),
             refused("404 Not Found", "sign_in_not_found"),
-            refused("403 Forbidden", "forbidden"),
+            refused("403 Forbidden", "forbidden").with_header("X-Request-ID", "req-end-2"),
             ended(),
         ]);
         let remote = Remote::keyed(&door.url, "key").unwrap();
@@ -380,10 +387,12 @@ mod tests {
         assert_eq!(outcome.failed.len(), 1);
         let text = outcome.text();
         let lines: Vec<&str> = text.lines().collect();
-        assert_eq!(lines.len(), 2, "{text}");
+        assert_eq!(lines.len(), 3, "{text}");
         assert_eq!(lines[0], "ended 2 sign-ins");
         assert!(lines[1].starts_with("could not end b2: "), "{text}");
+        assert_eq!(lines[2], "Request ID: req-end-2");
         assert_eq!(outcome.json()["failed"][0]["id"], "b2");
+        assert_eq!(outcome.json()["failed"][0]["request_id"], "req-end-2");
         assert_eq!(door.received().len(), 4);
     }
 

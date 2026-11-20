@@ -38,7 +38,8 @@ const SECRET = "object_store_secret_access_key";
 const DISK = {
   MARFA_OBJECT_STORE_BUCKET: "",
   MARFA_OBJECT_STORE_SECRET_ACCESS_KEY: "",
-  MARFA_ERROR_WEBHOOK_URL: "",
+  MARFA_POSTHOG_HOST: "",
+  MARFA_POSTHOG_PROJECT_TOKEN: "",
   MARFA_BACKUP_INTERVAL_SECONDS: "0",
 };
 
@@ -289,7 +290,8 @@ describe("a secret setting", () => {
         const set = await clientsFor(origin).operator.patchConfig({
           [SECRET]: `origin-${randomUUID()}`,
           heartbeat_url: beat(),
-          error_webhook_url: `https://${randomUUID()}.example.test/errors`,
+          posthog_host: `https://${randomUUID()}.example.test`,
+          posthog_project_token: `phc_${randomUUID()}`,
         });
         expect(set.status, JSON.stringify(set.error)).toBe(200);
         const archive = await (
@@ -310,13 +312,18 @@ describe("a secret setting", () => {
         );
         expect(restored.status, JSON.stringify(restored.error)).toBe(200);
         // The object store's secret belongs to the machine, so it is not asked for.
-        expect(restored.data.secrets_to_set).toEqual(["error_webhook_url"]);
+        expect(restored.data.secrets_to_set).toEqual([
+          "posthog_host",
+          "posthog_project_token",
+        ]);
 
-        expect(await listed(target, "error_webhook_url")).toMatchObject({
-          set: false,
-          unreadable: true,
-          stored: null,
-        });
+        for (const key of ["posthog_host", "posthog_project_token"]) {
+          expect(await listed(target, key)).toMatchObject({
+            set: false,
+            unreadable: true,
+            stored: null,
+          });
+        }
         expect((await listed(target, "heartbeat_url")).set).toBe(true);
         expect(await listed(target, SECRET)).toMatchObject({ set: false });
         expect((await listed(target, SECRET)).unreadable).not.toBe(true);
@@ -324,11 +331,13 @@ describe("a secret setting", () => {
           (concern) => concern.kind === "setting",
         );
         expect(concerns.map((concern) => concern.reference)).toEqual([
-          "error_webhook_url",
+          "posthog_host",
+          "posthog_project_token",
         ]);
 
         const mended = await clientsFor(target).operator.patchConfig({
-          error_webhook_url: `https://${randomUUID()}.example.test/errors`,
+          posthog_host: `https://${randomUUID()}.example.test`,
+          posthog_project_token: `phc_${randomUUID()}`,
         });
         expect(mended.status, JSON.stringify(mended.error)).toBe(200);
         expect(

@@ -362,21 +362,21 @@ it("sets one setting by name as the kind it holds, and removes it", async () => 
 });
 
 it("reads a secret setting from standard input and refuses it as an argument", async () => {
-  const name = "error_webhook_url";
+  const name = "heartbeat_url";
   expect((await setting(name)).secret).toBe(true);
   const given = await keyed.refused([
     "config",
     "set",
     name,
-    "https://hooks.example/received",
+    "https://heartbeat.example/received",
   ]);
   expect(given.code).toBe(2);
   expect(given.envelope.error.code).toBe("usage");
-  expect(given.envelope.error.message).not.toContain("hooks.example");
+  expect(given.envelope.error.message).not.toContain("heartbeat.example");
   expect((await setting(name)).set).toBeFalsy();
 
   await keyed.json(["config", "set", name], {
-    stdin: "https://hooks.example/received\n",
+    stdin: "https://heartbeat.example/received\n",
   });
   const stored = await setting(name);
   expect(stored.set).toBe(true);

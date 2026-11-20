@@ -16,6 +16,7 @@ use super::body::Shared;
 use super::caller_address::caller_address;
 use super::listening::Peer;
 use super::pages::{self, Notice};
+use crate::app::attention::faults::Place;
 use crate::app::provenance::{self, Origin};
 use crate::app::refusal::{Code, Refusal};
 use crate::app::{App, instance};
@@ -218,21 +219,27 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         error_code,
     });
     let live = observed.app.settings.live();
-    observed.app.telemetry.finish(
-        span,
-        &Finished {
-            request_id: &request_id,
+    let done = Finished {
+        request_id: &request_id,
+        method: &method,
+        path: &logged,
+        route,
+        transport: observed.listener.transport.name(),
+        status,
+        error_code,
+        fault: fault.as_ref(),
+        settings: &live,
+        timestamp: &timestamp,
+    };
+    if fault.is_some() {
+        let place = Place::Request {
             method: &method,
-            path: &logged,
             route,
-            transport: observed.listener.transport.name(),
-            status,
-            error_code,
-            fault: fault.as_ref(),
-            settings: &live,
-            timestamp: &timestamp,
-        },
-    );
+        };
+        observed.app.report_fault(place, span, &done);
+    } else {
+        observed.app.telemetry.finish(span, &done);
+    }
     response
 }
 

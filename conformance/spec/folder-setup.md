@@ -1362,9 +1362,9 @@ When `folders autostart on` writes the agent, the CLI MUST set `MARFA_FOLDER_REG
 
 ### `folder-setup/autostart-telemetry`
 
-When `folders autostart on` writes the agent, the CLI MUST write each telemetry setting that is set and not empty in its own environment (`MARFA_POSTHOG_HOST`, `MARFA_POSTHOG_PROJECT_TOKEN`, `OTEL_SDK_DISABLED` and the `OTEL_*` settings the CLI reads to report) to a file named `folder-watch.env` beside the folder registry, readable and writable by its owner alone from the moment it exists.
+When `folders autostart on` writes the agent, the CLI MUST write each telemetry setting that is set and not empty in its own environment (`OTEL_SDK_DISABLED` and the `OTEL_*` settings the CLI reads to report) to a file named `folder-watch.env` beside the folder registry, readable and writable by its owner alone from the moment it exists.
 
-**Reason:** A launchd agent and a systemd user unit do not inherit the shell’s environment, so a watch started at login would otherwise never send an exception report or a trace. A setting such as `OTEL_EXPORTER_OTLP_HEADERS` holds a credential, and the agent’s file is readable by others, so every setting goes in the one file that only the person can read.
+**Reason:** A launchd agent and a systemd user unit do not inherit the shell’s environment, so a watch started at login would otherwise never send a trace. A setting such as `OTEL_EXPORTER_OTLP_HEADERS` holds a credential, and the agent’s file is readable by others, so every setting goes in the one file that only the person can read.
 
 **Tests:** `device/folders-autostart.test.ts › carries the telemetry settings of the shell that ran it into a file only the person can read, names them and no value, and follows the shell on each run`.
 

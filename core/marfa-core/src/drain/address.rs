@@ -422,6 +422,7 @@ pub(super) fn upload(
         retry_after_seconds: reply.retry_after_seconds,
         replayed: false,
         contract_named: reply.contract.is_some(),
+        request_id: reply.request_id,
     };
     if answer.instance_changed() {
         return Err(answer.instance_changed_error());

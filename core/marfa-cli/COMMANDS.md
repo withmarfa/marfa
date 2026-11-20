@@ -40,17 +40,19 @@ Every command accepts these.
 
 When `marfa device catch-up` fails, the refusal says whether the catch-up had already changed the catalog the copy holds; the copy keeps that change. With --json, the refusal carries this as "catalog_changed" beside "exit".
 
+When the server refuses a command, the refusal ends with the server's `X-Request-ID` on a line of its own, `Request ID: <id>`; quote it when you report the problem. With --json the refusal carries it as "server.request_id". A failure the command line met without a server's answer shows none.
+
 With --json a refusal is the last line of stderr, one JSON object, after any plain lines such as a warning or the write line:
 
 ```text
-{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
+{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...,"request_id":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
 where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 
-A command sends one trace to an OpenTelemetry collector when the environment names one, and no trace when it does not. A command that ends in a fault can also send one exception to PostHog, which needs no collector (below). The settings are the standard OpenTelemetry variables, and two for PostHog.
+A command sends one trace to an OpenTelemetry collector when the environment names one, and no trace when it does not. The settings are the standard OpenTelemetry variables.
 
 | Variable | Description |
 | --- | --- |
@@ -60,14 +62,10 @@ A command sends one trace to an OpenTelemetry collector when the environment nam
 | `OTEL_EXPORTER_OTLP_TIMEOUT`, `OTEL_EXPORTER_OTLP_TRACES_TIMEOUT` | The longest one send may take, in milliseconds. The default is 2000. The command waits no longer than this at its end. |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | `always_on` (the default), `always_off`, or `traceidratio` with a ratio from 0 to 1 as the argument. The `parentbased_` forms act as the sampler they wrap. |
 | `OTEL_SERVICE_NAME` | The service name on the trace. The default is `marfa-cli`. It takes precedence over a `service.name` in `OTEL_RESOURCE_ATTRIBUTES`. |
-| `OTEL_RESOURCE_ATTRIBUTES` | Attributes to add to the trace and the exception, as comma-separated `key=value` pairs with percent-encoded values, such as `deployment.environment=staging`. One named here replaces the command's own of the same name. A list with a pair that cannot be read is ignored whole. |
-| `OTEL_SDK_DISABLED` | `true` turns off both the trace and the exception report. |
-| `MARFA_POSTHOG_HOST` | The PostHog host that receives a failed command's exception, `https` or, to this machine, `http`. It needs `MARFA_POSTHOG_PROJECT_TOKEN`. |
-| `MARFA_POSTHOG_PROJECT_TOKEN` | The PostHog project token for those exceptions. It needs `MARFA_POSTHOG_HOST`. |
+| `OTEL_RESOURCE_ATTRIBUTES` | Attributes to add to the trace, as comma-separated `key=value` pairs with percent-encoded values, such as `deployment.environment=staging`. One named here replaces the command's own of the same name. A list with a pair that cannot be read is ignored whole. |
+| `OTEL_SDK_DISABLED` | `true` turns the trace off. |
 
 The trace's root span is named for the command, such as `marfa items create`, and carries the exit code. The core's operations are beneath it, with their counts and outcomes. A command that fails adds an `error` event with the exit code and, for a refusal, the error code from the list above. The trace holds no argument, address, credential, item content or message. A collector that is unreachable, slow or refusing changes neither the command's output nor its exit code.
-
-A command that ends in a fault also sends one exception to PostHog's error tracking when `MARFA_POSTHOG_HOST` and `MARFA_POSTHOG_PROJECT_TOKEN` are both set, whether or not an OTLP endpoint is. The trace needs an endpoint and the exception does not, so a malformed endpoint turns off the trace only, and a malformed host the exception only. With either PostHog variable unset, no exception is sent. With only one of the two PostHog variables set, or a host that is neither `https` nor on this machine, the command prints one line on standard error that names the variable, and nothing under `--json`. The exception has the command's name, the error code, the exit code, the version, the operating system and the architecture, and a fixed sentence for the kind of error in place of its message. It names no person, and holds no argument, address, credential, item content or message. A fault is something the command line or the core itself got wrong: a panic, including one the core caught and ended with the code `fault`, the local store failing for a reason of its own, an answer that cannot be read, or an answer status the command line should never cause and no refusal is named for, such as `405` or `415`. Nothing the server or the environment did is a fault, and sends nothing: a refusal by design (a `4xx` answer that names a refusal, a usage error, a missing credential or docs page), a command that Ctrl-C stopped or that ended `canceled`, and an environment that failed (offline, a timeout, a rate limit, a `408` or `425` answer, any `5xx` answer, which the server reports itself, full local storage, or another program writing to the working copy). A command that panics sends an exception of type `panic` with no message, and `OTEL_TRACES_SAMPLER` does not change what is sent. A PostHog that is unreachable, slow or refusing changes neither the command's output nor its exit code, and the command waits no longer than the timeout above.
 
 ## Owner tasks
 
@@ -470,7 +468,7 @@ marfa sign-ins end [OPTIONS] <ID>
 
 ### marfa sign-ins end-all
 
-End every sign-in of the chosen kinds at once, except the ones named with --keep. With no --kind it ends every browser. It refuses, ending nothing, when a --keep names no sign-in. It ends them one at a time, carries on past one it cannot end, says how many it ended and names each one it could not. Requires `sign_ins.manage`.
+End every sign-in of the chosen kinds at once, except the ones named with --keep. With no --kind it ends every browser. It refuses, ending nothing, when a --keep names no sign-in. It ends them one at a time, carries on past one it cannot end, says how many it ended and names each one it could not, with the server's request ID where it sent one. Requires `sign_ins.manage`.
 
 ```text
 marfa sign-ins end-all [OPTIONS]
@@ -3124,7 +3122,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 List items, newest first unless sorted otherwise.
 
-Without `--view`, while a hydration fills the copy or after one was interrupted, the list holds the items that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the list holds the items the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `items`. With `--view`, a copy that is not whole is refused.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the list holds the items that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the list holds the items the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `data`, which holds the items, and `next_cursor`. With `--view`, a copy that is not whole is refused.
 
 ```text
 marfa device items list [OPTIONS]
@@ -3171,7 +3169,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Many items by id, read from one snapshot of the copy, each once and in the order named.
 
-An id the copy does not hold is left out, and so is an item in the bin unless `--include-bin`. Under --json the answer is `items` beside `completeness`, as `items list` answers; while a hydration fills the copy it is `partial`, since an item left out may be still to arrive.
+An id the copy does not hold is left out, and so is an item in the bin unless `--include-bin`. Under --json the answer is `data`, `next_cursor` and `completeness`, as `items list` answers; while a hydration fills the copy `completeness` is `partial`, since an item left out may be still to arrive.
 
 ```text
 marfa device items bulk-get [OPTIONS] <IDS>...
@@ -3806,7 +3804,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Full-text search over the local copy, best match first.
 
-Without `--view`, while a hydration fills the copy or after one was interrupted, the search covers the items that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the search covers the items the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `hits`. With `--view`, a copy that is not whole is refused.
+Without `--view`, while a hydration fills the copy or after one was interrupted, the search covers the items that have arrived and says it is partial. Once the server's event log no longer reaches the copy, and until a hydration has filled it again, the search covers the items the copy holds and says it is stale. Each is said on standard error, and under --json as `completeness`, `partial`, `stale` or `complete`, beside `data`, which holds the hits, and `next_cursor`. With `--view`, a copy that is not whole is refused.
 
 ```text
 marfa device search [OPTIONS] <QUERY>
@@ -3957,7 +3955,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Set aside a store SQLite cannot read, and make a new one in its place that carries every write its queue lets be read.
 
-The damaged store and its logs move to `PATH.damaged-N` beside it, for the first N no file holds, and are never deleted. Each write carried keeps its id and idempotency key, its body, its base version and its verdict, and the new store keeps the server and instance the old one was built from and the bytes kept beside the store. The answer counts the writes carried that the server has not taken and the writes it could not read, names each of those by id where it can, and says whether the whole queue was found. Where it could not read every write, every record of how one is sent, or every record of the bytes an earlier set-aside keeps, every byte kept beside the store as it was set aside stays until the store set aside is removed or moved from where the set-aside put it.
+The damaged store and its logs move to `PATH.damaged-N` beside it (beside the file a symbolic link at `PATH` leads to), for the first N no file holds, and are never deleted. Each write carried keeps its id and idempotency key, its body, its base version and its verdict, and the new store keeps the server and instance the old one was built from and the bytes kept beside the store. The answer counts the writes carried that the server has not taken and the writes it could not read, names each of those by id where it can, and says whether the whole queue was found. Where it could not read every write, every record of how one is sent, or every record of the bytes an earlier set-aside keeps, every byte kept beside the store as it was set aside stays until the store set aside is removed or moved from where the set-aside put it.
 
 The new store holds no copy: hydrate it, and then drain, to send what it carries; a drain before then sends nothing. Where the old store does not say which instance it was built from, each carried write is held blocked instance_changed until released, and a carried write whose record of how it is sent does not read is held blocked record_unread until released. A store that opens as it is, or a folder's store, is refused invalid. A set-aside that stopped part way is finished by running it again, and until then the store is refused store_damaged.
 
@@ -4702,7 +4700,7 @@ Sync every folder from login, and start now: writes a launchd agent on macOS or 
 
 The watch writes to its log, `folder-watch.log` beside the folder registry. An error it makes before it opens the log goes, on macOS, to `folder-watch.launchd.log` beside it, which the agent names for the watch's output, and on Linux to the user journal (`journalctl --user -u marfa-folder-watch.service`).
 
-The watch reports as a command run from this shell does: the telemetry settings set here (`MARFA_POSTHOG_HOST`, `MARFA_POSTHOG_PROJECT_TOKEN`, `OTEL_SDK_DISABLED` and the `OTEL_*` settings that `marfa` reads) are written to `folder-watch.env` beside the folder registry, a file only you can read, and the agent names that file and holds none of them. Run again, it makes the file match the settings set then, and removes it where none is. It says which settings it carried, by name.
+The watch reports as a command run from this shell does: the telemetry settings set here (`OTEL_SDK_DISABLED` and the `OTEL_*` settings that `marfa` reads) are written to `folder-watch.env` beside the folder registry, a file only you can read, and the agent names that file and holds none of them. Run again, it makes the file match the settings set then, and removes it where none is. It says which settings it carried, by name.
 
 With `--key-file` the agent runs the watch with that file in place of the keychain, for a machine where nobody signs in to unlock it. The agent holds the file's path and never what is in it.
 
@@ -4761,7 +4759,7 @@ Examples:
 marfa docs search "restore an archive" --limit 5
 marfa docs topics
 marfa docs build/files
-marfa docs cli --section "Use another keychain file"
+marfa docs reference/cli --section "Use another keychain file"
 ```
 
 ### marfa docs search

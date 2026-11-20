@@ -190,7 +190,8 @@ impl Instance {
         Written {
             items: count("SELECT count(*) FROM items"),
             versions: count("SELECT count(*) FROM item_versions"),
-            events: count("SELECT count(*) FROM event_log"),
+            // A fault's attention entry is an event of the instance's own, not the write's.
+            events: count("SELECT count(*) FROM event_log WHERE event_type != 'attention.raised'"),
             audits: count("SELECT count(*) FROM audit_log WHERE action LIKE 'item.%'"),
         }
     }

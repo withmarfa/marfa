@@ -1,5 +1,5 @@
 //! Every test that starts `marfa` goes through `support/quiet.rs`, so that a
-//! test which fails on purpose never reports to a developer's PostHog.
+//! test which fails on purpose never reports to a developer's collector.
 
 #[allow(dead_code)]
 #[path = "support/quiet.rs"]
@@ -60,8 +60,6 @@ fn the_helper_removes_telemetry_settings_and_turns_the_sdk_off() {
     planted
         .env("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1")
         .env("MARFA_OTEL_X", "1")
-        .env("MARFA_POSTHOG_HOST", "http://127.0.0.1:1")
-        .env("MARFA_POSTHOG_PROJECT_TOKEN", "t")
         .env("OTEL_SDK_DISABLED", "false")
         .env("MARFA_KEPT", "yes");
     let output = quiet::quiet(planted).output().unwrap();
@@ -70,9 +68,9 @@ fn the_helper_removes_telemetry_settings_and_turns_the_sdk_off() {
     assert!(lines.contains(&"OTEL_SDK_DISABLED=true"));
     assert!(lines.contains(&"MARFA_KEPT=yes"));
     assert!(
-        !lines.iter().any(|line| line.starts_with("OTEL_EXPORTER")
-            || line.starts_with("MARFA_OTEL_")
-            || line.starts_with("MARFA_POSTHOG_")),
+        !lines
+            .iter()
+            .any(|line| line.starts_with("OTEL_EXPORTER") || line.starts_with("MARFA_OTEL_")),
         "{lines:?}"
     );
 }

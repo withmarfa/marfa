@@ -921,6 +921,7 @@ mod tests {
             code: "unavailable".into(),
             message: "try again".into(),
             retry_after_seconds: None,
+            request_id: None,
             details: None,
         };
         match code_ended(Some(outage)) {

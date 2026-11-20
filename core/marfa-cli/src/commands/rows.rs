@@ -236,6 +236,7 @@ pub fn for_one_row(error: CliError) -> CliError {
         message,
         retry_after_seconds,
         mut details,
+        request_id,
     } = error
     else {
         return error;
@@ -264,6 +265,7 @@ pub fn for_one_row(error: CliError) -> CliError {
         message,
         retry_after_seconds,
         details,
+        request_id,
     }
 }
 

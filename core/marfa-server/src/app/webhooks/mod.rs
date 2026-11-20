@@ -2,6 +2,7 @@
 
 mod deferred;
 mod request;
+mod roster;
 mod schedule;
 mod send;
 mod sender;
@@ -27,6 +28,7 @@ use request::invalid;
 use store::{Delivery, Status};
 
 pub use request::{Address, CREATE_FIELDS, Create, UPDATE_FIELDS, Update};
+pub use roster::{Handed, tell as tell_from_memory};
 pub use sender::{Webhooks, start};
 pub use store::{Subscription, UNREAD_DELIVERIES};
 
@@ -144,7 +146,7 @@ pub async fn check_address(app: &App, maker: &Maker, address: &request::Address)
 }
 
 /// The text that tells one maker's lookups from another's.
-fn slot_key(maker: &Maker) -> String {
+pub(super) fn slot_key(maker: &Maker) -> String {
     match maker {
         Maker::Key(id) => format!("key:{id}"),
         Maker::Grant(id) => format!("grant:{id}"),
