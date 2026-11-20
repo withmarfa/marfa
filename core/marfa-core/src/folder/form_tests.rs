@@ -450,3 +450,21 @@ fn a_file_written_with_no_form_fills_none_and_a_persons_file_fills_its_own() {
     assert_eq!(tests::rendered(), 0);
     assert_eq!(forms_sent(&again), 0);
 }
+
+#[test]
+fn a_form_read_from_a_placement_is_held_to_the_limits_one_is_sent_within() {
+    let block = |indent: u64| json!({"keys": [{"key": "tags", "style": "block", "items": "plain", "indent": indent}]});
+    // The witness: a form a device sends reads back.
+    assert!(form::Form::read(&block(2)).is_some());
+    assert!(
+        form::Form::read(&block(4_000_000_000_000_000_000)).is_none(),
+        "a form whose list sits further right than any file's was taken"
+    );
+    let many: Vec<Value> = (0..2_000)
+        .map(|n| json!({"key": format!("key-{n}"), "style": "empty"}))
+        .collect();
+    assert!(
+        form::Form::read(&json!({ "keys": many })).is_none(),
+        "a form larger than a device sends was taken"
+    );
+}

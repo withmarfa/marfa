@@ -684,6 +684,14 @@ If the `form` of the item's `in-folder` edge writes a date as a day, and the ite
 
 **Tests:** `device/folders-form-live.test.ts › writes a day only for a time that is midnight in UTC, and the full time otherwise`.
 
+### `folder-files/form-unread`
+
+If the `form` of an item's `in-folder` edge is larger than the limit a device sends a form within, or puts a block list's items further right than that limit, then a device MUST write the item's document as it writes one whose edge holds no `form`.
+
+**Reason:** any credential that may write the edge can set its `form`, so a device follows only a form it could have sent itself, and one bad form never stops a pull.
+
+**Tests:** `device/folders-form-live.test.ts › writes a file as with no form where its placement holds a form beyond the limits a device sends one within`.
+
 ### `folder-files/form-none`
 
 When a device writes a document its directory does not hold and the item's `in-folder` edge holds no `form`, a device MUST write the frontmatter in the order and styles it uses for an item no file has shown.

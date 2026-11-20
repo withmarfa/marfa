@@ -462,6 +462,38 @@ async function withoutForm(): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
+it("writes a file as with no form where its placement holds a form beyond the limits a device sends one within", async () => {
+  const folder = await serverFolder();
+  const name = `${title("Listed")}.md`;
+  const text = `---\ntitle: ${name.replace(/\.md$/, "")}\ntags:\n    - one\n    - two\n---\nListed.\n`;
+  const first = await made(folder, { [name]: text });
+  const written = filesOf(first.dir)[name];
+  // The witness: the form the device sent is followed.
+  expect(filesOf((await followed(folder)).dir)[name]).toBe(written);
+  const sent = await placed(folder, name);
+  const form = sent.properties.form as { keys: Record<string, unknown>[] };
+
+  const reform = async (keys: Record<string, unknown>[]): Promise<string> => {
+    const was = await placed(folder, name);
+    const changed = await client.updateEdge(was.id, {
+      version: was.version,
+      properties: { form: { keys } },
+    });
+    expect(changed.status, JSON.stringify(changed.data)).toBe(200);
+    return filesOf((await followed(folder)).dir)[name];
+  };
+  // What a directory writes with no key's form to follow.
+  const unformed = await reform([]);
+  expect(unformed).not.toBe(written);
+
+  const beyond = form.keys.map((key) =>
+    key.key === "tags" ? { ...key, indent: 4_000_000_000_000_000_000 } : key,
+  );
+  expect(await reform(beyond), "a form beyond the limits was followed").toBe(
+    unformed,
+  );
+});
+
 it("sends no form to a server whose in-folder edge type declares none", async () => {
   const folder = await serverFolder();
   // The witness: through the server itself, the same file's placement

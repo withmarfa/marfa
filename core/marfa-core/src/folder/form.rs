@@ -33,6 +33,10 @@ const FORM_LIMIT: usize = 8 * 1024;
 /// How far a block's lines sit under their key.
 const BLOCK_INDENT: usize = 2;
 
+/// The furthest right a form puts a block list's items; a form beyond it is
+/// not kept, nor followed when a placement holds it.
+const INDENT_LIMIT: usize = 16;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Form {
     pub keys: Vec<Key>,
@@ -97,8 +101,14 @@ impl Form {
                 Some(node) => key_of(key, pair, preserve::value_node(node), text),
             });
         }
-        let form = Form { keys };
-        (serde_json::to_vec(&form).ok()?.len() <= FORM_LIMIT).then_some(form)
+        Form { keys }.bounded()
+    }
+
+    /// The form, where it is within the limits a device keeps one to.
+    fn bounded(self) -> Option<Form> {
+        (self.keys.iter().all(|key| key.indent <= INDENT_LIMIT)
+            && serde_json::to_vec(&self).ok()?.len() <= FORM_LIMIT)
+            .then_some(self)
     }
 
     /// Whether this form is `held` with only the own lines a device writes
@@ -119,9 +129,13 @@ impl Form {
         self.keys[..self.keys.len() - stamped] == held.keys[..]
     }
 
-    /// The form a placement's property holds, where it is one.
+    /// The form a placement's property holds, where it is one within the
+    /// limits a device sends one within: any credential that writes the edge
+    /// can set it.
     pub(super) fn read(value: &Value) -> Option<Form> {
-        serde_json::from_value(value.clone()).ok()
+        serde_json::from_value::<Form>(value.clone())
+            .ok()?
+            .bounded()
     }
 
     pub(super) fn value(&self) -> Value {
