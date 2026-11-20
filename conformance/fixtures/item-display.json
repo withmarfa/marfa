@@ -490,6 +490,342 @@
       },
       "name": "https://example.test/",
       "preview": "First line"
+    },
+    {
+      "description": "leaves out front matter at the top of a body",
+      "type": "core.note",
+      "properties": {
+        "title": "Front matter",
+        "body": "---\ntitle: Front matter\ntags: [a, b]\n---\nThe note's text."
+      },
+      "name": "Front matter",
+      "preview": "The note's text."
+    },
+    {
+      "description": "names a note by the first line after its front matter",
+      "type": "core.note",
+      "properties": {
+        "body": "---\ntitle: Kept out\n---\nFirst line\nsecond line"
+      },
+      "name": "First line",
+      "preview": "second line"
+    },
+    {
+      "description": "leaves out front matter with CRLF line endings",
+      "type": "core.note",
+      "properties": {
+        "title": "CRLF",
+        "body": "---\r\ntitle: x\r\n---\r\nText\r\nmore"
+      },
+      "name": "CRLF",
+      "preview": "Text more"
+    },
+    {
+      "description": "keeps front matter that never closes as text",
+      "type": "core.note",
+      "properties": {
+        "title": "Unclosed",
+        "body": "---\ntitle: x\ntags: [a]\nText"
+      },
+      "name": "Unclosed",
+      "preview": "title: x tags: [a] Text"
+    },
+    {
+      "description": "keeps a thematic break after the first line of a body as a break",
+      "type": "core.note",
+      "properties": {
+        "title": "Break",
+        "body": "First\n\n---\n\nSecond"
+      },
+      "name": "Break",
+      "preview": "First Second"
+    },
+    {
+      "description": "keeps a pair of thematic breaks around text, since an empty line follows the first",
+      "type": "core.note",
+      "properties": {
+        "title": "Rules",
+        "body": "---\n\nNote: x\n\n---\nafter"
+      },
+      "name": "Rules",
+      "preview": "Note: x after"
+    },
+    {
+      "description": "answers no name and no preview for a body that is only front matter",
+      "type": "core.note",
+      "properties": {
+        "body": "---\ntitle: x\n---"
+      },
+      "name": null,
+      "preview": null
+    },
+    {
+      "description": "leaves out footnote references and definitions",
+      "type": "core.note",
+      "properties": {
+        "title": "Footnotes",
+        "body": "Written.[^1] Then more.[^note]\n\n[^1]: The first source.\n[^note]:\n    A definition that\n    runs over lines.\n\nAfter."
+      },
+      "name": "Footnotes",
+      "preview": "Written. Then more. After."
+    },
+    {
+      "description": "keeps a footnote reference that no definition gives",
+      "type": "core.note",
+      "properties": {
+        "title": "Orphans",
+        "body": "Use [^abc] and [^0-9] in a pattern.[^1]\n\n[^1]: Source."
+      },
+      "name": "Orphans",
+      "preview": "Use [^abc] and [^0-9] in a pattern."
+    },
+    {
+      "description": "drops highlight markers and keeps their text",
+      "type": "core.note",
+      "properties": {
+        "title": "Highlights",
+        "body": "Some ==highlighted text== and ==**bold** inside== here."
+      },
+      "name": "Highlights",
+      "preview": "Some highlighted text and bold inside here."
+    },
+    {
+      "description": "keeps a highlight that never closes, and spaced double equals signs, as text",
+      "type": "core.note",
+      "properties": {
+        "title": "Unclosed highlight",
+        "body": "A ==never closes here and x == y and z == w"
+      },
+      "name": "Unclosed highlight",
+      "preview": "A ==never closes here and x == y and z == w"
+    },
+    {
+      "description": "reads a table as its cell text in reading order",
+      "type": "core.note",
+      "properties": {
+        "title": "Table",
+        "body": "| Left | Centre | Right |\n| :--- | :----: | ----: |\n| a | b | c |\n| d | e | f |\n\nAfter the table"
+      },
+      "name": "Table",
+      "preview": "Left Centre Right a b c d e f After the table"
+    },
+    {
+      "description": "reads a table that has no leading pipes",
+      "type": "core.note",
+      "properties": {
+        "title": "Bare table",
+        "body": "Name | Qty\n--- | ---\nApple | 3\nPear | 5"
+      },
+      "name": "Bare table",
+      "preview": "Name Qty Apple 3 Pear 5"
+    },
+    {
+      "description": "keeps a pipe inside inline code in its cell",
+      "type": "core.note",
+      "properties": {
+        "title": "Code pipe",
+        "body": "| Expr | Meaning |\n| --- | --- |\n| `a|b` | either |"
+      },
+      "name": "Code pipe",
+      "preview": "Expr Meaning a|b either"
+    },
+    {
+      "description": "reads an escaped pipe as a pipe in its cell",
+      "type": "core.note",
+      "properties": {
+        "title": "Escaped pipe",
+        "body": "| Op | Note |\n| --- | --- |\n| a \\| b | x |"
+      },
+      "name": "Escaped pipe",
+      "preview": "Op Note a | b x"
+    },
+    {
+      "description": "names a note by the header row of a table",
+      "type": "core.note",
+      "properties": {
+        "body": "| Left | Right |\n|---|---|\n| 1 | 2 |"
+      },
+      "name": "Left Right",
+      "preview": "1 2"
+    },
+    {
+      "description": "keeps lines with pipes that have no delimiter row as text",
+      "type": "core.note",
+      "properties": {
+        "title": "Pipes",
+        "body": "a | b | c\nnext | line"
+      },
+      "name": "Pipes",
+      "preview": "a | b | c next | line"
+    },
+    {
+      "description": "reads a table with CRLF line endings",
+      "type": "core.note",
+      "properties": {
+        "title": "CRLF table",
+        "body": "| a | b |\r\n|---|---|\r\n| 1 | 2 |\r\nend"
+      },
+      "name": "CRLF table",
+      "preview": "a b 1 2 end"
+    },
+    {
+      "description": "drops a callout's marker and keeps its title and text",
+      "type": "core.note",
+      "properties": {
+        "title": "Callouts",
+        "body": "> [!note] A callout\n> Its text.\n\n> [!tip]- Folded title\n> More text.\n\n> [!warning]\n> Only text."
+      },
+      "name": "Callouts",
+      "preview": "A callout Its text. Folded title More text. Only text."
+    },
+    {
+      "description": "keeps text that only looks like a callout marker",
+      "type": "core.note",
+      "properties": {
+        "title": "Not callouts",
+        "body": "[!note] not quoted\n> [!not a marker"
+      },
+      "name": "Not callouts",
+      "preview": "[!note] not quoted [!not a marker"
+    },
+    {
+      "description": "decodes named, decimal and hexadecimal character references",
+      "type": "core.note",
+      "properties": {
+        "title": "References",
+        "body": "Fish &amp; chips&#x20;&#169; 2024 &copy; &#65; &lt;b&gt;"
+      },
+      "name": "References",
+      "preview": "Fish & chips © 2024 © A <b>"
+    },
+    {
+      "description": "keeps an unknown or malformed character reference as written",
+      "type": "core.note",
+      "properties": {
+        "title": "Unknown references",
+        "body": "&unknown; &#xZZ; &#; &amp and AT&T; &#99999999;"
+      },
+      "name": "Unknown references",
+      "preview": "&unknown; &#xZZ; &#; &amp and AT&T; &#99999999;"
+    },
+    {
+      "description": "keeps a character reference in a code span as written",
+      "type": "core.note",
+      "properties": {
+        "title": "Code reference",
+        "body": "`&amp;` and ``&#169;``"
+      },
+      "name": "Code reference",
+      "preview": "&amp; and &#169;"
+    },
+    {
+      "description": "reads a decoded character as text, never as markup",
+      "type": "core.note",
+      "properties": {
+        "title": "Decoded markup",
+        "body": "&#42;not em&#42; and &lt;https://example.test&gt; and &#91;x&#93;(y)"
+      },
+      "name": "Decoded markup",
+      "preview": "*not em* and <https://example.test> and [x](y)"
+    },
+    {
+      "description": "reads a reference that makes a space or a line end as whitespace",
+      "type": "core.note",
+      "properties": {
+        "title": "Reference space",
+        "body": "Edge&#x20;\n&#x20;next&#10;line&#x20;"
+      },
+      "name": "Reference space",
+      "preview": "Edge next line"
+    },
+    {
+      "description": "cuts a long body of character references at 240 code points",
+      "type": "core.note",
+      "properties": {
+        "title": "Long references",
+        "body": "&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;&#x1F600;"
+      },
+      "name": "Long references",
+      "preview": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
+    },
+    {
+      "description": "reads the lines of a person's text between two thematic breaks, not as front matter",
+      "type": "core.note",
+      "properties": {
+        "body": "---\nMeeting notes\nA second paragraph.\n---\nFooter"
+      },
+      "name": "Meeting notes",
+      "preview": "A second paragraph. Footer"
+    },
+    {
+      "description": "keeps a block with one line that is not a key, a list item or a comment as text",
+      "type": "core.note",
+      "properties": {
+        "title": "Mixed block",
+        "body": "---\ntitle: x\nPlain words\n---\nAfter"
+      },
+      "name": "Mixed block",
+      "preview": "title: x Plain words After"
+    },
+    {
+      "description": "leaves out front matter with nested values, lists, comments and blank lines",
+      "type": "core.note",
+      "properties": {
+        "title": "Nested",
+        "body": "---\ntitle: Plan\ntags:\n  - a\n  - b\nmeta:\n  owner: someone\n  note: \"a: b\"\n# a comment\n\nlist:\n- one\n- two\nempty:\n---\nThe text."
+      },
+      "name": "Nested",
+      "preview": "The text."
+    },
+    {
+      "description": "keeps double equals signs between words as written",
+      "type": "core.note",
+      "properties": {
+        "title": "Equals",
+        "body": "if x==1 and y==2 then\na==b, c==d"
+      },
+      "name": "Equals",
+      "preview": "if x==1 and y==2 then a==b, c==d"
+    },
+    {
+      "description": "opens a highlight only after a non-word character and closes it only before one",
+      "type": "core.note",
+      "properties": {
+        "title": "Highlight edges",
+        "body": "(==kept==), ==a==. a _==b== and ab==c== and ==d==e f"
+      },
+      "name": "Highlight edges",
+      "preview": "(kept), a. a _==b== and ab==c== and ==d==e f"
+    },
+    {
+      "description": "keeps a footnote reference whose only definition is inside a fence",
+      "type": "core.note",
+      "properties": {
+        "title": "Fenced definition",
+        "body": "x [^1] y\n\n```\n[^1]: in fence\n```"
+      },
+      "name": "Fenced definition",
+      "preview": "x [^1] y [^1]: in fence"
+    },
+    {
+      "description": "keeps a footnote reference whose only definition is inside front matter",
+      "type": "core.note",
+      "properties": {
+        "title": "Front matter definition",
+        "body": "---\n[^1]: a key\n---\nText [^1]"
+      },
+      "name": "Front matter definition",
+      "preview": "Text [^1]"
+    },
+    {
+      "description": "keeps a footnote reference whose only definition is in another definition's continuation",
+      "type": "core.note",
+      "properties": {
+        "title": "Continued definition",
+        "body": "[^1]: first\n    [^2]: inside it\nText [^2] and [^1]"
+      },
+      "name": "Continued definition",
+      "preview": "Text [^2] and"
     }
   ],
   "parts": [
