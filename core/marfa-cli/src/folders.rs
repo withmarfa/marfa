@@ -917,7 +917,7 @@ fn beneath_line(beneath: Option<&marfa_core::folder::BeneathReport>) -> Option<S
             printable(&beneath.path)
         ),
         (None, Some(why)) => format!(
-            "the folder holds nothing from the server until {} has an item: {}",
+            "the folder holds nothing from the server until its query names the item of {}: {}",
             printable(&beneath.path),
             printable(why)
         ),
@@ -1431,7 +1431,7 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
     }
     if let Some(path) = &report.beneath_waiting {
         let mut line = format!(
-            "the folder holds nothing from the server until {} has an item",
+            "the folder holds nothing from the server until its query names the item of {}",
             printable(path)
         );
         if let Some(why) = &report.beneath_waiting_reason {
