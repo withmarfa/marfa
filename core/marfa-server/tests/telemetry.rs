@@ -752,8 +752,14 @@ fn a_platform_variable_never_overrides_the_stored_settings() {
             "OTEL_EXPORTER_OTLP_HEADERS",
             "authorization=planted,content-type=application/x-planted",
         ),
-        ("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "x-planted=traces"),
-        ("OTEL_EXPORTER_OTLP_LOGS_HEADERS", "x-planted=logs"),
+        (
+            "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+            "x-planted=traces,content-type=application/x-planted",
+        ),
+        (
+            "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+            "x-planted=logs,content-type=application/x-planted",
+        ),
         ("OTEL_EXPORTER_OTLP_TIMEOUT", "1"),
         ("OTEL_TRACES_SAMPLER", "always_off"),
         ("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT", "0"),
