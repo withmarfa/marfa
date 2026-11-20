@@ -10,7 +10,7 @@ These hold for every change to what an owner, an app or a key can do.
 - The command line does every owner task. Only approving an app's access and adding a passkey need a browser.
 - Only claiming a new instance and recovering a lost password start where the server runs. Everything else works from any app or key the owner approves.
 - Nothing is restricted without a reason a person would accept: a standard, a hard fact, or clear harm to the owner's data or security. Safety comes from approval and confirmation, not from making things hard.
-- Marfa sends nothing about itself until its owner sets where. Product code (server, command line, connectors, Swift package) carries no vendor token, name or dependency outside the server's PostHog exception report, and no setting sends anywhere by default. The test: a stranger installs it and sets nothing, and nothing leaves their machine. `ci/no-vendor-in-product.test.ts` and the no-send tests (`core/marfa-server/tests/telemetry.rs`, `core/marfa-cli/tests/telemetry.rs`) enforce it.
+- Marfa sends nothing about itself until its owner sets where. Product code (server, command line, connectors, Swift package) carries no vendor token, name or dependency outside the server's PostHog exception report, and no setting sends anywhere by default. The test: a stranger installs it and sets nothing, and nothing leaves their machine. `ci/no-vendor-in-product.test.ts` and the no-send tests (`core/marfa-server/tests/telemetry.rs`, `core/marfa-cli/tests/telemetry.rs`) enforce it for what this repository ships.
 
 ## Where an area's rules are
 

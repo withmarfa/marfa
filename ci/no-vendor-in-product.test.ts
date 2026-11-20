@@ -3,9 +3,10 @@
  * carries no vendor's name or token and no vendor's SDK, except the places
  * below, each with its reason.
  *
- * Product code is what an owner runs or reads: `core/`, `packages/`, `deploy/`,
- * `scripts/install.sh`, `.env.example` and the committed `openapi.json`. The
- * contract (`conformance/`), the workflows and `ci/` are not shipped, and
+ * Product code is what an owner runs or reads, and what builds it: `core/`,
+ * `packages/`, `deploy/`, `scripts/install.sh`, `scripts/release/`, the release
+ * workflow, `.env.example` and the committed `openapi.json`. The contract
+ * (`conformance/`), the other workflows and `ci/` are not shipped, and
  * `ci/test-telemetry.test.ts` and the Rust tests hold what a run sends.
  *
  * An allowed path must still exist and still name the vendor, so a file that
@@ -25,6 +26,8 @@ const SCOPE = [
   "packages",
   "deploy",
   "scripts/install.sh",
+  "scripts/release",
+  ".github/workflows/release.yml",
   ".env.example",
   "openapi.json",
 ];

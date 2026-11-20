@@ -858,8 +858,8 @@ export function affected(path: string): Set<Job> {
   if (readsDependencies(path)) jobs.add("core-deny");
   if (linted(path)) jobs.add("workspace");
   if (lintReads(path)) jobs.add("lint");
-  // Its format check, this classifier's test and the contract's reference
-  // check read every path.
+  // Its format check, this classifier's test, the vendor check and the
+  // contract's reference check read every path.
   jobs.add("quick-checks");
   return jobs;
 }
@@ -910,8 +910,8 @@ export function forNightly(): Record<Job, boolean> {
 
 /**
  * Whether an answer runs nothing but `Quick checks`' format check, this
- * classifier's test and the contract's reference check, as a change to
- * documentation or agent instructions does.
+ * classifier's test, the vendor check and the contract's reference check, as a
+ * change to documentation or agent instructions does.
  */
 export function documentationOnly(answer: Record<Job, boolean>): boolean {
   return JOBS.every((job) => job === "quick-checks" || !answer[job]);
