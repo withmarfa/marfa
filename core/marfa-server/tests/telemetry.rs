@@ -528,16 +528,16 @@ async fn a_change_to_the_endpoint_headers_or_switch_is_followed_with_no_restart_
         .await;
     assert_eq!(status, StatusCode::OK, "{answer}");
     instance.write_note("queued").await;
-    let switched = mark(&received);
     instance
         .configure(json!({ "telemetry_enabled": false }))
         .await;
+    // Counted once the change is answered: a batch may leave on its own before it.
+    let switched = mark(&received);
     instance.write_note("switched-off").await;
     instance
         .configure(json!({ "telemetry_enabled": true }))
         .await;
     instance.write_note("first").await;
-    let changed = mark(&received);
     // A span that starts before the change ends into the exporter the change built.
     let swapped = instance
         .configure_as(
@@ -546,6 +546,7 @@ async fn a_change_to_the_endpoint_headers_or_switch_is_followed_with_no_restart_
         )
         .await;
     assert_eq!(swapped, StatusCode::OK);
+    let changed = mark(&received);
     instance.write_note("second").await;
     let (status, answer) = instance
         .configure(json!({ "trash_retention_days": 7 }))
@@ -612,17 +613,17 @@ async fn a_report_queued_before_reporting_is_switched_off_or_moved_is_dropped() 
     let (instance, guard) = Instance::start(&borrowed(&pairs)).await;
 
     instance.fail_note("queued").await;
-    let switched = mark(&received);
     instance
         .configure(json!({ "telemetry_enabled": false }))
         .await;
+    let switched = mark(&received);
     instance
         .configure(json!({ "telemetry_enabled": true }))
         .await;
     instance.fail_note("before-the-move").await;
-    let changed = mark(&received);
     let (status, answer) = instance.configure(json!({ "posthog_host": other })).await;
     assert_eq!(status, StatusCode::OK, "{answer}");
+    let changed = mark(&received);
     instance.fail_note("kept").await;
     let (status, answer) = instance
         .configure(json!({ "trash_retention_days": 7 }))

@@ -17,8 +17,10 @@ import { clientsFor, everythingClient } from "../../utils/own-blob-server.js";
  * value, so it leaves telemetry off and says so.
  *
  * **A server of its own for each case, with a receiver the fixture runs.** A
- * stop flushes what the server holds, so each case reads what arrived once
- * the server has stopped.
+ * stop sends what the server holds under settings that did not change, so
+ * each case reads what arrived once the server has stopped. A change drops
+ * what was queued before it, so a case notes how much had arrived when it
+ * made the change.
  */
 const started: { stop(): Promise<void> }[] = [];
 
@@ -101,14 +103,19 @@ async function fault(server: FreshServer, requestId: string): Promise<void> {
   expect(answer.status).toBe(500);
 }
 
-/** The value of header `name` on each OTLP post of `signal` that names `requestId`. */
+/**
+ * The value of header `name` on each OTLP post of `signal` that names
+ * `requestId`, from the post numbered `from` on.
+ */
 function carried(
   sinks: FaultSinks,
   signal: "traces" | "logs",
   requestId: string,
   name: string,
+  from = 0,
 ): (string | undefined)[] {
   return sinks.exports
+    .slice(from)
     .filter(
       (post) =>
         post.signal === signal &&
@@ -120,15 +127,17 @@ function carried(
     });
 }
 
-function exceptionOf(sinks: FaultSinks, requestId: string): boolean {
-  return sinks
-    .sentExceptions()
-    .some((event) => event.properties.request_id === requestId);
+/** Whether a batch from the one numbered `from` on reported `requestId`. */
+function exceptionOf(sinks: FaultSinks, requestId: string, from = 0): boolean {
+  type Batch = { batch: { properties?: { request_id?: unknown } }[] };
+  return (sinks.trackedErrors.slice(from) as Batch[])
+    .flatMap((post) => post.batch)
+    .some((event) => event.properties?.request_id === requestId);
 }
 
 describe("the telemetry settings", () => {
   it(
-    "send the next trace and log record with the endpoint and headers a write to /config just set, with no restart",
+    "send the next trace and log record with the endpoint and headers a write to /config just set, with no restart, and drop those queued before it",
     async () => {
       const sinks = await receiver();
       const origin = sinks.serverEnv().MARFA_OTEL_EXPORTER_OTLP_ENDPOINT!;
@@ -143,40 +152,48 @@ describe("the telemetry settings", () => {
       const first = `first-${randomUUID()}`;
       await write(server, first);
       await configured(server, {
-        otel_exporter_otlp_headers: "authorization=Bearer%20two",
+        otel_exporter_otlp_headers: "authorization=Bearer%20two,x-team=core",
       });
+      // Counted once the change is answered: a batch may leave on its own
+      // before it.
+      const changed = sinks.exports.length;
       const second = `second-${randomUUID()}`;
       await write(server, second);
       await server.stop();
 
-      // The witness: what came after the first write arrived.
-      expect(carried(sinks, "traces", first, "authorization")).toEqual([
-        "Bearer one",
-      ]);
-      expect(carried(sinks, "traces", unset, "authorization")).toEqual([]);
-      expect(carried(sinks, "logs", unset, "authorization")).toEqual([]);
-      expect(carried(sinks, "logs", first, "authorization")).toEqual([
-        "Bearer one",
-      ]);
-      expect(carried(sinks, "traces", first, "x-team")).toEqual(["core"]);
-      expect(carried(sinks, "logs", first, "x-team")).toEqual(["logs"]);
+      // The witness: the write after the change, held until the stop, arrives.
       for (const signal of ["traces", "logs"] as const) {
         expect(carried(sinks, signal, second, "authorization")).toEqual([
           "Bearer two",
         ]);
       }
-      expect(carried(sinks, "traces", second, "x-team")).toEqual([undefined]);
+      expect(carried(sinks, "traces", second, "x-team")).toEqual(["core"]);
       expect(carried(sinks, "logs", second, "x-team")).toEqual(["logs"]);
+      for (const signal of ["traces", "logs"] as const) {
+        expect(carried(sinks, signal, unset, "authorization")).toEqual([]);
+        // Queued under the headers the change replaced, the first write is
+        // dropped: whatever of it arrived went before the change.
+        expect(
+          carried(sinks, signal, first, "authorization", changed),
+        ).toEqual([]);
+        for (const value of carried(sinks, signal, first, "authorization")) {
+          expect(value).toBe("Bearer one");
+        }
+      }
     },
     BUDGET,
   );
 
   it(
-    "send nothing while telemetry_enabled is false, and send again once it is true, with no setting written again",
+    "send nothing while telemetry_enabled is false, drop what was queued before it went off, and send again once it is true, with no setting written again",
     async () => {
       const sinks = await receiver();
       const server = await boot("telemetry-settings-switch", sinks.serverEnv());
+      const queued = `queued-${randomUUID()}`;
+      await fault(server, queued);
       await configured(server, { telemetry_enabled: false });
+      const exported = sinks.exports.length;
+      const tracked = sinks.trackedErrors.length;
       const off = `switched-off-${randomUUID()}`;
       await fault(server, off);
       await configured(server, { telemetry_enabled: true });
@@ -191,6 +208,14 @@ describe("the telemetry settings", () => {
       expect(carried(sinks, "traces", off, "content-type")).toEqual([]);
       expect(carried(sinks, "logs", off, "content-type")).toEqual([]);
       expect(exceptionOf(sinks, off)).toBe(false);
+      // Queued before the switch went off, the first fault is dropped:
+      // whatever of it arrived went before the switch.
+      for (const signal of ["traces", "logs"] as const) {
+        expect(
+          carried(sinks, signal, queued, "content-type", exported),
+        ).toEqual([]);
+      }
+      expect(exceptionOf(sinks, queued, tracked)).toBe(false);
     },
     BUDGET,
   );
@@ -206,8 +231,8 @@ describe("the telemetry settings", () => {
       const variables: Record<string, string> = {
         OTEL_SDK_DISABLED: "true",
         OTEL_EXPORTER_OTLP_ENDPOINT: plantedOrigin,
-        OTEL_EXPORTER_OTLP_HEADERS: `authorization=${plantedValue}`,
-        OTEL_EXPORTER_OTLP_TRACES_HEADERS: `x-planted=${plantedValue}`,
+        OTEL_EXPORTER_OTLP_HEADERS: `authorization=${plantedValue},content-type=application/x-planted`,
+        OTEL_EXPORTER_OTLP_TRACES_HEADERS: `x-planted=${plantedValue},content-type=application/x-planted`,
         OTEL_TRACES_SAMPLER: "always_off",
         OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT: "0",
         OTEL_SERVICE_NAME: plantedValue,
@@ -231,6 +256,9 @@ describe("the telemetry settings", () => {
         ]);
         expect(carried(sinks, signal, requestId, "x-planted")).toEqual([
           undefined,
+        ]);
+        expect(carried(sinks, signal, requestId, "content-type")).toEqual([
+          "application/json",
         ]);
       }
       expect(exceptionOf(sinks, requestId)).toBe(true);
