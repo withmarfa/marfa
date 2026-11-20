@@ -2968,3 +2968,111 @@ mod tests {
         assert_eq!(after, before);
     }
 }
+
+/// A real watch over a scripted server, on the manual clock, so a fixed
+/// simulated time can be counted in passes and requests.
+#[cfg(all(test, debug_assertions))]
+mod backoff_tests {
+    use super::*;
+    use crate::folder::WatchRecord;
+    use crate::folder::held_links_tests::{nothing_found, online_folder};
+    use crate::scripted::{json, root};
+
+    const OTHER_INSTANCE: &str = "11111111-1111-7111-8111-111111111111";
+    const FOLDER: &str = "/items/01a00000-0000-7000-8000-000000000001";
+
+    /// Ten simulated minutes, a second at a time, giving the watch a moment
+    /// of real time at each step for what it sends.
+    fn ten_minutes(ended: &AtomicBool, mut each: impl FnMut(usize)) {
+        for second in 0..600 {
+            if ended.load(Ordering::SeqCst) {
+                return;
+            }
+            each(second);
+            crate::clock::advance(SECOND);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    const SECOND: Duration = Duration::from_secs(1);
+
+    fn passes() -> usize {
+        crate::fault::reached("folder-pass-start")
+    }
+
+    #[test]
+    fn a_folder_whose_server_answers_as_another_instance_stops_and_sends_almost_nothing() {
+        let (dir, folder, server) = online_folder(nothing_found());
+        server.on("/", vec![root(OTHER_INSTANCE)]);
+        let record = WatchRecord::at(dir.path().join("record.json"), 1, Duration::from_secs(5));
+        crate::clock::set_manual(true);
+        crate::fault::observe(true);
+        let (stop, ended) = (AtomicBool::new(false), AtomicBool::new(false));
+        let watched = std::thread::scope(|scope| {
+            let watching = scope.spawn(|| {
+                let watched = record.watch_folder(&folder, &stop, |_| Ok::<(), ()>(()));
+                ended.store(true, Ordering::SeqCst);
+                watched
+            });
+            ten_minutes(&ended, |_| {});
+            stop.store(true, Ordering::SeqCst);
+            watching.join().unwrap()
+        });
+        let roots = server.seen("/").len();
+        crate::clock::set_manual(false);
+        match watched {
+            Err(WatchError::InstanceChanged { server: said, .. }) => {
+                assert_eq!(said, server.url());
+            }
+            other => panic!("the watch did not stop for the other instance: {other:?}"),
+        }
+        assert!(roots <= 3, "{roots} reads of the root");
+        assert!(passes() <= 2, "{} passes", passes());
+        assert_eq!(
+            record.state_of(folder.root()),
+            Some((false, Some(crate::http::INSTANCE_CHANGED.into())))
+        );
+        let said = instance_changed_said(&server.url());
+        assert!(said.contains(&server.url()) && said.contains("marfa folders add"));
+    }
+
+    #[test]
+    fn passes_that_keep_failing_back_off_and_a_real_change_ends_the_wait() {
+        let (_dir, folder, server) = online_folder(nothing_found());
+        server.on(FOLDER, vec![json(503, r#"{"error":{"code":"unavailable","message":"scripted"}}"#)]);
+        crate::clock::set_manual(true);
+        crate::fault::observe(true);
+        let (stop, ended) = (AtomicBool::new(false), AtomicBool::new(false));
+        let mut before_change = 0;
+        let mut after_change = 0;
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let _ = folder.watch(&stop, |_| Ok::<(), ()>(()));
+                ended.store(true, Ordering::SeqCst);
+            });
+            ten_minutes(&ended, |second| match second {
+                590 => {
+                    before_change = passes();
+                    std::fs::write(folder.root().join("Changed.md"), "a real change\n").unwrap();
+                    // The watcher's event arrives on the system's time.
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                595 => after_change = passes(),
+                _ => {}
+            });
+            stop.store(true, Ordering::SeqCst);
+        });
+        crate::clock::set_manual(false);
+        assert!(!ended.load(Ordering::SeqCst) || stop.load(Ordering::SeqCst));
+        // The witness: the passes ran and failed.
+        assert!(before_change >= 2, "{before_change} passes");
+        assert!(
+            before_change <= 12,
+            "{before_change} passes in ten minutes of failing ones"
+        );
+        assert!(
+            after_change > before_change,
+            "no pass ran within five seconds of a change on disk"
+        );
+    }
+}
