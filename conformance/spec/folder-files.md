@@ -606,6 +606,90 @@ When a watch cannot read the current key, a device MUST suppress repeated key re
 
 **Tests:** `device/folders-placement.test.ts › asks a key it could not read again at most once a minute while watching`.
 
+## The file's form
+
+A document's form is how its frontmatter is written, apart from what it says: its top-level keys in order, which of them are empty, and each value's style (plain, single-quoted, double-quoted, a block of text, a date written as a day, or a flow or block list, with the style of the list's items). The item's `in-folder` edge carries it as `form` (`edges/folder-form-kept`), so a directory that never had the file writes it as the directory that made it did.
+
+### `folder-files/form-sent`
+
+Where the server's `in-folder` edge type declares a `form`, when a device places a document it read from its directory, a device MUST send the document's form as the `form` of the item's `in-folder` edge.
+
+**Tests:** `device/folders-form-live.test.ts › sends a file's form on its placement, holding each key's style and no value or comment`.
+
+### `folder-files/form-no-value`
+
+A device MUST NOT send a frontmatter value or a frontmatter comment in a `form`.
+
+**Reason:** the item already holds the values, and a value kept on the edge would outlive the item's own change.
+
+**Tests:** `device/folders-form-live.test.ts › sends a file's form on its placement, holding each key's style and no value or comment`.
+
+### `folder-files/form-refused-key`
+
+If a document shows a key whose value the item does not hold, because the server or the device refused that change, then a device MUST leave the key out of the `form` it sends.
+
+**Reason:** a form names only what the item took, so a key the server refused never reaches the edge or another directory.
+
+**Tests:** `device/folders-form-live.test.ts › leaves a key whose change was refused out of a file's form`.
+
+### `folder-files/form-changed`
+
+When a person changes a document so that its form differs from the `form` its `in-folder` edge holds, a device MUST send the new form once the server has taken the change to the item.
+
+**Tests:** `device/folders-form-live.test.ts › sends a changed form from the directory where the file changed, and rewrites no file elsewhere for it`.
+
+### `folder-files/form-filled`
+
+When a device reads a document whose `in-folder` edge holds no `form`, a device MUST send the document's form once.
+
+**Reason:** a directory that followed the folder before forms existed fills them in without a change to the files.
+
+**Tests:** `device/folders-form-live.test.ts › fills the form of a placement that holds none once, from a directory where a person wrote the file`.
+
+### `folder-files/form-written`
+
+When a device writes a document its directory does not hold and the item's `in-folder` edge holds a `form`, a device MUST write the frontmatter keys in the form's order, each value in the form's style where that style shows the value the item holds.
+
+**Reason:** two directories of one folder then hold the same bytes for the same item.
+
+**Tests:** `device/folders-form-live.test.ts › writes each file new to a second directory as the directory that made it wrote it`.
+
+### `folder-files/form-empty`
+
+When a device writes a document its directory does not hold, a device MUST write each key that the item's `form` holds as empty, and that the item holds no value for, as an empty key.
+
+**Tests:** `device/folders-form-live.test.ts › writes each file new to a second directory as the directory that made it wrote it`.
+
+### `folder-files/form-day`
+
+If the item's `form` writes a date as a day and the item's value is not exactly midnight UTC, then a device MUST write the value's full time.
+
+**Reason:** a day alone is read back as midnight UTC, so writing a later time as a day would change it.
+
+**Tests:** `device/folders-form-live.test.ts › writes a day only for a time that is midnight in UTC, and the full time otherwise`.
+
+### `folder-files/form-none`
+
+When a device writes a document its directory does not hold and the item's `in-folder` edge holds no `form`, a device MUST write the frontmatter in the order and styles it uses for an item no file has shown.
+
+**Tests:** `device/folders-form-live.test.ts › writes each file new to a second directory as the directory that made it wrote it`.
+
+### `folder-files/form-alone-no-rewrite`
+
+When only the `form` of an item's `in-folder` edge changes, a device MUST NOT rewrite the item's file.
+
+**Reason:** a form says how a file is written, not what it says, so a directory's own copy stays as it is.
+
+**Tests:** `device/folders-form-live.test.ts › sends a changed form from the directory where the file changed, and rewrites no file elsewhere for it`.
+
+### `folder-files/form-older-server`
+
+Where the server's `in-folder` edge type declares no `form`, a device MUST NOT send a `form`.
+
+**Reason:** an older server refuses an `in-folder` property it does not declare, and the placement still goes without it.
+
+**Tests:** `device/folders-form-live.test.ts › sends no form to a server whose in-folder edge type declares none`.
+
 ## Ending a placement
 
 ### `folder-files/placement-end-departure`
