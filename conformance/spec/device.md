@@ -8246,21 +8246,22 @@ A refusal the CLI reports carries one `code`, a lowercase snake case word. The f
 | `not_answerable`       | The copy does not hold what a count needs, so only the server can answer it. No other failure carries it, so a caller that asks the server on it never repeats a request that failed for another reason.                                                                                                                |
 | `fault`                | The core itself failed, and a panic it caught ended the call.                                                                                                                                                                                                                                                           |
 
-| Code                     | Meaning                                                                                    |
-| ------------------------ | ------------------------------------------------------------------------------------------ |
-| `usage`                  | The command line or the profile file was wrong.                                            |
-| `watch`                  | The folder watch failed.                                                                   |
-| `install`                | The service manager, Docker, Tailscale or the server did not do what `marfa server` needs. |
-| `no_store`               | The command names no working copy, or none is at the path it names.                        |
-| `no_credential`          | No credential is held for the server.                                                      |
-| `key_command`            | A profile's key command gave no key.                                                       |
-| `device_code_ended`      | The device code `login` waits on is no longer valid, and a new `login` replaces it.        |
-| `blobs_missing`          | An archive lacks blobs its manifest names.                                                 |
-| `docs_page_not_found`    | The docs site has no page at the path.                                                     |
-| `docs_section_not_found` | The docs page has no heading of that name.                                                 |
-| `docs_unreachable`       | The docs site cannot be read.                                                              |
-| `conflict`               | A server answered `409` to a command.                                                      |
-| `too_large`              | A server answered `413` to a command.                                                      |
+| Code                     | Meaning                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------ |
+| `usage`                  | The command line or the profile file was wrong.                                                  |
+| `watch`                  | The folder watch failed.                                                                         |
+| `instance_changed`       | A folder's server answers as another Marfa instance, which holds neither the folder nor its key. |
+| `install`                | The service manager, Docker, Tailscale or the server did not do what `marfa server` needs.       |
+| `no_store`               | The command names no working copy, or none is at the path it names.                              |
+| `no_credential`          | No credential is held for the server.                                                            |
+| `key_command`            | A profile's key command gave no key.                                                             |
+| `device_code_ended`      | The device code `login` waits on is no longer valid, and a new `login` replaces it.              |
+| `blobs_missing`          | An archive lacks blobs its manifest names.                                                       |
+| `docs_page_not_found`    | The docs site has no page at the path.                                                           |
+| `docs_section_not_found` | The docs page has no heading of that name.                                                       |
+| `docs_unreachable`       | The docs site cannot be read.                                                                    |
+| `conflict`               | A server answered `409` to a command.                                                            |
+| `too_large`              | A server answered `413` to a command.                                                            |
 
 ### `device/error-codes-closed`
 

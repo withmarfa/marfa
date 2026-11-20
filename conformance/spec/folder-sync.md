@@ -140,6 +140,14 @@ If a folder's watch ends because its server answers as another Marfa instance, t
 
 **Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
 
+### `folder-sync/watch-instance-changed-exit`
+
+If `folders watch` of one directory ends because the folder's server answers as another Marfa instance, then the CLI MUST exit 4 with the code `instance_changed`.
+
+**Reason:** Exit 3 tells a script to try again, and no retry reaches a folder the other instance does not hold.
+
+**Tests:** `device/folders.test.ts › ends a watch of one folder whose server answers as another instance with exit 4 and the code instance_changed, as its status does`.
+
 ### `folder-sync/watch-failing-passes-back-off`
 
 While a folder watch's passes keep ending with a problem, such as a server it cannot reach, a device MUST wait before each next pass for a time that starts at one second and doubles after each such pass up to five minutes.
@@ -314,11 +322,19 @@ When `folders status` runs and no current entry in the record of folder watches 
 
 ### `folder-sync/status-watch-instance-changed`
 
-When `folders status` runs while the record of folder watches lists the folder with `reason` `instance_changed` and no current entry lists it as watched, the CLI MUST report that the server at the folder's address answers as another Marfa instance, naming that address.
+When `folders status` runs while the record of folder watches lists the folder the directory follows with `reason` `instance_changed`, no current entry lists it as watched, and no watch's pass has left that folder in step since the entry was last written, the CLI MUST report that the server at the folder's address answers as another Marfa instance, naming that address.
 
-**Reason:** A person who reads the status of a folder whose watch stopped learns why, rather than that its copy is not whole.
+**Reason:** A person who reads the status of a folder whose watch stopped learns why, rather than that its copy is not whole, and a directory added again or brought back in step is not said to be stopped.
 
-**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
+**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`, `device/folders.test.ts › says a folder's stop for another instance in its status only until a later watch leaves the folder in step`.
+
+### `folder-sync/status-watch-instance-changed-exit`
+
+If `folders status` reports a folder as `folder-sync/status-watch-instance-changed` says and its working copy is refused as expired or not whole, then the CLI MUST exit 4 with the code `instance_changed`.
+
+**Reason:** The copy expired because of the instance change, so its own refusal would only tell the person to wait for a hydration that cannot come.
+
+**Tests:** `device/folders.test.ts › ends a watch of one folder whose server answers as another instance with exit 4 and the code instance_changed, as its status does`, `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
 
 ## Pausing a directory's sync
 

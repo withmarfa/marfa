@@ -888,6 +888,7 @@ describe("a watch of every folder", () => {
       const status = await b.folder.status();
       expect(JSON.stringify(status)).toContain("another Marfa instance");
       expect(JSON.stringify(status)).toContain(b.server.url);
+      expect(status.ok || status.refusal.code).toBe("instance_changed");
     });
 
     it("reads only the root of a folder another instance answers for, at each timed look, and watches it again once its own instance answers", async () => {
