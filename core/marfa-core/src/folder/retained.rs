@@ -70,6 +70,18 @@ fn kept_file(row: &state::Retained) -> KeptFile {
     }
 }
 
+pub(super) const UNREAD: &str = "Marfa could not read its record";
+
+fn unread_file(row: &state::Unread) -> KeptFile {
+    KeptFile {
+        path: joined(&row.aside, &row.kept),
+        from: row.from.clone(),
+        writers: "unknown",
+        until: None,
+        reason: UNREAD.into(),
+    }
+}
+
 /// Why a file set aside at `path` is kept, by what the last look found.
 pub(super) fn retained_reason(path: &str, retained: &landing::Retained) -> String {
     let set_aside =
@@ -314,8 +326,10 @@ impl Folder {
     pub fn kept_files(&self) -> Result<Vec<KeptFile>> {
         let mut files: Vec<KeptFile> = state::retained(&*self.core.conn()?)?
             .iter()
-            .flatten()
-            .map(kept_file)
+            .map(|row| match row {
+                Ok(row) => kept_file(row),
+                Err(row) => unread_file(row),
+            })
             .collect();
         files.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(files)
@@ -368,9 +382,12 @@ impl Folder {
                                 opened.push((row, open));
                             }
                         }
-                        // What it kept stays under its reserved name, which
-                        // every scan reports.
-                        Err(id) => state::clear_retained(&conn, id)?,
+                        // Left for the owner to discard.
+                        Err(row) if discard => {
+                            let settled = self.discard_unread(&conn, row)?;
+                            looked.push((unread_file(row), settled));
+                        }
+                        Err(_) => {}
                     }
                 }
                 if !discard {
@@ -407,6 +424,26 @@ impl Folder {
             self.forget_inventory();
         }
         Ok(looked)
+    }
+
+    /// Deletes the file of a row that does not read, which only the owner's
+    /// discard does, since nothing tells whether a program wrote to it.
+    fn discard_unread(
+        &self,
+        conn: &rusqlite::Connection,
+        row: &state::Unread,
+    ) -> Result<RowSettled> {
+        let removed = self
+            .place_dir(&row.aside)
+            .and_then(|aside| aside.unlink(Path::new(&row.kept)));
+        let settled = match removed {
+            Ok(()) => RowSettled::Discarded,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => RowSettled::Gone,
+            // Listed still, for another try.
+            Err(_) => return Ok(RowSettled::Kept),
+        };
+        state::clear_retained(conn, &row.id)?;
+        Ok(settled)
     }
 
     /// `row`'s directory, the directory its reserved name is in, and the file
@@ -550,6 +587,47 @@ mod tests {
         let done = folder.discard_kept().unwrap();
         assert_eq!(done.discarded, vec![kept[0].path.clone()]);
         assert!(done.put_back.is_empty() && done.kept.is_empty(), "{done:?}");
+        assert!(reserved_in(&root.join("Notes")).is_empty());
+        assert!(folder.kept_files().unwrap().is_empty());
+        assert!(holds(&root, "changed elsewhere"));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_kept_file_whose_record_does_not_read_is_listed_and_discarded() {
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        changed_on_the_server(&root, &folder);
+        {
+            let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+            folder.pull().unwrap();
+        }
+        let reserved = reserved_in(&root.join("Notes"));
+        assert_eq!(reserved.len(), 1);
+        let path = format!("Notes/{}", reserved[0]);
+        // The witness: while its record reads, it is listed.
+        assert_eq!(folder.kept_files().unwrap()[0].path, path);
+        folder
+            .core
+            .conn()
+            .unwrap()
+            .execute(
+                "UPDATE meta SET value = json_set(value, '$.retained.since', 'soon') WHERE key LIKE 'folder_retained:%'",
+                [],
+            )
+            .unwrap();
+
+        folder.scan().unwrap();
+        let kept = Folder::kept_of(&root).unwrap();
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0].path, path);
+        assert_eq!(kept[0].from, "Notes/Plan.md");
+        assert_eq!(kept[0].reason, "Marfa could not read its record");
+        assert_eq!(reserved_in(&root.join("Notes")), reserved);
+
+        let done = folder.discard_kept().unwrap();
+        assert_eq!(done.discarded, vec![path], "{done:?}");
+        assert!(done.kept.is_empty(), "{done:?}");
         assert!(reserved_in(&root.join("Notes")).is_empty());
         assert!(folder.kept_files().unwrap().is_empty());
         assert!(holds(&root, "changed elsewhere"));

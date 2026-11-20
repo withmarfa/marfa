@@ -652,7 +652,7 @@ fn found(dir: &Directory, name: &Path, known: Known<'_>) -> io::Result<Found> {
 
 /// A name no sweep removes and no walk takes, in a directory on the target's
 /// volume.
-fn reserved(id: &str) -> PathBuf {
+pub(crate) fn reserved(id: &str) -> PathBuf {
     PathBuf::from(format!("{RESERVED}{id}.tmp"))
 }
 

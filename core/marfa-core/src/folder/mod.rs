@@ -1569,20 +1569,7 @@ impl Folder {
     /// folder's state, or absolute, where it is still the directory `at`
     /// names. Another directory at that path answers as not found.
     fn displaced_dir(&self, place: &str, at: (u64, u64)) -> std::io::Result<Directory> {
-        let place = Path::new(place);
-        let directory = if place.is_absolute() {
-            Directory::open(place)?
-        } else if place.as_os_str().is_empty() {
-            self.root_dir.clone()
-        } else if let Ok(below) = place.strip_prefix(STATE_DIR) {
-            if below.as_os_str().is_empty() {
-                self.state_dir.clone()
-            } else {
-                self.state_dir.child(below, false)?
-            }
-        } else {
-            self.root_dir.child(place, false)?
-        };
+        let directory = self.place_dir(place)?;
         if !same_directory(
             landing::identity(&directory.metadata()?),
             at,
@@ -1594,6 +1581,24 @@ impl Folder {
             ));
         }
         Ok(directory)
+    }
+
+    /// The directory a row names by `place`, whatever directory has that name.
+    fn place_dir(&self, place: &str) -> std::io::Result<Directory> {
+        let place = Path::new(place);
+        Ok(if place.is_absolute() {
+            Directory::open(place)?
+        } else if place.as_os_str().is_empty() {
+            self.root_dir.clone()
+        } else if let Ok(below) = place.strip_prefix(STATE_DIR) {
+            if below.as_os_str().is_empty() {
+                self.state_dir.clone()
+            } else {
+                self.state_dir.child(below, false)?
+            }
+        } else {
+            self.root_dir.child(place, false)?
+        })
     }
 
     /// Whether `row`'s directory, or the one its reserved names are in, is
@@ -1785,13 +1790,15 @@ impl Folder {
             return HashMap::new();
         };
         rows.into_iter()
-            .flatten()
-            .map(|row| {
-                let retained = &row.retained;
-                (
-                    joined(&row.aside, &retained.kept),
-                    retained::retained_reason(&joined(&row.dir, &retained.target), retained),
-                )
+            .map(|row| match row {
+                Ok(row) => {
+                    let retained = &row.retained;
+                    (
+                        joined(&row.aside, &retained.kept),
+                        retained::retained_reason(&joined(&row.dir, &retained.target), retained),
+                    )
+                }
+                Err(row) => (joined(&row.aside, &row.kept), retained::UNREAD.into()),
             })
             .collect()
     }

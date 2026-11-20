@@ -499,12 +499,44 @@ pub(crate) fn clear_retained(conn: &Connection, id: &str) -> Result<(), CoreErro
     crate::store::meta_delete(conn, &format!("{RETAINED}{id}"))
 }
 
-/// Every file kept for a pass to settle. A row that does not read is
-/// answered as its id alone.
-pub(crate) fn retained(conn: &Connection) -> Result<Vec<Result<Retained, String>>, CoreError> {
+/// A kept file whose row does not read, placed by what of the row does.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Unread {
+    pub(crate) id: String,
+    pub(crate) aside: String,
+    /// Its reserved name in `aside`.
+    pub(crate) kept: String,
+    /// The path it came from, where the row names one.
+    pub(crate) from: String,
+}
+
+impl Unread {
+    fn of(id: String, value: &str) -> Unread {
+        let row: serde_json::Value = serde_json::from_str(value).unwrap_or_default();
+        let text = |value: &serde_json::Value| value.as_str().map(str::to_string);
+        let kept = text(&row["retained"]["kept"])
+            .filter(|name| {
+                !name.contains('/') && super::landing::is_reserved(std::path::Path::new(name))
+            })
+            .unwrap_or_else(|| super::landing::reserved(&id).to_string_lossy().into_owned());
+        let from = text(&row["dir"])
+            .zip(text(&row["retained"]["target"]))
+            .map(|(dir, target)| super::joined(&dir, &target))
+            .unwrap_or_default();
+        Unread {
+            aside: text(&row["aside"]).unwrap_or_default(),
+            kept,
+            from,
+            id,
+        }
+    }
+}
+
+/// Every file kept for a pass to settle.
+pub(crate) fn retained(conn: &Connection) -> Result<Vec<Result<Retained, Unread>>, CoreError> {
     Ok(under(conn, RETAINED)?
         .into_iter()
-        .map(|(id, value)| serde_json::from_str(&value).map_err(|_| id))
+        .map(|(id, value)| serde_json::from_str(&value).map_err(|_| Unread::of(id, &value)))
         .collect())
 }
 
