@@ -4,7 +4,7 @@ These rules add to the root `AGENTS.md` and `core/AGENTS.md` for work under `cor
 
 - The server does what the contract in `conformance/spec/` states, and `openapi.json` is its interface. Where the server and either disagree, fix whichever is wrong.
 - Put a rule that the core and the command line also apply in `core/marfa-rules/`, which the server shares with them.
-- The server's migrations are in `core/marfa-server/src/db/migrations/`, one for each schema version in `MIGRATIONS` (`src/db/migrate.rs`). Before 0.1, a schema change either grows the newest migration, so the last release's databases need an export and a restore, or is a new numbered migration, so they upgrade in place; `src/db/pinned.rs` holds each version to what it makes. A migration that cannot run twice, such as one that adds a column, sets `done`.
+- The server's migrations are in `core/marfa-server/src/db/migrations/`, one for each schema version in `MIGRATIONS` (`src/db/migrate.rs`). By default, a schema change adds a new numbered migration, so the last release's databases upgrade in place. A migration that has been released is never edited. `src/db/pinned.rs` holds each version to what it makes. A migration that cannot run twice, such as one that adds a column, sets `done`.
 - The `test-hooks` feature gives the contract fixtures their hooks. The tests compile the server with it and a release build leaves it out, so also lint without it: `cargo clippy --locked -p marfa-server --no-deps -- -D warnings`. The contract fixtures need a server built with `--features test-hooks`.
 - To boot a throwaway server on this machine, use the `local-server` skill.
 
