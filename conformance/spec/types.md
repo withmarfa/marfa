@@ -236,9 +236,9 @@ If `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names a `descript
 
 ### `types/status-word-description`
 
-Where a status word names a `description`, the server MUST keep it with the word and answer it in `status_values` on `GET /types/{id}` and `GET /types`.
+When `POST /types` or `PUT /types/{id}` is taken with a status word that names a `description` that is not empty, the server MUST keep the description with the word and answer it in `status_values` on `GET /types/{id}` and `GET /types`.
 
-**Reason:** a word's name does not always say when to use it, and a child type reads the words it inherits with their descriptions.
+**Reason:** a word's name does not always say when to use it, and a child type reads the words it inherits with their descriptions. A `description` that is an empty string is left out, as for a field.
 
 **Tests:** `compliance/type-guidance.test.ts › keeps a status word's description and reads it on the type and on a child that inherits the word`.
 
@@ -250,7 +250,7 @@ If `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names a `descript
 
 ### `types/guidance`
 
-Where `POST /types` or `PUT /types/{id}` names `guidance` for a type, the server MUST keep it with the type and answer it as `guidance` on `GET /types/{id}` and in `GET /types`.
+When `POST /types` or `PUT /types/{id}` is taken with `guidance` that is not empty, the server MUST keep it with the type and answer it as `guidance` on `GET /types/{id}` and in `GET /types`.
 
 **Tests:** `compliance/type-guidance.test.ts › keeps a type's guidance and reads it back on the type and in the list`.
 
@@ -278,9 +278,9 @@ If `POST /types` or `PUT /types/{id}` names `guidance` that is an empty string, 
 
 ### `types/guidance-register-permission`
 
-If a key without `schema.write` sends `POST /types` naming non-empty `guidance`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` and `details.changes` listing `guidance`.
+If a key without `schema.write` sends `POST /types` naming non-empty `guidance` in a definition that the registration otherwise takes, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` and `details.changes` listing `guidance`.
 
-**Reason:** guidance tells agents how to fill a type, so adding it is a schema change beyond `metadata.types:write`.
+**Reason:** guidance tells agents how to fill a type, so adding it is a schema change beyond `metadata.types:write`. A definition the grammar refuses, such as guidance over the limit or on an `app.*` type, is refused with `400` first (`types/guidance-limit`, `types/guidance-app-refused`).
 
 **Tests:** `compliance/type-guidance.test.ts › answers 403 forbidden naming schema.write and guidance to a key with metadata.types:write alone that registers a type with guidance`.
 
@@ -292,7 +292,9 @@ If a key without `schema.write` sends `POST /types` naming non-empty `guidance`,
 
 ### `types/guidance-replace-permission`
 
-If a key without `schema.write` sends `PUT /types/{id}` that adds, changes or removes the type's `guidance`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` and `details.changes` listing `guidance`.
+If a key without `schema.write` sends `PUT /types/{id}` that adds, changes or removes the type's `guidance` and that the replacement otherwise takes, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` and `details.changes` listing `guidance`.
+
+**Reason:** a replacement the grammar refuses, or one that keeps text over a limit (`types/limits-replace-stored`), is refused with `400` first.
 
 **Tests:** `compliance/type-guidance.test.ts › answers 403 forbidden naming schema.write and guidance to a key with metadata.types:write alone whose replacement adds, changes or removes guidance`.
 
@@ -870,7 +872,7 @@ A status field is a field of the `status` kind, whatever its name: `core.task` c
 
 ### `types/status-groups`
 
-When a type declares a status field whose `status_values` holds one or more entries, each an object of a `value` matching `^[a-z][a-z0-9_]{0,63}$` that no other entry holds, a `group` of `not_started`, `in_progress`, `completed` or `canceled`, and no member but an optional `description` (`types/status-word-description`), the server MUST take it and answer the entries, in order, on `GET /types/{id}`.
+When a type declares a status field whose `status_values` holds one or more entries, each an object of a `value` matching `^[a-z][a-z0-9_]{0,63}$` that no other entry holds, a `group` of `not_started`, `in_progress`, `completed` or `canceled`, and no member but an optional `description` that `types/status-word-description-limit` accepts, the server MUST take it and answer the entries, in order, on `GET /types/{id}`.
 
 **Reason:** the groups are fixed so that a filter, a view or an app reads the same four meanings on every type; a word is a type's own name for where its item stands.
 
@@ -1184,9 +1186,9 @@ A connector's key holds `metadata.types:write` and not `schema.write`, so that a
 
 ### `types/evolve-free`
 
-When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `plural`, `description`, `display_hints`, `version`, or a kept field's `description` or the `label` of the field or of a member of its entries, or the `description` of a kept status word, including when its retained parent or compatibility targets are outside the key's write permissions.
+When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `plural`, `description`, `display_hints`, `version`, or a kept field's `description` or the `label` of the field or of a member of its entries, or the `description` of a kept status word, and whose text is within the limits `types/limits-replace-stored` names, including when its retained parent or compatibility targets are outside the key's write permissions.
 
-**Reason:** each release of a connector adds fields, and these change no stored item and only how the type is presented. A status word's `description` changes nothing an item holds, as a field's does not.
+**Reason:** each release of a connector adds fields, and these change no stored item and only how the type is presented. A status word's `description` changes nothing an item holds, as a field's does not. A type stored over a limit is replaced only with text within it (`types/limits-replace-stored`).
 
 **Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`, `› admits a change to the plural and to a kept field's labels on metadata.types:write alone`, `compliance/type-guidance.test.ts › lets a key with metadata.types:write alone change a status word's description and a guided type's description`, `compliance/type-dependency-permissions.test.ts › permits connector label and optional-field updates retaining %s without target write permission`.
 

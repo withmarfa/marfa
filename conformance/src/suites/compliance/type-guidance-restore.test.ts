@@ -1,11 +1,14 @@
+import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { editLineFile } from "../../utils/archive.js";
+import { v7 as uuidv7 } from "uuid";
+import { blobHash, editLineFile, itemsArchive } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { diskHolds } from "../../utils/store-faults.js";
 import {
   connect,
   issuerOrigin,
@@ -319,5 +322,108 @@ describe("an app restoring an archive that carries guidance", () => {
     const restored = await holding.restoreArchive(exported);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect((await reader.getType(KEPT)).data.guidance).toBe(GUIDANCE);
+  });
+
+  it("places no blob bytes of an archive that carries guidance for an app without schema.write, though an app holding schema.write places them", async () => {
+    /** An archive of one file item, its blob and a type that carries guidance. */
+    const carrying = (name: string) => {
+      const bytes = new Uint8Array(randomBytes(64));
+      const hash = blobHash(bytes);
+      const archive = itemsArchive(
+        [
+          {
+            id: uuidv7(),
+            type: "core.file",
+            source: "guidance-blob",
+            properties: { blob_ref: hash, mime_type: "application/x-guided" },
+          },
+        ],
+        [{ data: bytes, mime_type: "application/x-guided" }],
+        [
+          {
+            id: `user.guided-with-blob-${name}`,
+            guidance: "Use it.",
+            fields: { title: { type: "string" } },
+          },
+        ],
+      );
+      return { hash, archive };
+    };
+    const reader = new MarfaClient({
+      baseUrl: keyed.apiUrl,
+      apiKey: keyed.workingKey,
+    });
+
+    // The witness: the same kind of archive places its blob for an app holding schema.write.
+    const holding = await appToken("backups.manage schema.write");
+    const placed = carrying("witness");
+    expect((await reader.downloadBlob(placed.hash)).status).toBe(404);
+    const restored = await holding.restoreArchive(placed.archive);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data).toMatchObject({ blobs_imported: 1 });
+    expect((await reader.downloadBlob(placed.hash)).status).toBe(200);
+    expect(await diskHolds(keyed.controlSocket, placed.hash)).toBe(true);
+
+    const refused = carrying("refused");
+    const lacking = await appToken("backups.manage");
+    const answer = await lacking.restoreArchive(refused.archive);
+    expect(answer.status, JSON.stringify(answer.error)).toBe(403);
+    expect((await reader.downloadBlob(refused.hash)).status).toBe(404);
+    // Not placed and left unrecorded: no store holds the bytes.
+    expect(await diskHolds(keyed.controlSocket, refused.hash)).toBe(false);
+  });
+
+  it("answers 400 invalid_schema rather than 403 to an app without schema.write for an archive that gives an app type guidance", async () => {
+    const fields = { title: { type: "string" } };
+    const guided = {
+      id: "user.guided-order-user",
+      guidance: "Use it.",
+      fields,
+    };
+    const lacking = await appToken("backups.manage");
+    // The witness: guidance on a user type alone is refused for the permission.
+    const alone = await lacking.restoreArchive(itemsArchive([], [], [guided]));
+    expect(alone.status, JSON.stringify(alone.error)).toBe(403);
+
+    const both = itemsArchive(
+      [],
+      [],
+      [guided, { id: "app.guided.order", guidance: "Use it.", fields }],
+    );
+    const refused = await lacking.restoreArchive(both);
+    expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+  });
+
+  it("answers 409 conflict rather than 403 to an app without schema.write for an archive that registers a type the instance holds differently", async () => {
+    const reader = new MarfaClient({
+      baseUrl: keyed.apiUrl,
+      apiKey: keyed.workingKey,
+    });
+    const held = "user.guided-order-held";
+    const fields = { title: { type: "string" } };
+    expect(
+      (await reader.registerType({ id: held, fields } as never)).status,
+    ).toBe(201);
+    const lacking = await appToken("backups.manage");
+    const guided = {
+      id: "user.guided-order-other",
+      guidance: "Use it.",
+      fields,
+    };
+    // The witness: the guided type alone is refused for the permission.
+    const alone = await lacking.restoreArchive(itemsArchive([], [], [guided]));
+    expect(alone.status, JSON.stringify(alone.error)).toBe(403);
+
+    const refused = await lacking.restoreArchive(
+      itemsArchive(
+        [],
+        [],
+        [guided, { id: held, description: "Held differently.", fields }],
+      ),
+    );
+    expect(refused.status, JSON.stringify(refused.error)).toBe(409);
+    expect(refused.error?.error.code).toBe("conflict");
+    expect(refused.error?.error.details?.conflicting_ids).toEqual([held]);
   });
 });

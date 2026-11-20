@@ -61,6 +61,52 @@ async function registered(id: string) {
   return (await client.getType(id)).status === 200;
 }
 
+/** The commands that send a definition, each with the request it makes of the scripted server. */
+const COMMANDS = [
+  {
+    verb: "register",
+    args: () => ["types", "register"],
+    method: "POST",
+    path: () => "/types",
+  },
+  {
+    verb: "replace",
+    args: (id: string) => ["types", "replace", id],
+    method: "PUT",
+    path: (id: string) => `/types/${id}`,
+  },
+  {
+    verb: "normalize",
+    args: () => ["types", "normalize"],
+    method: "POST",
+    path: () => "/types/normalize",
+  },
+];
+
+/** How many requests that change something the scripted server has seen. */
+const writes = () =>
+  heard.requests.filter((request) => request.method !== "GET").length;
+
+/** The body of the request `command` sends for `rest`, read off the scripted server. */
+async function bodySent(
+  command: (typeof COMMANDS)[number],
+  id: string,
+  rest: string[],
+  options?: { cwd?: string; input?: string },
+): Promise<Record<string, unknown>> {
+  const before = heard.requests.length;
+  await marfa(["--json", ...command.args(id), ...rest], quietEnv, options);
+  const made = heard.requests
+    .slice(before)
+    .filter(
+      (request) =>
+        request.method === command.method &&
+        request.pathname === command.path(id),
+    );
+  expect(made, `${command.verb} ${rest.join(" ")}`).toHaveLength(1);
+  return JSON.parse(made[0].body) as Record<string, unknown>;
+}
+
 describe("a type's guidance beside its definition", () => {
   it("sends the Markdown file beside the definition as its guidance on register, replace and normalize", async () => {
     const id = idOf("guided");
@@ -94,6 +140,39 @@ describe("a type's guidance beside its definition", () => {
   });
 
   it("sends a definition as it is when no Markdown file sits beside it, on register and replace, from a file, --body and --file -", async () => {
+    const sending = COMMANDS.filter((command) => command.verb !== "normalize");
+    // The witness: with a Markdown file beside it, each command sends guidance.
+    for (const command of sending) {
+      const named = idOf(`witness_${command.verb}`);
+      const path = write(named, { id: named, fields: FIELDS }, "Sent.");
+      const body = await bodySent(command, named, ["--file", path]);
+      expect(body.guidance, command.verb).toBe("Sent.");
+    }
+    // No such file, or a file that inline and stdin input never read: the request carries
+    // the definition and no `guidance`.
+    writeFileSync(join(folder, "-.md"), "Not sent.");
+    for (const command of sending) {
+      const named = idOf(`quiet_${command.verb}`);
+      const definition = { id: named, fields: FIELDS };
+      const text = JSON.stringify(definition);
+      write(named, definition, "Not sent.");
+      const alone = idOf(`quiet_alone_${command.verb}`);
+      const cases: [string, string[], { cwd?: string; input?: string }?][] = [
+        ["--body", ["--body", text], { cwd: folder }],
+        ["--file -", ["--file", "-"], { cwd: folder, input: text }],
+        [
+          "a file",
+          ["--file", write(alone, { id: alone, fields: FIELDS })],
+          undefined,
+        ],
+      ];
+      for (const [label, rest, options] of cases) {
+        const body = await bodySent(command, named, rest, options);
+        expect(body, `${command.verb} ${label}`).not.toHaveProperty("guidance");
+        expect(body.fields, `${command.verb} ${label}`).toEqual(FIELDS);
+      }
+    }
+
     const id = idOf("unbesides");
     const path = write(id, { id, fields: FIELDS });
     const made = await marfa(
@@ -241,21 +320,19 @@ describe("a type's guidance beside its definition", () => {
       { id, fields: FIELDS, guidance: "In the JSON." },
       "In the file.",
     );
+    // The witness: the same definition without the file is sent by each command.
+    const alone = idOf("twice_quiet_alone");
+    const held = writes();
+    await onEach(
+      write(alone, { id: alone, fields: FIELDS, guidance: "In the JSON." }),
+      alone,
+      quietEnv,
+    );
+    expect(writes() - held).toBe(COMMANDS.length);
+
     const before = heard.requests.length;
     await onEach(path, id, quietEnv);
     expect(heard.requests.length).toBe(before);
-    const alone = idOf("twice_quiet_alone");
-    await marfa(
-      [
-        "--json",
-        "types",
-        "register",
-        "--file",
-        write(alone, { id: alone, fields: FIELDS, guidance: "In the JSON." }),
-      ],
-      quietEnv,
-    );
-    expect(heard.requests.length).toBeGreaterThan(before);
   });
 
   const UNREADABLE = [
@@ -289,24 +366,22 @@ describe("a type's guidance beside its definition", () => {
   });
 
   it("sends no request for a Markdown file that is not UTF-8 or starts with a byte-order mark, though a readable one sends one", async () => {
+    // The witness: a readable file is sent by each command.
+    const good = idOf("good_quiet");
+    const held = writes();
+    await onEach(
+      write(good, { id: good, fields: FIELDS }, "Use it."),
+      good,
+      quietEnv,
+    );
+    expect(writes() - held).toBe(COMMANDS.length);
+
     const before = heard.requests.length;
     for (const [name, bytes] of UNREADABLE) {
       const id = idOf(`bad_quiet_${name}`);
       await onEach(write(id, { id, fields: FIELDS }, bytes), id, quietEnv);
     }
     expect(heard.requests.length).toBe(before);
-    const id = idOf("good_quiet");
-    await marfa(
-      [
-        "--json",
-        "types",
-        "register",
-        "--file",
-        write(id, { id, fields: FIELDS }, "Use it."),
-      ],
-      quietEnv,
-    );
-    expect(heard.requests.length).toBeGreaterThan(before);
   });
 
   it("prints a type's guidance and its ancestors' as members under --json and as text otherwise", async () => {

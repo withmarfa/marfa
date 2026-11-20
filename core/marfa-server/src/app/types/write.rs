@@ -554,6 +554,7 @@ async fn change_icon(
 }
 
 /// An archive's type line: the definition and who made it.
+#[derive(Clone)]
 pub struct Archived {
     pub definition: Value,
     pub created_by: Option<Value>,

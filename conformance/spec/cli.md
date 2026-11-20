@@ -1626,7 +1626,9 @@ When `marfa types get` reads a type that has guidance or ancestors that carry gu
 
 ### `cli/normalize-cli`
 
-When a caller runs `marfa types normalize` with a definition supplied by `--body`, `--file PATH` or `--file -`, the CLI MUST send the declared input to `POST /types/normalize` and return its answer.
+When a caller runs `marfa types normalize` with a definition supplied by `--body`, `--file PATH` or `--file -`, the CLI MUST send the definition it read, with the `guidance` that `cli/types-guidance-file` takes from `PATH.md`, to `POST /types/normalize` and return its answer.
+
+**Reason:** a `PATH.md` the CLI refuses (`cli/types-guidance-ambiguous`, `cli/types-guidance-file-refused`) sends no request.
 
 **Tests:** `cli/doors.test.ts › normalizes an inline or stdin declaration with a read-only key and compares the registered definition`.
 
