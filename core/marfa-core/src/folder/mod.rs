@@ -47,8 +47,8 @@ mod watch;
 mod watch_record;
 mod watched;
 pub use every::{
-    Every, EveryFolder, HANDED_OVER, MISSING, PAUSED, RETRY_HANDED, Unwatched, follows, origin_of,
-    watch_every,
+    Every, EveryFolder, Followed, HANDED_OVER, MISSING, PAUSED, RETRY_HANDED, Unwatched, followed,
+    follows, watch_every,
 };
 pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};

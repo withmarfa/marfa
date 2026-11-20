@@ -46,6 +46,10 @@ pub enum CliError {
     #[error("{0}")]
     /// A watch that ended; the answer is the server's, where one ended it.
     Watch(String, Option<Box<ServerAnswer>>),
+    /// A folder whose server answers as another Marfa instance, which holds
+    /// neither the folder nor its key, so no retry reaches it.
+    #[error("{}", marfa_core::folder::instance_changed_said(.0))]
+    InstanceChanged(String),
     #[error("output closed")]
     ClosedOutput,
     /// The status and the server's own code are both kept, because neither
@@ -328,7 +332,7 @@ impl Exit {
                 "the environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a working copy another program was writing to, a docs site that cannot be read, a new build installed under `folders watch --exit-on-new-build`, a sign-in code that is no longer valid); try again"
             }
             Exit::Local => {
-                "the working copy or the queue refused under the device rules, the keychain cannot be used (locked, missing, unreadable, or none on this system), or the core stopped on a fault of its own"
+                "the working copy or the queue refused under the device rules, a folder's server answers as another Marfa instance, the keychain cannot be used (locked, missing, unreadable, or none on this system), or the core stopped on a fault of its own"
             }
             Exit::Credential => {
                 "there is no credential, a profile's key command gave none, the credential was refused, or the sign-in ended; run `marfa login` to start one"
@@ -366,6 +370,7 @@ own_codes! {
     CliError::Io(_) => "io",
     CliError::FolderHeld(_) | CliError::FolderNotHandedOver(_) | CliError::OpenedWithReader => "reading_handle",
     CliError::Watch(..) => "watch",
+    CliError::InstanceChanged(_) => "instance_changed",
     CliError::ClosedOutput => "closed_output",
     CliError::Usage(_) => "usage",
     CliError::Install(_) => "install",
@@ -517,7 +522,8 @@ impl CliError {
             CliError::NoKeychain(_)
             | CliError::FolderHeld(_)
             | CliError::FolderNotHandedOver(_)
-            | CliError::OpenedWithReader => Exit::Local,
+            | CliError::OpenedWithReader
+            | CliError::InstanceChanged(_) => Exit::Local,
         }
     }
 
@@ -943,6 +949,7 @@ mod tests {
             "conflict",
             "too_large",
             "watch",
+            "instance_changed",
             "no_store",
             "no_credential",
             "key_command",

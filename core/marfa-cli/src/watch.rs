@@ -346,12 +346,35 @@ impl EveryFolder for Machine {
     }
 }
 
-/// What a watch said where the record has it stop the folder at `dir`
-/// because another instance answers at its server, and no current watch
-/// holds it since.
+/// The server of the folder at `dir`, where the record has a watch stop the
+/// folder because another instance answers there, and no current watch holds
+/// it since.
 pub fn stopped_for_another_instance(dir: &Path) -> Option<String> {
     let record = WatchRecord::located()?;
     let file = crate::autostart::RecordFile::read(record.path())?;
+    let followed = marfa_core::folder::followed(dir)?;
+    stopped_in(&file, dir, &followed, std::time::SystemTime::now()).then(|| {
+        followed
+            .origin
+            .unwrap_or_else(|| "this folder's address".into())
+    })
+}
+
+/// Only an entry for the folder `dir` follows now counts, and a pass of that
+/// folder left in step after the entry was last written clears it.
+fn stopped_in(
+    file: &crate::autostart::RecordFile,
+    dir: &Path,
+    followed: &marfa_core::folder::Followed,
+    now: std::time::SystemTime,
+) -> bool {
+    let Some(id) = followed.folder.as_deref() else {
+        return false;
+    };
+    let succeeded = followed
+        .last_success_at
+        .as_deref()
+        .and_then(|at| marfa_rules::time::read(at).ok());
     let same = |listed: &str| {
         let listed = Path::new(listed);
         listed == dir
@@ -360,29 +383,20 @@ pub fn stopped_for_another_instance(dir: &Path) -> Option<String> {
                 (Ok(a), Ok(b)) if a == b
             )
     };
-    let now = std::time::SystemTime::now();
-    let entries = file
-        .processes
-        .iter()
-        .flat_map(|process| {
-            process
-                .folders
-                .iter()
-                .filter(|folder| same(&folder.dir))
-                .map(move |folder| (process.current(now), folder))
-        })
-        .collect::<Vec<_>>();
-    let stopped = entries
-        .iter()
-        .any(|(_, folder)| folder.reason.as_deref() == Some(INSTANCE_CHANGED));
-    let held = entries
-        .iter()
-        .any(|(current, folder)| *current && folder.watching);
-    (stopped && !held).then(|| {
-        let server =
-            marfa_core::folder::origin_of(dir).unwrap_or_else(|| "this folder's address".into());
-        marfa_core::folder::instance_changed_said(&server)
-    })
+    let (mut stopped, mut held) = (false, false);
+    for process in &file.processes {
+        let written = process.written_at();
+        for folder in process
+            .folders
+            .iter()
+            .filter(|folder| folder.folder.as_deref() == Some(id) && same(&folder.dir))
+        {
+            held |= folder.watching && process.current(now);
+            stopped |= folder.reason.as_deref() == Some(INSTANCE_CHANGED)
+                && succeeded.is_none_or(|at| written.is_some_and(|written| at <= written));
+        }
+    }
+    stopped && !held
 }
 
 /// Said once: the watch goes on without the record other programs read.
@@ -674,9 +688,7 @@ fn ended(server: &str, error: WatchError<CliError>) -> CliError {
             ),
             error.answer().map(Box::new),
         ),
-        WatchError::InstanceChanged { server, .. } => {
-            CliError::Watch(marfa_core::folder::instance_changed_said(&server), None)
-        }
+        WatchError::InstanceChanged { server, .. } => CliError::InstanceChanged(server),
         WatchError::Unwatchable(reason) => CliError::Watch(reason, None),
         WatchError::Core(error) => error.into(),
         WatchError::Told(error) => error,
@@ -1201,6 +1213,80 @@ mod tests {
             None
         );
         assert!(not_watched(&changed).contains("an hour"));
+    }
+
+    #[test]
+    fn a_folder_s_stop_for_another_instance_counts_only_for_the_folder_it_follows_and_until_a_later_pass()
+     {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        let entry = |folder: &str,
+                     heartbeat: &str,
+                     ended: Option<&str>,
+                     watching: bool,
+                     reason: Option<&str>| {
+            serde_json::json!({
+                "pid": 1,
+                "heartbeat_at": heartbeat,
+                "heartbeat_interval_seconds": 5,
+                "ended_at": ended,
+                "folders": [{
+                    "dir": dir,
+                    "folder": folder,
+                    "watching": watching,
+                    "reason": reason,
+                }],
+            })
+        };
+        let record = |processes: Vec<serde_json::Value>| {
+            serde_json::from_value::<crate::autostart::RecordFile>(
+                serde_json::json!({ "processes": processes }),
+            )
+            .unwrap()
+        };
+        let followed = |folder: &str, last_success_at: Option<&str>| marfa_core::folder::Followed {
+            origin: Some("https://one.test".into()),
+            folder: Some(folder.into()),
+            last_success_at: last_success_at.map(str::to_owned),
+        };
+        let now = std::time::SystemTime::UNIX_EPOCH
+            + Duration::from_millis(
+                u64::try_from(marfa_rules::time::read("2026-11-20T12:00:00.000Z").unwrap())
+                    .unwrap(),
+            );
+        let stop = || {
+            entry(
+                "one",
+                "2026-11-20T11:00:00.000Z",
+                Some("2026-11-20T11:00:01.000Z"),
+                false,
+                Some(INSTANCE_CHANGED),
+            )
+        };
+        let ended = record(vec![stop()]);
+        // The witness: the same entry for the folder it follows, with no pass since.
+        assert!(stopped_in(&ended, dir, &followed("one", None), now));
+        assert!(stopped_in(
+            &ended,
+            dir,
+            &followed("one", Some("2026-11-20T10:59:00.000Z")),
+            now
+        ));
+        // The directory was added again and follows another folder.
+        assert!(!stopped_in(&ended, dir, &followed("two", None), now));
+        // A watch left the folder in step after the stop was written.
+        assert!(!stopped_in(
+            &ended,
+            dir,
+            &followed("one", Some("2026-11-20T11:30:00.000Z")),
+            now
+        ));
+        // A current watch holds it.
+        let held = record(vec![
+            stop(),
+            entry("one", "2026-11-20T11:59:59.000Z", None, true, None),
+        ]);
+        assert!(!stopped_in(&held, dir, &followed("one", None), now));
     }
 
     #[test]

@@ -239,10 +239,27 @@ pub fn follows(registry: &Registry, origin: &str) -> bool {
     })
 }
 
-/// The server the folder at `dir` was hydrated from, read without claiming
-/// the folder.
-pub fn origin_of(dir: &Path) -> Option<String> {
-    stored_origin(dir).ok().flatten()
+/// What the store of the folder at `dir` says it follows, read without
+/// claiming the folder.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Followed {
+    /// The server the copy was hydrated from.
+    pub origin: Option<String>,
+    /// The folder's `system.folder` ID.
+    pub folder: Option<String>,
+    /// When a watch's pass last left the folder in step.
+    pub last_success_at: Option<String>,
+}
+
+pub fn followed(dir: &Path) -> Option<Followed> {
+    let (root, state_dir) = state_of(dir).ok()?;
+    let core = Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite")).ok()?;
+    let conn = core.conn().ok()?;
+    Some(Followed {
+        origin: store::meta_get(&conn, store::META_SERVER_ORIGIN).ok()?,
+        folder: store::meta_get(&conn, super::settings_file::META_FOLDER).ok()?,
+        last_success_at: super::health::last_success_at(&conn),
+    })
 }
 
 fn read(registry: &Registry) -> Listing {
