@@ -1,6 +1,6 @@
 # What a folder holds back
 
-A folder is a directory bound to a `system.folder` item, with a working copy and a queue. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
+A folder is a `system.folder` item on the instance, with its settings, query and ID. A directory is a place on a machine's disk that follows a folder, with a working copy and a queue. A statement about what a device does on disk says directory; one about what the instance holds says folder. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
 
 This chapter holds what a folder holds back until a person confirms: removals and additions, over-limit files, files outside the query, and what status reports about them.
 
@@ -684,7 +684,7 @@ While new files are paused, a device MUST pause the new files that arrive, howev
 
 When every file of a paused addition is deleted, a device MUST release the pause at the next scan, including one that finds a new file, without sending the deleted files.
 
-**Reason:** The pause is the list of held files in the folder's store, so it survives a crash and needs no record that a person must clear.
+**Reason:** The pause is the list of held files in the directory's store, so it survives a crash and needs no record that a person must clear.
 
 **Tests:** `device/folders-additions.test.ts › is let go of when the files are deleted`.
 
@@ -718,7 +718,7 @@ Where a folder's `outside_query` is absent or `send`, a device MUST send a new f
 
 Where a folder's `outside_query` is `hold`, a device MUST NOT send a new file whose item the folder's query would not hold.
 
-**Reason:** A new file has no item. A file bound to an item, or taken in from another folder on the machine, is not new, and `folder-files/unmatched-file-kept` governs it. The query is judged on the item the file would become: its type, tier, state, tags and `filter`, the properties its bytes give a file item, and `beneath`, by the edges the folder's `defaults.edges` would give the item and the edge lines the file's frontmatter writes, each name resolved as the create resolves it. A line whose name resolves to no item adds no edge.
+**Reason:** A new file has no item. A file bound to an item, or taken in from another directory on the machine, is not new, and `folder-files/unmatched-file-kept` governs it. The query is judged on the item the file would become: its type, tier, state, tags and `filter`, the properties its bytes give a file item, and `beneath`, by the edges the folder's `defaults.edges` would give the item and the edge lines the file's frontmatter writes, each name resolved as the create resolves it. A line whose name resolves to no item adds no edge.
 
 **Tests:** `device/folders-outside-query.test.ts › is held unsent and unwritten, shown in status and listed as unmatched`.
 

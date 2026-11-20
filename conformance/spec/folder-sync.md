@@ -1,6 +1,6 @@
 # Keeping in step
 
-A folder is a directory bound to a `system.folder` item, with a working copy and a queue. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
+A folder is a `system.folder` item on the instance, with its settings, query and ID. A directory is a place on a machine's disk that follows a folder, with a working copy and a queue. A statement about what a device does on disk says directory; one about what the instance holds says folder. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
 
 This chapter holds how a watch or a command keeps a folder in step with the server: keeping up, pulls and pushes, watching every folder, and the reports a folder sends.
 
@@ -284,7 +284,7 @@ When a folder is added to an empty directory, a device MUST materialize the held
 
 ### `folder-sync/empty-directory-push`
 
-When a file is edited in a newly added folder directory, a device MUST send that edit during push.
+When a file is edited in a newly added directory, a device MUST send that edit during push.
 
 **Tests:** `device/folders.test.ts › hydrates into an empty directory and pushes without holding anything else`.
 
@@ -352,19 +352,19 @@ When a watch pass exhausts its pull attempts because the working copy keeps chan
 
 ### `folder-sync/watch-store-busy-notice`
 
-If another program's writes to a folder's store keep a `folders watch` from writing to the store, then the CLI MUST report the condition once for each run of failures.
+If another program's writes to a directory's store keep a `folders watch` from writing to the store, then the CLI MUST report the condition once for each run of failures.
 
 **Tests:** `device/store-busy-live.test.ts › says once that another program kept the watch's follow from writing to the folder's store, goes on watching and takes the server's next change`, `› says once that another program kept a watch's pass from writing to the folder's store, goes on watching and sends the edit`.
 
 ### `folder-sync/watch-store-busy-delay`
 
-While another program's writes keep a folder watch's follow from writing to the folder's store, a device MUST double its delay before each next follow from one second up to thirty seconds.
+While another program's writes keep a folder watch's follow from writing to the directory's store, a device MUST double its delay before each next follow from one second up to thirty seconds.
 
 **Tests:** `device/store-busy-live.test.ts › says once that another program kept the watch's follow from writing to the folder's store, goes on watching and takes the server's next change`.
 
 ### `folder-sync/watch-store-busy-retry`
 
-If another program's writes to a folder's store keep a folder watch from writing to the store, then a device MUST continue watching and make the write again from fresh reads.
+If another program's writes to a directory's store keep a folder watch from writing to the store, then a device MUST continue watching and make the write again from fresh reads.
 
 **Tests:** `device/store-busy-live.test.ts › says once that another program kept the watch's follow from writing to the folder's store, goes on watching and takes the server's next change`, `› says once that another program kept a watch's pass from writing to the folder's store, goes on watching and sends the edit`.
 
@@ -382,7 +382,7 @@ When `folders push` or `folders watch` reports items held back by a pull, the CL
 
 ### `folder-sync/elsewhere-unflagged`
 
-When a pull counts an item as `elsewhere` because its file is moving to another folder on the machine, a device MUST NOT include the item in the pull report's `flagged` entries.
+When a pull counts an item as `elsewhere` because its file is moving to another directory on the machine, a device MUST NOT include the item in the pull report's `flagged` entries.
 
 **Tests:** `device/folders-one-mac.test.ts › does not trash a file moved to another folder`.
 
@@ -556,7 +556,7 @@ When a folder's drain begins and the working copy holds, as the server last gave
 
 When a folder's drain begins and the folder's queue holds an edge create the server refused and a later create of the same from item, to item and type that carries every property the earlier one carried and that is unanswered, `blocked` or refused by the server, a device MUST take the earlier create out of the folder's queue, other than a placement, a create another write depends on or follows, a create whose answer a file's record or a link rewrite still waits on, or a create with a receipt or a read still owed.
 
-**Reason:** a refusal the server gave stands until the file changes (`folder-setup/refused-line-retried`), and where the copy does not hold what the server refused it for, such as an edge from an item outside the folder, each save of the file queues the line's edge again under a new id, so without this the queue grows by one create with each save for as long as the refusal stands. The later create carries all the earlier one did. A file's flag and its reason are in the file's record and not in the create, so the file shows the refusal as it did.
+**Reason:** a refusal the server gave stands until the file changes (`folder-setup/refused-line-retried`), and where the copy does not hold what the server refused it for, such as an edge from an item outside the directory, each save of the file queues the line's edge again under a new id, so without this the queue grows by one create with each save for as long as the refusal stands. The later create carries all the earlier one did. A file's flag and its reason are in the file's record and not in the create, so the file shows the refusal as it did.
 
 **Tests:** `device/folders-cleared-answers.test.ts › holds one refused edge create of a line however often its file is saved, and the file keeps its reason`.
 
@@ -656,7 +656,7 @@ Where a renamed Markdown document's title line is as a send-only run left it and
 
 When a folder's copy has not hydrated, the CLI MUST hydrate it before `folders push --send-only` sends.
 
-**Reason:** a drain on a copy that has not hydrated is refused with `no_cursor`; hydrating writes only the folder's store, never an item's file.
+**Reason:** a drain on a copy that has not hydrated is refused with `no_cursor`; hydrating writes only the directory's store, never an item's file.
 
 **Tests:** `device/folders-send-only.test.ts › hydrates a copy that never was first, which writes no file, and then sends`.
 

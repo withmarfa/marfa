@@ -1,6 +1,6 @@
 # How much a pass does, and when
 
-A folder is a directory bound to a `system.folder` item, with a working copy and a queue. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
+A folder is a `system.folder` item on the instance, with its settings, query and ID. A directory is a place on a machine's disk that follows a folder, with a working copy and a queue. A statement about what a device does on disk says directory; one about what the instance holds says folder. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
 
 This chapter holds what a quick pass and a full pass of a folder watch read and render, how often a full pass runs, and how long a watch waits for a file to settle.
 

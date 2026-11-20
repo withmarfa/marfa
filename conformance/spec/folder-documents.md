@@ -1,6 +1,6 @@
 # What a document is
 
-A folder is a directory bound to a `system.folder` item, with a working copy and a queue. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
+A folder is a `system.folder` item on the instance, with its settings, query and ID. A directory is a place on a machine's disk that follows a folder, with a working copy and a queue. A statement about what a device does on disk says directory; one about what the instance holds says folder. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
 
 This chapter holds which files a folder admits as documents, how a document's fields, name, title, versions, edge lines and links are read and written, and what a folder does with a file it cannot read.
 
@@ -54,7 +54,7 @@ When a folder’s include or ignore list contains an invalid gitignore pattern, 
 
 ### `folder-documents/include-paths`
 
-When a folder has a nonempty include list, a device MUST admit only paths whose name or an ancestor directory matches an included gitignore pattern relative to the folder root.
+When a folder has a nonempty include list, a device MUST admit only paths whose name or an ancestor directory matches an included gitignore pattern relative to the directory's root.
 
 **Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folder-patterns.test.ts › keeps the members of the %s range in include patterns`, `device/folder-patterns.test.ts › preserves wildcard matches alongside Unicode equivalence in %s patterns`.
 
@@ -2030,7 +2030,7 @@ When embed syntax occurs in a code span, fenced code block, indented code block 
 
 ### `folder-documents/embed-path`
 
-When a Markdown embed names a path, a device MUST resolve it relative to the embedding document's directory, or the folder root for a leading `/`.
+When a Markdown embed names a path, a device MUST resolve it relative to the embedding document's directory, or the directory's root for a leading `/`.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
 
@@ -2096,7 +2096,7 @@ When a pull materializes a path embed, a device MUST place its file where the do
 
 ### `folder-documents/embed-name-placement`
 
-When a pull materializes a name embed, a device MUST use an existing matching placement or file path, otherwise place a bare name beside the embedding document or a name containing a directory at the folder root.
+When a pull materializes a name embed, a device MUST use an existing matching placement or file path, otherwise place a bare name beside the embedding document or a name containing a directory at the directory's root.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes an embedded file where its link says`, `device/folders-frontmatter.test.ts › writes a file embedded by name where its placement already answers to the name`, `device/folders-frontmatter.test.ts › writes a file embedded by name where another embed's path names it`.
 
@@ -2138,13 +2138,13 @@ When an embedded item is trashed or its ability to carry frontmatter is unknown,
 
 ### `folder-documents/embed-outside`
 
-When an embed path leads outside the folder, a device MUST report the embed in `embeds`.
+When an embed path leads outside the directory, a device MUST report the embed in `embeds`.
 
 **Tests:** `device/folders-frontmatter.test.ts › reports an embed pointing outside the folder`.
 
 ### `folder-documents/embed-outside-no-write`
 
-When an embed path leads outside the folder, a device MUST NOT read or write the file it names.
+When an embed path leads outside the directory, a device MUST NOT read or write the file it names.
 
 **Tests:** `device/folders-frontmatter.test.ts › reports an embed pointing outside the folder`.
 

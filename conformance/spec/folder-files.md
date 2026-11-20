@@ -1,6 +1,6 @@
 # Files on disk
 
-A folder is a directory bound to a `system.folder` item, with a working copy and a queue. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
+A folder is a `system.folder` item on the instance, with its settings, query and ID. A directory is a place on a machine's disk that follows a folder, with a working copy and a queue. A statement about what a device does on disk says directory; one about what the instance holds says folder. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
 
 This chapter holds what a file on disk is to a folder: its identity and placement, how a folder writes, recovers and deletes files, how it treats paths and links, and how it takes in another folder's file.
 
@@ -616,7 +616,7 @@ When a file leaves a folder because its item was trashed or left the query's sta
 
 ### `folder-files/placement-end-transfer`
 
-When a file transfers to another folder on the machine and its original folder's query no longer holds its item, a device MUST delete the original folder's `in-folder` edge for the item.
+When a file transfers to another directory on the machine and its original folder's query no longer holds its item, a device MUST delete the original folder's `in-folder` edge for the item.
 
 **Tests:** `device/folders-one-mac.test.ts › ends a folder's placement of an item whose file another folder took in or let go`, `cli/folder.test.ts › ends a folder's placement of an item whose file another folder took in, and no sooner`.
 
@@ -962,25 +962,25 @@ When a tracked file is absent at startup, a device MUST journal its deletion as 
 
 ### `folder-files/root-gone-no-delete`
 
-While the folder directory is missing or replaced by another directory, a device MUST NOT trash its items because the original files cannot be read.
+While the directory is missing or replaced by another directory, a device MUST NOT trash its items because the original files cannot be read.
 
 **Tests:** `device/folders-identity.test.ts › trashes nothing while its directory is gone, and says so`, `device/folders-identity.test.ts › reads, writes and trashes nothing in a copy put in its directory's place`.
 
 ### `folder-files/root-gone-watch`
 
-While the folder directory is missing, the CLI MUST report that the directory cannot be found.
+While the directory is missing, the CLI MUST report that the directory cannot be found.
 
 **Tests:** `device/folders-identity.test.ts › trashes nothing while its directory is gone, and says so`.
 
 ### `folder-files/root-gone-watch-continues`
 
-While the folder directory is missing, the CLI MUST keep the watch running.
+While the directory is missing, the CLI MUST keep the watch running.
 
 **Tests:** `device/folders-identity.test.ts › trashes nothing while its directory is gone, and says so`.
 
 ### `folder-files/root-return-watch`
 
-When the folder directory returns, a device MUST resume the running watch's work.
+When the directory returns, a device MUST resume the running watch's work.
 
 **Tests:** `device/folders-identity.test.ts › trashes nothing while its directory is gone, and says so`.
 
@@ -1034,7 +1034,7 @@ When a pull detects that the root directory disappeared or was replaced after th
 
 ### `folder-files/root-gone-command-refusal`
 
-When the folder directory is missing, the CLI MUST refuse `folders status`, `folders confirm`, and `folders restore` with the reason.
+When the directory is missing, the CLI MUST refuse `folders status`, `folders confirm`, and `folders restore` with the reason.
 
 **Tests:** `device/folders-contract-a.test.ts › refuses status and removal decisions while the folder directory is missing`.
 
@@ -1096,19 +1096,19 @@ When `folders pull` or `folders watch` reports removed files, the CLI MUST disti
 
 ### `folder-files/placement-root-relative`
 
-When a device reads a folder placement path, a device MUST resolve the path from the folder root after discarding leading separators, empty components and `.` components.
+When a device reads a folder placement path, a device MUST resolve the path from the directory's root after discarding leading separators, empty components and `.` components.
 
 **Tests:** `device/folders-placement.test.ts › reads a placement path with a leading separator from the folder's root`.
 
 ### `folder-files/parent-component-refused`
 
-When a folder placement contains a `..` component, a device MUST report the item as `outside` even when the path would return inside the folder.
+When a folder placement contains a `..` component, a device MUST report the item as `outside` even when the path would return inside the directory.
 
 **Tests:** `device/folders-contract-b.test.ts › refuses every parent component in a placement even when it climbs back inside`.
 
 ### `folder-files/parent-component-refused-file-unwritten`
 
-When a folder placement contains a `..` component, a device MUST NOT write the item’s file even when the path would return inside the folder.
+When a folder placement contains a `..` component, a device MUST NOT write the item’s file even when the path would return inside the directory.
 
 **Tests:** `device/folders-contract-b.test.ts › refuses every parent component in a placement even when it climbs back inside`.
 
@@ -1476,11 +1476,11 @@ When a folder file’s newer save was set aside against the same device’s earl
 
 **Tests:** `device/folders-placement.test.ts › keeps a file whose newest save conflicted with its own earlier one, and sends it again`.
 
-## Folder roots, linked paths and directory capability
+## Directory roots, linked paths and directory capability
 
 ### `folder-files/admitted-directory-capability`
 
-When a folder directory is admitted, a device MUST retain that opened directory as the authority for traversal, reads, writes, publication, storage, and cleanup until the operation ends.
+When a directory is admitted, a device MUST retain that opened directory as the authority for traversal, reads, writes, publication, storage, and cleanup until the operation ends.
 
 **Reason:** A pathname can name a replacement directory after admission.
 
@@ -1584,7 +1584,7 @@ When a directory contains an empty `.marfa` directory without `core.sqlite`, a d
 
 ### `folder-files/root-birth-identity-required`
 
-When a folder root has no usable nonzero birth timestamp, a device MUST refuse admission before creating administrative state.
+When a directory's root has no usable nonzero birth timestamp, a device MUST refuse admission before creating administrative state.
 
 **Reason:** Reopening an entry by device and inode alone cannot exclude inode reuse after the original descriptor closes.
 
@@ -1746,7 +1746,7 @@ When a device finds a missing folder file in no other registered folder past its
 
 ### `folder-files/missing-file-said`
 
-When a missing folder file is trashed after no other folder holds it, the CLI MUST say that no folder on the machine holds the file.
+When a missing file is trashed after no other directory holds it, the CLI MUST say that no directory on the machine holds the file.
 
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`.
 
