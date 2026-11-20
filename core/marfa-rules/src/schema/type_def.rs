@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use serde_json::{Map, Value, json};
 
 use super::compat::{describe_compatibility_conflict, inherited_shape_conflicts};
-use super::field::{Shape, label_issue, normalize_field, validate_field_shape};
+use super::field::{Shape, Stray, label_issue, normalize_field, validate_field_shape};
 use super::registry::Ancestry;
 use super::tables::judge_tables;
 use super::{
@@ -102,15 +102,34 @@ fn required_names(input: &Obj) -> Vec<String> {
 }
 
 pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issue>> {
-    judge_type(input, registry, Naming::Registered)
+    judge_type(input, registry, Naming::Registered, Stray::Refuse)
+}
+
+/// `validate_type` for a type that replaces `held`: a member that keeps its type and `enum_values` as held is not refused for a list its type does not check.
+pub fn validate_replacing_type(
+    input: &Value,
+    registry: &Registry,
+    held: &Obj,
+) -> Result<Obj, Vec<Issue>> {
+    judge_type(
+        input,
+        registry,
+        Naming::Registered,
+        Stray::UnlessChanged(held),
+    )
 }
 
 /// `validate_type` for an archived type, which may keep a table column's name of a type a forced delete removed.
 pub fn validate_restored_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issue>> {
-    judge_type(input, registry, Naming::Any)
+    judge_type(input, registry, Naming::Any, Stray::Take)
 }
 
-fn judge_type(input: &Value, registry: &Registry, naming: Naming) -> Result<Obj, Vec<Issue>> {
+fn judge_type(
+    input: &Value,
+    registry: &Registry,
+    naming: Naming,
+    stray: Stray<'_>,
+) -> Result<Obj, Vec<Issue>> {
     let Some(obj) = input.as_object() else {
         return Err(vec![Issue::new(
             "_root",
@@ -250,6 +269,7 @@ fn judge_type(input: &Value, registry: &Registry, naming: Naming) -> Result<Obj,
                 &Shape {
                     inherits_status,
                     path: None,
+                    stray,
                 },
             );
         }
@@ -296,9 +316,13 @@ fn judge_type(input: &Value, registry: &Registry, naming: Naming) -> Result<Obj,
             &mut errors,
         );
     }
-    let tables = judge_tables(obj, registry, &lineage, &|held| {
-        naming == Naming::Any || registry.contains(held) || id == Some(held)
-    })
+    let tables = judge_tables(
+        obj,
+        registry,
+        &lineage,
+        &|held| naming == Naming::Any || registry.contains(held) || id == Some(held),
+        stray,
+    )
     .unwrap_or_else(|issues| {
         errors.extend(issues);
         Obj::new()

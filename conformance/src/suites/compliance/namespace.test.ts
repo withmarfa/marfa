@@ -86,7 +86,7 @@ describe("namespace grammar", () => {
    * The roots the grammar refuses outright, which the tiered roots above do
    * not cover and nothing else in this suite reached.
    *
-   * Fourteen of them head a scope family, the ten permission roots and
+   * Sixteen of them head a scope family, the twelve permission roots and
    * `content`, `metadata`, `edge` and `profile`, so a type under one could
    * be written and never granted: the `keys` family publishes literals like
    * `keys.mint`, and `keys.thing:read` is not a scope at all, so a
@@ -104,6 +104,8 @@ describe("namespace grammar", () => {
     "instance",
     "connectors",
     "blobs",
+    "backups",
+    "sign_ins",
     "content",
     "metadata",
     "edge",

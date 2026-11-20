@@ -527,6 +527,21 @@ function validateFieldShape(
       }),
     );
   }
+  if (
+    fd.enum_values !== undefined &&
+    fd.type !== "enum" &&
+    fd.type !== "status" &&
+    !(fd.type === "array" && fd.items_type === "enum")
+  ) {
+    errors.push(
+      issue({
+        field: `${path}.enum_values`,
+        expected: "enum_values on an enum field, or on an array of enums",
+        actual: `enum_values on a ${describe(fd.type)} field`,
+        hint: 'Only an enum, or an array of enums, checks its values. Set the type to "enum", or drop enum_values.',
+      }),
+    );
+  }
   if (fd.items_type === "status") {
     errors.push(
       issue({

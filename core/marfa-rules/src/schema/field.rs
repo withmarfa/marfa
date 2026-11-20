@@ -11,6 +11,48 @@ use super::{
 use crate::builtin;
 use crate::catalog::{STATUS_GROUPS, api_name};
 
+/// How a definition that names `enum_values` where they are not checked is judged.
+#[derive(Clone, Copy)]
+pub(super) enum Stray<'a> {
+    /// Refused: the definition is new.
+    Refuse,
+    /// Taken as it is: a restore holds what an older server accepted.
+    Take,
+    /// Taken only where the definition at the same path of the held value keeps its type and its values.
+    UnlessChanged(&'a Obj),
+}
+
+impl Stray<'_> {
+    fn refuses(self, path: &str, definition: &Obj) -> bool {
+        match self {
+            Stray::Refuse => true,
+            Stray::Take => false,
+            Stray::UnlessChanged(held) => {
+                !held_at(held, path).is_some_and(|held| keeps_values(definition, held))
+            }
+        }
+    }
+}
+
+fn held_at<'a>(held: &'a Obj, path: &str) -> Option<&'a Obj> {
+    let mut parts = path.split('.');
+    let mut at = held.get(parts.next()?)?;
+    for part in parts {
+        at = at.get(part)?;
+    }
+    at.as_object()
+}
+
+fn keeps_values(definition: &Obj, held: &Obj) -> bool {
+    let (now, before) = (
+        normalize_field(definition, Some(false)),
+        normalize_field(held, Some(false)),
+    );
+    ["type", "items_type", "enum_values"]
+        .iter()
+        .all(|key| now.get(*key) == before.get(*key))
+}
+
 const ANNOTATING_FORMATS: [&str; 4] = ["bcp47", "iso3166", "currency", "phone"];
 
 pub(super) struct Vocabulary {
@@ -133,6 +175,7 @@ pub(super) fn label_issue(field: &str, value: Option<&Value>, errors: &mut Vec<I
 pub(super) struct Shape<'a> {
     pub inherits_status: bool,
     pub path: Option<&'a str>,
+    pub stray: Stray<'a>,
 }
 
 pub(super) fn validate_field_shape(
@@ -244,6 +287,20 @@ pub(super) fn validate_field_shape(
             )),
         }
     }
+    let takes_values =
+        type_word == "enum" || (type_word == "array" && text(fd, "items_type") == Some("enum"));
+    if fd.contains_key("enum_values")
+        && !takes_values
+        && type_word != "status"
+        && shape.stray.refuses(&path, fd)
+    {
+        errors.push(issue(
+            "enum_values",
+            "enum_values on an enum field, or on an array of enums".into(),
+            format!("enum_values on a {} field", describe(held_kind)),
+            "Only an enum, or an array of enums, checks its values. Set the type to \"enum\", or drop enum_values.".into(),
+        ));
+    }
     if type_word == "status" {
         validate_status_values(fd, shape.inherits_status, &path, errors);
     } else if fd.contains_key("status_values") {
@@ -330,7 +387,7 @@ pub(super) fn validate_field_shape(
         ));
     }
     validate_range(&path, fd, errors);
-    validate_items_fields(&path, fd, errors);
+    validate_items_fields(&path, fd, shape.stray, errors);
 }
 
 fn validate_range(path: &str, fd: &Obj, errors: &mut Vec<Issue>) {
@@ -376,7 +433,7 @@ fn validate_range(path: &str, fd: &Obj, errors: &mut Vec<Issue>) {
     }
 }
 
-fn validate_items_fields(path: &str, fd: &Obj, errors: &mut Vec<Issue>) {
+fn validate_items_fields(path: &str, fd: &Obj, stray: Stray<'_>, errors: &mut Vec<Issue>) {
     let Some(members) = fd.get("items_fields") else {
         return;
     };
@@ -407,12 +464,17 @@ fn validate_items_fields(path: &str, fd: &Obj, errors: &mut Vec<Issue>) {
         return;
     };
     for (member, definition) in members {
-        validate_member(&format!("{at}.{member}"), definition, errors);
+        validate_member(&format!("{at}.{member}"), definition, stray, errors);
     }
 }
 
 /// A plain value of a kind a list entry's member may take.
-pub(super) fn validate_member(path: &str, definition: &Value, errors: &mut Vec<Issue>) {
+pub(super) fn validate_member(
+    path: &str,
+    definition: &Value,
+    stray: Stray<'_>,
+    errors: &mut Vec<Issue>,
+) {
     let vocabulary = vocabulary();
     if let Some(record) = definition.as_object()
         && let Some(declared) = text(record, "type")
@@ -438,6 +500,7 @@ pub(super) fn validate_member(path: &str, definition: &Value, errors: &mut Vec<I
         &Shape {
             inherits_status: false,
             path: Some(path),
+            stray,
         },
     );
 }

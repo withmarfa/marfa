@@ -1700,12 +1700,21 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let tx = self.unit.tx();
         let rules = &self.catalog.rules;
         let mut properties = conflict::copy_properties(stale, keep_both);
+        if self.is_file(&row.type_id) {
+            let taken: Map<String, Value> = stale
+                .sent
+                .iter()
+                .filter(|(name, _)| keep_both.contains(name))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect();
+            conflict::forget_reading_of_old_bytes(stale.current, &mut properties, &taken);
+        }
         if let Some(field) = self.catalog.link_field(&row.type_id) {
             properties.shift_remove(field);
         }
         let written = conflict::changed(&properties, stale.current);
         rules
-            .validate_merged(&row.type_id, &properties, true, &written)
+            .validate_merged(&row.type_id, &properties, true, &written, stale.current)
             .map_err(|error| self.invalid(error, None))?;
         let mut properties = rules.coerced_properties(&row.type_id, &properties);
         let id = match self.claim {
@@ -1784,15 +1793,22 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         refusal
     }
 
-    /// A write with no property and no move need not satisfy a type that gained a field.
+    /// A write with no property and no move need not satisfy a type that gained a field. Bytes a write replaces take the reading of the old bytes with them.
     fn judged(
         &self,
         row: &Item,
         resulting: &str,
         writing: &Writing,
         current: &Map<String, Value>,
-        result: Map<String, Value>,
+        mut result: Map<String, Value>,
     ) -> Result<Map<String, Value>> {
+        if self.is_file(resulting) {
+            conflict::forget_reading_of_old_bytes(
+                current,
+                &mut result,
+                writing.properties.as_ref().unwrap_or(&Map::new()),
+            );
+        }
         if !writing.judged() {
             return Ok(result);
         }
@@ -1804,7 +1820,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             conflict::changed(&result, current)
         };
         rules
-            .validate_merged(resulting, &result, true, &written)
+            .validate_merged(resulting, &result, true, &written, current)
             .map_err(|error| self.invalid(error, moved.then_some(resulting)))?;
         crate::app::tables::judge_item_change(
             self.unit.tx(),

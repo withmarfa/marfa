@@ -2,7 +2,7 @@ use marfa_rules::grammar;
 use marfa_rules::schema::{
     Issue, OWN_TABLE_TYPE, Obj, Registry, broken_compatible_dependents, descendant_depth,
     evolution_of, icon_issue, labelled, parent_chain_fault, read_back_free, resolve,
-    validate_restored_type, validate_type, with_set_stored,
+    validate_replacing_type, validate_restored_type, validate_type, with_set_stored,
 };
 use rusqlite::{Transaction, params};
 use serde_json::{Value, json};
@@ -280,9 +280,12 @@ async fn replacing(
             };
             definition.remove("provenance");
             definition.insert("id".into(), Value::String(id.clone()));
-            let schema = validate_type(&Value::Object(definition), &catalog.types)
-                .map_err(schema_refusal)?;
-            let schema = labelled(schema);
+            let definition = Value::Object(definition);
+            let judged = match stored {
+                Some(held) => validate_replacing_type(&definition, &catalog.types, held),
+                None => validate_type(&definition, &catalog.types),
+            };
+            let schema = labelled(judged.map_err(schema_refusal)?);
             let schema = match stored {
                 Some(stored) => {
                     let read = resolve(&catalog.types, &id, false).ok().flatten();

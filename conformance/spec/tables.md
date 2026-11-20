@@ -292,9 +292,17 @@ The server MUST take an item of `core.table` whose `columns` names 64 columns.
 
 ### `tables/own-columns-refused`
 
-If a caller creates or updates an item of `core.table`, or of a type below it, with `columns` that break `tables/unknown-key`, `tables/name-grammar`, `tables/column-kind`, `tables/column-rules`, `tables/adds-up-refused`, `tables/searchable-refused`, `tables/item-unregistered`, `tables/item-values-refused` or `tables/too-many`, then the server MUST answer `400 invalid_properties` naming in `details.errors` the path of each fault under `columns`.
+If a caller creates or updates an item of `core.table`, or of a type below it, with `columns` that break `tables/unknown-key`, `tables/name-grammar`, `tables/column-kind`, `tables/column-rules`, `tables/adds-up-refused`, `tables/searchable-refused`, `tables/item-unregistered`, `tables/item-values-refused` or `tables/too-many`, then the server MUST answer `400 invalid_properties` naming in `details.errors` the path of each fault under `columns`, except as `tables/own-columns-enum-values-kept` allows.
 
-**Tests:** `compliance/table-own-columns.test.ts › refuses the columns a declared table would refuse, naming each fault under columns`, `› takes 64 columns and refuses a 65th`.
+**Tests:** `compliance/table-own-columns.test.ts › refuses the columns a declared table would refuse, naming each fault under columns`, `› takes 64 columns and refuses a 65th`, `› refuses enum_values on a column that is new or changed and not an enum, and takes the columns an item keeps`.
+
+### `tables/own-columns-enum-values-kept`
+
+When a caller updates an item of `core.table`, or of a type below it, with `columns` in which a column names `enum_values` on a `type` that is neither `enum` nor an `array` whose `items_type` is `enum`, and the column has the `type` and the `enum_values` the item's held `columns` give it, the server MUST NOT refuse the write for that column under `tables/column-rules`.
+
+**Reason:** the columns of an item written before `tables/column-rules` named the list are data a person made, so a write that keeps them is not refused for them. A column the write adds, or whose `type` or `enum_values` it changes, is refused.
+
+**Tests:** `compliance/table-own-columns.test.ts › refuses enum_values on a column that is new or changed and not an enum, and takes the columns an item keeps`.
 
 ### `tables/own-columns-required`
 
@@ -396,11 +404,11 @@ When `POST /restore` reads a `type` line that declares a table with a column who
 
 ### `tables/own-restore-columns`
 
-If `POST /restore` names an item of `core.table`, or of a type below it, whose `columns` break a rule `tables/own-columns-refused` names other than `tables/item-unregistered` naming a type that is not registered, then the server MUST answer `400 invalid_properties` naming the path of the fault under `properties.columns` in `details.field`.
+If `POST /restore` names an item of `core.table`, or of a type below it, whose `columns` break a rule `tables/own-columns-refused` names other than `tables/item-unregistered` naming a type that is not registered, and other than `enum_values` on a column that is not an enum, then the server MUST answer `400 invalid_properties` naming the path of the fault under `properties.columns` in `details.field`.
 
-**Reason:** the item's rows are judged by its columns, so an archive cannot bring in columns a write would refuse.
+**Reason:** the item's rows are judged by its columns, so an archive cannot bring in columns a write would refuse. A list an older server took on a column that does not check it comes back as the archive holds it (`types/enum-values-restored`).
 
-**Tests:** `compliance/table-own-restore.test.ts › refuses an item of a type below core.table whose columns a table cannot take, naming the column`, `› refuses a restored item of core.table whose column has an empty type_constraints, naming it`.
+**Tests:** `compliance/table-own-restore.test.ts › refuses an item of a type below core.table whose columns a table cannot take, naming the column`, `› refuses a restored item of core.table whose column has an empty type_constraints, naming it`, `› restores an item whose column names enum_values on a column that is not an enum as the archive holds it`.
 
 ### `tables/own-restore-unregistered`
 
@@ -1646,11 +1654,11 @@ If `PUT /types/{id}` would place a type at or below `core.table` while a type be
 
 ### `tables/own-columns-reparented`
 
-If `PUT /types/{id}` would place a type at or below `core.table` while an item of it, or of a type below it, holds `columns` that break a rule `tables/own-columns-refused` names other than `tables/item-unregistered` naming a type that is not registered, then the server MUST answer `400 invalid_schema` naming the type's `parent`.
+If `PUT /types/{id}` would place a type at or below `core.table` while an item of it, or of a type below it, holds `columns` that break a rule `tables/own-columns-refused` names other than `tables/item-unregistered` naming a type that is not registered, and other than `enum_values` on a column that is not an enum, then the server MUST answer `400 invalid_schema` naming the type's `parent`.
 
-**Reason:** an item there keeps its own table from its `columns` (`tables/own-table-listed`), so they are held to the rules a write of them is.
+**Reason:** an item there keeps its own table from its `columns` (`tables/own-table-listed`), so they are held to the rules a write of them is. A list an item already holds on a column that does not check it is data a person wrote (`tables/own-columns-enum-values-kept`).
 
-**Tests:** `compliance/table-rows-own.test.ts › refuses a replacement that places a type under core.table while its items hold columns a table cannot take`, `› takes a type under core.table whose items name an unregistered type in a column, and refuses one whose column has an empty type_constraints`.
+**Tests:** `compliance/table-rows-own.test.ts › refuses a replacement that places a type under core.table while its items hold columns a table cannot take`, `› takes a type under core.table whose items name an unregistered type in a column, and refuses one whose column has an empty type_constraints`, `compliance/table-own-columns.test.ts › refuses enum_values on a column that is new or changed and not an enum, and takes the columns an item keeps`.
 
 ### `tables/own-change-in-use`
 
