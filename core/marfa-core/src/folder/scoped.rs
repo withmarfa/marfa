@@ -33,6 +33,8 @@ pub(super) struct Scope {
     pub(super) keys: BTreeSet<String>,
     /// The paths a rename event named.
     pub(super) renamed: BTreeSet<String>,
+    /// The files a look at the unwatched directories found, however many.
+    pub(super) beneath: BTreeSet<String>,
 }
 
 impl Touched {
@@ -93,25 +95,15 @@ impl Touched {
         }
     }
 
-    /// Takes in files that no event named, which a pass is to look at all the
-    /// same, such as those in a directory that cannot be watched.
-    /// Answers whether they could be named: more than a pass looks at by
-    /// name, or one outside the folder, leaves the next pass to walk.
+    /// Takes in files no event named, for a pass to look at all the same.
+    /// Answers whether it could: a path outside the folder leaves the next pass to walk.
     pub(super) fn name(&mut self, root: &Path, paths: impl IntoIterator<Item = PathBuf>) -> bool {
         for path in paths {
-            match identity::relative(root, &path) {
-                Ok(key) => {
-                    self.scope.keys.insert(key);
-                }
-                Err(_) => {
-                    self.distrust();
-                    return false;
-                }
-            }
-        }
-        if self.scope.keys.len() > MOST_TOUCHED {
-            self.distrust();
-            return false;
+            let Ok(key) = identity::relative(root, &path) else {
+                self.distrust();
+                return false;
+            };
+            self.scope.beneath.insert(key);
         }
         true
     }
@@ -202,24 +194,15 @@ impl Folder {
         *self.inventory.lock().expect("inventory lock") = None;
     }
 
-    /// The files the last pass found in `directories` or below them, which a
-    /// change since may have removed. `None` where the last pass kept nothing.
+    /// The files the last pass found beneath `directories`, or `None` where it kept nothing.
     pub(super) fn kept_beneath(&self, root: &Path, directories: &[PathBuf]) -> Option<Vec<String>> {
-        let prefixes: Vec<String> = directories
+        let directories: HashSet<String> = directories
             .iter()
-            .map(|directory| identity::relative(root, directory).map(|key| format!("{key}/")))
+            .map(|directory| identity::relative(root, directory))
             .collect::<std::result::Result<_, _>>()
             .ok()?;
         let guard = self.inventory.lock().expect("inventory lock");
-        let inventory = guard.as_ref()?;
-        Some(
-            inventory
-                .keys
-                .iter()
-                .filter(|key| prefixes.iter().any(|prefix| key.starts_with(prefix)))
-                .cloned()
-                .collect(),
-        )
+        Some(beneath(&guard.as_ref()?.keys, &directories))
     }
 
     pub(super) fn keep_inventory(&self, inventory: Inventory) {
@@ -292,6 +275,7 @@ impl Folder {
         if active.len() > MOST_ACTIVE {
             return Ok(None);
         }
+        active.extend(scope.beneath.iter().cloned());
         let by_identity: HashMap<&str, &str> = snapshot
             .iter()
             .filter_map(|row| Some((row.identity.as_deref()?, row.path.as_str())))
@@ -629,6 +613,18 @@ impl Folder {
     }
 }
 
+/// The `keys` that stand beneath any of `directories`, found by each key's own
+/// ancestors, so the cost does not grow with the directories.
+fn beneath(keys: &HashSet<String>, directories: &HashSet<String>) -> Vec<String> {
+    keys.iter()
+        .filter(|key| {
+            key.match_indices('/')
+                .any(|(at, _)| directories.contains(&key[..at]))
+        })
+        .cloned()
+        .collect()
+}
+
 /// Whether two spellings are one name to a volume that ignores case or Unicode
 /// form.
 fn same_name(one: &str, other: &str) -> bool {
@@ -670,20 +666,51 @@ mod name_tests {
     use super::*;
 
     #[test]
-    fn named_paths_join_the_scope_until_there_are_more_than_a_pass_looks_at_or_one_is_outside() {
+    fn the_keys_beneath_a_directory_are_those_it_is_an_ancestor_of() {
+        let keys: HashSet<String> = [
+            "a.md",
+            "sub/b.md",
+            "sub/deep/c.md",
+            "sub2/d.md",
+            "other/sub/e.md",
+        ]
+        .map(String::from)
+        .into();
+        let found = |directories: &[&str]| {
+            let mut found = beneath(
+                &keys,
+                &directories.iter().map(|name| name.to_string()).collect(),
+            );
+            found.sort();
+            found
+        };
+        assert_eq!(found(&["sub"]), ["sub/b.md", "sub/deep/c.md"]);
+        assert_eq!(found(&["sub/deep", "sub2"]), ["sub/deep/c.md", "sub2/d.md"]);
+        assert!(
+            found(&["su"]).is_empty(),
+            "a name that only begins as a directory's does"
+        );
+        assert!(found(&["a.md"]).is_empty(), "a file is no directory");
+    }
+
+    #[test]
+    fn named_paths_join_the_scope_however_many_unless_one_is_outside() {
         let root = Path::new("/folder");
         let under = |count: usize| (0..count).map(|at| root.join(format!("d/n{at}.md")));
 
         let mut touched = Touched::default();
         assert!(touched.name(root, under(3)));
         let scope = touched.scope().expect("trusted");
-        assert_eq!(scope.keys.len(), 3);
-        assert!(scope.keys.contains("d/n0.md"));
+        assert_eq!(scope.beneath.len(), 3);
+        assert!(scope.beneath.contains("d/n0.md"));
+        assert!(scope.keys.is_empty(), "no event named them");
 
-        let mut over = Touched::default();
-        assert!(over.name(root, under(MOST_TOUCHED)));
-        assert!(!over.name(root, under(MOST_TOUCHED + 1)));
-        assert!(over.scope().is_none(), "too many leaves the pass to walk");
+        let mut many = Touched::default();
+        assert!(many.name(root, under(MOST_TOUCHED * 8)));
+        assert_eq!(
+            many.scope().expect("trusted").beneath.len(),
+            MOST_TOUCHED * 8
+        );
 
         let mut outside = Touched::default();
         assert!(!outside.name(root, [PathBuf::from("/elsewhere/a.md")]));

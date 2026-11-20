@@ -585,7 +585,9 @@ mod tests {
         let witness = kept(folder);
         assert!(witness.contains("one.md"), "{witness}");
         assert_eq!(
-            state::paused(&folder.core.conn().unwrap(), state::Removal::Disk).unwrap().len(),
+            state::paused(&folder.core.conn().unwrap(), state::Removal::Disk)
+                .unwrap()
+                .len(),
             2
         );
 
@@ -596,7 +598,11 @@ mod tests {
         refused(folder.scan().map(drop));
         refused(folder.hydrate().map(drop));
         refused(folder.confirm_first_sync().map(drop));
-        assert_eq!(kept(folder), witness, "a refused command changed the folder");
+        assert_eq!(
+            kept(folder),
+            witness,
+            "a refused command changed the folder"
+        );
 
         // Resumed, the same restore goes ahead.
         folder.resume_sync().unwrap();

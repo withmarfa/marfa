@@ -492,10 +492,12 @@ fn read_hash(folder: &Folder, name: &str) -> String {
         .content_hash
 }
 
+/// A quick pass an event at `n001.md` drives, readied as the watch readies it,
+/// after an edit at `name`. Answers the files the pass took the metadata of.
 fn edit_then_pass(
     (dir, folder): (&Path, &Folder),
     passes: &mut watch::Passes,
-    listening: &mut watched::Listening<Refusing>,
+    (listening, telling): (&mut watched::Listening<Refusing>, &mut watch::Telling),
     name: &str,
 ) -> usize {
     edit(dir, name);
@@ -504,66 +506,161 @@ fn edit_then_pass(
         .hearing_ready(folder, &[rewrite(dir, "n001.md")], |touched| {
             let uncovered = listening.unwatched();
             listening.ready(touched);
-            folder.name_unwatched(listening, dir, &uncovered, touched);
+            folder.count_unwatched(listening, telling);
+            folder.look_at_unwatched(
+                listening,
+                dir,
+                &uncovered,
+                (telling, Duration::from_secs(600)),
+                false,
+                touched,
+            );
         })
         .unwrap();
     counted().0
 }
 
+/// Makes the look at the unwatched directories due, as its time coming does.
+fn look_is_due(telling: &mut watch::Telling) {
+    telling.unwatched_due = Some(crate::clock::now());
+}
+
 #[test]
-fn a_quick_pass_while_a_directory_is_unwatched_reads_that_directory_and_no_more_of_the_folder() {
+fn a_quick_pass_while_a_directory_is_unwatched_reads_that_directory_only_when_the_look_is_due() {
     let mut all = names(12);
     all.push("sub/deep.md".into());
     let (dir, folder, _server, mut passes) = watched(&all);
     let (mut listening, refused, failed) = listening_refusing_sub(&folder);
     assert_eq!(failed, 1, "the watch could not watch the directory");
-
-    // No event names the edit in `sub`, and events elsewhere drive each pass.
+    let mut telling = watch::Telling::default();
     let mut seen = std::collections::HashSet::from([read_hash(&folder, "sub/deep.md")]);
-    for round in 1..=3 {
+    let pass = |passes: &mut watch::Passes,
+                listening: &mut watched::Listening<Refusing>,
+                telling: &mut watch::Telling,
+                name: &str| {
+        let captured = edit_then_pass((dir.path(), &folder), passes, (listening, telling), name);
+        (captured, read_hash(&folder, "sub/deep.md"))
+    };
+
+    // No event names the edit in `sub`: the first pass looks at once.
+    let (captured, hash) = pass(&mut passes, &mut listening, &mut telling, "sub/deep.md");
+    assert!(
+        captured < 6,
+        "the look took the metadata of {captured} files"
+    );
+    assert!(seen.insert(hash), "the first pass took no note of the edit");
+    assert!(
+        telling.unwatched_due.is_some(),
+        "the next look is scheduled"
+    );
+
+    // The witness: once the pass has judged what it read, a pass an unrelated
+    // event drives before the look is due leaves the directory be.
+    for _ in 0..3 {
+        passes.run(&folder, false).unwrap();
+    }
+    let (captured, hash) = pass(&mut passes, &mut listening, &mut telling, "sub/deep.md");
+    assert!(captured < 6, "took the metadata of {captured} files");
+    assert!(
+        seen.contains(&hash),
+        "a pass before the look read the directory"
+    );
+
+    look_is_due(&mut telling);
+    let (captured, hash) = pass(&mut passes, &mut listening, &mut telling, "sub/deep.md");
+    assert!(
+        captured < 6,
+        "the look took the metadata of {captured} files"
+    );
+    assert!(seen.insert(hash), "the look took no note of the edit");
+
+    // Registration succeeds: the pass that retries it looks once more, since
+    // an event before it was watched named nothing.
+    edit(dir.path(), "sub/deep.md");
+    *refused.borrow_mut() = None;
+    let (captured, hash) = pass(&mut passes, &mut listening, &mut telling, "sub/deep.md");
+    assert!(
+        captured < 6,
+        "the pass that watched it took {captured} files"
+    );
+    assert!(
+        seen.insert(hash),
+        "the pass that watched it took no note of the edit"
+    );
+    assert_eq!(telling.unwatched_due, None, "nothing is left to look at");
+
+    // The witness: with every directory watched, a quick pass stays scoped.
+    let (captured, _) = pass(&mut passes, &mut listening, &mut telling, "n002.md");
+    assert!(captured < 6, "took the metadata of {captured} files");
+}
+
+#[test]
+fn the_look_at_an_unwatched_directory_of_any_size_reads_it_and_no_more_of_the_folder() {
+    // More than a pass names, and more than a quick pass looks at.
+    for beneath in [300, 1100] {
+        let mut all = names(40);
+        all.extend((0..beneath).map(|at| format!("sub/f{at:04}.md")));
+        let (dir, folder, _server, mut passes) = watched(&all);
+        let (mut listening, _refused, failed) = listening_refusing_sub(&folder);
+        assert_eq!(failed, 1);
+        let mut telling = watch::Telling::default();
+        let before = read_hash(&folder, "sub/f0007.md");
+
         let captured = edit_then_pass(
             (dir.path(), &folder),
             &mut passes,
-            &mut listening,
-            "sub/deep.md",
+            (&mut listening, &mut telling),
+            "sub/f0007.md",
+        );
+        let after = read_hash(&folder, "sub/f0007.md");
+        assert_ne!(
+            before, after,
+            "{beneath} beneath: the look took no note of the edit"
+        );
+        assert!(
+            (beneath..beneath + 6).contains(&captured),
+            "{beneath} beneath: the look took the metadata of {captured} files, not the unwatched directory's alone"
+        );
+        assert!(
+            telling.unwatched_due.is_some(),
+            "{beneath} beneath: no look is scheduled"
+        );
+
+        // Before the next look is due, a pass an unrelated event drives walks
+        // nothing of the folder.
+        for _ in 0..3 {
+            passes.run(&folder, false).unwrap();
+        }
+        let captured = edit_then_pass(
+            (dir.path(), &folder),
+            &mut passes,
+            (&mut listening, &mut telling),
+            "sub/f0007.md",
         );
         assert!(
             captured < 6,
-            "pass {round} took the metadata of {captured} files, not those it was told of and the unwatched directory's"
+            "{beneath} beneath: an unrelated pass took {captured} files"
         );
-        let hash = read_hash(&folder, "sub/deep.md");
+        assert_eq!(after, read_hash(&folder, "sub/f0007.md"));
+
+        // Due again, the look finds the edit made since.
+        look_is_due(&mut telling);
+        let captured = edit_then_pass(
+            (dir.path(), &folder),
+            &mut passes,
+            (&mut listening, &mut telling),
+            "sub/f0007.md",
+        );
+        assert_ne!(
+            after,
+            read_hash(&folder, "sub/f0007.md"),
+            "{beneath} beneath: due, no edit found"
+        );
         assert!(
-            seen.insert(hash),
-            "pass {round} took no note of the edit in the unwatched directory"
+            (beneath..beneath + 6).contains(&captured),
+            "{beneath} beneath: the look took {captured} files"
         );
     }
-
-    // Registration succeeds: the pass that retries it named the unwatched
-    // directory before it was watched, so it stays scoped and finds the edit.
-    *refused.borrow_mut() = None;
-    let captured = edit_then_pass(
-        (dir.path(), &folder),
-        &mut passes,
-        &mut listening,
-        "sub/deep.md",
-    );
-    assert!(
-        captured < 6,
-        "the pass that watched it took the metadata of {captured} files"
-    );
-    assert!(
-        seen.insert(read_hash(&folder, "sub/deep.md")),
-        "the pass that watched it took no note of the edit"
-    );
-
-    // The witness: with every directory watched, a quick pass stays scoped.
-    let captured = edit_then_pass(
-        (dir.path(), &folder),
-        &mut passes,
-        &mut listening,
-        "n002.md",
-    );
-    assert!(captured < 6, "took the metadata of {captured} files");
 }
 
 #[test]

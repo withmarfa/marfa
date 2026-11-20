@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use super::handover::{self, Requests};
 use super::lists::Lists;
-use super::scoped::{MOST_TOUCHED, Reading, Touched};
+use super::scoped::{Reading, Touched};
 use super::selective::Selection;
 use super::watched::{Directories, Listening, Reach, settings_file};
 use super::{
@@ -497,9 +497,14 @@ impl Folder {
                 tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
             }
             self.count_unwatched(&listening, &mut telling);
-            let named = self.name_unwatched(&listening, dir, &uncovered, &mut touched);
-            telling.unwatched_due = (named && !listening.unwatched().is_empty())
-                .then(|| crate::clock::now() + unwatched_every(full_every));
+            self.look_at_unwatched(
+                &listening,
+                dir,
+                &uncovered,
+                (&mut telling, full_every),
+                full,
+                &mut touched,
+            );
             let scope = touched.scope();
             let passed = self.pass(
                 full,
@@ -553,38 +558,62 @@ impl Folder {
 
     /// Keeps the count of directories the watch could not register, and has
     /// the next pass report it where it changed.
-    fn count_unwatched<W: Directories>(&self, listening: &Listening<W>, telling: &mut Telling) {
+    pub(super) fn count_unwatched<W: Directories>(
+        &self,
+        listening: &Listening<W>,
+        telling: &mut Telling,
+    ) {
         let now = listening.unwatched().len();
         if self.unwatched.swap(now, Ordering::SeqCst) != now {
             telling.health_changed = true;
+            telling.unwatched_due = None;
         }
     }
 
-    /// Names for the next pass the files in the directories it could not
-    /// register, as a quick pass would otherwise miss changes there. Answers
-    /// whether it could: more files than a pass looks at by name are left to
-    /// the full pass.
-    pub(super) fn name_unwatched<W: Directories>(
+    /// Has the pass look at the directories that could not be watched, which
+    /// no event speaks for, each time the look is due and at once the first
+    /// time: a full pass walks them anyway. Only those directories are read.
+    pub(super) fn look_at_unwatched<W: Directories>(
+        &self,
+        listening: &Listening<W>,
+        root: &Path,
+        uncovered: &[PathBuf],
+        (telling, full_every): (&mut Telling, Duration),
+        full: bool,
+        touched: &mut Touched,
+    ) {
+        let now = crate::clock::now();
+        let due = telling.unwatched_due.is_none_or(|due| now >= due);
+        let looking = full || (!uncovered.is_empty() && due);
+        if looking && !full {
+            self.name_unwatched(listening, root, uncovered, touched);
+        }
+        telling.unwatched_due = if listening.unwatched().is_empty() {
+            None
+        } else if looking {
+            Some(now + unwatched_every(full_every))
+        } else {
+            telling.unwatched_due
+        };
+    }
+
+    /// Names for the next pass the files in `uncovered`, and those the last
+    /// pass found there, which may be gone.
+    fn name_unwatched<W: Directories>(
         &self,
         listening: &Listening<W>,
         root: &Path,
         uncovered: &[PathBuf],
         touched: &mut Touched,
-    ) -> bool {
-        if uncovered.is_empty() {
-            return true;
-        }
-        let Some(files) = listening.files_beneath(root, uncovered, MOST_TOUCHED) else {
-            touched.distrust();
-            return false;
-        };
+    ) {
         let kept = self.kept_beneath(root, uncovered).unwrap_or_default();
         touched.name(
             root,
-            files
+            listening
+                .files_beneath(root, uncovered)
                 .into_iter()
                 .chain(kept.into_iter().map(|key| root.join(key))),
-        )
+        );
     }
 
     /// Reads the settings again. Returns whether the rules for which paths
@@ -1496,7 +1525,7 @@ fn stirred(
 /// What the passes have told, so a standing condition is told once, not
 /// once a second.
 #[derive(Debug, Default)]
-struct Telling {
+pub(super) struct Telling {
     standing: Option<Standing>,
     unreachable: bool,
     /// Last pass failure reported.
@@ -1514,7 +1543,7 @@ struct Telling {
     kept_look: Option<Instant>,
     /// While directories stand unwatched, when the next look at them is due,
     /// which ends the rest.
-    unwatched_due: Option<Instant>,
+    pub(super) unwatched_due: Option<Instant>,
     /// When the last pass began its scan.
     scan_began: Option<Instant>,
     /// When the last pass began to read the copy for its pull.

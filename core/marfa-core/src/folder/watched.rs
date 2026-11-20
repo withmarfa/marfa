@@ -315,14 +315,8 @@ impl<W: Directories> Listening<W> {
             .unwrap_or_default()
     }
 
-    /// The files on disk in `directories` and below them, where a scan enters
-    /// them, or `None` where there are more than `most`.
-    pub(super) fn files_beneath(
-        &self,
-        root: &Path,
-        directories: &[PathBuf],
-        most: usize,
-    ) -> Option<BTreeSet<PathBuf>> {
+    /// The files on disk in `directories` and below them, where a scan enters them.
+    pub(super) fn files_beneath(&self, root: &Path, directories: &[PathBuf]) -> BTreeSet<PathBuf> {
         let mut found = BTreeSet::new();
         let mut pending = directories.to_vec();
         while let Some(directory) = pending.pop() {
@@ -342,13 +336,10 @@ impl<W: Directories> Listening<W> {
                     }
                 } else {
                     found.insert(path);
-                    if found.len() > most {
-                        return None;
-                    }
                 }
             }
         }
-        Some(found)
+        found
     }
 
     /// Readies the watch for a pass. A directory that could not be watched is
@@ -1373,7 +1364,7 @@ mod tests {
     }
 
     #[test]
-    fn the_files_beneath_the_unwatched_directories_are_named_up_to_the_most_a_pass_names() {
+    fn the_files_beneath_the_unwatched_directories_are_named() {
         let dir = folder_of(&["a/deeper", "b", "skipped/inner"]);
         let root = dir.path();
         for file in [
@@ -1392,32 +1383,24 @@ mod tests {
             reaching(&["skipped/"]),
         )
         .unwrap();
-        let named = |directories: &[&str], most: usize| {
+        let named = |directories: &[&str]| {
             let directories: Vec<PathBuf> =
                 directories.iter().map(|name| root.join(name)).collect();
-            listening
-                .files_beneath(root, &directories, most)
-                .map(|files| relative(root, &files.into_iter().collect::<Vec<_>>()))
+            relative(
+                root,
+                &listening
+                    .files_beneath(root, &directories)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            )
         };
         // Everything beneath a directory, none of what a scan leaves out, and
         // none of a directory that is not named.
         assert_eq!(
-            named(&["a"], 10),
-            Some(BTreeSet::from([
-                "a/deeper/two.md".to_string(),
-                "a/one.md".to_string()
-            ]))
+            named(&["a"]),
+            BTreeSet::from(["a/deeper/two.md".to_string(), "a/one.md".to_string()])
         );
-        assert_eq!(named(&["skipped"], 10), Some(BTreeSet::new()));
-        assert_eq!(
-            named(&["a", "b"], 10).map(|files| files.len()),
-            Some(3),
-            "the witness: the same directories under the most name every file"
-        );
-        assert_eq!(
-            named(&["a", "b"], 2),
-            None,
-            "more than the most are left to a walk"
-        );
+        assert_eq!(named(&["skipped"]), BTreeSet::new());
+        assert_eq!(named(&["a", "b"]).len(), 3);
     }
 }
