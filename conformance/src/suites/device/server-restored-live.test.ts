@@ -593,6 +593,51 @@ describe("a server restored behind work this device sent it", () => {
   );
 
   it(
+    "sends a tag replace the restored server refused, once its item is made again, naming no tags it read",
+    async () => {
+      const w = await world("restored-refused-tags");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const id = await made(w.device, "tagged since the backup");
+      value(await w.device.replaceTags(id, ["before"]));
+      await sent(w.device);
+
+      await w.restore(image);
+      value(await w.device.replaceTags(id, ["after"]));
+      const refused = value(await w.device.drain());
+      expect(refused.verdicts.map((verdict) => verdict.verdict)).toEqual([
+        "refused",
+      ]);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note"], "library"));
+      const replace = (await queue(w.device)).find(
+        (write) =>
+          write.kind === "replace_tags" &&
+          (write.body as { tags?: string[] }).tags?.[0] === "after",
+      );
+      expect(replace, "the refused replace was not kept").toBeDefined();
+      expect(
+        replace?.body,
+        "a replace sent over an item its create puts back still names tags the server never held",
+      ).toEqual({ tags: ["after"] });
+
+      value(await w.device.release({ reason: "server_restored" }));
+      value(await w.device.drain());
+      value(await w.device.drain());
+      const verdict = (await queue(w.device)).find(
+        (write) => write.id === replace?.id,
+      );
+      expect(
+        verdict?.verdict ?? "accepted",
+        "the replace was refused for tags the item put back never had",
+      ).not.toBe("blocked");
+      const read = await w.client().getItem(id);
+      expect(read.ok && read.data.metadata.tags).toContain("after");
+    },
+    TIMEOUT,
+  );
+
+  it(
     "puts back the tags the restored server lost from an item it still holds",
     async () => {
       const w = await world("restored-tags");
@@ -617,6 +662,127 @@ describe("a server restored behind work this device sent it", () => {
       value(await w.device.drain());
       const after = await w.client().getItem(held.id);
       expect(after.ok && after.data.metadata.tags).toEqual(["kept"]);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "puts back the tags of an item made since the backup, named as the tags the item it makes holds",
+    async () => {
+      const w = await world("restored-create-tags");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const queued = value(
+        await w.device.create({
+          type: "core.note",
+          properties: { title: "made with tags" },
+          tags: ["born-a", "born-b"],
+        }),
+      );
+      const id = queued.item_id ?? "";
+      await sent(w.device);
+      expect((await w.client().getItem(id)).status).toBe(200);
+
+      await w.restore(image);
+      expect((await w.client().getItem(id)).status).toBe(404);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note"], "library"));
+
+      expect(await keptBlocked(w.device)).toEqual([
+        ["create_item", id],
+        ["replace_tags", id],
+      ]);
+      const kept = (await queue(w.device)).find(
+        (write) => write.kind === "replace_tags",
+      );
+      expect(
+        kept?.body,
+        "the replace did not name the tags the kept create makes the item hold",
+      ).toEqual({ tags: ["born-a", "born-b"], read_tags: [] });
+
+      value(await w.device.release({ reason: "server_restored" }));
+      const report = value(await w.device.drain());
+      expect(
+        report.verdicts.map((entry) => [entry.verdict, entry.reason]),
+        JSON.stringify(report),
+      ).toEqual([
+        ["accepted", null],
+        ["accepted", null],
+      ]);
+      const after = await w.client().getItem(id);
+      expect(after.ok && [...after.data.metadata.tags].sort()).toEqual([
+        "born-a",
+        "born-b",
+      ]);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "puts back an edit and a tag change together on the tags the restored server holds, and blocks the tags where another writer changed them since",
+    async () => {
+      const w = await world("restored-edit-and-tags");
+      const held = await note(w.client(), "before the backup");
+      const tagged = await w.client().addTags(held.id, ["before"]);
+      expect(tagged.status, JSON.stringify(tagged.error)).toBe(200);
+      const other = await note(w.client(), "another item, before the backup");
+      await w.client().addTags(other.id, ["before"]);
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      for (const item of [held, other]) {
+        value(
+          await w.device.update(item.id, {
+            properties: { title: "edited after the backup" },
+            version: item.version,
+          }),
+        );
+        value(await w.device.replaceTags(item.id, ["after"]));
+      }
+      await sent(w.device);
+      value(await w.device.catchUp());
+
+      await w.restore(image);
+      expect(await title(w.client(), held.id)).toBe("before the backup");
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note"], "library"));
+
+      const kept = (await queue(w.device)).filter(
+        (write) => write.kind === "replace_tags",
+      );
+      expect(kept.map((write) => write.body)).toEqual([
+        { tags: ["after"], read_tags: ["before"] },
+        { tags: ["after"], read_tags: ["before"] },
+      ]);
+      expect((await queue(w.device)).map((write) => write.kind).sort()).toEqual(
+        ["replace_tags", "replace_tags", "update_item", "update_item"],
+      );
+
+      // Another writer changes the tags of one item before the person releases.
+      const changed = await w.client().addTags(other.id, ["added-since"]);
+      expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+      value(await w.device.release({ reason: "server_restored" }));
+      const report = value(await w.device.drain());
+      const verdictOf = (id: string) =>
+        report.verdicts.find((entry) => entry.id === id);
+
+      for (const write of kept) {
+        const landed = write.item_id === held.id;
+        expect(
+          [verdictOf(write.id)?.verdict, verdictOf(write.id)?.reason],
+          `${String(write.item_id)}: ${JSON.stringify(report)}`,
+        ).toEqual(
+          landed ? ["accepted", null] : ["blocked", "conflict_unresolved"],
+        );
+      }
+      expect(await title(w.client(), held.id)).toBe("edited after the backup");
+      expect(await title(w.client(), other.id)).toBe("edited after the backup");
+      const tags = async (id: string) => {
+        const read = await w.client().getItem(id);
+        return read.ok ? read.data.metadata.tags : undefined;
+      };
+      expect(await tags(held.id)).toEqual(["after"]);
+      expect(await tags(other.id)).toEqual(["before", "added-since"]);
+      expect(value(await w.device.get(other.id)).tags).toEqual(["after"]);
     },
     TIMEOUT,
   );

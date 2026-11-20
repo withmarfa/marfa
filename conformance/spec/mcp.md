@@ -874,7 +874,7 @@ When `marfa_adopt_backup_folder` adopts the folder, the server MUST answer `mark
 
 **Reason:** the record of the new store commits before the marker is written, so the adopt stands either way, and backups go to the folder only once it holds the marker.
 
-**Tests:** `compliance/mcp-file-acts.test.ts › adopts the folder with the confirmation the preview gave, writes its marker and clears the last backup`, `› says the marker was not written when the files folder refuses it, with the error`, `› says the marker is unknown when the folder does not answer in time, and marked once it has`.
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts the folder with the confirmation the preview gave, writes its marker and clears the last backup`, `› says the marker was not written when the files folder refuses it, with the error, and marked once it is writable`, `› says the marker is unknown when the folder does not answer in time, and marked once it has`.
 
 ### `mcp/adopt-folder-changed`
 

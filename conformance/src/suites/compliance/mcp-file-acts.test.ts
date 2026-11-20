@@ -701,7 +701,7 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
     expect(await lastBackup()).toBeNull();
   });
 
-  it("says the marker was not written when the files folder refuses it, with the error", async () => {
+  it("says the marker was not written when the files folder refuses it, with the error, and marked once it is writable", async () => {
     await marked();
     await loseTheDisk();
     const shown = await call(backupsAdmin, ADOPT, {});
@@ -709,9 +709,10 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
     const adopting = callTool(backupsAdmin, ADOPT, { confirm: shown.confirm });
     await folder.waitForHold("hold:stores-swap");
     chmodSync(area(), 0o555);
+    let adopted: Record<string, unknown>;
     try {
       await folder.clearFault("hold:stores-swap");
-      const adopted = toolResult(await adopting);
+      adopted = toolResult(await adopting);
       expect(adopted).toMatchObject({
         adopted: true,
         marked: false,
@@ -722,6 +723,16 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
     } finally {
       chmodSync(area(), 0o755);
     }
+
+    const backup = await ownerOf(folder).runBackup();
+    expect(backup.status, JSON.stringify(backup.error)).toBe(200);
+    const now = await call(backupsAdmin, ADOPT, { confirm: shown.confirm });
+    expect(now).toMatchObject({
+      already_done: true,
+      store_id: adopted.store_id,
+      marked: true,
+    });
+    expect(markerNow()).toBe(adopted.store_id);
   });
 
   it("says the marker is unknown when the folder does not answer in time, and marked once it has", async () => {
@@ -729,7 +740,7 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
     await loseTheDisk();
     const shown = await call(backupsAdmin, ADOPT, {});
     await folder.setFault("store-check-deadline=500");
-    await folder.setFault("hold:backup-folder-claim");
+    await folder.setFault("hold:folder-marker");
     const adopted = await call(backupsAdmin, ADOPT, { confirm: shown.confirm });
     expect(adopted).toMatchObject({ adopted: true, marked: null });
     expect(adopted.folder_changed).toBeUndefined();

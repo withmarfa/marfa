@@ -1076,7 +1076,7 @@ When the server replays an answer, the server MUST NOT perform or announce the w
 
 If a credential sends an `Idempotency-Key` it used with another request, differing in method, path, query as written or body text, then the server MUST answer `422 idempotency_key_reused`.
 
-**Tests:** `sync/idempotency.test.ts › refuses a key that names a different request rather than serving it`, `compliance/declared-refusals.test.ts › is refused 422 on every idempotent write door when sent with another request`, `compliance/folders.test.ts › refuses 422 a key sent again with another request on each folder door`, `compliance/bulk.test.ts › refuses a different request under a key already used`.
+**Tests:** `sync/idempotency.test.ts › refuses a key that names a different request rather than serving it`, `compliance/declared-refusals.test.ts › is refused 422 on every idempotent write door when sent with another request`, `compliance/folders.test.ts › refuses 422 a key sent again with another request on each folder door`, `compliance/bulk.test.ts › refuses a different request under a key already used`, `compliance/metadata-routes.test.ts › answers a key reused with other read tags as another request, and replays the same request`.
 
 ### `items/idempotency-contract`
 
@@ -2202,7 +2202,7 @@ When a key sends tags on `POST /items/{id}/tags`, the server MUST add them to th
 
 When a key sends `PUT /items/{id}/tags`, the server MUST make the tags it names the item's whole tag list.
 
-**Tests:** `compliance/metadata-routes.test.ts › adds tags, reads them back, and replaces them wholesale`.
+**Tests:** `compliance/metadata-routes.test.ts › adds tags, reads them back, and replaces them wholesale`, `› replaces tags only when the tags named as read are the item's, in any order, and as the item stands when none are named`.
 
 ### `items/tags-replace-answer`
 
@@ -2235,6 +2235,26 @@ If `POST /items/{id}/tags` or `DELETE /items/{id}/tags/{tag}` names a `version` 
 When `POST /items/{id}/tags` or `DELETE /items/{id}/tags/{tag}` names the item's current version in its `version` query parameter, the server MUST apply the tag write.
 
 **Tests:** `compliance/metadata-routes.test.ts › changes tags only when the version named is the item's`.
+
+### `items/tags-replace-read-stale`
+
+If `PUT /items/{id}/tags` names `read_tags` that are not the same set of tags as the item now holds, then the server MUST answer `409 version_conflict` with the item now in `current`, and change no tag.
+
+**Reason:** a tag write leaves the item's version as it is (`versions/metadata-keeps-version`), so a replace that named a version could not tell that another writer had changed the tags since the reader read them. Naming the tags read lets the server see that, and a change to the item's content alone does not stop the replace, since it does not touch the tags.
+
+**Tests:** `compliance/metadata-routes.test.ts › replaces tags only when the tags named as read are the item's, in any order, and as the item stands when none are named`.
+
+### `items/tags-replace-read-current`
+
+When `PUT /items/{id}/tags` names `read_tags` that are the same set of tags as the item now holds, whatever their order and however often one is named, the server MUST apply the replace.
+
+**Tests:** `compliance/metadata-routes.test.ts › replaces tags only when the tags named as read are the item's, in any order, and as the item stands when none are named`, `› replaces tags on an item whose content changed since the read when the tags did not`.
+
+### `items/tags-replace-read-malformed`
+
+If `PUT /items/{id}/tags` names `read_tags` that is not a list of strings, then the server MUST answer `400 validation_error` naming `read_tags`, and change no tag.
+
+**Tests:** `compliance/metadata-routes.test.ts › refuses a tags replace whose read tags are not a list of strings`.
 
 ### `items/tags-read`
 

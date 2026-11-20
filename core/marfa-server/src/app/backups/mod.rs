@@ -550,11 +550,18 @@ impl Destination {
     fn failed_while(&self, what: &str, why: &str) -> Refusal {
         let message = match self {
             Destination::Bucket(_) => format!("The object store failed while {what}: {why}."),
-            Destination::Folder(folder) if folder.reachable() => format!(
-                "The backup folder {} failed while {what}: {why}",
-                folder.root().display()
-            ),
-            Destination::Folder(folder) => folder_not_there(folder),
+            Destination::Folder(folder) => match folder.files().reach() {
+                Ok(()) => format!(
+                    "The backup folder {} failed while {what}: {why}",
+                    folder.root().display()
+                ),
+                Err(None) => folder_not_there(folder),
+                Err(Some(untaken)) => format!(
+                    "The backup folder {} failed while {what}: it holds the claim of the adopt \
+                     that recorded its store, which waits to become its marker: {untaken}",
+                    folder.root().display()
+                ),
+            },
         };
         Refusal::new(Code::BlobStoreUnavailable, message)
     }

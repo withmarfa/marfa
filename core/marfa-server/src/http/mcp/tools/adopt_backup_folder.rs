@@ -23,7 +23,7 @@ const PREVIEW_NEXT: &str = "Nothing has been adopted. Adopting takes the folder 
 const CLEARS: &str = "The record of the last backup is cleared too, so the instance shows no backup until the next one.";
 const ADOPTED_NEXT: &str = "Adopted. The folder holds the new store's marker, and backups and file copies go to it from now on.";
 const CHANGED_WHILE: &str = "Adopted, but the folder changed while it was adopted, or could not be read again after. The old store's backups and file copies were forgotten, and the new store's marker is in files_folder. Check with the person that this is the folder they meant.";
-const MARKER_FAILED: &str = "Adopted, but the folder could not take the new store's marker, so backups and file copies cannot go to it yet. The old store's backups and file copies were forgotten. Make the folder writable, then adopt it again.";
+const MARKER_FAILED: &str = "Adopted, but the folder could not take the new store's marker, so backups and file copies cannot go to it yet. The old store's backups and file copies were forgotten. Make the folder writable: the server gives it the marker then, and backups and file copies wait until it does.";
 const UNANSWERED: &str = "Adopted, but the folder did not answer when it was given the new store's marker. The old store's backups and file copies were forgotten. Backups wait until the folder answers.";
 const REPEATED: &str =
     "This confirmation already adopted the backup folder. This call changed nothing.";

@@ -10,13 +10,18 @@ use serde_json::{Value, json};
 use super::{Destination, REPLICATION, blocking, counted, forget_backups, found, running};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
+use crate::app::blobs::disk::{Claim, PENDING};
 use crate::app::blobs::folder::{Adoptable, Folder};
 use crate::app::blobs::{Attached, Blobs, unsettled};
-use crate::app::faults::{HOLD_STORES_RECORD, HOLD_STORES_SWAP};
+use crate::app::faults::{
+    FAIL_STORES_RECORD, FAIL_STORES_RECORD_LOST, HOLD_FOLDER_MARKER, HOLD_STORES_RECORD,
+    HOLD_STORES_SWAP,
+};
 use crate::app::fingerprint::Fingerprint;
 use crate::app::housekeeping;
 use crate::app::mcp::guard::{Guard, Halt};
 use crate::app::refusal::{Code, Refusal, Result};
+use crate::db::io_refusal;
 
 pub const ADOPTED: &str = "backup_folder.adopt";
 
@@ -137,7 +142,7 @@ fn unanswered(root: &str, what: &str) -> Refusal {
 fn looked_at_failed(root: &str, error: &std::io::Error) -> Refusal {
     tracing::warn!(%error, "The backup folder could not be looked at to adopt it");
     let next = if error.kind() == std::io::ErrorKind::PermissionDenied {
-        "Make the folder writable by the server, then try again."
+        "Let the server read and write the folder, then try again."
     } else {
         "Check that its disk is mounted and answering, then try again."
     };
@@ -312,8 +317,8 @@ impl App {
                     Code::BlobStoreUnavailable,
                     format!(
                         "The backup folder {root} could not take the new store's marker: {error}. \
-                         {forgot} Make the folder writable, then run `marfa backups folder adopt` \
-                         again."
+                         {forgot} Make the folder writable: the server gives it the marker then, \
+                         and backups wait until it does."
                     ),
                 ));
             }
@@ -351,8 +356,8 @@ impl App {
         .map_err(|_| Refusal::internal("an adopt of the backup folder did not finish"))?
     }
 
-    /// The follow lock covers folder selection through its claim, and the files area's lock
-    /// covers what the adopt reads of the folder through the marker it writes.
+    /// The follow lock covers folder selection through its claim, and the claim holds the files
+    /// area's lock from the read the record is checked against through the marker.
     async fn adopting(self: &Arc<App>, caller: &Caller, guard: Option<Guard>) -> Result<Adopting> {
         let followed = self.followed().await?;
         let _changing = self.blobs.changing().await;
@@ -379,9 +384,51 @@ impl App {
                 return Ok(Adopting::Halted(halt));
             }
         }
-        let mut holding = match folder.hold_within(self.blobs.check()).await {
-            Some(Ok(holding)) => holding,
-            Some(Err(error)) => return Err(looked_at_failed(&root, &error)),
+        let old = folder.files();
+        let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
+        let deadline = self.blobs.check();
+        // The folder is claimed, under its lock, and read again before any record is forgotten.
+        let (claiming, keeping) = (id.clone(), folder.clone());
+        let claimed = folder
+            .within(
+                deadline,
+                move |folder| {
+                    let claim = folder.claim(&claiming)?;
+                    let fingerprint = folder.fingerprint();
+                    Ok((claim, fingerprint))
+                },
+                move |(claim, _)| {
+                    if let Err(error) = keeping.give_up(&claim) {
+                        tracing::warn!(%error, "A claim on the backup folder that was given up on was not undone");
+                    }
+                },
+            )
+            .await;
+        let (claim, fingerprint) = match claimed {
+            Some(Ok((claim, Ok(fingerprint)))) => (claim, fingerprint),
+            Some(Ok((claim, Err(error)))) => {
+                let kept = self.give_up_claim(&folder, claim).await;
+                return Err(with_claim(looked_at_failed(&root, &error), kept));
+            }
+            Some(Err(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return Err(Refusal::new(
+                    Code::Conflict,
+                    format!(
+                        "The backup folder {root} could not be claimed, so nothing was adopted: \
+                         {error}."
+                    ),
+                ));
+            }
+            Some(Err(error)) => {
+                return Err(Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!(
+                        "The backup folder {root} could not be claimed, so nothing was adopted: \
+                         {error}. Check that the folder is writable and its disk has room, then \
+                         try again."
+                    ),
+                ));
+            }
             None => {
                 return Err(unanswered(
                     &root,
@@ -389,13 +436,8 @@ impl App {
                 ));
             }
         };
-        let found = std::mem::replace(&mut holding.found, Adoptable::Unmarked);
-        not_adoptable(&folder, found)?;
-        let old = folder.files();
-        let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
         let locator = old.root().display().to_string();
-        let (forgotten, new_id, fingerprint) =
-            (old_id.clone(), id.clone(), holding.fingerprint.clone());
+        let (forgotten, new_id, claimed) = (old_id.clone(), id.clone(), fingerprint.clone());
         let (checking, named) = (self.clone(), folder.root().to_path_buf());
         self.faults.hold(HOLD_STORES_RECORD, None).await;
         let written = self
@@ -403,7 +445,7 @@ impl App {
                 unit.caller.require(Permission::BackupsManage)?;
                 Blobs::check_adoptable(unit.tx(), &checking, &named, &forgotten)?;
                 if let Some(guard) = &guard {
-                    let forgets = forgets(unit.tx(), &forgotten, &fingerprint)?;
+                    let forgets = forgets(unit.tx(), &forgotten, &claimed)?;
                     if let Some(halt) = guard.check(unit, Some(&forgets.digest))? {
                         return Ok(Err(halt));
                     }
@@ -429,44 +471,76 @@ impl App {
                 if let Some(guard) = &guard {
                     guard.spend(unit, 1)?;
                 }
+                if checking.faults.fail(FAIL_STORES_RECORD, None) {
+                    return Err(io_refusal());
+                }
                 Ok(Ok((copies, backups)))
             })
             .await;
+        let written = match written {
+            Ok(_) if self.faults.fail(FAIL_STORES_RECORD_LOST, None) => Err(Refusal {
+                commit_failed: true,
+                ..io_refusal()
+            }),
+            written => written,
+        };
         let (copies, backups) = match written {
             Ok(Ok(counted)) => counted,
-            Ok(Err(halt)) => return Ok(Adopting::Halted(halt)),
-            Err(refusal) => {
-                drop(holding);
-                if refusal.commit_failed
-                    && let Err(refused) = self.retake_folder(&folder).await
-                {
-                    tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unchecked");
-                    self.blobs.doubt_record();
+            Ok(Err(halt)) => {
+                let Some(kept) = self.give_up_claim(&folder, claim).await else {
+                    return Ok(Adopting::Halted(halt));
+                };
+                return Err(Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!("What the preview showed has changed, so nothing was adopted. {kept}"),
+                ));
+            }
+            Err(refusal) if refusal.commit_failed => {
+                // The record may name the new store or the old: the claim is settled against it.
+                self.blobs.doubt_record();
+                if let Err(refused) = self.settle_claim(&folder, claim).await {
+                    tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unsettled");
                 }
                 return Err(refusal);
             }
+            Err(refusal) => {
+                let kept = self.give_up_claim(&folder, claim).await;
+                return Err(with_claim(refusal, kept));
+            }
         };
         self.faults.hold(HOLD_STORES_SWAP, None).await;
-        let locked = holding.fingerprint.clone();
-        let (marker, folder_changed) = match folder
-            .claim_held(holding, id.clone(), self.blobs.check(), self.faults.clone())
-            .await
-        {
-            Some(claimed) => {
-                let changed = claimed.fingerprint.as_ref().ok() != Some(&locked);
+        let faults = self.faults.clone();
+        let promoted = folder
+            .within(
+                deadline,
+                move |folder| {
+                    faults.hold_blocking(HOLD_FOLDER_MARKER);
+                    let written = folder.promote(claim);
+                    Ok((written, folder.fingerprint()))
+                },
+                |_| {},
+            )
+            .await;
+        let (marker, folder_changed) = match promoted {
+            Some(Ok((written, after))) => {
+                let changed = after.as_ref().ok() != Some(&fingerprint);
                 if changed {
                     tracing::warn!("The backup folder changed while it was adopted");
                 }
-                match claimed.written {
+                match written {
                     Ok(()) => (Marker::Written, Some(changed)),
-                    Err(error) => (Marker::Failed(error.to_string()), Some(changed)),
+                    Err(error) => {
+                        self.blobs.doubt_record();
+                        (Marker::Failed(error.to_string()), Some(changed))
+                    }
                 }
             }
+            Some(Err(error)) => {
+                self.blobs.doubt_record();
+                (Marker::Failed(error.to_string()), Some(true))
+            }
             None => {
-                if let Err(refused) = self.retake_folder(&folder).await {
-                    tracing::error!(%refused, "An adopt whose claim did not answer left the backup folder unchecked");
-                    self.blobs.doubt_record();
-                }
+                self.blobs.doubt_record();
                 (Marker::Unanswered, None)
             }
         };
@@ -481,6 +555,55 @@ impl App {
             marker,
             folder_changed,
         }))
+    }
+
+    /// Gives up `claim`, the claim of an adopt that recorded nothing, and answers what the folder
+    /// keeps of it where it could not be undone.
+    async fn give_up_claim(&self, folder: &Arc<Folder>, claim: Claim) -> Option<String> {
+        let root = folder.root().display().to_string();
+        let undone = folder
+            .within(
+                self.blobs.check(),
+                move |folder| {
+                    let given = folder.give_up(&claim);
+                    if given.is_err() {
+                        folder.hold_unsettled(claim);
+                    }
+                    given
+                },
+                |_| {},
+            )
+            .await;
+        let why = match undone {
+            Some(Ok(false)) => return None,
+            Some(Ok(true)) => {
+                return Some(format!(
+                    "Nothing was adopted, but the backup folder {root} keeps this adopt's claim, \
+                     which may be another server's, since its file system takes no locks. Stop \
+                     any other Marfa server that uses the folder, then remove {}.",
+                    folder.files().root().join(PENDING).display()
+                ));
+            }
+            Some(Err(error)) => error.to_string(),
+            None => "it did not answer in time".to_string(),
+        };
+        tracing::warn!(reason = %why, "The claim of an adopt that recorded nothing was not undone");
+        self.blobs.doubt_record();
+        Some(format!(
+            "Nothing was adopted, but the backup folder {root} keeps this adopt's claim, which was \
+             not undone: {why}. The server removes it once the folder answers."
+        ))
+    }
+}
+
+/// `refusal`, saying what the folder keeps of the adopt's claim.
+fn with_claim(refusal: Refusal, kept: Option<String>) -> Refusal {
+    match kept {
+        None => refusal,
+        Some(kept) => Refusal {
+            message: format!("{} {kept}", refusal.message).into(),
+            ..refusal
+        },
     }
 }
 
