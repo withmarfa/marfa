@@ -106,9 +106,10 @@ pub enum ServerCommand {
     /// A `marfa` of another release is refused, and so is a start after the
     /// programs the service runs were replaced in place, as Homebrew and the
     /// install script do, while an earlier release ran or after it stopped.
-    /// `marfa server upgrade` moves the install. A `marfa` of the same release at another path is named there
-    /// while the program the service runs is still in place; once that
-    /// program is gone, `marfa server upgrade` names the new one.
+    /// `marfa server upgrade` moves the install. A `marfa` of the same
+    /// release at another path is named there while the program the service
+    /// runs is still in place; once that program is gone, `marfa server
+    /// upgrade` names the new one.
     ///
     /// On a Mac with a Docker install, this starts Docker's engine first if it
     /// is down: it is what the login agent runs.
