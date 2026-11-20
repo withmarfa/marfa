@@ -9,6 +9,7 @@ mod every;
 mod executable;
 pub mod fields;
 mod first;
+mod form;
 mod handover;
 pub mod identity;
 mod landing;
@@ -3065,6 +3066,44 @@ impl Folder {
         tests::RENDERED_ITEMS.with(|rendered| rendered.borrow_mut().insert(item.id.clone()));
         #[cfg(debug_assertions)]
         crate::fault::hold(|| "folder-render");
+        let rendered = self.render_with(item, path, line, catalog, edge_types, lines)?;
+        let (names, typed, recorded) = lines;
+        // A file this directory never had is written in the form its
+        // placement holds, through the same rewrite as a file it had.
+        if typed.is_none()
+            && carries_frontmatter(Path::new(path))
+            && let Ok(text) = &rendered.text
+            && let Some(form) = self.placement(&item.id)?.and_then(|edge| {
+                edge.properties
+                    .get(form::FORM_PROPERTY)
+                    .and_then(form::Form::read)
+            })
+            && let Some(stand_in) = form.stand_in(&document::read(text).front, &item.occurred_at)
+        {
+            let shaped = self.render_with(
+                item,
+                path,
+                line,
+                catalog,
+                edge_types,
+                (names, Some(&stand_in), recorded),
+            )?;
+            if shaped.text.is_ok() {
+                return Ok(shaped);
+            }
+        }
+        Ok(rendered)
+    }
+
+    fn render_with(
+        &self,
+        item: &Item,
+        path: &str,
+        line: Option<i64>,
+        catalog: &Catalog,
+        edge_types: &EdgeTypes,
+        lines: LinesBy<'_>,
+    ) -> Result<Rendered> {
         let body_field = fields::body_field(catalog, &item.r#type);
         let body = item
             .properties

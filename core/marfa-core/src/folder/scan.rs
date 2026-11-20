@@ -353,6 +353,12 @@ impl Folder {
             ControlFlow::Continue(work) => work,
         };
         self.queue_edge_work(&mut scan, work)?;
+        self.send_forms(
+            &scan.files,
+            &scan.snapshot,
+            &scan.edge_types,
+            &self.withheld()?,
+        )?;
         self.settle_default_edges(&scan.settings)?;
         if scan.reread_embeds && !scan.incomplete {
             crate::store::meta_set(&*self.core.conn()?, EMBEDS_REREAD, "1")?;

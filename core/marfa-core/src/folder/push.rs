@@ -393,7 +393,8 @@ impl Folder {
             flagged,
         )?
         .add_to(&mut writes);
-        self.place(&item_id, &file.key, withheld)?;
+        let form = self.form_for(&item_id, &document, edge_types)?;
+        self.place_with(&item_id, &file.key, form, withheld)?;
         self.bind_scanned(
             file,
             &item_id,
