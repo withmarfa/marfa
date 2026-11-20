@@ -6,6 +6,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
+use marfa_rules::schema::{TypeFile, check_type_files, shipped_registry};
 use marfa_server::app::App;
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Environment, Settings};
@@ -206,6 +207,118 @@ async fn a_parent_that_is_missing_or_would_close_a_cycle_is_refused() {
         "{}",
         held.body
     );
+}
+
+/// What each registration is refused with, as an answer the checker also gives: the code, and each message.
+fn answered(reply: &Reply) -> (String, Vec<String>) {
+    let said = reply.body["error"]["details"]["errors"]
+        .as_array()
+        .filter(|errors| !errors.is_empty())
+        .map(|errors| {
+            errors
+                .iter()
+                .map(|error| error["message"].as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![reply.body["error"]["message"].as_str().unwrap().to_string()]);
+    (reply.code().to_string(), said)
+}
+
+#[tokio::test]
+async fn the_folder_check_gives_each_definition_the_answer_a_registration_gets() {
+    let instance = Instance::start().await;
+    let status = |group: &str| json!({ "stage": { "type": "status", "status_values": [{ "value": "open", "group": group }] } });
+    let cases = vec![
+        simple("acme.base"),
+        child(
+            "acme.sub",
+            "acme.base",
+            json!({ "extra": { "type": "integer" } }),
+        ),
+        child(
+            "acme.shadow",
+            "acme.base",
+            json!({ "note": { "type": "integer" } }),
+        ),
+        json!({ "id": "acme.good-status", "fields": status("not_started") }),
+        json!({ "id": "acme.bad-status", "fields": status("underway") }),
+        json!({ "id": "acme.thumbs", "fields": { "a": { "type": "thumbnail" }, "b": { "type": "thumbnail" } } }),
+        json!({ "id": "acme.enum", "fields": { "x": { "type": "enum" } } }),
+        json!({ "id": "acme.unknown", "colour": "red", "fields": { "x": { "type": "string" } } }),
+        json!({ "id": "acme.kind", "fields": { "x": { "type": "colour" } } }),
+        json!({ "id": "acme.version", "version": -1, "fields": { "x": { "type": "string" } } }),
+        json!({ "id": "acme.shadows-item", "fields": { "created_at": { "type": "string" } } }),
+        child("acme.orphan", "acme.nothing", json!({})),
+        json!({ "id": "core.mine", "fields": { "x": { "type": "string" } } }),
+        json!({ "id": "audit.mine", "fields": { "x": { "type": "string" } } }),
+        json!({ "id": "acme.bare" }),
+        json!({ "id": "acme.floor", "fields": { "n": { "type": "integer", "minimum": 5 } } }),
+        child(
+            "acme.lower",
+            "acme.floor",
+            json!({ "n": { "type": "integer", "minimum": 1 } }),
+        ),
+        child(
+            "acme.higher",
+            "acme.floor",
+            json!({ "n": { "type": "integer", "minimum": 9 } }),
+        ),
+        child(
+            "acme.under-task",
+            "core.task",
+            json!({ "sprint": { "type": "integer" } }),
+        ),
+        child(
+            "acme.retitled",
+            "core.task",
+            json!({ "title": { "type": "integer", "required": true } }),
+        ),
+    ];
+    let files: Vec<TypeFile> = cases
+        .iter()
+        .map(|case| TypeFile {
+            name: format!("{}.json", case["id"].as_str().unwrap()),
+            content: Ok(case.to_string().into_bytes()),
+        })
+        .collect();
+    let verdict = check_type_files(&files, &shipped_registry().unwrap()).unwrap();
+
+    let mut accepted = 0;
+    let mut refused = 0;
+    for case in cases {
+        let id = case["id"].as_str().unwrap().to_string();
+        let checked = verdict
+            .files
+            .iter()
+            .find(|file| file.file == format!("{id}.json"))
+            .unwrap();
+        let reply = instance.register(case).await;
+        if reply.status == StatusCode::CREATED {
+            assert!(checked.problems.is_empty(), "{id}: {:?}", checked.problems);
+            accepted += 1;
+            continue;
+        }
+        refused += 1;
+        let (code, mut said) = answered(&reply);
+        assert!(
+            !checked.problems.is_empty(),
+            "{id}: the server refused {code}"
+        );
+        assert!(
+            checked.problems.iter().all(|problem| problem.code == code),
+            "{id}: server {code}, checker {:?}",
+            checked.problems
+        );
+        let mut heard: Vec<String> = checked
+            .problems
+            .iter()
+            .map(|problem| problem.message.clone())
+            .collect();
+        said.sort();
+        heard.sort();
+        assert_eq!(heard, said, "{id}");
+    }
+    assert_eq!((accepted, refused), (6, 14));
 }
 
 #[tokio::test]

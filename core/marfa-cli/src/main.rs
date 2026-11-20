@@ -564,10 +564,8 @@ fn socket_refusal(command: &Command) -> Option<CliError> {
             | Command::Folders { .. }
             | Command::Docs(_)
             | Command::Server { .. }
-            | Command::Types {
-                command: types::TypesCommand::Scaffold(_)
-            }
-    ) {
+    ) || matches!(command, Command::Types { command } if command.is_offline())
+    {
         return Some(CliError::Usage(
             "this command does not support --socket".into(),
         ));
@@ -642,15 +640,12 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             "this operation requires --socket PATH".into(),
         ));
     }
-    if matches!(
-        cli.command,
-        Command::Types {
-            command: types::TypesCommand::Scaffold(_)
-        }
-    ) && (cli.url.is_some() || cli.key.is_some() || cli.profile.is_some())
+    if let Command::Types { command } = &cli.command
+        && command.is_offline()
+        && (cli.url.is_some() || cli.key.is_some() || cli.profile.is_some())
     {
         return Err(CliError::Usage(
-            "types scaffold contacts no server and takes none of --url, --key and --profile".into(),
+            "types scaffold and types check contact no server and take none of --url, --key and --profile".into(),
         ));
     }
     if matches!(cli.command, Command::Server { .. })

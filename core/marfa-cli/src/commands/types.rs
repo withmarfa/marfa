@@ -1,7 +1,11 @@
+use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Args, Subcommand};
 use marfa_core::ScaffoldField;
+use marfa_rules::schema::{
+    FolderVerdict, Problem, TypeFile, check_type_files, is_type_file, shipped_registry,
+};
 use serde_json::{Map, Value};
 
 use super::{BodySource, object};
@@ -25,6 +29,12 @@ pub enum TypesCommand {
     ///
     /// A field is `NAME:TYPE`, given once for each field, in the order it is printed. An `enum` field takes its allowed values after a second colon, as `effort:enum:easy,hard`, an `array` field the type of its elements, as `tags:array:string`, and a `status` field its words, each with its group, as `stage:status:open=not_started,closed=completed`. The groups are `not_started`, `in_progress`, `completed` and `canceled`. A type that inherits a status field may give it without words, or with only the words it adds.
     Scaffold(ScaffoldArgs),
+    /// Check a folder of type definitions the way a server checks each at registration, with no server.
+    ///
+    /// Reads each `*.json` file directly in the folder (not its subfolders, and not a file whose name starts with a dot) as an item type definition, in the body `types register --file` sends. The file is named `ID.json`, after the type's `id`. Other files are ignored. An edge type is not checked.
+    ///
+    /// Needs no server, key or keychain, sends nothing, and takes none of `--url`, `--key`, `--profile` and `--socket`. Each type is judged with the registration rules that need no instance, against the types Marfa ships and the folder's own types, parent first. A type whose parent is missing, in a loop or itself refused is reported with that reason alone. Every problem is reported, each with its file, its path in the definition, and the code and message a server gives. A code the server never gives, such as `file_name_mismatch`, `file_unreadable` and `parent_refused`, is this command's own. What only an instance knows is left to it: whether the type already exists, what a key may register, and the body size an instance allows. Exits 1 when any file is refused or none is found, and 2 when the path is not a folder.
+    Check(CheckArgs),
     /// Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map.
     Register(BodySource),
     /// Normalize a definition and compare it with the registered type. Any authenticated key can use this command.
@@ -96,6 +106,19 @@ pub struct ScaffoldArgs {
     /// What the type is for.
     #[arg(long, value_name = "TEXT")]
     description: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct CheckArgs {
+    /// The folder that holds the type definitions, one `ID.json` for each type.
+    folder: PathBuf,
+}
+
+impl TypesCommand {
+    /// Whether the command runs on this machine alone.
+    pub fn is_offline(&self) -> bool {
+        matches!(self, TypesCommand::Scaffold(_) | TypesCommand::Check(_))
+    }
 }
 
 impl ScaffoldArgs {
@@ -213,7 +236,7 @@ pub fn job_request(id: &str) -> Request {
 }
 
 /// `remote` resolves the server and the credential, for the commands that
-/// send: `scaffold` resolves neither.
+/// send: `scaffold` and `check` resolve neither.
 pub fn run(
     command: TypesCommand,
     remote: impl FnOnce() -> Result<Remote, CliError>,
@@ -221,6 +244,7 @@ pub fn run(
 ) -> Result<(), CliError> {
     let request = match &command {
         TypesCommand::Scaffold(args) => return scaffold(args, out),
+        TypesCommand::Check(args) => return check(args, out),
         TypesCommand::Move(args) => return move_type(args, &remote()?, out),
         TypesCommand::List => list_request(),
         TypesCommand::Get { id } => get_request(id),
@@ -480,6 +504,154 @@ fn scaffold(args: &ScaffoldArgs, out: &Printer) -> Result<(), CliError> {
         &args.fields()?,
     )?;
     out.raw(&format!("{}\n", serde_json::to_string_pretty(&definition)?))
+}
+
+/// Every `*.json` file directly in the folder, read where it can be.
+fn type_files(folder: &PathBuf) -> Result<Vec<TypeFile>, CliError> {
+    let entries = std::fs::read_dir(folder).map_err(|error| {
+        CliError::Invalid(format!(
+            "cannot read the folder {}: {error}",
+            folder.display()
+        ))
+    })?;
+    let mut files = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            CliError::Invalid(format!(
+                "cannot read the folder {}: {error}",
+                folder.display()
+            ))
+        })?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !is_type_file(&name) {
+            continue;
+        }
+        let path = entry.path();
+        let content = match std::fs::metadata(&path) {
+            Ok(held) if !held.is_file() => continue,
+            Ok(_) => std::fs::read(&path).map_err(|error| error.to_string()),
+            Err(error) => Err(error.to_string()),
+        };
+        files.push(TypeFile { name, content });
+    }
+    Ok(files)
+}
+
+fn problem_json(problem: &Problem) -> Value {
+    let mut shown = serde_json::json!({
+        "path": problem.path,
+        "code": problem.code,
+        "message": problem.message,
+    });
+    if let Some(hint) = &problem.hint {
+        shown["hint"] = Value::String(hint.clone());
+    }
+    shown
+}
+
+fn verdict_json(verdict: &FolderVerdict) -> Value {
+    let refused = verdict
+        .files
+        .iter()
+        .filter(|file| !file.problems.is_empty())
+        .count();
+    let files: Vec<Value> = verdict
+        .files
+        .iter()
+        .map(|file| {
+            serde_json::json!({
+                "file": file.file,
+                "id": file.id,
+                "ok": file.problems.is_empty(),
+                "problems": file.problems.iter().map(problem_json).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "ok": refused == 0,
+        "checked": verdict.files.len(),
+        "refused": refused,
+        "files": files,
+    })
+}
+
+fn verdict_words(answer: &Value) -> String {
+    let mut lines = Vec::new();
+    for file in answer["files"].as_array().into_iter().flatten() {
+        let name = field(file, "file");
+        if file["ok"] == Value::Bool(true) {
+            lines.push(format!("{name}: ok"));
+            continue;
+        }
+        lines.push(format!("{name}: refused"));
+        for problem in file["problems"].as_array().into_iter().flatten() {
+            let path = match field(problem, "path") {
+                "" => String::new(),
+                path => format!("{path}: "),
+            };
+            lines.push(format!(
+                "  {path}{} ({})",
+                field(problem, "message"),
+                field(problem, "code")
+            ));
+            if let Some(hint) = problem.get("hint").and_then(Value::as_str) {
+                lines.push(format!("    {hint}"));
+            }
+        }
+    }
+    let checked = count(answer, "checked");
+    let refused = count(answer, "refused");
+    lines.push(if refused == 0 {
+        format!("checked {}: all pass", plural(checked, "file", "files"))
+    } else {
+        format!(
+            "checked {}: {refused} refused",
+            plural(checked, "file", "files")
+        )
+    });
+    lines.join("\n")
+}
+
+fn check(args: &CheckArgs, out: &Printer) -> Result<(), CliError> {
+    let folder = &args.folder;
+    match std::fs::metadata(folder) {
+        Err(error) => {
+            return Err(CliError::Usage(format!(
+                "cannot read {}: {error}",
+                folder.display()
+            )));
+        }
+        Ok(held) if !held.is_dir() => {
+            return Err(CliError::Usage(format!(
+                "{} is not a folder: name the folder that holds the type definitions",
+                folder.display()
+            )));
+        }
+        Ok(_) => {}
+    }
+    let files = type_files(folder)?;
+    let verdict = check_type_files(
+        &files,
+        &shipped_registry().map_err(marfa_core::CoreError::from)?,
+    )
+    .map_err(marfa_core::CoreError::from)?;
+    if verdict.files.is_empty() {
+        return Err(CliError::Invalid(format!(
+            "no *.json files found in {}",
+            folder.display()
+        )));
+    }
+    let answer = verdict_json(&verdict);
+    out.report(&answer, verdict_words)?;
+    match count(&answer, "refused") {
+        0 => Ok(()),
+        refused => Err(CliError::Invalid(format!(
+            "{} of {} refused, with {}",
+            plural(refused, "file", "files"),
+            verdict.files.len(),
+            plural(verdict.problem_count() as u64, "problem", "problems")
+        ))),
+    }
 }
 
 #[cfg(test)]

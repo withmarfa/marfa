@@ -181,8 +181,9 @@ fn skipped(words: &[String]) -> bool {
         // Runs Docker on this machine, never a request to a server; the
         // fixtures in `tests/server.rs` hold it.
         || first == Some("server")
-        // Prints a definition from its arguments and sends nothing.
+        // Prints a definition from its arguments, or judges a folder of them, and sends nothing.
         || words == ["types", "scaffold"]
+        || words == ["types", "check"]
         // Remote settings and health commands need no local folder. Other
         // folder commands use a working copy, driven by the device fixtures.
         || (first == Some("folders")

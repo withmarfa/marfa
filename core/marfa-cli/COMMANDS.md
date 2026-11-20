@@ -1367,6 +1367,22 @@ marfa types scaffold [OPTIONS] <ID>
 | `--parent <ID>` | The id of the type this one inherits from. A parent Marfa ships is checked against its fields; any other is taken as named. |
 | `--description <TEXT>` | What the type is for. |
 
+### marfa types check
+
+Check a folder of type definitions the way a server checks each at registration, with no server.
+
+Reads each `*.json` file directly in the folder (not its subfolders, and not a file whose name starts with a dot) as an item type definition, in the body `types register --file` sends. The file is named `ID.json`, after the type's `id`. Other files are ignored. An edge type is not checked.
+
+Needs no server, key or keychain, sends nothing, and takes none of `--url`, `--key`, `--profile` and `--socket`. Each type is judged with the registration rules that need no instance, against the types Marfa ships and the folder's own types, parent first. A type whose parent is missing, in a loop or itself refused is reported with that reason alone. Every problem is reported, each with its file, its path in the definition, and the code and message a server gives. A code the server never gives, such as `file_name_mismatch`, `file_unreadable` and `parent_refused`, is this command's own. What only an instance knows is left to it: whether the type already exists, what a key may register, and the body size an instance allows. Exits 1 when any file is refused or none is found, and 2 when the path is not a folder.
+
+```text
+marfa types check [OPTIONS] <FOLDER>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<FOLDER>` | The folder that holds the type definitions, one `ID.json` for each type. |
+
 ### marfa types register
 
 Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map.

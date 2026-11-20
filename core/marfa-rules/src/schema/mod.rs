@@ -1,12 +1,14 @@
 //! Rules for registered types and edge types: registration, resolution down a chain, and evolution. A refusal is a list of [`Issue`]s.
 
 mod chain;
+mod check;
 mod compat;
 mod edge;
 mod evolution;
 mod field;
 mod icons;
 mod order_key;
+mod registration;
 mod registry;
 mod resolve;
 mod tables;
@@ -16,8 +18,11 @@ mod unread;
 use serde_json::{Map, Value, json};
 
 pub use chain::{
-    MAX_REGISTRATION_CHAIN_DEPTH, broken_compatible_dependents, descendant_depth,
-    parent_chain_fault,
+    CIRCULAR_INHERITANCE, MAX_REGISTRATION_CHAIN_DEPTH, broken_compatible_dependents,
+    descendant_depth, parent_chain_fault,
+};
+pub use check::{
+    FileVerdict, FolderVerdict, Problem, TypeFile, check_type_files, is_type_file, shipped_registry,
 };
 pub use compat::{ShapeConflict, stored_shape_conflicts};
 pub use edge::{
@@ -29,6 +34,7 @@ pub use icons::{icon_issue, is_icon_id};
 pub use order_key::{
     TEXT_KEY_CLOSE, order_column_inlinable, order_value_key_sql, text_key_open, text_key_sql,
 };
+pub use registration::{Early, SchemaVerdict, early_refusal, invalid_id_message};
 pub use registry::Registry;
 pub use resolve::{
     ChainFault, MAX_RESOLUTION_DEPTH, canonical, chain, label_or_default, labelled, plural_of,
