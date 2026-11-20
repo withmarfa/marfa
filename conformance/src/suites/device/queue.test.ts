@@ -26,6 +26,7 @@ import {
   type Answer,
   type Responder,
   type ScriptedServer,
+  type SseFrame,
 } from "../../device/scripted-server.js";
 import { chmodSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -8551,6 +8552,114 @@ describe("an edit behind an edit of the same item", () => {
         "accepted",
       ]);
       expect(door.rows.get(HELD.id)?.properties.body).toBe("second");
+    });
+
+    /**
+     * A note made in the copy and read there at version 0, its create then
+     * answered at 1 and the answer cleared from the queue, as an app clears
+     * what it has read. A catch-up replays what `later` holds by then.
+     */
+    async function madeAndAnswered(
+      label: string,
+      later: SseFrame[] = [],
+    ): Promise<{
+      run: Harness;
+      device: DeviceUnderTest;
+      door: FolderDoor;
+      id: string;
+    }> {
+      const run = await startHarness(label);
+      harness = run;
+      const { device, server } = run;
+      scriptHydration(server, { head: "10", items: rows() });
+      server.copyAnswer("GET", "/events", () =>
+        copyReplay(later.length === 0 ? "10" : "11", later),
+      );
+      const door = scriptDoor(run);
+      expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+      const made = await device.create({
+        type: "core.note",
+        properties: { title: "made here", body: "made here" },
+      });
+      expect(made.ok, JSON.stringify(made)).toBe(true);
+      if (!made.ok) throw new Error("unreachable: the assertion above threw");
+      const id = made.value.item_id ?? "";
+      const before = await device.get(id);
+      expect(before.ok && before.value.version).toBe(0);
+      await drained(device);
+      const after = await device.get(id);
+      expect(after.ok && after.value.version).toBe(1);
+      expect((await device.forget()).ok).toBe(true);
+      return { run, device, door, id };
+    }
+
+    it("sends an edit read at version 0 of its own create on the version that create made", async () => {
+      const { run, device, door, id } = await madeAndAnswered(
+        "edit-as-read-own-create",
+      );
+      const read = { title: "made here", body: "mine" };
+      // The witness: not said to be read, an edit on 0 is refused, because
+      // the copy holds 1.
+      const unsaid = await device.update(id, { properties: read, version: 0 });
+      expect(
+        unsaid.ok ? "queued" : unsaid.refusal.code,
+        "an edit on version 0 of an answered create was queued without saying it was read",
+      ).toBe("invalid");
+
+      const queued = await device.update(id, {
+        properties: read,
+        version: 0,
+        asRead: true,
+      });
+      expect(
+        queued.ok,
+        `an edit read from the new item before its create was answered was refused: ${JSON.stringify(queued)}`,
+      ).toBe(true);
+      const report = await drained(device);
+
+      expect(
+        sentOn(run, `/items/${id}`),
+        "the edit went out on a version other than the one its create made",
+      ).toEqual([1]);
+      expect(verdictsOf(report, "update_item", id)).toEqual(["accepted"]);
+      expect(door.rows.get(id)?.properties).toEqual(read);
+    });
+
+    it("keeps both where another device changed the property an edit read at version 0 of its own create changed", async () => {
+      const later: SseFrame[] = [];
+      const { run, device, door, id } = await madeAndAnswered(
+        "edit-as-read-own-create-collides",
+        later,
+      );
+      elsewhere(door, id, { body: "theirs" });
+      const { edges: _edges, ...atTwo } = wireItem({
+        id,
+        version: 2,
+        properties: { title: "made here", body: "theirs" },
+      });
+      later.push(copyItemEvent("11", "item.updated", atTwo));
+      expect((await device.catchUp()).ok).toBe(true);
+      const caught = await device.get(id);
+      expect(caught.ok && caught.value.version).toBe(2);
+
+      const queued = await device.update(id, {
+        properties: { body: "mine" },
+        version: 0,
+        asRead: true,
+      });
+      expect(queued.ok, JSON.stringify(queued)).toBe(true);
+      const report = await drained(device);
+
+      expect(sentOn(run, `/items/${id}`)).toEqual([1]);
+      expect(verdictsOf(report, "update_item", id)).toEqual(["conflicted"]);
+      expect(
+        door.rows.get(id)?.properties.body,
+        "an edit read before its create was answered was taken over the body another device wrote since",
+      ).toBe("theirs");
+      expect(
+        copies(door),
+        "the body the edit carried was not kept in a copy beside the item",
+      ).toEqual(["mine"]);
     });
   });
 });
