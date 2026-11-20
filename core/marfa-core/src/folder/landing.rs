@@ -1245,11 +1245,16 @@ fn beside(dir: &Directory) -> io::Result<(File, PathBuf)> {
 pub(crate) struct Memory {
     pub(crate) rows: std::cell::RefCell<Vec<Displacement>>,
     pub(crate) kept: std::cell::RefCell<Vec<(PathBuf, String)>>,
+    /// Refuses every record, as a store on a full disk does.
+    pub(crate) full: std::cell::Cell<bool>,
 }
 
 #[cfg(test)]
 impl Ledger for Memory {
     fn record(&self, displacement: &Displacement) -> io::Result<()> {
+        if self.full.get() {
+            return Err(io::Error::from(io::ErrorKind::StorageFull));
+        }
         let mut rows = self.rows.borrow_mut();
         rows.retain(|row| row.id != displacement.id);
         rows.push(displacement.clone());
@@ -1972,6 +1977,23 @@ mod tests {
         assert!(place.ledger.rows.borrow().is_empty());
         place.clean();
         // The witness: unlocked, both land.
+        place.write(b"as last written").unwrap();
+        assert!(place.remove(b"from the server").unwrap());
+        place.clean();
+    }
+
+    #[test]
+    fn a_displacement_that_cannot_be_recorded_on_a_full_disk_moves_nothing() {
+        let place = Place::new(Some(b"as last written"));
+        place.ledger.full.set(true);
+        let landed = place.write(b"as last written");
+        assert!(matches!(landed, Err(Unlanded::Failed(_))), "{landed:?}");
+        assert!(place.remove(b"as last written").is_err());
+        assert_eq!(place.read("note.md"), b"as last written");
+        assert!(place.ledger.rows.borrow().is_empty());
+        place.clean();
+        // The witness: with room for the record, both land.
+        place.ledger.full.set(false);
         place.write(b"as last written").unwrap();
         assert!(place.remove(b"from the server").unwrap());
         place.clean();
