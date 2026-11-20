@@ -3028,9 +3028,6 @@ mod tests {
     }
 }
 
-/// A real watch over a scripted server, on the manual clock, so a fixed
-/// simulated time can be counted in passes and requests.
-
 #[cfg(test)]
 mod wrote_tests {
     use notify::EventKind;
@@ -3058,6 +3055,8 @@ mod wrote_tests {
     }
 }
 
+/// A real watch over a scripted server, on the manual clock, so a fixed
+/// simulated time can be counted in passes and requests.
 #[cfg(all(test, debug_assertions))]
 mod backoff_tests {
     use super::*;
