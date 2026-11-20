@@ -36,10 +36,7 @@ impl<W: Watcher> Directories for W {
     }
 }
 
-/// Whether a fixture has the registration of `directory` refused: the file the
-/// fault names lists, one to a line, names that end the path of a directory it
-/// refuses with every directory below it, and refuses none once the file is
-/// gone.
+/// Whether the `watch-refuse` fault lists a name that ends `directory` or an ancestor.
 #[cfg(debug_assertions)]
 fn refused_by_fault(directory: &Path) -> bool {
     crate::fault::named("watch-refuse")
@@ -315,7 +312,7 @@ impl<W: Directories> Listening<W> {
             .unwrap_or_default()
     }
 
-    /// The files on disk in `directories` and below them, where a scan enters them.
+    /// The files on disk in and below `directories`.
     pub(super) fn files_beneath(&self, root: &Path, directories: &[PathBuf]) -> BTreeSet<PathBuf> {
         let mut found = BTreeSet::new();
         let mut pending = directories.to_vec();

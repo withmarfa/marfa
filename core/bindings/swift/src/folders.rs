@@ -16,6 +16,8 @@ pub struct ListedFolder {
     pub dir: String,
     /// The id of the `system.folder` whose settings it follows.
     pub folder: String,
+    /// Its sync is paused with `Folders.pause`.
+    pub paused: bool,
 }
 
 /// Why a folder's directory is in cloud-synced or network storage, where
@@ -150,6 +152,11 @@ pub struct FolderStatus {
     pub paused: FolderPaused,
     /// Set while the folder's first sync waits to be confirmed.
     pub first_sync: Option<WaitingFirstSync>,
+    /// The directory's sync is paused with `Folders.pause`.
+    pub sync_paused: bool,
+    /// How many directories a watch last found it could not watch, from the
+    /// folder's last health report.
+    pub unwatched: u64,
 }
 
 /// A file a pass held or warned about, with why.
@@ -450,6 +457,7 @@ guarded! {
                 .folders()?
                 .into_iter()
                 .map(|entry| ListedFolder {
+                    paused: marfa_core::Folder::paused_at(&entry.dir),
                     dir: entry.dir.display().to_string(),
                     folder: entry.folder,
                 })
@@ -486,7 +494,25 @@ guarded! {
                 first_sync: report.first_sync.map(|waiting| WaitingFirstSync {
                     plan: waiting.plan.map(Into::into),
                 }),
+                sync_paused: report.sync_paused,
+                unwatched: report.unwatched,
             })
+        }
+
+        /// Pauses the directory's sync until `resume`: a watch skips it, and
+        /// `sync`, `confirm`, `restore` and the other calls that read the
+        /// server's side or write either side are refused with `SyncPaused`.
+        /// Answers whether it was running. Asks a watch that holds the folder
+        /// to let it go, as `add` does.
+        pub fn pause(&self, dir: String) -> Result<bool, MarfaError> {
+            Ok(working(&dir, self.server(), self.renewal.as_ref())?.pause_sync()?)
+        }
+
+        /// Lets a paused directory's sync go on. Answers whether it was
+        /// paused. Asks a watch that holds the folder to let it go, as `add`
+        /// does.
+        pub fn resume(&self, dir: String) -> Result<bool, MarfaError> {
+            Ok(working(&dir, self.server(), self.renewal.as_ref())?.resume_sync()?)
         }
 
         /// Everything a folder does, once: sends what changed on disk, catches

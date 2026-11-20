@@ -1,5 +1,4 @@
-//! A person's pause of one directory's sync, kept in the directory's own
-//! store, so it survives a restart of the watch and of the machine.
+//! A person's pause of one directory's sync, kept in its own store.
 
 use super::Folder;
 use crate::error::CoreError;
@@ -19,18 +18,14 @@ impl Folder {
         paused(&*self.core.conn()?)
     }
 
-    /// Whether the sync of the directory at `root` is paused, read without
-    /// claiming the directory, so it answers beside a process that holds it.
-    /// `false` where the directory cannot be read.
+    /// Whether the directory at `root` is paused, read without claiming it.
     pub fn paused_at(root: impl AsRef<std::path::Path>) -> bool {
         Folder::reading(root.as_ref())
             .and_then(|folder| folder.is_paused())
             .unwrap_or(false)
     }
 
-    /// Pauses the directory's sync. Answers whether it was running: pausing a
-    /// directory that is paused changes nothing. The directory and what the
-    /// store keeps of its files are left as they are.
+    /// Pauses the directory's sync; `false` where it was paused already.
     pub fn pause_sync(&self) -> Result<bool> {
         let conn = self.core.conn()?;
         if paused(&conn)? {
@@ -42,9 +37,7 @@ impl Folder {
         Ok(true)
     }
 
-    /// Lets the directory's sync go on. Answers whether it was paused. The
-    /// next sync sends what changed in the directory and pulls what changed on
-    /// the server, as a watch that starts again does.
+    /// Lets the directory's sync go on; `false` where it was not paused.
     pub fn resume_sync(&self) -> Result<bool> {
         let conn = self.core.conn()?;
         if !paused(&conn)? {
@@ -56,20 +49,16 @@ impl Folder {
         Ok(true)
     }
 
-    /// Tells the server the directory is paused, or no longer is, with one
-    /// attempt that a failure does not turn into the command's.
+    /// Tells the server once; a failure is not the command's.
     fn report_pause(&self) {
         self.health_observe(false, true, None, None, false);
         self.health_send();
     }
 
-    /// Each command that reads the server's side or writes either side starts here.
+    /// Refuses a command that reads the server's side or writes either side.
     pub(super) fn refuse_while_paused(&self) -> Result<()> {
         if self.is_paused()? {
-            return Err(CoreError::Invalid(
-                "this directory's sync is paused, so nothing is sent or written until `folders resume` lets it go on"
-                    .into(),
-            ));
+            return Err(CoreError::SyncPaused);
         }
         Ok(())
     }

@@ -4604,7 +4604,8 @@ mod tests {
         drop(core);
         std::fs::write(dir.path().join("note.md"), "# Note\n").unwrap();
         let folder = Folder::open(dir.path(), None).unwrap();
-        let paused = |error: std::result::Result<(), CoreError>| matches!(error, Err(CoreError::Invalid(said)) if said.contains("folders resume"));
+        let paused =
+            |error: std::result::Result<(), CoreError>| matches!(error, Err(CoreError::SyncPaused));
         let stop = AtomicBool::new(false);
 
         // The witness: before the pause none of these is refused for it.
@@ -4621,7 +4622,7 @@ mod tests {
         assert!(paused(folder.pull().map(drop)));
         assert!(matches!(
             folder.watch(&stop, |_| Ok::<(), ()>(())),
-            Err(WatchError::Core(CoreError::Invalid(_)))
+            Err(WatchError::Core(CoreError::SyncPaused))
         ));
         assert_eq!(
             std::fs::read_to_string(dir.path().join("note.md")).unwrap(),

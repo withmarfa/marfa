@@ -14,6 +14,7 @@ use marfa_core::CoreError;
 pub struct ListedFolder {
     pub dir: String,
     pub folder: String,
+    pub paused: bool,
 }
 #[napi(discriminant = "cause", discriminant_case = "camelCase")]
 pub enum StorageCause {
@@ -94,6 +95,8 @@ pub struct FolderStatus {
     pub files: Vec<FileStatus>,
     pub paused: FolderPaused,
     pub first_sync: Option<WaitingFirstSync>,
+    pub sync_paused: bool,
+    pub unwatched: i64,
 }
 #[napi(object)]
 pub struct FlaggedFile {
@@ -287,6 +290,26 @@ impl Folders {
         AsyncTask::new(ConfirmFirstSync { dir, failed: None })
     }
 
+    #[napi(ts_return_type = "Promise<boolean>")]
+    pub fn pause(&self, dir: String) -> AsyncTask<PauseSync> {
+        AsyncTask::new(PauseSync {
+            dir,
+            server: self.server.clone(),
+            pausing: true,
+            failed: None,
+        })
+    }
+
+    #[napi(ts_return_type = "Promise<boolean>")]
+    pub fn resume(&self, dir: String) -> AsyncTask<PauseSync> {
+        AsyncTask::new(PauseSync {
+            dir,
+            server: self.server.clone(),
+            pausing: false,
+            failed: None,
+        })
+    }
+
     #[napi(ts_return_type = "Promise<ConfirmedFolder>")]
     pub fn confirm(&self, dir: String) -> AsyncTask<ConfirmFolder> {
         AsyncTask::new(ConfirmFolder { dir, failed: None })
@@ -433,6 +456,7 @@ impl Task for ListFolders {
                 .folders()?
                 .into_iter()
                 .map(|entry| ListedFolder {
+                    paused: marfa_core::Folder::paused_at(&entry.dir),
                     dir: entry.dir.display().to_string(),
                     folder: entry.folder,
                 })
@@ -485,6 +509,8 @@ impl Task for ReadFolderStatus {
                 first_sync: report.first_sync.map(|waiting| WaitingFirstSync {
                     plan: waiting.plan.map(Into::into),
                 }),
+                sync_paused: report.sync_paused,
+                unwatched: count(report.unwatched),
             })
         })()
         .map_err(|error| record(&mut self.failed, error))
@@ -549,6 +575,35 @@ impl Task for ConfirmFirstSync {
     fn compute(&mut self) -> Result<Self::Output> {
         (|| -> marfa_core::Result<Self::Output> { working(&self.dir, None)?.confirm_first_sync() })(
         )
+        .map_err(|error| record(&mut self.failed, error))
+    }
+    fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
+        Ok(report)
+    }
+}
+
+pub struct PauseSync {
+    dir: String,
+    server: Option<marfa_core::Server>,
+    pausing: bool,
+    failed: Option<CoreError>,
+}
+#[napi]
+impl Task for PauseSync {
+    type Output = bool;
+    type JsValue = bool;
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rejected(env, self.failed.take(), error, &self.dir))
+    }
+    fn compute(&mut self) -> Result<Self::Output> {
+        (|| -> marfa_core::Result<Self::Output> {
+            let folder = working(&self.dir, self.server.clone())?;
+            if self.pausing {
+                folder.pause_sync()
+            } else {
+                folder.resume_sync()
+            }
+        })()
         .map_err(|error| record(&mut self.failed, error))
     }
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {

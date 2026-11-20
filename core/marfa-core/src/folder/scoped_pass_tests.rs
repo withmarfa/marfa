@@ -492,8 +492,7 @@ fn read_hash(folder: &Folder, name: &str) -> String {
         .content_hash
 }
 
-/// A quick pass an event at `n001.md` drives, readied as the watch readies it,
-/// after an edit at `name`. Answers the files the pass took the metadata of.
+/// A quick pass driven by an event at `n001.md`, after an edit at `name`.
 fn edit_then_pass(
     (dir, folder): (&Path, &Folder),
     passes: &mut watch::Passes,

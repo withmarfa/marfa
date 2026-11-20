@@ -576,7 +576,7 @@ mod tests {
         let folder = &paused.folder;
         let refused = |error: Result<()>| {
             assert!(
-                matches!(&error, Err(crate::error::CoreError::Invalid(said)) if said.contains("folders resume")),
+                matches!(&error, Err(crate::error::CoreError::SyncPaused)),
                 "{error:?}"
             );
         };
@@ -619,7 +619,7 @@ mod tests {
         folder.pause_sync().unwrap();
         assert!(matches!(
             folder.confirm_first_sync(),
-            Err(crate::error::CoreError::Invalid(_))
+            Err(crate::error::CoreError::SyncPaused)
         ));
         assert!(folder.awaiting_confirmation().unwrap());
         folder.resume_sync().unwrap();

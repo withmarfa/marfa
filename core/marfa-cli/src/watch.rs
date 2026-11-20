@@ -335,8 +335,7 @@ fn paused_line() -> Value {
 /// How often a paused directory's pause is read again.
 const PAUSE_LOOK: Duration = Duration::from_secs(1);
 
-/// Waits until the pause of the directory at `root` ends, or the directory
-/// goes, answering `false` where the watch was stopped first.
+/// Waits until the directory's pause ends; `false` where the watch stopped first.
 fn resumed(root: &Path, stop: &std::sync::atomic::AtomicBool) -> bool {
     let mut looked = Instant::now();
     loop {
@@ -460,8 +459,7 @@ fn keep_in_step(
     let mut let_go = false;
     // What to say once the folder is watched again.
     let mut back: Option<Back> = None;
-    // Whether the watch has begun: a directory paused before it did is refused,
-    // and one paused under it is waited for.
+    // A directory paused before the watch began is refused; one paused under it is waited for.
     let mut begun = false;
     loop {
         let paused = begun && folder.is_paused()?;

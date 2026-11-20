@@ -556,8 +556,7 @@ impl Folder {
         Ok(WatchEnd::Stopped)
     }
 
-    /// Keeps the count of directories the watch could not register, and has
-    /// the next pass report it where it changed.
+    /// Keeps the count of unwatched directories, and reports it when it changes.
     pub(super) fn count_unwatched<W: Directories>(
         &self,
         listening: &Listening<W>,
@@ -570,9 +569,7 @@ impl Folder {
         }
     }
 
-    /// Has the pass look at the directories that could not be watched, which
-    /// no event speaks for, each time the look is due and at once the first
-    /// time: a full pass walks them anyway. Only those directories are read.
+    /// Names the files of the unwatched directories for the pass, each time the look is due.
     pub(super) fn look_at_unwatched<W: Directories>(
         &self,
         listening: &Listening<W>,
@@ -597,8 +594,7 @@ impl Folder {
         };
     }
 
-    /// Names for the next pass the files in `uncovered`, and those the last
-    /// pass found there, which may be gone.
+    /// Names the files in `uncovered` and those the last pass found there.
     fn name_unwatched<W: Directories>(
         &self,
         listening: &Listening<W>,
@@ -1355,8 +1351,7 @@ fn unwatched_every(full_every: Duration) -> Duration {
     UNWATCHED_EVERY.min(full_every)
 }
 
-/// Where a watch ends, sets the count of unwatched directories back to none
-/// and reports once, so no report says what no watch knows.
+/// Where a watch ends, clears the unwatched count and reports once.
 pub(super) struct Uncounted<'a>(pub(super) &'a Folder);
 
 impl Drop for Uncounted<'_> {
@@ -1562,9 +1557,7 @@ pub(super) struct Telling {
 }
 
 impl Telling {
-    /// Whether a tick leaves the folder be. A tick alone moves nothing on a
-    /// folder the last pass left at rest: a pass walks the whole folder, so
-    /// it is not run to find out.
+    /// Whether a tick leaves the folder be.
     fn rests(&self, full: bool, changed: bool) -> bool {
         !full
             && !changed

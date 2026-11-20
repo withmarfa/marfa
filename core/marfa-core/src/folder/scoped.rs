@@ -95,8 +95,7 @@ impl Touched {
         }
     }
 
-    /// Takes in files no event named, for a pass to look at all the same.
-    /// Answers whether it could: a path outside the folder leaves the next pass to walk.
+    /// Names files no event named; `false` where one is outside the folder.
     pub(super) fn name(&mut self, root: &Path, paths: impl IntoIterator<Item = PathBuf>) -> bool {
         for path in paths {
             let Ok(key) = identity::relative(root, &path) else {
@@ -194,7 +193,7 @@ impl Folder {
         *self.inventory.lock().expect("inventory lock") = None;
     }
 
-    /// The files the last pass found beneath `directories`, or `None` where it kept nothing.
+    /// The files the last pass found beneath `directories`.
     pub(super) fn kept_beneath(&self, root: &Path, directories: &[PathBuf]) -> Option<Vec<String>> {
         let directories: HashSet<String> = directories
             .iter()
@@ -613,8 +612,7 @@ impl Folder {
     }
 }
 
-/// The `keys` that stand beneath any of `directories`, found by each key's own
-/// ancestors, so the cost does not grow with the directories.
+/// The `keys` beneath any of `directories`, by each key's ancestors.
 fn beneath(keys: &HashSet<String>, directories: &HashSet<String>) -> Vec<String> {
     keys.iter()
         .filter(|key| {
