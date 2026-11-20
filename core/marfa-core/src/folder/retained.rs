@@ -1,7 +1,10 @@
 //! Files a pull set aside while a program might still write to them, kept
 //! under their reserved names until a pass settles them.
 
-use super::{Directory, Folder, Rows, device, identity, in_state, joined, landing, state, writers};
+use super::{
+    Directory, Folder, Rows, carries_frontmatter, device, document, identity, in_state, joined,
+    landing, line_of, state, writers,
+};
 use std::path::Path;
 
 use serde::Serialize;
@@ -158,12 +161,18 @@ fn settle_retained_row(
         }
         landing::Settled::PutBack(metadata) => {
             let path = joined(&row.dir, &retained.target);
+            let read_at = version_line(&path, file);
             let tx = conn.unchecked_transaction()?;
             if let Some(bound) = state::bound_at(&tx, &path)? {
                 state::bind(
                     &tx,
                     &state::Bound {
                         identity: identity::of(&metadata).map(|found| found.key()),
+                        // The program wrote over what the file held at its own
+                        // version, not over what the pull wrote, so a remote
+                        // edit since meets it as any concurrent edit does.
+                        content_hash: read_at
+                            .map_or(bound.content_hash.clone(), state::untaken_read_at),
                         ..bound
                     },
                 )?;
@@ -190,6 +199,20 @@ fn settle_retained_row(
             Ok(RowSettled::Gone)
         }
     }
+}
+
+/// The `marfa_version` line of the document at `path` that `file`, put back
+/// there, holds.
+fn version_line(path: &str, file: &std::fs::File) -> Option<i64> {
+    use std::io::{Read, Seek};
+    if !carries_frontmatter(Path::new(path)) {
+        return None;
+    }
+    let mut file = file;
+    let mut text = String::new();
+    file.seek(std::io::SeekFrom::Start(0)).ok()?;
+    file.read_to_string(&mut text).ok()?;
+    line_of(&document::read(&text).front)
 }
 
 /// What settling one kept file left.
@@ -543,11 +566,22 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn a_kept_file_a_program_wrote_to_goes_back_and_is_sent() {
+    fn a_kept_file_a_program_wrote_to_goes_back_and_is_sent_as_read_at_its_own_version() {
         for discard in [false, true] {
             let (dir, folder) = scanned_folder();
             let root = dir.path().canonicalize().unwrap();
             let id = changed_on_the_server(&root, &folder);
+            // Version 1 was this device's own edit, so its line alone would
+            // read as behind only by that edit, and the edit would go on 2.
+            folder
+                .core
+                .conn()
+                .unwrap()
+                .execute(
+                    "UPDATE folder_files SET edit_line = 1 WHERE path = 'Notes/Plan.md'",
+                    [],
+                )
+                .unwrap();
             {
                 let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
                 folder.pull().unwrap();
@@ -572,7 +606,23 @@ mod tests {
             assert!(reserved_in(&root.join("Notes")).is_empty());
             assert!(folder.kept_files().unwrap().is_empty());
             let bound = state::bound_at(&folder.core.conn().unwrap(), "Notes/Plan.md").unwrap();
-            assert_eq!(bound.map(|bound| bound.item_id), Some(id));
+            assert_eq!(bound.map(|bound| bound.item_id), Some(id.clone()));
+            let bases: Vec<Option<i64>> = folder
+                .core
+                .queue()
+                .unwrap()
+                .into_iter()
+                .filter(|write| {
+                    write.kind == crate::model::WriteKind::UpdateItem
+                        && write.item_id.as_deref() == Some(id.as_str())
+                })
+                .map(|write| write.base_version)
+                .collect();
+            assert_eq!(
+                bases,
+                vec![Some(1)],
+                "discard {discard}: what the program wrote goes on the version it read"
+            );
         }
     }
 }
