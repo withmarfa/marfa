@@ -122,6 +122,26 @@ fn by_mode(link: bool, folder: bool, owner: u32, mode: u32, trusted: u32) -> Opt
 /// Makes `path` and each missing folder above it 0700 whatever the umask, with no access control
 /// list entry inherited from its parent. A folder already there is left as it is.
 pub fn make_private_folders(path: &Path) -> std::io::Result<()> {
+    make_missing_folders(path, 0o700)
+}
+
+/// Makes each missing folder of `path` 0755 whatever the umask, with no inherited access control
+/// list entry that lets another account write there, as the server refuses above its data. A
+/// folder already there is left as it is.
+pub fn make_open_folders(path: &Path) -> std::io::Result<()> {
+    make_missing_folders(path, 0o755)
+}
+
+/// Makes `path` 0700 and each missing folder above it 0755: [`make_private_folders`] for the
+/// folder, [`make_open_folders`] for what leads to it.
+pub fn make_private_folder_in_open_folders(path: &Path) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        make_open_folders(parent)?;
+    }
+    make_private_folders(path)
+}
+
+fn make_missing_folders(path: &Path, mode: u32) -> std::io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
     let mut missing = Vec::new();
@@ -143,7 +163,7 @@ pub fn make_private_folders(path: &Path) -> std::io::Result<()> {
     // SAFETY: `geteuid` takes nothing and cannot fail.
     let own = unsafe { libc::geteuid() };
     for folder in missing.into_iter().rev() {
-        match std::fs::DirBuilder::new().mode(0o700).create(folder) {
+        match std::fs::DirBuilder::new().mode(mode).create(folder) {
             Ok(()) => {}
             // Made by another process meanwhile, so not this one's to change.
             Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
@@ -153,10 +173,15 @@ pub fn make_private_folders(path: &Path) -> std::io::Result<()> {
             .read(true)
             .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
             .open(folder)?;
-        if reach(&made, own)? != Reach::default() {
+        let inherited = if mode & 0o077 == 0 {
+            reach(&made, own)? != Reach::default()
+        } else {
+            others_may_write_file(&made, own)?
+        };
+        if inherited {
             clear(&made)?;
         }
-        made.set_permissions(std::fs::Permissions::from_mode(0o700))?;
+        made.set_permissions(std::fs::Permissions::from_mode(mode))?;
     }
     Ok(())
 }
@@ -394,6 +419,18 @@ pub fn others_may_write(path: &Path, own: u32) -> std::io::Result<bool> {
     )
 }
 
+/// [`others_may_write`] for an open file.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn others_may_write_file(file: &impl std::os::fd::AsRawFd, own: u32) -> std::io::Result<bool> {
+    let fd = file.as_raw_fd();
+    let access = read_fd_xattr(fd, ACCESS)?;
+    let default = read_fd_xattr(fd, DEFAULT)?;
+    Ok(
+        access.is_some_and(|value| posix::lets_others_write(&value, own, false))
+            || default.is_some_and(|value| posix::lets_others_write(&value, own, true)),
+    )
+}
+
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn read_xattr(path: &Path, name: &std::ffi::CStr) -> std::io::Result<Option<Vec<u8>>> {
     let file = c_path(path)?;
@@ -536,6 +573,14 @@ pub fn grants_by_acl(_path: &Path) -> std::io::Result<bool> {
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
 pub fn others_may_write(_path: &Path, _own: u32) -> std::io::Result<bool> {
+    Err(unsupported())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+pub fn others_may_write_file(
+    _file: &impl std::os::fd::AsRawFd,
+    _own: u32,
+) -> std::io::Result<bool> {
     Err(unsupported())
 }
 
@@ -1052,6 +1097,38 @@ mod tests {
         }
         std::fs::write(shared.join("file"), "").unwrap();
         let error = make_private_folders(&shared.join("file/below")).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::NotADirectory, "{error}");
+    }
+
+    #[test]
+    fn folders_above_a_private_one_are_open_and_take_no_write_entry_from_their_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        use testing::{Grant, let_another_account};
+        let shared = folder("open");
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let inherits = let_another_account(&shared, Grant::InheritWrite);
+        let (srv, install) = (shared.join("srv"), shared.join("srv/marfa"));
+        make_private_folder_in_open_folders(&install).unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&srv), 0o755);
+        assert_eq!(mode(&install), 0o700);
+        for made in [&srv, &install] {
+            assert!(!others_may_write(made, me()).unwrap(), "{}", made.display());
+        }
+        if inherits {
+            // The witness: a folder made there by another hand inherits the entry.
+            let other = shared.join("other");
+            std::fs::create_dir(&other).unwrap();
+            assert!(others_may_write(&other, me()).unwrap());
+        }
+        std::fs::set_permissions(&srv, std::fs::Permissions::from_mode(0o750)).unwrap();
+        make_private_folder_in_open_folders(&install).unwrap();
+        assert_eq!(mode(&srv), 0o750, "a folder already there is left alone");
+        let open = shared.join("a/b");
+        make_open_folders(&open).unwrap();
+        assert_eq!((mode(&shared.join("a")), mode(&open)), (0o755, 0o755));
+        std::fs::write(shared.join("file"), "").unwrap();
+        let error = make_open_folders(&shared.join("file/below")).unwrap_err();
         assert_eq!(error.kind(), ErrorKind::NotADirectory, "{error}");
     }
 
