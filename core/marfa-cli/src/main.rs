@@ -281,7 +281,7 @@ enum Command {
     /// `marfa-export.tar`, or redirect it.
     Export(export::ExportArgs),
     /// Restore an archive. Needs `backups.manage` and a sign-in from the last
-    /// five minutes, or the private local command (`--socket`).
+    /// fifteen minutes, or the private local command (`--socket`).
     ///
     /// Preserves item and edge IDs, created_at and updated_at dates, current
     /// versions, tags, extensions, and the item's earlier versions carried in

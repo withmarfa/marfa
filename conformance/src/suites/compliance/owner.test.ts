@@ -689,7 +689,7 @@ describe("signing the owner in at the claim", () => {
           sessionCookies(login)[0]!.split("=")[0],
         );
 
-        // The claim's session is a sign-in within the last five minutes, which
+        // The claim's session is a sign-in within the last fifteen minutes, which
         // removing a passkey needs. No passkey has this ID.
         const removed = await fetch(`${instance.url}/owner/passkeys/absent`, {
           method: "DELETE",

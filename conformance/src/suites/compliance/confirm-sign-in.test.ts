@@ -23,6 +23,8 @@ let origin: string;
 
 const CLIENT_HEADER = "x-conformance-client";
 const MINUTE = 60 * 1000;
+/** Long enough that a sign-in made before it is no longer recent. */
+const PAST_RECENT = 16 * MINUTE;
 let addresses = 0;
 
 beforeAll(async () => {
@@ -85,13 +87,27 @@ function get(path: string, cookie: string): Promise<Response> {
 }
 
 /**
- * A step that needs a sign-in from the last five minutes: removing a passkey.
+ * A step that needs a sign-in from the last fifteen minutes: removing a passkey.
  * No passkey has this ID, so a session recent enough is answered 404.
  */
 function removeAbsent(cookie: string): Promise<Response> {
   return fetch(`${server.apiUrl}/owner/passkeys/absent`, {
     method: "DELETE",
     headers: { cookie, origin, [CLIENT_HEADER]: nextAddress() },
+  });
+}
+
+/** Renames the passkey `id` from the session in `cookie`. */
+function renamePasskey(id: string, cookie: string): Promise<Response> {
+  return fetch(`${server.apiUrl}/owner/passkeys/${id}`, {
+    method: "PATCH",
+    headers: {
+      "content-type": "application/json",
+      cookie,
+      origin,
+      [CLIENT_HEADER]: nextAddress(),
+    },
+    body: JSON.stringify({ name: "Renamed at the edge" }),
   });
 }
 
@@ -142,7 +158,7 @@ async function registerPasskey(
   });
 }
 
-/** Whether `response` got past the five-minute check. */
+/** Whether `response` got past the fifteen-minute check. */
 async function wasRecent(response: Response): Promise<boolean> {
   expect([403, 404], await response.clone().text()).toContain(response.status);
   return response.status === 404;
@@ -166,7 +182,7 @@ async function code(response: Response): Promise<string> {
 describe("confirming with the password", () => {
   it("replaces a stale session with a new one, so the change that was refused runs", async () => {
     const stale = await signIn();
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const refused = await removeAbsent(stale);
     expect(refused.status).toBe(403);
     const refusal = (await refused.json()) as {
@@ -223,13 +239,13 @@ describe("confirming with the password", () => {
     }
   });
 
-  it("dates the new session from the confirmation, so it goes stale five minutes after it", async () => {
+  it("dates the new session from the confirmation, so it goes stale fifteen minutes after it", async () => {
     const stale = await signIn();
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const renewed = sessionCookie(
       await confirm({ password: TEST_OWNER.password }, stale),
     )!;
-    await server.advanceClock(4 * MINUTE);
+    await server.advanceClock(14 * MINUTE);
     expect(await wasRecent(await removeAbsent(renewed))).toBe(true);
     await server.advanceClock(2 * MINUTE);
     const again = await removeAbsent(renewed);
@@ -239,7 +255,7 @@ describe("confirming with the password", () => {
 
   it("answers a wrong password 401 and leaves the session as it was", async () => {
     const stale = await signIn();
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const wrong = await confirm({ password: "not the password" }, stale);
     expect(wrong.status).toBe(401);
     expect(await code(wrong)).toBe("unauthorized");
@@ -254,7 +270,7 @@ describe("confirming with the password", () => {
 
   it("counts a confirmation in the lane a password sign-in counts in, and answers the lockout with the wait", async () => {
     const stale = await signIn();
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const address = nextAddress();
     // Ten attempts from one address spend the window, whichever door they came by.
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -370,7 +386,7 @@ describe("confirming while strangers are limited", () => {
         expect(spent.status, "the hour every address shares is not spent").toBe(
           429,
         );
-        await crowded.advanceClock(6 * MINUTE);
+        await crowded.advanceClock(PAST_RECENT);
         const confirmed = await fetch(`${crowded.apiUrl}/auth/confirm`, {
           method: "POST",
           headers: {
@@ -395,7 +411,7 @@ describe("a confirmation names no account", () => {
   it("refuses a body that names an email, both proofs, or neither, and replaces nothing", async () => {
     const stale = await signIn();
     // A minute or more since the session was last used, so its use is recorded.
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     for (const body of [
       { email: "someone@example.test", password: TEST_OWNER.password },
       { password: TEST_OWNER.password, passkey: {} },
@@ -417,7 +433,7 @@ describe("a confirmation names no account", () => {
     const added = await registerPasskey(owner, registered, "Confirm key");
     expect(added.status).toBe(201);
 
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const asked = await passkeyOptions("sign-in", owner);
     const refused = await confirm(
       { passkey: stranger.authentication(asked.challenge, origin, 1, rpID) },
@@ -438,7 +454,7 @@ describe("confirming with a passkey", () => {
     const added = await registerPasskey(stale, device, "Confirm key");
     expect(added.status).toBe(201);
 
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     expect((await removeAbsent(stale)).status).toBe(403);
     const asked = await passkeyOptions("sign-in", stale);
     const confirmed = await confirm(
@@ -487,7 +503,7 @@ describe("a refused confirmation in the audit log", () => {
   it("records a refused confirmation in the audit log as a refused password sign-in, with its reason", async () => {
     const stale = await signIn();
     // Past the recent sign-in, and past any lockout an earlier case recorded.
-    await server.advanceClock(15 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const failed = "auth.sign_in.failed";
     const before = (await audited(failed)).length;
     const sent = "a wrong confirmation password";
@@ -568,7 +584,7 @@ describe("a refused confirmation in the audit log", () => {
     expect(added.status).toBe(201);
     const passkeyId = ((await added.json()) as { id: string }).id;
 
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const failed = "auth.sign_in.failed";
     const before = (await audited(failed)).length;
     const asked = await passkeyOptions("sign-in", stale);
@@ -591,7 +607,7 @@ describe("a refused confirmation in the audit log", () => {
 });
 
 describe("a stale session changing a passkey", () => {
-  it("refuses a rename and a removal from a session created more than five minutes ago, and a recent session makes both", async () => {
+  it("refuses a rename and a removal from a session created more than fifteen minutes ago, and a recent session makes both", async () => {
     const holder = await signIn();
     const added = await registerPasskey(
       holder,
@@ -600,7 +616,7 @@ describe("a stale session changing a passkey", () => {
     );
     expect(added.status).toBe(201);
 
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const fresh = await signIn();
     const listed = await get("/owner/passkeys", fresh);
     expect(listed.status).toBe(200);
@@ -637,6 +653,46 @@ describe("a stale session changing a passkey", () => {
     );
     expect((await change("DELETE", fresh)).status).toBe(200);
   });
+
+  it("lets a rename ten minutes after the sign-in pass without asking to sign in again", async () => {
+    const holder = await signIn();
+    const added = await registerPasskey(
+      holder,
+      testAuthenticator(),
+      "Ten minutes old",
+    );
+    expect(added.status).toBe(201);
+    const { id } = (await added.json()) as { id: string };
+    await server.advanceClock(10 * MINUTE);
+    const renamed = await renamePasskey(id, holder);
+    expect(renamed.status, await renamed.clone().text()).toBe(200);
+    expect(((await renamed.json()) as { name: string }).name).toBe(
+      "Renamed at the edge",
+    );
+  });
+
+  it("lets a rename through at exactly fifteen minutes after the sign-in and refuses it one millisecond later", async () => {
+    await server.pauseClock(true);
+    try {
+      const holder = await signIn();
+      const added = await registerPasskey(
+        holder,
+        testAuthenticator(),
+        "At the edge",
+      );
+      expect(added.status).toBe(201);
+      const { id } = (await added.json()) as { id: string };
+      await server.advanceClock(15 * MINUTE);
+      const atEdge = await renamePasskey(id, holder);
+      expect(atEdge.status, await atEdge.clone().text()).toBe(200);
+      await server.advanceClock(1);
+      const past = await renamePasskey(id, holder);
+      expect(past.status).toBe(403);
+      expect(await code(past)).toBe("forbidden");
+    } finally {
+      await server.pauseClock(false);
+    }
+  });
 });
 
 describe("a stale session adding a passkey", () => {
@@ -648,7 +704,7 @@ describe("a stale session adding a passkey", () => {
         headers: { cookie: stale, origin, [CLIENT_HEADER]: nextAddress() },
       });
     expect((await options()).status).toBe(200);
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const refused = await options();
     expect(refused.status).toBe(403);
     const refusal = (await refused.json()) as {

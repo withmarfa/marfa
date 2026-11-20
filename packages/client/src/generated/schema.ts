@@ -2104,14 +2104,14 @@ export interface paths {
         post?: never;
         /**
          * Delete a passkey
-         * @description Deletes one passkey so it cannot sign in again. Existing sign-ins remain usable. Requires the owner's browser session, signed in within five minutes, or `sign_ins.manage`.
+         * @description Deletes one passkey so it cannot sign in again. Existing sign-ins remain usable. Requires the owner's browser session, signed in within fifteen minutes, or `sign_ins.manage`.
          */
         delete: operations["deleteOwnerPasskey"];
         options?: never;
         head?: never;
         /**
          * Rename a passkey
-         * @description Renames the passkey and returns its public details. Requires the owner's browser session, signed in within five minutes, or `sign_ins.manage`.
+         * @description Renames the passkey and returns its public details. Requires the owner's browser session, signed in within fifteen minutes, or `sign_ins.manage`.
          */
         patch: operations["renameOwnerPasskey"];
         trace?: never;
@@ -2439,7 +2439,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Restores an exported archive atomically and returns counts of written and skipped records. While it writes, Marfa turns other writes away. Requires `backups.manage`, `config.manage` to add settings, and a sign-in from the last five minutes.
+         * @description Restores an exported archive atomically and returns counts of written and skipped records. While it writes, Marfa turns other writes away. Requires `backups.manage`, `config.manage` to add settings, and a sign-in from the last fifteen minutes.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -2503,7 +2503,7 @@ export interface paths {
         put?: never;
         /**
          * Restore a backup
-         * @description Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. Requires `backups.manage`, `config.manage` to add settings, and a sign-in from the last five minutes.
+         * @description Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. Requires `backups.manage`, `config.manage` to add settings, and a sign-in from the last fifteen minutes.
          */
         post: operations["restoreBackup"];
         delete?: never;
@@ -6468,27 +6468,27 @@ export interface components {
             addresses: string[];
             /** @description The address people sign in at, an origin with no path. Absent: this computer's own address. */
             sign_in_address?: string;
-            /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Changing it needs a sign-in from the last five minutes. Absent: no backup folder. */
+            /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Changing it needs a sign-in from the last fifteen minutes. Absent: no backup folder. */
             backup_path?: string;
-            /** @description The bucket of an S3-compatible object store that also keeps each file and the backups: 1 to 255 ASCII letters, digits, `.`, `:`, `-` and `_`, other than `.` and `..`. Changing it needs a sign-in from the last five minutes. Absent: no object store. */
+            /** @description The bucket of an S3-compatible object store that also keeps each file and the backups: 1 to 255 ASCII letters, digits, `.`, `:`, `-` and `_`, other than `.` and `..`. Changing it needs a sign-in from the last fifteen minutes. Absent: no object store. */
             object_store_bucket?: string;
             /**
-             * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Changing it needs a sign-in from the last five minutes. Absent: `us-east-1`.
+             * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1` or `auto`. Changing it needs a sign-in from the last fifteen minutes. Absent: `us-east-1`.
              * @default us-east-1
              */
             object_store_region: string;
             /**
              * Format: uri
-             * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Changing it needs a sign-in from the last five minutes. Absent: the store's provider chooses it.
+             * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Changing it needs a sign-in from the last fifteen minutes. Absent: the store's provider chooses it.
              */
             object_store_endpoint?: string;
             /**
-             * @description `true` if the store at `object_store_endpoint` is addressed by path. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name without the bucket. Changing it needs a sign-in from the last five minutes. Absent: `true`.
+             * @description `true` if the store at `object_store_endpoint` is addressed by path. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name without the bucket. Changing it needs a sign-in from the last fifteen minutes. Absent: `true`.
              * @default true
              */
             object_store_path_style: boolean;
             /**
-             * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Changing it needs a sign-in from the last five minutes. Absent: `marfa`.
+             * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Changing it needs a sign-in from the last fifteen minutes. Absent: `marfa`.
              * @default marfa
              */
             object_store_prefix: string;
@@ -6498,7 +6498,7 @@ export interface components {
              */
             object_store_access_key_id?: string;
             /**
-             * @description `true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
+             * @description `true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last fifteen minutes. Absent: `false`.
              * @default false
              */
             allow_private_addresses: boolean;
@@ -8479,7 +8479,7 @@ export interface components {
         "Retry-After": number;
         /** @description Sent as `true` when this response was served from the record of an earlier request carrying the same `Idempotency-Key`, rather than by performing the write. It is only ever sent on a replay and only with that value, so its absence means the write was performed. The status and body are the first attempt's, which is why the header can arrive on an error: a recorded 409 replays as a 409. Read a replayed response exactly as the original would have been read: the header says where the answer came from, not that anything went wrong. */
         "Idempotency-Replayed": "true";
-        /** @description The step-up challenge of RFC 9470, sent with `insufficient_user_authentication`: `Bearer error="insufficient_user_authentication", max_age="300"`, where `max_age` is how many seconds old the owner's sign-in may be. */
+        /** @description The step-up challenge of RFC 9470, sent with `insufficient_user_authentication`: `Bearer error="insufficient_user_authentication", max_age="900"`, where `max_age` is how many seconds old the owner's sign-in may be. */
         "WWW-Authenticate": string;
     };
     pathItems: never;
@@ -34055,7 +34055,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the credential lacks `sign_ins.manage`, and `details.required_scope` names it, or the owner's browser session signed in more than five minutes ago, and `details.needs` is `recent_sign_in`. */
+            /** @description - `forbidden`: the credential lacks `sign_ins.manage`, and `details.required_scope` names it, or the owner's browser session signed in more than fifteen minutes ago, and `details.needs` is `recent_sign_in`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -34232,7 +34232,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the credential lacks `sign_ins.manage`, and `details.required_scope` names it, or the owner's browser session signed in more than five minutes ago, and `details.needs` is `recent_sign_in`. */
+            /** @description - `forbidden`: the credential lacks `sign_ins.manage`, and `details.required_scope` names it, or the owner's browser session signed in more than fifteen minutes ago, and `details.needs` is `recent_sign_in`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -34990,27 +34990,27 @@ export interface operations {
                     confirm_sign_in_address_change?: boolean;
                     /** @description `true` moves the sign-in address without first checking that it answers as this instance, for a host that answers only after the move. Only the private local command can send it. */
                     skip_sign_in_address_check?: boolean;
-                    /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Changing it needs a sign-in from the last five minutes. Absent: no backup folder. */
+                    /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Changing it needs a sign-in from the last fifteen minutes. Absent: no backup folder. */
                     backup_path?: string;
-                    /** @description The bucket of an S3-compatible object store that also keeps each file and the backups: 1 to 255 ASCII letters, digits, `.`, `:`, `-` and `_`, other than `.` and `..`. Changing it needs a sign-in from the last five minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: no object store. */
+                    /** @description The bucket of an S3-compatible object store that also keeps each file and the backups: 1 to 255 ASCII letters, digits, `.`, `:`, `-` and `_`, other than `.` and `..`. Changing it needs a sign-in from the last fifteen minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: no object store. */
                     object_store_bucket?: string;
                     /**
-                     * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Changing it needs a sign-in from the last five minutes. Absent: `us-east-1`.
+                     * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1` or `auto`. Changing it needs a sign-in from the last fifteen minutes. Absent: `us-east-1`.
                      * @default us-east-1
                      */
                     object_store_region?: string;
                     /**
                      * Format: uri
-                     * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Changing it needs a sign-in from the last five minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: the store's provider chooses it.
+                     * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Changing it needs a sign-in from the last fifteen minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: the store's provider chooses it.
                      */
                     object_store_endpoint?: string;
                     /**
-                     * @description `true` if the store at `object_store_endpoint` is addressed by path. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name without the bucket. Changing it needs a sign-in from the last five minutes. Absent: `true`.
+                     * @description `true` if the store at `object_store_endpoint` is addressed by path. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name without the bucket. Changing it needs a sign-in from the last fifteen minutes. Absent: `true`.
                      * @default true
                      */
                     object_store_path_style?: boolean;
                     /**
-                     * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Changing it needs a sign-in from the last five minutes. Absent: `marfa`.
+                     * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Changing it needs a sign-in from the last fifteen minutes. Absent: `marfa`.
                      * @default marfa
                      */
                     object_store_prefix?: string;
@@ -35020,7 +35020,7 @@ export interface operations {
                      */
                     object_store_access_key_id?: string;
                     /**
-                     * @description `true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
+                     * @description `true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last fifteen minutes. Absent: `false`.
                      * @default false
                      */
                     allow_private_addresses?: boolean;
@@ -35276,7 +35276,7 @@ export interface operations {
             };
             /**
              * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
-             *     - `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             *     - `insufficient_user_authentication`: your app's owner signed in more than fifteen minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
              */
             401: {
                 headers: {
@@ -35522,27 +35522,27 @@ export interface operations {
                     confirm_sign_in_address_change?: boolean;
                     /** @description `true` moves the sign-in address without first checking that it answers as this instance, for a host that answers only after the move. Only the private local command can send it. */
                     skip_sign_in_address_check?: boolean;
-                    /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Changing it needs a sign-in from the last five minutes. Absent: no backup folder. `null` removes it, so the server's default applies. */
+                    /** @description The absolute path of the folder Marfa backs itself up to and keeps a second copy of each file in, outside the data directory and the blob folder. Changing it needs a sign-in from the last fifteen minutes. Absent: no backup folder. `null` removes it, so the server's default applies. */
                     backup_path?: string | null;
-                    /** @description The bucket of an S3-compatible object store that also keeps each file and the backups: 1 to 255 ASCII letters, digits, `.`, `:`, `-` and `_`, other than `.` and `..`. Changing it needs a sign-in from the last five minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: no object store. `null` removes it, so the server's default applies. */
+                    /** @description The bucket of an S3-compatible object store that also keeps each file and the backups: 1 to 255 ASCII letters, digits, `.`, `:`, `-` and `_`, other than `.` and `..`. Changing it needs a sign-in from the last fifteen minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: no object store. `null` removes it, so the server's default applies. */
                     object_store_bucket?: string | null;
                     /**
-                     * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1`, `eu-west-2` or `auto`. Changing it needs a sign-in from the last five minutes. Absent: `us-east-1`. `null` removes it, so the server's default applies.
+                     * @description The region of the object store: a name of 1 to 63 ASCII letters, digits, hyphens and underscores that can be part of a host name, such as `us-east-1` or `auto`. Changing it needs a sign-in from the last fifteen minutes. Absent: `us-east-1`. `null` removes it, so the server's default applies.
                      * @default us-east-1
                      */
                     object_store_region?: string | null;
                     /**
                      * Format: uri
-                     * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Changing it needs a sign-in from the last five minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: the store's provider chooses it. `null` removes it, so the server's default applies.
+                     * @description The endpoint of the object store, an `http` or `https` URL with no user name or password. Changing it needs a sign-in from the last fifteen minutes, and removes `object_store_secret_access_key` unless the same request sets it. Absent: the store's provider chooses it. `null` removes it, so the server's default applies.
                      */
                     object_store_endpoint?: string | null;
                     /**
-                     * @description `true` if the store at `object_store_endpoint` is addressed by path. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name without the bucket. Changing it needs a sign-in from the last five minutes. Absent: `true`. `null` removes it, so the server's default applies.
+                     * @description `true` if the store at `object_store_endpoint` is addressed by path. `false` puts the bucket, as lowercase host labels, before the endpoint's host, a name without the bucket. Changing it needs a sign-in from the last fifteen minutes. Absent: `true`. `null` removes it, so the server's default applies.
                      * @default true
                      */
                     object_store_path_style?: boolean | null;
                     /**
-                     * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Changing it needs a sign-in from the last five minutes. Absent: `marfa`. `null` removes it, so the server's default applies.
+                     * @description The folder in the bucket Marfa keeps files and backups under, as `/`-joined segments. Changing it needs a sign-in from the last fifteen minutes. Absent: `marfa`. `null` removes it, so the server's default applies.
                      * @default marfa
                      */
                     object_store_prefix?: string | null;
@@ -35552,7 +35552,7 @@ export interface operations {
                      */
                     object_store_access_key_id?: string | null;
                     /**
-                     * @description `true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.
+                     * @description `true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last fifteen minutes. Absent: `false`. `null` removes it, so the server's default applies.
                      * @default false
                      */
                     allow_private_addresses?: boolean | null;
@@ -35808,7 +35808,7 @@ export interface operations {
             };
             /**
              * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
-             *     - `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             *     - `insufficient_user_authentication`: your app's owner signed in more than fifteen minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
              */
             401: {
                 headers: {
@@ -38059,7 +38059,7 @@ export interface operations {
             };
             /**
              * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
-             *     - `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             *     - `insufficient_user_authentication`: your app's owner signed in more than fifteen minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
              */
             401: {
                 headers: {
@@ -38866,7 +38866,7 @@ export interface operations {
             };
             /**
              * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
-             *     - `insufficient_user_authentication`: your app's owner signed in more than five minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             *     - `insufficient_user_authentication`: your app's owner signed in more than fifteen minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
              */
             401: {
                 headers: {

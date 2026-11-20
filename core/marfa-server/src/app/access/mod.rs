@@ -191,9 +191,6 @@ fn requires(permission: Permission) -> Refusal {
     .with_detail("required_scope", permission.word())
 }
 
-/// How long an app's sign-in stands for an act that asks the owner to confirm it is them.
-pub const STEP_UP_SECONDS: i64 = 300;
-
 #[derive(Debug)]
 pub struct Change<'a> {
     pub grants: &'a Grants,
@@ -297,13 +294,15 @@ impl Caller {
             Caller::App { grant, .. } => {
                 self.require(permission)?;
                 let now = Stamp::read(at)?;
-                let recent = grant.authenticated_at.is_some_and(|signed_in| {
-                    (0..=STEP_UP_SECONDS * 1_000).contains(&(now.ms() - signed_in.ms()))
-                });
+                let recent = grant
+                    .authenticated_at
+                    .is_some_and(|signed_in| session::recent(signed_in, now));
                 if recent {
                     Ok(())
                 } else {
-                    Err(Refusal::insufficient_user_authentication(STEP_UP_SECONDS))
+                    Err(Refusal::insufficient_user_authentication(
+                        session::RECENT_SECONDS,
+                    ))
                 }
             }
         }
@@ -575,6 +574,31 @@ mod tests {
     fn with_map(mut key: Key, axis: Axis, value: Value) -> Key {
         key.grants.maps[axis as usize] = map(axis, value);
         key
+    }
+
+    #[test]
+    fn an_apps_sign_in_stands_for_fifteen_minutes_and_the_challenge_says_so() {
+        const NOW: i64 = 1_800_000_000_000;
+        const FIFTEEN_MINUTES_MS: i64 = 900_000;
+        let at = |ms: i64| Stamp::from_ms(ms).unwrap().text();
+        let app = Caller::App {
+            key: Box::new(key("app", "mine", &[Permission::BackupsManage], &[])),
+            grant: Box::new(oauth::Granted {
+                client_id: "client".into(),
+                owner_id: "owner".into(),
+                grant_id: "grant".into(),
+                authenticated_at: Some(Stamp::from_ms(NOW).unwrap()),
+            }),
+        };
+        let step_up = |ms: i64| app.require_step_up(Permission::BackupsManage, &at(ms));
+        step_up(NOW).unwrap();
+        step_up(NOW + FIFTEEN_MINUTES_MS).unwrap();
+        let refused = step_up(NOW + FIFTEEN_MINUTES_MS + 1).unwrap_err();
+        assert_eq!(refused.code, Code::InsufficientUserAuthentication);
+        assert_eq!(
+            refused.details.and_then(|d| d.get("max_age").cloned()),
+            Some(json!(900))
+        );
     }
 
     #[test]

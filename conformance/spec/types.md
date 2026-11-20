@@ -1746,7 +1746,7 @@ When a name field contains text, the server MUST trim its surrounding whitespace
 
 ### `types/item-name-markdown`
 
-When computing an item's name from its effective `display_hints.body_field`, `body` or `text`, the server MUST apply `types/item-name-text` to that property's value with its Markdown removed: each line that `device/item-preview-fence` or `device/item-preview-lines` removes left out, each line inside a fence kept as written, and each other line as `device/item-preview-prefixes` through `device/item-preview-unclosed` leave it.
+When computing an item's name from its effective `display_hints.body_field`, `body` or `text`, the server MUST apply `types/item-name-text` to that property's value with its Markdown removed as `device/item-preview-frontmatter` through `device/item-preview-unclosed` remove it, each line inside a fence kept as written.
 
 **Reason:** A body is Markdown, so a note whose body starts `# Plan` is named `Plan`, and a body that is only Markdown syntax gives no name. The other name fields hold plain text and keep every character.
 

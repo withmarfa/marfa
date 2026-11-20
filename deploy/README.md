@@ -97,7 +97,7 @@ marfa --socket <socket> setup open --address https://marfa.example.com --no-brow
 
 Open the link it prints. `--address` sets the address people sign in at before the link is made; it doesn't move the address of a server that already has an owner. To finish in the terminal instead, run `setup claim --address <address> --email owner@example.com`, which asks for the password at a hidden prompt. For the container, run the command with `docker exec <container> marfa ...`, adding `-it` for `setup claim`.
 
-Creating or changing a key, approving an app and restoring an archive need a sign-in within the last five minutes. If yours is older, the page asks you to confirm it's you with your password or a passkey.
+Creating or changing a key, approving an app and restoring an archive need a sign-in within the last fifteen minutes. If yours is older, the page asks you to confirm it's you with your password or a passkey.
 
 ## Recover the owner
 
