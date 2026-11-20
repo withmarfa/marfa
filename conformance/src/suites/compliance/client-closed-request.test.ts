@@ -33,7 +33,7 @@ let sinks: FaultSinks | undefined;
 
 beforeAll(async () => {
   sinks = await startFaultSinks();
-  server = await bootFreshServer("client-closed-request", sinks.env());
+  server = await bootFreshServer("client-closed-request", sinks.serverEnv());
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {

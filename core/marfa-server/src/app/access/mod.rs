@@ -31,6 +31,7 @@ pub use levers::{Holding, Levers, OwnLevers, Standing, report_unread};
 pub use maps::{Axis, Level, Map};
 pub use overview::Described;
 pub use schema::{Door, SchemaKind};
+pub use tools::AdminTask;
 pub use webhooks::{Listener, Maker, attention_listeners, standing_maker};
 
 macro_rules! permissions {

@@ -114,7 +114,7 @@ fn usage() -> Option<libc::rusage> {
 }
 
 #[cfg(target_os = "macos")]
-fn resident_bytes() -> Option<u64> {
+pub(crate) fn resident_bytes() -> Option<u64> {
     let mut info = std::mem::MaybeUninit::<libc::proc_taskinfo>::zeroed();
     let size = i32::try_from(size_of::<libc::proc_taskinfo>()).ok()?;
     let pid = i32::try_from(std::process::id()).ok()?;
@@ -133,7 +133,7 @@ fn resident_bytes() -> Option<u64> {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn resident_bytes() -> Option<u64> {
+pub(crate) fn resident_bytes() -> Option<u64> {
     let statm = std::fs::read_to_string("/proc/self/statm").ok()?;
     let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
     // SAFETY: a plain query with no pointers.

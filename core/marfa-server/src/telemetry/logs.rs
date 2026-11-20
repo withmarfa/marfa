@@ -2,9 +2,10 @@
 //! field could hold what an owner wrote, a path with a title in it, or a credential.
 
 use std::fmt::Debug;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::SystemTime;
 
+use arc_swap::ArcSwapOption;
 use opentelemetry::logs::{AnyValue, LogRecord, Logger, LoggerProvider, Severity};
 use opentelemetry_sdk::logs::{SdkLogger, SdkLoggerProvider};
 use tracing::field::{Field, Visit};
@@ -34,18 +35,23 @@ const SENT: [&str; 13] = [
     "panic_message",
 ];
 
+/// The one layer the process logs through; the provider behind it changes with the settings.
 #[derive(Clone, Default)]
 pub struct Logs {
-    logger: Arc<OnceLock<SdkLogger>>,
+    logger: Arc<ArcSwapOption<SdkLogger>>,
 }
 
 impl Logs {
     pub fn connect(&self, provider: &SdkLoggerProvider) {
-        let _ = self.logger.set(provider.logger(SCOPE));
+        self.logger.store(Some(Arc::new(provider.logger(SCOPE))));
+    }
+
+    pub fn disconnect(&self) {
+        self.logger.store(None);
     }
 
     pub fn is_on(&self) -> bool {
-        self.logger.get().is_some()
+        self.logger.load().is_some()
     }
 }
 
@@ -108,7 +114,8 @@ fn severity(level: &Level) -> (Severity, &'static str) {
 
 impl<S: Subscriber> Layer<S> for Logs {
     fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
-        let Some(logger) = self.logger.get() else {
+        let held = self.logger.load();
+        let Some(logger) = held.as_ref() else {
             return;
         };
         let mut fields = Fields {

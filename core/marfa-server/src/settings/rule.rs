@@ -27,3 +27,17 @@ pub fn boolean(text: &str) -> Result<bool, String> {
         _ => Err(BOOLEAN_RULE.to_string()),
     }
 }
+
+/// Digits with an optional fraction, as `0.25`; `.5`, `1e-1` and `NaN` are refused.
+pub fn ratio(text: &str) -> Result<f64, String> {
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    let (whole, fraction) = text
+        .split_once('.')
+        .map_or((text, None), |(whole, fraction)| (whole, Some(fraction)));
+    let shaped = digits(whole) && fraction.is_none_or(digits);
+    shaped
+        .then(|| text.parse::<f64>().ok())
+        .flatten()
+        .filter(|number| number.is_finite() && (0.0..=1.0).contains(number))
+        .ok_or_else(|| "must be a number from 0 to 1".to_string())
+}

@@ -441,9 +441,14 @@ fn link_in<'a>(field: &str, properties: &'a Map<String, Value>) -> Option<&'a st
         .filter(|value| !value.is_empty())
 }
 
+/// The name `shown_of` gives, which a summary or a listing shows without a preview.
 fn name_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<String> {
-    let shown = shown_of(tx, catalog, row, &|_| true)?;
-    Ok(shown.name.unwrap_or_else(|| UNTITLED.to_string()))
+    let properties = parsed(&row.properties)?;
+    let name = match naming_host(tx, catalog, row, &properties, &|_| true)? {
+        Some((label, host_name)) => display::part_name(&label, &host_name),
+        None => catalog.rules.display_name(&row.type_id, &properties),
+    };
+    Ok(name.unwrap_or_else(|| UNTITLED.to_string()))
 }
 
 /// An item's name and preview; a part is named after its oldest host of a readable type.
@@ -455,28 +460,40 @@ pub(crate) fn shown_of(
 ) -> Result<display::ItemDisplay> {
     let rules = &catalog.rules;
     let properties = parsed(&row.properties)?;
-    let untitled = display::title_name(&properties, rules.title_field(&row.type_id)).is_none();
-    let host = if untitled {
-        edges::naming_host(tx, catalog, &row.id, readable)?
-    } else {
-        None
-    };
-    Ok(match host {
-        Some(host) => {
-            let held = parsed(&host.properties).unwrap_or_default();
-            let host_name = rules
-                .display(&host.type_id, &held)
-                .name
-                .unwrap_or_else(|| UNTITLED.to_string());
-            display::part_display(
+    Ok(
+        match naming_host(tx, catalog, row, &properties, readable)? {
+            Some((label, host_name)) => display::part_display(
                 &properties,
                 rules.body_field(&row.type_id),
-                &host.label,
+                &label,
                 &host_name,
-            )
-        }
-        None => rules.display(&row.type_id, &properties),
-    })
+            ),
+            None => rules.display(&row.type_id, &properties),
+        },
+    )
+}
+
+/// The edge type's label and the name of the host that names a part with no title of its own.
+fn naming_host(
+    tx: &Transaction<'_>,
+    catalog: &Catalog,
+    row: &Item,
+    properties: &Map<String, Value>,
+    readable: &dyn Fn(&str) -> bool,
+) -> Result<Option<(String, String)>> {
+    let rules = &catalog.rules;
+    if display::title_name(properties, rules.title_field(&row.type_id)).is_some() {
+        return Ok(None);
+    }
+    Ok(
+        edges::naming_host(tx, catalog, &row.id, readable)?.map(|host| {
+            let held = parsed(&host.properties).unwrap_or_default();
+            let host_name = rules
+                .display_name(&host.type_id, &held)
+                .unwrap_or_else(|| UNTITLED.to_string());
+            (host.label, host_name)
+        }),
+    )
 }
 
 fn summary_of(tx: &Transaction<'_>, catalog: &Catalog, row: &Item) -> Result<Value> {

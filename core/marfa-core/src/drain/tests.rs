@@ -133,6 +133,7 @@ pub(super) fn reach_changed() -> CoreError {
 }
 
 mod create_edges;
+mod edit_after_create;
 mod interrupted;
 mod landing;
 mod pass;
