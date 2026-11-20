@@ -928,7 +928,7 @@ When a `marfa_maintain` call with `action` `confirm_clock` carries a `confirm` t
 
 ### `mcp/clock-jumped`
 
-If the server's clock has jumped since the preview that gave a `confirm_clock` call's `confirm` token, then the server MUST answer the tool error code `confirmation_stale` with a new preview, and confirm nothing.
+If the server's clock has jumped since the preview that gave a `confirm_clock` call's unexpired `confirm` token, then the server MUST answer the tool error code `confirmation_stale` with a new preview, and confirm nothing.
 
 **Reason:** the person agreed to the time the preview showed, not to the time the clock reads after a jump.
 

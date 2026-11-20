@@ -692,7 +692,12 @@ describe("the owner tasks at /mcp/admin", () => {
     const connection = await admin(key);
     const before = await call(key, "GET", "/config/settings");
     expect(before.status, JSON.stringify(before.body)).toBe(200);
-    for (const [name, value] of Object.entries(STEP_UP_SETTINGS)) {
+    const lines = (before.body as { data: { key: string; value: unknown }[] })
+      .data;
+    for (const [name, wanted] of Object.entries(STEP_UP_SETTINGS)) {
+      // A value the setting already has changes nothing, so the switches are turned over.
+      const now = lines.find((line) => line.key === name)?.value;
+      const value = typeof wanted === "boolean" ? now !== true : wanted;
       const answer = await callTool(connection, "marfa_change_settings", {
         name: "Named beside a setting that needs a recent sign-in",
         settings: { [name]: value },

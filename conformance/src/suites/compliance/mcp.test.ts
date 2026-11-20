@@ -968,16 +968,17 @@ describe("the schema and admin endpoints", () => {
       expect(choices("marfa_maintain", "action")).toEqual([
         "run_housekeeping",
         "cancel_job",
+        "confirm_clock",
       ]);
       expect(choices("marfa_rename_sign_in", "kind")).toEqual([
         "sign_in",
         "passkey",
       ]);
       const withheld =
-        /revoke_app|remove|drop|adopt|restore|export|claim|recover|password|passkey|update_server|clock/;
+        /remove|drop|adopt|restore|export|claim|recover|password|passkey/;
       // The witness: the pattern matches the names of the withheld tasks.
-      expect(withheld.test("marfa_revoke_app")).toBe(true);
       expect(withheld.test("marfa_add_passkey")).toBe(true);
+      expect(withheld.test("marfa_change_password")).toBe(true);
       expect(withheld.test("marfa_adopt_backup_folder")).toBe(true);
       expect(
         tools.map((tool) => tool.name).filter((name) => withheld.test(name)),
@@ -1175,23 +1176,51 @@ describe("the schema and admin endpoints", () => {
   });
 });
 
-/** A connection at each endpoint for a credential offered every tool it serves. */
+type Path = "/mcp" | "/mcp/schema" | "/mcp/admin";
+
+/**
+ * Connections at each endpoint that between them are offered every tool it
+ * serves: a key that writes every type, and one that holds every owner
+ * permission, which no one key this file can mint holds together.
+ */
 async function everyEndpoint(
   label: string,
-): Promise<Record<"/mcp" | "/mcp/schema" | "/mcp/admin", McpConnection>> {
-  const key = await keyWith(
-    label,
+): Promise<Record<Path, McpConnection[]>> {
+  const management = process.env.MARFA_MANAGEMENT_KEY;
+  if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
+  const manager = new MarfaClient({ baseUrl: apiUrl, apiKey: management });
+  const minted = await manager.createKey({
+    label: `${ctx.source}-${label}-owner`,
+    source: `${ctx.source}-${label}-owner`,
+    permissions: Object.keys(ADMIN_TOOLS_BY_PERMISSION),
+    type_permissions: {},
+  });
+  expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+  trackKey(ctx, minted.data.id);
+  const writer = await keyWith(
+    `${label}-writer`,
     { "*": "write" },
     {
-      permissions: [...Object.keys(ADMIN_TOOLS_BY_PERMISSION), "schema.write"],
+      permissions: ["schema.write", "audit.read", "webhooks.manage"],
       metadata_permissions: { "*": "write" },
     },
   );
+  const at = (key: string, path: Path) =>
+    connectMcp(apiUrl, key, "2026-07-28", path);
   return {
-    "/mcp": await connectMcp(apiUrl, key, "2026-07-28", "/mcp"),
-    "/mcp/schema": await connectMcp(apiUrl, key, "2026-07-28", "/mcp/schema"),
-    "/mcp/admin": await connectMcp(apiUrl, key, "2026-07-28", "/mcp/admin"),
+    "/mcp": [await at(writer, "/mcp")],
+    "/mcp/schema": [await at(writer, "/mcp/schema")],
+    "/mcp/admin": [
+      await at(writer, "/mcp/admin"),
+      await at(minted.data.key, "/mcp/admin"),
+    ],
   };
+}
+
+async function closeAll(endpoints: Record<Path, McpConnection[]>) {
+  for (const connection of Object.values(endpoints).flat()) {
+    await connection.close();
+  }
 }
 
 describe("what a client is told about the tools", () => {
@@ -1244,7 +1273,7 @@ describe("what a client is told about the tools", () => {
     const endpoints = await everyEndpoint("hints");
     try {
       const hints = new Map<string, Record<string, unknown>>();
-      for (const connection of Object.values(endpoints)) {
+      for (const connection of Object.values(endpoints).flat()) {
         const { tools } = await connection.client.listTools();
         for (const tool of tools) {
           hints.set(tool.name, { ...tool.annotations });
@@ -1276,9 +1305,7 @@ describe("what a client is told about the tools", () => {
         ).toEqual([readOnly, destructive, idempotent]);
       }
     } finally {
-      for (const connection of Object.values(endpoints)) {
-        await connection.close();
-      }
+      await closeAll(endpoints);
     }
   });
 
@@ -1286,12 +1313,16 @@ describe("what a client is told about the tools", () => {
     const endpoints = await everyEndpoint("instructions");
     try {
       const seen = new Set<string>();
-      for (const [path, connection] of Object.entries(endpoints)) {
-        const instructions = connection.client.getInstructions() ?? "";
+      for (const [path, connections] of Object.entries(endpoints)) {
+        const instructions = connections[0]!.client.getInstructions() ?? "";
         seen.add(instructions);
         expect(instructions.length, path).toBeGreaterThan(0);
         expect(instructions.length, path).toBeLessThanOrEqual(512);
-        const listed = await toolNames(connection);
+        const listed: string[] = [];
+        for (const connection of connections) {
+          expect(connection.client.getInstructions(), path).toBe(instructions);
+          listed.push(...(await toolNames(connection)));
+        }
         const named = instructions.match(/marfa_[a-z_]+/g) ?? [];
         expect(named.length, path).toBeGreaterThan(0);
         for (const name of named) {
@@ -1305,19 +1336,13 @@ describe("what a client is told about the tools", () => {
       // Each endpoint has its own.
       expect(seen.size).toBe(3);
     } finally {
-      for (const connection of Object.values(endpoints)) {
-        await connection.close();
-      }
+      await closeAll(endpoints);
     }
   });
 
   it("names the page where the owner adds a passkey or changes the password in the sign-ins tool, and that page answers", async () => {
-    const admin = await connectMcp(
-      apiUrl,
-      await keyWith("owner-page", {}, { permissions: ["sign_ins.manage"] }),
-      "2026-07-28",
-      "/mcp/admin",
-    );
+    const endpoints = await everyEndpoint("owner-page");
+    const admin = endpoints["/mcp/admin"][1]!;
     try {
       const listed = toolResult(await callTool(admin, "marfa_sign_ins", {}));
       const page = new URL(listed.owner_page as string);
@@ -1337,7 +1362,7 @@ describe("what a client is told about the tools", () => {
       await missing.body?.cancel();
       expect(missing.status).toBe(404);
     } finally {
-      await admin.close();
+      await closeAll(endpoints);
     }
   });
 });

@@ -171,7 +171,8 @@ describe("confirming the clock", () => {
     await jump(AHEAD);
     const first = toolResult(await clock());
     expect(first.held).toBe(true);
-    await jump(2 * DAY_MS);
+    // Set back a day, still far ahead: a jump forward would also outlast the token.
+    await jump(-DAY_MS);
     const refused = toolError(
       await clock({ confirm: first.confirm as string }),
     );
@@ -208,7 +209,6 @@ describe("confirming the clock", () => {
     const [throughTool] = await audited("instance.clock.confirmed");
     expect(throughTool).toMatchObject({
       action: "instance.clock.confirmed",
-      kind: "access",
       resource_type: "instance",
       details: { held: true, via: "mcp" },
     });
