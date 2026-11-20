@@ -1194,6 +1194,42 @@ async fn an_adopt_whose_marker_waits_while_the_disk_is_away_settles_and_the_fold
 }
 
 #[tokio::test]
+async fn a_held_claim_whose_marker_is_already_in_place_settles_as_taken() {
+    let parent = TempDir::new().unwrap();
+    let (instance, area, file) = adopted_without_its_marker(parent.path()).await;
+    // A rename that landed before the sync after it failed.
+    fs::rename(area.join(".marfa-store.pending"), area.join(".marfa-store")).unwrap();
+    let (status, body) = instance.back_up().await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a held claim whose marker was already in place was tried again for good: {body}"
+    );
+    assert!(instance.app.blobs.settled());
+    assert!(copy_of(&parent.path().join("disk"), &instance.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn a_held_claim_whose_pending_marker_went_away_lets_the_record_settle() {
+    let parent = TempDir::new().unwrap();
+    let (instance, area, _) = adopted_without_its_marker(parent.path()).await;
+    fs::remove_file(area.join(".marfa-store.pending")).unwrap();
+    let (status, body) = instance.back_up().await;
+    // The folder holds no marker, so the store is not reachable there.
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        instance.app.blobs.settled(),
+        "a held claim whose pending marker went away kept the record in doubt: {body}"
+    );
+    let (status, adopted) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{adopted}");
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
 async fn an_adopt_recorded_before_a_restart_with_the_disk_away_gives_the_folder_its_marker_once_it_is_back()
  {
     let parent = TempDir::new().unwrap();

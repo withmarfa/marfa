@@ -398,8 +398,16 @@ impl Folder {
     }
 
     /// Holds `claim`, with its files area's lock, for the next follow to settle against the
-    /// record.
+    /// record, while the folder still holds it. One the folder no longer holds is let go, so
+    /// the next follow settles from what the area holds and does not try the claim again for
+    /// good.
     pub fn hold_unsettled(&self, claim: disk::Claim) {
+        if !claim.waits() {
+            tracing::warn!(
+                "The backup folder no longer holds an adopt's claim, so the claim was let go"
+            );
+            return;
+        }
         *self
             .unsettled
             .lock()
@@ -429,7 +437,7 @@ impl Folder {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take()
-            .filter(disk::Claim::held);
+            .filter(|claim| claim.held() && claim.waits());
         let settled = match held {
             Some(claim) => self.settle_held(claim, recorded.as_deref()),
             None if self.reachable() => Ok(()),

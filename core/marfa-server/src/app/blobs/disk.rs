@@ -269,19 +269,31 @@ impl Claim {
         self.area.dir().sync_all()
     }
 
-    /// Makes the pending marker the folder's marker, and answers the store it now holds. It
-    /// blocks.
+    /// Whether the folder still holds this claim: in its pending marker, or already in its
+    /// marker where the rename landed and the sync after it failed. It blocks.
+    pub fn waits(&self) -> bool {
+        let dir = self.area.dir();
+        [PENDING, MARKER].into_iter().any(|name| {
+            read_in(dir, name).is_ok_and(|found| found.is_some_and(|found| found.trim() == self.id))
+        })
+    }
+
+    /// Makes the pending marker the folder's marker, and answers the store it now holds. A
+    /// marker already holding this claim's store, where a rename landed and the sync after it
+    /// failed, is taken as made. It blocks.
     pub fn promote(&self) -> io::Result<Disk> {
         let dir = self.area.dir();
         match read_in(dir, PENDING)? {
-            Some(found) if found.trim() == self.id => {}
+            Some(found) if found.trim() == self.id => {
+                rustix::fs::renameat(dir, PENDING, dir, MARKER)?;
+            }
+            _ if read_in(dir, MARKER)?.is_some_and(|found| found.trim() == self.id) => {}
             _ => {
                 return Err(io::Error::other(
                     "its pending marker changed or went away before it was made the marker",
                 ));
             }
         }
-        rustix::fs::renameat(dir, PENDING, dir, MARKER)?;
         dir.sync_all()?;
         Ok(Disk {
             id: self.id.clone(),
