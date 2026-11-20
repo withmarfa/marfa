@@ -75,6 +75,7 @@ impl Folder {
 
     /// Lets the first sync go. Answers whether it waited.
     pub fn confirm_first_sync(&self) -> Result<bool> {
+        self.refuse_while_paused()?;
         let conn = self.core.conn()?;
         let waited = store::meta_get(&conn, META_FIRST_SYNC)?.is_some();
         store::meta_delete(&conn, META_FIRST_SYNC)?;
@@ -88,6 +89,7 @@ impl Folder {
     /// which confirms it.
     pub fn plan_first_sync(&self) -> Result<Option<FirstSync>> {
         self.refuse_if_gone()?;
+        self.refuse_while_paused()?;
         self.resume()?;
         self.check_beneath_file()?;
         // Of the server's side as far as it can be had: the copy held stands

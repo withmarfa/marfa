@@ -38,6 +38,7 @@ pub struct Restored {
 impl Folder {
     pub fn confirm(&self) -> Result<Confirmed> {
         self.refuse_if_gone()?;
+        self.refuse_while_paused()?;
         self.refuse_while_waiting()?;
         let copy = crate::reach::Context::capture(&*self.core.conn()?)?;
         let settings = self.settings()?;
@@ -185,6 +186,7 @@ impl Folder {
 
     pub fn restore(&self) -> Result<Restored> {
         self.refuse_if_gone()?;
+        self.refuse_while_paused()?;
         self.refuse_while_waiting()?;
         let settings = self.settings()?;
         let (disk, pull) = {
@@ -547,6 +549,75 @@ mod tests {
         assert!(confirmed.unsure.is_empty(), "{confirmed:?}");
         assert_eq!(confirmed.deleted, 1, "{confirmed:?}");
         assert_eq!(deletes_queued(folder).len(), 1);
+    }
+
+    /// Everything a command that refuses must leave as it found it.
+    fn kept(folder: &Folder) -> String {
+        let queued = folder.core.queue().unwrap().len();
+        let conn = folder.core.conn().unwrap();
+        format!(
+            "{:?}\n{:?}\n{:?}\n{:?}\n{:?}\n{}",
+            state::every_bound(&conn).unwrap(),
+            state::journaled(&conn).unwrap(),
+            state::paused(&conn, state::Removal::Disk).unwrap(),
+            state::paused(&conn, state::Removal::Pull).unwrap(),
+            state::paused_additions(&conn).unwrap(),
+            queued,
+        )
+    }
+
+    #[test]
+    fn a_paused_directory_refuses_each_command_that_writes_and_changes_nothing() {
+        let (_, _registry) = registry::tests::own_registry();
+        let paused = paused_over(
+            "01a00000-0000-7000-8000-00000000c611",
+            &["one.md", "two.md"],
+        );
+        let folder = &paused.folder;
+        let refused = |error: Result<()>| {
+            assert!(
+                matches!(&error, Err(crate::error::CoreError::Invalid(said)) if said.contains("folders resume")),
+                "{error:?}"
+            );
+        };
+
+        // The witness: each command acts on this state before the pause.
+        let witness = kept(folder);
+        assert!(witness.contains("one.md"), "{witness}");
+        assert_eq!(
+            state::paused(&folder.core.conn().unwrap(), state::Removal::Disk).unwrap().len(),
+            2
+        );
+
+        folder.pause_sync().unwrap();
+        refused(folder.confirm().map(drop));
+        refused(folder.restore().map(drop));
+        refused(folder.remove_unmatched(&["one.md".into()]).map(drop));
+        refused(folder.scan().map(drop));
+        refused(folder.hydrate().map(drop));
+        refused(folder.confirm_first_sync().map(drop));
+        assert_eq!(kept(folder), witness, "a refused command changed the folder");
+
+        // Resumed, the same restore goes ahead.
+        folder.resume_sync().unwrap();
+        folder.restore().unwrap();
+        assert_ne!(kept(folder), witness);
+    }
+
+    #[test]
+    fn a_paused_directory_leaves_a_first_sync_waiting() {
+        let (_, _registry) = registry::tests::own_registry();
+        let paused = paused_over("01a00000-0000-7000-8000-00000000c612", &["one.md"]);
+        let folder = &paused.folder;
+        folder.wait_for_confirmation().unwrap();
+        folder.pause_sync().unwrap();
+        assert!(matches!(
+            folder.confirm_first_sync(),
+            Err(crate::error::CoreError::Invalid(_))
+        ));
+        assert!(folder.awaiting_confirmation().unwrap());
+        folder.resume_sync().unwrap();
+        assert!(folder.confirm_first_sync().unwrap());
     }
 
     fn flag(path: &str, flag: &'static str, item: Option<&str>) -> Flagged {

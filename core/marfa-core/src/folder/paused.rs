@@ -63,8 +63,7 @@ impl Folder {
         self.health_send();
     }
 
-    /// Where the directory's sync is paused, every step that reads the
-    /// server's side or writes either side refuses.
+    /// Each command that reads the server's side or writes either side starts here.
     pub(super) fn refuse_while_paused(&self) -> Result<()> {
         if self.is_paused()? {
             return Err(CoreError::Invalid(

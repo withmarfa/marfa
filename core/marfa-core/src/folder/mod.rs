@@ -913,6 +913,7 @@ impl Folder {
     }
 
     pub fn hydrate(&self) -> Result<crate::model::HydrateReport> {
+        self.refuse_while_paused()?;
         self.hydrate_until(&crate::NEVER_STOPPED)
     }
 

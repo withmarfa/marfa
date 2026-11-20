@@ -253,6 +253,7 @@ impl Folder {
     }
 
     pub fn scan(&self) -> Result<ScanReport> {
+        self.refuse_while_paused()?;
         self.scan_as(true, None, Files::Write, Reading::Walk, Journal::Sweep)
     }
 
