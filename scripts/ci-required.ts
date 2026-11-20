@@ -570,6 +570,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-server\/src\/db\/reader\.rs$/,
     ["core-checks", "core-checks-linux", ...RUST_SERVER],
   ],
+  // A folder's file system is told local or shared, and the program holding
+  // the database is named, each system's own way.
+  [
+    /^core\/marfa-server\/src\/(folder_lock|db\/open)\.rs$/,
+    ["core-checks", "core-checks-linux", ...RUST_SERVER],
+  ],
   // A backup folder file's stamp takes its birth time, which only a Mac's
   // test can set.
   [

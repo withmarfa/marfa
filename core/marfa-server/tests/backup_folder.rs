@@ -996,8 +996,7 @@ async fn a_replaced_disk_is_refused_until_the_owner_adopts_it_and_then_backs_up_
 }
 
 #[tokio::test]
-async fn an_adopt_that_cannot_mark_the_folder_says_the_old_store_was_forgotten_and_adopts_once_it_is_writable()
- {
+async fn an_adopt_that_cannot_claim_the_folder_forgets_nothing_and_adopts_once_it_is_writable() {
     use std::os::unix::fs::PermissionsExt;
 
     let parent = TempDir::new().unwrap();
@@ -1007,6 +1006,7 @@ async fn an_adopt_that_cannot_mark_the_folder_says_the_old_store_was_forgotten_a
     let (file, _) = instance.file(b"a file the old disk held").await;
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    let (_, before) = instance.local(Method::GET, "/blobs/stores", None).await;
     fs::rename(&folder, parent.path().join("old disk")).unwrap();
     fs::create_dir(&folder).unwrap();
     let _locked = marfa_acl::testing::locked(&folder, 0o555);
@@ -1021,16 +1021,486 @@ async fn an_adopt_that_cannot_mark_the_folder_says_the_old_store_was_forgotten_a
         "{refused}"
     );
     let says = refused["error"]["message"].as_str().unwrap();
-    assert!(says.contains("were forgotten"), "{refused}");
+    assert!(says.contains("nothing was adopted"), "{refused}");
     assert!(says.contains("writable"), "{refused}");
-    assert!(says.contains("marfa backups folder adopt"), "{refused}");
-    assert!(!says.contains("is not there"), "{refused}");
+    assert!(!says.contains("forgotten"), "{refused}");
+    let (_, after) = instance.local(Method::GET, "/blobs/stores", None).await;
+    assert_eq!(after, before, "a refused claim changed the stores record");
 
     let (status, adopted) = instance
         .local(Method::POST, "/backups/folder/adopt", None)
         .await;
     assert_eq!(status, StatusCode::OK, "{adopted}");
-    assert_eq!(adopted["backups_forgotten"], 0, "{adopted}");
+    assert_eq!(adopted["backups_forgotten"], 1, "{adopted}");
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(copy_of(&folder, &instance.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn an_adopt_whose_folder_cannot_take_its_marker_says_the_old_store_was_forgotten_and_finishes_once_it_is_writable()
+ {
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = TempDir::new().unwrap();
+    let folder = parent.path().join("disk");
+    fs::create_dir(&folder).unwrap();
+    let instance = Arc::new(Instance::start(&folder).await);
+    let (file, _) = instance.file(b"a file the old disk held").await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    fs::rename(&folder, parent.path().join("old disk")).unwrap();
+    fs::create_dir(&folder).unwrap();
+
+    instance.app.faults.set("hold:stores-swap", None).unwrap();
+    let adopting = tokio::spawn({
+        let instance = instance.clone();
+        async move {
+            instance
+                .local(Method::POST, "/backups/folder/adopt", None)
+                .await
+        }
+    });
+    let began = std::time::Instant::now();
+    while !instance
+        .app
+        .faults
+        .list()
+        .iter()
+        .any(|fault| fault.waiting > 0)
+    {
+        assert!(began.elapsed() < std::time::Duration::from_secs(10));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let area = fs::read_dir(folder.join("files"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let _locked = marfa_acl::testing::locked(&area, 0o555);
+    instance.app.faults.clear(Some("hold:stores-swap"));
+    let (status, refused) = adopting.await.unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
+    let says = refused["error"]["message"].as_str().unwrap();
+    assert!(says.contains("were forgotten"), "{refused}");
+    assert!(says.contains("writable"), "{refused}");
+    assert!(!says.contains("marfa backups folder adopt"), "{refused}");
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+
+    fs::set_permissions(&area, fs::Permissions::from_mode(0o755)).unwrap();
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(copy_of(&folder, &instance.id(), &file).is_file());
+}
+
+/// Waits until a hold fault armed on `instance` holds a request.
+async fn until_held(instance: &Instance) {
+    let began = std::time::Instant::now();
+    while !instance
+        .app
+        .faults
+        .list()
+        .iter()
+        .any(|fault| fault.waiting > 0)
+    {
+        assert!(began.elapsed() < std::time::Duration::from_secs(10));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+}
+
+/// Starts an instance backing up to `<parent>/disk`, replaces that disk with an empty one and
+/// adopts it, the files area refusing writes once the record names the new store, so the adopt
+/// answers that it could not take the marker. Answers the instance and the files area.
+async fn adopted_without_its_marker(parent: &Path) -> (Arc<Instance>, PathBuf, String) {
+    let folder = parent.join("disk");
+    fs::create_dir(&folder).unwrap();
+    let instance = Arc::new(Instance::start(&folder).await);
+    let (file, _) = instance.file(b"a file the old disk held").await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    fs::rename(&folder, parent.join("old disk")).unwrap();
+    fs::create_dir(&folder).unwrap();
+
+    instance.app.faults.set("hold:stores-swap", None).unwrap();
+    let adopting = tokio::spawn({
+        let instance = instance.clone();
+        async move {
+            instance
+                .local(Method::POST, "/backups/folder/adopt", None)
+                .await
+        }
+    });
+    until_held(&instance).await;
+    let area = fs::read_dir(folder.join("files"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let locked = marfa_acl::testing::locked(&area, 0o555);
+    instance.app.faults.clear(Some("hold:stores-swap"));
+    let (status, refused) = adopting.await.unwrap();
+    drop(locked);
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
+    assert!(
+        refused["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("could not take the new store's marker"),
+        "{refused}"
+    );
+    assert!(area.join(".marfa-store.pending").is_file());
+    assert!(!area.join(".marfa-store").exists());
+    let taken = fs::File::open(&area).unwrap().try_lock();
+    assert!(
+        matches!(taken, Err(fs::TryLockError::WouldBlock)),
+        "the folder's lock was let go before the adopt's claim became its marker: {taken:?}"
+    );
+    (instance, area, file)
+}
+
+#[tokio::test]
+async fn an_adopt_whose_marker_waits_while_the_disk_is_away_settles_and_the_folder_takes_its_marker_once_it_is_back()
+ {
+    let parent = TempDir::new().unwrap();
+    let (instance, area, file) = adopted_without_its_marker(parent.path()).await;
+    let folder = parent.path().join("disk");
+    let away = parent.path().join("away");
+    fs::rename(&folder, &away).unwrap();
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        instance.app.blobs.settled(),
+        "a files area that is not there kept the record in doubt"
+    );
+    let waiting = fs::read_dir(away.join("files"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert!(waiting.join(".marfa-store.pending").is_file());
+    assert!(!waiting.join(".marfa-store").exists());
+
+    fs::rename(&away, &folder).unwrap();
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(instance.app.blobs.settled());
+    assert!(area.join(".marfa-store").is_file());
+    assert!(!area.join(".marfa-store.pending").exists());
+    assert!(copy_of(&folder, &instance.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn a_held_claim_whose_marker_is_already_in_place_settles_as_taken() {
+    let parent = TempDir::new().unwrap();
+    let (instance, area, file) = adopted_without_its_marker(parent.path()).await;
+    // A rename that landed before the sync after it failed.
+    fs::rename(area.join(".marfa-store.pending"), area.join(".marfa-store")).unwrap();
+    let (status, body) = instance.back_up().await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a held claim whose marker was already in place was tried again for good: {body}"
+    );
+    assert!(instance.app.blobs.settled());
+    assert!(copy_of(&parent.path().join("disk"), &instance.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn a_held_claim_whose_pending_marker_went_away_lets_the_record_settle() {
+    let parent = TempDir::new().unwrap();
+    let (instance, area, _) = adopted_without_its_marker(parent.path()).await;
+    fs::remove_file(area.join(".marfa-store.pending")).unwrap();
+    let (status, body) = instance.back_up().await;
+    // The folder holds no marker, so the store is not reachable there.
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        instance.app.blobs.settled(),
+        "a held claim whose pending marker went away kept the record in doubt: {body}"
+    );
+    let (status, adopted) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{adopted}");
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn an_adopt_recorded_before_a_restart_with_the_disk_away_gives_the_folder_its_marker_once_it_is_back()
+ {
+    let parent = TempDir::new().unwrap();
+    let (instance, area, file) = adopted_without_its_marker(parent.path()).await;
+    let instance = Arc::into_inner(instance).unwrap();
+    instance.app.close().await;
+    let Instance { data, .. } = instance;
+    let folder = parent.path().join("disk");
+    let away = parent.path().join("away");
+    fs::rename(&folder, &away).unwrap();
+    let again = Instance::start_in(data, &folder).await;
+    let (status, body) = again.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+
+    fs::rename(&away, &folder).unwrap();
+    let (status, body) = again.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(area.join(".marfa-store").is_file());
+    assert!(!area.join(".marfa-store.pending").exists());
+    assert!(copy_of(&folder, &again.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn a_blank_disk_put_in_place_of_one_whose_adopt_marker_waits_can_be_adopted() {
+    let parent = TempDir::new().unwrap();
+    let (instance, _, file) = adopted_without_its_marker(parent.path()).await;
+    let folder = parent.path().join("disk");
+    let away = parent.path().join("away");
+    fs::rename(&folder, &away).unwrap();
+    fs::create_dir(&folder).unwrap();
+    let (status, refused) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
+
+    let (status, adopted) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{adopted}");
+    let waiting = fs::read_dir(away.join("files"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let claimed = fs::read_to_string(waiting.join(".marfa-store.pending")).unwrap();
+    assert_eq!(adopted["replaced_store_id"], claimed.trim(), "{adopted}");
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let area = folder.join("files").join(instance.id());
+    assert_eq!(
+        fs::read_to_string(area.join(".marfa-store"))
+            .unwrap()
+            .trim(),
+        adopted["store_id"].as_str().unwrap()
+    );
+    assert!(copy_of(&folder, &instance.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn a_files_area_whose_waiting_claim_another_server_holds_says_so_and_not_that_it_is_away() {
+    let parent = TempDir::new().unwrap();
+    let (instance, area, file) = adopted_without_its_marker(parent.path()).await;
+    let instance = Arc::into_inner(instance).unwrap();
+    instance.app.close().await;
+    let Instance { data, .. } = instance;
+    let folder = parent.path().join("disk");
+    let away = parent.path().join("away");
+    fs::rename(&folder, &away).unwrap();
+    let again = Instance::start_in(data, &folder).await;
+    fs::rename(&away, &folder).unwrap();
+    // A copy of the instance that started meanwhile took the folder's lock.
+    let held = fs::File::open(&area).unwrap();
+    held.try_lock().unwrap();
+
+    let (status, refused) = again.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
+    let says = refused["error"]["message"].as_str().unwrap();
+    assert!(says.contains("open in another Marfa server"), "{refused}");
+    assert!(!says.contains("is not there"), "{refused}");
+    assert!(area.join(".marfa-store.pending").is_file());
+
+    drop(held);
+    let (status, body) = again.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(area.join(".marfa-store").is_file());
+    assert!(copy_of(&folder, &again.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn an_adopt_whose_record_outcome_is_unknown_keeps_its_claim_held_when_the_record_cannot_be_read()
+ {
+    let parent = TempDir::new().unwrap();
+    let folder = parent.path().join("disk");
+    fs::create_dir(&folder).unwrap();
+    let instance = Arc::new(Instance::start(&folder).await);
+    let (file, _) = instance.file(b"a file the old disk held").await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    fs::rename(&folder, parent.path().join("old disk")).unwrap();
+    fs::create_dir(&folder).unwrap();
+
+    instance.app.faults.set("hold:folder-settle", None).unwrap();
+    instance
+        .app
+        .faults
+        .set("fail:stores-record-lost", None)
+        .unwrap();
+    let adopting = tokio::spawn({
+        let instance = instance.clone();
+        async move {
+            instance
+                .local(Method::POST, "/backups/folder/adopt", None)
+                .await
+        }
+    });
+    until_held(&instance).await;
+    let area = fs::read_dir(folder.join("files"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    instance.app.faults.set("refuse:read", None).unwrap();
+    instance.app.faults.clear(Some("hold:folder-settle"));
+    let (status, refused) = adopting.await.unwrap();
+    instance.app.faults.clear(Some("refuse:read"));
+    instance.app.faults.clear(Some("fail:stores-record-lost"));
+    assert_ne!(status, StatusCode::OK, "{refused}");
+    assert!(area.join(".marfa-store.pending").is_file());
+    let taken = fs::File::open(&area).unwrap().try_lock();
+    assert!(
+        matches!(taken, Err(fs::TryLockError::WouldBlock)),
+        "the folder's lock was let go before the adopt's claim was settled: {taken:?}"
+    );
+    drop(taken);
+
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(area.join(".marfa-store").is_file());
+    assert!(!area.join(".marfa-store.pending").exists());
+    assert!(copy_of(&folder, &instance.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn an_adopt_whose_record_outcome_is_unknown_holds_the_folder_until_its_claim_is_settled() {
+    let parent = TempDir::new().unwrap();
+    let folder = parent.path().join("disk");
+    fs::create_dir(&folder).unwrap();
+    let instance = Arc::new(Instance::start(&folder).await);
+    let (file, _) = instance.file(b"a file the old disk held").await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    fs::rename(&folder, parent.path().join("old disk")).unwrap();
+    fs::create_dir(&folder).unwrap();
+
+    instance.app.faults.set("hold:folder-settle", None).unwrap();
+    instance
+        .app
+        .faults
+        .set("fail:stores-record-lost", None)
+        .unwrap();
+    let adopting = tokio::spawn({
+        let instance = instance.clone();
+        async move {
+            instance
+                .local(Method::POST, "/backups/folder/adopt", None)
+                .await
+        }
+    });
+    until_held(&instance).await;
+    let area = fs::read_dir(folder.join("files"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert!(area.join(".marfa-store.pending").is_file());
+    // A copy of the instance starting now would take the folder's lock as this does.
+    let taken = fs::File::open(&area).unwrap().try_lock();
+    instance.app.faults.clear(Some("hold:folder-settle"));
+    let (status, refused) = adopting.await.unwrap();
+    instance.app.faults.clear(Some("fail:stores-record-lost"));
+    assert!(
+        matches!(taken, Err(fs::TryLockError::WouldBlock)),
+        "the folder's lock was let go before the adopt's claim was settled: {taken:?}"
+    );
+    assert_ne!(status, StatusCode::OK, "{refused}");
+    assert!(area.join(".marfa-store").is_file());
+    assert!(!area.join(".marfa-store.pending").exists());
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(copy_of(&folder, &instance.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn an_adopt_that_records_nothing_and_cannot_take_its_claim_back_says_so_and_settles_it_later()
+{
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = TempDir::new().unwrap();
+    let folder = parent.path().join("disk");
+    fs::create_dir(&folder).unwrap();
+    let instance = Arc::new(Instance::start(&folder).await);
+    let (file, _) = instance.file(b"a file the old disk held").await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    fs::rename(&folder, parent.path().join("old disk")).unwrap();
+    fs::create_dir(&folder).unwrap();
+
+    instance.app.faults.set("hold:stores-record", None).unwrap();
+    let adopting = tokio::spawn({
+        let instance = instance.clone();
+        async move {
+            instance
+                .local(Method::POST, "/backups/folder/adopt", None)
+                .await
+        }
+    });
+    let began = std::time::Instant::now();
+    while !instance
+        .app
+        .faults
+        .list()
+        .iter()
+        .any(|fault| fault.waiting > 0)
+    {
+        assert!(began.elapsed() < std::time::Duration::from_secs(10));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let area = fs::read_dir(folder.join("files"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let pending = area.join(".marfa-store.pending");
+    assert!(pending.is_file());
+    let _locked = marfa_acl::testing::locked(&area, 0o555);
+    instance.app.faults.set("fail:stores-record", None).unwrap();
+    instance.app.faults.clear(Some("hold:stores-record"));
+    let (status, refused) = adopting.await.unwrap();
+    instance.app.faults.clear(Some("fail:stores-record"));
+    assert_ne!(status, StatusCode::OK, "{refused}");
+    let says = refused["error"]["message"].as_str().unwrap();
+    assert!(says.contains("Nothing was adopted"), "{refused}");
+    assert!(says.contains("was not undone"), "{refused}");
+    assert!(pending.is_file());
+    let taken = fs::File::open(&area).unwrap().try_lock();
+    assert!(
+        matches!(taken, Err(fs::TryLockError::WouldBlock)),
+        "the folder's lock was let go before the adopt's claim was taken back: {taken:?}"
+    );
+    drop(taken);
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        pending.is_file(),
+        "a claim was removed while its folder refused writes"
+    );
+
+    fs::set_permissions(&area, fs::Permissions::from_mode(0o755)).unwrap();
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        !pending.exists(),
+        "the claim was not settled once the folder took writes"
+    );
+    let (status, adopted) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{adopted}");
+    assert_eq!(adopted["backups_forgotten"], 1, "{adopted}");
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(copy_of(&folder, &instance.id(), &file).is_file());

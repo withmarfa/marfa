@@ -10,6 +10,7 @@ pub mod app;
 pub mod control_socket;
 pub mod db;
 pub mod failure;
+pub mod folder_lock;
 pub mod http;
 pub mod listener;
 pub mod log;

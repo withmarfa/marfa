@@ -34,8 +34,8 @@ use super::access::{Caller, Permission};
 use super::catalog::{self, Snapshot};
 use super::faults::{
     FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, FAIL_STORES_RECORD, FAIL_STORES_RECORD_LOST,
-    Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS, HOLD_BLOB_READ, HOLD_BLOB_WRITE, HOLD_STORES_RECORD,
-    HOLD_STORES_SWAP, Lie,
+    Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS, HOLD_BLOB_READ, HOLD_BLOB_WRITE, HOLD_FOLDER_SETTLE,
+    HOLD_STORES_RECORD, HOLD_STORES_SWAP, Lie,
 };
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
@@ -45,8 +45,8 @@ use crate::failure::Failure;
 use crate::settings::registry::Snapshot as Settings;
 use crate::settings::registry::{BACKUP_PATH, BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
 use crate::telemetry::caught;
-use disk::{Disk, Place, Staged};
-pub use disk::{MARKER, Scratch, lock_blobs};
+use disk::{Claim, Disk, Place, Staged};
+pub use disk::{MARKER, Scratch, Taken, lock_blobs, take_blob_folder};
 pub use folder::Folder;
 pub use hash::Hash;
 pub use restore::stored_size;
@@ -535,7 +535,7 @@ impl Blobs {
     /// there, and the recorded store stays in use.
     pub async fn open(
         db: &Db,
-        (root, held): (&Path, Option<File>),
+        (root, held): (&Path, Option<disk::Taken>),
         Beside {
             wanted,
             instance,
@@ -571,7 +571,7 @@ impl Blobs {
         }
         let folder_opened = away.is_none();
         let disk = Arc::new(match away {
-            Some(id) => Disk::awaiting_blob_folder(id, root.to_path_buf()),
+            Some(id) => Disk::unmounted(id, root.to_path_buf(), Place::Blobs),
             None => {
                 let folder = root.to_path_buf();
                 tokio::task::spawn_blocking(move || Disk::open(&folder, Place::Blobs, held))
@@ -609,9 +609,19 @@ impl Blobs {
         self.disk.reachable()
     }
 
-    /// Whether the blob folder returned after the start and cannot be locked now. It blocks.
-    pub fn folder_unlockable(&self) -> bool {
-        self.disk.returned_unlockable()
+    /// What keeps the blob folder from taking a file now, where something does. It blocks.
+    pub fn folder_unwritable(&self) -> Option<String> {
+        self.disk.unwritable()
+    }
+
+    /// Why the blob folder's locks may not keep out a server on another machine.
+    pub fn folder_shared(&self) -> Option<String> {
+        self.disk.shared()
+    }
+
+    /// Runs `run` on the blob folder's descriptor, where the store holds it.
+    pub fn with_folder<T>(&self, run: impl FnOnce(&File) -> T) -> Option<T> {
+        self.disk.with_dir(run)
     }
 
     /// Whether the store in use is the usable one `wanted` names.
@@ -1339,8 +1349,17 @@ impl App {
         Ok(recorded)
     }
 
-    /// An adopt may have recorded a new ID without finishing its claim on the folder.
-    pub(crate) async fn retake_folder(&self, folder: &Arc<Folder>) -> Result<()> {
+    /// Settles `claim`, an adopt's own claim on the backup folder, against the record without
+    /// letting go of the folder's lock first, so no other server settles it meanwhile. A claim
+    /// this does not settle stays held for the next follow.
+    pub(crate) async fn settle_claim(&self, folder: &Arc<Folder>, claim: Claim) -> Result<()> {
+        folder.hold_unsettled(claim);
+        self.settle_folder(folder).await
+    }
+
+    /// Settles what an adopt that did not finish left in the backup folder against the record:
+    /// its claim is promoted where the record names its store, and removed where it does not.
+    pub(crate) async fn settle_folder(&self, folder: &Arc<Folder>) -> Result<()> {
         let deadline = self.blobs.check();
         let late = || {
             Refusal::new(
@@ -1355,31 +1374,30 @@ impl App {
         if folder.claim_unended() {
             return Err(late());
         }
-        let looked = folder.clone();
-        let reachable = tokio::time::timeout(
-            deadline,
-            tokio::task::spawn_blocking(move || looked.reachable()),
-        )
-        .await
-        .map_err(|_| late())?;
-        if joined(reachable)? {
-            return Ok(());
-        }
-        let files = folder.files();
-        let locator = files.root().display().to_string();
+        self.faults.hold(HOLD_FOLDER_SETTLE, None).await;
+        let locator = folder.files().root().display().to_string();
         let recorded = self
             .db
             .read(move |tx| rows::folder_at(tx, &locator))
             .await?;
-        let Some(id) = recorded.filter(|id| id != files.id()) else {
-            return Ok(());
-        };
-        match folder.claim_within(id, deadline).await {
+        match folder
+            .within(deadline, move |folder| folder.settle(recorded), |()| {})
+            .await
+        {
             None => Err(late()),
             Some(Ok(())) => Ok(()),
+            // The record stays in doubt, so the next follow tries again.
             Some(Err(error)) => {
-                tracing::warn!(%error, "The backup folder could not take the store the record names");
-                Ok(())
+                tracing::warn!(%error, "The backup folder's claim by an adopt could not be settled");
+                Err(Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!(
+                        "The backup folder {} keeps the claim of an adopt that did not finish, \
+                         and the claim could not be settled: {error}. Check that the folder is \
+                         writable; the server settles it once it can.",
+                        folder.root().display()
+                    ),
+                ))
             }
         }
     }
@@ -1418,10 +1436,10 @@ impl App {
                         return Ok(());
                     }
                     if let Some(folder) = &current.folder
-                        && let Err(refused) = self.retake_folder(folder).await
+                        && let Err(refused) = self.settle_folder(folder).await
                     {
                         tracing::error!(%refused, "The backup folder in use could not be checked against its record");
-                        return Err(unrecorded());
+                        return Err(refused);
                     }
                     match self.record_stores(&current).await {
                         Ok(Recorded::At(_)) => blobs.record_doubted.store(false, Ordering::SeqCst),
@@ -1537,10 +1555,10 @@ impl App {
         let Some(staged) = intake.staged.take() else {
             return Err(Refusal::internal("an upload finished twice"));
         };
-        let spooled = staged.path().to_path_buf();
+        let spooled = staged.unspool();
         let placed = self.place_staged(staged, &intake.mime_type).await;
         if placed.is_err() {
-            let _ = tokio::task::spawn_blocking(move || disk::unspool(&spooled)).await;
+            let _ = tokio::task::spawn_blocking(move || spooled.run()).await;
         }
         placed
     }
