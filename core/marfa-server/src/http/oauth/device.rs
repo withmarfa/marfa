@@ -10,7 +10,9 @@ use crate::app::access::Caller;
 use crate::app::auth::Visit;
 use crate::app::instance;
 use crate::app::oauth::authorize::sign_in_then;
-use crate::app::oauth::device::{self, Answer as Answered, Blocked, Lookup};
+use crate::app::oauth::device::{
+    self, Answer as Answered, Blocked, CONSENT_PATH as CONSENT, Lookup,
+};
 use crate::app::oauth::token::Form;
 use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
@@ -20,7 +22,6 @@ use crate::http::pages::{self, Answering, Consent, Notice};
 use crate::http::query;
 
 const ENTRY: &str = "/auth/device";
-const CONSENT: &str = "/auth/device/consent";
 
 fn encoded(text: &str) -> String {
     url::form_urlencoded::byte_serialize(text.as_bytes()).collect()

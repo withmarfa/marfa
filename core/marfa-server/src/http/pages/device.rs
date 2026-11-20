@@ -29,9 +29,9 @@ impl DeviceProblem {
             DeviceProblem::InvalidCode => "That code isn't right or has expired. Check it against \
                  your device, or start again there to get a new one."
                 .into(),
-            DeviceProblem::ExpiredCode => {
-                "That code has expired. Start again on your device to get a new one.".into()
-            }
+            DeviceProblem::ExpiredCode => "That code has expired. Start connecting again in the \
+                 app or on the device to get a new one."
+                .into(),
             DeviceProblem::TooManyAttempts(Some(wait)) => {
                 format!("Too many codes. Try again in {wait}.")
             }

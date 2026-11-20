@@ -3175,6 +3175,7 @@ export interface components {
          * @description The instance's health: the worst state of its components, and each one's state.
          * @example {
          *       "status": "ok",
+         *       "claimed": true,
          *       "components": {
          *         "database": {
          *           "status": "ok",
@@ -3214,6 +3215,8 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "degraded" | "down";
+            /** @description `true` if the instance has an owner, `false` if it is waiting to be claimed with its setup code, and `null` if Marfa couldn't read its database to tell. */
+            claimed: boolean | null;
             /** @description Each component checked: reading and writing the database, free disk space and the blob store. */
             components: {
                 /** @description Whether the database answers a read. */
@@ -36372,6 +36375,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "status": "ok",
+                     *       "claimed": true,
                      *       "components": {
                      *         "database": {
                      *           "status": "ok",

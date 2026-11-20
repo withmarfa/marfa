@@ -91,6 +91,8 @@ fn because(refusal: &Refusal) -> String {
 
 /// What `GET /health` found.
 pub struct Report {
+    /// Unknown, never false, when the database cannot be read.
+    claimed: Option<bool>,
     database: Component,
     database_write: Component,
     disk: Component,
@@ -158,6 +160,7 @@ impl Report {
         }
         json!({
             "status": self.overall().word(),
+            "claimed": self.claimed,
             "components": {
                 "database": self.database.to_json(with_errors),
                 "database_write": self.database_write.to_json(with_errors),
@@ -189,9 +192,13 @@ impl Health {
     }
 }
 
-async fn database(app: &App) -> Component {
+/// The read probe, and whether the instance has an owner, which only a read that answered knows.
+async fn database(app: &App) -> (Component, Option<bool>) {
     if app.db.damaged() {
-        return Component::not_ok(Status::Down, "the database file is damaged");
+        return (
+            Component::not_ok(Status::Down, "the database file is damaged"),
+            None,
+        );
     }
     let started = Instant::now();
     let read = app.db.read(|tx| {
@@ -200,12 +207,16 @@ async fn database(app: &App) -> Component {
             [],
             |row| row.get::<_, i64>(0),
         )
-        .map_err(Refusal::from)
+        .map_err(Refusal::from)?;
+        instance::is_claimed(tx)
     });
     match tokio::time::timeout(PROBE_WAIT, read).await {
-        Ok(Ok(_)) => Component::ok(Some(started.elapsed().as_millis() as u64)),
-        Ok(Err(refusal)) => Component::not_ok(Status::Down, because(&refusal)),
-        Err(_) => Component::silent("read answered"),
+        Ok(Ok(claimed)) => (
+            Component::ok(Some(started.elapsed().as_millis() as u64)),
+            Some(claimed),
+        ),
+        Ok(Err(refusal)) => (Component::not_ok(Status::Down, because(&refusal)), None),
+        Err(_) => (Component::silent("read answered"), None),
     }
 }
 
@@ -369,7 +380,7 @@ async fn blob_storage(app: &Arc<App>) -> Component {
 }
 
 pub async fn check(app: &Arc<App>) -> Report {
-    let (database, database_write, disk, blob_storage, backup) = tokio::join!(
+    let ((database, claimed), database_write, disk, blob_storage, backup) = tokio::join!(
         database(app),
         database_write(app),
         disk(app),
@@ -377,6 +388,7 @@ pub async fn check(app: &Arc<App>) -> Report {
         app.backup_health()
     );
     Report {
+        claimed,
         database,
         database_write,
         disk,

@@ -2,6 +2,7 @@ use askama::Template;
 use axum::http::StatusCode;
 
 use super::{Needs, Page, document, render_body};
+use crate::app::auth::return_to::through_sign_in;
 use crate::app::refusal::Result;
 
 #[derive(Debug, Clone)]
@@ -96,24 +97,15 @@ impl Notice {
         .linked("Sign in", "/auth/sign-in")
     }
 
-    pub fn already_claimed(instance_name: &str) -> Notice {
+    /// `return_to` is a value `kept` has read, where signing in goes on to.
+    pub fn already_claimed(instance_name: &str, return_to: &str) -> Notice {
         Notice::new(
             instance_name,
             StatusCode::OK,
             "This Marfa already has an owner",
             "Setup is finished. Sign in to continue.",
         )
-        .linked("Sign in", "/auth/sign-in")
-    }
-
-    pub fn no_owner_yet(instance_name: &str) -> Notice {
-        Notice::new(
-            instance_name,
-            StatusCode::OK,
-            "This Marfa has no owner yet",
-            "Claim it first. Then you can sign in.",
-        )
-        .linked("Set up this Marfa", "/setup")
+        .linked("Sign in", &through_sign_in(return_to))
     }
 
     pub fn refusal(instance_name: &str, status: StatusCode, message: &str) -> Notice {

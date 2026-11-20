@@ -583,7 +583,7 @@ describe("the pages a person reads at sign-in", () => {
     // The witness: the other error is the one that says only expired.
     const expired = await said("expired_code");
     expect(expired).toContain(
-      "That code has expired. Start again on your device to get a new one.",
+      "That code has expired. Start connecting again in the app or on the device to get a new one.",
     );
     expect(expired).not.toContain("isn't right");
   });

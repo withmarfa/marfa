@@ -29,6 +29,7 @@ use crate::app::refusal::{Code as RefusalCode, Refusal, Result};
 use crate::db::Write;
 
 const CODE_WRITE: &str = "auth.device_code.issued";
+pub const CONSENT_PATH: &str = "/auth/device/consent";
 
 pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answered<Value>> {
     hold_to(

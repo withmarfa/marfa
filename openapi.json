@@ -1433,6 +1433,13 @@
             ],
             "description": "`ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused."
           },
+          "claimed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` if the instance has an owner, `false` if it is waiting to be claimed with its setup code, and `null` if Marfa couldn't read its database to tell."
+          },
           "components": {
             "type": "object",
             "properties": {
@@ -1775,12 +1782,14 @@
         },
         "required": [
           "status",
+          "claimed",
           "components",
           "backups"
         ],
         "description": "The instance's health: the worst state of its components, and each one's state.",
         "example": {
           "status": "ok",
+          "claimed": true,
           "components": {
             "database": {
               "status": "ok",
@@ -62264,6 +62273,7 @@
                 },
                 "example": {
                   "status": "ok",
+                  "claimed": true,
                   "components": {
                     "database": {
                       "status": "ok",

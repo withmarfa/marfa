@@ -149,8 +149,21 @@ fn a_hostile_value_stays_text_on_every_other_page() {
                 password: Some(HOSTILE.into()),
             },
             notice: Some(HOSTILE.into()),
+            return_to: HOSTILE.into(),
         })
         .unwrap(),
+        setup_code(&SetupCode {
+            instance_name: HOSTILE.into(),
+            problem: None,
+            recovering: false,
+            return_to: HOSTILE.into(),
+            app: Some(AskingApp {
+                name: HOSTILE.into(),
+                host: HOSTILE.into(),
+            }),
+        })
+        .unwrap(),
+        notice(&Notice::already_claimed(HOSTILE, HOSTILE)).unwrap(),
         device_entry(&DeviceEntry {
             instance_name: HOSTILE.into(),
             user_code: HOSTILE.into(),
@@ -338,15 +351,94 @@ async fn a_page_over_a_refusal_keeps_its_status_and_drops_its_length() {
 }
 
 #[test]
-fn a_sign_in_refusal_links_to_sign_in_and_the_setup_notices_link_to_setup() {
+fn a_sign_in_refusal_and_the_claimed_notice_link_to_sign_in() {
     let refused = notice(&Notice::refusal("Marfa", StatusCode::UNAUTHORIZED, "No."))
         .unwrap()
         .html;
     assert!(refused.contains("/auth/sign-in"));
-    let waiting = notice(&Notice::no_owner_yet("Marfa")).unwrap().html;
-    assert!(waiting.contains("/setup"));
-    let claimed = notice(&Notice::already_claimed("Marfa")).unwrap().html;
+    let claimed = notice(&Notice::already_claimed(
+        "Marfa",
+        "/oauth/authorize?client_id=a&state=b",
+    ))
+    .unwrap()
+    .html;
+    assert!(claimed.contains(
+        "href=\"/auth/sign-in?return_to=%2Foauth%2Fauthorize%3Fclient_id%3Da%26state%3Db\""
+    ));
     assert!(!claimed.contains("href=\"/setup\""));
+}
+
+fn code_page(return_to: &str, app: Option<AskingApp>) -> String {
+    setup_code(&SetupCode {
+        instance_name: "Marfa".into(),
+        problem: None,
+        recovering: false,
+        return_to: return_to.into(),
+        app,
+    })
+    .unwrap()
+    .html
+}
+
+#[test]
+fn the_setup_code_page_says_where_the_code_is_and_carries_return_to() {
+    let plain = code_page("/", None);
+    assert!(plain.contains("in its terminal, or in its host&#39;s log"));
+    assert!(plain.contains("<input type=\"hidden\" name=\"return_to\" value=\"/\">"));
+    assert!(!plain.contains("choose what the app can access"));
+    let asked = code_page("/oauth/authorize?client_id=a", None);
+    assert!(asked.contains("value=\"/oauth/authorize?client_id=a\""));
+    assert!(asked.contains("you choose what the app can access"));
+    assert!(!asked.contains("is asking to connect"));
+    let device = code_page("/auth/device/consent?user_code=ABCD-EFGH", None);
+    assert!(device.contains("you choose what the app can access"));
+    let elsewhere = code_page("/oauth/authorized", None);
+    assert!(!elsewhere.contains("choose what the app can access"));
+}
+
+#[test]
+fn the_setup_code_page_names_an_app_only_beside_its_host() {
+    let named = code_page(
+        "/oauth/authorize?client_id=a",
+        Some(AskingApp {
+            name: "Notes".into(),
+            host: "notes.example".into(),
+        }),
+    );
+    assert!(named.contains("Notes</bdi> at <bdi>notes.example</bdi> is asking to connect"));
+    assert!(named.contains("Marfa hasn&#39;t verified this app."));
+}
+
+#[test]
+fn the_recovery_page_carries_no_return_to() {
+    let recovery = setup_code(&SetupCode {
+        instance_name: "Marfa".into(),
+        problem: None,
+        recovering: true,
+        return_to: "/oauth/authorize?client_id=a".into(),
+        app: None,
+    })
+    .unwrap()
+    .html;
+    assert!(recovery.contains("Recovery code"));
+    assert!(!recovery.contains("return_to"));
+}
+
+#[test]
+fn the_details_page_carries_return_to() {
+    let details = setup_details(&SetupDetails {
+        instance_name: "Marfa".into(),
+        name: String::new(),
+        username: String::new(),
+        email: String::new(),
+        errors: SetupFieldErrors::default(),
+        notice: None,
+        return_to: "/auth/device/consent?user_code=ABCD-EFGH".into(),
+    })
+    .unwrap()
+    .html;
+    assert!(details.contains("value=\"/auth/device/consent?user_code=ABCD-EFGH\""));
+    assert!(details.contains("Next, you choose what the app can access"));
 }
 
 mod consent_pages {

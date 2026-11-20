@@ -104,6 +104,12 @@ pub fn kept(value: &str, origin: &str) -> String {
     escaped(&format!("{resolved}{tail}"))
 }
 
+/// The sign-in page, then `back`, a value `kept` has read.
+pub fn through_sign_in(back: &str) -> String {
+    let encoded: String = url::form_urlencoded::byte_serialize(back.as_bytes()).collect();
+    format!("/auth/sign-in?return_to={encoded}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
