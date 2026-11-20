@@ -151,12 +151,19 @@ describe("catch-up replays from the cursor", () => {
     expect(incomplete.ok ? null : incomplete.refusal.code).toBe(
       "stream_incomplete",
     );
+    const status = await device.status();
+    expect(
+      status.ok ? status.value.event_cursor : null,
+      "the cursor is the highest id seen rather than the last one applied, so every event between the two is skipped with nothing left to fetch it",
+    ).toBe("11");
     await device.catchUp();
 
+    // The second replay asks from the event before 11, the last it took
+    // (`device/stream-asks-before-last`).
     expect(
       lastEventIds(harness),
       "the second replay resumed from the highest id seen rather than the last one applied, so every event between the two is skipped with nothing left to fetch it",
-    ).toEqual(["(none)", "10", "10", "11"]);
+    ).toEqual(["(none)", "10", "10", "10"]);
   });
 
   it("resumes from zero after hydrating an empty instance, and applies the first event", async () => {
@@ -748,10 +755,12 @@ describe("catch-up replays from the cursor", () => {
       ["item.updated", "row", "11"],
       ["item.created", "arrived", "13"],
     ]);
+    // Each stream after the first asks from the event before 12, the last
+    // the copy took (`device/stream-asks-before-last`).
     expect(
       resumedFrom,
       "the stream was opened again from somewhere other than the last event applied, so an event in between is lost or applied twice",
-    ).toEqual(["10", "12", "12"]);
+    ).toEqual(["10", "11", "11"]);
 
     const held = await device.get("row");
     expect(held.ok && held.value.properties.title).toBe("changed while held");
@@ -1561,7 +1570,9 @@ describe("catch-up replays from the cursor", () => {
       release();
       await follow.stop();
     }
-    expect(lastEventIds(harness)).toEqual(["(none)", "10", "10", "11"]);
+    // The second stream asks from the event before 11, the last the copy
+    // took (`device/stream-asks-before-last`).
+    expect(lastEventIds(harness)).toEqual(["(none)", "10", "10", "10"]);
     const held = await device.get("arrived");
     expect(held.ok && held.value).toMatchObject({ id: "arrived", version: 1 });
     expect(follow.stdout).not.toContain('"item_id":"arrived"');
@@ -1980,10 +1991,12 @@ describe("catch-up replays from the cursor", () => {
     expect(status.ok ? status.value.event_cursor : null).toBe("12");
 
     await device.catchUp();
+    // From the event before 12, the last it took
+    // (`device/stream-asks-before-last`).
     expect(
       lastEventIds(harness),
       "the next catch-up resumed from somewhere other than the last event applied, so a stream that ends early loses everything between",
-    ).toEqual(["(none)", "10", "10", "12"]);
+    ).toEqual(["(none)", "10", "10", "11"]);
   });
 
   it("never leaves its cursor before an applied event or past one it did not take when the stream ends among skipped events", async () => {
@@ -2019,10 +2032,12 @@ describe("catch-up replays from the cursor", () => {
     ).toBe(14);
 
     const resumed = await device.catchUp();
+    // The last event it took is 14, skipped, so it asks from the one before
+    // (`device/stream-asks-before-last`).
     expect(
       lastEventIds(harness).at(-1),
-      "the next catch-up resumed from somewhere other than the cursor the device holds",
-    ).toBe(String(stored));
+      "the next catch-up resumed from somewhere other than the event before the last one the device took",
+    ).toBe(String(stored - 1));
     expect(
       resumed.ok ? [resumed.value.applied, resumed.value.cursor] : undefined,
       "what the next catch-up replayed was not skipped again",
@@ -2136,11 +2151,20 @@ describe("catch-up ends on the replay's marker", () => {
       "the catch-up did not end on the marker at its cursor, so a device whose head items are withheld waits out the silence, reports itself behind, and keeps a cursor that ages out",
     ).toEqual([1, "14"]);
 
-    await device.catchUp();
+    const status = await device.status();
+    expect(status.ok ? status.value.event_cursor : null).toBe("14");
+    const again = await device.catchUp();
+    expect(
+      again.ok ? [again.value.applied, again.value.cursor] : again,
+      "the next catch-up did not resume from the marker's cursor",
+    ).toEqual([0, "14"]);
+    // 11 is the last event it took, so the next stream asks from the event
+    // before it (`device/stream-asks-before-last`) and takes nothing up to
+    // the marker's cursor again.
     expect(
       lastEventIds(harness),
-      "the next catch-up did not resume from the marker's cursor",
-    ).toEqual(["(none)", "10", "10", "14"]);
+      "the next catch-up did not ask from the event before the last one it took",
+    ).toEqual(["(none)", "10", "10", "10"]);
   });
 
   it("moves a held stream's cursor past the items it withheld", async () => {
@@ -5128,7 +5152,9 @@ describe("what a held stream takes and tells", () => {
           .filter((change) => !change.event.startsWith("server."))
           .map((change) => change.cursor),
     ).toEqual(["11", "12"]);
-    expect(lastEventIds(harness).slice(2, 4)).toEqual(["10", "11"]);
+    // Opened again from the event before 11, the last it took
+    // (`device/stream-asks-before-last`).
+    expect(lastEventIds(harness).slice(2, 4)).toEqual(["10", "10"]);
   });
 
   it("names the edge a held stream's change was about", async () => {

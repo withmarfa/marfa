@@ -20,7 +20,7 @@ let ownerId: string;
 let cookie: string;
 let managementKey: string;
 const OWNER = {
-  email: "owner@example.test",
+  username: "owner",
   password: "correct horse battery",
 };
 
@@ -313,6 +313,37 @@ describe("claiming the one owner", () => {
     expect((await local("/_control/setup/status")).body.claimed).toBe(false);
   });
 
+  it("refuses a username that is not 1 to 64 letters, numbers, dots, dashes and underscores without consuming valid setup proof", async () => {
+    for (const username of [
+      "owner@example.test",
+      "two words",
+      "hidden\u200bcharacter",
+      "émile",
+      "",
+      "   ",
+      "o".repeat(65),
+    ]) {
+      const refused = await post("/owner", { ...OWNER, username, code });
+      expect(refused.status, JSON.stringify(username)).toBe(400);
+      const { error } = await refused.json();
+      expect(error.code).toBe("validation_error");
+      expect(error.details.errors[0].path).toBe("username");
+    }
+    const noUsername = await post("/owner", {
+      password: OWNER.password,
+      code,
+    });
+    expect(noUsername.status).toBe(400);
+    const badEmail = await post("/owner", {
+      ...OWNER,
+      email: "not an email",
+      code,
+    });
+    expect(badEmail.status).toBe(400);
+    expect((await badEmail.json()).error.details.errors[0].path).toBe("email");
+    expect((await local("/_control/setup/status")).body.claimed).toBe(false);
+  });
+
   it("refuses a key the claim does not declare without consuming valid setup proof", async () => {
     for (const key of ["bogus", "_trace"]) {
       const refused = await post("/owner", { ...OWNER, code, [key]: 1 });
@@ -365,6 +396,7 @@ describe("claiming the one owner", () => {
       [0, 1].map(() =>
         post("/owner", {
           ...OWNER,
+          username: " Owner ",
           email: "Owner@Example.test",
           code,
         }),
@@ -376,7 +408,11 @@ describe("claiming the one owner", () => {
     const claim = attempts.find((response) => response.status === 201)!;
     const owner = await claim.json();
     await expectMatchesSchema("POST", "/owner", 201, owner);
-    expect(owner).toMatchObject({ email: OWNER.email, name: "owner" });
+    expect(owner).toMatchObject({
+      username: OWNER.username,
+      email: "owner@example.test",
+      name: OWNER.username,
+    });
     ownerId = owner.id;
     const audit = await local("/audit?action=owner.claimed");
     expect(audit.status).toBe(200);
@@ -408,6 +444,7 @@ describe("claiming the one owner", () => {
     await expectMatchesSchema("GET", "/profile", 200, read.body);
     expect(read.body).toEqual({
       name: owner.name,
+      username: owner.username,
       email: owner.email,
       avatar: owner.avatar,
     });
@@ -483,14 +520,14 @@ describe("claiming the one owner", () => {
           )
         ).status,
       ).toBe(401);
-    // Then the address's own limit across every email, so that no email
+    // Then the address's own limit across every username, so that no username
     // signs in from it.
     for (let i = 0; i < 20; i++)
       expect(
         (
           await post(
             "/auth/sign-in",
-            { email: `stranger-${String(i)}@example.test`, password },
+            { username: `stranger-${String(i)}`, password },
             lockedAddress,
           )
         ).status,
@@ -502,7 +539,7 @@ describe("claiming the one owner", () => {
       (
         await post(
           "/auth/sign-in",
-          { email: "stranger-new@example.test", password },
+          { username: "stranger-new", password },
           lockedAddress,
         )
       ).status,
@@ -672,6 +709,7 @@ describe("signing the owner in at the claim", () => {
           (await controlRequest(instance.controlSocket, "/profile")).body,
         ).toEqual({
           name: owner.name,
+          username: owner.username,
           email: owner.email,
           avatar: owner.avatar,
         });
@@ -700,6 +738,63 @@ describe("signing the owner in at the claim", () => {
         const repeated = await claim({ ...OWNER, code }, { origin });
         expect(repeated.status).toBe(409);
         expect(sessionCookies(repeated)).toEqual([]);
+      });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "creates the owner from the setup page's form with the optional email left blank, and shows a refused username on the page again",
+    async () => {
+      await withFreshInstance(async (instance) => {
+        const origin = instance.url;
+        const exchanged = await fetch(`${instance.url}/setup/exchange`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin },
+          body: JSON.stringify({ ticket: await instance.ticket() }),
+        });
+        expect(exchanged.status).toBe(200);
+        const cookie = cookieHeader(exchanged.headers.getSetCookie());
+        const form = (fields: Record<string, string>) =>
+          fetch(`${instance.url}/setup/claim`, {
+            method: "POST",
+            redirect: "manual",
+            headers: {
+              "content-type": "application/x-www-form-urlencoded",
+              accept: "text/html",
+              origin,
+              cookie,
+            },
+            body: new URLSearchParams(fields),
+          });
+        const refused = await form({
+          name: "",
+          username: "not a username",
+          password: OWNER.password,
+          email: "",
+        });
+        expect(refused.status).toBe(400);
+        const page = await refused.text();
+        expect(page).toContain('id="username-error"');
+        expect(page).toContain('value="not a username"');
+        expect(page).not.toContain(OWNER.password);
+        const claimed = await form({
+          name: "",
+          username: "Form.Owner",
+          password: OWNER.password,
+          email: "",
+        });
+        expect(claimed.status).toBe(303);
+        expect(claimed.headers.get("location")).toBe("/auth/sign-in");
+        const profile = await controlRequest(
+          instance.controlSocket,
+          "/profile",
+        );
+        expect(profile.body).toMatchObject({
+          username: "form.owner",
+          email: null,
+          name: "form.owner",
+        });
       });
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
@@ -854,8 +949,9 @@ describe("claiming through the private socket", () => {
         expect(ticket.body.expires_at).toBe(
           new Date(Date.parse(ticket.body.expires_at as string)).toISOString(),
         );
+        const longest = `Socket.${"o".repeat(57)}`;
         const claim = await control("/_control/setup/claim", {
-          email: "Socket.Owner@Example.test",
+          username: longest,
           password: "correct horse battery",
           name: "socket owner",
         });
@@ -866,10 +962,12 @@ describe("claiming through the private socket", () => {
           "email",
           "id",
           "name",
+          "username",
         ]);
         expect(claim.body).toMatchObject({
           avatar: null,
-          email: "socket.owner@example.test",
+          username: longest.toLowerCase(),
+          email: null,
           name: "socket owner",
         });
         expect(typeof claim.body.id).toBe("string");
@@ -878,6 +976,12 @@ describe("claiming through the private socket", () => {
           false,
         );
         await expectMatchesSchema("POST", "/owner", 201, claim.body);
+        const profile = await control("/profile");
+        expect(profile.status).toBe(200);
+        expect(profile.body).toMatchObject({
+          username: longest.toLowerCase(),
+          email: null,
+        });
         const after = await control("/_control/setup/status");
         expect(after.body).toMatchObject({
           claimed: true,

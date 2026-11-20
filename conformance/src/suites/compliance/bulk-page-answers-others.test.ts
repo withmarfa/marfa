@@ -223,7 +223,7 @@ describe("a write that waits behind a bulk page", () => {
         method: "POST",
         headers: { "content-type": "application/json", origin },
         body: JSON.stringify({
-          email: TEST_OWNER.email,
+          username: TEST_OWNER.username,
           password: "not the owner's password",
         }),
       }),

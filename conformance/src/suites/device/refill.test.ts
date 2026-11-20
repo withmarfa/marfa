@@ -152,6 +152,24 @@ async function ids(
   };
 }
 
+/**
+ * Every queued write as its kind and the item it names, sorted, once each is
+ * shown blocked `server_restored`.
+ */
+async function keptBlocked(h: Harness): Promise<Array<[string, string]>> {
+  const queued = await h.device.queue();
+  expect(queued.ok, JSON.stringify(queued)).toBe(true);
+  if (!queued.ok) throw new Error("unreachable: the assertion above threw");
+  for (const write of queued.value)
+    expect(
+      [write.verdict, write.reason],
+      `${write.kind} of ${String(write.item_id)} was not held for the person`,
+    ).toEqual(["blocked", "server_restored"]);
+  return queued.value
+    .map((write): [string, string] => [write.kind, write.item_id ?? ""])
+    .sort((left, right) => left.join(" ").localeCompare(right.join(" ")));
+}
+
 async function hydration(h: Harness): Promise<string | undefined> {
   const status = await h.device.status();
   expect(status.ok, JSON.stringify(status)).toBe(true);
@@ -358,7 +376,7 @@ describe("a copy whose cursor aged out", () => {
       },
     });
     rows["core.note"] = [
-      { item: { id: "a", version: 5 } },
+      { item: { id: "a", version: 5, properties: { title: "a at 5" } } },
       { item: { id: "b" } },
     ];
     dropping = true;
@@ -376,6 +394,11 @@ describe("a copy whose cursor aged out", () => {
       { item: { id: "a", version: 2 } },
       { item: { id: "c" } },
     ];
+    h.server.copyAnswer(
+      "GET",
+      "/items/b",
+      refusal(404, "not_found", "no such item"),
+    );
     const again = await h.device.hydrate(["core.note"], "library");
     expect(again.ok, JSON.stringify(again)).toBe(true);
     expect(again.ok && again.value.restarted).toBe("head_past_log");
@@ -383,12 +406,88 @@ describe("a copy whose cursor aged out", () => {
       again.ok && again.value.in_place,
       "a refill of a restored server filled over items it may never have held",
     ).toBe(false);
-    expect(await ids(h)).toEqual({ ids: ["a", "c"], completeness: "complete" });
     const restored = await h.device.get("a");
     expect(
       restored.ok && restored.value.version,
       "the copy kept a version the restored server never had",
     ).toBe(2);
+    // What the copy held and the restored server lacks waits to be put back:
+    // `a` as the copy held it, and `b`, which the server no longer holds.
+    expect(await keptBlocked(h)).toEqual([
+      ["create_item", "b"],
+      ["update_item", "a"],
+    ]);
+    expect(await ids(h)).toEqual({
+      ids: ["a", "b", "c"],
+      completeness: "complete",
+    });
+  });
+
+  /**
+   * A copy holding `a` at version 5 whose refill in place lists it at
+   * version 2, with a read of `a` by id answering `read`. Answers how many
+   * times the refill read `a`.
+   */
+  async function refilledOverEarlier(
+    label: string,
+    read: WireItemOptions,
+  ): Promise<{ h: Harness; reads: number }> {
+    const rows: Rows = {
+      "core.note": [
+        { item: { id: "a", version: 5, properties: { title: "a at 5" } } },
+      ],
+    };
+    const { h } = await agedOut(label, rows);
+    rows["core.note"] = [
+      { item: { id: "a", version: 2, properties: { title: "a at 2" } } },
+    ];
+    h.server.copyAnswer("GET", "/items/a", answers.updated(wireItem(read)));
+    const asked = h.server.requests.length;
+    const refilled = await h.device.hydrate(["core.note"], "library");
+    expect(refilled.ok, JSON.stringify(refilled)).toBe(true);
+    expect(refilled.ok && refilled.value.in_place).toBe(true);
+    const reads = h.server.requests
+      .slice(asked)
+      .filter(
+        (request) =>
+          request.method === "GET" && request.pathname === "/items/a",
+      ).length;
+    return { h, reads };
+  }
+
+  it("puts back the item a refill in place lists at an earlier version than the copy held where the server holds it there", async () => {
+    const { h, reads } = await refilledOverEarlier("refill-earlier-kept", {
+      id: "a",
+      version: 2,
+      properties: { title: "a at 2" },
+    });
+    expect(
+      reads,
+      "the item the refill listed at an earlier version was not read",
+    ).toBe(1);
+    expect(await keptBlocked(h)).toEqual([["update_item", "a"]]);
+    const held = await h.device.get("a");
+    expect(held.ok && held.value.properties.title).toBe("a at 5");
+  });
+
+  it("takes the item a refill in place lists at an earlier version than the copy held where the server holds it later, keeping nothing", async () => {
+    // The listing page was read before a write moved `a` on, so a read by id
+    // finds it past the copy's version.
+    const { h, reads } = await refilledOverEarlier("refill-earlier-later", {
+      id: "a",
+      version: 6,
+      properties: { title: "a at 6" },
+      updated_at: "2026-09-19T00:00:00.000Z",
+    });
+    expect(
+      reads,
+      "the item the refill listed at an earlier version was not read",
+    ).toBe(1);
+    expect(await keptBlocked(h)).toEqual([]);
+    const held = await h.device.get("a");
+    expect(
+      held.ok && [held.value.version, held.value.properties.title],
+    ).toEqual([6, "a at 6"]);
   });
 
   it("ends the stale copy when its refill reads another instance", async () => {
@@ -633,7 +732,11 @@ describe("a refill's sweep", () => {
 
 describe("a stale copy before its refill reads a page", () => {
   it("clears rather than fill again where the server was restored before its refill began", async () => {
-    const rows: Rows = { "core.note": [{ item: { id: "a", version: 5 } }] };
+    const rows: Rows = {
+      "core.note": [
+        { item: { id: "a", version: 5, properties: { title: "a at 5" } } },
+      ],
+    };
     const { h, head } = await agedOut("refill-restored-first", rows);
     const held = await h.device.get("a");
     expect(held.ok && held.value.version).toBe(5);
@@ -657,6 +760,51 @@ describe("a stale copy before its refill reads a page", () => {
       restored.ok && restored.value.version,
       "the copy kept a version the restored server never had",
     ).toBe(2);
+    expect(await keptBlocked(h)).toEqual([["update_item", "a"]]);
+  });
+
+  it("keeps what the copy held through an interrupted fill of a server restored behind it", async () => {
+    const rows: Rows = {
+      "core.note": [
+        { item: { id: "a", version: 5, properties: { title: "a at 5" } } },
+        { item: { id: "b" } },
+      ],
+    };
+    let dropping = false;
+    const { h, head } = await agedOut("refill-restored-interrupted", rows, {
+      pageSize: 1,
+      drop: () => {
+        if (!dropping) return false;
+        dropping = false;
+        return true;
+      },
+    });
+    head.now = "2";
+    rows["core.note"] = [
+      { item: { id: "a", version: 2 } },
+      { item: { id: "c" } },
+    ];
+    h.server.copyAnswer(
+      "GET",
+      "/items/b",
+      refusal(404, "not_found", "no such item"),
+    );
+    dropping = true;
+    expect(
+      (await h.device.hydrate(["core.note"], "library")).ok,
+      "the fill was not interrupted, so nothing below is about one that was",
+    ).toBe(false);
+    expect(
+      (await h.device.queue()).ok && (await keptBlocked(h)),
+      "an interrupted fill queued what it had not yet compared",
+    ).toEqual([]);
+
+    const again = await h.device.hydrate(["core.note"], "library");
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    expect(await keptBlocked(h)).toEqual([
+      ["create_item", "b"],
+      ["update_item", "a"],
+    ]);
   });
 
   it("fills in place from a head level with the cursor the copy held", async () => {
@@ -1361,7 +1509,14 @@ describe("a fill asked to happen only in place", () => {
     head.now = "50";
     await refusedInPlace(h, "head_past_log");
 
-    // The witness: asked for any fill, the same hydration clears the copy.
+    // The witness: asked for any fill, the same hydration clears the copy,
+    // reading the server for the edge it held, which the restored server
+    // lacks.
+    h.server.copyAnswer(
+      "GET",
+      "/edges/a-b",
+      refusal(404, "not_found", "no such edge"),
+    );
     const replaced = await h.device.hydrate(["core.note"], "library");
     expect(replaced.ok, JSON.stringify(replaced)).toBe(true);
     expect(replaced.ok && replaced.value.restarted).toBe("head_past_log");

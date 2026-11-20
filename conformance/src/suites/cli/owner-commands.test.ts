@@ -196,7 +196,7 @@ async function signsIn(password: string): Promise<boolean> {
       "content-type": "application/json",
       origin: await issuerOrigin(server),
     },
-    body: JSON.stringify({ email: TEST_OWNER.email, password }),
+    body: JSON.stringify({ username: TEST_OWNER.username, password }),
   });
   await response.body?.cancel();
   expect([200, 401]).toContain(response.status);

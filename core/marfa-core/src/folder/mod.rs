@@ -55,7 +55,7 @@ pub use storage::user_home;
 pub use sync::{Removal, SendReport, SyncReport};
 pub use taking_back::TakeBack;
 pub use unmatched::{Unmatched, UnmatchedRemoved};
-pub use watch::{RETRY_MOST, WatchEnd, WatchError, WatchEvent, WatchPass};
+pub use watch::{RETRY_MOST, WatchEnd, WatchError, WatchEvent, WatchPass, credential_refused_said};
 pub use watch_record::WatchRecord;
 pub mod state;
 
@@ -2410,6 +2410,14 @@ impl Folder {
                         (moved.to.other.clone(), bound.item_id.clone())
                     }
                 };
+                // Kept against a restore, the edge would stand in the way of
+                // the one the line asks for (`device/read-back-missing-kept`).
+                if let Some(edge_id) = row.edge_id.as_deref() {
+                    let mut conn = self.core.conn()?;
+                    let tx = conn.transaction()?;
+                    crate::store::restored::let_go_of_replaced_edge(&tx, edge_id)?;
+                    tx.commit()?;
+                }
                 let made_again = self.core.create_edge(&crate::model::EdgeDraft {
                     from_id,
                     to_id,

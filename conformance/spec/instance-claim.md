@@ -72,9 +72,45 @@ When `POST /setup/exchange`, sent as JSON, exchanges valid setup proof, the serv
 
 ### `instance-claim/owner-created`
 
-When valid setup proof claims an unclaimed instance with valid owner details, the server MUST answer `201` with the owner's `id`, lowercased `email`, `name`, and `created_at`.
+When valid setup proof claims an unclaimed instance with valid owner details, the server MUST answer `201` with the owner's `id`, lowercased `username`, `email` as a lowercased address or `null`, `name`, and `created_at`.
 
 **Tests:** `compliance/owner.test.ts › creates exactly one owner and reads it through the local command`, `› answers the setup routes in snake_case and the claim as the public claim does`.
+
+### `instance-claim/owner-username-rule`
+
+If valid setup proof comes with a `username` that is not, once its surrounding spaces are trimmed and its capitals lowercased, 1 to 64 characters from `a` to `z`, `0` to `9`, `.`, `_` and `-`, then the server MUST refuse the claim with `400 validation_error` and `username` as `details.errors[0].path`, without consuming the proof.
+
+**Reason:** A username holds no `@`, so it is never taken for an email address, and no hidden or look-alike character, so two names that look alike are one name.
+
+**Tests:** `compliance/owner.test.ts › refuses a username that is not 1 to 64 letters, numbers, dots, dashes and underscores without consuming valid setup proof`.
+
+### `instance-claim/owner-username-stored`
+
+When valid setup proof claims an unclaimed instance with a `username` in capital letters or with spaces at each end, the server MUST store it in lowercase with the spaces trimmed.
+
+**Tests:** `compliance/owner.test.ts › creates exactly one owner and reads it through the local command`.
+
+### `instance-claim/owner-email-optional`
+
+When valid setup proof claims an unclaimed instance with no `email`, the server MUST create the owner with `email` `null`, and answer `email` as `null` at `GET /profile`.
+
+**Reason:** The email plays no part in signing in, so an owner who gives none is complete.
+
+**Tests:** `compliance/owner.test.ts › answers the setup routes in snake_case and the claim as the public claim does`.
+
+### `instance-claim/owner-email-form-blank`
+
+When the setup page's form submits `email` left blank with valid owner details, the server MUST create the owner with `email` `null`.
+
+**Reason:** A browser sends an empty field for an optional input the person left alone.
+
+**Tests:** `compliance/owner.test.ts › creates the owner from the setup page's form with the optional email left blank, and shows a refused username on the page again`.
+
+### `instance-claim/owner-name-default`
+
+When valid setup proof claims an unclaimed instance with no `name` or a blank one, the server MUST give the owner their username as `name`.
+
+**Tests:** `compliance/owner.test.ts › creates exactly one owner and reads it through the local command`.
 
 ### `instance-claim/claim-signs-in`
 
@@ -510,19 +546,53 @@ When `PATCH /profile` receives `avatar` set to `null`, the server MUST remove th
 
 ### `instance-claim/owner-update-identity`
 
-When `PATCH /profile` changes email, name, or avatar, the server MUST preserve the owner's ID, password, passkeys, sessions, ordinary keys, and app grants.
+When `PATCH /profile` changes username, email, name, or avatar, the server MUST preserve the owner's ID, password, passkeys, sessions, ordinary keys, and app grants.
+
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
+
+### `instance-claim/owner-update-username`
+
+When `PATCH /profile` changes the username, the server MUST store it in lowercase with the spaces at each end trimmed.
+
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `› validates fields and limits credential writes to the fields each may write`.
+
+### `instance-claim/owner-username-new`
+
+When `PATCH /profile` changes the username, the server MUST sign the owner in from then on with the new username and the same password.
+
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
+
+### `instance-claim/owner-username-old`
+
+When `PATCH /profile` changes the username, the server MUST answer a password sign-in that names the old username as it answers one that names a wrong username.
 
 **Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
 
 ### `instance-claim/owner-update-email`
 
-When `PATCH /profile` changes email, the server MUST store the lowercase address without requiring email confirmation.
+When `PATCH /profile` changes the email, the server MUST store the lowercase address without requiring email confirmation.
 
-**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`, `› validates fields and limits credential writes to the fields each may write`.
+**Reason:** The email plays no part in signing in, so a wrong one costs the owner nothing but the address.
+
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to the fields each may write`, `compliance/owner-tasks.test.ts › lets a key holding profile.email:write change the owner's email`.
+
+### `instance-claim/owner-email-cleared`
+
+When `PATCH /profile` sends `email` as `null`, the server MUST remove the owner's email and answer `email` as `null` at `GET /profile`.
+
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to the fields each may write`.
+
+### `instance-claim/owner-email-no-sign-in`
+
+When a password sign-in names the owner's email address as its username, the server MUST answer it as it answers one that names a wrong username.
+
+**Reason:** Sign-in matches the username alone, so the email address, which the owner may give or remove at any time, never signs anyone in.
+
+**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
 
 ### `instance-claim/profile-input`
 
-If an owner or delegated profile update contains no field, an unknown field, an invalid email address, an empty trimmed name, a name longer than 200 Unicode code points, a name containing a control or bidirectional control character before trimming, or an avatar other than null, a web address included, then the server MUST refuse the whole update with `400 validation_error`.
+If an owner or delegated profile update contains no field, an unknown field, an invalid email address, an empty string as the email, a username that `instance-claim/owner-username-rule` refuses, an empty trimmed name, a name longer than 200 Unicode code points, a name containing a control or bidirectional control character before trimming, or an avatar other than null, a web address included, then the server MUST refuse the whole update with `400 validation_error`.
 
 **Reason:** An address names an avatar that lives somewhere else, and the owner's avatar is held by the instance.
 
@@ -530,9 +600,9 @@ If an owner or delegated profile update contains no field, an unknown field, an 
 
 ### `instance-claim/delegated-profile-update`
 
-When the private local command, a key or an app submits a valid nonempty `PATCH /profile` containing `email`, `name`, `avatar` set to `null`, or any combination of them, and holds current profile write permission for every submitted field, the server MUST change those fields and return the profile fields the caller may read, as `GET /profile` answers them.
+When the private local command, a key or an app submits a valid nonempty `PATCH /profile` containing `username`, `email`, `name`, `avatar` set to `null`, or any combination of them, and holds current profile write permission for every submitted field, the server MUST change those fields and return the profile fields the caller may read, as `GET /profile` answers them.
 
-**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to the fields each may write`, `› updates the existing owner and preserves credentials and sessions`, `› takes an email-write OAuth scope`.
+**Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to the fields each may write`, `› updates the existing owner and preserves credentials and sessions`, `› takes a username-write OAuth scope`.
 
 ### `instance-claim/delegated-profile-atomic`
 
@@ -540,13 +610,19 @@ If a key or app submits `PATCH /profile` with a field it lacks current write per
 
 **Tests:** `compliance/profile.test.ts › validates fields and limits credential writes to the fields each may write`, `› refuses a name change when the key loses its permission after the request was admitted, and makes it when the key does not`.
 
-### `instance-claim/profile-email-named`
+### `instance-claim/profile-username-named`
 
-If a key or an app whose profile permissions hold `*` at `write` but do not name `email` at `write` submits `PATCH /profile` containing `email`, then the server MUST answer `403 forbidden` with `details.profile_field` `email` and leave the email as it was.
+If a key or an app whose profile permissions hold `*` at `write` but do not name `username` at `write` submits `PATCH /profile` containing `username`, then the server MUST answer `403 forbidden` with `details.profile_field` `username` and leave the username as it was.
 
-**Reason:** Password sign-in matches the email, so a credential changes it only when it was granted that by name.
+**Reason:** Password sign-in matches the username, so a credential changes it only when it was granted that by name.
 
-**Tests:** `compliance/profile.test.ts › changes the email only for a credential that names email write, never through the profile wildcard`.
+**Tests:** `compliance/profile.test.ts › changes the username only for a credential that names username write, never through the profile wildcard`, `› takes a username-write OAuth scope`.
+
+### `instance-claim/profile-wildcard-email`
+
+When a key or an app whose profile permissions hold `*` at `write` submits `PATCH /profile` containing `email`, the server MUST change the email.
+
+**Tests:** `compliance/profile.test.ts › changes the username only for a credential that names username write, never through the profile wildcard`.
 
 ### `instance-claim/owner-avatar-upload`
 
@@ -640,7 +716,7 @@ While the owner has an avatar, the server MUST answer `avatar` in the owner as t
 
 ### `instance-claim/profile-read`
 
-When a credential sends `GET /profile`, the server MUST answer `200` with the owner's `name`, `email` and `avatar`, each only where the credential holds profile read permission for that field.
+When a credential sends `GET /profile`, the server MUST answer `200` with the owner's `name`, `username`, `email` and `avatar`, each only where the credential holds profile read permission for that field.
 
 **Reason:** An app learns whom it acts for from the profile the owner let it read. `avatar` is the address `instance-claim/owner-avatar-address` names.
 
@@ -688,12 +764,12 @@ If the owner has no avatar, then the server MUST answer `GET /profile/avatar` fr
 
 ### `instance-claim/profile-grant-closed`
 
-If a key grant names a profile field outside `*`, `name`, `email`, and `avatar`, then the server MUST refuse the grant.
+If a key grant names a profile field outside `*`, `name`, `username`, `email`, and `avatar`, then the server MUST refuse the grant.
 
-**Tests:** `compliance/profile.test.ts › requires a credential, takes an email-write grant and refuses an unknown field`.
+**Tests:** `compliance/profile.test.ts › requires a credential, takes a username-write grant and refuses an unknown field`.
 
 ### `instance-claim/owner-update-password-identity`
 
-If a password sign-in's submitted email no longer matches the owner's address when its session is created, then the server MUST refuse that sign-in.
+If the owner's username changes after a password sign-in has named it and before that sign-in's session is created, then the server MUST refuse that sign-in.
 
-**Tests:** `compliance/profile.test.ts › updates the existing owner and preserves credentials and sessions`.
+**Tests:** `compliance/profile.test.ts › refuses a password sign-in whose username changed while its password was being checked`.

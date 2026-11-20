@@ -576,7 +576,16 @@ fn refused(refusal: &marfa_core::Refusal) -> String {
 /// the scan that runs with the push counts none of them; this is where they
 /// show.
 pub fn answered_words(drain: &DrainReport) -> String {
-    let created = drain
+    let created = created_count(drain);
+    let mut line = format!("the server answered {} write(s)", drain.answered);
+    if created > 0 {
+        line.push_str(&format!(", creating {created} item(s)"));
+    }
+    line
+}
+
+fn created_count(drain: &DrainReport) -> usize {
+    drain
         .verdicts
         .iter()
         .filter(|write| {
@@ -586,12 +595,7 @@ pub fn answered_words(drain: &DrainReport) -> String {
                     Some(marfa_core::Verdict::Accepted | marfa_core::Verdict::Merged)
                 )
         })
-        .count();
-    let mut line = format!("the server answered {} write(s)", drain.answered);
-    if created > 0 {
-        line.push_str(&format!(", creating {created} item(s)"));
-    }
-    line
+        .count()
 }
 
 /// Writes the pass left unsent because each follows a write that has no
@@ -655,6 +659,69 @@ pub fn unclaimed(drain: &DrainReport) -> Vec<String> {
             format!(
                 "this credential's key does not claim the source {}, so every create naming it is blocked; \
                  they go on the first drain after the key claims it",
+                printable(source)
+            )
+        })
+        .collect()
+}
+
+/// What the server answered in a pass, with a change where `marfa device` says write.
+pub fn folder_counts(drain: &DrainReport) -> String {
+    let created = created_count(drain);
+    let mut line = format!("the server answered {} change(s)", drain.answered);
+    if created > 0 {
+        line.push_str(&format!(", creating {created} item(s)"));
+    }
+    if drain.held > 0 {
+        line.push_str(&format!(
+            "; {} more held back until the change each follows is answered",
+            drain.held
+        ));
+    }
+    if drain.unsent > 0 {
+        line.push_str(&format!(", {} settled without being sent", drain.unsent));
+    }
+    if drain.unmade > 0 {
+        line.push_str(&format!(
+            ", {} that could not be sent because the request could not be made",
+            drain.unmade
+        ));
+    }
+    line
+}
+
+/// Changes the pass could not deliver, and when they go: `next` names the
+/// run that sends them, such as "the next push".
+pub fn folder_undelivered(drain: &DrainReport, next: &str) -> Option<String> {
+    match (drain.undelivered, &drain.unavailable) {
+        (0, None) => None,
+        (count, Some(why)) => Some(format!(
+            "{count} change(s) not delivered, waiting for {next}: {}",
+            printable(why)
+        )),
+        (count, None) => Some(format!(
+            "{count} change(s) not delivered, waiting for {next}"
+        )),
+    }
+}
+
+/// Why a folder's sending stopped, in a folder's words. The only cause is a
+/// credential the server refused.
+pub fn folder_stopped(drain: &DrainReport) -> Option<String> {
+    drain.stopped.as_ref().map(|_| {
+        "sending stopped: the server refused the credential, so the changes waiting are held until a working credential is kept".to_string()
+    })
+}
+
+/// The key's claim on a source, in a folder's words.
+pub fn folder_unclaimed(drain: &DrainReport) -> Vec<String> {
+    drain
+        .unclaimed_sources
+        .iter()
+        .map(|source| {
+            format!(
+                "this credential's key does not claim the source {}, so each new item naming it waits; \
+                 they are sent on the first push after the key claims it",
                 printable(source)
             )
         })
@@ -1261,13 +1328,14 @@ fn record_columns(record: &Value) -> Cols {
     }
     if record.get("locator").is_some() && record.get("attached_at").is_some() {
         return Cols::new(
-            &["id", "kind", "where", "attached", "detached"],
+            &["id", "kind", "where", "attached", "detached", "error"],
             vec![
                 owned("id"),
                 owned("kind"),
                 owned("locator"),
                 owned("attached_at"),
                 owned("detached_at"),
+                owned("error"),
             ],
         );
     }
@@ -1289,6 +1357,17 @@ fn record_columns(record: &Value) -> Cols {
         return Cols::new(
             &["id", "action", "when", "actor"],
             vec![owned("id"), owned("action"), owned("created_at"), actor],
+        );
+    }
+    if record.as_object().is_some_and(|fields| {
+        fields.len() == 3
+            && ["id", "title", "created_at"]
+                .iter()
+                .all(|name| fields.get(*name).is_some_and(Value::is_string))
+    }) {
+        return Cols::new(
+            &["id", "title", "created"],
+            vec![owned("id"), owned("title"), owned("created_at")],
         );
     }
     let kind = ["type", "action"]
@@ -1600,6 +1679,71 @@ pub(crate) mod tests {
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         }
+    }
+
+    #[test]
+    fn a_folder_says_a_stopped_pass_without_the_queue_words() {
+        let mut report = pass(0, 0, Vec::new());
+        assert_eq!(
+            super::folder_stopped(&report),
+            None,
+            "the witness: nothing stopped"
+        );
+        report.stopped = Some(
+            "the server refused the credential, so every queued write is blocked and the drain stopped; 2 row(s) parked".into(),
+        );
+        let said = super::folder_stopped(&report).expect("a stopped pass is said");
+        assert!(said.contains("refused the credential"), "{said}");
+        for word in ["queue", "write", "drain", "parked"] {
+            assert!(!said.contains(word), "{word} in {said}");
+        }
+    }
+
+    #[test]
+    fn a_folder_says_a_pass_in_words_about_changes_and_the_device_keeps_the_queue_words() {
+        let mut report = pass(
+            4,
+            2,
+            vec![
+                verdict(WriteKind::CreateItem, Some(Verdict::Accepted)),
+                verdict(WriteKind::UpdateItem, Some(Verdict::Accepted)),
+            ],
+        );
+        report.unsent = 1;
+        report.unmade = 1;
+        report.undelivered = 3;
+        report.unavailable = Some("the server is away".into());
+        report.unclaimed_sources = vec!["crm".into()];
+        let said = [
+            vec![super::folder_counts(&report)],
+            super::folder_undelivered(&report, "the next push")
+                .into_iter()
+                .collect(),
+            super::folder_unclaimed(&report),
+        ]
+        .concat()
+        .join("\n");
+        assert_eq!(
+            said,
+            "the server answered 4 change(s), creating 1 item(s); 2 more held back until the change each follows is answered, 1 settled without being sent, 1 that could not be sent because the request could not be made\n\
+             3 change(s) not delivered, waiting for the next push: the server is away\n\
+             this credential's key does not claim the source crm, so each new item naming it waits; they are sent on the first push after the key claims it"
+        );
+        for word in ["queue", "drain", "write", "verdict", "_item"] {
+            assert!(!said.contains(word), "{word}: {said}");
+        }
+        // The witness: the device's words for the same report name them.
+        let device = [
+            vec![super::counts(&report)],
+            super::undelivered(&report).into_iter().collect(),
+            super::unclaimed(&report),
+        ]
+        .concat()
+        .join("\n");
+        assert!(
+            device.contains("write(s)") && device.contains("drain"),
+            "{device}"
+        );
     }
 
     #[test]
@@ -2083,6 +2227,20 @@ pub(crate) mod tests {
             stores,
             "id  kind  where        attached\ns1  disk  /data/blobs  2026-01-01T00:00:00.000Z"
         );
+        let refused = describe(&json!({"data": [
+            {"id": "s1", "kind": "disk", "locator": "/data/blobs",
+             "attached_at": "2026-01-01T00:00:00.000Z", "detached_at": null, "error": null},
+            {"id": "s2", "kind": "s3", "locator": "s3://marfa/files",
+             "attached_at": "2026-01-02T00:00:00.000Z", "detached_at": null,
+             "error": "The object store cannot be used."},
+        ], "next_cursor": null, "min_copies": 1}))
+        .unwrap();
+        assert_eq!(
+            refused,
+            "id  kind  where             attached                  error\n\
+             s1  disk  /data/blobs       2026-01-01T00:00:00.000Z\n\
+             s2  s3    s3://marfa/files  2026-01-02T00:00:00.000Z  The object store cannot be used."
+        );
         let batches = describe(&json!({"data": [
             {"id": "b2", "at": "2026-01-02T00:00:00.000Z", "rows": 2, "undoes": "b1"},
             {"id": "b1", "at": "2026-01-01T00:00:00.000Z", "rows": 1, "undoes": null},
@@ -2168,6 +2326,24 @@ pub(crate) mod tests {
             "id  name    approved\n\
              g1  Reader  2026-10-03T09:30:00.000Z\n\
              g2  -       2026-10-04T09:30:00.000Z"
+        );
+    }
+
+    #[test]
+    fn a_folder_in_the_inventory_shows_its_title_beside_its_id() {
+        let text = describe(&json!({
+            "data": [
+                {"id": "f1", "title": "Home", "created_at": "2026-10-03T09:57:30.610Z"},
+                {"id": "f2", "title": "Untitled folder", "created_at": "2026-10-04T09:57:30.610Z"},
+            ],
+            "next_cursor": null,
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "id  title            created\n\
+             f1  Home             2026-10-03T09:57:30.610Z\n\
+             f2  Untitled folder  2026-10-04T09:57:30.610Z"
         );
     }
 

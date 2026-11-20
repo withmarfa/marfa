@@ -10,7 +10,7 @@ const HOSTILE: &str = "\"><img src=x onerror=alert(1)> & 'q'";
 fn sign_in_view() -> SignIn {
     SignIn {
         instance_name: "Marfa".into(),
-        email: String::new(),
+        username: String::new(),
         return_to: "/".into(),
         authorization: None,
         app: None,
@@ -118,7 +118,7 @@ fn only_a_page_that_asks_the_server_for_something_may_connect() {
 fn a_hostile_value_is_text_in_text_and_in_an_attribute() {
     let page = sign_in(&SignIn {
         instance_name: HOSTILE.into(),
-        email: HOSTILE.into(),
+        username: HOSTILE.into(),
         return_to: HOSTILE.into(),
         authorization: None,
         app: Some(HOSTILE.into()),
@@ -140,9 +140,11 @@ fn a_hostile_value_stays_text_on_every_other_page() {
         setup_details(&SetupDetails {
             instance_name: HOSTILE.into(),
             name: HOSTILE.into(),
+            username: HOSTILE.into(),
             email: HOSTILE.into(),
             errors: SetupFieldErrors {
                 name: Some(HOSTILE.into()),
+                username: Some(HOSTILE.into()),
                 email: Some(HOSTILE.into()),
                 password: Some(HOSTILE.into()),
             },
@@ -158,7 +160,7 @@ fn a_hostile_value_stays_text_on_every_other_page() {
         notice(&Notice::refusal("x", StatusCode::BAD_REQUEST, HOSTILE)).unwrap(),
         signed_in(&SignedIn {
             instance_name: HOSTILE.into(),
-            email: HOSTILE.into(),
+            username: HOSTILE.into(),
             continue_to: format!("/{HOSTILE}"),
         })
         .unwrap(),
@@ -183,7 +185,7 @@ fn a_continue_link_goes_only_to_a_path_on_the_instance() {
     ] {
         let page = signed_in(&SignedIn {
             instance_name: "Marfa".into(),
-            email: "owner@example.test".into(),
+            username: "owner".into(),
             continue_to: given.into(),
         })
         .unwrap();

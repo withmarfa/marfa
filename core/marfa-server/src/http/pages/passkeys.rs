@@ -16,20 +16,20 @@ pub struct OwnerPasskey {
 pub struct OwnerPasskeys {
     pub instance_name: String,
     /// For a password manager to file the new password under.
-    pub email: String,
+    pub username: String,
     pub rows: Vec<OwnerPasskey>,
 }
 
 #[derive(Template)]
 #[template(path = "passkeys.html")]
 struct PasskeysBody<'a> {
-    email: &'a str,
+    username: &'a str,
     rows: &'a [OwnerPasskey],
 }
 
 pub fn owner_passkeys(view: &OwnerPasskeys) -> Result<Page> {
     let body = render_body(&PasskeysBody {
-        email: &view.email,
+        username: &view.username,
         rows: &view.rows,
     })?;
     document(

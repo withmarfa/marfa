@@ -309,7 +309,7 @@ describe("confirming with the password", () => {
         [CLIENT_HEADER]: address,
       },
       body: new URLSearchParams({
-        email: TEST_OWNER.email,
+        username: TEST_OWNER.username,
         password: TEST_OWNER.password,
       }),
     });
@@ -350,7 +350,11 @@ describe("confirming while strangers are limited", () => {
       });
       try {
         const crowdedOrigin = await issuerOrigin(crowded);
-        const signInAt = (email: string, password: string, address: string) =>
+        const signInAt = (
+          username: string,
+          password: string,
+          address: string,
+        ) =>
           fetch(`${crowded.apiUrl}/auth/sign-in`, {
             method: "POST",
             headers: {
@@ -358,10 +362,10 @@ describe("confirming while strangers are limited", () => {
               origin: crowdedOrigin,
               [CLIENT_HEADER]: address,
             },
-            body: JSON.stringify({ email, password }),
+            body: JSON.stringify({ username, password }),
           });
         const signedIn = await signInAt(
-          TEST_OWNER.email,
+          TEST_OWNER.username,
           TEST_OWNER.password,
           "10.4.0.1",
         );
@@ -408,12 +412,12 @@ describe("confirming while strangers are limited", () => {
 });
 
 describe("a confirmation names no account", () => {
-  it("refuses a body that names an email, both proofs, or neither, and replaces nothing", async () => {
+  it("refuses a body that names a username, both proofs, or neither, and replaces nothing", async () => {
     const stale = await signIn();
     // A minute or more since the session was last used, so its use is recorded.
     await server.advanceClock(PAST_RECENT);
     for (const body of [
-      { email: "someone@example.test", password: TEST_OWNER.password },
+      { username: "someone", password: TEST_OWNER.password },
       { password: TEST_OWNER.password, passkey: {} },
       {},
     ]) {

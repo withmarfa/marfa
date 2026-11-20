@@ -717,9 +717,9 @@ fn ended(error: marfa_core::WatchError<CoreError>, origin: Option<&str>) -> Core
         W::CredentialRefused(said) => CoreError::Unauthorized {
             server: said.answer().map(Box::new),
             code: "credential_refused".into(),
-            message: format!(
-                "the server at {} refused this watch's credential ({said}), so the watch stopped; queued writes wait until a working credential is kept",
-                origin.unwrap_or("this folder's server")
+            message: marfa_core::folder::credential_refused_said(
+                origin.unwrap_or("this folder's server"),
+                &said,
             ),
         },
         W::FollowEnded(error) | W::Core(error) => error,

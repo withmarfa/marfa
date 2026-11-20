@@ -43,12 +43,12 @@ The contract has two halves.
 
 - `device.md`: the working copy, the slice, hydration, catch-up, and what a device never does locally.
 - `queue-and-verdicts.md`: the queue, the version on every write, the six verdicts, and which failures retry.
-- `cli.md`: the `marfa` program: its profiles, the server it talks to and the contract it names, its keys, stores, drain, output and telemetry, the docs site, and the commands for the bin, summaries, connector problems, export and restore. A folder command's rules are in the `folder-` chapters.
-- `folder-setup.md`: setting a folder up: binding and settings, the first sync, the machine's registry, the record of watches, handing a folder to a command and syncing from login.
-- `folder-documents.md`: what a document is to a folder: which files it admits, a document's fields, name, title, versions, edge lines and links, and the files it cannot read.
-- `folder-files.md`: files on disk: identity and placement, writes and recovery, deletion, paths and links, and another folder's file.
-- `folder-sync.md`: keeping a folder in step: keeping up, watching, pulls and pushes, and the reports a folder sends.
-- `folder-guards.md`: what a folder holds back until a person confirms: removals and additions, size and status, and files outside the query.
+- `cli.md`: the `marfa` program: its profiles, the server it talks to and the contract it names, its keys, stores, drain, output and telemetry, the docs site, and the commands for the bin, summaries, connector problems, export and restore. A folder command's rules are in the `folder-` chapters, which use the word folder for the `system.folder` on the instance and directory for the place on a machine's disk that follows one (`GLOSSARY.md`).
+- `folder-setup.md`: setting a directory up to follow a folder: binding and settings, the first sync, the machine's registry, the record of watches, handing a directory to a command and syncing from login.
+- `folder-documents.md`: what a document is to a directory: which files it admits, a document's fields, name, title, versions, edge lines and links, and the files it cannot read.
+- `folder-files.md`: files on disk: identity and placement, writes and recovery, deletion, paths and links, and another directory's file.
+- `folder-sync.md`: keeping a directory in step: keeping up, watching, pulls and pushes, and the reports a directory sends.
+- `folder-guards.md`: what a directory holds back until a person confirms: removals and additions, size and status, and files outside the query.
 - `folder-speed.md`: what a quick pass and a full pass of a watch read and render, how often a full pass runs, and how long a watch waits for a file to settle.
 
 ## Compatibility

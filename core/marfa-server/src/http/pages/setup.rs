@@ -98,6 +98,7 @@ pub fn setup_code(view: &SetupCode) -> Result<Page> {
 #[derive(Debug, Clone, Default)]
 pub struct SetupFieldErrors {
     pub name: Option<String>,
+    pub username: Option<String>,
     pub email: Option<String>,
     pub password: Option<String>,
 }
@@ -107,6 +108,7 @@ pub struct SetupDetails {
     pub instance_name: String,
     /// What was typed before. The password is never sent back.
     pub name: String,
+    pub username: String,
     pub email: String,
     pub errors: SetupFieldErrors,
     pub notice: Option<String>,

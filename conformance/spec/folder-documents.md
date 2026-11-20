@@ -1,6 +1,6 @@
 # What a document is
 
-A folder is a directory bound to a `system.folder` item, with a working copy and a queue. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
+A folder is a `system.folder` item on the instance, with its settings, query and ID. A directory is a place on a machine's disk that follows a folder, with a working copy and a queue. A statement about what a device does on disk says directory; one about what the instance holds says folder. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
 
 This chapter holds which files a folder admits as documents, how a document's fields, name, title, versions, edge lines and links are read and written, and what a folder does with a file it cannot read.
 
@@ -14,7 +14,7 @@ When a folder’s include list is empty, a device MUST admit every path not excl
 
 ### `folder-documents/include-negation`
 
-When the last applicable include pattern for a folder path is negated, a device MUST exclude that path from admission.
+When the last applicable include pattern for a directory path is negated, a device MUST exclude that path from admission.
 
 **Tests:** `device/folders-contract-b.test.ts › applies include negation, ignore precedence and case-normalized patterns`.
 
@@ -32,7 +32,7 @@ When an include or ignore pattern matches a file's path directly, a device MUST 
 
 ### `folder-documents/pattern-not-folder-root`
 
-A device MUST NOT take or leave out a file at a folder's top level because an include or ignore pattern matches the folder's own directory.
+A device MUST NOT take or leave out a file at a directory's top level because an include or ignore pattern matches the directory's own name.
 
 **Reason:** git reads a list the same way, so a line that names only directories, such as `*/`, neither takes nor leaves out a top-level file. A bound file that such a line stops taking is kept, as `folder-documents/excluded-binding-kept` says.
 
@@ -54,19 +54,19 @@ When a folder’s include or ignore list contains an invalid gitignore pattern, 
 
 ### `folder-documents/include-paths`
 
-When a folder has a nonempty include list, a device MUST admit only paths whose name or an ancestor directory matches an included gitignore pattern relative to the folder root.
+When a folder has a nonempty include list, a device MUST admit only paths whose name or an ancestor directory matches an included gitignore pattern relative to the directory's root.
 
 **Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folder-patterns.test.ts › keeps the members of the %s range in include patterns`, `device/folder-patterns.test.ts › preserves wildcard matches alongside Unicode equivalence in %s patterns`.
 
 ### `folder-documents/ignore-paths`
 
-When a folder path matches its ignore list, a device MUST exclude that path from admission even when the include list also matches it.
+When a directory path matches its ignore list, a device MUST exclude that path from admission even when the include list also matches it.
 
 **Tests:** `device/folders.test.ts › ignores what its ignore list names`, `device/folders-contract-b.test.ts › applies include negation, ignore precedence and case-normalized patterns`, `device/folder-patterns.test.ts › keeps the members of the %s range in ignore patterns`, `device/folder-patterns.test.ts › preserves wildcard matches alongside Unicode equivalence in %s patterns`.
 
 ### `folder-documents/include-dot-directories`
 
-When a folder path has a dot-led directory component, a device MUST admit it only where a non-negated include pattern explicitly names every dot-led directory on its path.
+When a directory path has a dot-led directory component, a device MUST admit it only where a non-negated include pattern explicitly names every dot-led directory on its path.
 
 **Tests:** `device/folders.test.ts › reaches a dot-led path its include list names`, `device/folders.test.ts › excludes a dot-led directory at any depth`, `device/folders.test.ts › writes nothing under a dot-led directory its walk does not enter`, `device/folders.test.ts › takes nothing under a dot-led directory a negated include line names`, `device/folder-patterns.test.ts › keeps the members of the %s range when entering dot directories`.
 
@@ -102,7 +102,7 @@ When a folder push or watch encounters a file excluded by a built-in secret patt
 
 ### `folder-documents/secret-notice-once`
 
-While a folder file remains excluded by a built-in secret pattern, the CLI MUST say its watch notice only once.
+While a file remains excluded by a built-in secret pattern, the CLI MUST say its watch notice only once.
 
 **Tests:** `device/folders.test.ts › says a refused secret in words once while watching`, `device/folders.test.ts › says a refused secret once while a delete waits out its grace and other passes report`.
 
@@ -258,7 +258,7 @@ When a generated file name has more than 32 bytes from its last dot to its end, 
 
 ### `folder-documents/name-comparison`
 
-When a device compares folder paths, file names or titles, a device MUST treat two names as the same name where they are equal after each is put in normalization form NFC, has Unicode full case folding applied with no locale rule, and is put in NFC again.
+When a device compares directory paths, file names or titles, a device MUST treat two names as the same name where they are equal after each is put in normalization form NFC, has Unicode full case folding applied with no locale rule, and is put in NFC again.
 
 **Reason:** a case-insensitive file system such as APFS compares names by full case folding, so two names the device kept apart could be one file on disk, and the second item would never be written.
 
@@ -266,13 +266,13 @@ When a device compares folder paths, file names or titles, a device MUST treat t
 
 ### `folder-documents/same-name-scan-choice`
 
-When distinct folder files have paths equal without regard to case or Unicode normalization, a device MUST admit the already-bound path or otherwise the first path in order.
+When distinct files have paths equal without regard to case or Unicode normalization, a device MUST admit the already-bound path or otherwise the first path in order.
 
 **Tests:** `device/folders-contract-b.test.ts › chooses a bound path before path order when names compare equal`.
 
 ### `folder-documents/same-name-scan-choice-other-paths-held`
 
-When distinct folder files have paths equal without regard to case or Unicode normalization, a device MUST hold the other paths with flag `name` until renamed.
+When distinct files have paths equal without regard to case or Unicode normalization, a device MUST hold the other paths with flag `name` until renamed.
 
 **Tests:** `device/folders-contract-b.test.ts › chooses a bound path before path order when names compare equal`.
 
@@ -294,7 +294,7 @@ When a folder item that has no placement edge has its file at a path and another
 
 ### `folder-documents/case-rename-unsent`
 
-When a folder file is renamed only in case or Unicode normalization, a device MUST NOT queue a placement change for that rename.
+When a file is renamed only in case or Unicode normalization, a device MUST NOT queue a placement change for that rename.
 
 **Tests:** `device/folders-contract-b.test.ts › does not send a placement for an equivalent rename to %s`.
 
@@ -1062,7 +1062,7 @@ When a file at a document name (`.md`, `.markdown` or `.txt`, in any letter case
 
 ### `folder-documents/file-item-doc-name-replaced`
 
-When a file that names a note's item ID replaces the file of a file item at a Markdown name (`.md` or `.markdown`, in any letter case) and no other file in the folder is that note's, a device MUST keep the file bound to that note.
+When a file that names a note's item ID replaces the file of a file item at a Markdown name (`.md` or `.markdown`, in any letter case) and no other file in the directory is that note's, a device MUST keep the file bound to that note.
 
 **Reason:** the file's item ID, not the file it replaced, says whose file it is, in a plain scan and in a folder watch's pass alike. A device that judged the file by the item bound at its path would send the note as the file item's bytes and lose the note. While the note's own file is still in the folder, the new file is a copy of it and stays the file item's. A `.txt` file carries no ID line (`folder-files/raw-text-body`), so it never names a note and stays the file item's.
 
@@ -1974,7 +1974,7 @@ When a document removes an embed, a device MUST NOT delete the embedded file's `
 
 ### `folder-documents/embed-rederived`
 
-When a folder has not read its files since its device came to read an embed as a `references` edge, a device MUST read every document in the folder that embeds a file again once, at the next scan, whether or not the file changed.
+When a folder has not read its files since its device came to read an embed as a `references` edge, a device MUST read every document in the directory that embeds a file again once, at the next scan, whether or not the file changed.
 
 **Reason:** an embed once made the file's `attached-to` edge instead, and the folder's record of each document says so. A folder added afresh reads its documents again too: its first pull records each document it writes as read, and a body written under the earlier rule has no reference until it is read. Reading once brings each document to this rule, and the folder reads no unchanged document again after it.
 
@@ -2030,7 +2030,7 @@ When embed syntax occurs in a code span, fenced code block, indented code block 
 
 ### `folder-documents/embed-path`
 
-When a Markdown embed names a path, a device MUST resolve it relative to the embedding document's directory, or the folder root for a leading `/`.
+When a Markdown embed names a path, a device MUST resolve it relative to the embedding document's directory, or the directory's root for a leading `/`.
 
 **Tests:** `device/folders-frontmatter.test.ts › reads an embed's path as Obsidian reads one`.
 
@@ -2096,7 +2096,7 @@ When a pull materializes a path embed, a device MUST place its file where the do
 
 ### `folder-documents/embed-name-placement`
 
-When a pull materializes a name embed, a device MUST use an existing matching placement or file path, otherwise place a bare name beside the embedding document or a name containing a directory at the folder root.
+When a pull materializes a name embed, a device MUST use an existing matching placement or file path, otherwise place a bare name beside the embedding document or a name containing a directory at the directory's root.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes an embedded file where its link says`, `device/folders-frontmatter.test.ts › writes a file embedded by name where its placement already answers to the name`, `device/folders-frontmatter.test.ts › writes a file embedded by name where another embed's path names it`.
 
@@ -2138,13 +2138,13 @@ When an embedded item is trashed or its ability to carry frontmatter is unknown,
 
 ### `folder-documents/embed-outside`
 
-When an embed path leads outside the folder, a device MUST report the embed in `embeds`.
+When an embed path leads outside the directory, a device MUST report the embed in `embeds`.
 
 **Tests:** `device/folders-frontmatter.test.ts › reports an embed pointing outside the folder`.
 
 ### `folder-documents/embed-outside-no-write`
 
-When an embed path leads outside the folder, a device MUST NOT read or write the file it names.
+When an embed path leads outside the directory, a device MUST NOT read or write the file it names.
 
 **Tests:** `device/folders-frontmatter.test.ts › reports an embed pointing outside the folder`.
 
@@ -2216,7 +2216,7 @@ When an embedded file needs uploading, a device MUST leave its size-limit decisi
 
 ### `folder-documents/attachment-beside`
 
-When a pull writes a document that a readable active or archived file item is attached to, no document in the folder embeds that file, and the folder's query does not hold it, a device MUST write the file in the directory of a document it is attached to.
+When a pull writes a document that a readable active or archived file item is attached to, no document in the directory embeds that file, and the folder's query does not hold it, a device MUST write the file in the directory of a document it is attached to.
 
 **Reason:** a file attached to an item is part of that item, so a folder that holds the item holds its files too, wherever the body shows them or not.
 
@@ -2230,7 +2230,7 @@ While a document's attachment is written beside the document and the body embeds
 
 ### `folder-documents/attachment-name`
 
-When a pull writes a file attached to documents in a folder, which no document there embeds and the folder's query does not hold, and the file has no path in the folder yet, a device MUST name it from its item's title, numbered beside any other file the pull places at that name without regard to case or Unicode normalization (`folder-files/placement-collision-number`).
+When a pull writes a file attached to documents in a folder, which no document there embeds and the folder's query does not hold, and the file has no path in the directory yet, a device MUST name it from its item's title, numbered beside any other file the pull places at that name without regard to case or Unicode normalization (`folder-files/placement-collision-number`).
 
 **Tests:** `device/folders-frontmatter.test.ts › is written under a number where another attachment of its document has its name, whatever the case`, `› reads a name two attachments share as neither, and says so`.
 
@@ -2242,7 +2242,7 @@ While a file attached to documents in a folder, which no document there embeds a
 
 ### `folder-documents/attachment-follows`
 
-When a file attached to documents in a folder, which no document there embeds and the folder's query does not hold, is in the directory of none of those documents, or has no path in the folder yet, a device MUST write it in the directory of the first of those documents in path order.
+When a file attached to documents in a folder, which no document there embeds and the folder's query does not hold, is in the directory of none of those documents, or has no path in the directory yet, a device MUST write it in the directory of the first of those documents in path order.
 
 **Reason:** an attachment that no embed places has its document as its only anchor, so it follows the document, and a file moved away from it goes back, as a file an embed places by path does.
 
@@ -2250,13 +2250,13 @@ When a file attached to documents in a folder, which no document there embeds an
 
 ### `folder-documents/attachment-written-once`
 
-When a pull writes a file attached to documents in more than one directory of a folder, which no document there embeds and the folder's query does not hold, a device MUST write one copy of it.
+When a pull writes a file attached to documents in more than one directory below the root, which no document there embeds and the folder's query does not hold, a device MUST write one copy of it.
 
 **Tests:** `device/folders-frontmatter.test.ts › is written once, beside the first of its documents in path order, and the other is reported`.
 
 ### `folder-documents/attachment-written-once-report`
 
-When a pull writes a file attached to documents in more than one directory of a folder, which no document there embeds and the folder's query does not hold, a device MUST report each of those documents outside the directory the file is written in, in `embeds` with the flag `attachment`.
+When a pull writes a file attached to documents in more than one directory below the root, which no document there embeds and the folder's query does not hold, a device MUST report each of those documents outside the directory the file is written in, in `embeds` with the flag `attachment`.
 
 **Tests:** `device/folders-frontmatter.test.ts › is written once, beside the first of its documents in path order, and the other is reported`.
 

@@ -142,6 +142,13 @@ fn record_verdict_inner(
     if answered.verdict == Verdict::Accepted && !already_accepted {
         learn_dead_effects(conn, &queued_write(conn, id)?.expect("answered row exists"))?;
     }
+    if matches!(
+        answered.verdict,
+        Verdict::Accepted | Verdict::Merged | Verdict::Conflicted
+    ) && let Some(row) = queued_write(conn, id)?
+    {
+        super::restored::keep_receipt(conn, &row, answered.answer)?;
+    }
     // A blocked or dead write still waits, to be released or sent again.
     if !matches!(answered.verdict, Verdict::Blocked | Verdict::Dead) {
         let_go_of_ends(conn, &ends)?;

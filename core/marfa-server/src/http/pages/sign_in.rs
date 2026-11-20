@@ -27,9 +27,9 @@ impl SignInProblem {
     fn message(self) -> String {
         match self {
             SignInProblem::InvalidCredentials => {
-                "That email or password isn't right. Check them and try again.".into()
+                "That username or password isn't right. Check them and try again.".into()
             }
-            SignInProblem::MissingField => "Enter your email and your password.".into(),
+            SignInProblem::MissingField => "Enter your username and your password.".into(),
             SignInProblem::TooManyAttempts(Some(wait)) => {
                 format!("Too many attempts. Try again in {wait}, or sign in with a passkey.")
             }
@@ -44,7 +44,7 @@ impl SignInProblem {
 #[derive(Debug, Clone)]
 pub struct SignIn {
     pub instance_name: String,
-    pub email: String,
+    pub username: String,
     /// A path on the instance. The caller has already replaced anything else.
     pub return_to: String,
     /// A refused form comes back with it so the page still names the app.
@@ -81,7 +81,7 @@ pub fn sign_in(view: &SignIn) -> Result<Page> {
 #[derive(Debug, Clone)]
 pub struct SignedIn {
     pub instance_name: String,
-    pub email: String,
+    pub username: String,
     /// Where Continue goes. Anything but a path on the instance becomes `/`.
     pub continue_to: String,
 }
@@ -120,7 +120,7 @@ pub fn signed_in(view: &SignedIn) -> Result<Page> {
 #[derive(Debug, Clone)]
 pub struct Running {
     pub instance_name: String,
-    pub email: String,
+    pub username: String,
 }
 
 #[derive(Template)]

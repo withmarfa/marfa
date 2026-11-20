@@ -109,16 +109,23 @@ impl MetadataPart {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ProfileRow {
     Name,
+    Username,
     Email,
     Avatar,
 }
 
 impl ProfileRow {
-    const ALL: [ProfileRow; 3] = [ProfileRow::Name, ProfileRow::Email, ProfileRow::Avatar];
+    const ALL: [ProfileRow; 4] = [
+        ProfileRow::Name,
+        ProfileRow::Username,
+        ProfileRow::Email,
+        ProfileRow::Avatar,
+    ];
 
     pub const fn word(self) -> &'static str {
         match self {
             ProfileRow::Name => "name",
+            ProfileRow::Username => "username",
             ProfileRow::Email => "email",
             ProfileRow::Avatar => "avatar",
         }
@@ -823,6 +830,7 @@ mod tests {
             "profile:read",
             "profile:write",
             "profile.name:write",
+            "profile.username:write",
             "profile.email:read",
             "profile.avatar:read",
             "offline_access",
@@ -945,6 +953,7 @@ mod tests {
             "content:write",
             "offline_access",
             "schema.write",
+            "profile.username:read",
             "profile.email:read",
             "metadata.edge_types:write",
         ] {
@@ -1021,11 +1030,19 @@ mod tests {
             level("metadata.types:write", Axis::Metadata, "edge_types"),
             Level::None
         );
-        assert_eq!(level("profile:write", Axis::Profile, "email"), Level::Read);
         assert_eq!(
-            level("profile:write profile.email:write", Axis::Profile, "email"),
+            level("profile:write", Axis::Profile, "username"),
+            Level::Read
+        );
+        assert_eq!(
+            level(
+                "profile:write profile.username:write",
+                Axis::Profile,
+                "username"
+            ),
             Level::Write
         );
+        assert_eq!(level("profile:write", Axis::Profile, "email"), Level::Write);
         assert_eq!(level("profile:write", Axis::Profile, "name"), Level::Write);
         assert!(to_grants(&set("keys.mint offline_access")).holds(Permission::KeysMint));
     }
@@ -1175,7 +1192,7 @@ mod tests {
             ("profile:read", "profile.email:read", true),
             ("profile.name:read", "profile:read", false),
             (
-                "profile.name:read profile.email:read profile.avatar:read",
+                "profile.name:read profile.username:read profile.email:read profile.avatar:read",
                 "profile:read",
                 true,
             ),

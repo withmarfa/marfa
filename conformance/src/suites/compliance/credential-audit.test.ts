@@ -157,7 +157,7 @@ describe("a sign-in's audit entry", () => {
     const failed = await fetch(`${server.apiUrl}/auth/sign-in`, {
       method: "POST",
       headers: { "content-type": "application/json", origin },
-      body: JSON.stringify({ email: OWNER.email, password: "not it" }),
+      body: JSON.stringify({ username: OWNER.username, password: "not it" }),
     });
     expect(failed.status).toBe(401);
     const session = await signIn(server, origin);
@@ -193,7 +193,7 @@ describe("a security observation", () => {
     const failed = await fetch(`${server.apiUrl}/auth/sign-in`, {
       method: "POST",
       headers: { "content-type": "application/json", origin },
-      body: JSON.stringify({ email: OWNER.email, password: "not it" }),
+      body: JSON.stringify({ username: OWNER.username, password: "not it" }),
     });
     expect(failed.status).toBe(401);
     expect(await logged("auth.sign_in.failed")).toBe(before + 1);

@@ -63,8 +63,8 @@ impl Instance {
             .db
             .write(Write::own(), move |tx| {
                 tx.execute(
-                    "INSERT INTO owner (id, name, email, password, created_at, updated_at) \
-                     VALUES ('owner', 'Owner', 'owner@example.com', 'x', ?1, ?1)",
+                    "INSERT INTO owner (id, name, username, password, created_at, updated_at) \
+                     VALUES ('owner', 'Owner', 'owner', 'x', ?1, ?1)",
                     [old],
                 )?;
                 instance::mark_claimed(tx, "2026-01-01T00:00:00.000Z", "owner")?;

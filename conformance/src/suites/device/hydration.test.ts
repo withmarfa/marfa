@@ -327,7 +327,18 @@ describe("the order a hydration reads in", () => {
           ),
         ]),
       ),
-      atCursor("11", copyReplay("11", [])),
+      // The catch-up asks from the event before 11, the last the copy took
+      // (`device/stream-asks-before-last`), and is carried 11 again.
+      atCursor(
+        "10",
+        copyReplay("11", [
+          copyItemEvent(
+            "11",
+            "item.created",
+            wireItem({ id: "written-during-the-snapshot" }),
+          ),
+        ]),
+      ),
     );
     server.copyAnswer("GET", "/types", typeCatalog());
     server.copyAnswer("GET", "/edge-types", edgeTypeCatalog());
@@ -771,9 +782,12 @@ describe("how a hydration completes", () => {
           copyItemEvent("11", "item.created", wireItem({ id: "during" })),
         ]),
       ),
+      // From the event before 11, the last the copy took
+      // (`device/stream-asks-before-last`).
       atCursor(
-        "11",
+        "10",
         copyReplay("12", [
+          copyItemEvent("11", "item.created", wireItem({ id: "during" })),
           copyItemEvent("12", "item.created", wireItem({ id: "after" })),
         ]),
       ),
@@ -812,7 +826,7 @@ describe("how a hydration completes", () => {
       server.requests
         .filter((request) => request.pathname === "/events")
         .map((request) => request.headers["last-event-id"]),
-    ).toEqual([undefined, "10", "11"]);
+    ).toEqual([undefined, "10", "10"]);
   });
 
   it("does not complete a hydration whose replay sends no live marker", async () => {

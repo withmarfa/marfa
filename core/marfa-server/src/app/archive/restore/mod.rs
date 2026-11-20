@@ -27,6 +27,7 @@ use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{connectors, edge_types, sources, stored, tables, types};
 use crate::app::{provenance, restore_running};
 use crate::db::Write;
+use crate::settings::registry;
 use intake::{Intake, LineFile, Received};
 
 /// What an archive never holds, each with the kind a client reads and what the owner does.
@@ -68,6 +69,41 @@ const UNREADABLE: [(&str, &str); 1] = [(
     "The instance that wrote this archive could not read its enforcement settings, so the archive does not hold them. Set strict mode, the source allowlist and the source filter on this instance.",
 )];
 const QUEUED: usize = 8;
+
+/// The secrets telemetry sends with, which an archive names without their values.
+const TELEMETRY_SECRETS: [&str; 10] = [
+    registry::OTEL_EXPORTER_OTLP_ENDPOINT.entry.key,
+    registry::OTEL_EXPORTER_OTLP_TRACES_ENDPOINT.entry.key,
+    registry::OTEL_EXPORTER_OTLP_LOGS_ENDPOINT.entry.key,
+    registry::OTEL_EXPORTER_OTLP_METRICS_ENDPOINT.entry.key,
+    registry::OTEL_EXPORTER_OTLP_HEADERS.entry.key,
+    registry::OTEL_EXPORTER_OTLP_TRACES_HEADERS.entry.key,
+    registry::OTEL_EXPORTER_OTLP_LOGS_HEADERS.entry.key,
+    registry::OTEL_EXPORTER_OTLP_METRICS_HEADERS.entry.key,
+    registry::POSTHOG_HOST.entry.key,
+    registry::POSTHOG_PROJECT_TOKEN.entry.key,
+];
+
+/// The note naming the telemetry secrets a restore left to set again.
+fn telemetry_note(secrets_to_set: &Value) -> Option<Value> {
+    let keys: Vec<&str> = secrets_to_set
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|key| TELEMETRY_SECRETS.contains(key))
+        .collect();
+    (!keys.is_empty()).then(|| {
+        json!({
+            "kind": "telemetry",
+            "message": format!(
+                "Telemetry settings are not restored: the archive names {} without their values. \
+                 Traces, log records, metrics and fault reports that need them stay off until you set them \
+                 again.",
+                keys.join(", ")
+            ),
+        })
+    })
+}
 
 /// The instance that wrote an archive, and where the backup destination in use keeps what it
 /// wrote. Nothing here is known to be unused: that instance may still run, or be restored again.
@@ -567,6 +603,7 @@ impl App {
                         .filter(|(kind, _)| unreadable.iter().any(|named| named == kind)),
                 )
                 .map(|(kind, message)| json!({ "kind": kind, "message": message }))
+                .chain(telemetry_note(&answer["secrets_to_set"]))
                 .collect();
             if let Some(id) = previous {
                 answer["previous_instance"] = previous_instance(kept_here, &id);

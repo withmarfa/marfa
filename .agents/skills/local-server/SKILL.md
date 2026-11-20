@@ -28,7 +28,7 @@ description: Boot a throwaway Marfa server on this machine, claim it and make a 
    - `MARFA_TEST_URL`: the server's address, on a port the system assigns unless `MARFA_PORT` names one.
    - `MARFA_TEST_KEY`: a working key with all fourteen permissions, write on every type, edge, extension and metadata entry, and read on the owner's profile.
    - `MARFA_TEST_SOCKET`: the private socket.
-   - `MARFA_TEST_OWNER_EMAIL` and `MARFA_TEST_OWNER_PASSWORD`: the throwaway owner, from `core/scripts/test-owner.example.env`.
+   - `MARFA_TEST_OWNER_USERNAME` and `MARFA_TEST_OWNER_PASSWORD`: the throwaway owner, from `core/scripts/test-owner.example.env`.
    - `MARFA_SERVER_ENV`: the env file `server-down.sh` reads. `MARFA_SERVER_PID` and `MARFA_SERVER_STATE`: the server's process and its data directory.
 
    Options, set before the boot:
@@ -48,7 +48,7 @@ description: Boot a throwaway Marfa server on this machine, claim it and make a 
 
   Never run `marfa login` or `marfa keys keep` against this server from an agent or a test: both write to the login keychain.
 
-- Sign in as the owner at `$MARFA_TEST_URL/auth/sign-in` with the owner's email and password.
+- Sign in as the owner at `$MARFA_TEST_URL/auth/sign-in` with the owner's username and password.
 - Make another key through the private socket, with the same binary (`marfa` below). `--socket` refuses `--url`, `--key`, `--profile`, `MARFA_API_URL`, `MARFA_API_KEY` and `MARFA_PROFILE`, so leave them unset.
 
   ```sh
@@ -75,12 +75,12 @@ Run each command as the server's operating-system account, through its private s
 - Claim it:
 
   ```sh
-  marfa --socket "$MARFA_CONTROL_SOCKET" setup claim --email owner@example.com
+  marfa --socket "$MARFA_CONTROL_SOCKET" setup claim --username owner
   ```
 
-  It asks for the password at a hidden prompt. For automation, add `--stdin` and send a JSON object with `email`, `password` and an optional `name`. Never pass a secret as an argument.
+  It asks for the password at a hidden prompt. For automation, add `--stdin` and send a JSON object with `username`, `password`, an optional `email` and an optional `name`. Never pass a secret as an argument.
 
 - Or hand the claim to a browser: `marfa --socket "$MARFA_CONTROL_SOCKET" setup open` opens a single-use link; `--no-browser` prints it instead.
-- Claim from another machine: `marfa --url https://marfa.example.com setup claim --email owner@example.com` asks for the password and the setup code; its `--stdin` JSON also needs `code`.
+- Claim from another machine: `marfa --url https://marfa.example.com setup claim --username owner` asks for the password and the setup code; its `--stdin` JSON also needs `code`.
 - Recover the owner's password: `marfa --socket "$MARFA_CONTROL_SOCKET" owner recover`, or with `--stdin` and a JSON object with `password`. It ends the owner's browser sessions.
 - When the public HTTP listener cannot start, set `MARFA_CONTROL_ONLY=true` to run only the private listener against the configured database. Stop a running listener, or choose another socket path, first.

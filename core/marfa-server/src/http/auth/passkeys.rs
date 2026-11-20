@@ -189,7 +189,7 @@ pub async fn page(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer
     let owner = owner::find(&app).await?.ok_or_else(owner::not_found)?;
     let view = OwnerPasskeys {
         instance_name: instance::name(&app).await?,
-        email: owner.email,
+        username: owner.username,
         rows,
     };
     let page: Response = pages::owner_passkeys(&view)?.into_response();

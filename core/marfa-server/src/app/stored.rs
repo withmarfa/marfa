@@ -123,7 +123,7 @@ impl Staged {
     /// beside the disk and telemetry follow their settings.
     pub fn publish(self, app: &Arc<App>) {
         app.settings.publish(self.generation, &self.rows);
-        app.telemetry.follow(&app.settings.live());
+        app.telemetry.follow(&app.settings);
         super::housekeeping::wake(app);
         app.ask_stores_to_follow();
     }

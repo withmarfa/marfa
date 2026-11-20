@@ -389,13 +389,6 @@ fn attempt(
         None => {
             let counts = counted(plain, types, tier, query);
             let pinned = read_pins(core, http, stop)?;
-            crate::catch_up::refuse_if_stopped(stop)?;
-            let mut conn = core.conn()?;
-            let tx = conn.transaction()?;
-            // A copy whose cursor aged out is filled again over what it holds
-            // when the instance, the reach and the slice are those it was
-            // built under; anything else may hold rows the key no longer
-            // reads, so it is cleared first.
             // A log that ends before the head the refill began from, or
             // before the cursor the copy held when it went stale, is a server
             // restored to an earlier point, whose rows the later versions held
@@ -409,6 +402,13 @@ fn attempt(
                 edge_types,
                 query,
             };
+            crate::catch_up::refuse_if_stopped(stop)?;
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            // A copy whose cursor aged out is filled again over what it holds
+            // when the instance, the reach and the slice are those it was
+            // built under; anything else may hold rows the key no longer
+            // reads, so it is cleared first.
             let not_in_place = match restarted {
                 Some(HydrateRestart::HeadPastLog) => Some(HydrateRestart::HeadPastLog.as_str()),
                 _ => not_in_place(&tx, &built)?,
@@ -425,12 +425,33 @@ fn attempt(
                 .is_some_and(|built| !built.is_empty() && built != instance)
             {
                 store::block_for_another_instance(&tx)?;
+                // What the copy held is compared with no other instance.
+                store::restored::release_held_back(&tx)?;
+                store::restored::forget_receipts(&tx)?;
+            } else if not_in_place == Some(HydrateRestart::HeadPastLog.as_str()) {
+                if !store::restored::restore_held(&tx)? {
+                    store::restored::hold_copy(&tx)?;
+                }
+            } else if store::meta_get(&tx, store::META_INSTANCE_ID)?.as_deref()
+                == Some(instance.as_str())
+                && crate::reach::built_under(&tx)?.as_deref() == Some(fence.as_str())
+            {
+                // A copy of this instance cleared or filled again for another
+                // reason still keeps what the server has lost of its writes
+                // (`device/restored-checked-before-clear`). One built under
+                // another reach is not checked, nor kept checking from an
+                // earlier attempt: a row its key no longer reads answers as
+                // a lost one does.
+                store::restored::hold_unseen(&tx)?;
+            } else if !store::restored::restore_held(&tx)? {
+                store::restored::release_held_back(&tx)?;
             }
+            store::restored::forget_anchor(&tx)?;
             crate::reach::advance_generation(&tx)?;
             store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
             store::attachments_start_growing(&tx)?;
             store::meta_set(&tx, store::META_EVENT_CURSOR, &cursor)?;
-            store::meta_set(&tx, crate::reach::FENCE, &fence)?;
+            crate::reach::build_under(&tx, &fence)?;
             store::meta_set(&tx, store::META_INSTANCE_ID, &instance)?;
             store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
             store::meta_set(&tx, store::META_SLICE_TYPES, &serde_json::to_string(types)?)?;
@@ -727,11 +748,15 @@ fn attempt(
             replay => replay?,
         };
         let cursor = replay.cursor;
+        // Read before the transaction, which holds the store: a row the
+        // filled copy does not hold is asked of the server.
+        let lost = crate::restored::compare(core, &context.http(http), stop)?;
         let (items, edges) = {
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
             context.check(&tx)?;
             let catalog = crate::catalog::load(&tx)?;
+            crate::restored::keep(&tx, &catalog, lost)?;
             lay_queue_over(
                 &tx,
                 &catalog,
@@ -799,8 +824,8 @@ struct Built<'a> {
 /// what it holds only then; anything else may hold rows the key no longer
 /// reads, so it is cleared first. A log that ends before the cursor the copy
 /// held when it went stale is a server restored to an earlier point, whose
-/// rows the later versions held would refuse. Otherwise why not, as a
-/// `copy_expired` reason.
+/// rows the later versions held would refuse, as is a copy that set its rows
+/// aside on finding one. Otherwise why not, as a `copy_expired` reason.
 fn not_in_place(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<Option<&'static str>> {
     let Some(refill) = store::refill(conn)? else {
         // An expiry keeps the instance a copy was built from, so a copy that
@@ -810,12 +835,16 @@ fn not_in_place(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<Option
             .is_some_and(|held| !held.is_empty() && held != built.instance);
         return Ok(Some(if elsewhere {
             HydrateRestart::InstanceChanged.as_str()
+        } else if store::restored::restore_held(conn)? {
+            HydrateRestart::HeadPastLog.as_str()
         } else {
             NOT_STALE
         }));
     };
     Ok(if refill.instance != built.instance {
         Some(HydrateRestart::InstanceChanged.as_str())
+    } else if store::restored::restore_held(conn)? {
+        Some(HydrateRestart::HeadPastLog.as_str())
     } else if refill.reach != built.fence {
         Some(HydrateRestart::ReachChanged.as_str())
     } else if !holds_built_slice(conn, built)? {

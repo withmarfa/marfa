@@ -17,6 +17,7 @@ use crate::model::{CatchUpReport, SliceTier, Subject, Tier};
 use crate::priority::inheriting;
 use crate::reach::{self, Context};
 use crate::read_only;
+use crate::restored::Heard;
 use crate::slice::SliceQuery;
 use crate::sse::{Frame, Frames};
 use crate::store;
@@ -433,6 +434,7 @@ fn take(
     stop: &AtomicBool,
 ) -> Result<Taken> {
     if leave_skipped && untouched(core, catalog, slice, kind, payload)? {
+        store::restored::receipts_seen(&*core.conn()?, kind, payload)?;
         return Ok(Taken {
             change: None,
             rows: Vec::new(),
@@ -478,6 +480,7 @@ fn take(
             let behind = leave_skipped && applied == crate::tables::Applied::Nothing;
             if !behind {
                 store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
+                store::restored::set_anchor(&tx, id, &store::restored::event_print(kind, payload))?;
             }
             tx.commit()?;
             return Ok(Taken {
@@ -517,11 +520,13 @@ fn take(
             Some(reread) => crate::tables::take_reread(&tx, reread)?,
             None => Vec::new(),
         };
+        store::restored::receipts_seen(&tx, kind, payload)?;
         // The last id applied, never the highest seen: where an event is not
         // applied, a high-water mark would step over it forever.
         let behind = leave_skipped && !applied && reread.is_empty();
         if !behind {
             store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
+            store::restored::set_anchor(&tx, id, &store::restored::event_print(kind, payload))?;
         }
         tx.commit()?;
         Ok(Taken {
@@ -769,7 +774,8 @@ fn replay(
     let catalog = ask_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
     let mut catalog = adopt(core, context, &catalog, catalog_changed)?;
-    let mut frames = open(http, &cursor, STREAM_HARD_BOUND)?;
+    let mut opening = crate::restored::Opening::read(&*core.conn()?, &cursor, !context.building())?;
+    let mut frames = open(http, &opening.from(), STREAM_HARD_BOUND)?;
     let mut opened_under = http.authorization();
     refuse_if_stopped(stop)?;
     // So a type the server will not describe costs one read of the catalog
@@ -822,6 +828,16 @@ fn replay(
                 prologue_seen = true;
                 let payload = reach::event_payload(name.as_deref(), id.as_deref(), &data)?;
                 let kind = name.as_deref().unwrap_or(&payload.event_type);
+                match opening.heard(kind, id.as_deref(), &payload) {
+                    Heard::Take => {}
+                    Heard::Again => continue,
+                    Heard::Went(reason) => return Err(CoreError::expired(reason)),
+                    Heard::AgedOut => {
+                        drop(frames);
+                        crate::restored::forget_anchor(core)?;
+                        return replay(core, http, context, idle, stop, catalog_changed, behind);
+                    }
+                }
                 if let Some(reason) = diverged(kind, &payload, &report.cursor) {
                     return Err(CoreError::expired(reason));
                 }
@@ -877,7 +893,12 @@ fn replay(
                         commit_cursor(core, context, behind, stop)?;
                         renew_for_ended_stream(http, stop, opened_under, ended)?;
                         renewed_at = Some(report.cursor.clone());
-                        let from = report.cursor.clone();
+                        opening = crate::restored::Opening::read(
+                            &*core.conn()?,
+                            &report.cursor,
+                            !context.building(),
+                        )?;
+                        let from = opening.from();
                         frames = ask_unless_stopped(stop, http, move |http| {
                             open(http, &from, STREAM_HARD_BOUND)
                         })?;
@@ -908,6 +929,7 @@ fn replay(
                         )?;
                         if taken.behind {
                             behind.last = Some(id.clone());
+                            behind.print = Some(store::restored::event_print(kind, &payload));
                             behind.count += 1;
                             if behind.count >= SKIPPED_PER_COMMIT {
                                 commit_cursor(core, context, behind, stop)?;
@@ -951,6 +973,11 @@ fn replay(
             server: None,
         });
     }
+    // A fill compares what it set aside instead, and clears what any other
+    // receipt names.
+    if !context.building() {
+        crate::restored::went_back(core, http, stop, &mut opening)?;
+    }
     report.catalog_changed = *catalog_changed;
     Ok(report)
 }
@@ -961,6 +988,9 @@ const SKIPPED_PER_COMMIT: usize = 1_000;
 #[derive(Default)]
 struct Behind {
     last: Option<String>,
+    /// What the event at `last` named, which the cursor's commit keeps as the
+    /// anchor.
+    print: Option<String>,
     count: usize,
 }
 
@@ -971,8 +1001,13 @@ fn commit_cursor(
     stop: &AtomicBool,
 ) -> Result<()> {
     if let Some(id) = behind.last.take() {
+        let print = behind.print.take();
         crate::busy::transaction(core, context, stop, |tx| {
-            store::meta_set(tx, store::META_EVENT_CURSOR, &id)
+            store::meta_set(tx, store::META_EVENT_CURSOR, &id)?;
+            match &print {
+                Some(print) => store::restored::set_anchor(tx, &id, print),
+                None => Ok(()),
+            }
         })?;
     }
     behind.count = 0;
@@ -982,7 +1017,9 @@ fn commit_cursor(
 const AGED_OUT: &str = "the event log no longer holds the cursor";
 /// The reason a stale copy answers after the one that made it stale.
 pub(crate) const CATCHUP_TOO_OLD: &str = "catchup_too_old";
-const RESTORED: &str = "as a server restored from an earlier point does";
+/// How every reason that names a server restored to an earlier point ends,
+/// which `divergence` reads.
+pub(crate) const RESTORED: &str = "as a server restored from an earlier point does";
 
 /// Why a frame says the server's log does not continue from `held`: the log
 /// has aged past it, or ends behind it, as a server restored from an earlier
@@ -1515,7 +1552,8 @@ fn follow_paced(
                 report.reconnects += 1;
             }
             asked = true;
-            let Some(reached) = reach(&http, &cursor, stop) else {
+            let mut opening = crate::restored::Opening::read(&*core.conn()?, &cursor, true)?;
+            let Some(reached) = reach(&http, &opening.from(), stop) else {
                 break;
             };
             let (fetched, frames) = match reached {
@@ -1576,6 +1614,7 @@ fn follow_paced(
                 &mut look,
                 &recovery,
                 &mut told,
+                &mut opening,
                 on_change,
                 on_live,
             )?;
@@ -1910,6 +1949,7 @@ fn read_stream(
     look: &mut Look,
     recovery: &Recovery,
     told: &mut Told<'_>,
+    opening: &mut crate::restored::Opening,
     on_change: &mut dyn FnMut(&Change),
     on_live: &mut dyn FnMut(bool),
 ) -> Result<Ended> {
@@ -1998,6 +2038,15 @@ fn read_stream(
         };
         let payload = reach::event_payload(name.as_deref(), id.as_deref(), &data)?;
         let kind = name.as_deref().unwrap_or(&payload.event_type);
+        match opening.heard(kind, id.as_deref(), &payload) {
+            Heard::Take => {}
+            Heard::Again => continue,
+            Heard::Went(reason) => return Err(CoreError::expired(reason)),
+            Heard::AgedOut => {
+                crate::restored::forget_anchor(core)?;
+                return Ok(Ended::Behind);
+            }
+        }
         if let Some(reason) = diverged(kind, &payload, &report.cursor) {
             return Err(CoreError::expired(reason));
         }
@@ -2022,6 +2071,16 @@ fn read_stream(
                     || live < reach::cursor(&report.cursor).ok_or_else(reach::invalid)?
                 {
                     return Err(reach::invalid());
+                }
+                match core.http().and_then(|http| {
+                    crate::restored::went_back(core, &context.http(http), stop, opening)
+                }) {
+                    Err(error) if error.is_environmental() => {
+                        report.failed_opens += 1;
+                        report.last_failure = Some(error.to_string());
+                        return Ok(Ended::Stalled(error));
+                    }
+                    other => other?,
                 }
                 if let Some(cursor) =
                     pass_withheld(core, context, &report.cursor, payload.cursor.as_deref())?
@@ -4503,6 +4562,7 @@ mod tests {
                         stalled: false,
                         contact: &mut || {},
                     },
+                    &mut crate::restored::Opening::unanchored(),
                     &mut |_| {},
                     &mut |_| {},
                 )
@@ -5612,9 +5672,11 @@ mod tests {
                 ],
                 Then::End,
             ),
+            // Asked from the event before 12, the last the copy took.
             stream(
                 vec![
                     stream_cursor("14"),
+                    created("n2", "12"),
                     created("n3", "13"),
                     created("n4", "14"),
                     stream_live(Some("14")),
@@ -5653,7 +5715,7 @@ mod tests {
         assert_eq!(*asked.lock().unwrap(), ["k"]);
         assert_eq!(
             asked_from(&server),
-            [Some("10".to_string()), Some("12".to_string())]
+            [Some("10".to_string()), Some("11".to_string())]
         );
         assert_eq!(carried(&server, "/events"), ["Bearer k", "Bearer fresh-1"]);
         let paths = server.paths();
@@ -6457,7 +6519,14 @@ mod tests {
             frames.extend(skipped_events(17, to));
             frames
         };
-        let mut again = vec![stream_cursor("30")];
+        let mut again = vec![
+            stream_cursor("30"),
+            event(
+                "16",
+                "item.created",
+                &item_payload("item.created", "n16", NOTE, 1),
+            ),
+        ];
         again.extend(skipped_events(17, 30));
         again.push(stream_live(Some("30")));
         let server = skipped_server(vec![first(30), again]);
@@ -6492,9 +6561,11 @@ mod tests {
         let report = core.catch_up().unwrap();
         assert_eq!((report.applied, report.skipped), (0, 14));
         assert_eq!(stored_cursor(&core).as_deref(), Some("30"));
+        // From the event before the anchor, which the copy takes again only
+        // to compare.
         assert_eq!(
             server.seen("/events")[1].last_event_id.as_deref(),
-            Some("16")
+            Some("15")
         );
     }
     fn table_event(id: u64, item: &str, deleted: bool) -> String {

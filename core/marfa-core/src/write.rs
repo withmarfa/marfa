@@ -291,27 +291,7 @@ pub(crate) fn queue_create(
     }
     // The answer's echo would otherwise let go of a row the slice does not
     // hold, and a create shown as saved would vanish with nothing said.
-    let declared = match store::slice(tx)? {
-        Some((types, tier))
-            if store::slice_takes(catalog, &types, tier, &row.r#type, shown_tier) =>
-        {
-            match store::slice_query(tx)? {
-                Some(query) => crate::slice::judge_held(
-                    tx,
-                    catalog,
-                    &query,
-                    crate::slice::Reading::Holds,
-                    crate::slice::Scope::default(),
-                    &id,
-                )?,
-                None => true,
-            }
-        }
-        _ => false,
-    };
-    if !declared {
-        store::pin(tx, &id)?;
-    }
+    pin_unless_declared(tx, catalog, &row.r#type, shown_tier, &id)?;
     let queued = enqueue(
         tx,
         &store::NewWrite {
@@ -353,6 +333,38 @@ pub(crate) fn queue_create(
         )?;
     }
     Ok(queued)
+}
+
+/// Pins the row `id` the copy holds where its slice does not declare it.
+pub(crate) fn pin_unless_declared(
+    tx: &Connection,
+    catalog: &marfa_rules::catalog::Catalog,
+    r#type: &str,
+    tier: Option<Tier>,
+    id: &str,
+) -> Result<()> {
+    let declared = match store::slice(tx)? {
+        Some((types, slice_tier))
+            if store::slice_takes(catalog, &types, slice_tier, r#type, tier) =>
+        {
+            match store::slice_query(tx)? {
+                Some(query) => crate::slice::judge_held(
+                    tx,
+                    catalog,
+                    &query,
+                    crate::slice::Reading::Holds,
+                    crate::slice::Scope::default(),
+                    id,
+                )?,
+                None => true,
+            }
+        }
+        _ => false,
+    };
+    if !declared {
+        store::pin(tx, id)?;
+    }
+    Ok(())
 }
 
 /// Whether a write reads the item's body as edges. A folder reads its own
@@ -491,7 +503,20 @@ pub(crate) fn queue_update(
             message: format!("{type} is not a type this copy holds, so {id} cannot move to it"),
         });
     }
-    let read_earlier = based == Based::AsRead && base > 0 && base <= held.version;
+    // Version 0 is how this copy showed its own create until the server took
+    // it, so an editor can still hold the item as read there. Until the
+    // create's answer is taken, the edit stays on 0 and moves with it.
+    let own_create = based == Based::AsRead && base == 0 && held.version > 0;
+    let base = if own_create {
+        store::made_version(tx, id)?
+            .filter(|made| *made > 0 && *made <= held.version)
+            .unwrap_or(base)
+    } else {
+        base
+    };
+    let behind_own_create = own_create && base == 0 && store::own_create_untaken(tx, id)?;
+    let read_earlier =
+        based == Based::AsRead && (base > 0 || behind_own_create) && base <= held.version;
     if base != held.version && !read_earlier {
         return Err(CoreError::Invalid(format!(
             "the update to {id} is based on version {base} and this copy holds version {}; read it again",
@@ -666,7 +691,8 @@ impl Core {
 
     /// The base may be a version earlier than the one held, which the server
     /// merges against, so another device's write that came in since is kept
-    /// rather than overwritten.
+    /// rather than overwritten. A base of 0 on an item this copy created, and
+    /// has held since, is read as the version the server gave that create.
     pub fn update_item_as_read(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         self.noting_limit_refusal(self.write_update(id, edit, Based::AsRead, Body::Read))

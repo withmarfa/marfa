@@ -556,6 +556,19 @@ pub fn url_value(text: &str) -> Option<String> {
     taken.then_some(kept)
 }
 
+/// The longest an owner's username may be, in characters.
+pub const MAX_USERNAME_CHARS: usize = 64;
+
+/// The owner's username as stored, or None where the text is refused. Surrounding whitespace is
+/// trimmed and ASCII capitals are lowercased; what remains is 1 to 64 of `a` to `z`, `0` to `9`, `.`,
+/// `_` and `-`.
+pub fn username(text: &str) -> Option<String> {
+    let name = text.trim().to_ascii_lowercase();
+    let kept = |ch: char| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ".-_".contains(ch);
+    (name.chars().count() <= MAX_USERNAME_CHARS && !name.is_empty() && name.chars().all(kept))
+        .then_some(name)
+}
+
 // A practical email pattern, narrower than RFC 5322 or HTML's email shape.
 pub fn email(text: &str) -> bool {
     let Some((local, domain)) = text.split_once('@') else {
@@ -664,6 +677,35 @@ mod tests {
 
     fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<String>, RuleError> {
         super::field(kind, definition, value).map(|problem| problem.map(|problem| problem.shown))
+    }
+
+    #[test]
+    fn a_username_is_trimmed_lowercased_and_held_to_its_alphabet_and_length() {
+        // The witness: the names that are taken, in the shapes people type them.
+        assert_eq!(username("august").as_deref(), Some("august"));
+        assert_eq!(
+            username("  Ada.Lovelace_1-x ").as_deref(),
+            Some("ada.lovelace_1-x")
+        );
+        assert_eq!(
+            username(&"a".repeat(64)).as_deref(),
+            Some("a".repeat(64).as_str())
+        );
+        let long = "a".repeat(65);
+        for refused in [
+            "",
+            "   ",
+            "owner@example.test",
+            "two words",
+            "zero\u{200b}width",
+            "tab\tinside",
+            "émile",
+            "名前",
+            "plus+sign",
+            long.as_str(),
+        ] {
+            assert_eq!(username(refused), None, "{refused:?}");
+        }
     }
 
     #[test]

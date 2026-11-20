@@ -33,6 +33,11 @@ pub struct Page {
     pub message: String,
 }
 
+/// Left on a response that streams until the client closes it. Its duration is how long it stayed
+/// open, which says nothing about latency, so the request-duration metric leaves it out.
+#[derive(Clone, Copy, Debug)]
+pub struct Endless;
+
 /// Left on the answer to a fault no refusal foresaw, for the layer that tells the outside once.
 #[derive(Clone, Debug)]
 pub struct Unhandled(pub Arc<Fault>);

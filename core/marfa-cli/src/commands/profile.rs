@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Subcommand)]
 pub enum ProfileCommand {
-    /// Show the owner's name, email address and avatar, as far as profile read permission reaches.
+    /// Show the owner's name, username, email address and avatar, as far as profile read permission reaches.
     Show,
-    /// Change the owner's email address, name or avatar with profile write permission for each field.
+    /// Change the owner's username, email address, name or avatar with profile write permission for each field.
     Update(ProfileUpdateArgs),
     /// Fetch the owner's avatar. Needs profile read permission for the avatar.
     Avatar {
@@ -22,9 +22,15 @@ pub enum ProfileCommand {
 #[derive(Debug, Args)]
 #[group(required = true)]
 pub struct ProfileUpdateArgs {
-    /// The email address the owner uses to sign in.
+    /// The username the owner signs in with. Signing in with the old one stops at once.
     #[arg(long)]
+    username: Option<String>,
+    /// The owner's email address. It plays no part in signing in.
+    #[arg(long, conflicts_with = "clear_email")]
     email: Option<String>,
+    /// Remove the owner's email address.
+    #[arg(long)]
+    clear_email: bool,
     /// The owner's new display name.
     #[arg(long)]
     name: Option<String>,
@@ -71,8 +77,14 @@ pub fn run(command: ProfileCommand, remote: &Remote, out: &Printer) -> Result<()
                 None => None,
             };
             let mut body = Map::new();
+            if let Some(username) = args.username {
+                body.insert("username".into(), Value::String(username));
+            }
             if let Some(email) = args.email {
                 body.insert("email".into(), Value::String(email));
+            }
+            if args.clear_email {
+                body.insert("email".into(), Value::Null);
             }
             if let Some(name) = args.name {
                 body.insert("name".into(), Value::String(name));
@@ -81,7 +93,7 @@ pub fn run(command: ProfileCommand, remote: &Remote, out: &Printer) -> Result<()
                 body.insert("avatar".into(), Value::Null);
             }
             // The avatar goes first: the server may refuse it, and a refusal
-            // then leaves the email and name as they were.
+            // then leaves the other fields as they were.
             let mut reply = None;
             if let Some(request) = avatar {
                 reply = Some(remote.json(&request)?);
@@ -114,5 +126,24 @@ pub fn run(command: ProfileCommand, remote: &Remote, out: &Printer) -> Result<()
             }
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    #[test]
+    fn the_email_is_set_or_cleared_never_both() {
+        let parse = |words: &[&str]| {
+            let mut argv = vec!["marfa", "profile", "update"];
+            argv.extend(words);
+            crate::Cli::try_parse_from(argv)
+        };
+        assert!(parse(&["--email", "a@example.com"]).is_ok());
+        assert!(parse(&["--clear-email"]).is_ok());
+        assert!(parse(&["--username", "alex"]).is_ok());
+        assert!(parse(&["--email", "a@example.com", "--clear-email"]).is_err());
+        assert!(parse(&[]).is_err());
     }
 }

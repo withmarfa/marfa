@@ -1,13 +1,19 @@
 //! Traces and log records over OTLP/HTTP with JSON bodies, sent by a blocking client from
-//! the exporters' own threads, with no retry.
+//! the exporters' own threads, with no retry. Metrics are in `metrics`, through the same client.
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use arc_swap::ArcSwapOption;
+use http::header::CONTENT_TYPE;
+use http::{HeaderName, HeaderValue};
+use marfa_telemetry::host::CONNECT_LIMIT;
+use marfa_telemetry::identity::DEFAULT_TIMEOUT;
 use marfa_telemetry::sampler::Sampler;
 use opentelemetry::KeyValue;
 use opentelemetry::trace::{SpanId, Status, TraceId};
@@ -17,24 +23,46 @@ use opentelemetry_otlp::{
 };
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::error::OTelSdkResult;
-use opentelemetry_sdk::logs::{BatchLogProcessor, SdkLoggerProvider};
+use opentelemetry_sdk::logs::{self, BatchLogProcessor, SdkLoggerProvider};
 use opentelemetry_sdk::trace::{
-    BatchSpanProcessor, SdkTracerProvider, Span, SpanData, SpanProcessor,
+    self, BatchSpanProcessor, SdkTracerProvider, Span, SpanData, SpanLimits, SpanProcessor,
 };
 
 use super::config::Export;
-use super::sinks::agent;
+use crate::app::outbound::notice_agent;
 
 pub const MAX_HELD_SPANS: usize = 500;
 /// How many traces are undecided at once; a trace over the number goes
 /// unexported unless an error shows in its first span after that.
 const MAX_HELD_TRACES: usize = 256;
 const HOLD_LIMIT: Duration = Duration::from_secs(60);
+const QUEUE: usize = 2048;
+const BATCH: usize = 512;
+const SPAN_DELAY: Duration = Duration::from_secs(5);
+const LOG_DELAY: Duration = Duration::from_secs(1);
 
-/// Exporters call it from threads of their own, so a blocking call holds up no request.
+/// Set when an exporter is replaced: its client sends nothing more, so what it holds is dropped.
+#[derive(Debug, Clone, Default)]
+pub struct Halt(Arc<AtomicBool>);
+
+impl Halt {
+    pub fn set(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    fn is_set(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// Sends only the stored headers: the exporter adds `OTEL_EXPORTER_OTLP_*HEADERS` on its own,
+/// a `content-type` among them.
 #[derive(Debug)]
-struct Blocking {
-    agent: ureq::Agent,
+pub(super) struct Blocking {
+    url: String,
+    headers: Vec<(HeaderName, HeaderValue)>,
+    private_allowed: bool,
+    halt: Halt,
 }
 
 impl HttpClient for Blocking {
@@ -46,9 +74,30 @@ impl HttpClient for Blocking {
         'a: 'b,
         Self: 'b,
     {
-        let (parts, body) = request.into_parts();
+        let (mut parts, body) = request.into_parts();
+        parts.headers.clear();
+        parts
+            .headers
+            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        for (name, value) in &self.headers {
+            parts.headers.insert(name.clone(), value.clone());
+        }
         let request = Request::from_parts(parts, plain_integers(&body));
-        let sent = self.agent.run(request);
+        let agent = notice_agent(
+            &self.url,
+            DEFAULT_TIMEOUT,
+            DEFAULT_TIMEOUT.min(CONNECT_LIMIT),
+            self.private_allowed,
+        );
+        let sent = agent
+            .ok_or_else(|| HttpError::from("the address is not public"))
+            .and_then(|agent| {
+                // Checked last so nothing slow sits between the check and the connect.
+                if self.halt.is_set() {
+                    return Err(HttpError::from("the exporter was replaced"));
+                }
+                agent.run(request).map_err(HttpError::from)
+            });
         Box::pin(async move {
             let mut response = sent?;
             let status = response.status();
@@ -88,14 +137,23 @@ fn plain_integers(body: &[u8]) -> Vec<u8> {
     }
 }
 
-fn client(export: &Export) -> Blocking {
+/// A header the settings' rule took but HTTP cannot carry is left out.
+pub(super) fn client(export: &Export, halt: &Halt) -> Blocking {
     Blocking {
-        agent: agent(export.timeout, &export.url),
+        url: export.url.clone(),
+        headers: export
+            .headers
+            .iter()
+            .filter_map(|(name, value)| {
+                Some((
+                    HeaderName::from_bytes(name.as_bytes()).ok()?,
+                    HeaderValue::from_str(value).ok()?,
+                ))
+            })
+            .collect(),
+        private_allowed: export.private_allowed,
+        halt: halt.clone(),
     }
-}
-
-fn headers(export: &Export) -> HashMap<String, String> {
-    export.headers.iter().cloned().collect()
 }
 
 pub fn resource(pairs: &[(String, String)]) -> Resource {
@@ -108,43 +166,127 @@ pub fn resource(pairs: &[(String, String)]) -> Resource {
         .build()
 }
 
-pub fn tracer_provider(
-    export: &Export,
-    resource: Resource,
-    sampler: Sampler,
-) -> Result<SdkTracerProvider, String> {
-    let exporter = SpanExporter::builder()
-        .with_http()
-        .with_http_client(client(export))
-        .with_protocol(Protocol::HttpJson)
-        .with_endpoint(export.url.clone())
-        .with_timeout(export.timeout)
-        .with_headers(headers(export))
-        .with_retry_policy(RetryPolicy::disabled())
+/// The sampler and limits are set, since the defaults read `OTEL_TRACES_SAMPLER` and
+/// `OTEL_SPAN_*_LIMIT`.
+pub fn relay_provider(relay: Relay) -> SdkTracerProvider {
+    SdkTracerProvider::builder()
+        .with_sampler(trace::Sampler::ParentBased(Box::new(
+            trace::Sampler::AlwaysOn,
+        )))
+        .with_span_limits(SpanLimits::default())
+        .with_resource(Resource::builder_empty().build())
+        .with_span_processor(relay)
         .build()
-        .map_err(|error| error.to_string())?;
-    let batch = BatchSpanProcessor::builder(exporter).build();
-    Ok(SdkTracerProvider::builder()
-        .with_resource(resource)
-        .with_span_processor(Tail::new(batch, sampler))
-        .build())
 }
 
-pub fn logger_provider(export: &Export, resource: Resource) -> Result<SdkLoggerProvider, String> {
-    let exporter = LogExporter::builder()
+/// The batch's every field is set, since the defaults read `OTEL_BSP_*`.
+pub fn trace_leg(export: &Export, pairs: &[(String, String)], ratio: f64) -> Result<Leg, String> {
+    let halt = Halt::default();
+    let exporter = SpanExporter::builder()
         .with_http()
-        .with_http_client(client(export))
+        .with_http_client(client(export, &halt))
         .with_protocol(Protocol::HttpJson)
         .with_endpoint(export.url.clone())
-        .with_timeout(export.timeout)
-        .with_headers(headers(export))
+        .with_timeout(DEFAULT_TIMEOUT)
         .with_retry_policy(RetryPolicy::disabled())
         .build()
         .map_err(|error| error.to_string())?;
-    Ok(SdkLoggerProvider::builder()
-        .with_resource(resource)
-        .with_log_processor(BatchLogProcessor::builder(exporter).build())
-        .build())
+    let config = trace::BatchConfigBuilder::default()
+        .with_max_queue_size(QUEUE)
+        .with_scheduled_delay(SPAN_DELAY)
+        .with_max_export_batch_size(BATCH)
+        .build();
+    let mut batch = BatchSpanProcessor::builder(exporter)
+        .with_batch_config(config)
+        .build();
+    batch.set_resource(&resource(pairs));
+    Ok(Leg {
+        tail: Tail::new(batch, Sampler::Ratio(ratio)),
+        halt,
+    })
+}
+
+/// The batch's every field is set, since the defaults read `OTEL_BLRP_*`.
+pub fn logger_provider(export: &Export, pairs: &[(String, String)]) -> Result<Loggers, String> {
+    let halt = Halt::default();
+    let exporter = LogExporter::builder()
+        .with_http()
+        .with_http_client(client(export, &halt))
+        .with_protocol(Protocol::HttpJson)
+        .with_endpoint(export.url.clone())
+        .with_timeout(DEFAULT_TIMEOUT)
+        .with_retry_policy(RetryPolicy::disabled())
+        .build()
+        .map_err(|error| error.to_string())?;
+    let config = logs::BatchConfigBuilder::default()
+        .with_max_queue_size(QUEUE)
+        .with_scheduled_delay(LOG_DELAY)
+        .with_max_export_batch_size(BATCH)
+        .build();
+    let provider = SdkLoggerProvider::builder()
+        .with_resource(resource(pairs))
+        .with_log_processor(
+            BatchLogProcessor::builder(exporter)
+                .with_batch_config(config)
+                .build(),
+        )
+        .build();
+    Ok(Loggers { provider, halt })
+}
+
+/// The exporter one set of log settings built.
+pub struct Loggers {
+    pub provider: SdkLoggerProvider,
+    pub halt: Halt,
+}
+
+/// The exporter one set of trace settings built, with its own resource.
+#[derive(Debug)]
+pub struct Leg {
+    tail: Tail<BatchSpanProcessor>,
+    pub halt: Halt,
+}
+
+impl Leg {
+    pub fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
+        self.tail.shutdown_with_timeout(timeout)
+    }
+}
+
+/// A span goes to the leg in place when it ends, so one started before a change is sent as the
+/// settings now say.
+#[derive(Debug, Clone, Default)]
+pub struct Relay(pub Arc<ArcSwapOption<Leg>>);
+
+impl SpanProcessor for Relay {
+    fn on_start(&self, span: &mut Span, cx: &opentelemetry::Context) {
+        if let Some(leg) = self.0.load().as_ref() {
+            leg.tail.on_start(span, cx);
+        }
+    }
+
+    fn on_end(&self, span: SpanData) {
+        if let Some(leg) = self.0.load().as_ref() {
+            leg.tail.on_end(span);
+        }
+    }
+
+    fn force_flush(&self) -> OTelSdkResult {
+        self.0
+            .load()
+            .as_ref()
+            .map_or(Ok(()), |leg| leg.tail.force_flush())
+    }
+
+    fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
+        match self.0.swap(None) {
+            Some(leg) => leg.shutdown_with_timeout(timeout),
+            None => Ok(()),
+        }
+    }
+
+    /// Each leg carries the resource its settings name, set before it is in place.
+    fn set_resource(&mut self, _: &Resource) {}
 }
 
 enum Trace {

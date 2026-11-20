@@ -1969,7 +1969,7 @@ export interface paths {
         };
         /**
          * Get the owner's profile
-         * @description Returns the fields of the owner's profile that your credential can read: `name`, `email` and `avatar`, each only with profile read permission for that field. A field you can't read is left out, so a credential that can read none gets an empty object.
+         * @description Returns the owner's profile fields that your credential can read: `name`, `username`, `email` and `avatar`, each with its own read permission. A field you can't read is left out, so a credential that can read none gets an empty object.
          */
         get: operations["getProfile"];
         put?: never;
@@ -1979,7 +1979,7 @@ export interface paths {
         head?: never;
         /**
          * Update the owner's profile
-         * @description Updates the owner's email or name, or removes the avatar, and returns the profile fields you can read. Requires profile write permission for every submitted field. All fields commit together. Changing the email needs no confirmation.
+         * @description Updates the owner's username, email or name, or removes the avatar, and returns the profile fields you can read. Requires profile write permission for every submitted field. All fields commit together. Changing the username needs no confirmation.
          */
         patch: operations["updateProfile"];
         trace?: never;
@@ -2630,7 +2630,7 @@ export interface components {
         /** @description Profile field permissions. */
         ProfilePermissions: {
             /**
-             * @description Access to every profile field, except that `write` changes only the name and the avatar. Changing the email address takes `email` at `write`.
+             * @description Access to every profile field, except that `write` doesn't change the username. Changing the username takes `username` at `write`.
              * @enum {string}
              */
             "*"?: "read" | "write";
@@ -2640,7 +2640,12 @@ export interface components {
              */
             name?: "read" | "write";
             /**
-             * @description Access to the owner's email address, which password sign-in matches. Only this entry at `write` lets a credential change it.
+             * @description Access to the owner's username, which password sign-in matches. Only this entry at `write` lets a credential change it.
+             * @enum {string}
+             */
+            username?: "read" | "write";
+            /**
+             * @description Access to the owner's email address, which plays no part in signing in.
              * @enum {string}
              */
             email?: "read" | "write";
@@ -3279,7 +3284,7 @@ export interface components {
                  */
                 status: "ok" | "incomplete" | "failing" | "off";
                 /**
-                 * @description Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0, also given beside `failing`.
+                 * @description Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0. `destination_unusable` wins if both apply.
                  * @enum {string}
                  */
                 reason?: "no_backup_destination" | "turned_off" | "destination_unusable";
@@ -3809,11 +3814,13 @@ export interface components {
         Profile: {
             /** @description The owner's name. Present with `profile.name:read`. */
             name?: string;
+            /** @description The owner's username, which password sign-in matches. Present with `profile.username:read`. */
+            username?: string;
             /**
              * Format: email
-             * @description The owner's sign-in email address. Present with `profile.email:read`.
+             * @description The owner's email address, or `null` when none is set. Present with `profile.email:read`.
              */
-            email?: string;
+            email?: string | null;
             /**
              * Format: uri
              * @description The address of the owner's avatar, or `null` when there is none. Present with `profile.avatar:read`. Fetch it with `GET /profile/avatar`.
@@ -5341,6 +5348,11 @@ export interface components {
              * @example 2026-10-03T09:30:00.000Z
              */
             detached_at: string | null;
+            /**
+             * @description Why the attached object store cannot be used while the address rules refuse the requests to it because `allow_private_addresses` is `false`, the same text as `backups.store_error` in `GET /health`, or `null`.
+             * @example The object store cannot be used: the object store's address is not public, and allow_private_addresses is false. Until it can, no file is copied there, no backup is taken and no file is purged.
+             */
+            error: string | null;
         };
         /** @description An error response. */
         BlobNotFoundRefusal: {
@@ -5503,7 +5515,9 @@ export interface components {
         HousekeepingOutcome: "succeeded" | "failed" | "held";
         /** @description What a run reports, under names its job chooses, such as `deleted`, `copied` or, for `trash-purge`, `passed_over`: the items it could not purge and left for the next run. */
         HousekeepingReport: {
-            [key: string]: number | boolean | string | null;
+            [key: string]: number | boolean | string | null | {
+                [key: string]: string;
+            };
         };
         /** @description One run of a housekeeping job. */
         HousekeepingRun: {
@@ -6402,6 +6416,23 @@ export interface components {
              */
             error_reporting_enabled: boolean;
             /**
+             * @description `true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.
+             * @default true
+             */
+            telemetry_enabled: boolean;
+            /**
+             * @description The share of traces Marfa exports, from 0 to 1. A trace that holds an error is exported whatever this says. Absent: `0.05`.
+             * @default 0.05
+             */
+            otel_sample_ratio: number;
+            /** @description The service name on everything Marfa exports, in place of a `service.name` in `otel_resource_attributes`. Absent: `marfa-server`. An archive doesn't carry it. */
+            otel_service_name?: string;
+            /**
+             * @description Attributes Marfa adds to everything it exports, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces Marfa's own of the same name, such as `service.version`. An archive doesn't carry it.
+             * @example deployment.environment=staging
+             */
+            otel_resource_attributes?: string;
+            /**
              * @description `true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies.
              * @default true
              */
@@ -6707,8 +6738,10 @@ export interface components {
              * @example 01a10127-2109-7883-b687-be1e0823be15
              */
             id: string;
-            /** @description Email address used to sign in. */
-            email: string;
+            /** @description The username the owner signs in with. */
+            username: string;
+            /** @description The owner's email address, or `null` when none is set. It plays no part in signing in. */
+            email: string | null;
             /** @description Display name of the owner. */
             name: string;
             /** @description The address of the owner's avatar on this instance, or `null` when none is set. Fetch it with `GET /profile/avatar`. */
@@ -8164,10 +8197,10 @@ export interface components {
         /** @description One kind of thing the archive doesn't hold, with what to do about it. */
         NotRestored: {
             /**
-             * @description What the archive doesn't hold. `enforcement` appears only when the instance that wrote the archive couldn't read its enforcement settings.
+             * @description What the archive doesn't hold. `enforcement` appears only when the archive's instance couldn't read its enforcement settings, and `telemetry` only when `secrets_to_set` names a telemetry setting.
              * @enum {string}
              */
-            kind: "sign_in" | "keys" | "apps" | "webhooks" | "inbound_endpoints" | "connector_keys" | "addresses" | "name" | "logs" | "enforcement";
+            kind: "sign_in" | "keys" | "apps" | "webhooks" | "inbound_endpoints" | "connector_keys" | "addresses" | "name" | "logs" | "enforcement" | "telemetry";
             /** @description A sentence saying that this kind is not restored and what to do about it. */
             message: string;
         };
@@ -22076,7 +22109,8 @@ export interface operations {
                      *           "kind": "disk",
                      *           "locator": "/var/lib/marfa/blobs",
                      *           "attached_at": "2026-10-03T09:34:00.198Z",
-                     *           "detached_at": null
+                     *           "detached_at": null,
+                     *           "error": null
                      *         }
                      *       ],
                      *       "next_cursor": null,
@@ -31754,7 +31788,6 @@ export interface operations {
              * @description An RFC 6749 error, when Marfa can't send the browser back to the app:
              *     - `invalid_request`: `client_id` is missing, or a parameter is repeated.
              *     - `invalid_client` or `invalid_client_metadata`: the client ID metadata document is unreadable or invalid.
-             *     - `invalid_scope`: a scope writes the owner's email.
              *     - `invalid_target`: a resource isn't served here.
              *
              *     `X-Marfa-Reach` gets `validation_error`.
@@ -32382,15 +32415,17 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /**
-                     * Format: email
-                     * @description Email address the owner uses to sign in.
-                     */
-                    email: string;
+                    /** @description The username the owner signs in with: 1 to 64 letters a to z, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. */
+                    username: string;
                     /** @description Password for the new owner. */
                     password: string;
-                    /** @description Display name. Defaults to the part before @ in the email address when omitted or blank. */
+                    /** @description Display name. Defaults to the username when omitted or blank. */
                     name?: string;
+                    /**
+                     * Format: email
+                     * @description The owner's email address. It plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed.
+                     */
+                    email?: string;
                     /** @description Machine-issued setup code. Omit when using a setup-only browser session. */
                     code?: string;
                 };
@@ -32408,6 +32443,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "id": "01926a3c-4b1d-7e52-9a8f-3c5d7e1b2a40",
+                     *       "username": "alex",
                      *       "email": "alex@example.com",
                      *       "name": "Alex Example",
                      *       "avatar": null,
@@ -32548,6 +32584,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "name": "Alex Example",
+                     *       "username": "alex",
                      *       "email": "alex@example.com",
                      *       "avatar": null
                      *     }
@@ -32668,11 +32705,13 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description The username the owner signs in with: 1 to 64 letters a to z, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. Signing in with the old username stops at once. */
+                    username?: string;
                     /**
                      * Format: email
-                     * @description The email address the owner signs in with. Marfa stores it in lowercase, with spaces at each end trimmed.
+                     * @description The owner's email address, which plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed. Set it to `null` to remove it.
                      */
-                    email?: string;
+                    email?: string | null;
                     /** @description Display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. */
                     name?: string;
                     /** @description Set `avatar` to `null` to remove the owner's avatar, or omit it to leave it unchanged. To set an avatar, send its bytes to `PUT /profile/avatar`. */
@@ -32692,6 +32731,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "name": "Alex Example",
+                     *       "username": "alex",
                      *       "email": "alex@example.com",
                      *       "avatar": null
                      *     }
@@ -33022,6 +33062,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "name": "Alex Example",
+                     *       "username": "alex",
                      *       "email": "alex@example.com",
                      *       "avatar": "https://marfa.example.com/profile/avatar"
                      *     }
@@ -35027,6 +35068,55 @@ export interface operations {
                     posthog_host?: string;
                     /** @description The PostHog project token Marfa sends its fault reports with, with no whitespace around it. It needs `posthog_host` set too. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
                     posthog_project_token?: string;
+                    /**
+                     * @description `true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.
+                     * @default true
+                     */
+                    telemetry_enabled?: boolean;
+                    /**
+                     * Format: uri
+                     * @description The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, log records to, under `v1/logs`, and metrics to, under `v1/metrics`, keeping its query. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
+                     * @example https://collector.example:4318
+                     */
+                    otel_exporter_otlp_endpoint?: string;
+                    /**
+                     * Format: uri
+                     * @description The URL Marfa posts traces to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
+                     */
+                    otel_exporter_otlp_traces_endpoint?: string;
+                    /**
+                     * Format: uri
+                     * @description The URL Marfa posts log records to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
+                     */
+                    otel_exporter_otlp_logs_endpoint?: string;
+                    /**
+                     * Format: uri
+                     * @description The URL Marfa posts metrics to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
+                     */
+                    otel_exporter_otlp_metrics_endpoint?: string;
+                    /**
+                     * @description The headers Marfa sends with every OTLP export, as comma-separated `key=value` pairs with percent-encoded values and no whitespace around them. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
+                     * @example authorization=Bearer%20token
+                     */
+                    otel_exporter_otlp_headers?: string;
+                    /** @description The headers Marfa sends with trace exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
+                    otel_exporter_otlp_traces_headers?: string;
+                    /** @description The headers Marfa sends with log exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
+                    otel_exporter_otlp_logs_headers?: string;
+                    /** @description The headers Marfa sends with metric exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
+                    otel_exporter_otlp_metrics_headers?: string;
+                    /**
+                     * @description The share of traces Marfa exports, from 0 to 1. A trace that holds an error is exported whatever this says. Absent: `0.05`.
+                     * @default 0.05
+                     */
+                    otel_sample_ratio?: number;
+                    /** @description The service name on everything Marfa exports, in place of a `service.name` in `otel_resource_attributes`. Absent: `marfa-server`. An archive doesn't carry it. */
+                    otel_service_name?: string;
+                    /**
+                     * @description Attributes Marfa adds to everything it exports, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces Marfa's own of the same name, such as `service.version`. An archive doesn't carry it.
+                     * @example deployment.environment=staging
+                     */
+                    otel_resource_attributes?: string;
                     /** @description The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing. */
                     secrets_set?: string[];
                     /**
@@ -35517,6 +35607,55 @@ export interface operations {
                     posthog_host?: string | null;
                     /** @description The PostHog project token Marfa sends its fault reports with, with no whitespace around it. It needs `posthog_host` set too. Marfa never returns it. `null` or an empty string removes it. */
                     posthog_project_token?: string | null;
+                    /**
+                     * @description `true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`. `null` removes it, so the server's default applies.
+                     * @default true
+                     */
+                    telemetry_enabled?: boolean | null;
+                    /**
+                     * Format: uri
+                     * @description The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, log records to, under `v1/logs`, and metrics to, under `v1/metrics`, keeping its query. Marfa never returns it. `null` or an empty string removes it.
+                     * @example https://collector.example:4318
+                     */
+                    otel_exporter_otlp_endpoint?: string | null;
+                    /**
+                     * Format: uri
+                     * @description The URL Marfa posts traces to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. `null` or an empty string removes it.
+                     */
+                    otel_exporter_otlp_traces_endpoint?: string | null;
+                    /**
+                     * Format: uri
+                     * @description The URL Marfa posts log records to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. `null` or an empty string removes it.
+                     */
+                    otel_exporter_otlp_logs_endpoint?: string | null;
+                    /**
+                     * Format: uri
+                     * @description The URL Marfa posts metrics to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. `null` or an empty string removes it.
+                     */
+                    otel_exporter_otlp_metrics_endpoint?: string | null;
+                    /**
+                     * @description The headers Marfa sends with every OTLP export, as comma-separated `key=value` pairs with percent-encoded values and no whitespace around them. Marfa never returns it. `null` or an empty string removes it.
+                     * @example authorization=Bearer%20token
+                     */
+                    otel_exporter_otlp_headers?: string | null;
+                    /** @description The headers Marfa sends with trace exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it. */
+                    otel_exporter_otlp_traces_headers?: string | null;
+                    /** @description The headers Marfa sends with log exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it. */
+                    otel_exporter_otlp_logs_headers?: string | null;
+                    /** @description The headers Marfa sends with metric exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it. */
+                    otel_exporter_otlp_metrics_headers?: string | null;
+                    /**
+                     * @description The share of traces Marfa exports, from 0 to 1. A trace that holds an error is exported whatever this says. Absent: `0.05`. `null` removes it, so the server's default applies.
+                     * @default 0.05
+                     */
+                    otel_sample_ratio?: number | null;
+                    /** @description The service name on everything Marfa exports, in place of a `service.name` in `otel_resource_attributes`. Absent: `marfa-server`. An archive doesn't carry it. `null` removes it, so the server's default applies. */
+                    otel_service_name?: string | null;
+                    /**
+                     * @description Attributes Marfa adds to everything it exports, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces Marfa's own of the same name, such as `service.version`. An archive doesn't carry it. `null` removes it, so the server's default applies.
+                     * @example deployment.environment=staging
+                     */
+                    otel_resource_attributes?: string | null;
                     /** @description The secret settings `GET /config` says are set, accepted so you can send back what it returned. It sets nothing. */
                     secrets_set?: string[];
                     /**

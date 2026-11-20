@@ -1,8 +1,10 @@
 //! Object store connections that reach only public addresses, never through a proxy.
 
+use std::error::Error;
 use std::io;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -15,10 +17,103 @@ use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use super::address::is_public;
 use crate::app::faults::Faults;
 
+/// Where the store's credentials are fetched from when no access key and secret are set.
+pub const METADATA_ENDPOINT: &str = "http://169.254.169.254";
+const METADATA_HOST: &str = "169.254.169.254";
+
+/// Which request to the object store the address rules refused.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Refused {
+    /// A request to the host the store is addressed at.
+    Bucket,
+    /// The fetch of the store's credentials.
+    Credentials,
+}
+
+impl Refused {
+    /// Why, in words that name no address or key.
+    pub fn reason(self) -> &'static str {
+        match self {
+            Refused::Bucket => {
+                "the object store's address is not public, and allow_private_addresses is false"
+            }
+            Refused::Credentials => {
+                "the address the object store's credentials are fetched from is not public, and \
+                 allow_private_addresses is false; set an access key and secret, or turn \
+                 allow_private_addresses on"
+            }
+        }
+    }
+
+    /// The refusal anywhere in `error`'s chain, an `io::Error`'s own error included.
+    pub fn in_chain(error: &(dyn Error + 'static)) -> Option<Refused> {
+        let mut cause = Some(error);
+        while let Some(error) = cause {
+            if let Some(refused) = error.downcast_ref::<Refused>() {
+                return Some(*refused);
+            }
+            if let Some(inner) = error
+                .downcast_ref::<io::Error>()
+                .and_then(io::Error::get_ref)
+                && let Some(refused) = Refused::in_chain(inner)
+            {
+                return Some(refused);
+            }
+            cause = error.source();
+        }
+        None
+    }
+
+    /// The request `uri` makes to the store.
+    fn of(uri: &http::Uri) -> Refused {
+        match uri.host() {
+            Some(METADATA_HOST) => Refused::Credentials,
+            _ => Refused::Bucket,
+        }
+    }
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.reason())
+    }
+}
+
+impl Error for Refused {}
+
+/// What the address rules said of the last request of each kind to one object store.
+#[derive(Debug, Default)]
+pub struct Guarded {
+    bucket: AtomicBool,
+    credentials: AtomicBool,
+}
+
+impl Guarded {
+    /// The refusal that holds now; the store's own requests wait on its credentials.
+    pub fn refused(&self) -> Option<Refused> {
+        if self.credentials.load(Ordering::SeqCst) {
+            Some(Refused::Credentials)
+        } else if self.bucket.load(Ordering::SeqCst) {
+            Some(Refused::Bucket)
+        } else {
+            None
+        }
+    }
+
+    fn note(&self, request: Refused, refused: bool) {
+        let flag = match request {
+            Refused::Bucket => &self.bucket,
+            Refused::Credentials => &self.credentials,
+        };
+        flag.store(refused, Ordering::SeqCst);
+    }
+}
+
 #[derive(Debug)]
 pub struct PublicOnly {
     pub connect_timeout: Duration,
     pub faults: Arc<Faults>,
+    pub guarded: Arc<Guarded>,
 }
 
 impl HttpConnector for PublicOnly {
@@ -31,7 +126,10 @@ impl HttpConnector for PublicOnly {
             store: "S3",
             source: Box::new(error),
         })?;
-        Ok(HttpClient::new(RequestsJudged(client)))
+        Ok(HttpClient::new(RequestsJudged {
+            client,
+            guarded: self.guarded.clone(),
+        }))
     }
 }
 
@@ -51,39 +149,43 @@ fn client(connect_timeout: Duration, names: Arc<dyn Resolve>) -> reqwest::Result
         .build()
 }
 
-fn not_public() -> io::Error {
-    io::Error::new(
-        io::ErrorKind::PermissionDenied,
-        "the object store's address is not public, and allow_private_addresses is false",
-    )
+/// Holds each request to the destination address rules, and notes what they said.
+#[derive(Debug)]
+struct RequestsJudged {
+    client: reqwest::Client,
+    guarded: Arc<Guarded>,
 }
 
-/// Holds each request to the destination address rules.
-#[derive(Debug)]
-struct RequestsJudged(reqwest::Client);
-
-fn judged(uri: &http::Uri) -> Result<(), io::Error> {
-    let url = url::Url::parse(&uri.to_string()).map_err(|_| not_public())?;
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err(not_public());
-    }
-    let literal = match url.host() {
-        Some(url::Host::Ipv4(ip)) => Some(IpAddr::V4(ip)),
-        Some(url::Host::Ipv6(ip)) => Some(IpAddr::V6(ip)),
-        Some(url::Host::Domain(_)) => None,
-        None => return Err(not_public()),
+/// Whether `uri` may be asked before its host is looked up.
+fn fit(uri: &http::Uri) -> bool {
+    let Ok(url) = url::Url::parse(&uri.to_string()) else {
+        return false;
     };
-    if literal.is_some_and(|ip| !is_public(ip)) {
-        return Err(not_public());
+    if !url.username().is_empty() || url.password().is_some() {
+        return false;
     }
-    Ok(())
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => is_public(IpAddr::V4(ip)),
+        Some(url::Host::Ipv6(ip)) => is_public(IpAddr::V6(ip)),
+        Some(url::Host::Domain(_)) => true,
+        None => false,
+    }
 }
 
 #[async_trait]
 impl HttpService for RequestsJudged {
     async fn call(&self, request: HttpRequest) -> Result<HttpResponse, HttpError> {
-        judged(request.uri()).map_err(|error| HttpError::new(HttpErrorKind::Unknown, error))?;
-        self.0.call(request).await
+        let asked = Refused::of(request.uri());
+        if !fit(request.uri()) {
+            self.guarded.note(asked, true);
+            return Err(HttpError::new(HttpErrorKind::Unknown, asked));
+        }
+        let answer = self.client.call(request).await;
+        let refused = answer
+            .as_ref()
+            .is_err_and(|error| Refused::in_chain(error).is_some());
+        self.guarded.note(asked, refused);
+        answer
     }
 }
 
@@ -116,7 +218,7 @@ impl Resolve for PublicNames {
                 }
             };
             if reached.is_empty() || judged.is_empty() || judged.iter().any(|ip| !is_public(*ip)) {
-                return Err(not_public().into());
+                return Err(Refused::Bucket.into());
             }
             Ok(Box::new(reached.into_iter()) as Addrs)
         })
@@ -244,16 +346,10 @@ mod tests {
     async fn a_request_to_a_loopback_host_is_refused_before_any_connection() {
         let (at, connections) = counted_listener().await;
         let port = at.port();
-        let service = RequestsJudged(
-            client(
-                Duration::from_secs(2),
-                Arc::new(PublicNames(Arc::default())),
-            )
-            .unwrap(),
-        );
+        let service = judging(Arc::new(PublicNames(Arc::default())));
         // The witness: the listener does take a connection when nothing refuses it.
         let _ = service
-            .0
+            .client
             .get(format!("http://127.0.0.1:{port}/"))
             .send()
             .await;
@@ -286,7 +382,7 @@ mod tests {
 
     #[test]
     fn a_host_is_judged_by_its_address() {
-        let (mut fit, mut refused) = (0, 0);
+        let (mut fits, mut refused) = (0, 0);
         for (url, read) in hosts("0127fx.", 6, 9000) {
             let public = match read {
                 Some(url::Host::Ipv4(ip)) => is_public(IpAddr::V4(ip)),
@@ -294,15 +390,15 @@ mod tests {
                 Some(url::Host::Domain(_)) => true,
                 None => false,
             };
-            let judged = judged(&url.parse().unwrap()).is_ok();
+            let judged = fit(&url.parse().unwrap());
             assert_eq!(judged, public, "{url}");
             if judged {
-                fit += 1;
+                fits += 1;
             } else {
                 refused += 1;
             }
         }
-        assert!(fit > 0 && refused > 0, "{fit} fit, {refused} refused");
+        assert!(fits > 0 && refused > 0, "{fits} fit, {refused} refused");
     }
 
     #[test]
@@ -315,7 +411,7 @@ mod tests {
             "https://[2606:4700:4700::1111]/bucket",
             "http://store.example.com:9000/bucket",
         ] {
-            assert!(judged(&url.parse().unwrap()).is_ok(), "{url}");
+            assert!(fit(&url.parse().unwrap()), "{url}");
         }
         for url in [
             "http://10.0.0.1/b",
@@ -323,7 +419,114 @@ mod tests {
             "http://192.168.1.1/b",
             "http://[fe80::1]/b",
         ] {
-            assert!(judged(&url.parse().unwrap()).is_err(), "{url}");
+            assert!(!fit(&url.parse().unwrap()), "{url}");
         }
+    }
+
+    fn judging(names: Arc<dyn Resolve>) -> RequestsJudged {
+        RequestsJudged {
+            client: client(Duration::from_secs(2), names).unwrap(),
+            guarded: Arc::default(),
+        }
+    }
+
+    /// Answers every connection `200` with an empty body.
+    async fn answering_listener() -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let at = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut asked = vec![0u8; 4096];
+                let _ = socket.read(&mut asked).await;
+                let _ = socket
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                    .await;
+            }
+        });
+        at
+    }
+
+    #[tokio::test]
+    async fn a_refusal_names_its_request_and_holds_until_that_request_passes() {
+        let service = judging(Arc::new(PublicNames(Arc::default())));
+        let port = answering_listener().await.port();
+        let by_lookup = service
+            .call(get(&format!("http://localhost:{port}/b/k")))
+            .await
+            .unwrap_err();
+        assert_eq!(Refused::in_chain(&by_lookup), Some(Refused::Bucket));
+        assert_eq!(service.guarded.refused(), Some(Refused::Bucket));
+        let credentials = service
+            .call(get("http://169.254.169.254/latest/api/token"))
+            .await
+            .unwrap_err();
+        assert_eq!(Refused::in_chain(&credentials), Some(Refused::Credentials));
+        assert_eq!(service.guarded.refused(), Some(Refused::Credentials));
+        let wrapped = io::Error::other(object_store::Error::Generic {
+            store: "S3",
+            source: Box::new(credentials),
+        });
+        assert_eq!(Refused::in_chain(&wrapped), Some(Refused::Credentials));
+
+        // The same kinds of request, now let through, clear what they set.
+        let passing = RequestsJudged {
+            client: client(
+                Duration::from_secs(2),
+                Arc::new(Everywhere(SocketAddr::from(([127, 0, 0, 1], port)))),
+            )
+            .unwrap(),
+            guarded: service.guarded.clone(),
+        };
+        service.guarded.note(Refused::Credentials, false);
+        assert_eq!(service.guarded.refused(), Some(Refused::Bucket));
+        let answer = passing
+            .call(get(&format!("http://store.example.com:{port}/b/k")))
+            .await
+            .unwrap();
+        assert_eq!(answer.status(), 200);
+        assert_eq!(service.guarded.refused(), None);
+    }
+
+    #[tokio::test]
+    async fn a_store_that_does_not_answer_is_not_a_refusal() {
+        let service = judging(Arc::new(Everywhere(SocketAddr::from(([127, 0, 0, 1], 9)))));
+        service.guarded.note(Refused::Bucket, true);
+        let silent = service
+            .call(get("http://store.example.com:9/b/k"))
+            .await
+            .unwrap_err();
+        assert_eq!(Refused::in_chain(&silent), None);
+        assert_eq!(service.guarded.refused(), None);
+    }
+
+    #[tokio::test]
+    async fn a_client_without_keys_reports_its_credentials_refused() {
+        let guarded = Arc::new(Guarded::default());
+        let store = object_store::aws::AmazonS3Builder::new()
+            .with_bucket_name("b")
+            .with_region("us-east-1")
+            .with_endpoint("http://store.example.com:9")
+            .with_allow_http(true)
+            .with_metadata_endpoint(METADATA_ENDPOINT)
+            .with_retry(object_store::RetryConfig {
+                max_retries: 0,
+                ..Default::default()
+            })
+            .with_http_connector(PublicOnly {
+                connect_timeout: Duration::from_secs(2),
+                faults: Arc::default(),
+                guarded: guarded.clone(),
+            })
+            .build()
+            .unwrap();
+        let failed =
+            object_store::ObjectStoreExt::head(&store, &object_store::path::Path::from("k"))
+                .await
+                .unwrap_err();
+        assert_eq!(guarded.refused(), Some(Refused::Credentials));
+        assert_eq!(
+            Refused::in_chain(&io::Error::from(failed)),
+            Some(Refused::Credentials)
+        );
     }
 }

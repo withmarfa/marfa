@@ -19,7 +19,7 @@ use crate::http::body::{JsonBody, only_declared};
 use crate::http::caller::OnPage;
 use crate::http::query;
 
-const PASSWORD_FIELDS: [&str; 2] = ["email", "password"];
+const PASSWORD_FIELDS: [&str; 2] = ["username", "password"];
 const CONFIRM_FIELDS: [&str; 2] = ["password", "passkey"];
 const CURRENT_PASSWORD_CHARS: usize = 1024;
 const CHANGE_FIELDS: [&str; 2] = ["current_password", "new_password"];
@@ -84,10 +84,10 @@ pub async fn sign_in(
     }
     require_own_page(&app, &headers)?;
     let body = body.object(&PASSWORD_FIELDS).await?;
-    let email = text_field(&body, "email")?.to_string();
+    let username = text_field(&body, "username")?.to_string();
     let password = text_field(&body, "password")?.to_string();
     let mark = device_mark(&app, &headers);
-    let signed = sign_in::with_password(&app, email, password, mark, visit).await?;
+    let signed = sign_in::with_password(&app, username, password, mark, visit).await?;
     let ok = json_answer(StatusCode::OK, &json!({ "ok": true }));
     signed_in(&app, ok, &signed)
 }
@@ -112,7 +112,7 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
     let address = app.addresses().sign_in();
     let return_to = kept(field("return_to"), address.origin());
     let shown_return = if return_to == "/" { "" } else { &return_to };
-    let email = field("email").trim();
+    let username = field("username").trim();
     let password = field("password");
     let failed = |error: &str, wait: &str| {
         redirect(
@@ -120,18 +120,18 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
             &back_to_sign_in(&[
                 ("error", error),
                 ("retry_after_seconds", wait),
-                ("email", email),
+                ("username", username),
                 ("return_to", shown_return),
                 ("authorization", field("authorization")),
             ]),
         )
     };
-    if email.is_empty() || password.is_empty() {
+    if username.is_empty() || password.is_empty() {
         return failed("missing_field", "");
     }
     let mark = device_mark(app, headers);
     let outcome =
-        sign_in::with_password(app, email.to_string(), password.to_string(), mark, visit).await;
+        sign_in::with_password(app, username.to_string(), password.to_string(), mark, visit).await;
     let signed = match outcome {
         Ok(opened) => opened,
         Err(refusal) if refusal.code == Code::Unauthorized => {

@@ -722,6 +722,7 @@ describe("the contract the binary was built for", () => {
         status: 201,
         body: {
           id: "owner",
+          username: "owner",
           email: "a@cyzr.me",
           name: "Owner",
           created_at: "2026-01-01T00:00:00Z",
@@ -740,6 +741,7 @@ describe("the contract the binary was built for", () => {
       return { outcome, claims };
     };
     const body = {
+      username: "owner",
       email: "a@cyzr.me",
       password: "an owner password",
       code: "TEST-SETUP-CODE",
@@ -830,7 +832,7 @@ describe("the contract the binary was built for", () => {
       marfa(
         ["--json", "--url", started.url, "setup", "claim", "--stdin"],
         JSON.stringify({
-          email: "a@cyzr.me",
+          username: "owner",
           password: "an owner password",
           code: "WRONG-CODE",
         }),
@@ -1275,7 +1277,7 @@ const stdinFor: Record<string, string> = {
     new_password: "a new owner password",
   }),
   "setup claim": JSON.stringify({
-    email: "a@cyzr.me",
+    username: "owner",
     password: "an owner password",
     code: "TEST-SETUP-CODE",
   }),
@@ -1852,6 +1854,7 @@ describe("every command holds the server to the contract", () => {
     const socket = await PrivateSocket.start();
     const body = {
       id: "owner",
+      username: "owner",
       email: "a@cyzr.me",
       name: "Owner",
       created_at: WHEN,
@@ -1867,8 +1870,8 @@ describe("every command holds the server to the contract", () => {
           socket.path,
           "profile",
           "update",
-          "--email",
-          "a@cyzr.me",
+          "--username",
+          "owner",
           "--name",
           "Owner",
         ]);
@@ -1976,6 +1979,7 @@ describe("every command holds the server to the contract", () => {
     const avatar = fileOf("owner-avatar.png", "avatar bytes");
     const body = {
       id: "owner",
+      username: "owner",
       email: "a@cyzr.me",
       name: "Owner",
       created_at: WHEN,
@@ -3333,6 +3337,13 @@ describe("the contract the working copy was built for", () => {
       update: [refused(400, "invalid_properties", "not a title")],
       read: [notFound(null), notFound()],
     });
+    // Each catch-up reaches the head and shows nothing of the item.
+    scripted.copyAnswer("GET", "/events", copyReplay("1", []));
+    const reads = () =>
+      scripted.requests.filter(
+        (request) =>
+          request.method === "GET" && request.pathname === `/items/${held.id}`,
+      ).length;
     const edit = () =>
       device.update(held.id, {
         properties: { title: "edited" },
@@ -3346,13 +3357,33 @@ describe("the contract the working copy was built for", () => {
       (await device.get(held.id)).ok,
       "the copy forgot an item the server holds because a proxy answered 404",
     ).toBe(true);
+    const beforeCatchUp = reads();
+    const caught = await device.catchUp();
+    expect(
+      caught.ok,
+      `a proxy's 404 was taken as the server losing the item: ${JSON.stringify(caught)}`,
+    ).toBe(true);
+    expect(reads(), "a catch-up read an item only a proxy said was gone").toBe(
+      beforeCatchUp,
+    );
+    expect((await device.get(held.id)).ok).toBe(true);
 
-    // The witness: the server's own 404 is the item's absence, and the copy
-    // forgets it.
+    // The witness: the server's own 404 says the item is missing. A purge and
+    // a server restored to before the item both answer it, so the copy keeps
+    // the item until the stream says which (`device/read-back-missing-kept`),
+    // and a stream that reaches the head without its purge leaves a server
+    // that lost it (`device/expire-write-lost`).
     expect((await edit()).ok).toBe(true);
     const second = await device.drain();
     expect(second.ok && second.value.verdicts[0]?.verdict).toBe("refused");
-    expect((await device.get(held.id)).ok).toBe(false);
+    expect((await device.get(held.id)).ok).toBe(true);
+    const expired = await device.catchUp();
+    expect(
+      expired.ok,
+      "the server's own 404 was not taken as its word that the item is missing",
+    ).toBe(false);
+    if (!expired.ok) expect(expired.refusal.code).toBe("copy_expired");
+    expect(reads()).toBeGreaterThan(beforeCatchUp);
   });
 
   it("refuses a blob's link from a server on another contract", async () => {

@@ -7,13 +7,15 @@ use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{App, instance};
 
-pub(super) const MAX_EMAIL_CHARS: usize = 254;
+const MAX_EMAIL_CHARS: usize = 254;
 const MAX_NAME_CHARS: usize = 200;
 
 #[derive(Clone, Debug)]
 pub struct Owner {
     pub id: String,
-    pub email: String,
+    pub username: String,
+    /// Plays no part in signing in.
+    pub email: Option<String>,
     pub name: String,
     pub created_at: Stamp,
     /// Whether the owner holds an avatar, which `GET /profile/avatar` serves.
@@ -25,6 +27,7 @@ impl Owner {
     pub fn to_json(&self, origin: &str) -> Value {
         json!({
             "id": self.id,
+            "username": self.username,
             "email": self.email,
             "name": self.name,
             "avatar": self.avatar.then(|| format!("{origin}/profile/avatar")),
@@ -36,6 +39,7 @@ impl Owner {
 fn from_row(row: &Row<'_>) -> rusqlite::Result<Owner> {
     Ok(Owner {
         id: row.get("id")?,
+        username: row.get("username")?,
         email: row.get("email")?,
         name: row.get("name")?,
         created_at: row.get("created_at")?,
@@ -49,7 +53,7 @@ pub fn read(tx: &Transaction<'_>) -> Result<Option<Owner>> {
     };
     let owner = tx
         .query_row(
-            "SELECT id, email, name, created_at FROM owner WHERE id = ?1",
+            "SELECT id, username, email, name, created_at FROM owner WHERE id = ?1",
             [id],
             from_row,
         )
@@ -120,18 +124,37 @@ pub(super) fn credentials(tx: &Transaction<'_>, owner_id: &str) -> Result<Option
 
 #[derive(Clone, Debug)]
 pub struct Details {
-    pub email: String,
+    pub username: String,
+    pub email: Option<String>,
     pub name: String,
     pub password: String,
 }
 
 pub fn incomplete_claim() -> Refusal {
-    Refusal::validation("Provide an email and password, and optionally a name")
+    Refusal::validation("Provide a username and password, and optionally a name and an email")
+}
+
+/// A claim's optional text field: absent where the body leaves it out, refused where it is not a string.
+pub fn optional_text<'a>(fields: &'a Map<String, Value>, name: &str) -> Result<Option<&'a str>> {
+    match fields.get(name) {
+        None => Ok(None),
+        Some(Value::String(text)) => Ok(Some(text)),
+        Some(_) => Err(incomplete_claim()),
+    }
 }
 
 fn invalid(path: &str, message: &str) -> Refusal {
     Refusal::validation("Invalid owner details.")
         .with_detail("errors", json!([{ "path": path, "message": message }]))
+}
+
+fn checked_username(text: &str) -> Result<String> {
+    marfa_rules::validation::username(text).ok_or_else(|| {
+        invalid(
+            "username",
+            "Use 1 to 64 letters a to z, numbers, dots, dashes and underscores.",
+        )
+    })
 }
 
 fn checked_email(text: &str) -> Result<String> {
@@ -173,16 +196,18 @@ pub(super) fn said_name(text: &str, empty: &'static str) -> Result<String> {
 }
 
 impl Details {
-    pub fn new(email: &str, name: Option<&str>, password: String) -> Result<Details> {
-        let email = checked_email(email)?;
+    pub fn new(
+        username: &str,
+        email: Option<&str>,
+        name: Option<&str>,
+        password: String,
+    ) -> Result<Details> {
+        let username = checked_username(username)?;
+        let email = email.map(checked_email).transpose()?;
         let name = name.map(checked_name).transpose()?.flatten();
-        let name = name.unwrap_or_else(|| {
-            email
-                .split_once('@')
-                .map_or(email.as_str(), |(local, _)| local)
-                .to_string()
-        });
+        let name = name.unwrap_or_else(|| username.clone());
         Ok(Details {
+            username,
             email,
             name,
             password,
@@ -198,12 +223,13 @@ pub(super) fn create(
 ) -> Result<Owner> {
     let id = uuid::Uuid::now_v7().to_string();
     tx.execute(
-        "INSERT INTO owner (id, name, email, password, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
-        params![id, details.name, details.email, hash, now],
+        "INSERT INTO owner (id, name, username, email, password, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+        params![id, details.name, details.username, details.email, hash, now],
     )?;
     Ok(Owner {
         id,
+        username: details.username.clone(),
         email: details.email.clone(),
         name: details.name.clone(),
         created_at: now,
@@ -229,7 +255,7 @@ pub async fn read_profile(app: &App, caller: &Caller) -> Result<Value> {
 pub fn profile_of(owner: &Owner, origin: &str, caller: &Caller) -> Value {
     let whole = owner.to_json(origin);
     let mut shown = Map::new();
-    for field in ["name", "email", "avatar"] {
+    for field in ["name", "username", "email", "avatar"] {
         if caller.reads_profile(field) {
             shown.insert(field.to_string(), whole[field].clone());
         }
@@ -239,12 +265,14 @@ pub fn profile_of(owner: &Owner, origin: &str, caller: &Caller) -> Value {
 
 #[derive(Debug)]
 pub struct ProfileUpdate {
-    email: Option<String>,
+    username: Option<String>,
+    /// `Some(None)` clears the email.
+    email: Option<Option<String>>,
     name: Option<String>,
     clear_avatar: bool,
 }
 
-pub const PROFILE_FIELDS: [&str; 3] = ["email", "name", "avatar"];
+pub const PROFILE_FIELDS: [&str; 4] = ["username", "email", "name", "avatar"];
 
 impl ProfileUpdate {
     pub fn from_body(body: &Map<String, Value>) -> Result<ProfileUpdate> {
@@ -261,12 +289,19 @@ impl ProfileUpdate {
             }
             Some(_) => return Err(invalid("name", "Must be a string.")),
         };
+        let username = match body.get("username") {
+            None => None,
+            Some(Value::String(username)) => Some(checked_username(username)?),
+            Some(_) => return Err(invalid("username", "Must be a string.")),
+        };
         let email = match body.get("email") {
             None => None,
-            Some(Value::String(email)) => Some(checked_email(email)?),
-            Some(_) => return Err(invalid("email", "Must be a string.")),
+            Some(Value::Null) => Some(None),
+            Some(Value::String(email)) => Some(Some(checked_email(email)?)),
+            Some(_) => return Err(invalid("email", "Must be a string or null.")),
         };
         Ok(ProfileUpdate {
+            username,
             email,
             name,
             clear_avatar: body.contains_key("avatar"),
@@ -275,6 +310,7 @@ impl ProfileUpdate {
 
     fn fields(&self) -> Vec<&'static str> {
         let named = [
+            (self.username.is_some(), "username"),
             (self.email.is_some(), "email"),
             (self.name.is_some(), "name"),
             (self.clear_avatar, "avatar"),
@@ -299,6 +335,12 @@ pub async fn update_profile(
             unit.caller.require_profile(field, Level::Write)?;
         }
         let owner = read(unit.tx())?.ok_or_else(not_found)?;
+        if let Some(username) = &update.username {
+            unit.tx().execute(
+                "UPDATE owner SET username = ?2, updated_at = ?3 WHERE id = ?1",
+                params![owner.id, username, unit.instant],
+            )?;
+        }
         if let Some(email) = &update.email {
             unit.tx().execute(
                 "UPDATE owner SET email = ?2, updated_at = ?3 WHERE id = ?1",

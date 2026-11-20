@@ -18,7 +18,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 
 const ORIGIN: &str = "http://127.0.0.1:8600";
-const EMAIL: &str = "owner@example.test";
+const USERNAME: &str = "owner";
 const PASSWORD: &str = "the first password";
 const LIMIT: usize = 2 * 1024 * 1024;
 
@@ -183,7 +183,7 @@ impl Instance {
             _dir: dir,
         };
         if claimed {
-            let claim = json!({ "email": EMAIL, "password": PASSWORD });
+            let claim = json!({ "username": USERNAME, "password": PASSWORD });
             let reply = instance
                 .json(
                     &instance.control,
@@ -223,7 +223,7 @@ impl Instance {
     }
 
     async fn cookie(&self) -> String {
-        let body = json!({ "email": EMAIL, "password": PASSWORD });
+        let body = json!({ "username": USERNAME, "password": PASSWORD });
         let reply = self
             .json(&self.public, Method::POST, "/auth/sign-in", &body)
             .await;
@@ -536,12 +536,12 @@ async fn the_profile_door_removes_the_avatar_and_changes_the_name_in_one_step() 
     assert_eq!(instance.owner().await, before);
     assert_eq!(instance.served().await.bytes, kept);
 
-    let email = send(
+    let username = send(
         &instance.public,
-        patch(&named, json!({ "email": "x@example.test" })),
+        patch(&named, json!({ "username": "someone-else" })),
     )
     .await;
-    assert_eq!(email.status, StatusCode::FORBIDDEN);
+    assert_eq!(username.status, StatusCode::FORBIDDEN);
     assert_eq!(instance.owner().await, before);
 
     for body in [json!({}), json!({ "avatar": "https://example.test/p.png" })] {

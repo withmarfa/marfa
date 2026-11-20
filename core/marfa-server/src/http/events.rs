@@ -14,7 +14,7 @@ use http_body::Frame;
 use marfa_rules::query::type_entries;
 use tokio::sync::mpsc;
 
-use super::answer::Answer;
+use super::answer::{Answer, Endless};
 use super::conditional;
 use super::items::invalid_field;
 use super::listening;
@@ -227,6 +227,7 @@ fn streaming(feed: mpsc::Receiver<Bytes>) -> Response {
     // A stream's end then closes its connection, which `Hangup::closed` sees.
     headers.insert(header::CONNECTION, HeaderValue::from_static("close"));
     headers.insert("x-accel-buffering", HeaderValue::from_static("no"));
+    response.extensions_mut().insert(Endless);
     response
 }
 

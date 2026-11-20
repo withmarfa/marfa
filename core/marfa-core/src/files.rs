@@ -728,6 +728,7 @@ impl Core {
     fn queue_keeps(&self, conn: &Connection) -> Result<HashSet<String>> {
         let mut kept: HashSet<String> = store::kept_uploads(conn)?
             .iter()
+            .chain(&store::restored::held_bytes(conn)?)
             .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
             .collect();
         if let Some(cache) = &self.cache {

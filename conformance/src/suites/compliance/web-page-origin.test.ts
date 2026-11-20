@@ -705,7 +705,11 @@ describe("an approved page's address and the sign-in surface", () => {
           origin: from,
           "content-type": "application/x-www-form-urlencoded",
         },
-        body: new URLSearchParams({ email: "", password: "", return_to: "/" }),
+        body: new URLSearchParams({
+          username: "",
+          password: "",
+          return_to: "/",
+        }),
       });
     const passwordSignIn = (from: string) =>
       fetch(`${server.apiUrl}/auth/sign-in`, {

@@ -103,9 +103,10 @@ impl Core {
         drain::drain_keeping(self, &NEVER_STOPPED)
     }
 
-    /// Under a fresh idempotency key, but a row write, released with every
-    /// write of its batch under the batch's key, and an undo, under its own,
-    /// unless blocked `key_spent`. Answers `false` for a row that is not
+    /// Under the write's own idempotency key, or for a row write its batch's,
+    /// with every write of the batch, unless blocked `key_spent`,
+    /// `conflict_unresolved` or `ancestor_unavailable`, which go under a fresh
+    /// one. Answers `false` for a row that is not
     /// blocked, dead or refused without being sent, for one held behind
     /// another write, and for one refused because what it waited for was
     /// withdrawn. A write held `record_unread`, or a row write whose batch

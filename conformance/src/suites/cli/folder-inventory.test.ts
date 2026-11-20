@@ -42,3 +42,19 @@ it("pages the server inventory through the private socket and a key that reads s
     second.data[0]?.id,
   ]);
 });
+
+it("prints each folder's title beside its ID in plain output", async () => {
+  const made = await key.json<{ item: { id: string } }>([
+    "folders",
+    "create",
+    "--title",
+    "Packing list for the plain output",
+  ]);
+  const outcome = await key.run(["folders", "inventory"]);
+  expect(outcome.code, outcome.stderr).toBe(0);
+  const row = outcome.stdout
+    .split("\n")
+    .find((line) => line.includes(made.item.id));
+  expect(row).toBeDefined();
+  expect(row).toContain("Packing list for the plain output");
+});

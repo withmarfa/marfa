@@ -23,51 +23,55 @@ use crate::watch;
 
 #[derive(Debug, Subcommand)]
 pub enum FoldersCommand {
-    /// Make a directory a folder that follows a `system.folder`'s settings,
-    /// which `folders create` makes. Needs read on `system.folder`. Warns on
+    /// Make a directory follow a folder, the `system.folder` that
+    /// `folders create` makes. Needs read on `system.folder`. Warns on
     /// standard error, once, and goes on, if the directory is in iCloud Drive,
     /// a cloud service's synced location or a network file system, or if git
     /// tracks it.
     Add {
         /// The directory. It is made if it is not there.
         dir: PathBuf,
-        /// The folder's `system.folder` id.
-        #[arg(long, value_name = "ID")]
+        /// The folder to follow, by its `system.folder` ID, or by its title
+        /// where exactly one folder the credential can read has that title. A
+        /// value that is an ID is taken as one.
+        #[arg(long, value_name = "ID_OR_TITLE")]
         folder: String,
         /// Confirm the first sync without asking, for scripts. Without it,
         /// the add says what the first sync will do and waits for a go-ahead.
         #[arg(long)]
         yes: bool,
     },
-    /// List the folders on this machine, as its registry holds them. The
+    /// List the directories on this machine that follow a folder, as its
+    /// registry holds them. The
     /// registry is the file MARFA_FOLDER_REGISTRY names, where it names one.
     /// With --json, each entry has `dir`, `folder`, and where the registry
     /// records them, `store` and `root`. `root` is an opaque value that
-    /// identifies the directory the folder opened: compare it for equality
+    /// identifies the directory as it was opened: compare it for equality
     /// and do not parse it.
     List,
-    /// List the active folders in Marfa, to a credential that reads `system.folder`.
+    /// List the active folders in Marfa, each with its title and ID, to a
+    /// credential that reads `system.folder`.
     Inventory {
         #[command(flatten)]
         page: crate::commands::PageArgs,
     },
-    /// Take a folder off this machine: its own state under `.marfa` goes,
-    /// and its files stay as plain files. Empty administrative directories
+    /// Make a directory stop following its folder: its own state under
+    /// `.marfa` goes, and its files stay as plain files. Empty administrative directories
     /// remain. Refused while writes wait, except for a first sync still
     /// waiting to be confirmed, which this cancels. Follows no symbolic
     /// link, and takes a path through one only where it is the path
     /// `folders list` shows. Where that path is gone, passes through a link,
-    /// or holds state the registry does not show to be the folder's own, the
-    /// folder is only taken off the list and nothing is deleted.
+    /// or holds state the registry does not show to be the directory's own, the
+    /// directory is only taken off the list and nothing is deleted.
     Remove {
-        /// The folder.
+        /// The directory.
         dir: PathBuf,
     },
-    /// Say where every file in the folder stands, from its own store,
-    /// asking the server nothing, and whether the watch of the folder runs
+    /// Say where every file in the directory stands, from its own store,
+    /// asking the server nothing, and whether the watch of the directory runs
     /// another build of marfa.
     Status {
-        /// The folder.
+        /// The directory.
         dir: PathBuf,
     },
     /// Read the server's latest reports from every sign-in and local copy.
@@ -76,45 +80,45 @@ pub enum FoldersCommand {
         /// The folder's `system.folder` id.
         id: String,
     },
-    /// Let a folder's first sync go, or what it holds back: a paused large
+    /// Let a directory's first sync go, or what it holds back: a paused large
     /// removal, whose deletes are queued and whose files that items left
     /// elsewhere are taken away, and new files held for being more than the
     /// addition threshold lets in at once, which are queued as new items.
     Confirm {
-        /// The folder.
+        /// The directory.
         dir: PathBuf,
     },
     /// Cancel a paused large removal: files gone from the disk are written
     /// back, and items that left elsewhere are restored.
     Restore {
-        /// The folder.
+        /// The directory.
         dir: PathBuf,
     },
-    /// Pull what the folder's query needs into its working copy.
+    /// Pull what its folder's query needs into the directory's working copy.
     Hydrate {
-        /// The folder.
+        /// The directory.
         dir: PathBuf,
     },
-    /// Read the folder and queue what has changed. Sends nothing.
+    /// Read the directory and queue what has changed. Sends nothing.
     Scan {
-        /// The folder.
+        /// The directory.
         dir: PathBuf,
     },
-    /// Write what the folder's query matches out as files.
+    /// Write what its folder's query matches out as files.
     Pull {
-        /// The folder.
+        /// The directory.
         dir: PathBuf,
     },
     /// Scan, drain, catch up, pull, and send the placements the pull queued:
-    /// everything a folder does, once. Exits 3 where a write is left unsent or
+    /// everything a directory does, once. Exits 3 where a write is left unsent or
     /// the catch-up failed, and 5 where the server refused the credential.
     Push {
-        /// The folder.
+        /// The directory.
         dir: PathBuf,
-        /// Send what the folder holds and go no further: scan and drain,
+        /// Send what the directory holds and go no further: scan and drain,
         /// catch up with nothing and pull nothing, so no item's file is
         /// written into the directory or removed from it. A copy never
-        /// hydrated hydrates first, which writes only the folder's store. A
+        /// hydrated hydrates first, which writes only the directory's store. A
         /// later push without this pulls what the server holds. Refused while
         /// the first sync waits to be confirmed.
         #[arg(long)]
@@ -126,20 +130,20 @@ pub enum FoldersCommand {
         #[arg(long)]
         confirm_additions: bool,
     },
-    /// List the files the folder keeps whose items its query does not match,
+    /// List the files the directory keeps whose items its folder's query does not match,
     /// as the last pull left them, and with `--remove` take them away. A file
     /// goes only after a confirmation at a terminal or `--yes`, and only
-    /// while its bytes are the ones the folder wrote (for a file made from a
+    /// while its bytes are the ones the directory wrote (for a file made from a
     /// new file, the ones it last read) and no edit of it waits to be sent; any other is kept and said. The item stays in
     /// Marfa as it was, and the folder's placement of it ends, sent at the
-    /// next push. Also lists, with why, the new files a folder whose `outside_query` is `hold` holds because its query would not hold them; they have no item and
+    /// next push. Also lists, with why, the new files a directory whose folder's `outside_query` is `hold` holds because its query would not hold them; they have no item and
     /// are never taken away. Takes away no `held`, `outside` or `unreached` file. With
-    /// `--remove`, a watch holding the folder lets it go while this runs, and
-    /// this is refused if the process holding the folder does not let it go
+    /// `--remove`, a watch holding the directory lets it go while this runs, and
+    /// this is refused if the process holding the directory does not let it go
     /// within 10 seconds. Delete an unmatched file with this, not by hand: a
     /// file deleted by hand sends a delete of its item.
     Unmatched {
-        /// The folder.
+        /// The directory.
         dir: PathBuf,
         /// Take the files away, after a confirmation.
         #[arg(long)]
@@ -164,26 +168,26 @@ pub enum FoldersCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Watch a folder and keep it in step, or every folder on this machine.
-    /// Warns on standard error, once per folder, and goes on, if a folder's
+    /// Watch a directory and keep it in step, or every directory on this
+    /// machine. Warns on standard error, once per directory, and goes on, if a
     /// directory is in iCloud Drive, a cloud service's synced location or a
     /// network file system. `SIGTERM` stops it as Ctrl-C does, and it then
     /// exits 0, so a service manager that stopped it does not start it again.
-    /// A command that works a folder the watch holds, such as `folders
+    /// A command that works a directory the watch holds, such as `folders
     /// confirm`, asks for it: the watch lets it go at the end of the step of
     /// its pass under way, and takes it back once the command ends.
     Watch {
         /// The directory to watch, recursively. Without one, the command
-        /// watches every folder the folder registry lists, in one process.
-        /// Each folder uses the server its copy came from, and each line names
-        /// its folder. A folder added or removed while the watch runs joins or
-        /// leaves it. A folder that can't be watched is reported once and
-        /// tried again. A folder whose sign-in ended is reported once as
+        /// watches every directory the folder registry lists, in one process.
+        /// Each directory uses the server its copy came from, and each line
+        /// names its directory. A directory added or removed while the watch
+        /// runs joins or leaves it. A directory that can't be watched is
+        /// reported once and tried again. A directory whose sign-in ended is reported once as
         /// `signed_out` and is not tried again with that sign-in; it is
         /// watched once `marfa login` or `marfa keys keep` keeps a new
-        /// credential, and the other folders go on. A watch of one folder ends
+        /// credential, and the other directories go on. A watch of one directory ends
         /// with exit status 5 when its sign-in ends. Either way the watch keeps
-        /// a record of its folders in `folder-watch.json` beside the registry,
+        /// a record of its directories in `folder-watch.json` beside the registry,
         /// for other programs on the machine to read.
         dir: Option<PathBuf>,
         /// Stop after this long. Unset, it runs until interrupted.
@@ -200,10 +204,10 @@ pub enum FoldersCommand {
         log: Option<PathBuf>,
         /// A file that holds `MARFA_API_URL` and `MARFA_API_KEY` lines, which
         /// only you can read (mode 600), for a watch that runs with nobody
-        /// signed in to unlock the keychain. The watch uses it for the folders
-        /// that name that server and reads the keychain for none, so a folder
-        /// of another server is reported as having no credential. Keep the
-        /// file outside every folder. `folders autostart on --key-file` runs
+        /// signed in to unlock the keychain. The watch uses it for the
+        /// directories that name that server and reads the keychain for none,
+        /// so a directory of another server is reported as having no
+        /// credential. Keep the file outside every directory. `folders autostart on --key-file` runs
         /// the watch with it.
         #[arg(long, value_name = "FILE")]
         key_file: Option<PathBuf>,
@@ -218,7 +222,7 @@ pub enum FoldersCommand {
         #[arg(long)]
         exit_on_new_build: bool,
     },
-    /// Sync every folder from login, in your own account: a launchd agent on
+    /// Sync every directory from login, in your own account: a launchd agent on
     /// macOS or a systemd user unit on Linux runs `folders watch` with no
     /// directory. Supported on macOS and Linux.
     Autostart {
@@ -247,6 +251,10 @@ pub fn run(
     let done = match command {
         FoldersCommand::Add { dir, folder, yes } => {
             let session = named.session()?;
+            let folder = folder_id(&folder, || {
+                let request = crate::remote::request::Request::get(&["folders"]);
+                Remote::resolve(named)?.pages(&request, true)
+            })?;
             let folder = Folder::add(&dir, &folder, Some(session.server), session.renew)
                 .map_err(asked(&dir))?;
             say_replaced(&folder);
@@ -293,7 +301,7 @@ pub fn run(
                     lines.extend(first_sync_lines(&dir, plan.as_ref(), confirmed));
                     if let Some(error) = &unread {
                         lines.push(format!(
-                            "the first sync waits for confirmation, but the folder could not be read for it now: {}; `folders push` tries again",
+                            "the first sync waits for confirmation, but the directory could not be read for it now: {}; `folders push` tries again",
                             printable(&error.to_string())
                         ));
                     }
@@ -318,7 +326,7 @@ pub fn run(
             };
             output::list_report(&listed, None, json, || {
                 if listed.is_empty() {
-                    return "no folders on this machine".into();
+                    return "no directory on this machine follows a folder".into();
                 }
                 listed
                     .iter()
@@ -338,7 +346,12 @@ pub fn run(
                 Removal::Deleted(dir) => output::report(
                     &serde_json::json!({ "dir": dir, "removed": true }),
                     json,
-                    || format!("{} is no longer a folder; its files stay", dir.display()),
+                    || {
+                        format!(
+                            "{} no longer follows a folder; its files stay",
+                            dir.display()
+                        )
+                    },
                 ),
                 Removal::Unlisted { dir, reason } => output::report(
                     &serde_json::json!({ "dir": dir, "removed": false, "reason": reason }),
@@ -404,7 +417,7 @@ pub fn run(
                             .into();
                     }
                     format!(
-                        "{} delete(s) queued, sent at the next push; {} file(s) found in another folder, whose items stay; {} file(s) taken away; {} new file(s) queued as items, sent at the next push{}",
+                        "{} delete(s) waiting, sent at the next push; {} file(s) found in another directory, whose items stay; {} file(s) taken away; {} new file(s) waiting to become items, sent at the next push{}",
                         confirmed.deleted,
                         confirmed.moved,
                         confirmed.removed,
@@ -493,7 +506,10 @@ pub fn run(
                 || {
                     let mut lines = Vec::new();
                     if let Some(hydrated) = &hydrated {
-                        lines.push(format!("hydrated {} item(s) first", hydrated.items));
+                        lines.push(format!(
+                            "read {} item(s) from the server first",
+                            hydrated.items
+                        ));
                     }
                     lines.extend(settings_lines(&settings, None));
                     lines.push(describe_scan(&scanned));
@@ -561,7 +577,10 @@ pub fn run(
                 || {
                     let mut lines = Vec::new();
                     if let Some(hydrated) = &hydrated {
-                        lines.push(format!("hydrated {} item(s) first", hydrated.items));
+                        lines.push(format!(
+                            "read {} item(s) from the server first",
+                            hydrated.items
+                        ));
                     }
                     lines.extend(settings_lines(
                         &settings,
@@ -603,7 +622,7 @@ pub fn run(
                                 .map(|line| format!("; {line}"))
                                 .unwrap_or_default()
                         ),
-                        None => "nothing written: the copy could not be hydrated, and the next push tries again".into(),
+                        None => "nothing written: the folder's items could not be read from the server, and the next push tries again".into(),
                     });
                     lines.join("\n")
                 },
@@ -792,10 +811,54 @@ fn asks_to_remove(dir: &Path, going: &[String]) -> Result<bool, CliError> {
     Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
+/// Whether `text` is an ID as the server mints one: hyphenated, 36 characters.
+fn is_folder_id(text: &str) -> bool {
+    text.len() == 36
+        && text.char_indices().all(|(at, found)| match at {
+            8 | 13 | 18 | 23 => found == '-',
+            _ => found.is_ascii_hexdigit(),
+        })
+}
+
+/// The ID of the folder `value` names: an ID as it is, any other value as an exact title.
+fn folder_id(
+    value: &str,
+    listing: impl FnOnce() -> Result<serde_json::Value, CliError>,
+) -> Result<String, CliError> {
+    if is_folder_id(value) {
+        return Ok(value.to_string());
+    }
+    let listed = listing()?;
+    let matches: Vec<&str> = listed["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|folder| folder["title"].as_str() == Some(value))
+        .filter_map(|folder| folder["id"].as_str())
+        .collect();
+    match matches.as_slice() {
+        [only] => Ok((*only).to_string()),
+        [] => Err(CliError::Invalid(format!(
+            "no folder titled \"{}\" that this credential can read; `marfa folders inventory` lists the folders, and `--folder` also takes a folder's ID",
+            printable(value)
+        ))),
+        several => Err(CliError::Invalid(format!(
+            "{} folders are titled \"{}\", so nothing was added; pass the ID of the one to follow:\n{}",
+            several.len(),
+            printable(value),
+            several
+                .iter()
+                .map(|id| format!("  {}", printable(id)))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))),
+    }
+}
+
 fn rebuilt_line(rebuilt: Option<&marfa_core::HydrateReport>) -> Option<String> {
     rebuilt.map(|rebuilt| {
         format!(
-            "the server's reach changed, so the copy was hydrated again ({} item(s)) before the waiting writes were sent",
+            "the server's reach changed, so the folder's items were read from the server again ({} item(s)) before the waiting changes were sent",
             rebuilt.items
         )
     })
@@ -817,22 +880,20 @@ fn beneath_line(beneath: Option<&marfa_core::folder::BeneathReport>) -> Option<S
     })
 }
 
-/// What a drain sent and what came of it, said once.
+/// What a push sent to the server and what came of it, said once.
 fn drain_lines(folder: &Folder, drained: &marfa_core::Drained) -> Vec<String> {
-    let mut lines = vec![output::counts(&drained.report)];
+    let mut lines = vec![output::folder_counts(&drained.report)];
     lines.extend(Conflicts::default().say(folder, &drained.report));
-    lines.extend(output::undelivered(&drained.report));
+    lines.extend(output::folder_undelivered(&drained.report, "the next push"));
     if drained.report.undelivered > 0
         && let Some(wait) = drained.report.retry_after_seconds
     {
         lines.push(format!(
-            "the server asked for {wait}s before the next drain; push again after that to send the rest"
+            "the server asked for {wait}s before more is sent; push again after that to send the rest"
         ));
     }
-    if let Some(stopped) = &drained.report.stopped {
-        lines.push(printable(stopped));
-    }
-    lines.extend(output::unclaimed(&drained.report));
+    lines.extend(output::folder_stopped(&drained.report));
+    lines.extend(output::folder_unclaimed(&drained.report));
     if drained.rebased > 0 {
         lines.push(rebased_line(drained.rebased));
     }
@@ -938,12 +999,12 @@ fn asked(dir: &Path) -> impl FnOnce(CoreError) -> CliError + '_ {
     }
 }
 
-/// Says on standard error that opening `folder` replaced a store another
-/// build of the core made (`folder-setup/refused-store-replaced-told`).
+/// Says on standard error that opening `folder` replaced the saved state
+/// another build made (`folder-setup/refused-store-replaced-told`).
 fn say_replaced(folder: &Folder) {
     if let Some(reason) = folder.replaced_store() {
         crate::errln!(
-            "marfa: replaced the store of {}, which another build of the core made ({}); it held no write still to be sent and no answer the folder had yet to record, so the new store keeps the folder's record of each file and is filled again from the server; the replacement changes no file",
+            "marfa: replaced the saved state of {}, which another build of marfa made ({}); nothing in it waited to be sent and no answer from the server was yet to be recorded, so the new saved state keeps what is recorded of each file and is filled again from the server; the replacement changes no file",
             folder.root().display(),
             printable(reason)
         );
@@ -1132,11 +1193,11 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
     let held: Vec<String> = [
         (
             report.unwritten,
-            "the folder did not write and would not write over",
+            "the directory did not write and would not write over",
         ),
         (
             report.outside,
-            "whose path the folder does not write to (left out by its lists, inside a package or another folder, or not a path inside the folder)",
+            "whose path the directory does not write to (left out by its lists, inside a package or another directory, or not a path inside the directory)",
         ),
         (
             report.unsuited,
@@ -1181,19 +1242,19 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         ),
         (
             report.taken,
-            "file(s) taken in from another folder on this machine",
+            "file(s) taken in from another directory on this machine",
         ),
         (
             report.elsewhere,
-            "item(s) whose file was moved to another folder on this machine, written here once that folder takes it",
+            "item(s) whose file was moved to another directory on this machine, written here once that directory takes it",
         ),
         (
             report.let_go,
-            "file(s) removed whose item another folder on this machine holds, with nothing trashed",
+            "file(s) removed whose item another directory on this machine holds, with nothing trashed",
         ),
         (
             report.ended,
-            "placement(s) ended, for files that left the folder for good",
+            "placement(s) ended, for files that left the directory for good",
         ),
         (
             report.relinked,
@@ -1277,7 +1338,7 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
     }
     for directory in &report.directories {
         let path = if directory.path.is_empty() {
-            "the folder"
+            "the directory"
         } else {
             &directory.path
         };
@@ -1346,7 +1407,7 @@ fn first_sync_lines(dir: &Path, plan: Option<&FirstSync>, confirmed: bool) -> Ve
                 plan_line(plan)
             ),
             format!(
-                "`marfa folders confirm {0}` lets it go; `marfa folders remove {0}` drops the folder and leaves the files",
+                "`marfa folders confirm {0}` lets it go; `marfa folders remove {0}` stops the directory following its folder and leaves the files",
                 dir.display()
             ),
         ],
@@ -1448,7 +1509,7 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
         [
             (
                 report.requeued,
-                "queued again because the item it was bound to is gone",
+                "set to be sent again because the item it was bound to is gone",
             ),
             (
                 report.lost,
@@ -1456,7 +1517,7 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
             ),
             (
                 report.waiting,
-                "already queued by an earlier scan, so not counted as created or updated here",
+                "already waiting to be sent from an earlier scan, so not counted as created or updated here",
             ),
             (
                 report.unreached,
@@ -1470,7 +1531,7 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
     );
     if report.moved_away > 0 {
         line.push_str(&format!(
-            "; {} moved to another folder on this machine, so nothing was trashed",
+            "; {} moved to another directory on this machine, so nothing was trashed",
             report.moved_away
         ));
     }
@@ -1539,7 +1600,7 @@ pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
         .iter()
         .map(|path| {
             format!(
-                "{} was found in no folder on this machine, so its item was trashed",
+                "{} was found in no directory on this machine, so its item was trashed",
                 printable(path)
             )
         })
@@ -1551,13 +1612,13 @@ pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
 pub fn unsure_lines(report: &marfa_core::ScanReport) -> Vec<String> {
     let registry = report.registry.iter().map(|why| {
         format!(
-            "this folder stands alone, since the folder registry cannot be read: {}",
+            "this directory stands alone, since the folder registry cannot be read: {}",
             printable(why)
         )
     });
     let unsure = report.unsure.iter().map(|file| {
         format!(
-            "{} is missing and not trashed, since the other folders cannot all be read: {}",
+            "{} is missing and not trashed, since the other directories cannot all be read: {}",
             printable(&file.path),
             printable(&file.reason)
         )
@@ -1572,10 +1633,10 @@ pub fn lookup_line(report: &marfa_core::ScanReport) -> Option<String> {
     report.lookup_refused.as_deref().map(printable)
 }
 
-/// Says each conflicted edit once, with the file it was for and the file its
-/// text went to, as `device drain` says a conflicted write. A conflicted copy
-/// reaches the folder with a change after the answer, so a watch can know its
-/// file only at a later pass; it keeps those and says them then.
+/// Says each edit that conflicted once, as a file that changed in two places
+/// and the file the other edit went to. A conflicted copy reaches the
+/// directory with a change after the answer, so a watch can know its file
+/// only at a later pass; it keeps those and says them then.
 #[derive(Default)]
 pub struct Conflicts {
     awaiting: Vec<(String, String)>,
@@ -1597,7 +1658,7 @@ impl Conflicts {
         self.awaiting.retain(|(file, copy)| match file_of(copy) {
             Some(path) => {
                 arrived.push(format!(
-                    "{} holds the text of the conflicted edit of {}",
+                    "{} now holds the other edit of {}",
                     printable(&path),
                     printable(file)
                 ));
@@ -1615,10 +1676,18 @@ impl Conflicts {
                 continue;
             };
             let copy = verdict.conflicted_copy_id.as_deref().and_then(&file_of);
-            let mut line = output::verdict_line(verdict, Some(&file), copy.as_deref());
-            if let (None, Some(id)) = (&copy, &verdict.conflicted_copy_id) {
-                line.push_str("; it is not a file in this folder yet");
-                self.awaiting.push((file, id.clone()));
+            let mut line = format!("{} changed in two places", printable(&file));
+            match (&copy, &verdict.conflicted_copy_id) {
+                (Some(copy), _) => {
+                    line.push_str(&format!("; the other edit is in {}", printable(copy)));
+                }
+                (None, Some(id)) => {
+                    line.push_str(
+                        "; the other edit is in a new file that is not in this directory yet",
+                    );
+                    self.awaiting.push((file, id.clone()));
+                }
+                (None, None) => {}
             }
             lines.push(line);
         }
@@ -1863,16 +1932,89 @@ mod tests {
             ..Default::default()
         });
         assert!(
-            said.contains("2 whose path the folder does not write to"),
+            said.contains("2 whose path the directory does not write to"),
             "{said}"
         );
         assert!(
             said.contains("left out by its lists")
-                && said.contains("inside a package or another folder")
-                && said.contains("not a path inside the folder"),
+                && said.contains("inside a package or another directory")
+                && said.contains("not a path inside the directory"),
             "{said}"
         );
         assert!(!said.contains("wanting a path outside"), "{said}");
+    }
+
+    const HOME: &str = "01a10122-54e3-7447-9e6f-91e7d99f361f";
+    const OTHER: &str = "01a10126-6c86-74b2-a04a-1fe68e721fde";
+
+    fn listed(folders: &[(&str, &str)]) -> Result<serde_json::Value, CliError> {
+        Ok(serde_json::json!({
+            "data": folders
+                .iter()
+                .map(|(id, title)| serde_json::json!({
+                    "id": id, "title": title, "created_at": "2026-10-03T09:57:30.610Z"
+                }))
+                .collect::<Vec<_>>(),
+            "next_cursor": null,
+        }))
+    }
+
+    #[test]
+    fn a_folder_is_named_by_its_title_where_one_folder_has_it() {
+        let id = folder_id("Home", || listed(&[(HOME, "Home"), (OTHER, "Deals")])).unwrap();
+        assert_eq!(id, HOME);
+    }
+
+    #[test]
+    fn a_title_is_matched_exactly() {
+        for title in ["home", "Hom", "Home ", "Home\n"] {
+            let refused = folder_id(title, || listed(&[(HOME, "Home")])).unwrap_err();
+            assert!(matches!(refused, CliError::Invalid(_)), "{title:?}");
+        }
+    }
+
+    #[test]
+    fn a_title_no_folder_has_is_refused_naming_the_title() {
+        let refused = folder_id("Archive", || listed(&[(HOME, "Home")])).unwrap_err();
+        let CliError::Invalid(said) = refused else {
+            panic!("not refused as invalid");
+        };
+        assert!(said.contains("\"Archive\""), "{said}");
+        assert!(said.contains("marfa folders inventory"), "{said}");
+    }
+
+    #[test]
+    fn a_title_two_folders_have_is_refused_listing_each_id() {
+        let refused = folder_id("Home", || {
+            listed(&[(HOME, "Home"), (OTHER, "Home"), ("x", "Deals")])
+        })
+        .unwrap_err();
+        let CliError::Invalid(said) = refused else {
+            panic!("not refused as invalid");
+        };
+        assert!(said.contains(HOME) && said.contains(OTHER), "{said}");
+        assert!(
+            said.contains("2 folders") && said.contains("nothing was added"),
+            "{said}"
+        );
+    }
+
+    #[test]
+    fn an_id_is_taken_as_an_id_without_asking_the_server() {
+        let id = folder_id(HOME, || panic!("the server was asked about an ID")).unwrap();
+        assert_eq!(id, HOME);
+        assert_eq!(id, HOME);
+        assert!(!is_folder_id("Home") && !is_folder_id(&HOME.replace('-', "_")));
+        assert!(
+            !is_folder_id(&format!("{HOME}0"))
+                && !is_folder_id("0123456789abcdefg0123456789abcdefg0")
+        );
+    }
+
+    #[test]
+    fn a_listing_the_server_refuses_is_the_refusal() {
+        let refused = folder_id("Home", || Err(CliError::Invalid("refused".into()))).unwrap_err();
+        assert!(matches!(refused, CliError::Invalid(said) if said == "refused"));
     }
 
     #[test]
@@ -1888,7 +2030,40 @@ mod tests {
         );
         assert_eq!(
             said,
-            ["conflicted update_item note.md conflicted copy note (2).md"]
+            ["note.md changed in two places; the other edit is in note (2).md"]
+        );
+    }
+
+    #[test]
+    fn a_conflicted_edit_names_no_write_kind_field_or_reason_of_the_queue() {
+        let files: HashMap<&str, &str> =
+            [("item", "Packing list.md"), ("copy", "Packing list (2).md")].into();
+        let mut verdict = answered(Verdict::Conflicted, "item", Some("copy"));
+        verdict.merged_fields = vec!["body".into()];
+        verdict.reason = Some("version_conflict".into());
+        verdict.replayed = true;
+        verdict.refusals = 1;
+        let said = Conflicts::default().say_with(
+            |id| files.get(id).map(|path| path.to_string()),
+            &drain(vec![verdict]),
+        );
+        assert_eq!(
+            said,
+            ["Packing list.md changed in two places; the other edit is in Packing list (2).md"]
+        );
+        // The witness: the queue's own line for the same verdict names all of them.
+        let queue = output::verdict_line(
+            &{
+                let mut verdict = answered(Verdict::Conflicted, "item", Some("copy"));
+                verdict.merged_fields = vec!["body".into()];
+                verdict
+            },
+            Some("Packing list.md"),
+            Some("Packing list (2).md"),
+        );
+        assert!(
+            queue.contains("update_item") && queue.contains("merged body"),
+            "{queue}"
         );
     }
 
@@ -1901,7 +2076,7 @@ mod tests {
         assert_eq!(
             said,
             [
-                "conflicted update_item note.md conflicted copy copy; it is not a file in this folder yet"
+                "note.md changed in two places; the other edit is in a new file that is not in this directory yet"
             ]
         );
         let quiet = drain(Vec::new());
@@ -1913,10 +2088,7 @@ mod tests {
         );
         files.insert("copy", "note (2).md");
         let arrived = conflicts.say_with(|id| files.get(id).map(|path| path.to_string()), &quiet);
-        assert_eq!(
-            arrived,
-            ["note (2).md holds the text of the conflicted edit of note.md"]
-        );
+        assert_eq!(arrived, ["note (2).md now holds the other edit of note.md"]);
         assert!(
             conflicts
                 .say_with(|id| files.get(id).map(|path| path.to_string()), &quiet)

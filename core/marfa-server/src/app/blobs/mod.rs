@@ -304,13 +304,13 @@ async fn object_store(
                     return Err(folder_missing(root, unknown));
                 }
             }
-            S3::new(settings, id, db.faults()).map_err(started)
+            Ok(bucket.named(id))
         }
         Marker::None => {
             if let Some(root) = unfilled {
                 return Err(folder_missing(root, unknown));
             }
-            let s3 = S3::new(settings, Uuid::now_v7().to_string(), db.faults()).map_err(started)?;
+            let s3 = bucket.named(Uuid::now_v7().to_string());
             match tokio::time::timeout(CHECK_DEADLINE, s3.mark()).await {
                 Ok(Ok(())) => Ok(s3),
                 Ok(Err(error)) => Err(refused(format!(
@@ -322,12 +322,28 @@ async fn object_store(
                 )),
             }
         }
+        Marker::Silent(_) | Marker::Refused(_)
+            if unfilled.is_none()
+                && let Some(why) = bucket.refused() =>
+        {
+            let locator = settings.locator();
+            let recorded = db
+                .read(move |tx| rows::object_store_at(tx, &locator))
+                .await
+                .map_err(started)?;
+            match recorded {
+                // Health and the store list read the refusal from the store itself.
+                Some(id) => Ok(bucket.named(id)),
+                None => Err(refused(format!("cannot be reached: {}", why.reason()))),
+            }
+        }
         Marker::Silent(error) => {
             if let Some(root) = unfilled {
-                return Err(folder_missing(
-                    root,
-                    ", and the object store did not answer",
-                ));
+                let why = match bucket.refused() {
+                    Some(why) => format!(", and the object store is refused: {}", why.reason()),
+                    None => ", and the object store did not answer".to_string(),
+                };
+                return Err(folder_missing(root, &why));
             }
             let locator = settings.locator();
             let recorded = db
@@ -337,7 +353,7 @@ async fn object_store(
             match recorded {
                 Some(id) => {
                     tracing::warn!(%error, "The object store did not answer; its copies wait");
-                    S3::new(settings, id, db.faults()).map_err(started)
+                    Ok(bucket.named(id))
                 }
                 None => Err(refused(format!(
                     "did not answer: {}",
@@ -651,6 +667,20 @@ impl Blobs {
     /// The object store, where one is in use.
     pub fn s3(&self) -> Option<Arc<S3>> {
         self.attached.load().s3.clone()
+    }
+
+    /// The object store in use while the address rules refuse it.
+    pub fn refused(&self) -> Option<Arc<S3>> {
+        self.s3().filter(|s3| s3.refused().is_some())
+    }
+
+    /// Asks a refused object store again, which ends the refusal once its request passes.
+    pub async fn ask_refused(&self) -> Option<Arc<S3>> {
+        let s3 = self.refused()?;
+        if let Err(error) = tokio::time::timeout(self.check(), s3.is_itself()).await {
+            tracing::warn!(%error, "The refused object store did not answer in time");
+        }
+        s3.refused().is_some().then_some(s3)
     }
 
     /// The backup folder, where one is in use.
@@ -1883,7 +1913,16 @@ impl App {
     /// Every store, and the fewest live copies of a blob the instance keeps.
     pub async fn blob_stores(&self, caller: &Caller) -> Result<(Vec<StoreRecord>, u64)> {
         caller.require(Permission::InstanceRead)?;
-        let stores = self.db.read(rows::stores).await?;
+        let mut stores = self.db.read(rows::stores).await?;
+        if let Some(s3) = self.blobs.s3()
+            && let Some(error) = s3.refusal()
+        {
+            for store in &mut stores {
+                if store.id == s3.id() && store.detached_at.is_none() {
+                    store.error = Some(error.clone());
+                }
+            }
+        }
         Ok((stores, self.settings.live().get(BLOB_MIN_COPIES)))
     }
 
@@ -2083,5 +2122,40 @@ mod tests {
         assert!(attached.s3.is_none());
         let trouble = attached.trouble.unwrap();
         assert!(trouble.contains("object store"), "{trouble}");
+    }
+
+    fn local_name_settings(private_allowed: bool) -> ObjectStoreSettings {
+        ObjectStoreSettings {
+            endpoint: Some("http://localhost:1".to_string()),
+            private_allowed,
+            ..signed_settings("us-east-1".to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_start_over_an_emptied_blob_folder_names_the_address_rules_that_refused_the_store() {
+        let db = database();
+        let refused = object_store(&db, &local_name_settings(false), Some(Path::new("/blobs")))
+            .await
+            .unwrap_err();
+        assert!(
+            refused.message.contains("allow_private_addresses"),
+            "{}",
+            refused.message
+        );
+        assert!(
+            !refused.message.contains("did not answer"),
+            "{}",
+            refused.message
+        );
+        // The witness: with the rules allowing the address, the same store is one that did not answer.
+        let silent = object_store(&db, &local_name_settings(true), Some(Path::new("/blobs")))
+            .await
+            .unwrap_err();
+        assert!(
+            silent.message.contains("did not answer"),
+            "{}",
+            silent.message
+        );
     }
 }

@@ -107,7 +107,7 @@ function nextAddress(): string {
 
 function signIn(
   server: FreshServer,
-  email: string,
+  username: string,
   password: string,
   address: string,
   from = origin,
@@ -119,7 +119,7 @@ function signIn(
       origin: from,
       [CLIENT_HEADER]: address,
     },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ username, password }),
   });
 }
 
@@ -139,34 +139,29 @@ async function untilRefused(
 }
 
 describe("the limits one address is held to", () => {
-  it("answers password sign-ins at any email alike, the owner's among them, until the address's limit refuses them all", async () => {
+  it("answers password sign-ins at any username alike, the owner's among them, until the address's limit refuses them all", async () => {
     const address = nextAddress();
     // The witness: the owner's right password from this address signs in,
     // and spends nothing.
     expect(
-      (await signIn(limited, TEST_OWNER.email, TEST_OWNER.password, address))
+      (await signIn(limited, TEST_OWNER.username, TEST_OWNER.password, address))
         .status,
     ).toBe(200);
     const atOwner = await untilRefused(10, () =>
-      signIn(limited, TEST_OWNER.email, "wrong", address),
+      signIn(limited, TEST_OWNER.username, "wrong", address),
     );
     expect(atOwner.answered).toEqual(Array<number>(10).fill(401));
     const elsewhere = await untilRefused(20, (n) =>
-      signIn(limited, `stranger-${String(n)}@example.test`, "wrong", address),
+      signIn(limited, `stranger-${String(n)}`, "wrong", address),
     );
     expect(elsewhere.answered).toEqual(Array<number>(20).fill(401));
     const owner = await signIn(
       limited,
-      TEST_OWNER.email,
+      TEST_OWNER.username,
       TEST_OWNER.password,
       address,
     );
-    const stranger = await signIn(
-      limited,
-      "stranger-new@example.test",
-      "wrong",
-      address,
-    );
+    const stranger = await signIn(limited, "stranger-new", "wrong", address);
     expect([owner.status, stranger.status]).toEqual([429, 429]);
     expect(owner.headers.get("x-error-code")).toBe(
       stranger.headers.get("x-error-code"),
@@ -564,7 +559,7 @@ describe("an instance with no sign-in address", () => {
     const own = await issuerOrigin(unset);
     const away = await signIn(
       unset,
-      TEST_OWNER.email,
+      TEST_OWNER.username,
       TEST_OWNER.password,
       "203.0.113.7",
       own,
@@ -579,7 +574,7 @@ describe("an instance with no sign-in address", () => {
     // The witness: the same sign-in from the loopback is answered.
     const here = await signIn(
       unset,
-      TEST_OWNER.email,
+      TEST_OWNER.username,
       TEST_OWNER.password,
       "127.0.0.1",
       own,

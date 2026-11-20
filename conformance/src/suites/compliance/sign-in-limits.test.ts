@@ -23,8 +23,9 @@ let timed: FreshServer;
 let known: FreshServer;
 let noted: FreshServer;
 let uncertain: FreshServer;
-let ownersEmail: FreshServer;
+let ownersUsername: FreshServer;
 let ownersCount: FreshServer;
+let usernames: FreshServer;
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -39,8 +40,9 @@ beforeAll(async () => {
     known,
     noted,
     uncertain,
-    ownersEmail,
+    ownersUsername,
     ownersCount,
+    usernames,
   ] = await Promise.all([
     bootFreshServer("sign-in-limits", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
@@ -50,7 +52,7 @@ beforeAll(async () => {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
       MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
-    bootFreshServer("sign-in-limits-every-email", {
+    bootFreshServer("sign-in-limits-every-username", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
       MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
@@ -70,7 +72,7 @@ beforeAll(async () => {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
       MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
-    bootFreshServer("sign-in-limits-owners-email", {
+    bootFreshServer("sign-in-limits-owners-username", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
       MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
@@ -78,8 +80,12 @@ beforeAll(async () => {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
       MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
+    bootFreshServer("sign-in-limits-usernames", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
   ]);
-}, 9 * FRESH_SERVER_TIMEOUT_MS);
+}, 10 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await Promise.allSettled([
@@ -90,17 +96,18 @@ afterAll(async () => {
     known.stop(),
     noted.stop(),
     uncertain.stop(),
-    ownersEmail.stop(),
+    ownersUsername.stop(),
     ownersCount.stop(),
+    usernames.stop(),
   ]);
-}, 9 * FRESH_SERVER_TIMEOUT_MS);
+}, 10 * FRESH_SERVER_TIMEOUT_MS);
 
 async function signIn(
   server: FreshServer,
   password: string,
   address: string,
   cookie?: string,
-  email = OWNER.email,
+  username = OWNER.username,
 ): Promise<Response> {
   const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
     method: "POST",
@@ -110,10 +117,35 @@ async function signIn(
       [CLIENT_HEADER]: address,
       ...(cookie === undefined ? {} : { cookie }),
     },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ username, password }),
   });
   await response.body?.cancel();
   return response;
+}
+
+/** One wrong password at `username`, answered in full. */
+async function attempt(
+  server: FreshServer,
+  username: string,
+  address: string,
+): Promise<{ status: number; code: string | null; message: string | null }> {
+  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin: await issuerOrigin(server),
+      [CLIENT_HEADER]: address,
+    },
+    body: JSON.stringify({ username, password: "not the password" }),
+  });
+  const body = (await response.json()) as {
+    error?: { code?: string; message?: string };
+  };
+  return {
+    status: response.status,
+    code: body.error?.code ?? null,
+    message: body.error?.message ?? null,
+  };
 }
 
 /** The `name=value` of the cookie a response sets whose name ends in `name`. */
@@ -303,23 +335,57 @@ describe("password sign-in", () => {
     expect(bothWait).toBeLessThanOrEqual(60 * 60);
   }, 120_000);
 
-  it("holds attempts at every email together to the same hundred, and the owner's right password still signs in", async () => {
+  it("answers a name that cannot be a username, and the owner's email, as a wrong username, and counts each at its address", async () => {
+    // The witness: the owner's own username signs in, typed in capitals and with spaces too.
+    const signed = (username: string, address: string) =>
+      signIn(usernames, OWNER.password, address, undefined, username);
+    expect((await signed(OWNER.username, "10.20.1.1")).status).toBe(200);
+    expect(
+      (await signed(` ${OWNER.username.toUpperCase()} `, "10.20.1.2")).status,
+    ).toBe(200);
+    const wrong = await attempt(usernames, "nobody", "10.20.2.1");
+    expect(wrong).toEqual({
+      status: 401,
+      code: "unauthorized",
+      message: "Invalid username or password.",
+    });
+    const names = [
+      "nobody",
+      `${OWNER.username}@example.test`,
+      `${OWNER.username} two`,
+      `${OWNER.username}\u200b`,
+      "",
+      "o".repeat(65),
+    ];
+    for (const [n, username] of names.entries()) {
+      const address = `10.20.${String(10 + n)}.1`;
+      for (let i = 0; i < 10; i++) {
+        expect(
+          await attempt(usernames, username, address),
+          JSON.stringify(username),
+        ).toEqual(wrong);
+      }
+      const past = await attempt(usernames, username, address);
+      expect(past.status, JSON.stringify(username)).toBe(429);
+      expect(past.code).toBe("rate_limited");
+    }
+  });
+
+  it("holds attempts at every username together to the same hundred, and the owner's right password still signs in", async () => {
     const device = await deviceCookie(every, "203.0.113.200");
-    // From each of ten addresses, five wrong passwords at the owner's email
-    // and five at emails with no account.
+    // From each of ten addresses, five wrong passwords at the owner's username
+    // and five at usernames with no account.
     for (let a = 1; a <= 10; a++) {
       const address = `203.0.113.${String(a)}`;
       for (let i = 0; i < 10; i++) {
-        const email =
-          i < 5
-            ? OWNER.email
-            : `stranger-${String(a)}-${String(i)}@example.test`;
+        const username =
+          i < 5 ? OWNER.username : `stranger-${String(a)}-${String(i)}`;
         const response = await signIn(
           every,
           "not the password",
           address,
           undefined,
-          email,
+          username,
         );
         expect(response.status).toBe(401);
       }
@@ -331,7 +397,7 @@ describe("password sign-in", () => {
       "not the password",
       "203.0.113.51",
       undefined,
-      "stranger@example.test",
+      "stranger",
     );
     expect(stranger.status).toBe(429);
     const waits = [owner, stranger].map((response) =>
@@ -339,7 +405,7 @@ describe("password sign-in", () => {
     );
     expect(waits[0]).toBeGreaterThan(15 * 60);
     expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
-    // Fifty of the hundred were at the owner's email, so the owner's share
+    // Fifty of the hundred were at the owner's username, so the owner's share
     // has room: the right password signs in from a browser the server does
     // not know, and so does the known device.
     expect((await signIn(every, OWNER.password, "203.0.113.53")).status).toBe(
@@ -350,14 +416,14 @@ describe("password sign-in", () => {
     ).toBe(200);
   }, 120_000);
 
-  it("answers the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour", async () => {
+  it("answers the owner's right password as a wrong one once a hundred attempts at the owner's username are counted in an hour", async () => {
     // The witness: with the owner's share left, the right password signs in.
     expect(
-      (await signIn(ownersEmail, OWNER.password, "10.9.98.1")).status,
+      (await signIn(ownersUsername, OWNER.password, "10.9.98.1")).status,
     ).toBe(200);
-    await fillAccount(ownersEmail, 9);
-    const wrong = await signIn(ownersEmail, "not the password", "10.9.97.1");
-    const right = await signIn(ownersEmail, OWNER.password, "10.9.96.1");
+    await fillAccount(ownersUsername, 9);
+    const wrong = await signIn(ownersUsername, "not the password", "10.9.97.1");
+    const right = await signIn(ownersUsername, OWNER.password, "10.9.96.1");
     expect(wrong.status).toBe(429);
     expect(right.status).toBe(wrong.status);
     expect(right.headers.getSetCookie()).toEqual([]);
@@ -370,11 +436,11 @@ describe("password sign-in", () => {
 
   // A failed try leaves the clock moved, which the retry would start from.
   it(
-    "counts the owner's right password as a wrong one once a hundred attempts at the owner's email are counted in an hour",
+    "counts the owner's right password as a wrong one once a hundred attempts at the owner's username are counted in an hour",
     { retry: 0, timeout: 120_000 },
     async () => {
       // Past every window the server's start opened, the hour every address
-      // shares opens first, so it ends while the owner's email still has its
+      // shares opens first, so it ends while the owner's username still has its
       // hundred counted.
       await ownersCount.advanceClock(61 * 60 * 1000);
       expect(
@@ -384,7 +450,7 @@ describe("password sign-in", () => {
             "not the password",
             "10.8.0.1",
             undefined,
-            "stranger@example.test",
+            "stranger",
           )
         ).status,
       ).toBe(401);
@@ -654,25 +720,25 @@ describe("counting only wrong passwords", () => {
     await recover(known);
   }, 240_000);
 
-  it("answers an address that spent its attempts at two emails alike after the password is changed", async () => {
+  it("answers an address that spent its attempts at two usernames alike after the password is changed", async () => {
     await recover(known);
     const address = "172.19.0.1";
-    const stranger = "stranger@example.test";
+    const stranger = "stranger";
     for (let i = 0; i < 10; i++) {
-      for (const email of [OWNER.email, stranger]) {
+      for (const username of [OWNER.username, stranger]) {
         const response = await signIn(
           known,
           "wrong",
           address,
           undefined,
-          email,
+          username,
         );
         expect(response.status).toBe(401);
       }
     }
-    for (const email of [OWNER.email, stranger]) {
+    for (const username of [OWNER.username, stranger]) {
       expect(
-        (await signIn(known, "wrong", address, undefined, email)).status,
+        (await signIn(known, "wrong", address, undefined, username)).status,
       ).toBe(429);
     }
     const signedIn = await signIn(known, OWNER.password, "172.19.0.2");
@@ -693,8 +759,8 @@ describe("counting only wrong passwords", () => {
     await changed.body?.cancel();
     expect(changed.status).toBe(200);
     const after = await Promise.all(
-      [OWNER.email, stranger].map((email) =>
-        signIn(known, "wrong", address, undefined, email),
+      [OWNER.username, stranger].map((username) =>
+        signIn(known, "wrong", address, undefined, username),
       ),
     );
     expect(after.map((response) => response.status)).toEqual([429, 429]);

@@ -87,7 +87,7 @@ Each takes `--dir` when the install isn't in the default folder, and `marfa serv
 
 ## Claim the server
 
-`marfa server install` prints a link that claims the server. Open it within five minutes, and choose the owner's email and password. The link works once; run the command again for a new one.
+`marfa server install` prints a link that claims the server. Open it within five minutes, and choose the owner's username and password. The link works once; run the command again for a new one.
 
 For a server you run another way, use the private socket, under the same operating system account as the server. For a native install, the socket is `data/control/marfa.sock` in the install folder; in the container, it's `/data/control/marfa.sock`.
 
@@ -95,7 +95,7 @@ For a server you run another way, use the private socket, under the same operati
 marfa --socket <socket> setup open --address https://marfa.example.com --no-browser
 ```
 
-Open the link it prints. `--address` sets the address people sign in at before the link is made; it doesn't move the address of a server that already has an owner. To finish in the terminal instead, run `setup claim --address <address> --email owner@example.com`, which asks for the password at a hidden prompt. For the container, run the command with `docker exec <container> marfa ...`, adding `-it` for `setup claim`.
+Open the link it prints. `--address` sets the address people sign in at before the link is made; it doesn't move the address of a server that already has an owner. To finish in the terminal instead, run `setup claim --address <address> --username owner`, which asks for the password at a hidden prompt. For the container, run the command with `docker exec <container> marfa ...`, adding `-it` for `setup claim`.
 
 Creating or changing a key, approving an app and restoring an archive need a sign-in within the last fifteen minutes. If yours is older, the page asks you to confirm it's you with your password or a passkey.
 
@@ -195,6 +195,6 @@ The server reads its start-only settings from its environment when it starts. Th
 - Set `MARFA_TRUSTED_PROXY_HEADER` together with `MARFA_TRUSTED_PROXY_CIDRS`, naming the ranges the edge connects from, such as `127.0.0.0/8,::1/128` for a tunnel to a native server on the same machine. The server refuses to start with the header alone. With neither proxy setting, the server ignores `X-Forwarded-For`.
 - With `MARFA_OWNER_RECOVERY` on behind a platform proxy or shared edge, set `MARFA_TRUSTED_PROXY_HEADER` and `MARFA_TRUSTED_PROXY_CIDRS`. Without them, every caller shares one attempt limit, and wrong guesses can block the owner's code for a while.
 - The backup folder, the object store, the backup schedule, the PostHog host and project token, and the heartbeat are stored settings, not environment variables. Set them from any app you approve or with `marfa config update`, for example `marfa config update --body '{"backup_path": "/backups"}'`. Set `backup_path` or `object_store_bucket`, not both. With neither, the server keeps no backup.
-- The server sends webhooks, the heartbeat, exception reports and object store requests only to public addresses. To reach a receiver or an object store on your own network, set `allow_private_addresses` to `true` through the private socket: `marfa --socket <socket> config update --body '{"allow_private_addresses": true}'`.
+- The server sends webhooks, the heartbeat, telemetry and object store requests only to public addresses. To reach a receiver or an object store on your own network, set `allow_private_addresses` to `true` through the private socket: `marfa --socket <socket> config update --body '{"allow_private_addresses": true}'`.
 - Serve an object store from a different site from your instance's address: a link to a file in the store is safe only because the store serves it from its own origin.
-- `OTEL_EXPORTER_OTLP_ENDPOINT` sets where an OpenTelemetry receiver is, and `OTEL_SDK_DISABLED=true` turns telemetry off. The stored settings `posthog_host` and `posthog_project_token`, set together, say where exception reports go. Write both in one change from standard input, so the token stays out of your shell history: run `marfa config update --file -` and enter `{"posthog_host": "https://eu.i.posthog.com", "posthog_project_token": "<token>"}`. The server sends no `deployment.environment` unless `OTEL_RESOURCE_ATTRIBUTES` names one, such as `deployment.environment=production`.
+- Telemetry is stored settings too, and the server reads no `OTEL_*` variable. `otel_exporter_otlp_endpoint` says where an OpenTelemetry receiver is, with its headers in `otel_exporter_otlp_headers`, and `posthog_host` with `posthog_project_token` say where exception reports go. Write secrets from standard input, so they stay out of your shell history: run `marfa config update --file -` and enter `{"otel_exporter_otlp_endpoint": "https://collector.example", "otel_exporter_otlp_headers": "authorization=Bearer%20<token>"}`. `telemetry_enabled` set to `false` pauses all of it and keeps the settings. The server sends no `deployment.environment` unless `otel_resource_attributes` names one, such as `deployment.environment=production`. A restore leaves these secrets to set again.

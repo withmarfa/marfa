@@ -39,7 +39,7 @@ afterEach(async () => {
 
 const HELD = { id: "01a00000-0000-7000-8000-00000000000a", version: 3 };
 
-/** The eight, as the contract names them (`queue-and-verdicts/blocked-reasons-closed`). */
+/** The nine, as the contract names them (`queue-and-verdicts/blocked-reasons-closed`). */
 const BLOCKED_REASONS = [
   "credential_refused",
   "key_spent",
@@ -49,6 +49,7 @@ const BLOCKED_REASONS = [
   "failing_alone",
   "instance_changed",
   "record_unread",
+  "server_restored",
 ] as const;
 
 function held() {
@@ -1073,11 +1074,11 @@ describe("the ceiling, and releasing what it stopped", () => {
     ).toBe(0);
   });
 
-  it("reports one of the eight blocked reasons and no other", async () => {
+  it("reports one of the nine blocked reasons and no other", async () => {
     // Every answer that blocks, each in its own store, and the set of
-    // reasons they produce compared against the eight. Both directions: a
-    // reason outside the eight is a store no later build reads, and a reason
-    // in the eight that nothing produces is a promise the device cannot keep.
+    // reasons they produce compared against the nine. Both directions: a
+    // reason outside the nine is a store no later build reads, and a reason
+    // in the nine that nothing produces is a promise the device cannot keep.
     const reached = new Set<string>();
     const blocking: ScriptedWrites[] = [
       { update: [refusal(401, "unauthorized", "revoked")] },
@@ -1247,9 +1248,42 @@ describe("the ceiling, and releasing what it stopped", () => {
       await damaged.stop();
     }
 
+    // The ninth comes from a hydration as well: the copy held an item that a
+    // server restored to a point behind the copy's cursor no longer holds.
+    const restored = await startHarness("class-reasons-server-restored");
+    try {
+      let head = "10";
+      const rows = held();
+      scriptHydration(restored.server, { head: () => head, items: rows });
+      expect((await restored.device.hydrate(["core.note"], "library")).ok).toBe(
+        true,
+      );
+      head = "2";
+      rows["core.note"] = [];
+      restored.server.copyAnswer(
+        "GET",
+        `/items/${HELD.id}`,
+        refusal(404, "not_found", "no such item"),
+      );
+      const caught = await restored.device.catchUp();
+      expect(caught.ok ? "caught up" : caught.refusal.code).toBe(
+        "copy_expired",
+      );
+      expect((await restored.device.hydrate(["core.note"], "library")).ok).toBe(
+        true,
+      );
+      const row = (await queueOf(restored)).find(
+        (row) => row.kind === "create_item" && row.item_id === HELD.id,
+      );
+      expect(row?.reason).not.toBeNull();
+      if (row?.reason != null) reached.add(row.reason);
+    } finally {
+      await restored.stop();
+    }
+
     expect(
       [...reached].sort(),
-      "the reasons this device can reach are not the eight the contract names: a reason outside them is one the store refuses to record, and one inside them that nothing produces is a promise nothing keeps",
+      "the reasons this device can reach are not the nine the contract names: a reason outside them is one the store refuses to record, and one inside them that nothing produces is a promise nothing keeps",
     ).toEqual([...BLOCKED_REASONS].sort());
   });
 

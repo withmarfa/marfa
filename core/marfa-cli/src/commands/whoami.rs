@@ -75,11 +75,16 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 let who = credential
                     .get("person")
                     .map(|person| {
-                        let email = field(person, "email");
-                        if email.is_empty() {
+                        let username = field(person, "username");
+                        let lead = if username.is_empty() {
                             field(person, "name")
                         } else {
-                            email
+                            username
+                        };
+                        match (lead.is_empty(), field(person, "email")) {
+                            (_, email) if email.is_empty() => lead,
+                            (true, email) => email,
+                            (false, email) => format!("{lead} ({email})"),
                         }
                     })
                     .filter(|name| !name.is_empty())

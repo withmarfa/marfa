@@ -287,7 +287,7 @@
               "read",
               "write"
             ],
-            "description": "Access to every profile field, except that `write` changes only the name and the avatar. Changing the email address takes `email` at `write`."
+            "description": "Access to every profile field, except that `write` doesn't change the username. Changing the username takes `username` at `write`."
           },
           "name": {
             "type": "string",
@@ -297,13 +297,21 @@
             ],
             "description": "Access to the owner's name."
           },
+          "username": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write"
+            ],
+            "description": "Access to the owner's username, which password sign-in matches. Only this entry at `write` lets a credential change it."
+          },
           "email": {
             "type": "string",
             "enum": [
               "read",
               "write"
             ],
-            "description": "Access to the owner's email address, which password sign-in matches. Only this entry at `write` lets a credential change it."
+            "description": "Access to the owner's email address, which plays no part in signing in."
           },
           "avatar": {
             "type": "string",
@@ -1587,7 +1595,7 @@
                   "turned_off",
                   "destination_unusable"
                 ],
-                "description": "Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0, also given beside `failing`."
+                "description": "Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0. `destination_unusable` wins if both apply."
               },
               "destination": {
                 "type": "string",
@@ -2938,10 +2946,17 @@
             "type": "string",
             "description": "The owner's name. Present with `profile.name:read`."
           },
-          "email": {
+          "username": {
             "type": "string",
+            "description": "The owner's username, which password sign-in matches. Present with `profile.username:read`."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "email",
-            "description": "The owner's sign-in email address. Present with `profile.email:read`."
+            "description": "The owner's email address, or `null` when none is set. Present with `profile.email:read`."
           },
           "avatar": {
             "type": [
@@ -6527,6 +6542,14 @@
             ],
             "description": "When the instance's configuration stopped naming the store, in UTC, or `null` while it names it.",
             "example": "2026-10-03T09:30:00.000Z"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the attached object store cannot be used while the address rules refuse the requests to it because `allow_private_addresses` is `false`, the same text as `backups.store_error` in `GET /health`, or `null`.",
+            "example": "The object store cannot be used: the object store's address is not public, and allow_private_addresses is false. Until it can, no file is copied there, no backup is taken and no file is purged."
           }
         },
         "required": [
@@ -6534,7 +6557,8 @@
           "kind",
           "locator",
           "attached_at",
-          "detached_at"
+          "detached_at",
+          "error"
         ],
         "description": "A store is a place a blob's bytes live: the disk beside the server, or an S3-compatible bucket."
       },
@@ -6912,6 +6936,13 @@
             },
             {
               "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Text by name, such as `refused` for `blob-replicate`: the ID of each store that took no copy, and why."
             }
           ]
         },
@@ -8562,7 +8593,7 @@
                 "$ref": "#/components/schemas/StoredProfilePermissions"
               },
               {
-                "description": "Stored profile levels by field. Only name and avatar permit writes; email is read-only, including under a wildcard."
+                "description": "Stored profile levels by field. Only the `username` entry permits writing the username; a wildcard reads it."
               }
             ]
           },
@@ -8729,7 +8760,7 @@
                 "$ref": "#/components/schemas/StoredProfilePermissions"
               },
               {
-                "description": "Stored profile levels by field. Only name and avatar permit writes; email is read-only, including under a wildcard."
+                "description": "Stored profile levels by field. Only the `username` entry permits writing the username; a wildcard reads it."
               }
             ]
           },
@@ -8970,6 +9001,29 @@
             "type": "boolean",
             "description": "`true` if exception reports are sent. Enabling requires both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.",
             "default": true
+          },
+          "telemetry_enabled": {
+            "type": "boolean",
+            "description": "`true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.",
+            "default": true
+          },
+          "otel_sample_ratio": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "The share of traces Marfa exports, from 0 to 1. A trace that holds an error is exported whatever this says. Absent: `0.05`.",
+            "default": 0.05
+          },
+          "otel_service_name": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "The service name on everything Marfa exports, in place of a `service.name` in `otel_resource_attributes`. Absent: `marfa-server`. An archive doesn't carry it."
+          },
+          "otel_resource_attributes": {
+            "type": "string",
+            "maxLength": 4096,
+            "description": "Attributes Marfa adds to everything it exports, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces Marfa's own of the same name, such as `service.version`. An archive doesn't carry it.",
+            "example": "deployment.environment=staging"
           },
           "heartbeat_enabled": {
             "type": "boolean",
@@ -9467,9 +9521,16 @@
             "description": "Unique identifier for the owner.",
             "example": "01a10127-2109-7883-b687-be1e0823be15"
           },
-          "email": {
+          "username": {
             "type": "string",
-            "description": "Email address used to sign in."
+            "description": "The username the owner signs in with."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The owner's email address, or `null` when none is set. It plays no part in signing in."
           },
           "name": {
             "type": "string",
@@ -9490,6 +9551,7 @@
         },
         "required": [
           "id",
+          "username",
           "email",
           "name",
           "avatar",
@@ -12671,9 +12733,10 @@
               "addresses",
               "name",
               "logs",
-              "enforcement"
+              "enforcement",
+              "telemetry"
             ],
-            "description": "What the archive doesn't hold. `enforcement` appears only when the instance that wrote the archive couldn't read its enforcement settings."
+            "description": "What the archive doesn't hold. `enforcement` appears only when the archive's instance couldn't read its enforcement settings, and `telemetry` only when `secrets_to_set` names a telemetry setting."
           },
           "message": {
             "type": "string",
@@ -37347,7 +37410,8 @@
                       "kind": "disk",
                       "locator": "/var/lib/marfa/blobs",
                       "attached_at": "2026-10-03T09:34:00.198Z",
-                      "detached_at": null
+                      "detached_at": null,
+                      "error": null
                     }
                   ],
                   "next_cursor": null,
@@ -51427,7 +51491,7 @@
                         "$ref": "#/components/schemas/ProfilePermissions"
                       },
                       {
-                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` implies read. `write` on `name` or `avatar` changes it, and only `email` at `write` changes the email address. `*` reads every field and at `write` changes only the name and avatar."
+                        "description": "Profile access by `name`, `username`, `email`, `avatar`, or `*`. `write` implies read. `write` on a field changes it, and only `username` at `write` changes the username. `*` reads every field and at `write` changes every field but the username."
                       }
                     ]
                   },
@@ -52719,7 +52783,7 @@
                         "$ref": "#/components/schemas/ProfilePermissions"
                       },
                       {
-                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` implies read. `write` on `name` or `avatar` changes it, and only `email` at `write` changes the email address. `*` reads every field and at `write` changes only the name and avatar."
+                        "description": "Profile access by `name`, `username`, `email`, `avatar`, or `*`. `write` implies read. `write` on a field changes it, and only `username` at `write` changes the username. `*` reads every field and at `write` changes every field but the username."
                       }
                     ]
                   },
@@ -54418,7 +54482,7 @@
             }
           },
           "400": {
-            "description": "An RFC 6749 error, when Marfa can't send the browser back to the app:\n- `invalid_request`: `client_id` is missing, or a parameter is repeated.\n- `invalid_client` or `invalid_client_metadata`: the client ID metadata document is unreadable or invalid.\n- `invalid_scope`: a scope writes the owner's email.\n- `invalid_target`: a resource isn't served here.\n\n`X-Marfa-Reach` gets `validation_error`.",
+            "description": "An RFC 6749 error, when Marfa can't send the browser back to the app:\n- `invalid_request`: `client_id` is missing, or a parameter is repeated.\n- `invalid_client` or `invalid_client_metadata`: the client ID metadata document is unreadable or invalid.\n- `invalid_target`: a resource isn't served here.\n\n`X-Marfa-Reach` gets `validation_error`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -55456,11 +55520,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "email": {
+                  "username": {
                     "type": "string",
-                    "maxLength": 254,
-                    "format": "email",
-                    "description": "Email address the owner uses to sign in."
+                    "maxLength": 64,
+                    "description": "The username the owner signs in with: 1 to 64 letters a to z, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed."
                   },
                   "password": {
                     "type": "string",
@@ -55469,7 +55532,13 @@
                   "name": {
                     "type": "string",
                     "maxLength": 200,
-                    "description": "Display name. Defaults to the part before @ in the email address when omitted or blank."
+                    "description": "Display name. Defaults to the username when omitted or blank."
+                  },
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "description": "The owner's email address. It plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed."
                   },
                   "code": {
                     "type": "string",
@@ -55477,7 +55546,7 @@
                   }
                 },
                 "required": [
-                  "email",
+                  "username",
                   "password"
                 ],
                 "additionalProperties": false
@@ -55495,6 +55564,7 @@
                 },
                 "example": {
                   "id": "01926a3c-4b1d-7e52-9a8f-3c5d7e1b2a40",
+                  "username": "alex",
                   "email": "alex@example.com",
                   "name": "Alex Example",
                   "avatar": null,
@@ -55732,7 +55802,7 @@
           "Owner"
         ],
         "summary": "Get the owner's profile",
-        "description": "Returns the fields of the owner's profile that your credential can read: `name`, `email` and `avatar`, each only with profile read permission for that field. A field you can't read is left out, so a credential that can read none gets an empty object.",
+        "description": "Returns the owner's profile fields that your credential can read: `name`, `username`, `email` and `avatar`, each with its own read permission. A field you can't read is left out, so a credential that can read none gets an empty object.",
         "security": [
           {
             "bearerAuth": []
@@ -55748,6 +55818,7 @@
                 },
                 "example": {
                   "name": "Alex Example",
+                  "username": "alex",
                   "email": "alex@example.com",
                   "avatar": null
                 }
@@ -55945,7 +56016,7 @@
           "Owner"
         ],
         "summary": "Update the owner's profile",
-        "description": "Updates the owner's email or name, or removes the avatar, and returns the profile fields you can read. Requires profile write permission for every submitted field. All fields commit together. Changing the email needs no confirmation.",
+        "description": "Updates the owner's username, email or name, or removes the avatar, and returns the profile fields you can read. Requires profile write permission for every submitted field. All fields commit together. Changing the username needs no confirmation.",
         "security": [
           {
             "bearerAuth": []
@@ -55958,11 +56029,20 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "email": {
+                  "username": {
                     "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "The username the owner signs in with: 1 to 64 letters a to z, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. Signing in with the old username stops at once."
+                  },
+                  "email": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
                     "format": "email",
                     "maxLength": 254,
-                    "description": "The email address the owner signs in with. Marfa stores it in lowercase, with spaces at each end trimmed."
+                    "description": "The owner's email address, which plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed. Set it to `null` to remove it."
                   },
                   "name": {
                     "type": "string",
@@ -55990,6 +56070,7 @@
                 },
                 "example": {
                   "name": "Alex Example",
+                  "username": "alex",
                   "email": "alex@example.com",
                   "avatar": null
                 }
@@ -56578,6 +56659,7 @@
                 },
                 "example": {
                   "name": "Alex Example",
+                  "username": "alex",
                   "email": "alex@example.com",
                   "avatar": "https://marfa.example.com/profile/avatar"
                 }
@@ -59975,6 +60057,79 @@
                     "description": "The PostHog project token Marfa sends its fault reports with, with no whitespace around it. It needs `posthog_host` set too. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
                     "writeOnly": true
                   },
+                  "telemetry_enabled": {
+                    "type": "boolean",
+                    "description": "`true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.",
+                    "default": true
+                  },
+                  "otel_exporter_otlp_endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, log records to, under `v1/logs`, and metrics to, under `v1/metrics`, keeping its query. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true,
+                    "example": "https://collector.example:4318"
+                  },
+                  "otel_exporter_otlp_traces_endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The URL Marfa posts traces to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_logs_endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The URL Marfa posts log records to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_metrics_endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The URL Marfa posts metrics to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_headers": {
+                    "type": "string",
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with every OTLP export, as comma-separated `key=value` pairs with percent-encoded values and no whitespace around them. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true,
+                    "example": "authorization=Bearer%20token"
+                  },
+                  "otel_exporter_otlp_traces_headers": {
+                    "type": "string",
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with trace exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_logs_headers": {
+                    "type": "string",
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with log exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_metrics_headers": {
+                    "type": "string",
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with metric exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_sample_ratio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "The share of traces Marfa exports, from 0 to 1. A trace that holds an error is exported whatever this says. Absent: `0.05`.",
+                    "default": 0.05
+                  },
+                  "otel_service_name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "description": "The service name on everything Marfa exports, in place of a `service.name` in `otel_resource_attributes`. Absent: `marfa-server`. An archive doesn't carry it."
+                  },
+                  "otel_resource_attributes": {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "description": "Attributes Marfa adds to everything it exports, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces Marfa's own of the same name, such as `service.version`. An archive doesn't carry it.",
+                    "example": "deployment.environment=staging"
+                  },
                   "secrets_set": {
                     "type": "array",
                     "items": {
@@ -60819,6 +60974,115 @@
                     "maxLength": 256,
                     "description": "The PostHog project token Marfa sends its fault reports with, with no whitespace around it. It needs `posthog_host` set too. Marfa never returns it. `null` or an empty string removes it.",
                     "writeOnly": true
+                  },
+                  "telemetry_enabled": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "description": "`true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`. `null` removes it, so the server's default applies.",
+                    "default": true
+                  },
+                  "otel_exporter_otlp_endpoint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, log records to, under `v1/logs`, and metrics to, under `v1/metrics`, keeping its query. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true,
+                    "example": "https://collector.example:4318"
+                  },
+                  "otel_exporter_otlp_traces_endpoint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "The URL Marfa posts traces to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_logs_endpoint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "The URL Marfa posts log records to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_metrics_endpoint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "The URL Marfa posts metrics to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_headers": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with every OTLP export, as comma-separated `key=value` pairs with percent-encoded values and no whitespace around them. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true,
+                    "example": "authorization=Bearer%20token"
+                  },
+                  "otel_exporter_otlp_traces_headers": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with trace exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_logs_headers": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with log exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_metrics_headers": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with metric exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_sample_ratio": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "The share of traces Marfa exports, from 0 to 1. A trace that holds an error is exported whatever this says. Absent: `0.05`. `null` removes it, so the server's default applies.",
+                    "default": 0.05
+                  },
+                  "otel_service_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 255,
+                    "description": "The service name on everything Marfa exports, in place of a `service.name` in `otel_resource_attributes`. Absent: `marfa-server`. An archive doesn't carry it. `null` removes it, so the server's default applies."
+                  },
+                  "otel_resource_attributes": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 4096,
+                    "description": "Attributes Marfa adds to everything it exports, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces Marfa's own of the same name, such as `service.version`. An archive doesn't carry it. `null` removes it, so the server's default applies.",
+                    "example": "deployment.environment=staging"
                   },
                   "secrets_set": {
                     "type": "array",

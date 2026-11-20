@@ -35,10 +35,10 @@ use serde_json::{Map, Value};
 
 use super::results::{Outcome, Stop, check};
 use crate::app::App;
-use crate::app::access::Caller;
+use crate::app::access::{AdminTask, Caller};
 use crate::app::refusal::Refusal;
 
-/// The endpoint that serves a tool: `/mcp` serves the items group at every endpoint.
+/// An MCP endpoint; each serves the items tools as well as its own.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Group {
     Items,
@@ -67,44 +67,56 @@ struct Definition {
     meta: Option<Value>,
 }
 
-fn definitions() -> Vec<(Group, Definition)> {
+/// Where a tool lives: an admin tool names the task whose permissions open it.
+#[derive(Clone, Copy)]
+enum Home {
+    Items,
+    Schema,
+    Admin(AdminTask),
+}
+
+fn definitions() -> Vec<(Home, Definition)> {
+    use AdminTask as Task;
     vec![
-        (Group::Items, overview::definition()),
-        (Group::Items, find::definition()),
-        (Group::Items, get::definition()),
-        (Group::Items, rows::read_definition()),
-        (Group::Items, create::definition()),
-        (Group::Items, update::definition()),
-        (Group::Items, rows::write_definition()),
-        (Group::Items, delete::definition()),
-        (Group::Schema, types::definition()),
-        (Group::Schema, views::definition()),
-        (Group::Schema, bulk::definition()),
-        (Group::Schema, moving::definition()),
-        (Group::Schema, docs::definition()),
-        (Group::Schema, sources::list_definition()),
-        (Group::Schema, sources::name_definition()),
-        (Group::Admin, health::definition()),
-        (Group::Admin, audit::definition()),
-        (Group::Admin, keys::list_definition()),
-        (Group::Admin, keys::manage_definition()),
-        (Group::Admin, revoke::definition()),
-        (Group::Admin, webhooks::list_definition()),
-        (Group::Admin, webhooks::manage_definition()),
-        (Group::Admin, settings::read_definition()),
-        (Group::Admin, settings::change_definition()),
-        (Group::Admin, trash::definition()),
-        (Group::Admin, purge::definition()),
-        (Group::Admin, apps::list_definition()),
-        (Group::Admin, apps::narrow_definition()),
-        (Group::Admin, backups::list_definition()),
-        (Group::Admin, backups::take_definition()),
-        (Group::Admin, maintain::definition()),
-        (Group::Admin, connectors::list_definition()),
-        (Group::Admin, connectors::endpoint_definition()),
-        (Group::Admin, files::definition()),
-        (Group::Admin, sign_ins::list_definition()),
-        (Group::Admin, sign_ins::rename_definition()),
+        (Home::Items, overview::definition()),
+        (Home::Items, find::definition()),
+        (Home::Items, get::definition()),
+        (Home::Items, rows::read_definition()),
+        (Home::Items, create::definition()),
+        (Home::Items, update::definition()),
+        (Home::Items, rows::write_definition()),
+        (Home::Items, delete::definition()),
+        (Home::Schema, types::definition()),
+        (Home::Schema, views::definition()),
+        (Home::Schema, bulk::definition()),
+        (Home::Schema, moving::definition()),
+        (Home::Schema, docs::definition()),
+        (Home::Schema, sources::list_definition()),
+        (Home::Schema, sources::name_definition()),
+        (Home::Admin(Task::Health), health::definition()),
+        (Home::Admin(Task::Audit), audit::definition()),
+        (Home::Admin(Task::Keys), keys::list_definition()),
+        (Home::Admin(Task::Keys), keys::manage_definition()),
+        (Home::Admin(Task::Keys), revoke::definition()),
+        (Home::Admin(Task::Webhooks), webhooks::list_definition()),
+        (Home::Admin(Task::Webhooks), webhooks::manage_definition()),
+        (Home::Admin(Task::Settings), settings::read_definition()),
+        (Home::Admin(Task::Settings), settings::change_definition()),
+        (Home::Admin(Task::Trash), trash::definition()),
+        (Home::Admin(Task::Trash), purge::definition()),
+        (Home::Admin(Task::Apps), apps::list_definition()),
+        (Home::Admin(Task::Apps), apps::narrow_definition()),
+        (Home::Admin(Task::Backups), backups::list_definition()),
+        (Home::Admin(Task::Backups), backups::take_definition()),
+        (Home::Admin(Task::Maintain), maintain::definition()),
+        (Home::Admin(Task::Connectors), connectors::list_definition()),
+        (
+            Home::Admin(Task::Connectors),
+            connectors::endpoint_definition(),
+        ),
+        (Home::Admin(Task::Files), files::definition()),
+        (Home::Admin(Task::SignIns), sign_ins::list_definition()),
+        (Home::Admin(Task::SignIns), sign_ins::rename_definition()),
     ]
 }
 
@@ -125,7 +137,10 @@ fn works_on_items(name: &str) -> bool {
     )
 }
 
-fn offered(caller: &Caller, name: &str) -> bool {
+fn offered(caller: &Caller, home: Home, name: &str) -> bool {
+    if let Home::Admin(task) = home {
+        return caller.may_do(task);
+    }
     if works_on_items(name) && !caller.reaches_a_type() {
         return false;
     }
@@ -140,37 +155,29 @@ fn offered(caller: &Caller, name: &str) -> bool {
         types::NAME => caller.may_save_types(),
         views::NAME => caller.writes_views(),
         docs::NAME | sources::LIST_NAME | sources::NAME_NAME => true,
-        health::NAME => caller.may_read_health(),
-        audit::NAME => caller.may_read_audit(),
-        keys::LIST_NAME | keys::MANAGE_NAME | revoke::NAME => caller.may_use_key_door(),
-        webhooks::LIST_NAME | webhooks::MANAGE_NAME => caller.may_manage_webhooks(),
-        settings::READ_NAME | settings::CHANGE_NAME => caller.may_change_settings(),
-        trash::NAME | purge::NAME => caller.may_purge_items(),
-        apps::LIST_NAME | apps::NARROW_NAME => caller.may_manage_apps(),
-        backups::LIST_NAME | backups::TAKE_NAME => caller.may_manage_backups(),
-        maintain::NAME => caller.may_maintain(),
-        connectors::LIST_NAME | connectors::ENDPOINT_NAME => caller.may_manage_connectors(),
-        files::NAME => caller.may_manage_files(),
-        sign_ins::LIST_NAME | sign_ins::RENAME_NAME => caller.may_manage_sign_ins(),
         _ => false,
     }
 }
 
-fn served(group: Group, tool: Group) -> bool {
-    tool == Group::Items || tool == group
+fn served(group: Group, home: Home) -> bool {
+    match home {
+        Home::Items => true,
+        Home::Schema => group == Group::Schema,
+        Home::Admin(_) => group == Group::Admin,
+    }
 }
 
 /// Whether the credential is offered any tool, which is whether the server declares them.
 pub fn any_offered(caller: &Caller, group: Group) -> bool {
     definitions()
         .iter()
-        .any(|(home, tool)| served(group, *home) && offered(caller, tool.name))
+        .any(|(home, tool)| served(group, *home) && offered(caller, *home, tool.name))
 }
 
 pub fn listing(caller: &Caller, group: Group) -> Vec<Value> {
     definitions()
         .into_iter()
-        .filter(|(home, tool)| served(group, *home) && offered(caller, tool.name))
+        .filter(|(home, tool)| served(group, *home) && offered(caller, *home, tool.name))
         .map(|(_, tool)| tool)
         .map(|tool| {
             let mut listed = Map::new();
@@ -198,7 +205,7 @@ pub async fn call(
     exact: Result<(), Refusal>,
 ) -> Option<Outcome> {
     let (_, tool) = definitions().into_iter().find(|(home, tool)| {
-        tool.name == name && served(group, *home) && offered(caller, tool.name)
+        tool.name == name && served(group, *home) && offered(caller, *home, tool.name)
     })?;
     let arguments = Value::Object(arguments);
     if let Err(message) = check(&tool.input, &arguments, "") {
@@ -303,4 +310,22 @@ fn texts(arguments: &Map<String, Value>, name: &str) -> Vec<String> {
 fn parsed(text: &str) -> Result<Value, Stop> {
     serde_json::from_str(text)
         .map_err(|_| Stop::refused(Refusal::internal("an item answer did not read")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_admin_task_has_a_tool_at_admin() {
+        let homes: Vec<Home> = definitions().into_iter().map(|(home, _)| home).collect();
+        for task in AdminTask::ALL {
+            assert!(
+                homes
+                    .iter()
+                    .any(|home| matches!(home, Home::Admin(listed) if listed == task)),
+                "{task:?} opens no tool"
+            );
+        }
+    }
 }

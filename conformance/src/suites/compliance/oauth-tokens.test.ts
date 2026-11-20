@@ -27,6 +27,12 @@ import {
   type App,
   type TokenAnswer,
 } from "../../utils/signed-in.js";
+import {
+  ADMIN_TOOLS,
+  ALL_TOOLS,
+  connectMcp,
+  toolNames,
+} from "../../utils/mcp.js";
 
 /**
  * What an app does with the tokens a person's approval gave it: refresh and
@@ -362,11 +368,15 @@ describe("the resource parameter", () => {
 });
 
 describe("the MCP endpoint", () => {
-  /** A token for `scope`, with `resource` named at authorization and at the token request. */
+  /**
+   * A token for `scope`, with `resource` named at authorization and at the
+   * token request, approved with the scopes it names or with `access`.
+   */
   async function tokenNaming(
     app: App,
     scope: string,
     resource: string,
+    access?: string,
   ): Promise<string> {
     const proof = pkce();
     const consent = await sentTo(
@@ -380,9 +390,16 @@ describe("the MCP endpoint", () => {
         cookie,
       ),
     );
-    const sent = await decide(server, origin, cookie, consent!, true, [
-      ...scope.split(" "),
-    ]);
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      consent!,
+      true,
+      access === undefined ? scope.split(" ") : [],
+      [],
+      access,
+    );
     const issued = await token(server, {
       grant_type: "authorization_code",
       code: sent?.searchParams.get("code") ?? "",
@@ -451,6 +468,59 @@ describe("the MCP endpoint", () => {
     const saved = await create("core.task");
     expect(saved.status).toBe(200);
     expect(await saved.text()).toContain("created");
+  });
+
+  it("lists every admin tool at /mcp/admin to an app that asks for exactly the scopes its metadata names and is given full access", async () => {
+    const metadata = await fetch(
+      `${server.apiUrl}/.well-known/oauth-protected-resource/mcp/admin`,
+    );
+    expect(metadata.status).toBe(200);
+    const advertised = (
+      (await metadata.json()) as { scopes_supported: string[] }
+    ).scopes_supported;
+    const scope = advertised.join(" ");
+    const app = await registerApp(server, scope);
+    const accessToken = await tokenNaming(
+      app,
+      scope,
+      `${origin}/mcp/admin`,
+      "full",
+    );
+    const connection = await connectMcp(
+      server.apiUrl,
+      accessToken,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      expect(await toolNames(connection)).toEqual(
+        [...ALL_TOOLS, ...ADMIN_TOOLS].sort(),
+      );
+    } finally {
+      await connection.close();
+    }
+
+    // A client naming no scope is still registered for what /mcp names alone.
+    const items = (
+      (await (
+        await fetch(`${server.apiUrl}/.well-known/oauth-protected-resource/mcp`)
+      ).json()) as { scopes_supported: string[] }
+    ).scopes_supported;
+    const unnamed = await fetch(`${server.apiUrl}/oauth/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "names no scope",
+        application_type: "native",
+        redirect_uris: [CALLBACK],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+      }),
+    });
+    expect(unnamed.status).toBe(201);
+    const registered = ((await unnamed.json()) as { scope: string }).scope;
+    expect(registered.split(" ").sort()).toEqual([...items].sort());
+    expect(advertised.length).toBeGreaterThan(items.length);
   });
 
   it("answers a tool call naming a type nothing registered with the tool's error, not a challenge", async () => {

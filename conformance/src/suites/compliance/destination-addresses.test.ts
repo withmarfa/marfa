@@ -185,6 +185,104 @@ describe("where the server may send", () => {
   );
 
   it(
+    "refuses an OTLP endpoint written as a private address while the switch is off",
+    async () => {
+      const server = await bootFreshServer("switch-otlp-literals", PUBLIC_ONLY);
+      try {
+        const socket = socketOf(server);
+        const keys = [
+          "otel_exporter_otlp_endpoint",
+          "otel_exporter_otlp_traces_endpoint",
+          "otel_exporter_otlp_logs_endpoint",
+          "otel_exporter_otlp_metrics_endpoint",
+        ];
+        // A signal's endpoint is set beside the base, so the switch is the one
+        // rule it can break.
+        const base = (key: string) =>
+          key === "otel_exporter_otlp_endpoint"
+            ? {}
+            : { otel_exporter_otlp_endpoint: "https://collector.example.test" };
+        for (const key of keys) {
+          for (const host of ["127.0.0.1:4318", "[::1]:4318", "10.1.2.3"]) {
+            const refused = await socket.patchConfig({
+              ...base(key),
+              [key]: `http://${host}/hush-${key}`,
+            });
+            expect(refused.status, `${key} ${host}`).toBe(400);
+            const said = JSON.stringify(refused.error);
+            expect(said).toContain(key);
+            expect(said).toContain(SWITCH);
+            expect(said).not.toContain(`hush-${key}`);
+          }
+          // The witness: the same setting takes a name, which a lookup judges.
+          await setFrom(socket, {
+            ...base(key),
+            [key]: "http://receiver.example.test:4318/",
+          });
+          await setFrom(socket, {
+            otel_exporter_otlp_endpoint: null,
+            otel_exporter_otlp_traces_endpoint: null,
+            otel_exporter_otlp_logs_endpoint: null,
+            otel_exporter_otlp_metrics_endpoint: null,
+          });
+        }
+      } finally {
+        await server.stop();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "sends no trace or log record to a name that leads to a private address until the switch is on",
+    async () => {
+      const sinks = await startFaultSinks();
+      const server = await bootFreshServer("switch-otlp", {
+        ...PUBLIC_ONLY,
+        MARFA_OTEL_SAMPLE_RATIO: "1",
+      });
+      try {
+        const { operator, working } = clientsFor(server);
+        const write = async (requestId: string) => {
+          const written = await working.rawRequest("/items", {
+            method: "POST",
+            headers: { "X-Request-ID": requestId },
+            body: { type: "core.note", properties: { body: "x" } },
+          });
+          expect(written.status).toBe(201);
+        };
+        await setFrom(operator, {
+          otel_exporter_otlp_endpoint: byName(
+            sinks.serverEnv().MARFA_OTEL_EXPORTER_OTLP_ENDPOINT!,
+          ),
+        });
+        const unsent = `otlp-unsent-${randomUUID()}`;
+        await write(unsent);
+        await setFrom(socketOf(server), { [SWITCH]: true });
+        const sent = `otlp-sent-${randomUUID()}`;
+        await write(sent);
+        await server.stop();
+
+        // The witness: the write once the switch is on arrives.
+        const named = (requestId: string, signal: "traces" | "logs") =>
+          sinks.exports.filter(
+            (post) =>
+              post.signal === signal &&
+              JSON.stringify(post.body).includes(`"${requestId}"`),
+          );
+        for (const signal of ["traces", "logs"] as const) {
+          expect(named(sent, signal), signal).not.toEqual([]);
+          expect(named(unsent, signal), signal).toEqual([]);
+        }
+      } finally {
+        await server.stop();
+        await sinks.close();
+      }
+    },
+    COLLECTOR_TEST_TIMEOUT_MS,
+  );
+
+  it(
     "sends no heartbeat to a name that leads to a private address until the switch is on",
     async () => {
       const beats = await beatReceiver();
@@ -214,10 +312,7 @@ describe("where the server may send", () => {
     "sends no exception report to a name that leads to a private address until the switch is on",
     async () => {
       const sinks = await startFaultSinks();
-      const server = await bootFreshServer("switch-posthog", {
-        ...PUBLIC_ONLY,
-        OTEL_SDK_DISABLED: "false",
-      });
+      const server = await bootFreshServer("switch-posthog", PUBLIC_ONLY);
       try {
         const { operator, working } = clientsFor(server);
         const fail = async (requestId: string) => {

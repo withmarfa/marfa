@@ -1016,6 +1016,7 @@ fn found(
                     id: id.to_string(),
                     held: Some(Box::new(row)),
                     before,
+                    absent: false,
                 },
             )
         }),
@@ -1029,6 +1030,7 @@ fn found(
                     id: id.to_string(),
                     held: Some(Box::new(edge)),
                     before,
+                    absent: false,
                 },
             ))
         }
