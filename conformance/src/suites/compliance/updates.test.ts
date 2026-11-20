@@ -382,7 +382,7 @@ it("follows a redirect of the release check only on the address it asks, and ask
   moved = { status: 404, body: "" };
 });
 
-it("decides a start on the key as it stands when the update would begin, refusing one that lost instance.maintain", async () => {
+it("decides a start on the key as it stands when the update would begin, refusing one that lost instance.maintain or ended", async () => {
   reply = { status: 200, body: release(await newer()) };
   await pointAtFeed();
   await check();
@@ -390,7 +390,7 @@ it("decides a start on the key as it stands when the update would begin, refusin
     baseUrl: server.apiUrl,
     controlSocket: server.controlSocket,
   });
-  const started = async (narrowed: boolean) => {
+  const started = async (change: "none" | "narrowed" | "revoked") => {
     const minted = await owner.createKey({
       label: "maintain-held",
       source: `updates-held-${randomUUID()}`,
@@ -409,24 +409,31 @@ it("decides a start on the key as it stands when the update would begin, refusin
     await server.setFault("hold:update-start");
     const pending = caller.startUpdate();
     await server.waitForHold("hold:update-start");
-    if (narrowed) {
+    if (change === "narrowed") {
       const narrow = await owner.updateKey(minted.data.id, {
         permissions: ["instance.read"],
       });
       expect(narrow.status, JSON.stringify(narrow.error)).toBe(200);
+    }
+    if (change === "revoked") {
+      const revoked = await owner.revokeKey(minted.data.id);
+      expect(revoked.status, JSON.stringify(revoked.error)).toBe(200);
     }
     await server.clearFault("hold:update-start");
     return pending;
   };
 
   // The witness: held the same way and left alone, the key's start is decided past its access.
-  const kept = await started(false);
+  const kept = await started("none");
   expect(kept.status).toBe(409);
   expect(kept.error?.error.code).toBe("update_unavailable");
 
-  const lost = await started(true);
+  const lost = await started("narrowed");
   expect(lost.status).toBe(403);
   expect(lost.error?.error.code).toBe("forbidden");
+  const ended = await started("revoked");
+  expect(ended.status).toBe(401);
+  expect(ended.error?.error.code).toBe("unauthorized");
   const after = await operator.getUpdate();
   expect(after.data.progress).toEqual({ state: "idle", release: null });
   expect(after.data.last).toBeNull();

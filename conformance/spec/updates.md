@@ -54,7 +54,7 @@ When the `release-check` housekeeping job asks for the newest release, the serve
 
 ### `updates/check-download-address`
 
-If the newest release names its archive or its checksum file at any address but `https://github.com/withmarfa/marfa/releases/download/v<version>/<name>`, then the server MUST treat the check as failed and fetch nothing from that address.
+If the newest release names the archive for the server's platform or its checksum file at any address but `https://github.com/withmarfa/marfa/releases/download/v<version>/<name>`, then the server MUST treat the check as failed and fetch nothing from that address.
 
 **Reason:** a release is offered only when the files it names are Marfa's own release files, so the reading of the update never offers one the swap would refuse.
 
@@ -126,11 +126,19 @@ If a newer release is available and the server cannot update itself, then the se
 
 ### `updates/start-current-access`
 
-If the credential that sent `POST /update` no longer holds `instance.maintain` when the server decides whether the update starts, then the server MUST answer `403 forbidden` and start no update.
+If the credential that sent `POST /update` has been narrowed so that it no longer holds `instance.maintain` when the server decides whether the update starts, then the server MUST answer `403 forbidden` and start no update.
 
-**Reason:** an update replaces the programs the server runs, so a key revoked or narrowed while the request waits must not start one.
+**Reason:** an update replaces the programs the server runs, so a key narrowed while the request waits must not start one.
 
-**Tests:** `compliance/updates.test.ts › decides a start on the key as it stands when the update would begin, refusing one that lost instance.maintain`.
+**Tests:** `compliance/updates.test.ts › decides a start on the key as it stands when the update would begin, refusing one that lost instance.maintain or ended`.
+
+### `updates/start-credential-ended`
+
+If the credential that sent `POST /update` has been revoked or has expired when the server decides whether the update starts, then the server MUST answer `401 unauthorized` and start no update.
+
+**Reason:** a credential that has ended is refused as any request bearing it is, and an update replaces the programs the server runs.
+
+**Tests:** `compliance/updates.test.ts › decides a start on the key as it stands when the update would begin, refusing one that lost instance.maintain or ended`.
 
 ### `updates/start-once`
 
@@ -162,7 +170,7 @@ When the server downloads a release's archive or checksum file, the server MUST 
 
 **Reason:** a release that points elsewhere, even at another repository or another release on GitHub, must not make the server fetch and run a program from there.
 
-**Tests:** `compliance/updates.test.ts › refuses a release that names its files anywhere but Marfa's release address, and asks nothing of that address`.
+**Tests:** waiting on #3177.
 
 ### `updates/swap-redirect-host`
 
