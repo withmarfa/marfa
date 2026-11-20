@@ -216,7 +216,7 @@ impl Destination {
     }
 }
 
-/// The host the parser read, never the text or a private-use scheme. A loopback URI names none.
+/// The host the parser read, or the scheme where it has no host. A loopback URI names none.
 pub fn shown_destination(uri: &str) -> Option<String> {
     let url = Url::parse(uri).ok()?;
     if on_the_loopback(&url) {

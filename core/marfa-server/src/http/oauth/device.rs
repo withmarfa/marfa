@@ -8,6 +8,7 @@ use super::{Browser, Fields, problem_answer};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::auth::Visit;
+use crate::app::auth::return_to::encoded;
 use crate::app::instance;
 use crate::app::oauth::authorize::sign_in_then;
 use crate::app::oauth::device::{
@@ -22,10 +23,6 @@ use crate::http::pages::{self, Answering, Consent, Notice};
 use crate::http::query;
 
 const ENTRY: &str = "/auth/device";
-
-fn encoded(text: &str) -> String {
-    url::form_urlencoded::byte_serialize(text.as_bytes()).collect()
-}
 
 fn to_entry(error: &str) -> Answer {
     redirect(StatusCode::FOUND, &format!("{ENTRY}?error={error}"))

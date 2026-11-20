@@ -482,7 +482,7 @@ pub async fn exchange_ticket(app: &App, ticket: &str, visit: Visit) -> Result<Se
 /// On a claimed instance, the code is a recovery code, where recovery is on.
 pub async fn exchange_code(app: &App, code: &str, visit: Visit) -> Result<SetupSession> {
     if !is_claimed(app).await? {
-        return exchange_setup_code(app, code, visit).await;
+        return exchange_unclaimed(app, code, visit).await;
     }
     if !app.settings.start.owner_recovery {
         return Err(already_claimed());
@@ -497,6 +497,11 @@ pub async fn exchange_setup_code(app: &App, code: &str, visit: Visit) -> Result<
     if is_claimed(app).await? {
         return Err(already_claimed());
     }
+    exchange_unclaimed(app, code, visit).await
+}
+
+/// The write judges again whether the instance is still unclaimed.
+async fn exchange_unclaimed(app: &App, code: &str, visit: Visit) -> Result<SetupSession> {
     count_code(app, visit.address)?;
     let digest = digest_of(&app.settings.start.key_salt, &normalized(code))?;
     exchange(app, "instance.setup_code.exchanged", CODE, digest, visit).await
