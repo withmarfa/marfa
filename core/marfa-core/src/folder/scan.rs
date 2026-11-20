@@ -1688,7 +1688,6 @@ impl Folder {
             .filter(|(path, _)| seen.contains(path))
             .map(|(_, item_id)| item_id.clone())
             .collect();
-        // Its binding gone, the record keeps nothing.
         for ((path, item_id), kept) in &journaled {
             if matches!(kept, Some(state::Kept::Carried(_)))
                 && !bound.contains(&(path.clone(), item_id.clone()))

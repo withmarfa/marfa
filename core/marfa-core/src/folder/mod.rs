@@ -2385,7 +2385,6 @@ impl Carriers {
         Ok(carriers)
     }
 
-    /// By identity, else by id line.
     fn carrying(&self, bound: &state::Bound) -> Option<&str> {
         bound
             .identity
