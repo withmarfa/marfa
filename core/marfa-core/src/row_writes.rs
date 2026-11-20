@@ -783,11 +783,11 @@ pub(crate) fn keep(conn: &Connection, item: &str, table: &str, ops: &[Op]) -> Re
         )?;
         let seq = match lowest {
             Some(lowest) => lowest - count + at,
-            None => conn.query_row_cached(
-                "SELECT seq FROM queue WHERE id = ?1",
-                [&queued.id],
-                |row| row.get(0),
-            )?,
+            None => {
+                conn.query_row_cached("SELECT seq FROM queue WHERE id = ?1", [&queued.id], |row| {
+                    row.get(0)
+                })?
+            }
         };
         record_laid(conn, &queued.id, seq, item, table, chunk, &queued.queued_at)?;
         store::record_verdict(

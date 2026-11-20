@@ -102,10 +102,7 @@ struct Unseen {
 /// Whether `server` is a time before `at`. A time that does not read orders
 /// nothing, so it is never taken as a loss.
 fn earlier(server: &str, at: &str) -> bool {
-    match (
-        marfa_rules::time::read(server),
-        marfa_rules::time::read(at),
-    ) {
+    match (marfa_rules::time::read(server), marfa_rules::time::read(at)) {
         (Ok(server), Ok(at)) => server < at,
         _ => false,
     }
@@ -489,8 +486,16 @@ mod tests {
 
     fn row(conn: &Connection, id: &str, count: i64, at: &str) {
         let values = json!({ "count": count });
-        crate::tables::hold_row(conn, "item", "steps", id, values.as_object().unwrap(), &[], at)
-            .unwrap();
+        crate::tables::hold_row(
+            conn,
+            "item",
+            "steps",
+            id,
+            values.as_object().unwrap(),
+            &[],
+            at,
+        )
+        .unwrap();
     }
 
     /// What a fill from the server alone leaves before the table is whole.
@@ -769,6 +774,58 @@ mod tests {
             let write = store::queued_write(&conn, id).unwrap().unwrap();
             assert_eq!(write.verdict, None, "{id}");
         }
+    }
+
+    /// With `MARFA_RESTORED_ROWS_BENCH` set to a row count, prints how long
+    /// each step takes at that size; run it in a release build:
+    ///
+    /// ```sh
+    /// MARFA_RESTORED_ROWS_BENCH=100000 cargo nextest run --release -p marfa-core restored_rows_bench --no-capture
+    /// ```
+    #[test]
+    fn restored_rows_bench_times_the_comparison() {
+        let rows: usize = std::env::var("MARFA_RESTORED_ROWS_BENCH")
+            .ok()
+            .and_then(|rows| rows.parse().ok())
+            .unwrap_or(1_000);
+        let conn = copy();
+        let tx = conn.unchecked_transaction().unwrap();
+        for at in 0..rows {
+            row(&tx, &format!("row-{at:06}"), at as i64, TEN);
+        }
+        tx.commit().unwrap();
+        let timed = |label: &str, step: &dyn Fn(&Connection)| {
+            let tx = conn.unchecked_transaction().unwrap();
+            let started = std::time::Instant::now();
+            step(&tx);
+            let took = started.elapsed();
+            tx.commit().unwrap();
+            println!(
+                "{rows:>7} rows  {label:<52} {:>9.1} ms",
+                took.as_secs_f64() * 1000.0
+            );
+        };
+        timed("lay the queue and judge the cap", &|tx| {
+            row_writes::lay_table(tx, "item", "steps").unwrap();
+            crate::tables::past_cap(tx, "item", "steps").unwrap();
+        });
+        timed("compare, nothing set aside", &|tx| {
+            keep_lost(tx, "item", "steps").unwrap();
+        });
+        timed("set aside every row", &|tx| hold_copy(tx).unwrap());
+        timed("compare every row, the server holds them all", &|tx| {
+            keep_lost(tx, "item", "steps").unwrap();
+        });
+        assert!(kept(&conn).is_empty());
+        hold_copy(&conn).unwrap();
+        conn.execute("DELETE FROM table_rows", []).unwrap();
+        timed("compare every row, the server holds none", &|tx| {
+            keep_lost(tx, "item", "steps").unwrap();
+        });
+        assert_eq!(
+            kept(&conn).len(),
+            rows.div_ceil(marfa_rules::rows::MAX_OPERATIONS)
+        );
     }
 
     #[test]

@@ -775,9 +775,7 @@ async function copySteps(
     }>(["list", item, "steps", "--limit", "1000"]),
   );
   expect(page.held, "the copy does not hold the table whole").toBe(true);
-  return Object.fromEntries(
-    page.data.map((row) => [row.id, row.values.count]),
-  );
+  return Object.fromEntries(page.data.map((row) => [row.id, row.values.count]));
 }
 
 function put(id: string, count: number): Operation {
@@ -914,8 +912,9 @@ describe("table rows a server restored behind lost", () => {
         (write) => write.reason === "server_restored",
       );
       expect(kept, "no row write was kept").toBeDefined();
-      expect((await queue(w.device)).find((write) => write.id === later.id))
-        .toMatchObject({ follows: kept?.id, verdict: null });
+      expect(
+        (await queue(w.device)).find((write) => write.id === later.id),
+      ).toMatchObject({ follows: kept?.id, verdict: null });
       value(await w.device.drain());
       expect(
         (await serverSteps(w.client(), item))[row],
@@ -927,11 +926,9 @@ describe("table rows a server restored behind lost", () => {
       expect(
         (await queue(w.device)).find((write) => write.id === later.id),
       ).toMatchObject({ verdict: "accepted" });
-      const read = await w
-        .client()
-        .rawRequest<{
-          data: { id: string; values: Record<string, unknown> }[];
-        }>(`/items/${item}/tables/steps/rows?limit=1000`);
+      const read = await w.client().rawRequest<{
+        data: { id: string; values: Record<string, unknown> }[];
+      }>(`/items/${item}/tables/steps/rows?limit=1000`);
       expect(read.data.data.find((one) => one.id === row)?.values).toEqual({
         count: 1,
         note: "later",
