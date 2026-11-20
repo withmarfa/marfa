@@ -1866,7 +1866,7 @@ When two folder queries both hold an item and each directory has its own bound f
 
 ### `folder-files/missing-file-trashed`
 
-When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or carries its identity and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
+When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or carries the missing file's identity or its item's ID, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
 
 **Reason:** the files of one sweep are decided before any of them is trashed, so files deleted together are all trashed, whichever the sweep reaches first and whether they link one another. A link line in a file shows the note it names by title, and a note already trashed by the same sweep would otherwise read as a change made elsewhere.
 
@@ -1874,7 +1874,7 @@ When a missing file’s deletion grace expires, no other directory holds the mov
 
 ### `folder-files/missing-file-trashed-path-reported`
 
-When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or carries its identity and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
+When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or carries the missing file's identity or its item's ID, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
 
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
 
@@ -1885,6 +1885,22 @@ While a file in the directory that the scan holds for a clash with another file'
 **Reason:** a file the scan does not read is still in the folder, and its item's history and links would otherwise point at the bin. The device follows the file once it can read it, and lets the item go once no file carries it.
 
 **Tests:** `device/folders-contract-b.test.ts › trashes no item whose file moved to a name the folder does not send`, `› keeps the item of a paused removal's file that returned under a name another file holds`.
+
+### `folder-files/missing-file-carried-quick-pass`
+
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, carries a missing file's identity or the ID of its item, when a folder watch runs a pass that looks only at the paths its events named, a device MUST NOT queue deletion of the missing file's item.
+
+**Reason:** a quick pass reads only the files its events named, so it cannot see that a file it did not look at carries the item. It keeps what the last full look found, and walks the directory before it journals a missing file that no journal entry covers.
+
+**Tests:** `device/folders-contract-b.test.ts › trashes no item a watch's quick passes meet while a file the folder does not send carries it`.
+
+### `folder-files/carried-path-new-file`
+
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, carries a missing file's identity or the ID of its item, when a new file appears at the missing file's path, a device MUST send the new file as a new item.
+
+**Reason:** the carried item's file is elsewhere in the directory, so a new file at its old path is another note. Sent as an edit, it would replace the carried item's words.
+
+**Tests:** `device/folders-contract-b.test.ts › makes a new item of a new file a watch finds at the path of a file the folder does not send`.
 
 ### `folder-files/missing-file-changed-revives`
 
