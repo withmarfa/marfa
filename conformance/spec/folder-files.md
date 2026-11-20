@@ -1002,7 +1002,7 @@ When a program writes to a file through a descriptor it held open across a pull,
 
 When a device replaces or removes a file and cannot tell that no program holds it open for writing, a device MUST keep the file it moved out under a name of the form `.marfa-kept-<id>.tmp`.
 
-**Reason:** a device cannot always tell, as on a network volume, for a sandboxed program or when a program opens the file during the pull.
+**Reason:** a device cannot always tell, as on a network volume, inside a sandboxed app or when a program opens the file during the pull.
 
 **Tests:** `device/folders-open-writer.test.ts › keeps a file it set aside where it cannot tell whether a program writes to it, and puts back what the program wrote`, `› keeps a file it set aside while a program holds it open, and deletes it once the program closes it unchanged`.
 
