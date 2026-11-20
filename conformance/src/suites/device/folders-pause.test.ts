@@ -103,6 +103,7 @@ describe("a paused directory", () => {
       await harness.folder.pull(),
     ]) {
       expect(refused.ok).toBe(false);
+      if (!refused.ok) expect(refused.refusal.code).toBe("sync_paused");
       expect(JSON.stringify(refused)).toContain("folders resume");
     }
     expect(sentTitles(harness), "a paused push sent a file").toEqual([
@@ -228,7 +229,8 @@ describe("a paused directory", () => {
 
     expect((await harness.folder.pause()).ok).toBe(true);
     await vi.waitFor(
-      () => expect(reasons(watching.stdout + watching.stderr)).toContain("paused"),
+      () =>
+        expect(reasons(watching.stdout + watching.stderr)).toContain("paused"),
       WAIT,
     );
     put(harness, "During.md", "during\n");

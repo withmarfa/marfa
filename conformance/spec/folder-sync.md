@@ -300,7 +300,7 @@ When `folders resume` names a directory whose sync is not paused, the CLI MUST r
 
 ### `folder-sync/pause-sync-refused`
 
-While a directory's sync is paused, the CLI MUST refuse `folders push`, with or without `--send-only`, and `folders pull` for that directory, naming `folders resume`.
+While a directory's sync is paused, the CLI MUST refuse `folders push`, with or without `--send-only`, and `folders pull` for that directory with the error code `sync_paused`, naming `folders resume`.
 
 **Reason:** A command a person types for a paused directory would otherwise undo the pause without saying so.
 

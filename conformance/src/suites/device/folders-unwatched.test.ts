@@ -167,7 +167,11 @@ describe("a watch that cannot watch part of a directory", () => {
         `---\ntitle: Note ${at}\n---\nnote ${at}\n`,
       );
     }
+    // A drop of this size waits for the person, who lets it go.
     expect((await made.folder.push()).ok).toBe(true);
+    expect((await made.folder.confirm()).ok).toBe(true);
+    expect((await made.folder.push()).ok).toBe(true);
+    expect(sentTitles(made)).toContain("Note 299");
     const watching = watchWith(made, refusal, SHORT);
     await vi.waitFor(
       () => expect(problemCodes(made), watching.stderr).toContain("unwatched"),
@@ -175,7 +179,7 @@ describe("a watch that cannot watch part of a directory", () => {
     );
     put(
       made,
-      `${UNWATCHED}/many/Late.md`,
+      `${UNWATCHED}/many/Zz Late.md`,
       "---\ntitle: Late\n---\nwritten where no event comes\n",
     );
     await vi.waitFor(
