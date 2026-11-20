@@ -5,6 +5,10 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
+#[cfg_attr(
+    not(any(target_os = "macos", target_os = "linux", target_os = "android")),
+    allow(dead_code)
+)]
 fn c_path(path: &Path) -> std::io::Result<CString> {
     CString::new(path.as_os_str().as_bytes())
         .map_err(|_| std::io::Error::from(ErrorKind::InvalidInput))
