@@ -1319,27 +1319,17 @@ impl App {
         Ok(recorded)
     }
 
+    /// Settles `claim`, an adopt's own claim on the backup folder, against the record without
+    /// letting go of the folder's lock first, so no other server settles it meanwhile. A claim
+    /// this does not settle stays held for the next follow.
+    pub(crate) async fn settle_claim(&self, folder: &Arc<Folder>, claim: Claim) -> Result<()> {
+        folder.hold_unsettled(claim);
+        self.settle_folder(folder).await
+    }
+
     /// Settles what an adopt that did not finish left in the backup folder against the record:
     /// its claim is promoted where the record names its store, and removed where it does not.
     pub(crate) async fn settle_folder(&self, folder: &Arc<Folder>) -> Result<()> {
-        self.settling(folder, |folder, recorded| folder.settle(recorded))
-            .await
-    }
-
-    /// Settles `claim`, an adopt's own claim on the backup folder, against the record without
-    /// letting go of the folder's lock first, so no other server settles it meanwhile.
-    pub(crate) async fn settle_claim(&self, folder: &Arc<Folder>, claim: Claim) -> Result<()> {
-        self.settling(folder, move |folder, recorded| {
-            folder.settle_claim(claim, recorded)
-        })
-        .await
-    }
-
-    async fn settling<T: Send + 'static>(
-        &self,
-        folder: &Arc<Folder>,
-        settle: impl FnOnce(&Folder, Option<String>) -> io::Result<T> + Send + 'static,
-    ) -> Result<T> {
         let deadline = self.blobs.check();
         let late = || {
             Refusal::new(
@@ -1361,11 +1351,11 @@ impl App {
             .read(move |tx| rows::folder_at(tx, &locator))
             .await?;
         match folder
-            .within(deadline, move |folder| settle(folder, recorded), |_| {})
+            .within(deadline, move |folder| folder.settle(recorded), |()| {})
             .await
         {
             None => Err(late()),
-            Some(Ok(settled)) => Ok(settled),
+            Some(Ok(())) => Ok(()),
             // The record stays in doubt, so the next follow tries again.
             Some(Err(error)) => {
                 tracing::warn!(%error, "The backup folder's claim by an adopt could not be settled");

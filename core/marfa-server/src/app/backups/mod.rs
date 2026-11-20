@@ -1424,7 +1424,7 @@ impl App {
                 deadline,
                 move |folder| folder.claim(&claiming),
                 move |claim| {
-                    if let Err(error) = keeping.give_up(claim) {
+                    if let Err(error) = keeping.give_up(&claim) {
                         tracing::warn!(%error, "A claim on the backup folder that was given up on was not undone");
                     }
                 },
@@ -1495,7 +1495,17 @@ impl App {
             }
             Err(refusal) => {
                 let undone = folder
-                    .within(deadline, move |folder| folder.give_up(claim), |_| {})
+                    .within(
+                        deadline,
+                        move |folder| {
+                            let given = folder.give_up(&claim);
+                            if given.is_err() {
+                                folder.hold_unsettled(claim);
+                            }
+                            given
+                        },
+                        |_| {},
+                    )
                     .await;
                 let why = match undone {
                     Some(Ok(false)) => return Err(refusal),
@@ -1542,8 +1552,7 @@ impl App {
                 deadline,
                 move |folder| {
                     faults.hold_blocking(HOLD_FOLDER_MARKER);
-                    folder.swap(claim.promote()?);
-                    Ok(())
+                    folder.promote(claim)
                 },
                 |()| {},
             )

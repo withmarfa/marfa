@@ -251,9 +251,14 @@ impl Claim {
         self.area.folder.unlocked_why()
     }
 
+    /// Whether the folder at the files area's path is still the one this claim holds. It blocks.
+    pub fn held(&self) -> bool {
+        folder_lock::open_dir(&self.root).is_ok_and(|dir| self.area.folder.is(&dir))
+    }
+
     /// Removes the pending marker where it still holds this claim; one already gone, or now
     /// another's, is left. It blocks.
-    pub fn undo(self) -> io::Result<()> {
+    pub fn undo(&self) -> io::Result<()> {
         if read_in(self.area.dir(), PENDING)?.is_none_or(|found| found.trim() != self.id) {
             return Ok(());
         }
@@ -266,7 +271,7 @@ impl Claim {
 
     /// Makes the pending marker the folder's marker, and answers the store it now holds. It
     /// blocks.
-    pub fn promote(self) -> io::Result<Disk> {
+    pub fn promote(&self) -> io::Result<Disk> {
         let dir = self.area.dir();
         match read_in(dir, PENDING)? {
             Some(found) if found.trim() == self.id => {}
@@ -279,10 +284,10 @@ impl Claim {
         rustix::fs::renameat(dir, PENDING, dir, MARKER)?;
         dir.sync_all()?;
         Ok(Disk {
-            id: self.id,
-            root: self.root,
+            id: self.id.clone(),
+            root: self.root.clone(),
             place: Place::BackupFiles,
-            held: Mutex::new(Some(self.area)),
+            held: Mutex::new(Some(self.area.clone())),
             returning: Returning::default(),
         })
     }
@@ -1266,6 +1271,7 @@ mod tests {
         assert!(area.join(TMP).is_dir() && area.join(LOCK).is_file());
         assert!(Disk::open(&area, Place::BackupFiles, None).is_err());
         claim.undo().unwrap();
+        drop(claim);
         assert!(!area.join(PENDING).exists());
         assert!(current.pending(&area).unwrap().is_none());
 

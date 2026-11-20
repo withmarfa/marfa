@@ -54,6 +54,8 @@ pub struct Folder {
     /// The store id of an adopt's claim for a store the record does not name, kept since the
     /// files area takes no locks and the claim may be another server's.
     kept: Mutex<Option<String>>,
+    /// An adopt's claim that did not settle, held with its lock until a follow settles it.
+    unsettled: Mutex<Option<disk::Claim>>,
     /// A temporary file staged before this is a leftover of a process that ended.
     started: SystemTime,
 }
@@ -122,7 +124,7 @@ enum Settled {
 /// Settles `claim`, held under its files area's lock, against `recorded`, the store the record
 /// names there: promoted where it is that store, and otherwise removed, unless the area takes
 /// no locks and the claim may be another server's. It blocks.
-fn settled(claim: disk::Claim, recorded: Option<&str>) -> io::Result<Settled> {
+fn settled(claim: &disk::Claim, recorded: Option<&str>) -> io::Result<Settled> {
     match recorded {
         Some(recorded) if claim.id() == recorded => {
             let promoted = claim.promote()?;
@@ -142,7 +144,7 @@ fn settled(claim: disk::Claim, recorded: Option<&str>) -> io::Result<Settled> {
 
 /// Removes `claim`, which the record does not name, unless its files area takes no locks: the
 /// claim there may since be another server's, so it is kept and its store id answered. It blocks.
-fn given_up(claim: disk::Claim) -> io::Result<Option<String>> {
+fn given_up(claim: &disk::Claim) -> io::Result<Option<String>> {
     if let Some(why) = claim.unlocked() {
         tracing::warn!(
             reason = %why,
@@ -161,7 +163,7 @@ fn given_up(claim: disk::Claim) -> io::Result<Option<String>> {
 fn settled_at_start(area: &Path, recorded: &str) -> (Option<Disk>, Option<String>) {
     let waiting = Disk::unmounted(recorded.to_string(), area.to_path_buf(), Place::BackupFiles);
     let settled = match waiting.pending(area) {
-        Ok(Some(claim)) => settled(claim, Some(recorded)),
+        Ok(Some(claim)) => settled(&claim, Some(recorded)),
         Ok(None) => return (None, None),
         Err(error) if error.kind() == io::ErrorKind::NotFound => return (None, None),
         Err(error) => Err(error),
@@ -270,6 +272,7 @@ impl Folder {
             files: RwLock::new(Arc::new(files)),
             claim_key,
             kept: Mutex::new(kept),
+            unsettled: Mutex::new(None),
             #[allow(
                 clippy::disallowed_methods,
                 reason = "compared with files' modification times, which are the host's time"
@@ -290,6 +293,10 @@ impl Folder {
     }
 
     pub fn let_go(&self) {
+        self.unsettled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         self.files().let_go();
     }
 
@@ -373,12 +380,30 @@ impl Folder {
 
     /// Gives up `claim`, an adopt's own claim that recorded nothing, and answers whether it was
     /// kept, as a claim in a files area that takes no locks is. It blocks.
-    pub fn give_up(&self, claim: disk::Claim) -> io::Result<bool> {
+    pub fn give_up(&self, claim: &disk::Claim) -> io::Result<bool> {
         let Some(id) = given_up(claim)? else {
             return Ok(false);
         };
         *self.kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(id);
         Ok(true)
+    }
+
+    /// Makes `claim`, an adopt's own claim that recorded its store, the files area's marker and
+    /// its store. A claim that could not be promoted is held until a follow settles it. It
+    /// blocks.
+    pub fn promote(&self, claim: disk::Claim) -> io::Result<()> {
+        let promoted = claim.promote();
+        self.swap(promoted.inspect_err(|_| self.hold_unsettled(claim))?);
+        Ok(())
+    }
+
+    /// Holds `claim`, with its files area's lock, for the next follow to settle against the
+    /// record.
+    pub fn hold_unsettled(&self, claim: disk::Claim) {
+        *self
+            .unsettled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(claim);
     }
 
     /// Makes `disk` the files area's store, and lets the one it replaces go.
@@ -391,36 +416,37 @@ impl Folder {
     }
 
     /// Settles a claim an adopt left in the files area against `recorded`, the store the record
-    /// names there. Whether or not the claim settles, a store the record names in place of the
-    /// one in use is used from then on, unmounted until a folder holding its marker is back, so
-    /// the record is never written back to the store it replaced. A files area that is not
-    /// there has nothing to settle now: a claim for the store the record names becomes the
-    /// marker once it is back. It blocks.
+    /// names there: the claim held since the adopt where the area is still the folder it holds,
+    /// and otherwise one read from the area. A files area that is not there has nothing to
+    /// settle now: a claim for the store the record names becomes the marker once it is back.
+    /// Whether or not the claim settles, a store the record names in place of the one in use is
+    /// used from then on, unmounted until a folder holding its marker is back, so the record is
+    /// never written back to the store it replaced. It blocks.
     pub fn settle(&self, recorded: Option<String>) -> io::Result<()> {
-        if self.reachable() {
-            return Ok(());
-        }
         let area = self.area();
-        let settled = match self.files().pending(&area) {
-            Ok(Some(claim)) => self.settle_held(claim, recorded.as_deref()),
-            Ok(None) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-            Err(error) => Err(error),
+        let held = self
+            .unsettled
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+            .filter(disk::Claim::held);
+        let settled = match held {
+            Some(claim) => self.settle_held(claim, recorded.as_deref()),
+            None if self.reachable() => Ok(()),
+            None => match self.files().pending(&area) {
+                Ok(Some(claim)) => self.settle_held(claim, recorded.as_deref()),
+                Ok(None) => Ok(()),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+                Err(error) => Err(error),
+            },
         };
         self.follow_record(recorded, area);
         settled
     }
 
-    /// Settles `claim`, an adopt's own claim on the files area that still holds its lock, against
-    /// `recorded`, as [`Folder::settle`] does. It blocks.
-    pub fn settle_claim(&self, claim: disk::Claim, recorded: Option<String>) -> io::Result<()> {
-        let settled = self.settle_held(claim, recorded.as_deref());
-        self.follow_record(recorded, self.area());
-        settled
-    }
-
     fn settle_held(&self, claim: disk::Claim, recorded: Option<&str>) -> io::Result<()> {
-        let kept = match settled(claim, recorded)? {
+        let settled = settled(&claim, recorded);
+        let kept = match settled.inspect_err(|_| self.hold_unsettled(claim))? {
             Settled::Promoted(disk) => {
                 self.swap(disk);
                 None
@@ -799,6 +825,7 @@ pub(crate) fn unmounted_at(root: &Path) -> Arc<Folder> {
         ))),
         claim_key: resolved(&area),
         kept: Mutex::new(None),
+        unsettled: Mutex::new(None),
         started: SystemTime::now(),
     })
 }
@@ -833,6 +860,7 @@ mod tests {
             )),
             claim_key: resolved(&area),
             kept: Mutex::new(None),
+            unsettled: Mutex::new(None),
             started: SystemTime::now(),
         }
     }
@@ -1253,7 +1281,7 @@ mod tests {
         let folder = unmounted_at(dir.path());
         let pending = dir.path().join(FILES).join("instance").join(disk::PENDING);
         let claim = folder.claim(&Uuid::now_v7().to_string()).unwrap();
-        assert!(!folder.give_up(claim).unwrap());
+        assert!(!folder.give_up(&claim).unwrap());
         assert!(!pending.exists());
         assert!(folder.kept_claim().is_none());
 
@@ -1264,7 +1292,7 @@ mod tests {
             let id = Uuid::now_v7().to_string();
             let kept = crate::server_lock::without_locks_answering(code, || {
                 let claim = folder.claim(&id)?;
-                folder.give_up(claim)
+                folder.give_up(&claim)
             })
             .unwrap();
             assert!(kept, "{code}");
