@@ -341,7 +341,7 @@ where
             Ok(())
         })
         .await;
-    // Begun work runs even if the empty commit after the decision failed.
+    // Begun work runs even if the commit after the decision failed.
     if begun.load(Ordering::SeqCst) {
         return Ok(());
     }
