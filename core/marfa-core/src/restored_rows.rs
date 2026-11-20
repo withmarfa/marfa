@@ -261,7 +261,7 @@ fn holdable(conn: &Connection, item: &str, table: &str) -> Result<Option<bool>> 
 
 /// Sets aside each row of every table the copy holds, as the server last
 /// answered it, and marks for comparison each table held or named by a
-/// removal this device made (`device/restored-rows-held`). A row already set
+/// removal this device made (`device/restored-rows-kept`). A row already set
 /// aside stays as it was first set aside.
 pub(crate) fn hold_copy(conn: &Connection) -> Result<()> {
     let tables: Vec<(String, String)> = conn

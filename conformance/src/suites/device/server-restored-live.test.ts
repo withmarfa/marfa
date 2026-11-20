@@ -898,16 +898,16 @@ describe("table rows a server restored behind lost", () => {
       const image = await w.original.image();
       value(await w.device.writeRows(item, "steps", [put(row, 2)]));
       await sent(w.device);
-
-      await w.restore(image);
-      expect(expired(await w.device.catchUp())).toBe("copy_expired");
-      value(await w.device.hydrate([type], "library"));
-      value(await w.device.fillTables());
       const later = value(
         await w.device.writeRows(item, "steps", [
           { op: "patch", id: row, values: { note: "later" } },
         ]),
       );
+
+      await w.restore(image);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.fillTables());
       const [kept] = (await queue(w.device)).filter(
         (write) => write.reason === "server_restored",
       );
