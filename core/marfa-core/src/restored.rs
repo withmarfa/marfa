@@ -799,6 +799,9 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
         // The server holds nothing the write could have changed, so a key
         // it went under answers nothing the write is owed.
         store::restored::send_afresh(tx, &row.id)?;
+        if row.kind == WriteKind::ReplaceTags {
+            store::forget_read_tags(tx, &row.id)?;
+        }
         let over_create = match row.kind {
             WriteKind::UpdateItem | WriteKind::DeleteItem => row
                 .item_id

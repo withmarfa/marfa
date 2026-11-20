@@ -191,8 +191,9 @@ pub(super) fn forget_versions_named(conn: &Connection, id: &str) -> Result<(), C
     super::meta::meta_delete(conn, &format!("{RESENT_AT_VERSION}{id}"))
 }
 
-/// A tag replace released under a fresh key names no tags it read.
-pub(super) fn forget_read_tags(conn: &Connection, id: &str) -> Result<(), CoreError> {
+/// A tag replace released under a fresh key, or sent over an item a kept
+/// create puts back, names no tags it read.
+pub(crate) fn forget_read_tags(conn: &Connection, id: &str) -> Result<(), CoreError> {
     let payload: String =
         conn.query_row_cached("SELECT payload FROM queue WHERE id = ?1", [id], |row| {
             row.get(0)

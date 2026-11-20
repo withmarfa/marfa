@@ -593,6 +593,51 @@ describe("a server restored behind work this device sent it", () => {
   );
 
   it(
+    "sends a tag replace the restored server refused, once its item is made again, naming no tags it read",
+    async () => {
+      const w = await world("restored-refused-tags");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const id = await made(w.device, "tagged since the backup");
+      value(await w.device.replaceTags(id, ["before"]));
+      await sent(w.device);
+
+      await w.restore(image);
+      value(await w.device.replaceTags(id, ["after"]));
+      const refused = value(await w.device.drain());
+      expect(refused.verdicts.map((verdict) => verdict.verdict)).toEqual([
+        "refused",
+      ]);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note"], "library"));
+      const replace = (await queue(w.device)).find(
+        (write) =>
+          write.kind === "replace_tags" &&
+          (write.body as { tags?: string[] }).tags?.[0] === "after",
+      );
+      expect(replace, "the refused replace was not kept").toBeDefined();
+      expect(
+        replace?.body,
+        "a replace sent over an item its create puts back still names tags the server never held",
+      ).toEqual({ tags: ["after"] });
+
+      value(await w.device.release({ reason: "server_restored" }));
+      value(await w.device.drain());
+      value(await w.device.drain());
+      const verdict = (await queue(w.device)).find(
+        (write) => write.id === replace?.id,
+      );
+      expect(
+        verdict?.verdict ?? "accepted",
+        "the replace was refused for tags the item put back never had",
+      ).not.toBe("blocked");
+      const read = await w.client().getItem(id);
+      expect(read.ok && read.data.metadata.tags).toContain("after");
+    },
+    TIMEOUT,
+  );
+
+  it(
     "puts back the tags the restored server lost from an item it still holds",
     async () => {
       const w = await world("restored-tags");

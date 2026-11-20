@@ -1640,6 +1640,14 @@ When a device queues a create under `device/restored-kept`, a device MUST queue 
 
 **Tests:** `device/server-restored-live.test.ts › keeps an item made since the backup, with an edit the restored server refused before the copy expired waiting on its create`.
 
+### `device/restored-waiting-replace-unread`
+
+When a device makes a tag replace wait on a create queued under `device/restored-kept`, a device MUST remove the tags the replace read (`queue-and-verdicts/replace-tags-names-read`) from it.
+
+**Reason:** the server lost the item those tags were read from, and the create puts it back without them, so a replace that named them would be refused as a conflict with work the person already made.
+
+**Tests:** `device/server-restored-live.test.ts › sends a tag replace the restored server refused, once its item is made again, naming no tags it read`.
+
 ### `device/restored-kept-blocked`
 
 When a device queues a write under `device/restored-kept`, a device MUST give it the verdict `blocked` with the reason `server_restored`.
