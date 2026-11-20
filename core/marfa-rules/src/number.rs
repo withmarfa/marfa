@@ -3,7 +3,7 @@
 use std::io;
 
 use serde::Serialize;
-use serde_json::ser::Formatter;
+use serde_json::ser::{Formatter, PrettyFormatter};
 use serde_json::{Map, Value};
 
 /// Fixed notation holds up to 21 digits before the point and down to 6 zeros after it; a number outside it is written with an exponent.
@@ -77,6 +77,74 @@ pub fn to_vec(value: &impl Serialize) -> serde_json::Result<Vec<u8>> {
     Ok(out)
 }
 
+/// A JSON value indented one `indent` per level as `serde_json` indents, every number written as [`text`] writes it.
+pub fn json_indented(value: &Value, indent: &str) -> String {
+    let mut out = Vec::with_capacity(256);
+    let formatter = Indented(PrettyFormatter::with_indent(indent.as_bytes()));
+    value
+        .serialize(&mut serde_json::Serializer::with_formatter(
+            &mut out, formatter,
+        ))
+        .expect("a JSON value serializes into memory");
+    String::from_utf8(out).expect("serde_json writes UTF-8")
+}
+
+struct Indented<'a>(PrettyFormatter<'a>);
+
+impl Formatter for Indented<'_> {
+    fn write_f32<W: ?Sized + io::Write>(&mut self, writer: &mut W, value: f32) -> io::Result<()> {
+        writer.write_all(text(f64::from(value)).as_bytes())
+    }
+
+    fn write_f64<W: ?Sized + io::Write>(&mut self, writer: &mut W, value: f64) -> io::Result<()> {
+        writer.write_all(text(value).as_bytes())
+    }
+
+    fn begin_array<W: ?Sized + io::Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.0.begin_array(writer)
+    }
+
+    fn end_array<W: ?Sized + io::Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.0.end_array(writer)
+    }
+
+    fn begin_array_value<W: ?Sized + io::Write>(
+        &mut self,
+        writer: &mut W,
+        first: bool,
+    ) -> io::Result<()> {
+        self.0.begin_array_value(writer, first)
+    }
+
+    fn end_array_value<W: ?Sized + io::Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.0.end_array_value(writer)
+    }
+
+    fn begin_object<W: ?Sized + io::Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.0.begin_object(writer)
+    }
+
+    fn end_object<W: ?Sized + io::Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.0.end_object(writer)
+    }
+
+    fn begin_object_key<W: ?Sized + io::Write>(
+        &mut self,
+        writer: &mut W,
+        first: bool,
+    ) -> io::Result<()> {
+        self.0.begin_object_key(writer, first)
+    }
+
+    fn begin_object_value<W: ?Sized + io::Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.0.begin_object_value(writer)
+    }
+
+    fn end_object_value<W: ?Sized + io::Write>(&mut self, writer: &mut W) -> io::Result<()> {
+        self.0.end_object_value(writer)
+    }
+}
+
 struct Digits;
 
 impl Formatter for Digits {
@@ -143,6 +211,18 @@ mod tests {
             r#"{"list":[100000000000000000000,0.0000015,1e+21,12,-3,1.5],"n":{"m":100000000000000000000}}"#
         );
         assert_eq!(json(&json!("a\"b")), r#""a\"b""#);
+    }
+
+    #[test]
+    fn indents_as_serde_json_does_and_writes_numbers_as_text_writes_them() {
+        let value: Value = serde_json::from_str(
+            r#"{"a":[1.0,0.00001,1e300],"b":{},"c":[],"d":{"e":-2.5e-9,"f":"x"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            json_indented(&value, " "),
+            "{\n \"a\": [\n  1,\n  0.00001,\n  1e+300\n ],\n \"b\": {},\n \"c\": [],\n \"d\": {\n  \"e\": -2.5e-9,\n  \"f\": \"x\"\n }\n}"
+        );
     }
 
     #[test]

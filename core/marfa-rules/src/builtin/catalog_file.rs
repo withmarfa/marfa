@@ -13,7 +13,7 @@ use super::{
     SEARCHED_FIELD_NAMES,
 };
 use crate::schema::{
-    Obj, Registry, edge_id, edge_type_from_request, labelled, plural_of, request_shape,
+    EdgeIssues, Obj, Registry, edge_id, edge_type_from_request, labelled, plural_of, request_shape,
     unread_edge_keys, validate_type,
 };
 
@@ -50,41 +50,23 @@ pub(super) fn digest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/types/shipped-shapes.sha256")
 }
 
-fn plain_number(file: &str, path: &str, value: &mut Value) -> Result<(), String> {
+/// Holds each number as JavaScript would read it: a whole number up to 2^53 stays whole, and a larger one is the double JavaScript reads it as.
+fn javascript_numbers(value: &mut Value) {
     match value {
-        Value::Number(number) if number.is_f64() => {
-            let held = number.as_f64().unwrap_or(f64::NAN);
-            if held.fract() == 0.0 && held.abs() <= LARGEST_WHOLE {
-                // Exactly integral and below 2^53, so the cast loses nothing.
-                let whole = held as i64;
-                *value = Value::from(whole);
-                Ok(())
-            } else if held.fract() != 0.0 && (1e-4..1e15).contains(&held.abs()) {
-                Ok(())
-            } else {
-                Err(format!(
-                    "{file}: {path} is {number}, which JavaScript and this writer print differently; write a whole number or a plain decimal"
-                ))
-            }
-        }
         Value::Number(number) => {
             let held = number.as_f64().unwrap_or(f64::NAN);
-            if held.abs() > LARGEST_WHOLE {
-                Err(format!(
-                    "{file}: {path} is {number}, beyond the whole numbers a property keeps as written"
-                ))
-            } else {
-                Ok(())
+            if held.abs() <= LARGEST_WHOLE {
+                if number.is_f64() && held.fract() == 0.0 {
+                    // Exactly integral and below 2^53, so the cast loses nothing.
+                    *value = Value::from(held as i64);
+                }
+            } else if !number.is_f64() {
+                *value = Value::from(held);
             }
         }
-        Value::Array(items) => items
-            .iter_mut()
-            .enumerate()
-            .try_for_each(|(at, item)| plain_number(file, &format!("{path}[{at}]"), item)),
-        Value::Object(members) => members
-            .iter_mut()
-            .try_for_each(|(key, member)| plain_number(file, &format!("{path}.{key}"), member)),
-        _ => Ok(()),
+        Value::Array(items) => items.iter_mut().for_each(javascript_numbers),
+        Value::Object(members) => members.values_mut().for_each(javascript_numbers),
+        _ => {}
     }
 }
 
@@ -109,9 +91,7 @@ pub(super) fn read_folder(folder: &Path) -> Result<Vec<Source>, String> {
             let Value::Object(mut row) = parsed else {
                 return Err(format!("{}: not a JSON object", path.display()));
             };
-            for (key, member) in &mut row {
-                plain_number(&name, key, member)?;
-            }
+            row.values_mut().for_each(javascript_numbers);
             Ok((name, row))
         })
         .collect()
@@ -308,8 +288,16 @@ pub(super) fn register_edges(edges: &[Source]) -> Result<Vec<Obj>, Vec<String>> 
         if !edge_id(&id) {
             problems.push("not an edge type identifier".into());
         }
-        match edge_type_from_request(row, &|_| None) {
+        let taken = |name: &str| {
+            found.iter().find_map(|edge| {
+                let held = edge.get("id").and_then(Value::as_str)?;
+                let reverse = edge.get("reverse_name").and_then(Value::as_str);
+                (held == name || reverse == Some(name)).then(|| held.to_string())
+            })
+        };
+        match edge_type_from_request(row, &taken) {
             Ok(stored) => found.push(stored),
+            Err(EdgeIssues::Conflict { message, .. }) => problems.push(message),
             Err(issue) => problems.push(format!("{issue:?}")),
         }
         refused.extend(
@@ -506,15 +494,7 @@ fn written_edge(stored: &Obj) -> Obj {
 
 /// Match the committed catalog's one-space indentation.
 fn pretty(value: &Value) -> String {
-    use serde::Serialize;
-    let mut bytes = Vec::new();
-    let formatter = serde_json::ser::PrettyFormatter::with_indent(b" ");
-    let mut serializer = serde_json::Serializer::with_formatter(&mut bytes, formatter);
-    value
-        .serialize(&mut serializer)
-        .unwrap_or_else(|e| panic!("a value that is JSON cannot fail to serialize: {e}"));
-    let mut text =
-        String::from_utf8(bytes).unwrap_or_else(|e| panic!("serde_json writes UTF-8: {e}"));
+    let mut text = crate::number::json_indented(value, " ");
     text.push('\n');
     text
 }
@@ -662,7 +642,7 @@ pub(super) fn write(root: &Path) -> Result<Written, Vec<String>> {
         let mut document = Obj::new();
         put(&mut document, "types", shapes(&type_shapes));
         put(&mut document, "edges", shapes(&edges));
-        Value::Object(document).to_string()
+        crate::number::json(&Value::Object(document))
     };
     let mut digest = String::new();
     for byte in Sha256::digest(digest_text.as_bytes()) {
@@ -852,27 +832,84 @@ mod tests {
     }
 
     #[test]
+    fn two_new_edges_cannot_share_a_reverse_name() {
+        let copy = Copy::new();
+        for id in ["made-by-one", "made-by-two"] {
+            let edge = serde_json::json!({
+                "id": id,
+                "label": id,
+                "reverse_label": "Made",
+                "description": "A test edge.",
+                "cardinality": "many-to-many",
+                "from_type_constraints": ["*"],
+                "to_type_constraints": ["*"],
+                "cascade_on_delete": "orphan",
+                "reverse_name": "makes",
+                "property_schema": {}
+            });
+            fs::write(copy.0.join(format!("edges/{id}.json")), edge.to_string()).unwrap();
+        }
+        let refused = write(&copy.0).err().unwrap().join("\n");
+        assert!(
+            refused.contains(
+                "made-by-two.json: made-by-two: \"makes\" is already a name of the edge type made-by-one"
+            ),
+            "{refused}"
+        );
+        assert!(!refused.contains("made-by-one.json"), "{refused}");
+    }
+
+    #[test]
+    fn a_small_number_is_written_as_javascript_writes_it() {
+        let copy = Copy::new();
+        copy.edit("note.json", |row| {
+            row["fields"]["score"] = serde_json::json!({
+                "type": "number",
+                "minimum": 0.00001,
+                "maximum": 1e21
+            });
+        });
+        let catalog = copy.written().catalog;
+        assert!(catalog.contains("\"minimum\": 0.00001,"), "{catalog}");
+        assert!(catalog.contains("\"maximum\": 1e+21"), "{catalog}");
+    }
+
+    #[test]
     fn numbers_are_written_as_javascript_writes_them() {
         let read = |text: &str| {
             let mut value: Value = serde_json::from_str(text).unwrap();
-            plain_number("f.json", "n", &mut value).map(|()| value.to_string())
+            javascript_numbers(&mut value);
+            (value.clone(), pretty(&value))
         };
-        assert_eq!(read("1.0").unwrap(), "1");
-        assert_eq!(read("-3.0").unwrap(), "-3");
-        assert_eq!(read("1e2").unwrap(), "100");
-        assert_eq!(read("0.5").unwrap(), "0.5");
-        assert_eq!(read("9007199254740991").unwrap(), "9007199254740991");
-        assert_eq!(read("[1, 2.0]").unwrap(), "[1,2]");
-        for refused in [
-            "1e-5",
-            "1e300",
-            "9007199254740993",
-            "1152921504606846976",
-            "12345678901234567890.5",
+        for (text, written) in [
+            ("1.0", "1"),
+            ("-3.0", "-3"),
+            ("1e2", "100"),
+            ("0.5", "0.5"),
+            ("-0.5", "-0.5"),
+            ("0", "0"),
+            ("-0.0", "0"),
+            ("1e-5", "0.00001"),
+            ("1e-6", "0.000001"),
+            ("1.5e-7", "1.5e-7"),
+            ("-2.5e-9", "-2.5e-9"),
+            ("5e-324", "5e-324"),
+            ("1e300", "1e+300"),
+            ("-1.5e300", "-1.5e+300"),
+            ("1e21", "1e+21"),
+            ("1e20", "100000000000000000000"),
+            ("123456.789", "123456.789"),
+            ("9007199254740991", "9007199254740991"),
+            ("-9007199254740991", "-9007199254740991"),
+            ("9007199254740993", "9007199254740992"),
+            ("1152921504606846976", "1152921504606847000"),
+            ("18446744073709551615", "18446744073709552000"),
+            ("12345678901234567890.5", "12345678901234567000"),
         ] {
-            let message = read(refused).unwrap_err();
-            assert!(message.starts_with("f.json: n"), "{message}");
+            assert_eq!(read(text).1, format!("{written}\n"), "{text}");
         }
+        assert_eq!(read("1.0").0, Value::from(1));
+        assert_eq!(read("[1, 2.0]").0.to_string(), "[1,2]");
     }
 
     #[test]
