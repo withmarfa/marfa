@@ -38,7 +38,12 @@ const SENT_FROM_MEMORY = "An attention entry was sent from memory";
 const DAY_MS = 86_400_000;
 
 beforeAll(async () => {
-  server = await bootFreshServer("attention-faults");
+  // The run's object store listens on loopback, which would stop a fixture
+  // turning private addresses off; nothing here needs the store.
+  server = await bootFreshServer("attention-faults", {
+    MARFA_OBJECT_STORE_BUCKET: "",
+    MARFA_OBJECT_STORE_ENDPOINT: "",
+  });
   writer = (await mint({ type_permissions: { "core.note": "write" } })).key;
   note = (await writeNote()).id;
 }, FRESH_SERVER_TIMEOUT_MS);
