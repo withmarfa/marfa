@@ -832,6 +832,32 @@ Where enrichment is on, the server MUST NOT write `extracted_text`, `width`, `he
 
 **Tests:** `compliance/enrichment-reach.test.ts › extracts only from bytes the file's own reference lends`, `› reads the width, height and duration only of bytes the file's own reference lends`.
 
+## A file's reading follows its bytes
+
+A file item is an item of `core.file` or of a type that inherits from it. Its reading is the `extracted_text`, `width`, `height` and `duration` the enrichment sweep wrote from its bytes.
+
+### `blobs/file-bytes-replaced`
+
+When a write changes the `blob_ref` of a file item that holds one to a different value, the server MUST remove from the item the `extracted_text`, `width`, `height` and `duration` it holds and the write does not set, whichever door the write came through.
+
+**Reason:** the sweep fills only what an item lacks, so a value read from the old bytes would otherwise stay, and a search would match the words of a file the item no longer names.
+
+**Tests:** `compliance/enrichment-new-bytes.test.ts › has the text of the new bytes after $name replaces the old`, `› has the size and length of the new bytes, not of the old`.
+
+### `blobs/file-bytes-replaced-set`
+
+When a write changes the `blob_ref` of a file item and sets `extracted_text`, `width`, `height` or `duration`, the server MUST store the value the write sets.
+
+**Reason:** a writer that sets a value in the write that moves the bytes knows what the new bytes hold, and the sweep never overwrites it.
+
+**Tests:** `compliance/enrichment-new-bytes.test.ts › keeps a value the write that replaces the bytes sets`.
+
+### `blobs/file-bytes-same`
+
+When a write to a file item leaves its `blob_ref` as it is, or sets it to the value it holds, the server MUST NOT remove the item's `extracted_text`, `width`, `height` or `duration`.
+
+**Tests:** `compliance/enrichment-new-bytes.test.ts › keeps what was read when a write leaves the bytes as they are`.
+
 ## A file item's size
 
 A file item is an item of `core.file` or of a type that inherits from it.

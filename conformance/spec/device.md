@@ -6572,6 +6572,16 @@ When a device takes in bytes for a file item by attaching a file to an item or b
 
 **Tests:** `device/file-size-live.test.ts › shows a file's size in the copy before it drains, and the server's once it has`.
 
+## A file's reading
+
+### `device/file-bytes-replaced`
+
+When a device queues an edit that changes the `blob_ref` of a file item its copy holds to a different value, a device MUST remove from the copy's item the `extracted_text`, `width`, `height` and `duration` it holds and the edit does not set.
+
+**Reason:** the copy shows what the server will keep once the edit lands (`blobs/file-bytes-replaced`), so a search offline does not match the words of bytes the item no longer names. An edit that leaves the bytes as they are removes nothing.
+
+**Tests:** `device/search-file-text-live.test.ts › stops matching a file by the words of bytes an edit replaces, before the server answers`.
+
 ## Purging
 
 A purge goes from a device to `POST /items/{id}/purge` at once, at the version the person was shown: the copy's, or the one a read of the bin answered, which the caller names.

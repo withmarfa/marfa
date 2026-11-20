@@ -290,6 +290,14 @@ The server MUST NOT offer the enrichment sweep an item whose type inherits from 
 
 **Tests:** `compliance/enrichment-by-inheritance.test.ts › takes a type inheriting from a file type as that file, whatever its name`.
 
+### `housekeeping/enrichment-new-bytes`
+
+Where enrichment is on, when a write replaces a file item's `blob_ref` with other bytes, the server MUST write what the new bytes give, among `extracted_text`, `width`, `height` and `duration`, onto the item on the next `enrichment-sweep` run, except what the write set.
+
+**Reason:** the sweep fills only what an item lacks, and a write that replaces the bytes removes what the old ones gave (`blobs/file-bytes-replaced`).
+
+**Tests:** `compliance/enrichment-new-bytes.test.ts › has the text of the new bytes after $name replaces the old`, `› has the size and length of the new bytes, not of the old`.
+
 ### `housekeeping/image-size-from-header`
 
 Where enrichment is on and OCR is off, if an image item's bytes start with a GIF, JPEG or WebP signature over a malformed header, then the server MUST NOT write a `width` or `height` onto the item.

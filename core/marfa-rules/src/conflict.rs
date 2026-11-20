@@ -350,6 +350,34 @@ pub fn laid_over(
     merged
 }
 
+/// What a file's reading of its bytes sets: the text, and the size or length of an image, a video or a sound.
+pub const READ_FROM_BYTES: [&str; 4] = ["extracted_text", "width", "height", "duration"];
+
+/// Drops from `result` what was read from the bytes `held` names when `result` names other bytes, except what `sent` sets.
+pub fn forget_reading_of_old_bytes(
+    held: &Map<String, Value>,
+    result: &mut Map<String, Value>,
+    sent: &Map<String, Value>,
+) {
+    let bytes = |properties: &Map<String, Value>| {
+        properties
+            .get("blob_ref")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    };
+    let replaced = match (bytes(held), bytes(result)) {
+        (Some(old), Some(new)) => old != new,
+        _ => false,
+    };
+    if replaced {
+        for name in READ_FROM_BYTES {
+            if !sent.contains_key(name) {
+                result.shift_remove(name);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,6 +385,48 @@ mod tests {
 
     fn map(value: Value) -> Map<String, Value> {
         value.as_object().cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn a_change_of_bytes_drops_what_was_read_from_the_old_ones_unless_the_write_sets_it() {
+        let held = map(json!({
+            "blob_ref": "sha256:a", "extracted_text": "old", "width": 4, "title": "t"
+        }));
+        let forgotten = |result: Value, sent: Value| {
+            let mut result = map(result);
+            forget_reading_of_old_bytes(&held, &mut result, &map(sent));
+            Value::Object(result)
+        };
+        assert_eq!(
+            forgotten(
+                json!({ "blob_ref": "sha256:b", "extracted_text": "old", "width": 4, "title": "t" }),
+                json!({ "blob_ref": "sha256:b" }),
+            ),
+            json!({ "blob_ref": "sha256:b", "title": "t" })
+        );
+        assert_eq!(
+            forgotten(
+                json!({ "blob_ref": "sha256:b", "extracted_text": "new", "width": 4, "title": "t" }),
+                json!({ "blob_ref": "sha256:b", "extracted_text": "new" }),
+            ),
+            json!({ "blob_ref": "sha256:b", "extracted_text": "new", "title": "t" })
+        );
+        // The witnesses: the same hash, and a write that leaves the bytes alone, drop nothing.
+        let kept =
+            json!({ "blob_ref": "sha256:a", "extracted_text": "old", "width": 4, "title": "t" });
+        assert_eq!(
+            forgotten(kept.clone(), json!({ "blob_ref": "sha256:a" })),
+            kept
+        );
+        assert_eq!(forgotten(kept.clone(), json!({ "title": "t" })), kept);
+        // Nothing was read from bytes an item did not name.
+        let mut unnamed = map(json!({ "blob_ref": "sha256:b", "extracted_text": "typed" }));
+        forget_reading_of_old_bytes(
+            &map(json!({ "extracted_text": "typed" })),
+            &mut unnamed,
+            &Map::new(),
+        );
+        assert_eq!(unnamed.len(), 2);
     }
 
     #[test]

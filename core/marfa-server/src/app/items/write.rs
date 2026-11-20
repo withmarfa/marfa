@@ -1784,15 +1784,22 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         refusal
     }
 
-    /// A write with no property and no move need not satisfy a type that gained a field.
+    /// A write with no property and no move need not satisfy a type that gained a field. Bytes a write replaces take the reading of the old bytes with them.
     fn judged(
         &self,
         row: &Item,
         resulting: &str,
         writing: &Writing,
         current: &Map<String, Value>,
-        result: Map<String, Value>,
+        mut result: Map<String, Value>,
     ) -> Result<Map<String, Value>> {
+        if self.is_file(resulting) {
+            conflict::forget_reading_of_old_bytes(
+                current,
+                &mut result,
+                writing.properties.as_ref().unwrap_or(&Map::new()),
+            );
+        }
         if !writing.judged() {
             return Ok(result);
         }

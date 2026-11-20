@@ -556,6 +556,14 @@ pub(crate) fn queue_update(
     for name in &edit.clear_properties {
         next.properties.shift_remove(name);
     }
+    // The copy shows what the server will keep: bytes that change leave nothing read from the old.
+    if catalog.matches("core.file", &next.r#type) {
+        marfa_rules::conflict::forget_reading_of_old_bytes(
+            &held.properties,
+            &mut next.properties,
+            &edit.properties,
+        );
+    }
     // The natural key moves on the copy too: the folder reads the copy to
     // answer "who holds this name", and the next file to take the old name
     // would otherwise base its create on this row, which the server resolves
