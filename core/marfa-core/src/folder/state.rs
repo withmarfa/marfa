@@ -789,7 +789,7 @@ pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result
 }
 
 /// Records that the file at `carrier` carries the missing file at `path`.
-/// A row that was not carried before starts its grace again once it is not.
+/// Its grace starts again once no file carries it (`journal_uncarried`).
 pub fn journal_carried(
     conn: &Connection,
     path: &str,

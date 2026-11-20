@@ -1697,8 +1697,8 @@ impl Folder {
                 report.unreached += 1;
                 continue;
             }
-            // A quick pass sees only the files it looked at, which a pass
-            // that touched a carrier walked over.
+            // A quick pass that touched a carrier walks instead, so this one
+            // did not look at the file that carries it.
             if quick && was_carried {
                 report.unreached += 1;
                 continue;
