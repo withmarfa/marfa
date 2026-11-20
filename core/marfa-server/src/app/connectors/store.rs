@@ -362,10 +362,15 @@ pub fn drop_agreement(tx: &Transaction<'_>, source: &str, item_id: &str) -> Resu
         .execute(params![source, item_id])?)
 }
 
-pub fn agreements_on(tx: &Transaction<'_>, item_id: &str) -> Result<i64> {
+/// Each agreement on the item, by source: its source, whether it waits, and its record.
+pub fn agreements_on(tx: &Transaction<'_>, item_id: &str) -> Result<Vec<(String, bool, String)>> {
     Ok(tx
-        .prepare_cached("SELECT count(*) FROM connector_agreements WHERE item_id = ?1")?
-        .query_row([item_id], |row| row.get(0))?)
+        .prepare_cached(
+            "SELECT source, waiting, record FROM connector_agreements \
+             WHERE item_id = ?1 ORDER BY source",
+        )?
+        .query_map([item_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 pub fn clear_agreements(tx: &Transaction<'_>, source: &str) -> Result<usize> {

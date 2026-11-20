@@ -35,7 +35,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Purge items from the trash",
-        description: "Use to delete items in the trash for good, with their history, tags, extensions and table rows. Name ids, or pass page to take one page of the trash: {} for the first page, then the next_cursor a preview returned. The first call only previews; show the person and ask. Only if they agree, call again with the ids the preview returned and confirm. A confirmation works once, for this credential only. This cannot be undone.",
+        description: "Use to delete items in the trash for good, with their history, tags, extensions and table rows. Name ids, or pass page to take one page of the trash: {} for the first page, then the next_cursor a preview returned. One purge takes at most 1,000 items, counting the parts that go with them; a page shrinks to fit. The first call only previews; show the person and ask. Only if they agree, call again with the ids the preview returned and confirm. A confirmation works once, for this credential only. This cannot be undone.",
         input: json!({
             "type": "object",
             "properties": {

@@ -315,7 +315,8 @@ pub async fn purge_owned(
 pub enum Chosen {
     /// Every row of the walk was taken: this many.
     Purged(usize),
-    /// A chosen row is gone, out of the bin or out of reach, or `agree` refused the walk.
+    /// A chosen row is gone, out of the bin or out of reach, the walk outgrew the cap, or `agree`
+    /// refused the walk.
     Changed,
 }
 
@@ -2442,13 +2443,17 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let plan = match plan::chosen(&self.gate(), ids) {
             Ok(plan) => plan,
             Err(refusal)
-                if matches!(refusal.code, Code::ItemNotFound | Code::InvalidTransition) =>
+                if matches!(
+                    refusal.code,
+                    Code::ItemNotFound | Code::InvalidTransition | Code::BulkCapExceeded
+                ) =>
             {
                 return Ok(Chosen::Changed);
             }
             Err(refusal) => return Err(refusal),
         };
-        if !agree(&plan::walk_digest(&plan.purging))? {
+        let (digest, _) = plan::walk_held(self.unit.tx(), &plan.purging)?;
+        if !agree(&digest)? {
             return Ok(Chosen::Changed);
         }
         let done = self.purged_walk(&plan.purging)?;

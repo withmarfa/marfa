@@ -41,9 +41,11 @@ pub use undo::undo;
 
 pub use marfa_rules::rows::{MAX_OPERATIONS, MAX_ROW_BYTES, Op};
 
-/// How many rows the item's tables hold, which a purge marks for clean-up.
-pub(crate) fn rows_held(tx: &Transaction<'_>, seq: i64) -> Result<i64> {
-    store::rows_held(tx, seq)
+pub(crate) use store::Hosted;
+
+/// Each table the item hosts, whose rows a purge marks for clean-up.
+pub(crate) fn hosted(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Hosted>> {
+    store::hosted(tx, seq)
 }
 
 fn refused(refused: rows::Refused) -> Refusal {

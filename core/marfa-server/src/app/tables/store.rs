@@ -352,13 +352,29 @@ pub(super) struct Summary {
     pub changed_at: String,
 }
 
-/// Every row of every table the item hosts.
-pub(super) fn rows_held(tx: &Transaction<'_>, seq: i64) -> Result<i64> {
+/// A table an item hosts, as a purge binds it: its key, name, row count and last batch.
+pub(crate) struct Hosted {
+    pub key: i64,
+    pub name: String,
+    pub rows: i64,
+    pub last_batch: String,
+}
+
+pub(super) fn hosted(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Hosted>> {
     Ok(tx
         .prepare_cached(
-            "SELECT coalesce(sum(row_count), 0) FROM table_summaries WHERE item_seq = ?1",
+            "SELECT seq, table_name, row_count, last_batch FROM table_summaries \
+             WHERE item_seq = ?1 ORDER BY seq",
         )?
-        .query_row([seq], |row| row.get(0))?)
+        .query_map([seq], |row| {
+            Ok(Hosted {
+                key: row.get(0)?,
+                name: row.get(1)?,
+                rows: row.get(2)?,
+                last_batch: row.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 pub(super) fn summaries(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Summary>> {

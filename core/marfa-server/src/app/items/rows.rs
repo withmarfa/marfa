@@ -626,15 +626,34 @@ pub(super) fn binned_counts(tx: &Transaction<'_>) -> Result<Vec<(String, String,
         .collect::<rusqlite::Result<_>>()?)
 }
 
-/// How many versions, tags and extensions an item holds.
-pub(super) fn held_counts(tx: &Transaction<'_>, seq: i64) -> Result<(i64, i64, i64)> {
-    Ok(tx
+/// What an item holds beside its own row: its earlier versions, its tags and its extensions.
+pub(super) struct Holding {
+    pub versions: i64,
+    /// In the item's order.
+    pub tags: Vec<String>,
+    /// Each namespace with its data as stored, by namespace.
+    pub extensions: Vec<(String, Vec<u8>)>,
+}
+
+pub(super) fn holding(tx: &Transaction<'_>, seq: i64) -> Result<Holding> {
+    let versions = tx
+        .prepare_cached("SELECT count(*) FROM item_versions WHERE item_seq = ?1")?
+        .query_row([seq], |row| row.get(0))?;
+    let tags = tx
+        .prepare_cached("SELECT tag FROM item_tags WHERE item_seq = ?1 ORDER BY position, tag")?
+        .query_map([seq], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let extensions = tx
         .prepare_cached(
-            "SELECT (SELECT count(*) FROM item_versions WHERE item_seq = ?1), \
-             (SELECT count(*) FROM item_tags WHERE item_seq = ?1), \
-             (SELECT count(*) FROM item_extensions WHERE item_seq = ?1)",
+            "SELECT namespace, data FROM item_extensions WHERE item_seq = ?1 ORDER BY namespace",
         )?
-        .query_row([seq], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?)
+        .query_map([seq], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(Holding {
+        versions,
+        tags,
+        extensions,
+    })
 }
 
 pub(super) type Position = (String, String);

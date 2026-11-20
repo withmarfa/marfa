@@ -18,12 +18,12 @@ use crate::app::access::reach::Demand;
 use crate::app::access::{Caller, Level, Permission};
 use crate::app::catalog::{self, Catalog, Snapshot};
 use crate::app::clock::Stamp;
-use crate::app::connectors::{ReadOnly, agreements_on, read_only};
+use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::edges::{self, Reach};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION, HOLD_READ_SNAPSHOT};
 use crate::app::housekeeping::DAY_MS;
 use crate::app::query::{Secret, States, bad_cursor, judge_type};
-use crate::app::refusal::Result;
+use crate::app::refusal::{Code, Result};
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
 const TITLES_PER_NAME: i64 = 20;
@@ -868,24 +868,6 @@ pub struct PurgePreview {
 pub async fn purge_preview(app: &App, caller: &Caller, choosing: Choosing) -> Result<PurgePreview> {
     reading(app, caller, move |read| {
         read.caller.require(Permission::ItemsPurge)?;
-        let (asked, next_cursor) = match choosing {
-            Choosing::Ids(ids) => (ids, None),
-            Choosing::Page { cursor, limit } => {
-                let listing = Listing {
-                    type_id: None,
-                    q: String::new(),
-                    limit,
-                    cursor,
-                };
-                let (page, next) = read.named_page(listing, true)?;
-                (page.into_iter().map(|row| row.id).collect(), next)
-            }
-        };
-        let mut seen = HashSet::new();
-        let ids: Vec<String> = asked
-            .into_iter()
-            .filter(|id| seen.insert(id.clone()))
-            .collect();
         let gate = Gate {
             tx: read.tx,
             caller: &read.caller,
@@ -893,7 +875,41 @@ pub async fn purge_preview(app: &App, caller: &Caller, choosing: Choosing) -> Re
             claim: None,
             server_own: false,
         };
-        let plan = plan::chosen(&gate, &ids)?;
+        let page = |cursor: Option<String>, limit: i64| -> Result<(Vec<String>, Option<String>)> {
+            let listing = Listing {
+                type_id: None,
+                q: String::new(),
+                limit,
+                cursor,
+            };
+            let (page, next) = read.named_page(listing, true)?;
+            Ok((page.into_iter().map(|row| row.id).collect(), next))
+        };
+        let (ids, next_cursor, plan) = match choosing {
+            Choosing::Ids(asked) => {
+                let mut seen = HashSet::new();
+                let ids: Vec<String> = asked
+                    .into_iter()
+                    .filter(|id| seen.insert(id.clone()))
+                    .collect();
+                let plan = plan::chosen(&gate, &ids)?;
+                (ids, None, plan)
+            }
+            Choosing::Page { cursor, limit } => {
+                let (ids, next) = page(cursor.clone(), limit)?;
+                match plan::chosen(&gate, &ids) {
+                    Ok(plan) => (ids, next, plan),
+                    Err(refusal) if refusal.code == Code::BulkCapExceeded => {
+                        let fits = plan::fitting(&gate, &ids)?;
+                        let (ids, next) = page(cursor, fits as i64)?;
+                        let plan = plan::chosen(&gate, &ids)?;
+                        (ids, next, plan)
+                    }
+                    Err(refusal) => return Err(refusal),
+                }
+            }
+        };
+        let (digest, holdings) = plan::walk_held(read.tx, &plan.purging)?;
         let levers = read.caller.levers()?;
         let rules = &read.catalog.rules;
         let shows = |row: &Item| {
@@ -910,9 +926,9 @@ pub async fn purge_preview(app: &App, caller: &Caller, choosing: Choosing) -> Re
             edges: 0,
             hidden_edges: 0,
             goes_with: GoesWith::default(),
-            digest: plan::walk_digest(&plan.purging),
+            digest,
         };
-        for going in &plan.purging {
+        for (going, holding) in plan.purging.iter().zip(&holdings) {
             let item = &going.item;
             if shows(item) {
                 let shown = super::shown_of(read.tx, &read.catalog, item, &readable)?;
@@ -922,13 +938,12 @@ pub async fn purge_preview(app: &App, caller: &Caller, choosing: Choosing) -> Re
                     name: shown.name.unwrap_or_else(|| super::UNTITLED.to_string()),
                     version: item.version,
                 });
-                let (versions, tags, extensions) = rows::held_counts(read.tx, item.seq)?;
                 let held = &mut preview.goes_with;
-                held.versions += versions;
-                held.tags += tags;
-                held.extensions += extensions;
-                held.table_rows += crate::app::tables::rows_held(read.tx, item.seq)?;
-                held.connector_agreements += agreements_on(read.tx, &item.id)?;
+                held.versions += holding.versions;
+                held.tags += holding.tags;
+                held.extensions += holding.extensions;
+                held.table_rows += holding.table_rows;
+                held.connector_agreements += holding.agreements;
             } else {
                 preview.hidden_items += 1;
             }
