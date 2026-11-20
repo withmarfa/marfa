@@ -10,6 +10,7 @@ These hold for every change to what an owner, an app or a key can do.
 - The command line does every owner task. Only approving an app's access and adding a passkey need a browser.
 - Only claiming a new instance and recovering a lost password start where the server runs. Everything else works from any app or key the owner approves.
 - Nothing is restricted without a reason a person would accept: a standard, a hard fact, or clear harm to the owner's data or security. Safety comes from approval and confirmation, not from making things hard.
+- Marfa sends nothing about itself until its owner sets where. Product code (server, command line, connectors, Swift package) carries no vendor token, name or dependency outside the server's PostHog exception report, and no setting sends anywhere by default. The test: a stranger installs it and sets nothing, and nothing leaves their machine. `ci/no-vendor-in-product.test.ts` and the no-send tests (`core/marfa-server/tests/telemetry.rs`, `core/marfa-cli/tests/telemetry.rs`) enforce it for what this repository ships; withmarfa/marfa-connectors and withmarfa/marfa-swift run their own vendor checks.
 
 ## Where an area's rules are
 
@@ -101,5 +102,6 @@ The nested files `core/marfa-server/AGENTS.md` and `conformance/AGENTS.md` add r
 - **Keep what people made.** A refused, failed or uncertain write is kept where the person can get it back, never dropped or rolled over newer work. Clean-up acts only on what it proved gone, and an edit keeps every byte it did not mean to change.
 - **Real conditions.** Real clocks and dates, number ranges across languages and SQLite, runtime limits, slow or absent peers, untidy input, other platforms and file systems. One bad item, slow peer or hiccup stays contained and never takes down the batch, the folder or the job.
 - **Flaky tests.** An unexplained flaky test is a finding: reproduce it, or say exactly why it cannot recur.
+- **Nothing leaves by default.** A change that makes anything leave the owner's machine with no destination set, or that adds a vendor name, token, setting or dependency to product code outside the vendor check's allowlist, is a defect.
 
 Mark a finding blocking when it changes how Marfa behaves or breaks a criterion or rule, and a quick fix when it is a name, a stale reference or a wrong count. Keep a problem that was there before the change apart from findings against it, and list it only if it is clearly wrong and would keep coming up.

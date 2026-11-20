@@ -1325,13 +1325,13 @@ describe("each job reads its own answer", () => {
     ).toEqual({ GH_TOKEN: "${{ github.token }}" });
   });
 
-  it("Quick checks checks formatting, these rules and the contract's references for any change and the rest only for the workspace", () => {
+  it("Quick checks checks formatting, these rules, the vendor check and the contract's references for any change and the rest only for the workspace", () => {
     const steps = workflow("ci.yml").jobs["quick-checks"]?.steps ?? [];
     const format = steps.findIndex((step) => step.run === "pnpm format:check");
     expect(format).toBeGreaterThan(0);
     expect(steps[format]?.if).toBeUndefined();
     expect(steps[format + 1]).toEqual({
-      run: "pnpm vitest run ci/ci-required.test.ts",
+      run: "pnpm vitest run ci/ci-required.test.ts ci/no-vendor-in-product.test.ts",
     });
     expect(steps[format + 2]).toEqual({
       "working-directory": "conformance",

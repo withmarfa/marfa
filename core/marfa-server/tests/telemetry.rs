@@ -160,6 +160,15 @@ fn request(method: Method, path: &str, token: Option<&str>, body: Value) -> Requ
 
 impl Instance {
     async fn start(pairs: &[(&str, &str)]) -> (Instance, marfa_server::telemetry::Guard) {
+        Instance::start_as(true, pairs).await
+    }
+
+    /// With `hooks` off the server is the one an owner runs: no setting is seeded from a
+    /// variable, so only a stored setting can say where anything is sent.
+    async fn start_as(
+        hooks: bool,
+        pairs: &[(&str, &str)],
+    ) -> (Instance, marfa_server::telemetry::Guard) {
         // Log records reach the exporter through the process's one subscriber.
         marfa_server::log::init();
         let dir = TempDir::new().unwrap();
@@ -170,9 +179,11 @@ impl Instance {
             ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
             ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
             ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
-            ("MARFA_TEST_HOOKS", "true"),
             ("MARFA_RATE_LIMIT_ENABLED", "false"),
         ];
+        if hooks {
+            all.push(("MARFA_TEST_HOOKS", "true"));
+        }
         all.extend_from_slice(pairs);
         let environment = Environment::from_pairs(&all);
         let app = App::start(Settings::read(environment).unwrap())
@@ -1114,4 +1125,94 @@ async fn the_metrics_endpoint_and_headers_are_used_beside_the_base_and_a_change_
         assert_eq!(team.map(|(_, value)| value.as_str()), Some("two"));
     }
     assert!(posted(&received, "/v1/metrics").is_empty());
+}
+
+/// Every name a shell or a platform could carry from an older release or a vendor's own
+/// convention, all pointing at `host`.
+fn planted(host: &str) -> Vec<(&'static str, String)> {
+    vec![
+        ("OTEL_EXPORTER_OTLP_ENDPOINT", host.to_string()),
+        (
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+            format!("{host}/v1/traces"),
+        ),
+        (
+            "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+            format!("{host}/v1/logs"),
+        ),
+        (
+            "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+            format!("{host}/v1/metrics"),
+        ),
+        ("OTEL_TRACES_SAMPLER", "always_on".to_string()),
+        ("MARFA_OTEL_EXPORTER_OTLP_ENDPOINT", host.to_string()),
+        ("MARFA_OTEL_SAMPLE_RATIO", "1".to_string()),
+        ("MARFA_POSTHOG_HOST", host.to_string()),
+        ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_planted".to_string()),
+        ("MARFA_ALLOW_PRIVATE_ADDRESSES", "true".to_string()),
+    ]
+}
+
+/// Ordinary requests, a fault and a stop, which exports once: everything a server does that
+/// could reach a receiver.
+async fn drive(instance: &Instance, guard: marfa_server::telemetry::Guard, name: &str) {
+    assert_eq!(instance.write_note(name).await, StatusCode::CREATED);
+    assert_eq!(ask(&instance.public, "/health", None).await, StatusCode::OK);
+    instance.fail_note(&format!("{name}-fault")).await;
+    guard.stop(REPORT_BUDGET);
+}
+
+/// A server nobody has configured sends nothing, whatever its environment names. Runs its own
+/// runtime, since the variables are set before any thread starts.
+#[test]
+fn a_server_nobody_configured_sends_nothing_and_the_same_server_configured_sends_everything() {
+    let (host, received) = receiver(false);
+    let variables = planted(&host);
+    for (name, value) in &variables {
+        if name.starts_with("OTEL_") {
+            // SAFETY: no other thread runs yet; the receiver's threads read no environment.
+            unsafe { std::env::set_var(name, value) };
+        }
+    }
+    let seeded: Vec<(&str, &str)> = variables
+        .iter()
+        .map(|(name, value)| (*name, value.as_str()))
+        .collect();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (instance, guard) = Instance::start_as(false, &seeded).await;
+        drive(&instance, guard, "unconfigured").await;
+        assert_eq!(paths(&received), Vec::<String>::new(), "nothing was set");
+
+        // The witness: the same server, run the same way, sends once its settings say where.
+        let (instance, guard) = Instance::start_as(false, &seeded).await;
+        let (status, answer) = instance
+            .configure(json!({
+                "allow_private_addresses": true,
+                "otel_exporter_otlp_endpoint": host,
+                "otel_sample_ratio": 1.0,
+                "posthog_host": host,
+                "posthog_project_token": "phc_test",
+            }))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        drive(&instance, guard, "configured").await;
+    });
+    for prefix in ["/v1/traces", "/v1/logs", "/v1/metrics", EVENTS] {
+        assert!(
+            !posted(&received, prefix).is_empty(),
+            "{prefix} in {:?}",
+            paths(&received)
+        );
+    }
+    let sent = received.lock().unwrap();
+    let before: Vec<&String> = sent
+        .iter()
+        .map(|(_, _, body, _)| body)
+        .filter(|body| body.contains("unconfigured"))
+        .collect();
+    assert!(before.is_empty(), "the first server sent {before:?}");
 }
