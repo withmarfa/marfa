@@ -1288,6 +1288,14 @@ When an item leaves a folder’s query for a reason other than its state or purg
 
 **Tests:** `device/folders-identity.test.ts › keeps a file whose item no longer matches, flagged`, `device/folders-identity.test.ts › keeps the file of an item a narrowed query leaves out, flagged, and sends its edits to it`, `device/folders-identity.test.ts › keeps the file of an item retyped out of its query elsewhere, flagged, and sends its edits to it`.
 
+### `folder-files/unmatched-same-folder-kept`
+
+When an item leaves a folder's query for a reason other than its state or purge and another registered directory that follows the same `system.folder` holds a file of the item, a device MUST retain the bound file unless a registered directory that follows another `system.folder` takes it.
+
+**Reason:** A directory that follows the same folder is a second copy of it, with the same query, which it may not have read yet, so its file of the item is not the file taken by another folder (`folder-files/unmatched-file-kept`). Taking the kept file away is the person's to confirm (`folder-guards/unmatched-remove-file`). A directory whose store cannot be read is not known to follow another folder, so the file stays.
+
+**Tests:** `device/folders-one-mac.test.ts › keeps a file as unmatched in both directories of one folder when its query narrows`, `› keeps a file as unmatched when its query narrows while the other directory of the folder cannot be read, and once it can`.
+
 ### `folder-files/new-file-outside-state-kept`
 
 When a device creates an item from a new file of a folder, whether a document or a file's bytes, the state of the item at creation (the file's `state` line, or active where it has none) is not one of the states held by the folder's query, and no pull has since found the item in a state the query holds with no write to the item waiting to be sent (a queued write the server has not answered, or one that is blocked or dead, but not a refused one), a device MUST retain the file at every pull, whether its bytes are those the device wrote or not, unless the item is trashed or purged.
@@ -1987,6 +1995,14 @@ When another folder’s let-go file was edited since that folder last read it, a
 When an item left another folder by state, a device MUST NOT take in that folder’s file as a non-state departure.
 
 **Tests:** `device/folders-one-mac.test.ts › does not take in the file of an item that left its folder by state`.
+
+### `folder-files/take-in-same-folder-excluded`
+
+When a folder's query holds an item without a file, a device MUST NOT take in the file of the item that another registered directory following the same `system.folder` holds.
+
+**Reason:** That directory's query is this folder's, perhaps not yet read there, so its file is its own copy of the item and was never let go. The folder writes a file of its own.
+
+**Tests:** `device/folders-one-mac.test.ts › writes its own file, and takes none from the other directory of the folder, when a widened query brings an item back`.
 
 ### `folder-files/take-in-attachment-excluded`
 
