@@ -83,6 +83,17 @@ pub(super) fn named_in(tx: &Transaction<'_>, store: &str) -> Result<Vec<(i64, St
         .collect::<rusqlite::Result<_>>()?)
 }
 
+/// Every file a backup the server found in `store` names.
+pub(super) fn files_in(tx: &Transaction<'_>, store: &str) -> Result<Vec<String>> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT DISTINCT f.hash FROM found_backup_files f JOIN found_backups b \
+             ON b.seq = f.seq WHERE b.store_id = ?1",
+        )?
+        .query_map([store], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
 /// Forgets every backup the server found in `store`, answering how many.
 pub(super) fn forget_store(tx: &Transaction<'_>, store: &str) -> Result<usize> {
     for table in ["found_backup_files", "found_backup_parts"] {

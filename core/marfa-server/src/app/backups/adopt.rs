@@ -32,6 +32,11 @@ pub struct Forgets {
     pub backups: Vec<String>,
     pub found_backups: Vec<String>,
     pub copies: i64,
+    /// Deletions of bytes queued in the replaced store, whose bytes then stay on its disk.
+    pub pending_deletions: i64,
+    pub copy_failures: i64,
+    /// Files only the forgotten backups keep, which a purge then takes.
+    pub files_to_purge: i64,
     pub last_backup: Option<String>,
     pub last_backup_at: Option<String>,
     /// What a confirmation binds: these and the folder's fingerprint.
@@ -94,6 +99,9 @@ fn forgets(tx: &Transaction<'_>, store: &str, fingerprint: &str) -> Result<Forge
         .collect::<rusqlite::Result<_>>()?;
     let found_backups = found::named_in(tx, store)?;
     let copies = Blobs::copies_in(tx, store)?;
+    let (pending_deletions, copy_failures) = Blobs::leftovers_in(tx, store)?;
+    let named = super::named_in(tx, store)?;
+    let files_to_purge = Blobs::unkept_among(tx, named.iter().map(String::as_str))?;
     type Last = (Option<i64>, Option<i64>, Option<String>, Option<String>);
     let (backed_up, version, last_backup, last_backup_at): Last = tx
         .query_row(
@@ -114,6 +122,9 @@ fn forgets(tx: &Transaction<'_>, store: &str, fingerprint: &str) -> Result<Forge
     }
     print
         .number(copies)
+        .number(pending_deletions)
+        .number(copy_failures)
+        .number(files_to_purge)
         .maybe(backed_up.map(|at| at.to_string()).as_deref())
         .maybe(version.map(|at| at.to_string()).as_deref())
         .maybe(last_backup.as_deref())
@@ -123,6 +134,9 @@ fn forgets(tx: &Transaction<'_>, store: &str, fingerprint: &str) -> Result<Forge
         backups: backups.into_iter().map(|(_, name)| name).collect(),
         found_backups: found_backups.into_iter().map(|(_, name)| name).collect(),
         copies,
+        pending_deletions,
+        copy_failures,
+        files_to_purge,
         last_backup,
         last_backup_at,
         digest: print.finish(),
@@ -385,12 +399,11 @@ impl App {
         }
         let old = folder.files();
         let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
-        let deadline = self.blobs.check();
         // The folder is claimed, under its lock, and read again before any record is forgotten.
         let (claiming, keeping) = (id.clone(), folder.clone());
         let claimed = folder
             .within(
-                deadline,
+                self.blobs.check(),
                 move |folder| {
                     let claim = folder.claim(&claiming)?;
                     let fingerprint = folder.fingerprint();
@@ -509,13 +522,14 @@ impl App {
         };
         self.faults.hold(HOLD_STORES_SWAP, None).await;
         let faults = self.faults.clone();
+        // Read before the new store is in use, so nothing the server writes to it counts as a
+        // change.
         let promoted = folder
             .within(
-                deadline,
+                self.blobs.check(),
                 move |folder| {
                     faults.hold_blocking(HOLD_FOLDER_MARKER);
-                    let written = folder.promote(claim);
-                    Ok((written, folder.fingerprint()))
+                    Ok(folder.promote(claim, Folder::fingerprint))
                 },
                 |_| {},
             )

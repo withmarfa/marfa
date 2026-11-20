@@ -730,6 +730,20 @@ impl Blobs {
         rows::copies_in(tx, store)
     }
 
+    /// How many deletions of bytes wait in `store`, and how many blobs failed to copy to it.
+    pub fn leftovers_in(tx: &rusqlite::Transaction<'_>, store: &str) -> Result<(i64, i64)> {
+        rows::leftovers_in(tx, store)
+    }
+
+    /// How many of `hashes` are recorded blobs that nothing keeps, so a purge takes them once
+    /// nothing else holds them.
+    pub fn unkept_among<'a>(
+        tx: &rusqlite::Transaction<'_>,
+        hashes: impl IntoIterator<Item = &'a str>,
+    ) -> Result<i64> {
+        rows::unkept_among(tx, hashes)
+    }
+
     /// The attached folder store the record names.
     pub fn attached_folder(tx: &rusqlite::Transaction<'_>) -> Result<Option<String>> {
         rows::attached_folder(tx)

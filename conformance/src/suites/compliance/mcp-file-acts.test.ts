@@ -5,6 +5,8 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -231,7 +233,7 @@ async function fired(server: FreshServer, name: string): Promise<number> {
 async function fileItem(
   server: FreshServer,
   words: string,
-): Promise<{ hash: string; bytes: Uint8Array }> {
+): Promise<{ hash: string; bytes: Uint8Array; id: string }> {
   const { working } = clientsFor(server);
   const bytes = bytesOf(words, SIZE);
   const uploaded = await working.uploadBlob(bytes, "text/plain");
@@ -241,7 +243,7 @@ async function fileItem(
     properties: { blob_ref: uploaded.data.hash, mime_type: "text/plain" },
   });
   expect(item.status, JSON.stringify(item.error)).toBe(201);
-  return { hash: uploaded.data.hash, bytes };
+  return { hash: uploaded.data.hash, bytes, id: item.data.id };
 }
 
 async function kinds(server: FreshServer, hash: string): Promise<string[]> {
@@ -481,6 +483,33 @@ describe("marfa_remove_file_copy removes a copy of a file", () => {
     expect(await kinds(copies, hash)).toEqual(["disk"]);
   });
 
+  it("refuses a confirmation once the copy changed and removing it would leave fewer copies than the instance keeps, without a new preview", async () => {
+    const { hash } = await replicated("changed and alone");
+    const args = { hash, store_id: s3Id };
+    const shown = await call(filesAdmin, REMOVE, args);
+    const { operator } = clientsFor(copies);
+    const dropped = await operator.deleteBlobCopy(hash, s3Id);
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+    await replicateUntilCaughtUp(
+      operator,
+      `the object store's copy of ${hash} again`,
+    );
+    await copies.setFault(REPLICATION_HELD);
+    const alone = await operator.deleteBlobCopy(hash, diskId);
+    expect(alone.status, JSON.stringify(alone.error)).toBe(200);
+    expect(await kinds(copies, hash)).toEqual(["s3"]);
+
+    const refused = await stale(filesAdmin, REMOVE, {
+      ...args,
+      confirm: shown.confirm,
+    });
+    expect(refused.confirm).toBeUndefined();
+    expect(await kinds(copies, hash)).toEqual(["s3"]);
+    // The witness: a preview of the same copy is refused for the copies it would leave.
+    const previewed = toolError(await callTool(filesAdmin, REMOVE, args));
+    expect(previewed.code).toBe("copies_below_minimum");
+  });
+
   it("changes nothing more on a confirmation an earlier call used, and says what the copy is now", async () => {
     const { hash, bytes } = await replicated("repeated");
     const args = { hash, store_id: diskId };
@@ -655,9 +684,16 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
       folder: root,
       files_folder: area(),
       replaces_store_id: old.id,
-      forgets: { found_backups: [], file_copies: expect.any(Number) },
+      forgets: {
+        found_backups: [],
+        file_copies: expect.any(Number),
+        pending_deletions: 0,
+        copy_failures: 0,
+      },
       last_backup: { name: backup.data.backup.name, at: expect.any(String) },
       clears: expect.any(String),
+      files_to_purge: 0,
+      leaves: expect.any(String),
       confirm: expect.any(String),
       expires_at: expect.any(String),
     });
@@ -739,9 +775,14 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
     await marked();
     await loseTheDisk();
     const shown = await call(backupsAdmin, ADOPT, {});
+    // The short deadline reaches only the marker: the claim before it may be slow on a busy disk.
+    await folder.setFault("hold:stores-swap");
+    const adopting = callTool(backupsAdmin, ADOPT, { confirm: shown.confirm });
+    await folder.waitForHold("hold:stores-swap");
     await folder.setFault("store-check-deadline=500");
     await folder.setFault("hold:folder-marker");
-    const adopted = await call(backupsAdmin, ADOPT, { confirm: shown.confirm });
+    await folder.clearFault("hold:stores-swap");
+    const adopted = toolResult(await adopting);
     expect(adopted).toMatchObject({ adopted: true, marked: null });
     expect(adopted.folder_changed).toBeUndefined();
     expect(markerNow()).toBeUndefined();
@@ -814,6 +855,22 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
       confirm: refused.confirm,
     });
     expect(again.confirm).toEqual(expect.any(String));
+
+    // A files folder that links to an empty folder elsewhere, which may be another volume.
+    rmSync(join(root, "files"), { recursive: true });
+    const shownWithout = await call(backupsAdmin, ADOPT, {});
+    const elsewhere = join(parent, `elsewhere ${String(swaps)}`);
+    mkdirSync(elsewhere);
+    symlinkSync(elsewhere, join(root, "files"));
+    try {
+      const linked = await stale(backupsAdmin, ADOPT, {
+        confirm: shownWithout.confirm,
+      });
+      expect(linked.confirm).toEqual(expect.any(String));
+      expect(readdirSync(elsewhere)).toEqual([]);
+    } finally {
+      rmSync(join(root, "files"));
+    }
     expect(markerNow()).toBeUndefined();
     expect((await folderStore()).id).toBe(old.id);
   });
@@ -871,6 +928,130 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
       confirm: expect.any(String),
     });
     expect(markerNow()).toBeUndefined();
+  });
+
+  it("counts the files only the forgotten backups keep, and refuses a confirmation once another one is left to them since the preview", async () => {
+    await marked();
+    const first = await fileItem(folder, `left to a backup ${randomUUID()}`);
+    const second = await fileItem(folder, `left later ${randomUUID()}`);
+    const backup = await ownerOf(folder).runBackup();
+    expect(backup.status, JSON.stringify(backup.error)).toBe(200);
+    const everything = await everythingClient(folder);
+    const purge = async (id: string): Promise<void> => {
+      expect((await everything.deleteItem(id)).status).toBe(200);
+      const purged = await everything.purgeItem(id);
+      expect(purged.status, JSON.stringify(purged.error)).toBe(200);
+    };
+    await purge(first.id);
+    await loseTheDisk();
+    const shown = await call(backupsAdmin, ADOPT, {});
+    expect(shown.files_to_purge).toBe(1);
+
+    await purge(second.id);
+    const refused = await stale(backupsAdmin, ADOPT, {
+      confirm: shown.confirm,
+    });
+    expect(refused).toMatchObject({
+      files_to_purge: 2,
+      confirm: expect.any(String),
+    });
+    expect(markerNow()).toBeUndefined();
+  });
+
+  it("counts the deletions queued in the replaced store and the files that failed to copy to it, and refuses a confirmation once a deletion ran since the preview", async () => {
+    await marked();
+    const store = await folderStore();
+    const { operator } = clientsFor(folder);
+    const file = await fileItem(folder, `queued ${randomUUID()}`);
+    await replicateUntilCaughtUp(operator, `the folder's copy of ${file.hash}`);
+    // The folder's copy is removed while its bytes cannot be deleted, then fails to be made again.
+    await folder.setFault("fail:blob-delete");
+    const dropped = await operator.deleteBlobCopy(file.hash, store.id);
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+    expect(await fired(folder, "fail:blob-delete")).toBe(1);
+    await folder.clearFault("fail:blob-delete");
+    await folder.setFault("fail:backup-folder-write");
+    await runJob(operator, "blob-replicate", "either");
+    expect(await fired(folder, "fail:backup-folder-write")).toBeGreaterThan(0);
+    await folder.clearFault("fail:backup-folder-write");
+    expect(await kinds(folder, file.hash)).toEqual(["disk"]);
+
+    await loseTheDisk();
+    const shown = await call(backupsAdmin, ADOPT, {});
+    expect(shown.forgets).toMatchObject({
+      pending_deletions: 1,
+      copy_failures: 1,
+    });
+
+    // The deletion needs the folder it was queued in, so the old disk is back for it, then gone again.
+    const old = join(parent, `old disk ${String(swaps)}`);
+    const replacement = join(parent, `replacement disk ${String(swaps)}`);
+    await folder.setFault(REPLICATION_HELD);
+    renameSync(root, replacement);
+    renameSync(old, root);
+    try {
+      await runJob(operator, "blob-integrity");
+    } finally {
+      renameSync(root, old);
+      renameSync(replacement, root);
+    }
+    const refused = await stale(backupsAdmin, ADOPT, {
+      confirm: shown.confirm,
+    });
+    expect(refused).toMatchObject({
+      forgets: { pending_deletions: 0, copy_failures: 1 },
+      confirm: expect.any(String),
+    });
+    expect(markerNow()).toBeUndefined();
+  });
+
+  it("refuses a confirmation once another store's marker appeared in the files folder since the preview, without a new preview", async () => {
+    await marked();
+    const old = await folderStore();
+    await loseTheDisk();
+    const shown = await call(backupsAdmin, ADOPT, {});
+    const foreign = randomUUID();
+    mkdirSync(area(), { recursive: true });
+    writeFileSync(markerPath(), foreign);
+    try {
+      const refused = await stale(backupsAdmin, ADOPT, {
+        confirm: shown.confirm,
+      });
+      expect(refused.confirm).toBeUndefined();
+      expect(String(refused.message)).toContain(foreign);
+      expect(markerNow()).toBe(foreign);
+      expect((await folderStore()).id).toBe(old.id);
+    } finally {
+      rmSync(markerPath());
+    }
+    // The witness: without the marker, the same confirmation adopts.
+    const adopted = await call(backupsAdmin, ADOPT, { confirm: shown.confirm });
+    expect(adopted).toMatchObject({ adopted: true, marked: true });
+  });
+
+  it("answers already done to a call with a confirmation that another call spent while it waited", async () => {
+    await marked();
+    await loseTheDisk();
+    const shown = await call(backupsAdmin, ADOPT, {});
+    await folder.setFault("hold:stores-record");
+    const first = callTool(backupsAdmin, ADOPT, { confirm: shown.confirm });
+    await folder.waitForHold("hold:stores-record");
+    await folder.setFault("hold:adopt-confirmed");
+    const second = callTool(backupsAdmin, ADOPT, { confirm: shown.confirm });
+    await folder.waitForHold("hold:adopt-confirmed");
+    await folder.clearFault("hold:stores-record");
+    const adopted = toolResult(await first);
+    expect(adopted).toMatchObject({ adopted: true, marked: true });
+    expect(adopted.already_done).toBeUndefined();
+
+    await folder.clearFault("hold:adopt-confirmed");
+    expect(toolResult(await second)).toMatchObject({
+      adopted: true,
+      already_done: true,
+      store_id: adopted.store_id,
+      marked: true,
+    });
+    expect(markerNow()).toBe(adopted.store_id);
   });
 
   it("changes nothing more on an adopt's confirmation an earlier call used, and reads the folder now", async () => {

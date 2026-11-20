@@ -120,14 +120,26 @@ fn made_by_the_system(name: &str) -> bool {
         )
 }
 
-/// Adds the entries of `folder` but `own` to `print`, by name, kind and inode.
-fn entries(print: &mut Fingerprint, folder: &Path, own: &[&str]) -> io::Result<()> {
+fn kind_of(kind: fs::FileType) -> &'static str {
+    if kind.is_dir() {
+        "d"
+    } else if kind.is_file() {
+        "f"
+    } else if kind.is_symlink() {
+        "l"
+    } else {
+        "o"
+    }
+}
+
+type Entry = (String, &'static str, u64);
+
+/// The entries of `folder` but `own` and the system's, by name, kind and inode, sorted; `None`
+/// where `folder` is not there.
+fn entries_of(folder: &Path, own: &[&str]) -> io::Result<Option<Vec<Entry>>> {
     let listed = match fs::read_dir(folder) {
         Ok(listed) => listed,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            print.number(0);
-            return Ok(());
-        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
     let mut found = Vec::new();
@@ -138,20 +150,48 @@ fn entries(print: &mut Fingerprint, folder: &Path, own: &[&str]) -> io::Result<(
             continue;
         }
         let kind = match entry.file_type() {
-            Ok(kind) if kind.is_dir() => "d",
-            Ok(kind) if kind.is_file() => "f",
-            Ok(kind) if kind.is_symlink() => "l",
-            Ok(_) => "o",
+            Ok(kind) => kind_of(kind),
             Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
             Err(error) => return Err(error),
         };
         found.push((name, kind, entry.ino()));
     }
     found.sort_unstable();
+    Ok(Some(found))
+}
+
+fn add_entries(print: &mut Fingerprint, found: Option<&[Entry]>) {
+    let found = found.unwrap_or_default();
     print.number(i64::try_from(found.len()).unwrap_or(i64::MAX));
-    for (name, kind, ino) in &found {
+    for (name, kind, ino) in found {
         print.text(name).text(kind).text(&ino.to_string());
     }
+}
+
+/// Whether `path` is missing, or a folder on `device` that holds nothing in `inside`, which
+/// adopting fills the same as one the claim makes. Not following a symbolic link, so a link or
+/// another volume in its place is not empty.
+fn empty_place(path: &Path, device: u64, inside: Option<&[Entry]>) -> io::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            Ok(meta.is_dir() && meta.dev() == device && inside.is_some_and(<[Entry]>::is_empty))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+/// Adds `path` as absent where it is `empty`, and otherwise by kind, device and inode.
+fn add_place(print: &mut Fingerprint, path: &Path, empty: bool) -> io::Result<()> {
+    if empty {
+        print.text("absent");
+        return Ok(());
+    }
+    let meta = fs::symlink_metadata(path)?;
+    print
+        .text(kind_of(meta.file_type()))
+        .text(&meta.dev().to_string())
+        .text(&meta.ino().to_string());
     Ok(())
 }
 
@@ -385,24 +425,32 @@ impl Folder {
             .map(|found| found.as_deref() == Some(id))
     }
 
-    /// What adopting would take: the folder, by device, inode and birth time, and the entries of
-    /// its root, of `files/` and of this instance's files area, by name, kind and inode. The
-    /// entries the operating system makes and the server's own are left out, and a folder that
-    /// is not there reads as an empty one. It blocks.
+    /// What adopting would take: the folder, by device, inode and birth time; `files/` and this
+    /// instance's files area, each absent or by kind, device and inode; and the entries of all
+    /// three, by name, kind and inode. The entries the operating system makes and the server's
+    /// own are left out. Either folder reads as absent where it is missing or an empty folder on
+    /// the backup folder's own device, as the claim makes it. It blocks.
     pub fn fingerprint(&self) -> io::Result<String> {
         let meta = fs::metadata(&self.root)?;
+        let (files, area) = (self.root.join(FILES), self.area());
+        let in_root = entries_of(&self.root, &[FILES])?;
+        let in_files = entries_of(&files, &[&self.instance])?;
+        let in_area = entries_of(
+            &area,
+            &[disk::MARKER, disk::PENDING, folder_lock::LOCK, disk::TMP],
+        )?;
+        let area_empty = empty_place(&area, meta.dev(), in_area.as_deref())?;
+        let files_empty = area_empty && empty_place(&files, meta.dev(), in_files.as_deref())?;
         let mut print = Fingerprint::new("backup folder");
         print
             .text(&meta.dev().to_string())
             .text(&meta.ino().to_string())
             .maybe(born(&meta).as_deref());
-        entries(&mut print, &self.root, &[FILES])?;
-        entries(&mut print, &self.root.join(FILES), &[&self.instance])?;
-        entries(
-            &mut print,
-            &self.area(),
-            &[disk::MARKER, disk::PENDING, folder_lock::LOCK, disk::TMP],
-        )?;
+        add_entries(&mut print, in_root.as_deref());
+        add_place(&mut print, &files, files_empty)?;
+        add_entries(&mut print, in_files.as_deref());
+        add_place(&mut print, &area, area_empty)?;
+        add_entries(&mut print, in_area.as_deref());
         Ok(print.finish())
     }
 
@@ -485,12 +533,26 @@ impl Folder {
     }
 
     /// Makes `claim`, an adopt's own claim that recorded its store, the files area's marker and
-    /// its store. A claim that could not be promoted is held until a follow settles it. It
-    /// blocks.
-    pub fn promote(&self, claim: disk::Claim) -> io::Result<()> {
+    /// its store, and answers `read`, run on the folder once the marker is written and before
+    /// the store is in use. A claim that could not be promoted is held until a follow settles it.
+    /// It blocks.
+    pub fn promote<T>(
+        &self,
+        claim: disk::Claim,
+        read: impl FnOnce(&Folder) -> T,
+    ) -> (io::Result<()>, T) {
         let promoted = claim.promote();
-        self.swap(promoted.inspect_err(|_| self.hold_unsettled(claim))?);
-        Ok(())
+        let read = read(self);
+        match promoted {
+            Ok(disk) => {
+                self.swap(disk);
+                (Ok(()), read)
+            }
+            Err(error) => {
+                self.hold_unsettled(claim);
+                (Err(error), read)
+            }
+        }
     }
 
     /// Holds `claim`, with its files area's lock, for the next follow to settle against the
@@ -1484,8 +1546,58 @@ mod tests {
         let before = folder.fingerprint().unwrap();
         let claim = folder.claim("adopted").unwrap();
         assert_eq!(folder.fingerprint().unwrap(), before, "the claim");
-        folder.promote(claim).unwrap();
-        assert_eq!(folder.fingerprint().unwrap(), before, "the marker");
+        let (written, after) = folder.promote(claim, |folder| {
+            (
+                folder.files().id().to_string(),
+                folder.fingerprint().unwrap(),
+            )
+        });
+        written.unwrap();
+        assert_eq!(after.0, "old", "read before the new store is in use");
+        assert_eq!(after.1, before, "the marker");
         assert_eq!(folder.files().id(), "adopted");
+    }
+
+    #[test]
+    fn a_fingerprint_binds_the_files_folder_and_the_area_unless_missing_or_empty() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("backups");
+        fs::create_dir_all(&root).unwrap();
+        let folder = unmounted_at(&root);
+        let files = root.join(FILES);
+        let before = folder.fingerprint().unwrap();
+        fs::create_dir_all(files.join("instance")).unwrap();
+        assert_eq!(folder.fingerprint().unwrap(), before, "empty folders");
+
+        // Another files folder holding the same area, in place of the one read.
+        fs::write(files.join("instance").join("abcd"), b"x").unwrap();
+        let held = folder.fingerprint().unwrap();
+        assert_ne!(held, before, "a file in the area");
+        assert_eq!(folder.fingerprint().unwrap(), held);
+        let other = dir.path().join("other files");
+        fs::create_dir_all(&other).unwrap();
+        fs::rename(files.join("instance"), other.join("instance")).unwrap();
+        fs::remove_dir(&files).unwrap();
+        fs::rename(&other, &files).unwrap();
+        assert_ne!(
+            folder.fingerprint().unwrap(),
+            held,
+            "a files folder swapped"
+        );
+
+        // A link to a folder elsewhere, which may be another volume.
+        fs::remove_dir_all(&files).unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &files).unwrap();
+        assert_ne!(
+            folder.fingerprint().unwrap(),
+            before,
+            "a linked files folder"
+        );
+        fs::remove_file(&files).unwrap();
+        fs::create_dir_all(&files).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, files.join("instance")).unwrap();
+        assert_ne!(folder.fingerprint().unwrap(), before, "a linked area");
     }
 }

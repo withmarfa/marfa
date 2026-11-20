@@ -400,6 +400,34 @@ pub fn copies_in(tx: &Transaction<'_>, store: &str) -> Result<i64> {
         .query_row([store], |row| row.get(0))?)
 }
 
+/// How many deletions of bytes wait in `store`, and how many blobs failed to copy to it.
+pub fn leftovers_in(tx: &Transaction<'_>, store: &str) -> Result<(i64, i64)> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT (SELECT count(*) FROM blob_pending_deletions WHERE store_id = ?1), \
+             (SELECT count(*) FROM blob_copy_failures WHERE store_id = ?1)",
+        )?
+        .query_row([store], |row| Ok((row.get(0)?, row.get(1)?)))?)
+}
+
+/// How many of `hashes` are recorded blobs that nothing keeps.
+pub fn unkept_among<'a>(
+    tx: &Transaction<'_>,
+    hashes: impl IntoIterator<Item = &'a str>,
+) -> Result<i64> {
+    let mut statement = tx.prepare_cached(&format!(
+        "SELECT 1 FROM blobs b WHERE b.hash = ?1 AND NOT {}",
+        kept("b.hash")
+    ))?;
+    let mut unkept = 0;
+    for hash in hashes {
+        if statement.exists([hash])? {
+            unkept += 1;
+        }
+    }
+    Ok(unkept)
+}
+
 /// Detaches the store `id` and forgets every copy, failure and deletion it records, answering
 /// how many copies it forgot.
 pub fn forget_store(tx: &Transaction<'_>, id: &str, at: &str) -> Result<usize> {

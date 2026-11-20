@@ -5,11 +5,12 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::delete_connector::{CHANGED, stale};
+use super::delete_connector::{CHANGED, changed_unpreviewable, refused_stale, stale};
 use super::{Definition, text};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::backups::adopt::{self, Adopted, Adopting, Adoption, Marker};
+use crate::app::faults::HOLD_ADOPT_CONFIRMED;
 use crate::app::mcp::confirm;
 use crate::app::mcp::guard::{self, Guard, Halt};
 use crate::app::refusal::Refusal;
@@ -21,6 +22,7 @@ const ROOM: usize = ANSWER_BUDGET_CHARS - 4_000;
 
 const PREVIEW_NEXT: &str = "Nothing has been adopted. Adopting takes the folder there now as a new store and forgets the old store's backups and file copies; it cannot be undone. Show the person what would be forgotten and ask them; only if they agree, call marfa_adopt_backup_folder again with confirm.";
 const CLEARS: &str = "The record of the last backup is cleared too, so the instance shows no backup until the next one.";
+const LEAVES: &str = "Deletions queued in the old store are forgotten, so the bytes they would delete stay on the old disk. Files that only the forgotten backups keep, counted in files_to_purge, are then purged like any file nothing names, from every store.";
 const ADOPTED_NEXT: &str = "Adopted. The folder holds the new store's marker, and backups and file copies go to it from now on.";
 const CHANGED_WHILE: &str = "Adopted, but the folder changed while it was adopted, or could not be read again after. The old store's backups and file copies were forgotten, and the new store's marker is in files_folder. Check with the person that this is the folder they meant.";
 const MARKER_FAILED: &str = "Adopted, but the folder could not take the new store's marker, so backups and file copies cannot go to it yet. The old store's backups and file copies were forgotten. Make the folder writable: the server gives it the marker then, and backups and file copies wait until it does.";
@@ -56,10 +58,17 @@ pub fn definition() -> Definition {
                         "description": "Backups the instance found in the folder without having recorded them." },
                     "found_backups_left_out": { "type": "integer" },
                     "file_copies": { "type": "integer" },
+                    "pending_deletions": { "type": "integer",
+                        "description": "Deletions of bytes queued in the old store, whose bytes then stay on the old disk." },
+                    "copy_failures": { "type": "integer",
+                        "description": "Files whose copy to the old store failed." },
                 } },
                 "last_backup": { "type": ["object", "null"],
                     "description": "The record of the last backup, which adopting clears." },
                 "clears": { "type": "string" },
+                "files_to_purge": { "type": "integer",
+                    "description": "Files nothing keeps but the backups adopting forgets, which are then purged." },
+                "leaves": { "type": "string" },
                 "confirm": { "type": "string" },
                 "expires_at": { "type": "string" },
                 "adopted": { "type": "boolean" },
@@ -111,6 +120,8 @@ fn body(app: &App, caller: &Caller, adoption: Adoption) -> Result<Map<String, Va
         listed.insert("found_backups_left_out".into(), found_left_out.into());
     }
     listed.insert("file_copies".into(), forgets.copies.into());
+    listed.insert("pending_deletions".into(), forgets.pending_deletions.into());
+    listed.insert("copy_failures".into(), forgets.copy_failures.into());
     let mut body = Map::new();
     body.insert("folder".into(), adoption.folder.into());
     body.insert("files_folder".into(), adoption.files_folder.into());
@@ -124,6 +135,8 @@ fn body(app: &App, caller: &Caller, adoption: Adoption) -> Result<Map<String, Va
         },
     );
     body.insert("clears".into(), CLEARS.into());
+    body.insert("files_to_purge".into(), forgets.files_to_purge.into());
+    body.insert("leaves".into(), LEAVES.into());
     body.insert("confirm".into(), token.text.into());
     body.insert("expires_at".into(), token.expires_at.text().into());
     body.insert("next".into(), PREVIEW_NEXT.into());
@@ -149,7 +162,25 @@ async fn halted(app: &Arc<App>, caller: &Caller, halt: Halt) -> Outcome {
             answer.insert("next".into(), REPEATED.into());
             Ok(Value::Object(answer))
         }
-        Halt::Changed => Err(stale(CHANGED, Some(preview(app, caller).await?))),
+        Halt::Changed => match preview(app, caller).await {
+            Ok(body) => Err(stale(CHANGED, Some(body))),
+            Err(refused) => Err(changed_unpreviewable(refused)),
+        },
+    }
+}
+
+/// What a confirmed adopt the server refused answers, judged by the token as it stands now:
+/// another call may have spent it on the folder since this one first judged it.
+async fn refused(app: &Arc<App>, caller: &Caller, guard: &Guard, refused: Refusal) -> Outcome {
+    if refused.commit_failed {
+        return Err(refused.into());
+    }
+    match app.peek_adoption(guard).await? {
+        Some(halt @ (Halt::Repeated { .. } | Halt::Stale)) => halted(app, caller, halt).await,
+        Some(Halt::Changed) | None => match preview(app, caller).await {
+            Ok(body) => Err(refused_stale(refused, Some(body))),
+            Err(_) => Err(refused_stale(refused, None)),
+        },
     }
 }
 
@@ -192,8 +223,10 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
     if let Some(halt) = app.peek_adoption(&guard).await? {
         return halted(app, caller, halt).await;
     }
-    match app.adopt_folder(caller, Some(guard)).await? {
-        Adopting::Done(adopted) => Ok(answer(adopted)),
-        Adopting::Halted(halt) => halted(app, caller, halt).await,
+    app.faults.hold(HOLD_ADOPT_CONFIRMED, None).await;
+    match app.adopt_folder(caller, Some(guard.clone())).await {
+        Ok(Adopting::Done(adopted)) => Ok(answer(adopted)),
+        Ok(Adopting::Halted(halt)) => halted(app, caller, halt).await,
+        Err(refusal) => refused(app, caller, &guard, refusal).await,
     }
 }

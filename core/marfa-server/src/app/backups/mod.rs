@@ -832,6 +832,20 @@ pub fn held(tx: &Transaction<'_>, store: &str, hashes: &[Hash]) -> Result<HashSe
     Ok(held)
 }
 
+/// Every file a backup of `store` that this instance keeps or found names.
+pub(super) fn named_in(tx: &Transaction<'_>, store: &str) -> Result<BTreeSet<String>> {
+    let mut named: BTreeSet<String> = tx
+        .prepare_cached(
+            "SELECT f.hash FROM backup_files f WHERE f.store_id = ?1 AND EXISTS \
+             (SELECT 1 FROM backups b WHERE b.store_id = f.store_id AND b.seq >= f.first_seq \
+             AND (f.last_seq IS NULL OR b.seq <= f.last_seq))",
+        )?
+        .query_map([store], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    named.extend(found::files_in(tx, store)?);
+    Ok(named)
+}
+
 fn no_backup_destination() -> Refusal {
     Refusal::new(
         Code::NoBackupDestination,

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::delete_connector::{CHANGED, CHANGED_GONE, stale};
+use super::delete_connector::{CHANGED, CHANGED_GONE, changed_unpreviewable, stale};
 use super::{Definition, text};
 use crate::app::App;
 use crate::app::access::Caller;
@@ -178,7 +178,7 @@ async fn halted(
         Halt::Changed => match preview(app, caller, hash, store_id).await {
             Ok(body) => Err(stale(CHANGED, Some(body))),
             Err(refused) if gone(&refused) => Err(stale(CHANGED_GONE, None)),
-            Err(refused) => Err(refused.into()),
+            Err(refused) => Err(changed_unpreviewable(refused)),
         },
     }
 }

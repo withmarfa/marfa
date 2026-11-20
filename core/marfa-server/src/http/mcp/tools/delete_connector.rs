@@ -12,7 +12,7 @@ use crate::app::access::Caller;
 use crate::app::connectors::{Clearing, Deletion};
 use crate::app::mcp::confirm;
 use crate::app::mcp::connector::{self, Confirmed, Part};
-use crate::app::refusal::Refusal;
+use crate::app::refusal::{Code, Refusal};
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list, json_length};
 
 pub const NAME: &str = connector::DELETE_TOOL;
@@ -195,6 +195,40 @@ pub(super) fn stale(message: &str, body: Option<Map<String, Value>>) -> Stop {
         stop.error.insert(name, value);
     }
     stop
+}
+
+/// What a confirmed call stopped by `refused` answers: the refusal itself where it is about the
+/// caller or the server, or where the outcome is unknown; otherwise stale, saying why, with
+/// `preview` where one could be made.
+pub(super) fn refused_stale(refused: Refusal, preview: Option<Map<String, Value>>) -> Stop {
+    if refused.commit_failed
+        || matches!(
+            refused.code,
+            Code::Forbidden | Code::Unauthorized | Code::InternalError
+        )
+    {
+        return refused.into();
+    }
+    let next = match preview {
+        Some(_) => "This call changed nothing; here is a new preview.",
+        None => "This call changed nothing.",
+    };
+    stale(&format!("{} {next}", refused.message), preview)
+}
+
+/// What a confirmation whose target changed answers where the new preview was refused.
+pub(super) fn changed_unpreviewable(refused: Refusal) -> Stop {
+    let message = format!(
+        "What the preview showed has changed, and it cannot be previewed again: {}",
+        refused.message
+    );
+    refused_stale(
+        Refusal {
+            message: message.into(),
+            ..refused
+        },
+        None,
+    )
 }
 
 fn part(arguments: &Map<String, Value>) -> Part {

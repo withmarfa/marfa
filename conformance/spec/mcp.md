@@ -808,11 +808,11 @@ When `marfa_remove_file_copy` removes a copy, the server MUST answer under `byte
 
 ### `mcp/copy-remove-changed`
 
-If the store no longer records the copy the `marfa_remove_file_copy` preview read, records it with another answer for whether the server wrote it, or is an object store that records it in another object, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale`, and with a new preview where the store records a copy of the file.
+If the store no longer records the copy the `marfa_remove_file_copy` preview read, records it with another answer for whether the server wrote it, or is an object store that records it in another object, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale`, and with a new preview where the store records a copy of the file that the instance could remove.
 
 **Reason:** whether the server wrote the copy decides whether its bytes are deleted, and an object store keeps each copy the server writes in an object of its own, so the confirmation covers the copy the preview showed and no other.
 
-**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once the copy was removed since the preview, without a new preview`, `› refuses a confirmation once the object store holds the copy in another object since the preview, with a new preview`, `› refuses a confirmation once the server wrote the copy it did not write at the preview, with a new preview`.
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once the copy was removed since the preview, without a new preview`, `› refuses a confirmation once the object store holds the copy in another object since the preview, with a new preview`, `› refuses a confirmation once the server wrote the copy it did not write at the preview, with a new preview`, `› refuses a confirmation once the copy changed and removing it would leave fewer copies than the instance keeps, without a new preview`.
 
 ### `mcp/copy-remove-recorded-again`
 
@@ -862,6 +862,28 @@ If the backup folder's files folder holds the marker of the store the server rec
 
 **Tests:** `compliance/mcp-file-acts.test.ts › refuses a preview while the folder holds the store recorded there`.
 
+### `mcp/adopt-preview-deletions`
+
+When `marfa_adopt_backup_folder` previews, the server MUST answer under `forgets` in `pending_deletions` the number of deletions of file bytes it has queued in the store it recorded at the backup folder.
+
+**Reason:** the adopt forgets those deletions, so the bytes they would delete stay on the old disk.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts nothing without a confirmation, and previews what adopting forgets and clears`, `› counts the deletions queued in the replaced store and the files that failed to copy to it, and refuses a confirmation once a deletion ran since the preview`.
+
+### `mcp/adopt-preview-copy-failures`
+
+When `marfa_adopt_backup_folder` previews, the server MUST answer under `forgets` in `copy_failures` the number of files whose copy to the store it recorded at the backup folder failed.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts nothing without a confirmation, and previews what adopting forgets and clears`, `› counts the deletions queued in the replaced store and the files that failed to copy to it, and refuses a confirmation once a deletion ran since the preview`.
+
+### `mcp/adopt-preview-purges`
+
+When `marfa_adopt_backup_folder` previews, the server MUST answer in `files_to_purge` the number of files that a backup it recorded or found in the store at the backup folder names and that nothing else keeps.
+
+**Reason:** the adopt forgets those backups, so the server stops holding the files they name (`instance/backup-folder-adopt-backups`) and purges these as it purges any file nothing names, from every store.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts nothing without a confirmation, and previews what adopting forgets and clears`, `› counts the files only the forgotten backups keep, and refuses a confirmation once another one is left to them since the preview`.
+
 ### `mcp/adopt-confirmed`
 
 When `marfa_adopt_backup_folder` is called with the `confirm` token its preview gave, by the same credential, within five minutes, while the folder and what adopting forgets stand as the preview read them, the server MUST adopt the folder as `POST /backups/folder/adopt` does and answer `adopted` as `true`, the new store in `store_id`, the store it replaced in `replaced_store_id`, the numbers of backups and file copies it forgot in `backups_forgotten` and `copies_forgotten`, and `folder` and `files_folder`.
@@ -900,17 +922,33 @@ When the only entries added to or removed from the backup folder since a `marfa_
 
 **Tests:** `compliance/mcp-file-acts.test.ts › adopts on a confirmation after the operating system added its own entries to the folder`.
 
+### `mcp/adopt-empty-folders`
+
+When the `files` folder or this instance's files folder was missing at a `marfa_adopt_backup_folder` preview and is an empty folder on the backup folder's own device at the call that confirms it, the server MUST adopt the folder on the confirmation.
+
+**Reason:** the adopt makes these folders empty where they are missing, so an empty one made in between changes nothing the person agreed to, while a link or another volume in its place does.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once another store's marker appeared in the files folder since the preview, without a new preview`.
+
 ### `mcp/adopt-changed-copies`
 
-If the number of file copies the replaced store records changed since a `marfa_adopt_backup_folder` preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and a new preview.
+If the number of file copies, of queued deletions or of failed copies the replaced store records, or the number of files to purge, changed since a `marfa_adopt_backup_folder` preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and a new preview.
 
-**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once a copy the replaced store records was removed since the preview`.
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once a copy the replaced store records was removed since the preview`, `› counts the deletions queued in the replaced store and the files that failed to copy to it, and refuses a confirmation once a deletion ran since the preview`, `› counts the files only the forgotten backups keep, and refuses a confirmation once another one is left to them since the preview`.
+
+### `mcp/adopt-refused-stale`
+
+If a call to `marfa_adopt_backup_folder` carries a `confirm` token that holds and the server refuses the adopt for what the folder or the record holds now, with an outcome it knows, then the server MUST answer the tool error code `confirmation_stale`, with a new preview where the folder can be previewed.
+
+**Reason:** the stale answer tells the client that this call adopted nothing and that it needs the person to agree to what a new preview shows.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once another store's marker appeared in the files folder since the preview, without a new preview`.
 
 ### `mcp/adopt-repeated`
 
 When a call to `marfa_adopt_backup_folder` carries a `confirm` token that an earlier call by the same credential used, within five minutes of the preview, the server MUST answer `adopted` and `already_done` as `true`, the store the server records at the backup folder now in `store_id`, and in `marked` whether the files folder holds that store's marker now, or `null` where the folder does not answer in time or cannot be read.
 
-**Tests:** `compliance/mcp-file-acts.test.ts › changes nothing more on an adopt's confirmation an earlier call used, and reads the folder now`, `› says the marker is unknown when the folder does not answer in time, and marked once it has`.
+**Tests:** `compliance/mcp-file-acts.test.ts › changes nothing more on an adopt's confirmation an earlier call used, and reads the folder now`, `› says the marker is unknown when the folder does not answer in time, and marked once it has`, `› answers already done to a call with a confirmation that another call spent while it waited`.
 
 ## A confirmation of a removal or an adopt
 
