@@ -379,6 +379,7 @@ impl Folder {
         report: &mut PullReport,
         selection: Option<&mut Selection>,
     ) -> Result<bool> {
+        self.writers.fresh();
         let pulled = self.pull_into_ordered(planning, report, selection);
         // Every return passes here, so files already landed are made durable
         // before a pull reports them, whether it ends well or part way.

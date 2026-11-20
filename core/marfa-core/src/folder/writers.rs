@@ -24,13 +24,18 @@ pub(crate) enum Writers {
 /// What a folder knows of the files programs hold open for writing.
 ///
 /// On macOS one census of this user's processes, taken when first asked and
-/// kept until [`Census::fresh`]: a program that opens a file after the
-/// census is not in it. Elsewhere each answer asks the kernel.
+/// kept until [`Census::fresh`] or for `CENSUS_KEPT`: a program that opens a
+/// file after the census is not in it. Elsewhere each answer asks the kernel.
 #[derive(Default)]
 pub(crate) struct Census {
     #[cfg(target_os = "macos")]
-    taken: std::sync::Mutex<Option<std::sync::Arc<darwin::Snapshot>>>,
+    taken: std::sync::Mutex<Option<(std::time::Instant, std::sync::Arc<darwin::Snapshot>)>>,
 }
+
+/// How long one census answers, which bounds how stale an answer is in a
+/// long pass.
+#[cfg(target_os = "macos")]
+const CENSUS_KEPT: std::time::Duration = std::time::Duration::from_secs(1);
 
 impl Census {
     /// Forgets the census taken, so the next answer takes another.
@@ -75,7 +80,17 @@ impl Census {
                 .taken
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            std::sync::Arc::clone(taken.get_or_insert_with(|| std::sync::Arc::new(darwin::take())))
+            let now = std::time::Instant::now();
+            match &*taken {
+                Some((at, snapshot)) if now.duration_since(*at) < CENSUS_KEPT => {
+                    std::sync::Arc::clone(snapshot)
+                }
+                _ => {
+                    let snapshot = std::sync::Arc::new(darwin::take());
+                    *taken = Some((now, std::sync::Arc::clone(&snapshot)));
+                    snapshot
+                }
+            }
         };
         darwin::of(file, &snapshot)
     }

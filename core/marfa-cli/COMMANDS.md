@@ -4601,6 +4601,23 @@ marfa folders unmatched [OPTIONS] <DIR>
 | `--remove` | Take the files away, after a confirmation. |
 | `--yes` | Confirm the removal without asking, for scripts. Without it, a removal asks at a terminal, and is refused with `--json` or anywhere else. |
 
+### marfa folders kept
+
+List the files the directory keeps under a reserved name because a program might still write to them, and with `--discard` delete them. When a pull replaces or removes a file that a program holds open for writing, or one where Marfa cannot tell, it sets the old file aside under a name starting `.marfa-kept-`. Marfa deletes it once no program holds it, or, where it cannot tell, once it has been unchanged for 7 days. A file a program wrote to goes back to its path, and the next push sends what the program wrote; `--discard` puts such a file back too, in place of deleting it. With `--discard`, a watch holding the directory lets it go while this runs, and this is refused if the process holding the directory does not let it go within 10 seconds.
+
+```text
+marfa folders kept [OPTIONS] <DIR>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<DIR>` | The directory. |
+
+| Option | Description |
+| --- | --- |
+| `--discard` | Delete the files, after a confirmation, whatever programs hold them. |
+| `--yes` | Confirm the deletion without asking, for scripts. Without it, a deletion asks at a terminal, and is refused with `--json` or anywhere else. |
+
 ### marfa folders create
 
 Create a folder's settings on the server, as a `system.folder`. Needs write on `system.folder`.
