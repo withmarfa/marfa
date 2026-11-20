@@ -1476,11 +1476,11 @@ The CLI MUST print, for `marfa types scaffold`, a definition that `marfa types r
 
 ### `cli/types-check-judges`
 
-When `marfa types check` is given a folder, the CLI MUST report, for each `*.json` file directly in it, every problem the server's registration of the type in that file would refuse it for, each with the file, the path in the definition and the code and message the server gives, judging the type against the types the server ships and the folder's own types, parent first.
+When `marfa types check` is given a folder, the CLI MUST report, for each `*.json` file directly in it, every problem the server's registration of the type in that file would refuse it for, each with the file, the path in the definition and the code and message the server gives, judging the type against the types the server ships and the types of the folder that the server would have registered before it, each type after every type it names as its `parent`, in `compatible_with` or in a table column's `type_constraints`.
 
-**Reason:** a repository that keeps type files must learn at its own checks what a server would refuse, and learn all of it at once, not one refusal at a time.
+**Reason:** a repository that keeps type files must learn at its own checks what a server would refuse, and learn all of it at once, not one refusal at a time. The files of a folder have no order, so a type is judged after the types it needs, as a person would register them.
 
-**Tests:** `device/types-check.test.ts › refuses each definition a registration refuses, naming the file, the path, the code and the message`, `› refuses a loosened minimum and a reserved root`.
+**Tests:** `device/types-check.test.ts › refuses each definition a registration refuses, naming the file, the path, the code and the message`, `› refuses a loosened minimum and a reserved root`, `› passes a folder whose types name a shipped parent and each other`.
 
 ### `cli/types-check-passes`
 
@@ -1496,15 +1496,15 @@ If `marfa types check` refuses a file in the folder, then the CLI MUST exit 1 wi
 
 ### `cli/types-check-parent-reason`
 
-If the parent of a type in the folder is missing, is in a loop of parents or is itself refused, then the CLI MUST report that reason alone for the type in `marfa types check`.
+If a type in the folder names a type that is neither shipped nor accepted in the folder, because it is missing, was refused or is in a loop with the type, then the CLI MUST give the type in `marfa types check` the answer a server gives with the named type absent, and say beside that answer why the type is absent.
 
-**Reason:** the types above it cannot be known, so any other fault found against them would mislead.
+**Reason:** types that name one another in a loop cannot be registered in any order, so a server refuses each of them with the other absent whichever it is given first. Another fault the server finds in the type, such as an `enum` with no `enum_values`, is shown with it, and the reason the type is absent only adds to it.
 
-**Tests:** `device/types-check.test.ts › names a missing parent, a parent loop and a refused parent as the one reason`.
+**Tests:** `device/types-check.test.ts › gives a type that names an absent type the server's answer and says why beside it`.
 
 ### `cli/types-check-file-name`
 
-If a file's name is not its type's `id` followed by `.json`, then the CLI MUST refuse the file in `marfa types check` with `file_name_mismatch`, in whatever case the name differs.
+If a file's name is not its type's `id` followed by `.json`, then the CLI MUST refuse the file in `marfa types check` with `file_name_mismatch`, in whatever case the name differs, before any answer of the server for the type and whatever else the type holds.
 
 **Reason:** a plugins repository finds a type by its file name, so a name that differs from the id names another type.
 

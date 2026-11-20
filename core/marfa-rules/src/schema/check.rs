@@ -1,12 +1,12 @@
 //! Offline validation of item type definitions.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use super::{
-    CIRCULAR_INHERITANCE, Obj, Registry, SchemaVerdict, early_refusal, labelled,
-    parent_chain_fault, validate_type,
+    ITEM_KIND, Obj, Registry, SchemaVerdict, early_refusal, labelled, parent_chain_fault,
+    validate_type,
 };
 use crate::builtin;
 use crate::error::RuleError;
@@ -32,6 +32,8 @@ pub struct FileVerdict {
     pub file: String,
     pub id: Option<String>,
     pub problems: Vec<Problem>,
+    /// What the folder adds beside a server's answer for the type, such as a parent that is not there.
+    pub context: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,11 +64,6 @@ fn problem(path: &str, code: &'static str, message: impl Into<String>) -> Proble
         message: message.into(),
         hint: None,
     }
-}
-
-fn with_hint(mut problem: Problem, hint: impl Into<String>) -> Problem {
-    problem.hint = Some(hint.into());
-    problem
 }
 
 /// The line and column, counted as the JSON parser counts, of the byte at `offset`.
@@ -112,10 +109,12 @@ fn read(bytes: &[u8]) -> Result<Obj, Problem> {
     }
 }
 
+/// How a type names another, each of which the server looks up in the registry when it judges the type.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Link {
     Parent,
     Compat,
+    Column,
 }
 
 fn compat_targets(body: &Obj) -> Vec<&str> {
@@ -124,6 +123,49 @@ fn compat_targets(body: &Obj) -> Vec<&str> {
         Some(Value::Array(targets)) => targets.iter().filter_map(Value::as_str).collect(),
         _ => Vec::new(),
     }
+}
+
+/// The types an item column of a table may name; a column naming its own type needs no other.
+fn column_targets<'a>(body: &'a Obj, own: &str) -> Vec<&'a str> {
+    let mut found: Vec<&str> = Vec::new();
+    let tables = body.get("tables").and_then(Value::as_object);
+    for table in tables.into_iter().flat_map(Map::values) {
+        let columns = table.get("columns").and_then(Value::as_object);
+        for column in columns.into_iter().flat_map(Map::values) {
+            if column.get("type").and_then(Value::as_str) != Some(ITEM_KIND) {
+                continue;
+            }
+            let named = column.get("type_constraints").and_then(Value::as_array);
+            for id in named.into_iter().flatten().filter_map(Value::as_str) {
+                if id != own && !found.contains(&id) {
+                    found.push(id);
+                }
+            }
+        }
+    }
+    found
+}
+
+/// Every type the server looks up in the registry to judge this one.
+fn references<'a>(body: &'a Obj, own: &str) -> Vec<(Link, &'a str)> {
+    let parent = body
+        .get("parent")
+        .and_then(Value::as_str)
+        .filter(|parent| !parent.is_empty());
+    parent
+        .map(|parent| (Link::Parent, parent))
+        .into_iter()
+        .chain(
+            compat_targets(body)
+                .into_iter()
+                .map(|id| (Link::Compat, id)),
+        )
+        .chain(
+            column_targets(body, own)
+                .into_iter()
+                .map(|id| (Link::Column, id)),
+        )
+        .collect()
 }
 
 struct Entry {
@@ -209,6 +251,7 @@ pub fn check_type_files(
             file: file.name.clone(),
             id: None,
             problems: Vec::new(),
+            context: None,
         })
         .collect();
     let mut entries: Vec<Entry> = Vec::new();
@@ -230,21 +273,25 @@ pub fn check_type_files(
                 }
             },
         };
-        match body.get("id").and_then(Value::as_str) {
-            Some(id) => {
-                verdicts[at].id = Some(id.to_string());
-                entries.push(Entry {
-                    file: at,
-                    id: id.to_string(),
-                    body,
-                });
+        let id = body
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        if !id.is_empty() {
+            verdicts[at].id = Some(id.clone());
+            if file.name != format!("{id}.json") {
+                verdicts[at].problems.push(problem(
+                    "id",
+                    "file_name_mismatch",
+                    format!(
+                        "The file is named \"{}\" but its id is \"{id}\": name the file \"{id}.json\".",
+                        file.name
+                    ),
+                ));
             }
-            None => entries.push(Entry {
-                file: at,
-                id: String::new(),
-                body,
-            }),
         }
+        entries.push(Entry { file: at, id, body });
     }
     let mut by_id: HashMap<&str, usize> = HashMap::new();
     for (index, entry) in entries.iter().enumerate() {
@@ -260,17 +307,9 @@ pub fn check_type_files(
         .iter()
         .map(|entry| {
             let mut found: Vec<(usize, Link)> = Vec::new();
-            let parent = entry
-                .body
-                .get("parent")
-                .and_then(Value::as_str)
-                .filter(|parent| !shipped.contains(parent));
-            let targets = compat_targets(&entry.body)
-                .into_iter()
-                .filter(|target| !shipped.contains(target))
-                .map(|target| (target, Link::Compat));
-            for (named, link) in parent.map(|p| (p, Link::Parent)).into_iter().chain(targets) {
-                if let Some(index) = by_id.get(named)
+            for (link, named) in references(&entry.body, &entry.id) {
+                if !shipped.contains(named)
+                    && let Some(index) = by_id.get(named)
                     && !found.contains(&(*index, link))
                 {
                     found.push((*index, link));
@@ -281,149 +320,88 @@ pub fn check_type_files(
         .collect();
     let order = order_of(&entries, &links);
     let mut working = shipped.clone();
-    let mut refused: HashSet<usize> = HashSet::new();
-    for &index in &order.ready {
+    for &index in order.ready.iter().chain(&order.stuck) {
         let entry = &entries[index];
-        let found = judge(
-            entry,
-            &candidates[entry.file].name,
-            &working,
-            &refused,
-            &links[index],
-            &entries,
-        )?;
-        match found {
+        let looped = loop_through(index, &links, &order.stuck);
+        let held = judge(entry, &working)?;
+        verdicts[entry.file].context =
+            context_of(entry, &working, &by_id, looped.as_deref(), &entries);
+        match held {
             Ok(stored) => working = working.with(stored),
-            Err(problems) => {
-                refused.insert(index);
-                verdicts[entry.file].problems.extend(problems);
-            }
+            Err(problems) => verdicts[entry.file].problems.extend(problems),
         }
-    }
-    for &index in &order.stuck {
-        let entry = &entries[index];
-        let found = match loop_through(index, &links, &order.stuck) {
-            Some(path) => {
-                let parents_only = path.iter().all(|(_, link)| *link == Link::Parent);
-                let mut names: Vec<&str> = path
-                    .iter()
-                    .map(|(at, _)| entries[*at].id.as_str())
-                    .collect();
-                names.push(entry.id.as_str());
-                let shown = names.join(" -> ");
-                if parents_only {
-                    with_hint(
-                        problem(PARENT_PATH, "validation_error", CIRCULAR_INHERITANCE),
-                        format!("The loop is {shown}."),
-                    )
-                } else {
-                    with_hint(
-                        problem(
-                            "compatible_with",
-                            "compatible_with_violation",
-                            "Types that name each other as a parent or in compatible_with cannot be registered in any order.",
-                        ),
-                        format!("The loop is {shown}."),
-                    )
-                }
-            }
-            None => {
-                let (blocker, link) = links[index]
-                    .iter()
-                    .find(|(dependency, _)| order.stuck.contains(dependency))
-                    .copied()
-                    .unwrap_or((index, Link::Parent));
-                refusal_of_dependency(&entries[blocker].id, link)
-            }
-        };
-        verdicts[entry.file].problems.push(found);
     }
     Ok(FolderVerdict { files: verdicts })
 }
 
-fn refusal_of_dependency(id: &str, link: Link) -> Problem {
-    match link {
-        Link::Parent => problem(
-            PARENT_PATH,
-            "parent_refused",
-            format!(
-                "Parent type \"{id}\" is refused, so this type cannot be checked until \"{id}\" is fixed."
-            ),
-        ),
-        Link::Compat => problem(
-            "compatible_with",
-            "compatible_with_refused",
-            format!(
-                "compatible_with names \"{id}\", which is refused, so this type cannot be checked until \"{id}\" is fixed."
-            ),
-        ),
+/// What the folder adds to a server's answer: the types the type names that are not there, and the loop it is in.
+fn context_of(
+    entry: &Entry,
+    working: &Registry,
+    by_id: &HashMap<&str, usize>,
+    looped: Option<&[(usize, Link)]>,
+    entries: &[Entry],
+) -> Option<String> {
+    let mut sentences: Vec<String> = Vec::new();
+    for (link, named) in references(&entry.body, &entry.id) {
+        if working.contains(named) || named == entry.id {
+            continue;
+        }
+        let subject = match link {
+            Link::Parent => "The parent",
+            Link::Compat => "compatible_with names",
+            Link::Column => "A table column's type_constraints names",
+        };
+        let why = if by_id.contains_key(named) {
+            "was refused in this folder"
+        } else {
+            "is not shipped or in this folder"
+        };
+        sentences.push(match link {
+            Link::Parent => format!("{subject} \"{named}\" {why}."),
+            _ => format!("{subject} \"{named}\", which {why}."),
+        });
     }
+    if let Some(path) = looped {
+        let mut names: Vec<&str> = path
+            .iter()
+            .map(|(at, _)| entries[*at].id.as_str())
+            .collect();
+        names.push(entry.id.as_str());
+        sentences.push(format!(
+            "The type is in a loop of types that name one another, so none can be registered first: {}.",
+            names.join(" -> ")
+        ));
+    }
+    (!sentences.is_empty()).then(|| sentences.join(" "))
 }
 
 /// One type as the server registers it, against the types that registered before it: what it would store, or what it would be refused for.
-fn judge(
-    entry: &Entry,
-    file_name: &str,
-    working: &Registry,
-    refused: &HashSet<usize>,
-    links: &[(usize, Link)],
-    entries: &[Entry],
-) -> Result<Result<Obj, Vec<Problem>>, RuleError> {
-    let mut problems: Vec<Problem> = Vec::new();
-    if !entry.id.is_empty() && file_name != format!("{}.json", entry.id) {
-        problems.push(problem(
-            "id",
-            "file_name_mismatch",
-            format!(
-                "The file is named \"{file_name}\" but its id is \"{}\": name the file \"{}.json\".",
-                entry.id, entry.id
-            ),
-        ));
-    }
+fn judge(entry: &Entry, working: &Registry) -> Result<Result<Obj, Vec<Problem>>, RuleError> {
     if let Some(early) = early_refusal(&entry.body)? {
-        problems.push(problem(early.path(), early.code(), early.message()));
-        return Ok(Err(problems));
-    }
-    if let Some((blocker, link)) = links
-        .iter()
-        .find(|(dependency, _)| refused.contains(dependency))
-    {
-        problems.push(refusal_of_dependency(&entries[*blocker].id, *link));
-        return Ok(Err(problems));
-    }
-    let parent = entry
-        .body
-        .get("parent")
-        .and_then(Value::as_str)
-        .filter(|parent| !parent.is_empty());
-    if let Some(parent) = parent
-        && !working.contains(parent)
-        && let Some(fault) = parent_chain_fault(working, &entry.id, parent, 0)
-    {
-        problems.push(problem(PARENT_PATH, "validation_error", fault));
-        return Ok(Err(problems));
+        return Ok(Err(vec![problem(
+            early.path(),
+            early.code(),
+            early.message(),
+        )]));
     }
     match validate_type(&Value::Object(entry.body.clone()), working) {
         Err(issues) => {
             let code = SchemaVerdict::of(&issues).code();
-            problems.extend(
-                issues
-                    .iter()
-                    .map(|issue| problem(&issue.field, code, issue.message())),
-            );
-            Ok(Err(problems))
+            Ok(Err(issues
+                .iter()
+                .map(|issue| problem(&issue.field, code, issue.message()))
+                .collect()))
         }
         Ok(schema) => {
             let schema = labelled(schema);
-            if let Some(parent) = schema.get("parent").and_then(Value::as_str)
-                && let Some(fault) = parent_chain_fault(working, &entry.id, parent, 0)
-            {
-                problems.push(problem(PARENT_PATH, "validation_error", fault));
-            }
-            Ok(if problems.is_empty() {
-                Ok(schema)
-            } else {
-                Err(problems)
+            let fault = schema
+                .get("parent")
+                .and_then(Value::as_str)
+                .and_then(|parent| parent_chain_fault(working, &entry.id, parent, 0));
+            Ok(match fault {
+                Some(fault) => Err(vec![problem(PARENT_PATH, "validation_error", fault)]),
+                None => Ok(schema),
             })
         }
     }
@@ -655,45 +633,107 @@ mod tests {
         assert_eq!(found[0].path, "fields");
     }
 
+    fn child_of(id: &str, parent: &str) -> TypeFile {
+        definition(
+            id,
+            json!({ "parent": parent, "fields": { "x": { "type": "string" } } }),
+        )
+    }
+
+    fn holder(id: &str, target: &str) -> TypeFile {
+        definition(
+            id,
+            json!({ "fields": { "x": { "type": "string" } }, "tables": { "rows": { "columns": {
+                "who": { "type": "item", "type_constraints": [target] }
+            } } } }),
+        )
+    }
+
+    fn plain(id: &str) -> TypeFile {
+        definition(id, json!({ "fields": { "x": { "type": "string" } } }))
+    }
+
+    fn context_of_file<'a>(verdict: &'a FolderVerdict, name: &str) -> Option<&'a str> {
+        verdict
+            .files
+            .iter()
+            .find(|file| file.file == name)
+            .and_then(|file| file.context.as_deref())
+    }
+
     #[test]
-    fn a_missing_parent_is_named_alone() {
-        let verdict = check(&[definition(
-            "user.orphan",
-            json!({ "parent": "user.gone", "fields": { "x": { "type": "string" } } }),
-        )]);
+    fn a_missing_parent_gets_the_servers_answer_and_the_folder_says_why() {
+        let verdict = check(&[child_of("user.orphan", "user.gone")]);
         let found = problems_of(&verdict, "user.orphan.json");
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].code, "validation_error");
         assert_eq!(found[0].path, "parent");
         assert_eq!(found[0].message, "Parent type \"user.gone\" not found");
+        assert_eq!(
+            context_of_file(&verdict, "user.orphan.json"),
+            Some("The parent \"user.gone\" is not shipped or in this folder.")
+        );
     }
 
     #[test]
-    fn a_parent_cycle_is_named_for_each_type_in_it_and_not_for_a_type_below() {
-        let child = |id: &str, parent: &str| {
-            definition(
-                id,
-                json!({ "parent": parent, "fields": { "x": { "type": "string" } } }),
-            )
-        };
+    fn a_missing_parent_does_not_hide_another_fault_the_server_gives() {
+        let enum_without_values = json!({ "x": { "type": "enum" } });
+        let verdict = check(&[definition(
+            "user.orphan",
+            json!({ "parent": "user.gone", "fields": enum_without_values }),
+        )]);
+        let found = problems_of(&verdict, "user.orphan.json");
+        assert!(
+            found.iter().any(|problem| problem.code == "invalid_schema"
+                && problem.path == "fields.x.enum_values"),
+            "{found:?}"
+        );
+        assert!(found.iter().all(|problem| problem.code == "invalid_schema"));
+        assert!(
+            context_of_file(&verdict, "user.orphan.json")
+                .unwrap()
+                .contains("user.gone")
+        );
+    }
+
+    #[test]
+    fn a_parent_cycle_gives_each_type_in_it_the_answer_of_an_absent_parent() {
         let verdict = check(&[
-            child("user.a", "user.b"),
-            child("user.b", "user.a"),
-            child("user.below", "user.a"),
-            child("user.fine", "core.note"),
+            child_of("user.a", "user.b"),
+            child_of("user.b", "user.a"),
+            child_of("user.below", "user.a"),
+            child_of("user.fine", "core.note"),
         ]);
-        for name in ["user.a.json", "user.b.json"] {
+        for (name, parent) in [
+            ("user.a.json", "user.b"),
+            ("user.b.json", "user.a"),
+            ("user.below.json", "user.a"),
+        ] {
             let found = problems_of(&verdict, name);
             assert_eq!(found.len(), 1, "{name}: {found:?}");
-            assert_eq!(found[0].message, "Circular inheritance detected");
+            assert_eq!(found[0].code, "validation_error");
             assert_eq!(found[0].path, "parent");
-            assert!(found[0].hint.as_deref().unwrap().contains("user.a"));
+            assert_eq!(
+                found[0].message,
+                format!("Parent type \"{parent}\" not found")
+            );
         }
-        let below = problems_of(&verdict, "user.below.json");
-        assert_eq!(below.len(), 1, "{below:?}");
-        assert_eq!(below[0].code, "parent_refused");
-        assert!(below[0].message.contains("user.a"), "{below:?}");
+        for name in ["user.a.json", "user.b.json"] {
+            let context = context_of_file(&verdict, name).unwrap();
+            assert!(
+                context.contains("user.a -> user.b -> user.a")
+                    || context.contains("user.b -> user.a -> user.b"),
+                "{context}"
+            );
+        }
+        let below = context_of_file(&verdict, "user.below.json").unwrap();
+        assert!(
+            below.contains("\"user.a\" was refused in this folder"),
+            "{below}"
+        );
+        assert!(!below.contains("loop"), "{below}");
         assert!(problems_of(&verdict, "user.fine.json").is_empty());
+        assert!(context_of_file(&verdict, "user.fine.json").is_none());
     }
 
     #[test]
@@ -720,44 +760,173 @@ mod tests {
                 json!({ "compatible_with": "user.a-claimant", "fields": { "x": { "type": "string", "required": true } } }),
             ),
         ]);
-        for name in ["user.a-claimant.json", "user.z-target.json"] {
+        for (name, target) in [
+            ("user.a-claimant.json", "user.z-target"),
+            ("user.z-target.json", "user.a-claimant"),
+        ] {
             let found = problems_of(&looped, name);
             assert_eq!(found.len(), 1, "{name}: {found:?}");
             assert_eq!(found[0].code, "compatible_with_violation");
-            assert_eq!(found[0].path, "compatible_with");
+            assert_eq!(found[0].path, format!("compatible_with.{target}"));
+            assert!(
+                found[0].message.contains("which is not registered"),
+                "{found:?}"
+            );
+            assert!(context_of_file(&looped, name).unwrap().contains("loop"));
         }
         let broken = check(&[claimant("user.nothing"), target]);
-        assert!(!problems_of(&broken, "user.a-claimant.json").is_empty());
+        let found = problems_of(&broken, "user.a-claimant.json");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, "compatible_with_violation");
     }
 
     #[test]
-    fn a_type_naming_itself_as_its_parent_is_a_cycle() {
-        let verdict = check(&[definition(
-            "user.self",
-            json!({ "parent": "user.self", "fields": { "x": { "type": "string" } } }),
-        )]);
+    fn a_compatible_with_claim_that_the_target_does_not_satisfy_is_refused() {
+        let target = definition(
+            "user.z-target",
+            json!({ "fields": { "x": { "type": "string", "required": true } } }),
+        );
+        let claimant = |fields: Value| {
+            definition(
+                "user.a-claimant",
+                json!({ "compatible_with": "user.z-target", "fields": fields }),
+            )
+        };
+        let met = check(&[
+            claimant(json!({ "x": { "type": "string", "required": true } })),
+            target.clone(),
+        ]);
+        assert_eq!(met.problem_count(), 0, "witness: {met:?}");
+        let unmet = check(&[claimant(json!({ "y": { "type": "string" } })), target]);
+        let found = problems_of(&unmet, "user.a-claimant.json");
+        assert!(!found.is_empty());
+        assert!(
+            found
+                .iter()
+                .all(|problem| problem.code == "compatible_with_violation")
+        );
+        assert!(problems_of(&unmet, "user.z-target.json").is_empty());
+    }
+
+    #[test]
+    fn a_table_column_is_judged_after_the_type_it_names_whatever_order_the_files_sort_in() {
+        for (referrer, target) in [
+            ("user.a-holder", "user.z-person"),
+            ("user.z-holder", "user.a-person"),
+        ] {
+            let verdict = check(&[holder(referrer, target), plain(target)]);
+            assert_eq!(verdict.problem_count(), 0, "{referrer}: {verdict:?}");
+        }
+        let chained = check(&[
+            holder("user.a-holder", "user.m-holder"),
+            holder("user.m-holder", "user.z-person"),
+            plain("user.z-person"),
+        ]);
+        assert_eq!(chained.problem_count(), 0, "{chained:?}");
+    }
+
+    #[test]
+    fn a_table_column_naming_its_own_type_passes() {
+        let verdict = check(&[holder("user.tree", "user.tree")]);
+        assert_eq!(verdict.problem_count(), 0, "{verdict:?}");
+    }
+
+    #[test]
+    fn a_table_column_naming_a_type_that_is_not_there_gets_the_servers_answer() {
+        let verdict = check(&[holder("user.dangling", "user.nowhere")]);
+        let found = problems_of(&verdict, "user.dangling.json");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, "invalid_schema");
+        assert_eq!(found[0].path, "tables.rows.columns.who.type_constraints");
+        assert!(found[0].message.contains("which is not registered"));
+        assert_eq!(
+            context_of_file(&verdict, "user.dangling.json"),
+            Some(
+                "A table column's type_constraints names \"user.nowhere\", which is not shipped or in this folder."
+            )
+        );
+    }
+
+    #[test]
+    fn table_columns_that_name_each_other_are_each_refused_as_the_other_is_absent() {
+        let verdict = check(&[
+            holder("user.col-a", "user.col-b"),
+            holder("user.col-b", "user.col-a"),
+            holder("user.below", "user.col-a"),
+        ]);
+        for name in ["user.col-a.json", "user.col-b.json", "user.below.json"] {
+            let found = problems_of(&verdict, name);
+            assert_eq!(found.len(), 1, "{name}: {found:?}");
+            assert_eq!(found[0].code, "invalid_schema");
+            assert!(found[0].message.contains("which is not registered"));
+        }
+        assert!(
+            context_of_file(&verdict, "user.col-a.json")
+                .unwrap()
+                .contains("loop")
+        );
+        assert!(
+            !context_of_file(&verdict, "user.below.json")
+                .unwrap()
+                .contains("loop")
+        );
+    }
+
+    #[test]
+    fn a_type_naming_itself_as_its_parent_gets_the_servers_answer() {
+        let verdict = check(&[child_of("user.self", "user.self")]);
         let found = problems_of(&verdict, "user.self.json");
         assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, "validation_error");
         assert_eq!(found[0].message, "Circular inheritance detected");
+        let reserved = check(&[child_of("core.unshipped", "core.unshipped")]);
+        let found = problems_of(&reserved, "core.unshipped.json");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, "forbidden");
     }
 
     #[test]
-    fn a_child_of_a_refused_parent_says_so_and_not_what_the_parent_got_wrong() {
+    fn a_name_that_differs_from_the_id_is_reported_for_a_type_in_a_cycle_too() {
+        let body = json!({ "id": "user.self", "parent": "user.self", "fields": { "x": { "type": "string" } } })
+            .to_string();
+        let verdict = check(&[file("Wrong.json", &body)]);
+        let found = problems_of(&verdict, "Wrong.json");
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].code, "file_name_mismatch");
+        assert_eq!(found[1].message, "Circular inheritance detected");
+    }
+
+    #[test]
+    fn a_child_of_a_refused_parent_gets_the_servers_answer_and_the_folder_says_the_parent_was_refused()
+     {
         let verdict = check(&[
             definition(
                 "user.parent",
                 json!({ "fields": { "x": { "type": "colour" } } }),
             ),
+            child_of("user.child", "user.parent"),
             definition(
-                "user.child",
-                json!({ "parent": "user.parent", "fields": { "y": { "type": "string" } } }),
+                "user.child-enum",
+                json!({ "parent": "user.parent", "fields": { "y": { "type": "enum" } } }),
             ),
         ]);
         assert!(!problems_of(&verdict, "user.parent.json").is_empty());
         let found = problems_of(&verdict, "user.child.json");
         assert_eq!(found.len(), 1, "{found:?}");
-        assert_eq!(found[0].code, "parent_refused");
+        assert_eq!(found[0].code, "validation_error");
         assert_eq!(found[0].path, "parent");
+        assert_eq!(found[0].message, "Parent type \"user.parent\" not found");
+        assert_eq!(
+            context_of_file(&verdict, "user.child.json"),
+            Some("The parent \"user.parent\" was refused in this folder.")
+        );
+        let found = problems_of(&verdict, "user.child-enum.json");
+        assert!(
+            found.iter().all(|problem| problem.code == "invalid_schema"
+                && problem.path == "fields.y.enum_values"),
+            "{found:?}"
+        );
+        assert!(!found.is_empty());
     }
 
     #[test]

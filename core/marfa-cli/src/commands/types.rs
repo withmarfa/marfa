@@ -33,7 +33,7 @@ pub enum TypesCommand {
     ///
     /// Reads each `*.json` file directly in the folder (not its subfolders, and not a file whose name starts with a dot) as an item type definition, in the body `types register --file` sends. The file is named `ID.json`, after the type's `id`. Other files are ignored. An edge type is not checked.
     ///
-    /// Needs no server, key or keychain, sends nothing, and takes none of `--url`, `--key`, `--profile` and `--socket`. Each type is judged with the registration rules that need no instance, against the types Marfa ships and the folder's own types, parent first. A type whose parent is missing, in a loop or itself refused is reported with that reason alone. Every problem is reported, each with its file, its path in the definition, and the code and message a server gives. A code the server never gives, such as `file_name_mismatch`, `file_unreadable` and `parent_refused`, is this command's own. What only an instance knows is left to it: whether the type already exists, what a key may register, and the body size an instance allows. Exits 1 when any file is refused or none is found, and 2 when the path is not a folder.
+    /// Needs no server, key or keychain, sends nothing, and takes none of `--url`, `--key`, `--profile` and `--socket`. Each type is judged with the registration rules that need no instance, against the types Marfa ships and the types of the folder that registered before it: a type goes after every type it names, as its `parent`, in `compatible_with` or in a table column's `type_constraints`. Types that name one another in a loop cannot be registered in any order, so each is judged with the others absent, which is the answer a server gives whichever it is given first. Every problem is reported, each with its file, its path in the definition, and the code and message a server gives for that file; a type whose parent or other named type is absent also says why, beside the server's answer. A code the server never gives, `file_name_mismatch` and `file_unreadable`, is this command's own, and is reported first. What only an instance knows is left to it: whether the type already exists, what a key may register, and the body size an instance allows. Exits 1 when any file is refused or none is found, and 2 when the path is not a folder.
     Check(CheckArgs),
     /// Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map.
     Register(BodySource),
@@ -557,12 +557,16 @@ fn verdict_json(verdict: &FolderVerdict) -> Value {
         .files
         .iter()
         .map(|file| {
-            serde_json::json!({
+            let mut shown = serde_json::json!({
                 "file": file.file,
                 "id": file.id,
                 "ok": file.problems.is_empty(),
                 "problems": file.problems.iter().map(problem_json).collect::<Vec<_>>(),
-            })
+            });
+            if let Some(context) = &file.context {
+                shown["context"] = Value::String(context.clone());
+            }
+            shown
         })
         .collect();
     serde_json::json!({
@@ -595,6 +599,9 @@ fn verdict_words(answer: &Value) -> String {
             if let Some(hint) = problem.get("hint").and_then(Value::as_str) {
                 lines.push(format!("    {hint}"));
             }
+        }
+        if let Some(context) = file.get("context").and_then(Value::as_str) {
+            lines.push(format!("  {context}"));
         }
     }
     let checked = count(answer, "checked");

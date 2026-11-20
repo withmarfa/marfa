@@ -295,9 +295,31 @@ fn a_reserved_root_is_refused() {
     }
 }
 
+fn context(verdict: &Value, file: &str) -> String {
+    verdict["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["file"] == file)
+        .unwrap_or_else(|| panic!("no entry for {file} in {verdict}"))["context"]
+        .as_str()
+        .unwrap_or("")
+        .to_string()
+}
+
+fn child(id: &str, parent: &str) -> Value {
+    json!({ "id": id, "parent": parent, "fields": { "x": { "type": "string" } } })
+}
+
+fn holder(id: &str, target: &str) -> Value {
+    json!({ "id": id, "fields": { "x": { "type": "string" } }, "tables": { "rows": { "columns": {
+        "who": { "type": "item", "type_constraints": [target] }
+    } } } })
+}
+
 #[test]
-fn a_missing_parent_is_refused_with_that_reason_alone() {
-    let body = |parent: &str| json!({ "id": "user.o", "parent": parent, "fields": { "x": { "type": "string" } } });
+fn a_missing_parent_gets_the_servers_answer_and_the_folder_says_why() {
+    let body = |parent: &str| child("user.o", parent);
     refused(
         body("core.note"),
         body("user.gone"),
@@ -309,11 +331,33 @@ fn a_missing_parent_is_refused_with_that_reason_alone() {
     let folder = folder_of(&[("user.o.json", body("user.gone"))]);
     let (_, verdict) = check_json(folder.path());
     assert_eq!(problems(&verdict, "user.o.json").len(), 1);
+    assert_eq!(
+        context(&verdict, "user.o.json"),
+        "The parent \"user.gone\" is not shipped or in this folder."
+    );
+    let plain = check(folder.path());
+    assert!(
+        plain.stdout.contains("not shipped or in this folder"),
+        "{}",
+        plain.stdout
+    );
 }
 
 #[test]
-fn a_parent_cycle_is_refused_and_a_type_below_it_names_the_cycle_as_why() {
-    let child = |id: &str, parent: &str| json!({ "id": id, "parent": parent, "fields": { "x": { "type": "string" } } });
+fn a_missing_parent_does_not_hide_the_fault_the_server_names() {
+    let enum_without_values = |parent: &str| json!({ "id": "user.o", "parent": parent, "fields": { "x": { "type": "enum" } } });
+    let folder = folder_of(&[("user.o.json", enum_without_values("user.gone"))]);
+    let (ran, verdict) = check_json(folder.path());
+    assert_eq!(ran.code, 1);
+    let found = problems(&verdict, "user.o.json");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["code"], "invalid_schema");
+    assert_eq!(found[0]["path"], "fields.x.enum_values");
+    assert!(context(&verdict, "user.o.json").contains("user.gone"));
+}
+
+#[test]
+fn a_parent_cycle_gives_each_type_in_it_the_answer_of_an_absent_parent() {
     let witness = folder_of(&[
         ("user.a.json", child("user.a", "core.note")),
         ("user.b.json", child("user.b", "user.a")),
@@ -326,14 +370,78 @@ fn a_parent_cycle_is_refused_and_a_type_below_it_names_the_cycle_as_why() {
     ]);
     let (ran, verdict) = check_json(folder.path());
     assert_eq!(ran.code, 1);
-    for file in ["user.a.json", "user.b.json"] {
+    for (file, parent) in [
+        ("user.a.json", "user.b"),
+        ("user.b.json", "user.a"),
+        ("user.c.json", "user.a"),
+    ] {
         let found = problems(&verdict, file);
         assert_eq!(found.len(), 1, "{file}: {found:?}");
-        assert_eq!(found[0]["message"], "Circular inheritance detected");
+        assert_eq!(found[0]["code"], "validation_error");
+        assert_eq!(
+            found[0]["message"],
+            format!("Parent type \"{parent}\" not found")
+        );
     }
-    let below = problems(&verdict, "user.c.json");
-    assert_eq!(below.len(), 1, "{below:?}");
-    assert_eq!(below[0]["code"], "parent_refused");
+    assert!(context(&verdict, "user.a.json").contains("loop"));
+    assert!(context(&verdict, "user.b.json").contains("loop"));
+    let below = context(&verdict, "user.c.json");
+    assert!(below.contains("was refused in this folder"), "{below}");
+    assert!(!below.contains("loop"), "{below}");
+}
+
+#[test]
+fn a_type_naming_itself_as_its_parent_gets_the_servers_answer_and_keeps_its_folder_checks() {
+    let folder = folder_of(&[
+        ("user.self.json", child("user.self", "user.self")),
+        (
+            "core.unshipped.json",
+            child("core.unshipped", "core.unshipped"),
+        ),
+        ("Wrong.json", child("user.other", "user.other")),
+    ]);
+    let (ran, verdict) = check_json(folder.path());
+    assert_eq!(ran.code, 1);
+    let own = problems(&verdict, "user.self.json");
+    assert_eq!(own.len(), 1, "{own:?}");
+    assert_eq!(own[0]["message"], "Circular inheritance detected");
+    let reserved = problems(&verdict, "core.unshipped.json");
+    assert_eq!(reserved.len(), 1, "{reserved:?}");
+    assert_eq!(reserved[0]["code"], "forbidden");
+    let misnamed = problems(&verdict, "Wrong.json");
+    assert_eq!(misnamed.len(), 2, "{misnamed:?}");
+    assert_eq!(misnamed[0]["code"], "file_name_mismatch");
+    assert_eq!(misnamed[1]["message"], "Circular inheritance detected");
+}
+
+#[test]
+fn a_table_column_is_judged_after_the_type_it_names_and_refused_where_it_is_absent() {
+    let witness = folder_of(&[
+        (
+            "user.a-holder.json",
+            holder("user.a-holder", "user.z-person"),
+        ),
+        ("user.z-person.json", child("user.z-person", "core.note")),
+    ]);
+    let passed = check(witness.path());
+    assert_eq!(passed.code, 0, "{}{}", passed.stdout, passed.stderr);
+    let folder = folder_of(&[
+        (
+            "user.a-holder.json",
+            holder("user.a-holder", "user.nowhere"),
+        ),
+        ("user.col-a.json", holder("user.col-a", "user.col-b")),
+        ("user.col-b.json", holder("user.col-b", "user.col-a")),
+    ]);
+    let (ran, verdict) = check_json(folder.path());
+    assert_eq!(ran.code, 1);
+    for file in ["user.a-holder.json", "user.col-a.json", "user.col-b.json"] {
+        let found = problems(&verdict, file);
+        assert_eq!(found.len(), 1, "{file}: {found:?}");
+        assert_eq!(found[0]["code"], "invalid_schema");
+        assert_eq!(found[0]["path"], "tables.rows.columns.who.type_constraints");
+    }
+    assert!(context(&verdict, "user.col-a.json").contains("loop"));
 }
 
 #[test]

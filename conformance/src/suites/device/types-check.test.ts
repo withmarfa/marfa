@@ -33,6 +33,7 @@ interface Verdict {
     id: string | null;
     ok: boolean;
     problems: { path: string; code: string; message: string; hint?: string }[];
+    context?: string;
   }[];
 }
 
@@ -82,9 +83,21 @@ describe("a folder of type definitions, checked offline", () => {
         parent: "acme.sprint-task",
         fields: { severity: note },
       },
+      {
+        id: "acme.a-holder",
+        fields: { x: note },
+        tables: {
+          rows: {
+            columns: {
+              who: { type: "item", type_constraints: ["acme.z-person"] },
+            },
+          },
+        },
+      },
+      { id: "acme.z-person", fields: { x: note } },
     ]);
     const verdict = await verdictOf(folder, 0);
-    expect(verdict).toMatchObject({ ok: true, checked: 2, refused: 0 });
+    expect(verdict).toMatchObject({ ok: true, checked: 4, refused: 0 });
     expect(problemsOf(verdict, "acme.bug.json")).toEqual([]);
   });
 
@@ -215,14 +228,33 @@ describe("a folder of type definitions, checked offline", () => {
     ]);
   });
 
-  it("names a missing parent, a parent loop and a refused parent as the one reason", async () => {
+  it("gives a type that names an absent type the server's answer and says why beside it", async () => {
     const under = (id: string, parent: string) => ({
       id,
       parent,
       fields: { x: note },
     });
+    const holder = (id: string, target: string) => ({
+      id,
+      fields: { x: note },
+      tables: {
+        rows: {
+          columns: { who: { type: "item", type_constraints: [target] } },
+        },
+      },
+    });
+    const contextOf = (verdict: Verdict, file: string) =>
+      verdict.files.find((entry) => entry.file === file)?.context ?? "";
+
     const missing = await verdictOf(
-      folderOf([under("acme.orphan", "acme.gone")]),
+      folderOf([
+        under("acme.orphan", "acme.gone"),
+        {
+          id: "acme.orphan-enum",
+          parent: "acme.gone",
+          fields: { x: { type: "enum" } },
+        },
+      ]),
       1,
     );
     expect(problemsOf(missing, "acme.orphan.json")).toMatchObject([
@@ -231,6 +263,12 @@ describe("a folder of type definitions, checked offline", () => {
         code: "validation_error",
         message: 'Parent type "acme.gone" not found',
       },
+    ]);
+    expect(contextOf(missing, "acme.orphan.json")).toContain(
+      "is not shipped or in this folder",
+    );
+    expect(problemsOf(missing, "acme.orphan-enum.json")).toMatchObject([
+      { path: "fields.x.enum_values", code: "invalid_schema" },
     ]);
 
     const looped = await verdictOf(
@@ -241,14 +279,20 @@ describe("a folder of type definitions, checked offline", () => {
       ]),
       1,
     );
-    for (const file of ["acme.a.json", "acme.b.json"]) {
+    for (const [file, parent] of [
+      ["acme.a.json", "acme.b"],
+      ["acme.b.json", "acme.a"],
+      ["acme.c.json", "acme.a"],
+    ]) {
       expect(problemsOf(looped, file)).toMatchObject([
-        { message: "Circular inheritance detected" },
+        {
+          code: "validation_error",
+          message: `Parent type "${parent}" not found`,
+        },
       ]);
     }
-    expect(problemsOf(looped, "acme.c.json")).toMatchObject([
-      { code: "parent_refused" },
-    ]);
+    expect(contextOf(looped, "acme.a.json")).toContain("loop");
+    expect(contextOf(looped, "acme.c.json")).not.toContain("loop");
 
     const refusedParent = await verdictOf(
       folderOf([
@@ -258,7 +302,52 @@ describe("a folder of type definitions, checked offline", () => {
       1,
     );
     expect(problemsOf(refusedParent, "acme.q.json")).toMatchObject([
-      { code: "parent_refused" },
+      { code: "validation_error", message: 'Parent type "acme.p" not found' },
+    ]);
+    expect(contextOf(refusedParent, "acme.q.json")).toContain(
+      "was refused in this folder",
+    );
+
+    const columns = await verdictOf(
+      folderOf([
+        holder("acme.a-holder", "acme.z-person"),
+        under("acme.z-person", "core.note"),
+        holder("acme.dangling", "acme.nowhere"),
+        holder("acme.col-a", "acme.col-b"),
+        holder("acme.col-b", "acme.col-a"),
+      ]),
+      1,
+    );
+    expect(problemsOf(columns, "acme.a-holder.json")).toEqual([]);
+    for (const file of [
+      "acme.dangling.json",
+      "acme.col-a.json",
+      "acme.col-b.json",
+    ]) {
+      expect(problemsOf(columns, file)).toMatchObject([
+        {
+          path: "tables.rows.columns.who.type_constraints",
+          code: "invalid_schema",
+        },
+      ]);
+    }
+
+    const selfParent = await verdictOf(
+      folderOf(
+        [
+          under("core.unshipped", "core.unshipped"),
+          under("acme.other", "acme.other"),
+        ],
+        { "acme.other": "Wrong.json" },
+      ),
+      1,
+    );
+    expect(problemsOf(selfParent, "core.unshipped.json")).toMatchObject([
+      { code: "forbidden" },
+    ]);
+    expect(problemsOf(selfParent, "Wrong.json")).toMatchObject([
+      { code: "file_name_mismatch" },
+      { message: "Circular inheritance detected" },
     ]);
   });
 
