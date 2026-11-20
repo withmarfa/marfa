@@ -8,6 +8,7 @@ mod hash;
 pub mod link;
 pub mod range;
 pub mod references;
+pub mod removal;
 pub mod restore;
 mod room;
 mod rows;
@@ -25,7 +26,6 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use futures_util::StreamExt;
-use futures_util::future::join_all;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -713,6 +713,11 @@ impl Blobs {
         let forgotten = rows::forget_store(tx, old, at)?;
         rows::attach(tx, id, "folder", locator, at)?;
         Ok(forgotten)
+    }
+
+    /// How many copies the copy record records in `store`.
+    pub fn copies_in(tx: &rusqlite::Transaction<'_>, store: &str) -> Result<i64> {
+        rows::copies_in(tx, store)
     }
 
     pub fn check_adoptable(
@@ -1929,114 +1934,6 @@ impl App {
     pub async fn blob_orphans(&self, caller: &Caller) -> Result<Vec<OrphanRecord>> {
         caller.require(Permission::InstanceRead)?;
         self.db.read(rows::orphans).await
-    }
-
-    /// Queues deletion with the copy's removal before deleting its bytes.
-    pub async fn drop_copy(
-        self: &Arc<App>,
-        caller: &Caller,
-        hash: &Hash,
-        store_id: &str,
-    ) -> Result<()> {
-        let (app, caller, hash) = (self.clone(), caller.clone(), hash.clone());
-        let store_id = store_id.to_string();
-        owned(async move { app.dropping(&caller, &hash, &store_id).await }).await
-    }
-
-    async fn dropping(&self, caller: &Caller, hash: &Hash, store_id: &str) -> Result<()> {
-        let blob = hash.clone();
-        let (found, holders) = self
-            .db
-            .read(move |tx| Ok((rows::find(tx, &blob)?, rows::holders(tx, &blob)?)))
-            .await?;
-        let Some(found) = found else {
-            return Err(not_found());
-        };
-        if self.blobs.gate.unfinished(hash) {
-            return Err(unavailable());
-        }
-        let store = self
-            .blobs
-            .store(store_id)
-            .filter(|_| holders.iter().any(|held| held.store_id == store_id))
-            .ok_or_else(copy_not_found)?;
-        if matches!(store, Store::S3(_) | Store::Folder(_)) {
-            crate::app::backups::survey_folder(self).await?;
-        }
-        let (blob, kept_in) = (hash.clone(), store_id.to_string());
-        self.db
-            .read(move |tx| keep_held(tx, &blob, &kept_in))
-            .await?;
-        let seeds = self.settings.seeds();
-        let min_copies = self
-            .db
-            .read(move |tx| stored::deciding(tx, &seeds, BLOB_MIN_COPIES))
-            .await?;
-        let kept = own_others(&holders, store_id);
-        if (kept as u64) < min_copies {
-            return Err(below(kept + 1, min_copies));
-        }
-        let _held = self.lock_to_write(hash).await?;
-        if self.blobs.gate.unfinished(hash) {
-            return Err(unavailable());
-        }
-        let blob = hash.clone();
-        let holders = self.db.read(move |tx| rows::holders(tx, &blob)).await?;
-        if !holders.iter().any(|held| held.store_id == store_id) {
-            return Err(copy_not_found());
-        }
-        let others: Vec<(Store, &str)> = holders
-            .iter()
-            .filter(|held| held.store_id != store_id && held.written)
-            .filter_map(|held| Some((self.blobs.store(&held.store_id)?, held.object.as_str())))
-            .collect();
-        let answers = join_all(
-            others
-                .iter()
-                .map(|(other, object)| self.blobs.answer_of(other, &found.hash, object)),
-        )
-        .await;
-        let mut confirmed = 0;
-        for ((other, _), answer) in others.iter().zip(&answers) {
-            if matches!(answer, Ok(Answer::Holds(size)) if *size == found.size_bytes)
-                && self.blobs.is_itself(other).await
-            {
-                confirmed += 1;
-            }
-        }
-        if (confirmed as u64) < min_copies {
-            return Err(below(confirmed + 1, min_copies));
-        }
-        let (blob, dropped) = (hash.clone(), store_id.to_string());
-        let seeds = self.settings.seeds();
-        self.write(caller, "blob.copy_dropped", move |unit| {
-            unit.caller.require(Permission::BlobsManage)?;
-            let holders = rows::holders(unit.tx(), &blob)?;
-            if !holders.iter().any(|held| held.store_id == dropped) {
-                return Err(copy_not_found());
-            }
-            keep_held(unit.tx(), &blob, &dropped)?;
-            let min_copies = stored::deciding(unit.tx(), &seeds, BLOB_MIN_COPIES)?;
-            let kept = own_others(&holders, &dropped);
-            if (kept as u64) < min_copies {
-                return Err(below(kept + 1, min_copies));
-            }
-            if (confirmed as u64) < min_copies {
-                return Err(below(confirmed + 1, min_copies));
-            }
-            let object = holders
-                .iter()
-                .find(|held| held.store_id == dropped)
-                .map(|held| held.object.as_str())
-                .ok_or_else(copy_not_found)?;
-            rows::remove_copy(unit.tx(), &blob, &dropped, object, &unit.at)?;
-            unit.audit("blob", blob.as_str(), Some(json!({ "store_id": dropped })))
-        })
-        .await?;
-        if let Err(failure) = self.finish_deletion(&store, hash).await {
-            tracing::warn!(?failure, "A dropped copy's bytes wait for a later run");
-        }
-        Ok(())
     }
 }
 

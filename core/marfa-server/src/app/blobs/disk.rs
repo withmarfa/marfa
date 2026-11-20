@@ -15,8 +15,8 @@ use crate::failure::Failure;
 use crate::server_lock::{self, Untaken};
 
 pub const MARKER: &str = ".marfa-store";
-const TMP: &str = "tmp";
-const LOCK: &str = ".server-lock";
+pub(super) const TMP: &str = "tmp";
+pub(super) const LOCK: &str = ".server-lock";
 
 #[derive(Debug)]
 pub struct Disk {
@@ -64,6 +64,13 @@ enum Taken {
     Locked(File),
     /// Only the backup folder, which the server can start without, is left unlocked.
     Unlocked(String),
+}
+
+/// The lock of the backup folder's files area, or why its file system takes none.
+#[derive(Debug)]
+pub struct AreaLock {
+    file: Option<File>,
+    unlocked: Option<String>,
 }
 
 /// The folder's lock, or why its file system takes none; anything else refuses the start.
@@ -201,14 +208,29 @@ impl Disk {
         read_marker(root, Place::BackupFiles)
     }
 
-    /// Takes the backup folder's files area `root`, which must exist and hold no other store's
-    /// marker, as the store `id`, locked as one opened at the start is. It blocks.
-    pub fn claim(root: &Path, id: &str) -> io::Result<Disk> {
-        let (lock, unlocked) = match take_lock(root, Place::BackupFiles) {
-            Ok(Taken::Locked(file)) => (Some(file), None),
-            Ok(Taken::Unlocked(why)) => (None, Some(why)),
-            Err(failure) => return Err(io::Error::other(failure.message)),
-        };
+    /// Takes the lock of the backup folder's files area `root`, which must exist, as one opened at
+    /// the start is. It blocks.
+    pub fn lock_area(root: &Path) -> io::Result<AreaLock> {
+        match take_lock(root, Place::BackupFiles) {
+            Ok(Taken::Locked(file)) => Ok(AreaLock {
+                file: Some(file),
+                unlocked: None,
+            }),
+            Ok(Taken::Unlocked(why)) => Ok(AreaLock {
+                file: None,
+                unlocked: Some(why),
+            }),
+            Err(failure) => Err(io::Error::other(failure.message)),
+        }
+    }
+
+    /// Takes the backup folder's files area `root`, whose lock `lock` is, and which must hold no
+    /// other store's marker, as the store `id`. It blocks.
+    pub fn claim(root: &Path, id: &str, lock: AreaLock) -> io::Result<Disk> {
+        let AreaLock {
+            file: lock,
+            unlocked,
+        } = lock;
         match read_marker(root, Place::BackupFiles) {
             Ok(None) => {}
             Ok(Some(found)) if found == id => {}
@@ -664,6 +686,10 @@ mod tests {
     use crate::server_lock::without_locks;
     use tempfile::TempDir;
 
+    fn claimed(root: &Path, id: &str) -> io::Result<Disk> {
+        Disk::lock_area(root).and_then(|lock| Disk::claim(root, id, lock))
+    }
+
     #[test]
     fn a_fresh_folder_gets_a_marker_that_a_second_start_reads_back() {
         let dir = TempDir::new().unwrap();
@@ -715,8 +741,9 @@ mod tests {
         );
         fs::create_dir_all(dir.path().join("adopted")).unwrap();
         let id = Uuid::now_v7().to_string();
-        let _adopted = Disk::claim(&dir.path().join("adopted"), &id).unwrap();
-        let again = Disk::claim(&dir.path().join("adopted"), &id).unwrap_err();
+        let adopted = dir.path().join("adopted");
+        let _adopted = claimed(&adopted, &id).unwrap();
+        let again = Disk::lock_area(&adopted).unwrap_err();
         assert!(
             again
                 .to_string()
@@ -750,7 +777,7 @@ mod tests {
         let adopted = dir.path().join("adopted");
         fs::create_dir_all(&adopted).unwrap();
         let id = Uuid::now_v7().to_string();
-        let claimed = without_locks(|| Disk::claim(&adopted, &id)).unwrap();
+        let claimed = without_locks(|| claimed(&adopted, &id)).unwrap();
         assert!(claimed.unlocked().is_some());
 
         let blobs = dir.path().join("blobs");
@@ -791,7 +818,7 @@ mod tests {
         );
         assert!(half.exists());
         let id = Uuid::now_v7().to_string();
-        let refused = Disk::claim(&area, &id).unwrap_err();
+        let refused = claimed(&area, &id).unwrap_err();
         assert!(refused.to_string().contains("its lock file"), "{refused}");
         assert!(half.exists());
     }

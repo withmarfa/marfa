@@ -394,6 +394,12 @@ pub fn attach(tx: &Transaction<'_>, id: &str, kind: &str, locator: &str, at: &st
     Ok(())
 }
 
+pub fn copies_in(tx: &Transaction<'_>, store: &str) -> Result<i64> {
+    Ok(tx
+        .prepare_cached("SELECT count(*) FROM blob_copies WHERE store_id = ?1")?
+        .query_row([store], |row| row.get(0))?)
+}
+
 /// Detaches the store `id` and forgets every copy, failure and deletion it records, answering
 /// how many copies it forgot.
 pub fn forget_store(tx: &Transaction<'_>, id: &str, at: &str) -> Result<usize> {

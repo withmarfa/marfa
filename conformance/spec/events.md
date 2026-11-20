@@ -2069,6 +2069,7 @@ Each entry names what it records in `action`. The first table gives the `action`
 | `connector_state.delete`     | A connector's state is deleted.                                                 | `settings`     |
 | `inbound_endpoint.create`    | An inbound endpoint is created.                                                 | `settings`     |
 | `inbound_endpoint.retire`    | An inbound endpoint is retired.                                                 | `settings`     |
+| `backup_folder.adopt`        | A caller with `backups.manage` adopts the backup folder.                        | `settings`     |
 | `items.trash_purged`         | The trash retention job purges items that stayed in the bin past the retention. | `housekeeping` |
 | `items.feed_expired`         | The feed expiry job moves expired feed items to the bin.                        | `housekeeping` |
 | `item.versions_thinned`      | The version thinning job removes versions of an item.                           | `housekeeping` |
@@ -2264,9 +2265,9 @@ The server MUST filter `GET /audit` by `action`, `resource_type` and `resource_i
 
 ### `events/audit-kind`
 
-The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, as the two tables of audit actions give, and by the part of the `action` before its first period for an action the tables do not list: `access` for `auth`, `owner`, `key`, `keys`, `instance`, `profile` and `folder`, `settings` for `config`, `webhook`, `connector`, `connector_state` and `inbound_endpoint`, and `data` for the rest, so that each entry is of exactly one kind.
+The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, as the two tables of audit actions give, and by the part of the `action` before its first period for an action the tables do not list: `access` for `auth`, `owner`, `key`, `keys`, `instance`, `profile` and `folder`, `settings` for `config`, `webhook`, `connector`, `connector_state`, `inbound_endpoint` and `backup_folder`, and `data` for the rest, so that each entry is of exactly one kind.
 
-**Reason:** `kind` lets a reader ask for one area of activity at a time. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks and connectors; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
+**Reason:** `kind` lets a reader ask for one area of activity at a time. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks, connectors and the backup folder; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
 
 **Tests:** `compliance/audit.test.ts › sorts entries by kind, each into exactly one`.
 

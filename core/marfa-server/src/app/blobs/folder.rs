@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Write as _};
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{DirEntryExt as _, MetadataExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
@@ -14,11 +14,12 @@ use futures_util::StreamExt;
 use futures_util::stream;
 use uuid::Uuid;
 
-use super::disk::{self, Disk, Place};
+use super::disk::{self, AreaLock, Disk, Place};
 use super::hash::Hash;
 use super::rows;
 use super::store::ByteStream;
 use crate::app::faults::{FAIL_BACKUP_FOLDER_WRITE, Faults};
+use crate::app::fingerprint::Fingerprint;
 use crate::db::Db;
 use crate::failure::Failure;
 
@@ -82,6 +83,91 @@ pub enum Adoptable {
     Foreign(String),
     /// Its files area holds no marker.
     Unmarked,
+}
+
+/// What adopting found once the files area was locked, holding the area's claim and lock until
+/// the marker is written.
+pub struct Holding {
+    _claiming: Claiming,
+    lock: Option<AreaLock>,
+    pub found: Adoptable,
+    /// What `Folder::fingerprint` read under the lock.
+    pub fingerprint: String,
+}
+
+/// What writing the marker under a held lock did.
+pub struct Claimed {
+    pub written: io::Result<()>,
+    /// The folder's fingerprint once the marker was written.
+    pub fingerprint: io::Result<String>,
+}
+
+fn not_there() -> io::Error {
+    io::Error::new(io::ErrorKind::NotFound, "the backup folder is not there")
+}
+
+fn born(meta: &Metadata) -> Option<String> {
+    let born = meta
+        .created()
+        .ok()?
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?;
+    Some(format!("{}.{:09}", born.as_secs(), born.subsec_nanos()))
+}
+
+/// Names the operating system or a desktop gives entries it makes in any folder it opens.
+fn made_by_the_system(name: &str) -> bool {
+    name.starts_with("._")
+        || name.starts_with(".Trash")
+        || matches!(
+            name,
+            ".DS_Store"
+                | ".Spotlight-V100"
+                | ".fseventsd"
+                | ".TemporaryItems"
+                | ".DocumentRevisions-V100"
+                | ".apdisk"
+                | ".VolumeIcon.icns"
+                | ".localized"
+                | ".com.apple.timemachine.donotpresent"
+                | ".directory"
+                | ".hidden"
+        )
+}
+
+/// Adds the entries of `folder` but `own` to `print`, by name, kind and inode.
+fn entries(print: &mut Fingerprint, folder: &Path, own: &[&str]) -> io::Result<()> {
+    let listed = match fs::read_dir(folder) {
+        Ok(listed) => listed,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            print.number(0);
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
+    let mut found = Vec::new();
+    for entry in listed {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if own.contains(&name.as_str()) || made_by_the_system(&name) {
+            continue;
+        }
+        let kind = match entry.file_type() {
+            Ok(kind) if kind.is_dir() => "d",
+            Ok(kind) if kind.is_file() => "f",
+            Ok(kind) if kind.is_symlink() => "l",
+            Ok(_) => "o",
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        found.push((name, kind, entry.ino()));
+    }
+    found.sort_unstable();
+    print.number(i64::try_from(found.len()).unwrap_or(i64::MAX));
+    for (name, kind, ino) in &found {
+        print.text(name).text(kind).text(&ino.to_string());
+    }
+    Ok(())
 }
 
 fn started(error: impl std::fmt::Display) -> Failure {
@@ -214,7 +300,8 @@ impl Folder {
         self.files().reachable()
     }
 
-    fn area(&self) -> PathBuf {
+    /// This instance's files area.
+    pub fn area(&self) -> PathBuf {
         self.root.join(FILES).join(&self.instance)
     }
 
@@ -262,16 +349,119 @@ impl Folder {
     /// Takes the files area as the store `id`; where that fails, `id` waits as one not mounted.
     fn claim(&self, id: &str) -> io::Result<()> {
         let area = self.area();
-        let claimed = if self.root.is_dir() {
+        let locked = if self.root.is_dir() {
             make_inside(&self.root.join(FILES))
                 .and_then(|()| make_inside(&area))
-                .and_then(|()| Disk::claim(&area, id))
+                .and_then(|()| Disk::lock_area(&area))
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "the backup folder is not there",
-            ))
+            Err(not_there())
         };
+        self.claim_locked(id, locked)
+    }
+
+    /// Locks the files area and reads what adopting it would take, keeping the area's claim and
+    /// lock until `claim_held` writes the marker. A timeout does not cancel the blocking work.
+    pub async fn hold_within(self: &Arc<Self>, deadline: Duration) -> Option<io::Result<Holding>> {
+        if !claiming().insert(self.claim_key.clone()) {
+            return None;
+        }
+        let (folder, claiming) = (self.clone(), Claiming(self.claim_key.clone()));
+        let held = tokio::task::spawn_blocking(move || folder.hold(claiming));
+        match tokio::time::timeout(deadline, held).await {
+            Ok(Ok(answer)) => Some(answer),
+            Ok(Err(error)) => Some(Err(io::Error::other(error))),
+            Err(_) => None,
+        }
+    }
+
+    fn hold(&self, claiming: Claiming) -> io::Result<Holding> {
+        let holding = |lock, found, fingerprint| Holding {
+            _claiming: claiming,
+            lock,
+            found,
+            fingerprint,
+        };
+        if !self.root.is_dir() {
+            return Ok(holding(None, Adoptable::Missing, String::new()));
+        }
+        let old = self.files();
+        if old.reachable() {
+            return Ok(holding(None, Adoptable::Held, String::new()));
+        }
+        // The old store's lock, where its folder is still here without its marker, refuses ours.
+        old.let_go();
+        let area = self.area();
+        make_inside(&self.root.join(FILES))?;
+        make_inside(&area)?;
+        let lock = Disk::lock_area(&area)?;
+        let found = match Disk::marked(&area) {
+            Ok(Some(id)) if id == old.id() => Adoptable::Held,
+            Ok(Some(id)) => Adoptable::Foreign(id),
+            Ok(None) => Adoptable::Unmarked,
+            Err(failure) => return Err(io::Error::other(failure.message)),
+        };
+        let fingerprint = self.fingerprint()?;
+        Ok(holding(Some(lock), found, fingerprint))
+    }
+
+    /// Writes the marker of the store `id` under the lock `holding` took, then reads the folder
+    /// again. A timeout does not cancel the blocking work.
+    pub async fn claim_held(
+        self: &Arc<Self>,
+        holding: Holding,
+        id: String,
+        deadline: Duration,
+    ) -> Option<Claimed> {
+        let folder = self.clone();
+        let claimed = tokio::task::spawn_blocking(move || {
+            let Holding {
+                _claiming: claiming,
+                lock,
+                ..
+            } = holding;
+            let _claiming = claiming;
+            let written = folder.claim_locked(&id, lock.ok_or_else(not_there));
+            Claimed {
+                written,
+                fingerprint: folder.fingerprint(),
+            }
+        });
+        match tokio::time::timeout(deadline, claimed).await {
+            Ok(Ok(claimed)) => Some(claimed),
+            Ok(Err(error)) => Some(Claimed {
+                written: Err(io::Error::other(error)),
+                fingerprint: Err(not_there()),
+            }),
+            Err(_) => None,
+        }
+    }
+
+    /// What adopting would take: the folder, by device, inode and birth time, and the entries of
+    /// its root, of `files/` and of this instance's files area, by name, kind and inode. The
+    /// entries the operating system makes and the server's own are left out, and a folder that
+    /// is not there reads as an empty one. It blocks.
+    pub fn fingerprint(&self) -> io::Result<String> {
+        let meta = fs::metadata(&self.root)?;
+        let mut print = Fingerprint::new("backup folder");
+        print
+            .text(&meta.dev().to_string())
+            .text(&meta.ino().to_string())
+            .maybe(born(&meta).as_deref());
+        entries(&mut print, &self.root, &[FILES])?;
+        entries(&mut print, &self.root.join(FILES), &[&self.instance])?;
+        entries(&mut print, &self.area(), &[disk::MARKER, disk::LOCK, disk::TMP])?;
+        Ok(print.finish())
+    }
+
+    fn claim_locked(&self, id: &str, locked: io::Result<AreaLock>) -> io::Result<()> {
+        let area = self.area();
+        let claimed = locked.and_then(|lock| {
+            if self.root.is_dir() {
+                Disk::claim(&area, id, lock)
+            } else {
+                Err(not_there())
+            }
+        });
         let (disk, answer) = match claimed {
             Ok(disk) => (disk, Ok(())),
             Err(error) => (Disk::unmounted(id.to_string(), area), Err(error)),

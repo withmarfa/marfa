@@ -75,6 +75,14 @@ pub(super) fn parts_held(
     Ok(held)
 }
 
+/// The backups found in `store`, by sequence and name.
+pub(super) fn named_in(tx: &Transaction<'_>, store: &str) -> Result<Vec<(i64, String)>> {
+    Ok(tx
+        .prepare_cached("SELECT seq, name FROM found_backups WHERE store_id = ?1 ORDER BY seq")?
+        .query_map([store], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
 /// Forgets every backup the server found in `store`, answering how many.
 pub(super) fn forget_store(tx: &Transaction<'_>, store: &str) -> Result<usize> {
     for table in ["found_backup_files", "found_backup_parts"] {

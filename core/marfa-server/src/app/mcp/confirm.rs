@@ -67,6 +67,7 @@ pub fn parse(token: &str) -> Option<Parsed> {
 }
 
 /// A confirmation of an owner's destructive tool, whose target is judged before the target is read.
+#[derive(Clone)]
 pub struct Bound {
     pub expires_at_ms: i64,
     target: String,
@@ -265,6 +266,32 @@ impl Signer {
             return Ok(Opening::Stale);
         }
         Ok(Opening::Open)
+    }
+
+    /// Judges a bound confirmation in a read as `open` would in the write, before anything costly.
+    pub fn peek(
+        &self,
+        tx: &Transaction<'_>,
+        tool: &str,
+        credential: &str,
+        target: &str,
+        bound: &Bound,
+        now: Stamp,
+    ) -> Result<Opening> {
+        if !self.holds_target(tool, credential, target, bound)? {
+            return Ok(Opening::Stale);
+        }
+        // A spent record lasts as long as its token, so an expired token has none `open` keeps.
+        if bound.expires_at_ms <= now.ms() {
+            return Ok(Opening::Stale);
+        }
+        Ok(match spent(tx, &bound.signature)? {
+            Some(spent) if spent.credential == credential && spent.ids_digest == target => {
+                Opening::Spent { total: spent.total }
+            }
+            Some(_) => Opening::Stale,
+            None => Opening::Open,
+        })
     }
 }
 
