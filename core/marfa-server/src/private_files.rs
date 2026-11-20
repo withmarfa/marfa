@@ -364,8 +364,6 @@ impl Kept {
                     "-journal",
                     ".before-upgrade",
                     ".before-upgrade.partial",
-                    ".release",
-                    ".release.partial",
                 ]
                 .iter()
                 .map(|suffix| {
