@@ -287,7 +287,7 @@
               "read",
               "write"
             ],
-            "description": "Access to every profile field, except that `write` changes only the name and the avatar. Changing the email address takes `email` at `write`."
+            "description": "Access to every profile field, except that `write` doesn't change the username. Changing the username takes `username` at `write`."
           },
           "name": {
             "type": "string",
@@ -297,13 +297,21 @@
             ],
             "description": "Access to the owner's name."
           },
+          "username": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write"
+            ],
+            "description": "Access to the owner's username, which password sign-in matches. Only this entry at `write` lets a credential change it."
+          },
           "email": {
             "type": "string",
             "enum": [
               "read",
               "write"
             ],
-            "description": "Access to the owner's email address, which password sign-in matches. Only this entry at `write` lets a credential change it."
+            "description": "Access to the owner's email address, which plays no part in signing in."
           },
           "avatar": {
             "type": "string",
@@ -2938,10 +2946,17 @@
             "type": "string",
             "description": "The owner's name. Present with `profile.name:read`."
           },
-          "email": {
+          "username": {
             "type": "string",
+            "description": "The owner's username, which password sign-in matches. Present with `profile.username:read`."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "email",
-            "description": "The owner's sign-in email address. Present with `profile.email:read`."
+            "description": "The owner's email address, or `null` when none is set. Present with `profile.email:read`."
           },
           "avatar": {
             "type": [
@@ -8562,7 +8577,7 @@
                 "$ref": "#/components/schemas/StoredProfilePermissions"
               },
               {
-                "description": "Stored profile levels by field. Only name and avatar permit writes; email is read-only, including under a wildcard."
+                "description": "Stored profile levels by field. Only the `username` entry permits writing the username; a wildcard reads it."
               }
             ]
           },
@@ -8729,7 +8744,7 @@
                 "$ref": "#/components/schemas/StoredProfilePermissions"
               },
               {
-                "description": "Stored profile levels by field. Only name and avatar permit writes; email is read-only, including under a wildcard."
+                "description": "Stored profile levels by field. Only the `username` entry permits writing the username; a wildcard reads it."
               }
             ]
           },
@@ -9490,9 +9505,16 @@
             "description": "Unique identifier for the owner.",
             "example": "01a10127-2109-7883-b687-be1e0823be15"
           },
-          "email": {
+          "username": {
             "type": "string",
-            "description": "Email address used to sign in."
+            "description": "The username the owner signs in with."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The owner's email address, or `null` when none is set. It plays no part in signing in."
           },
           "name": {
             "type": "string",
@@ -9513,6 +9535,7 @@
         },
         "required": [
           "id",
+          "username",
           "email",
           "name",
           "avatar",
@@ -51451,7 +51474,7 @@
                         "$ref": "#/components/schemas/ProfilePermissions"
                       },
                       {
-                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` implies read. `write` on `name` or `avatar` changes it, and only `email` at `write` changes the email address. `*` reads every field and at `write` changes only the name and avatar."
+                        "description": "Profile access by `name`, `username`, `email`, `avatar`, or `*`. `write` implies read. `write` on a field changes it, and only `username` at `write` changes the username. `*` reads every field and at `write` changes every field but the username."
                       }
                     ]
                   },
@@ -52743,7 +52766,7 @@
                         "$ref": "#/components/schemas/ProfilePermissions"
                       },
                       {
-                        "description": "Profile access by `name`, `email`, `avatar`, or `*`. `write` implies read. `write` on `name` or `avatar` changes it, and only `email` at `write` changes the email address. `*` reads every field and at `write` changes only the name and avatar."
+                        "description": "Profile access by `name`, `username`, `email`, `avatar`, or `*`. `write` implies read. `write` on a field changes it, and only `username` at `write` changes the username. `*` reads every field and at `write` changes every field but the username."
                       }
                     ]
                   },
@@ -54442,7 +54465,7 @@
             }
           },
           "400": {
-            "description": "An RFC 6749 error, when Marfa can't send the browser back to the app:\n- `invalid_request`: `client_id` is missing, or a parameter is repeated.\n- `invalid_client` or `invalid_client_metadata`: the client ID metadata document is unreadable or invalid.\n- `invalid_scope`: a scope writes the owner's email.\n- `invalid_target`: a resource isn't served here.\n\n`X-Marfa-Reach` gets `validation_error`.",
+            "description": "An RFC 6749 error, when Marfa can't send the browser back to the app:\n- `invalid_request`: `client_id` is missing, or a parameter is repeated.\n- `invalid_client` or `invalid_client_metadata`: the client ID metadata document is unreadable or invalid.\n- `invalid_target`: a resource isn't served here.\n\n`X-Marfa-Reach` gets `validation_error`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -55480,11 +55503,10 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "email": {
+                  "username": {
                     "type": "string",
-                    "maxLength": 254,
-                    "format": "email",
-                    "description": "Email address the owner uses to sign in."
+                    "maxLength": 64,
+                    "description": "The username the owner signs in with: 1 to 64 letters, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed."
                   },
                   "password": {
                     "type": "string",
@@ -55493,7 +55515,13 @@
                   "name": {
                     "type": "string",
                     "maxLength": 200,
-                    "description": "Display name. Defaults to the part before @ in the email address when omitted or blank."
+                    "description": "Display name. Defaults to the username when omitted or blank."
+                  },
+                  "email": {
+                    "type": "string",
+                    "maxLength": 254,
+                    "format": "email",
+                    "description": "The owner's email address. It plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed."
                   },
                   "code": {
                     "type": "string",
@@ -55501,7 +55529,7 @@
                   }
                 },
                 "required": [
-                  "email",
+                  "username",
                   "password"
                 ],
                 "additionalProperties": false
@@ -55519,6 +55547,7 @@
                 },
                 "example": {
                   "id": "01926a3c-4b1d-7e52-9a8f-3c5d7e1b2a40",
+                  "username": "alex",
                   "email": "alex@example.com",
                   "name": "Alex Example",
                   "avatar": null,
@@ -55756,7 +55785,7 @@
           "Owner"
         ],
         "summary": "Get the owner's profile",
-        "description": "Returns the fields of the owner's profile that your credential can read: `name`, `email` and `avatar`, each only with profile read permission for that field. A field you can't read is left out, so a credential that can read none gets an empty object.",
+        "description": "Returns the owner's profile fields that your credential can read: `name`, `username`, `email` and `avatar`, each with its own read permission. A field you can't read is left out, so a credential that can read none gets an empty object.",
         "security": [
           {
             "bearerAuth": []
@@ -55772,6 +55801,7 @@
                 },
                 "example": {
                   "name": "Alex Example",
+                  "username": "alex",
                   "email": "alex@example.com",
                   "avatar": null
                 }
@@ -55969,7 +55999,7 @@
           "Owner"
         ],
         "summary": "Update the owner's profile",
-        "description": "Updates the owner's email or name, or removes the avatar, and returns the profile fields you can read. Requires profile write permission for every submitted field. All fields commit together. Changing the email needs no confirmation.",
+        "description": "Updates the owner's username, email or name, or removes the avatar, and returns the profile fields you can read. Requires profile write permission for every submitted field. All fields commit together. Changing the username needs no confirmation.",
         "security": [
           {
             "bearerAuth": []
@@ -55982,11 +56012,20 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "email": {
+                  "username": {
                     "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "The username the owner signs in with: 1 to 64 letters, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. Signing in with the old username stops at once."
+                  },
+                  "email": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
                     "format": "email",
                     "maxLength": 254,
-                    "description": "The email address the owner signs in with. Marfa stores it in lowercase, with spaces at each end trimmed."
+                    "description": "The owner's email address, which plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed. Set it to `null` to remove it."
                   },
                   "name": {
                     "type": "string",
@@ -56014,6 +56053,7 @@
                 },
                 "example": {
                   "name": "Alex Example",
+                  "username": "alex",
                   "email": "alex@example.com",
                   "avatar": null
                 }
@@ -56602,6 +56642,7 @@
                 },
                 "example": {
                   "name": "Alex Example",
+                  "username": "alex",
                   "email": "alex@example.com",
                   "avatar": "https://marfa.example.com/profile/avatar"
                 }

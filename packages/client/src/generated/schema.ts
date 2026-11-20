@@ -1969,7 +1969,7 @@ export interface paths {
         };
         /**
          * Get the owner's profile
-         * @description Returns the fields of the owner's profile that your credential can read: `name`, `email` and `avatar`, each only with profile read permission for that field. A field you can't read is left out, so a credential that can read none gets an empty object.
+         * @description Returns the owner's profile fields that your credential can read: `name`, `username`, `email` and `avatar`, each with its own read permission. A field you can't read is left out, so a credential that can read none gets an empty object.
          */
         get: operations["getProfile"];
         put?: never;
@@ -1979,7 +1979,7 @@ export interface paths {
         head?: never;
         /**
          * Update the owner's profile
-         * @description Updates the owner's email or name, or removes the avatar, and returns the profile fields you can read. Requires profile write permission for every submitted field. All fields commit together. Changing the email needs no confirmation.
+         * @description Updates the owner's username, email or name, or removes the avatar, and returns the profile fields you can read. Requires profile write permission for every submitted field. All fields commit together. Changing the username needs no confirmation.
          */
         patch: operations["updateProfile"];
         trace?: never;
@@ -2630,7 +2630,7 @@ export interface components {
         /** @description Profile field permissions. */
         ProfilePermissions: {
             /**
-             * @description Access to every profile field, except that `write` changes only the name and the avatar. Changing the email address takes `email` at `write`.
+             * @description Access to every profile field, except that `write` doesn't change the username. Changing the username takes `username` at `write`.
              * @enum {string}
              */
             "*"?: "read" | "write";
@@ -2640,7 +2640,12 @@ export interface components {
              */
             name?: "read" | "write";
             /**
-             * @description Access to the owner's email address, which password sign-in matches. Only this entry at `write` lets a credential change it.
+             * @description Access to the owner's username, which password sign-in matches. Only this entry at `write` lets a credential change it.
+             * @enum {string}
+             */
+            username?: "read" | "write";
+            /**
+             * @description Access to the owner's email address, which plays no part in signing in.
              * @enum {string}
              */
             email?: "read" | "write";
@@ -3809,11 +3814,13 @@ export interface components {
         Profile: {
             /** @description The owner's name. Present with `profile.name:read`. */
             name?: string;
+            /** @description The owner's username, which password sign-in matches. Present with `profile.username:read`. */
+            username?: string;
             /**
              * Format: email
-             * @description The owner's sign-in email address. Present with `profile.email:read`.
+             * @description The owner's email address, or `null` when none is set. Present with `profile.email:read`.
              */
-            email?: string;
+            email?: string | null;
             /**
              * Format: uri
              * @description The address of the owner's avatar, or `null` when there is none. Present with `profile.avatar:read`. Fetch it with `GET /profile/avatar`.
@@ -6724,8 +6731,10 @@ export interface components {
              * @example 01a10127-2109-7883-b687-be1e0823be15
              */
             id: string;
-            /** @description Email address used to sign in. */
-            email: string;
+            /** @description The username the owner signs in with. */
+            username: string;
+            /** @description The owner's email address, or `null` when none is set. It plays no part in signing in. */
+            email: string | null;
             /** @description Display name of the owner. */
             name: string;
             /** @description The address of the owner's avatar on this instance, or `null` when none is set. Fetch it with `GET /profile/avatar`. */
@@ -31771,7 +31780,6 @@ export interface operations {
              * @description An RFC 6749 error, when Marfa can't send the browser back to the app:
              *     - `invalid_request`: `client_id` is missing, or a parameter is repeated.
              *     - `invalid_client` or `invalid_client_metadata`: the client ID metadata document is unreadable or invalid.
-             *     - `invalid_scope`: a scope writes the owner's email.
              *     - `invalid_target`: a resource isn't served here.
              *
              *     `X-Marfa-Reach` gets `validation_error`.
@@ -32399,15 +32407,17 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /**
-                     * Format: email
-                     * @description Email address the owner uses to sign in.
-                     */
-                    email: string;
+                    /** @description The username the owner signs in with: 1 to 64 letters, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. */
+                    username: string;
                     /** @description Password for the new owner. */
                     password: string;
-                    /** @description Display name. Defaults to the part before @ in the email address when omitted or blank. */
+                    /** @description Display name. Defaults to the username when omitted or blank. */
                     name?: string;
+                    /**
+                     * Format: email
+                     * @description The owner's email address. It plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed.
+                     */
+                    email?: string;
                     /** @description Machine-issued setup code. Omit when using a setup-only browser session. */
                     code?: string;
                 };
@@ -32425,6 +32435,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "id": "01926a3c-4b1d-7e52-9a8f-3c5d7e1b2a40",
+                     *       "username": "alex",
                      *       "email": "alex@example.com",
                      *       "name": "Alex Example",
                      *       "avatar": null,
@@ -32565,6 +32576,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "name": "Alex Example",
+                     *       "username": "alex",
                      *       "email": "alex@example.com",
                      *       "avatar": null
                      *     }
@@ -32685,11 +32697,13 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
+                    /** @description The username the owner signs in with: 1 to 64 letters, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. Signing in with the old username stops at once. */
+                    username?: string;
                     /**
                      * Format: email
-                     * @description The email address the owner signs in with. Marfa stores it in lowercase, with spaces at each end trimmed.
+                     * @description The owner's email address, which plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed. Set it to `null` to remove it.
                      */
-                    email?: string;
+                    email?: string | null;
                     /** @description Display name, without control or bidirectional formatting characters. Spaces at each end are trimmed. */
                     name?: string;
                     /** @description Set `avatar` to `null` to remove the owner's avatar, or omit it to leave it unchanged. To set an avatar, send its bytes to `PUT /profile/avatar`. */
@@ -32709,6 +32723,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "name": "Alex Example",
+                     *       "username": "alex",
                      *       "email": "alex@example.com",
                      *       "avatar": null
                      *     }
@@ -33039,6 +33054,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "name": "Alex Example",
+                     *       "username": "alex",
                      *       "email": "alex@example.com",
                      *       "avatar": "https://marfa.example.com/profile/avatar"
                      *     }
