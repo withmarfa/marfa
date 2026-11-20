@@ -542,7 +542,7 @@ pub(crate) fn end_for_owner(unit: &Unit<'_, '_>, id: &str) -> Result<()> {
 
 /// Includes keys those keys minted. Whoever ended the app decides this, whatever keys they reach.
 /// A key whose expiry does not read ends too, since it might still be live.
-pub(crate) fn end_all_of_app(unit: &Unit<'_, '_>, client_id: &str) -> Result<()> {
+pub(crate) fn end_all_of_app(unit: &Unit<'_, '_>, client_id: &str) -> Result<usize> {
     let now = Stamp::read(&unit.at)?;
     let held = unit
         .tx()
@@ -553,12 +553,29 @@ pub(crate) fn end_all_of_app(unit: &Unit<'_, '_>, client_id: &str) -> Result<()>
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut ended = 0;
     for (id, end_at) in &held {
         if may_live(end_at.as_deref(), now) {
             end(unit, id)?;
+            ended += 1;
         }
     }
-    Ok(())
+    Ok(ended)
+}
+
+/// The keys [`end_all_of_app`] would end. A key whose expiry does not read refuses.
+pub(crate) fn all_of_app(tx: &Transaction<'_>, client_id: &str, at: &str) -> Result<Vec<Key>> {
+    let now = Stamp::read(at)?;
+    let held = tx
+        .prepare(&format!(
+            "{SELECT} WHERE {UNREVOKED} AND k.oauth_client_id = ?1 ORDER BY k.created_at, k.id"
+        ))?
+        .query_map([client_id], from_row)?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(held
+        .into_iter()
+        .filter(|key| may_live(key.expires_at.as_deref(), now))
+        .collect())
 }
 
 /// Ends and counts the app's live keys `beyond` judges too wide. A key's own keys carry its app too.

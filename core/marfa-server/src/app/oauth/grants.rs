@@ -24,7 +24,7 @@ const NARROWED: &str = "auth.grant.narrowed";
 pub(crate) const RENAMED: &str = "auth.grant.renamed";
 pub(crate) const REVOKED: &str = GRANT_REVOKED;
 
-fn no_such_grant() -> Refusal {
+pub(crate) fn no_such_grant() -> Refusal {
     Refusal::new(Code::GrantNotFound, "No live app grant has this ID.")
 }
 
@@ -229,12 +229,13 @@ pub async fn narrow(
     .await
 }
 
+/// Answers how many of the app's keys it ended.
 pub(crate) fn withdraw(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
     consent: &Consent,
     with_keys: bool,
-) -> Result<()> {
+) -> Result<usize> {
     grant::end(unit, cache, &consent.client_id, &consent.owner_id)?;
     unit.audit_also(
         REVOKED,
@@ -248,19 +249,46 @@ pub(crate) fn withdraw(
         })),
     )?;
     if with_keys {
-        keys::end_all_of_app(unit, &consent.client_id)?;
+        return keys::end_all_of_app(unit, &consent.client_id);
     }
-    Ok(())
+    Ok(0)
+}
+
+/// `DELETE /oauth/grants/{id}` in the caller's transaction; answers how many keys it ended.
+pub(crate) fn revoke_in(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    id: &str,
+    with_keys: bool,
+) -> Result<usize> {
+    unit.caller.require(Permission::GrantsManage)?;
+    let consent = of_owner(unit.tx(), id)?.ok_or_else(no_such_grant)?;
+    withdraw(unit, cache, &consent, with_keys)
 }
 
 pub async fn revoke(app: &Arc<App>, caller: &Caller, id: String, with_keys: bool) -> Result<()> {
     let cache = app.catalog_handle();
     app.write(caller, REVOKED, move |unit| {
-        unit.caller.require(Permission::GrantsManage)?;
-        let consent = of_owner(unit.tx(), &id)?.ok_or_else(no_such_grant)?;
-        withdraw(unit, &cache, &consent, with_keys)
+        revoke_in(unit, &cache, &id, with_keys).map(drop)
     })
     .await
+}
+
+/// The grant's `system.connection` item version, which every change to the grant moves.
+pub(crate) fn item_version(tx: &Connection, consent: &Consent) -> Result<Option<i64>> {
+    grant::item_version(tx, &consent.grant_id)
+}
+
+pub(crate) fn destinations(tx: &Connection, consent: &Consent) -> Result<Vec<String>> {
+    store::approved_destinations(tx, &consent.client_id, &consent.owner_id)
+}
+
+/// The app's token chains that can still be used, which ending the grant ends.
+pub(crate) fn token_chains(tx: &Connection, consent: &Consent) -> Result<usize> {
+    let tokens = store::usable_tokens(tx, &consent.client_id, &consent.owner_id)?;
+    let chains: std::collections::BTreeSet<&str> =
+        tokens.iter().map(|(chain, _)| chain.as_str()).collect();
+    Ok(chains.len())
 }
 
 pub(crate) fn rename(

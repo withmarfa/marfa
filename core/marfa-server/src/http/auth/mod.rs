@@ -32,17 +32,21 @@ impl FromRequestParts<Arc<App>> for Visit {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _: &Arc<App>) -> Result<Visit, Infallible> {
-        let user_agent = parts
-            .headers
-            .get(header::USER_AGENT)
-            .and_then(|value| value.to_str().ok())
-            .map(|value| value.chars().take(USER_AGENT_CHARS).collect());
-        let context = parts.extensions.get::<RequestContext>();
-        Ok(Visit {
-            peer: context.and_then(|context| context.peer),
-            address: context.and_then(|context| context.caller_address),
-            user_agent,
-        })
+        Ok(visit_of(parts))
+    }
+}
+
+pub(crate) fn visit_of(parts: &Parts) -> Visit {
+    let user_agent = parts
+        .headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| value.chars().take(USER_AGENT_CHARS).collect());
+    let context = parts.extensions.get::<RequestContext>();
+    Visit {
+        peer: context.and_then(|context| context.peer),
+        address: context.and_then(|context| context.caller_address),
+        user_agent,
     }
 }
 

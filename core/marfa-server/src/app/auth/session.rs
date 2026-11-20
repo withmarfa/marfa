@@ -20,7 +20,7 @@ const USE_EVERY_MS: i64 = 60 * 1000;
 /// How long after signing in the owner's sign-in counts as recent, for a browser session and
 /// an app's sign-in alike.
 pub const RECENT_SECONDS: i64 = 15 * 60;
-pub(super) const ENDED: &str = "auth.sign_in.ended";
+pub(crate) const ENDED: &str = "auth.sign_in.ended";
 /// Bookkeeping, named so a fault can reach it. It leaves no audit entry.
 const USE: Write = Write {
     action: Some("auth.sign_in.used"),
@@ -94,6 +94,26 @@ pub fn live_by_id(tx: &Transaction<'_>, id: &str, now: Stamp) -> Result<Option<S
         )
         .optional()?;
     live(tx, found, now)
+}
+
+/// A live session of the owner with the address it signed in from and its token's digest,
+/// which never changes while the session lasts.
+pub(super) fn live_held_by_id(
+    tx: &Transaction<'_>,
+    id: &str,
+    now: Stamp,
+) -> Result<Option<(Session, Option<String>, String)>> {
+    let found = tx
+        .query_row(
+            &format!("SELECT {COLUMNS}, client_ip, digest FROM sign_ins WHERE id = ?1"),
+            [id],
+            |row| Ok((from_row(row)?, row.get("client_ip")?, row.get("digest")?)),
+        )
+        .optional()?;
+    let Some((session, client_ip, digest)) = found else {
+        return Ok(None);
+    };
+    Ok(live(tx, Some(session), now)?.map(|session| (session, client_ip, digest)))
 }
 
 /// Every live session of the owner, each with the address it signed in from.
