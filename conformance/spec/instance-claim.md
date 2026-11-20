@@ -400,7 +400,7 @@ If a form post to `POST /setup/exchange` on an instance with no owner carries a 
 
 ### `instance-claim/setup-form-claimed`
 
-While an instance has an owner, when a browser that asks for a page sends a form post to `POST /setup/exchange` or `POST /setup/claim` that carries a `return_to`, or opens `GET /setup` with one, the server MUST answer the notice that the instance has an owner, with a sign-in link that carries that `return_to`.
+While an instance has an owner, when a browser that asks for a page sends a form post to `POST /setup/exchange` or `POST /setup/claim` that carries a `return_to` and no `purpose`, or opens `GET /setup` with one, the server MUST answer the notice that the instance has an owner, with a sign-in link that carries that `return_to`.
 
 **Reason:** A second tab, or a setup page left open while another finished the claim, continues to the app through sign-in.
 

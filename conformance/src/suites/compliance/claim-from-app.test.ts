@@ -865,6 +865,10 @@ describe("a claim another tab or a refused sign-in finished", () => {
             ["code", code],
             ["return_to", AUTHORIZE],
           ]),
+          await second.post("/setup/exchange", [
+            ["code", "   "],
+            ["return_to", AUTHORIZE],
+          ]),
           await second.get(`/setup?return_to=${encodeURIComponent(AUTHORIZE)}`),
         ];
         for (const notice of notices) {
@@ -874,7 +878,9 @@ describe("a claim another tab or a refused sign-in finished", () => {
           );
           expect(links(html)).toContain(throughSignIn(AUTHORIZE));
         }
-        expect(notices.map((notice) => notice.status)).toEqual([409, 409, 200]);
+        expect(notices.map((notice) => notice.status)).toEqual([
+          409, 409, 409, 200,
+        ]);
 
         // The notice's sign-in continues to the authorization.
         const signInHtml = await (

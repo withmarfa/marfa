@@ -18,7 +18,7 @@ use crate::http::answer::{Answer, Stopped, json_answer};
 use crate::http::body::{JsonBody, only_declared};
 
 const EXCHANGE_FIELDS: [&str; 2] = ["ticket", "code"];
-const EXCHANGE_FORM_FIELDS: [&str; 4] = ["ticket", "code", RETURN_TO, PURPOSE];
+const EXCHANGE_FORM_FIELDS: [&str; 3] = ["code", RETURN_TO, PURPOSE];
 const CLAIM_FIELDS: [&str; 5] = ["username", "password", "name", "email", "code"];
 const RECOVER_FIELDS: [&str; 2] = ["password", "code"];
 const AFTER_CLAIM: &str = "/auth/sign-in";
@@ -81,11 +81,14 @@ pub async fn exchange(
         .and_then(Value::as_str)
         .filter(|code| !code.trim().is_empty());
     let exchanged = match (code, &form) {
+        (Some(code), CodeForm::Setup(_)) => claim::exchange_setup_code(&app, code, visit).await,
+        (Some(code), CodeForm::Recovery) => claim::exchange_code(&app, code, visit).await,
+        (None, CodeForm::Setup(_)) if claim::is_claimed(&app).await? => {
+            Err(claim::already_claimed())
+        }
         (None, _) => Err(Refusal::validation(
             "Enter a setup code or open a new setup link.",
         )),
-        (Some(code), CodeForm::Setup(_)) => claim::exchange_setup_code(&app, code, visit).await,
-        (Some(code), CodeForm::Recovery) => claim::exchange_code(&app, code, visit).await,
     };
     let session = match exchanged {
         Ok(session) => session,
