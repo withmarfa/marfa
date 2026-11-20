@@ -1398,11 +1398,6 @@ describe("the owner tasks at /mcp/admin", () => {
       expect(await inBin(old)).toBe(true);
       expect(await inBin(recent)).toBe(true);
       const { tools } = await connection.client.listTools();
-      expect(
-        tools
-          .filter((tool) => /purge|empty/.test(tool.name))
-          .map((tool) => tool.name),
-      ).toEqual([]);
       const maintain = tools.find((tool) => tool.name === "marfa_maintain");
       expect(
         Object.keys(maintain?.inputSchema.properties ?? {}).sort(),

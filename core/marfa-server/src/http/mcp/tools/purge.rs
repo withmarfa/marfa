@@ -76,7 +76,7 @@ pub fn definition() -> Definition {
                 } },
                 "edges": { "type": "integer" },
                 "goes_with": { "type": "object", "properties": {
-                    "versions": { "type": "integer" },
+                    "versions": { "type": "integer", "description": "Earlier versions of the items." },
                     "tags": { "type": "integer" },
                     "extensions": { "type": "integer" },
                     "table_rows": { "type": "integer" },
