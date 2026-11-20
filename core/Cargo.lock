@@ -2838,6 +2838,7 @@ dependencies = [
  "globset",
  "icu_casemap",
  "jiff 1.0.1",
+ "pulldown-cmark",
  "regex",
  "ryu",
  "serde",
