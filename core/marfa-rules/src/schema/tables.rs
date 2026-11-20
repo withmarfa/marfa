@@ -2,7 +2,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::field::{UNUSED_ENUM_VALUES, label_issue, normalize_field, validate_member, vocabulary};
+use super::field::{Stray, label_issue, normalize_field, validate_member, vocabulary};
 use super::registry::Lineage;
 use super::resolve::{ChainFault, chain, label_member};
 use super::unread::{unread_column_keys, unread_table_keys};
@@ -59,14 +59,15 @@ fn name_issue(path: &str, name: &str, what: &str) -> Option<Issue> {
     })
 }
 
+/// Judges an item's own `columns`. `held` is the item's properties before the write: a column it keeps as held is not refused for `enum_values` that a type does not check. Name the item's own properties to take them as they are.
 pub fn judge_item_columns(
     columns: Option<&Value>,
+    held: Option<&Obj>,
     type_known: &dyn Fn(&str) -> bool,
 ) -> Result<Obj, Vec<Issue>> {
     let mut errors = Vec::new();
-    validate_columns(columns, OWN_COLUMNS, type_known, &mut errors);
-    // An item's own columns are data a person wrote, so a write that keeps them is not refused for them.
-    errors.retain(|issue| issue.expected != UNUSED_ENUM_VALUES);
+    let stray = held.map_or(Stray::Refuse, Stray::UnlessChanged);
+    validate_columns(columns, OWN_COLUMNS, type_known, stray, &mut errors);
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -76,10 +77,11 @@ pub fn judge_item_columns(
 }
 
 /// Judges the columns of one table at `path`; `type_known` says which types an item column may name.
-pub fn validate_columns(
+pub(super) fn validate_columns(
     columns: Option<&Value>,
     path: &str,
     type_known: &dyn Fn(&str) -> bool,
+    stray: Stray<'_>,
     errors: &mut Vec<Issue>,
 ) {
     let Some(columns) = columns.and_then(Value::as_object).filter(|c| !c.is_empty()) else {
@@ -114,7 +116,7 @@ pub fn validate_columns(
     for (name, definition) in columns {
         let column = format!("{path}.{name}");
         errors.extend(name_issue(&column, name, "column"));
-        validate_column(&column, definition, type_known, errors);
+        validate_column(&column, definition, type_known, stray, errors);
     }
 }
 
@@ -140,6 +142,7 @@ fn validate_column(
     path: &str,
     definition: &Value,
     type_known: &dyn Fn(&str) -> bool,
+    stray: Stray<'_>,
     errors: &mut Vec<Issue>,
 ) {
     let Some(column) = definition.as_object() else {
@@ -183,7 +186,7 @@ fn validate_column(
             }
         }
     } else {
-        validate_member(path, definition, errors);
+        validate_member(path, definition, stray, errors);
         if column.contains_key("type_constraints") {
             errors.push(issue(
                 "type_constraints",
@@ -296,6 +299,7 @@ pub(super) fn judge_tables(
     registry: &Registry,
     lineage: &Lineage<'_>,
     type_known: &dyn Fn(&str) -> bool,
+    stray: Stray<'_>,
 ) -> Result<Obj, Vec<Issue>> {
     let mut errors = Vec::new();
     validate_tables(
@@ -304,6 +308,7 @@ pub(super) fn judge_tables(
         &lineage.descendants,
         keeps_as_defined(definition, registry),
         type_known,
+        stray,
         &mut errors,
     );
     if errors.is_empty() {
@@ -348,7 +353,13 @@ pub fn declared_tables(
         let Some(id) = text(definition, "id") else {
             continue;
         };
-        match judge_tables(definition, &stored, &stored.lineage(definition), type_known) {
+        match judge_tables(
+            definition,
+            &stored,
+            &stored.lineage(definition),
+            type_known,
+            Stray::Refuse,
+        ) {
             Ok(tables) => judged.push((id.to_string(), tables)),
             Err(issues) => found.extend(issues.into_iter().map(|issue| (id.to_string(), issue))),
         }
@@ -402,6 +413,7 @@ fn validate_tables(
     descendants: &[&Obj],
     own_table: bool,
     type_known: &dyn Fn(&str) -> bool,
+    stray: Stray<'_>,
     errors: &mut Vec<Issue>,
 ) {
     descendants_declare_no_inherited_table(inherited, descendants, errors);
@@ -465,6 +477,7 @@ fn validate_tables(
             table.get("columns"),
             &format!("{path}.columns"),
             type_known,
+            stray,
             errors,
         );
         validate_order(table, &path, errors);
@@ -730,7 +743,7 @@ mod tests {
 
     use super::super::{
         Issue, Obj, Registry, evolution_of, item_tables, keeps_own_table, resolve,
-        validate_restored_type, validate_type, with_set_stored,
+        validate_replacing_type, validate_restored_type, validate_type, with_set_stored,
     };
 
     fn registry() -> Registry {
@@ -1061,8 +1074,7 @@ mod tests {
     }
 
     #[test]
-    fn enum_values_on_a_kind_that_does_not_check_them_is_refused_but_restored_and_kept_on_item_columns()
-     {
+    fn enum_values_on_a_kind_that_does_not_check_them_is_refused_on_a_new_definition() {
         let kinds = [
             ("string", None),
             ("number", None),
@@ -1079,10 +1091,6 @@ mod tests {
                 found.iter().any(|f| f == "fields.x.enum_values"),
                 "{kind}: {found:?}"
             );
-            assert!(
-                validate_restored_type(&declared, &registry()).is_ok(),
-                "{kind}"
-            );
         }
         let column = fields_of(with_columns(
             json!({"c": {"type": "string", "enum_values": ["a"]}}),
@@ -1098,9 +1106,153 @@ mod tests {
             "e": {"type": "enum", "enum_values": ["a"]},
             "l": {"type": "array", "items_type": "enum", "enum_values": ["a"]}}});
         assert!(judged(enums).is_ok());
+    }
 
-        let own = json!({"c": {"type": "string", "enum_values": ["a"]}});
-        assert!(super::judge_item_columns(Some(&own), &|_| true).is_ok());
+    #[test]
+    fn a_restored_type_keeps_a_stray_enum_values_on_a_field_a_member_and_a_table_column() {
+        let stray = json!({"id": "user.listed",
+            "fields": {
+                "x": {"type": "string", "enum_values": ["a"]},
+                "rows": {"type": "array", "items_type": "object", "items_fields": {
+                    "m": {"type": "number", "enum_values": ["a"]}}}},
+            "tables": {"lines": {"columns": {
+                "c": {"type": "string", "enum_values": ["a"]},
+                "d": {"type": "string"}}}}});
+        assert!(
+            !fields_of(stray.clone()).is_empty(),
+            "the witness: a new one is refused"
+        );
+        let restored = validate_restored_type(&stray, &registry())
+            .unwrap_or_else(|issues| panic!("refused: {issues:?}"));
+        assert_eq!(
+            restored["tables"]["lines"]["columns"]["c"]["enum_values"],
+            json!(["a"]),
+            "the table is kept, not emptied"
+        );
+        assert_eq!(restored["fields"]["x"]["enum_values"], json!(["a"]));
+    }
+
+    #[test]
+    fn a_replacing_type_keeps_what_it_holds_and_refuses_what_it_adds_or_changes() {
+        let held = judged_replacing_held();
+        let replacing = |input: Value| {
+            validate_replacing_type(&input, &registry(), &held)
+                .err()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|issue| issue.field)
+                .collect::<Vec<_>>()
+        };
+        let unchanged = |extra: Value| {
+            let mut input = json!({"id": "user.listed",
+                "fields": {
+                    "x": {"type": "string", "enum_values": ["a"]},
+                    "rows": {"type": "array", "items_type": "object", "items_fields": {
+                        "m": {"type": "number", "enum_values": ["a"]}}}},
+                "tables": {"lines": {"columns": {
+                    "c": {"type": "string", "enum_values": ["a"]}}}}});
+            for (path, value) in extra.as_object().cloned().unwrap_or_default() {
+                let mut at = &mut input;
+                let parts: Vec<&str> = path.split('.').collect();
+                for part in &parts[..parts.len() - 1] {
+                    at = &mut at[*part];
+                }
+                at[parts[parts.len() - 1]] = value;
+            }
+            input
+        };
+        assert_eq!(replacing(unchanged(json!({}))), Vec::<String>::new());
+        assert_eq!(
+            replacing(unchanged(json!({"fields.other": {"type": "string"}}))),
+            Vec::<String>::new(),
+            "an unrelated field is added"
+        );
+        assert_eq!(
+            replacing(unchanged(json!({"fields.x.label": "X"}))),
+            Vec::<String>::new(),
+            "a label changes, the list and its type do not"
+        );
+        for (changed, refused) in [
+            (
+                json!({"fields.x.enum_values": ["a", "b"]}),
+                "fields.x.enum_values",
+            ),
+            (json!({"fields.x.type": "number"}), "fields.x.enum_values"),
+            (
+                json!({"fields.y": {"type": "string", "enum_values": ["a"]}}),
+                "fields.y.enum_values",
+            ),
+            (
+                json!({"fields.rows.items_fields.m.enum_values": ["b"]}),
+                "fields.rows.items_fields.m.enum_values",
+            ),
+            (
+                json!({"tables.lines.columns.c.enum_values": ["b"]}),
+                "tables.lines.columns.c.enum_values",
+            ),
+            (
+                json!({"tables.lines.columns.n": {"type": "string", "enum_values": ["a"]}}),
+                "tables.lines.columns.n.enum_values",
+            ),
+        ] {
+            let found = replacing(unchanged(changed.clone()));
+            assert!(found.iter().any(|f| f == refused), "{changed}: {found:?}");
+        }
+    }
+
+    fn judged_replacing_held() -> serde_json::Map<String, Value> {
+        validate_restored_type(
+            &json!({"id": "user.listed",
+                "fields": {
+                    "x": {"type": "string", "enum_values": ["a"]},
+                    "rows": {"type": "array", "items_type": "object", "items_fields": {
+                        "m": {"type": "number", "enum_values": ["a"]}}}},
+                "tables": {"lines": {"columns": {
+                    "c": {"type": "string", "enum_values": ["a"]}}}}}),
+            &registry(),
+        )
+        .unwrap_or_else(|issues| panic!("refused: {issues:?}"))
+    }
+
+    #[test]
+    fn an_items_own_columns_are_refused_for_enum_values_where_new_or_changed() {
+        let stray = json!({"type": "string", "enum_values": ["a"]});
+        let own = json!({"c": stray, "d": {"type": "string"}});
+        let refused = |columns: &Value, held: Option<&Obj>| {
+            super::judge_item_columns(Some(columns), held, &|_| true)
+                .err()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|issue| issue.field)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(refused(&own, None), ["columns.c.enum_values"], "a new item");
+        let held = json!({"columns": own.clone()});
+        let held = held.as_object();
+        assert!(refused(&own, held).is_empty(), "columns kept as held");
+        let added = json!({"c": stray, "e": {"type": "number", "enum_values": ["a"]}});
+        assert_eq!(
+            refused(&added, held),
+            ["columns.e.enum_values"],
+            "a column is added"
+        );
+        let changed = json!({"c": {"type": "string", "enum_values": ["a", "b"]}});
+        assert_eq!(
+            refused(&changed, held),
+            ["columns.c.enum_values"],
+            "the list changes"
+        );
+        let moved = json!({"c": {"type": "number", "enum_values": ["a"]}});
+        assert_eq!(
+            refused(&moved, held),
+            ["columns.c.enum_values"],
+            "the kind changes"
+        );
+        let enums = json!({"c": {"type": "enum", "enum_values": ["a"]}});
+        assert!(
+            refused(&enums, None).is_empty(),
+            "an enum column takes its values"
+        );
     }
 
     #[test]

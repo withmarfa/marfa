@@ -441,8 +441,10 @@ pub fn unkept_columns(
         }
         let mut refused = 0;
         for (_, properties) in store::naming_columns(tx, type_id)? {
-            let columns = parsed(&properties)?.remove(OWN_COLUMNS);
-            if judge_item_columns(columns.as_ref(), &|_| true).is_err() {
+            let properties = parsed(&properties)?;
+            if judge_item_columns(properties.get(OWN_COLUMNS), Some(&properties), &|_| true)
+                .is_err()
+            {
                 refused += 1;
             }
         }

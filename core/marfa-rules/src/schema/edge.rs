@@ -2,7 +2,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::field::{Shape, normalize_field, validate_field_shape, vocabulary};
+use super::field::{Shape, Stray, normalize_field, validate_field_shape, vocabulary};
 use super::{Issue, Obj, ROLE_PREFIX, TYPE_ROLES, as_obj, is_role_constraint, known_role, text};
 use crate::builtin;
 use crate::wire::label_from_id;
@@ -253,6 +253,7 @@ pub fn edge_type_from_request(
             &Shape {
                 inherits_status: false,
                 path: None,
+                stray: Stray::Refuse,
             },
         );
         let prefix = format!("fields.{name}.format");

@@ -888,16 +888,17 @@ impl Catalog {
         properties: &Map<String, Value>,
         complete: bool,
     ) -> Result<(), RuleError> {
-        self.validate_merged(type_id, properties, complete, properties)
+        self.validate_merged(type_id, properties, complete, properties, &Map::new())
     }
 
-    /// A value is judged only where `written`, the properties the write changes, sets it: a stored value its field no longer admits, a status word the type does not declare included, does not refuse a write that leaves it alone or sends it back unchanged. A required field is judged on the whole item.
+    /// `held` is the item before the write, empty for a new one. A value is judged only where `written`, the properties the write changes, sets it: a stored value its field no longer admits, a status word the type does not declare included, does not refuse a write that leaves it alone or sends it back unchanged. A required field is judged on the whole item.
     pub fn validate_merged(
         &self,
         type_id: &str,
         properties: &Map<String, Value>,
         complete: bool,
         written: &Map<String, Value>,
+        held: &Map<String, Value>,
     ) -> Result<(), RuleError> {
         if !self.known(type_id) {
             return Err(RuleError::new(
@@ -928,7 +929,7 @@ impl Catalog {
             fields.insert(name.as_str(), definition);
         }
         crate::validation::changed_properties(&fields, properties, complete, written)?;
-        self.judge_kept_columns(type_id, written, Naming::Registered)?;
+        self.judge_kept_columns(type_id, written, held, Naming::Registered)?;
         if complete {
             self.judge_schedule(type_id, properties)?;
         }
@@ -963,6 +964,7 @@ impl Catalog {
         &self,
         type_id: &str,
         properties: &Map<String, Value>,
+        held: &Map<String, Value>,
         naming: Naming,
     ) -> Result<(), RuleError> {
         if !self.keeps_own_table(type_id) {
@@ -991,7 +993,11 @@ impl Catalog {
             Naming::Registered => self.known(id),
             Naming::Any => true,
         };
-        judge_item_columns(Some(columns), &known)
+        let held = match naming {
+            Naming::Registered => held,
+            Naming::Any => properties,
+        };
+        judge_item_columns(Some(columns), Some(held), &known)
             .map(drop)
             .map_err(|issues| {
                 let message = issues
@@ -1972,6 +1978,37 @@ mod tests {
     }
 
     #[test]
+    fn a_stray_enum_values_on_an_items_own_column_is_refused_unless_the_item_holds_it() {
+        let catalog = Catalog::from_wire(
+            &held(json!([
+                {"id": "core.table", "fields": {"columns": {"type": "object"}}}
+            ])),
+            None,
+        );
+        let stray = json!({"a": {"type": "string", "enum_values": ["x"]}});
+        let item = |columns: &Value| json!({"title": "T", "columns": columns});
+        let judge = |properties: &Value, held: &Value, naming: Naming| {
+            catalog.judge_kept_columns(
+                "core.table",
+                properties.as_object().unwrap(),
+                held.as_object().unwrap(),
+                naming,
+            )
+        };
+        let none = json!({});
+        let refused = judge(&item(&stray), &none, Naming::Registered).unwrap_err();
+        assert_eq!(refused.fields[0].path, "columns.a.enum_values");
+        assert!(judge(&item(&stray), &item(&stray), Naming::Registered).is_ok());
+        let added = json!({"a": stray["a"], "b": {"type": "number", "enum_values": ["x"]}});
+        let refused = judge(&item(&added), &item(&stray), Naming::Registered).unwrap_err();
+        assert_eq!(refused.fields[0].path, "columns.b.enum_values");
+        assert!(
+            judge(&item(&stray), &none, Naming::Any).is_ok(),
+            "a restore"
+        );
+    }
+
+    #[test]
     fn a_partial_write_is_judged_by_the_columns_it_leaves() {
         let catalog = Catalog::from_wire(
             &held(json!([
@@ -1988,6 +2025,7 @@ mod tests {
                 &partial,
                 false,
                 written.as_object().unwrap(),
+                &Map::new(),
             )
         };
         assert!(judged(&left(json!({"a": {"type": "string"}}))).is_ok());

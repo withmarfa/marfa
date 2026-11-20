@@ -838,19 +838,19 @@ A file item is an item of `core.file` or of a type that inherits from it. Its re
 
 ### `blobs/file-bytes-replaced`
 
-When a write changes the `blob_ref` of a file item that holds one to a different value, the server MUST remove from the item the `extracted_text`, `width`, `height` and `duration` it holds and the write does not set, whichever door the write came through.
+When a write changes the `blob_ref` of a file item that holds one to a different value, the server MUST remove from the item the `extracted_text`, `width`, `height` and `duration` it holds and the write does not set, whichever door the write came through, including the conflicted copy of a write that keeps both copies of the `blob_ref` (`versions/auto-keep-both`).
 
 **Reason:** the sweep fills only what an item lacks, so a value read from the old bytes would otherwise stay, and a search would match the words of a file the item no longer names.
 
-**Tests:** `compliance/enrichment-new-bytes.test.ts › has the text of the new bytes after $name replaces the old`, `› has the size and length of the new bytes, not of the old`.
+**Tests:** `compliance/enrichment-new-bytes.test.ts › has the text of the new bytes after $name replaces the old`, `› has the size and length of the new bytes, not of the old`, `› has no text of the old bytes on the copy a write that keeps both makes`.
 
 ### `blobs/file-bytes-replaced-set`
 
 When a write changes the `blob_ref` of a file item and sets `extracted_text`, `width`, `height` or `duration`, the server MUST store the value the write sets.
 
-**Reason:** a writer that sets a value in the write that moves the bytes knows what the new bytes hold, and the sweep never overwrites it.
+**Reason:** a writer that sets a value in the write that moves the bytes knows what the new bytes hold, and the sweep never overwrites it. A value the write sends back as the item holds it counts as set, so the write names it and the server keeps it.
 
-**Tests:** `compliance/enrichment-new-bytes.test.ts › keeps a value the write that replaces the bytes sets`.
+**Tests:** `compliance/enrichment-new-bytes.test.ts › keeps a value the write that replaces the bytes sets`, `› keeps a value the write that replaces the bytes sends back as it holds it`.
 
 ### `blobs/file-bytes-same`
 

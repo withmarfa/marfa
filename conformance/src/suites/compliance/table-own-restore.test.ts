@@ -85,6 +85,49 @@ describe("a restore of an item that keeps a table", () => {
     3 * FRESH_SERVER_TIMEOUT_MS,
   );
 
+  it(
+    "restores an item whose column names enum_values on a column that is not an enum as the archive holds it",
+    async () => {
+      const source = working(origin);
+      const sheet = "user.sheet";
+      expect(
+        (
+          await source.registerType({
+            id: sheet,
+            parent: "core.table",
+            fields: { owner: { type: "string" } },
+          })
+        ).status,
+      ).toBe(201);
+      const made = await source.createItem({
+        type: sheet,
+        properties: { title: "Sheet", columns: { a: { type: "string" } } },
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      const id = made.data.item.id;
+      const listed = { type: "string", enum_values: ["x"] };
+      // The witness: a write of the same column is refused.
+      const refused = await source.createItem({
+        type: sheet,
+        properties: { title: "Sheet", columns: { a: listed } },
+      });
+      expect(refused.status).toBe(400);
+
+      const stray = editLineFile(await archiveOf(source), "items", (text) =>
+        text.replace(
+          '"a":{"type":"string"}',
+          '"a":{"type":"string","enum_values":["x"]}',
+        ),
+      );
+      expect(readLineFile(stray, "items")).toContain('"enum_values":["x"]');
+      const restored = await owner(destination).restoreArchive(stray);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      const read = await working(destination).getItem(id);
+      expect(read.data.item.properties.columns).toEqual({ a: listed });
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
   it("exports and restores the rows of an item of core.table, as unlogged rows that a later write can undo", async () => {
     const source = working(origin);
     const columns = {

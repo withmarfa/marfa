@@ -119,6 +119,21 @@ const doors: {
     },
   },
   {
+    name: "an update that replaces the properties",
+    replace: async (file) => {
+      const updated = await client.updateItem(file.id, {
+        version: file.version,
+        properties: {
+          blob_ref: file.newHash,
+          mime_type: "text/plain",
+          title: "moves",
+        },
+        properties_mode: "replace",
+      });
+      expect(updated.status, JSON.stringify(updated.error)).toBe(200);
+    },
+  },
+  {
     name: "an upsert by natural key",
     replace: async (file) => {
       const upserted = await client.createItem({
@@ -271,6 +286,77 @@ describe("a file item whose bytes are replaced", () => {
     await sweep();
     expect((await properties(file.id)).extracted_text).toBe(
       "typed by the writer",
+    );
+  }, 120_000);
+
+  it("keeps a value the write that replaces the bytes sends back as it holds it", async () => {
+    const file = await readText();
+    const updated = await client.updateItem(file.id, {
+      version: file.version,
+      properties: { blob_ref: file.newHash, extracted_text: file.text },
+    });
+    expect(updated.status, JSON.stringify(updated.error)).toBe(200);
+    await sweep();
+    expect((await properties(file.id)).extracted_text).toBe(file.text);
+  }, 120_000);
+
+  it("has no text of the old bytes on the copy a write that keeps both makes", async () => {
+    const type = `fixture.new-bytes-kept-${randomUUID().slice(0, 8)}`;
+    const registered = await client.registerType({
+      id: type,
+      parent: "core.file",
+      fields: {},
+      merge_policy: {
+        fields: { blob_ref: "keep_both_copies" },
+        default: "last_writer_wins",
+      },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const stamp = randomUUID();
+    const texts = {
+      base: `base words ${stamp}`,
+      theirs: `their words ${stamp}`,
+      mine: `my words ${stamp}`,
+    };
+    const hashes = {
+      base: await upload(Buffer.from(texts.base), "text/plain"),
+      theirs: await upload(Buffer.from(texts.theirs), "text/plain"),
+      mine: await upload(Buffer.from(texts.mine), "text/plain"),
+    };
+    const item = await create(type, {
+      blob_ref: hashes.base,
+      mime_type: "text/plain",
+    });
+    const theirs = await client.updateItem(item.id, {
+      version: item.version,
+      properties: { blob_ref: hashes.theirs },
+    });
+    expect(theirs.status, JSON.stringify(theirs.error)).toBe(200);
+    await sweep();
+    // The witness: the item the other writer moved holds the text of its bytes.
+    expect((await properties(item.id)).extracted_text).toBe(texts.theirs);
+
+    const resolved = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${item.id}?conflict=auto`, {
+      method: "PATCH",
+      body: {
+        properties: { blob_ref: hashes.mine },
+        version: item.version,
+      },
+    });
+    expect(resolved.status, JSON.stringify(resolved.error)).toBe(200);
+    const copyId = resolved.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId, "no conflicted copy was written").toBeTruthy();
+
+    const copy = await properties(String(copyId));
+    expect(copy.blob_ref).toBe(hashes.mine);
+    expect(copy.extracted_text).toBeUndefined();
+    await sweep();
+    expect((await properties(String(copyId))).extracted_text).toBe(texts.mine);
+    const kept = await properties(item.id);
+    expect(kept.extracted_text).toBe(
+      kept.blob_ref === hashes.theirs ? texts.theirs : texts.mine,
     );
   }, 120_000);
 

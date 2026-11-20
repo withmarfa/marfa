@@ -1,4 +1,5 @@
 use arc_swap::ArcSwap;
+use marfa_rules::conflict::READ_FROM_BYTES;
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
 
@@ -55,7 +56,7 @@ pub fn offer(tx: &Transaction<'_>, catalog: &Catalog, seq: i64, hash: &Hash) -> 
         .rules
         .resolved(&item.type_id)
         .map_err(super::ruled)?;
-    let wanted = [EXTRACTED_TEXT, WIDTH, HEIGHT, DURATION]
+    let wanted = READ_FROM_BYTES
         .iter()
         .any(|name| declared.contains_key(*name) && lacks(&properties, name));
     if !wanted {

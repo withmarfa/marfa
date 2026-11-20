@@ -1700,12 +1700,21 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let tx = self.unit.tx();
         let rules = &self.catalog.rules;
         let mut properties = conflict::copy_properties(stale, keep_both);
+        if self.is_file(&row.type_id) {
+            let taken: Map<String, Value> = stale
+                .sent
+                .iter()
+                .filter(|(name, _)| keep_both.contains(name))
+                .map(|(name, value)| (name.clone(), value.clone()))
+                .collect();
+            conflict::forget_reading_of_old_bytes(stale.current, &mut properties, &taken);
+        }
         if let Some(field) = self.catalog.link_field(&row.type_id) {
             properties.shift_remove(field);
         }
         let written = conflict::changed(&properties, stale.current);
         rules
-            .validate_merged(&row.type_id, &properties, true, &written)
+            .validate_merged(&row.type_id, &properties, true, &written, &Map::new())
             .map_err(|error| self.invalid(error, None))?;
         let mut properties = rules.coerced_properties(&row.type_id, &properties);
         let id = match self.claim {
@@ -1811,7 +1820,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             conflict::changed(&result, current)
         };
         rules
-            .validate_merged(resulting, &result, true, &written)
+            .validate_merged(resulting, &result, true, &written, current)
             .map_err(|error| self.invalid(error, moved.then_some(resulting)))?;
         crate::app::tables::judge_item_change(
             self.unit.tx(),

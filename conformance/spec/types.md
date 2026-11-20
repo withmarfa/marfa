@@ -466,15 +466,23 @@ If a type names a field definition with an unknown `type` or `format`, an `enum`
 
 ### `types/enum-values-kind`
 
-If a type names `enum_values` on a field, a member of `items_fields` or a table column whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, then the server MUST answer `400 invalid_schema` naming the member.
+If a type names `enum_values` on a field, a member of `items_fields` or a table column whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, then the server MUST answer `400 invalid_schema` naming the member, except as `types/enum-values-kept` and `types/enum-values-restored` allow.
 
 **Reason:** only an `enum` takes its values and checks them (`types/array-items`), so a list on any other field would register as though it held and never be enforced.
 
 **Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› refuses enum_values on a field that is not an enum on a replacement, and keeps the type as it was`, `compliance/type-tables.test.ts › refuses a column that breaks a rule a field of its kind keeps`.
 
+### `types/enum-values-kept`
+
+When `PUT /types/{id}` leaves a field, a member of `items_fields` or a table column that names `enum_values` on a `type` that is neither `enum` nor an `array` whose `items_type` is `enum` with the `type`, the `items_type` and the `enum_values` the stored type holds for it, the server MUST NOT refuse the replacement for that member under `types/enum-values-kind`.
+
+**Reason:** a type restored with such a list (`types/enum-values-restored`) could otherwise never be changed in any other way. A member the replacement adds, or whose `type`, `items_type` or `enum_values` it changes, is refused.
+
+**Tests:** `compliance/restore-enum-values.test.ts › takes an update that leaves a member as the type holds it, and refuses one that adds or changes a list`.
+
 ### `types/enum-values-restored`
 
-When an archive restore carries a type that names `enum_values` on a field whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, the server MUST restore the type as the archive holds it.
+When an archive restore carries a type that names `enum_values` on a field, a member of `items_fields` or a table column whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, the server MUST restore the type as the archive holds it, with every table it declares.
 
 **Reason:** a registration the server accepted before `types/enum-values-kind` stays valid when exported and restored (`archive/restore-compatible-types`).
 

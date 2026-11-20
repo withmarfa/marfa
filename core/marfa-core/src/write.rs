@@ -178,7 +178,8 @@ pub(crate) fn queue_create(
     // Landing on a held row, the create is an update of it, and a value it
     // sends back unchanged is not judged (`types/field-tightened-held`),
     // whether or not the copy can judge its merged result.
-    let written = match target.as_ref().filter(|held| held.r#type == draft.r#type) {
+    let landed = target.as_ref().filter(|held| held.r#type == draft.r#type);
+    let written = match landed {
         Some(held) => marfa_rules::conflict::changed(&draft.properties, &held.properties),
         None => draft.properties.clone(),
     };
@@ -189,6 +190,7 @@ pub(crate) fn queue_create(
         &properties,
         current.is_some() || draft.source_id.is_none(),
         &written,
+        landed.map_or(&serde_json::Map::new(), |held| &held.properties),
     )?;
     // A tier is chosen where none is named: left out, the server gives a new
     // row the key's default, and a row shown at one tier would come back at
@@ -598,9 +600,21 @@ pub(crate) fn queue_update(
     };
     // Required nulls remain invalid even where replace projection drops
     // them. Stale edits cannot prove the server's eventual merged result.
-    catalog.validate_merged(&next.r#type, &edit.properties, false, &written)?;
+    catalog.validate_merged(
+        &next.r#type,
+        &edit.properties,
+        false,
+        &written,
+        &held.properties,
+    )?;
     if base == held.version && !store::unanswered_keyed_create(tx, &held)? {
-        catalog.validate_merged(&next.r#type, &next.properties, true, &written)?;
+        catalog.validate_merged(
+            &next.r#type,
+            &next.properties,
+            true,
+            &written,
+            &held.properties,
+        )?;
     }
     store::hold_beneath_item(tx, id)?;
     store::upsert_item(tx, &next.as_wire(), None, &catalog.indexing(&next.r#type))?;
