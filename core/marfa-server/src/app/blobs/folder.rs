@@ -493,7 +493,8 @@ impl Folder {
 
     /// Runs `work` on the files area off the runtime, one piece of work per area at a time, and
     /// answers it within `deadline`. A timeout does not cancel the work: what it answers after
-    /// the caller stopped waiting goes to `abandon`, while the area is still held.
+    /// the caller stopped waiting goes to `abandon`, while the area is still held. An answer
+    /// carries the area's hold, so the area is free again once `within` answers.
     pub async fn within<T: Send + 'static>(
         self: &Arc<Self>,
         deadline: Duration,
@@ -506,19 +507,22 @@ impl Folder {
         let (folder, claiming) = (self.clone(), Claiming(self.claim_key.clone()));
         let (answer, mut answered) = tokio::sync::oneshot::channel();
         tokio::task::spawn_blocking(move || {
-            let _claiming = claiming;
-            if let Err(Ok(left)) = answer.send(work(&folder)) {
+            if let Err((Ok(left), _claiming)) = answer.send((work(&folder), claiming)) {
                 abandon(left);
             }
         });
         tokio::select! {
             biased;
-            answer = &mut answered => Ok(answer.unwrap_or_else(|_| {
-                Err(io::Error::other("work on the backup folder ended without an answer"))
-            })),
+            answer = &mut answered => Ok(answer.map_or_else(
+                |_| Err(io::Error::other("work on the backup folder ended without an answer")),
+                |(answer, _claiming)| answer,
+            )),
             () = tokio::time::sleep(deadline) => {
                 answered.close();
-                answered.try_recv().map_err(|_| Unanswered::Late)
+                answered
+                    .try_recv()
+                    .map(|(answer, _claiming)| answer)
+                    .map_err(|_| Unanswered::Late)
             }
         }
     }
