@@ -129,6 +129,12 @@ describe("a field's definition", () => {
       mended: { fields: { x: { type: "array", items_type: "string" } } },
     },
     {
+      what: "an array whose items_type names no field type",
+      bad: { fields: { x: { type: "array", items_type: "somethingelse" } } },
+      named: "fields.x.items_type",
+      mended: { fields: { x: { type: "array", items_type: "string" } } },
+    },
+    {
       what: "a max_length of 0",
       bad: { fields: { x: { type: "string", max_length: 0 } } },
       named: "fields.x.max_length",
@@ -431,7 +437,6 @@ describe("an array field", () => {
         sites: { type: "array", items_type: "url" },
         things: { type: "array", items_type: "object" },
         capped: { type: "array", items_type: "string", max_items: 2 },
-        loose: { type: "array", items_type: "somethingelse" as never },
       },
     });
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
@@ -561,7 +566,6 @@ describe("an array field", () => {
       capped: ["a", "b"],
       links: ["https://example.test"],
       attachments: [{ id: "x" }],
-      loose: [1, {}, null],
     });
     expect(good.status, JSON.stringify(good.error)).toBe(201);
     expect(good.data.item.properties.names).toEqual(["a", ""]);
@@ -722,10 +726,5 @@ describe("an array field", () => {
       source_ids: [`${key}-c`],
     });
     expect(none.data.data).toEqual([]);
-  });
-
-  it("leaves the elements of an array unchecked where items_type names no field type", async () => {
-    const ok = await create({ loose: [1, "x", {}, null] });
-    expect(ok.status, JSON.stringify(ok.error)).toBe(201);
   });
 });

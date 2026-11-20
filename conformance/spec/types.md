@@ -460,7 +460,7 @@ If a `merge_policy` names a field the type does not declare or inherit, or a str
 
 ### `types/field-grammar`
 
-If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a status field `types/status-refused` refuses, an `array` with no `items_type`, or a `max_length` or `max_items` that is not a whole number of at least 1 or on a type it does not apply to, a `max_length` on a `string` field whose `format` is `currency`, or a `minimum`, `maximum` or `items_fields` that `types/range-refused` or `types/items-fields-refused` refuses, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field that neither the type nor an ancestor declares, a role other than `container`, a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, or a `display_hints` `name_from_body` that is not `true` or `false`, then the server MUST answer `400 invalid_schema` naming the member.
+If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a status field `types/status-refused` refuses, an `array` with no `items_type`, an `items_type` that names no field type, or a `max_length` or `max_items` that is not a whole number of at least 1 or on a type it does not apply to, a `max_length` on a `string` field whose `format` is `currency`, or a `minimum`, `maximum` or `items_fields` that `types/range-refused` or `types/items-fields-refused` refuses, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field that neither the type nor an ancestor declares, a role other than `container`, a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, or a `display_hints` `name_from_body` that is not `true` or `false`, then the server MUST answer `400 invalid_schema` naming the member.
 
 **Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› takes a required entry naming a field only an ancestor declares`, `compliance/field-rules.test.ts › refuses $what with invalid_schema, naming the member`, `› refuses a name_from_body that is not true or false with invalid_schema, naming the member`.
 
@@ -660,11 +660,19 @@ If a write of an item's properties leaves an `array` field holding more elements
 
 ### `types/array-items-unnamed`
 
-Where an `array` field's `items_type` names no field type, the server MUST NOT check the field's elements.
+Where a stored type's `array` field has an `items_type` that names no field type, the server MUST NOT check the field's elements.
 
-**Reason:** the grammar requires `items_type` to be a string and no more, so a type registered or stored with another name keeps loading and keeps taking writes.
+**Reason:** a registration refuses one (`types/field-grammar`) and a restore takes one (`types/array-items-restored`), so a type that holds one keeps loading and keeps taking writes.
 
-**Tests:** `compliance/field-types.test.ts › leaves the elements of an array unchecked where items_type names no field type`.
+**Tests:** `compliance/restore-array-items.test.ts › restores a type whose items_type names no field type, and its items take any elements`.
+
+### `types/array-items-restored`
+
+When an archive restore carries a type whose field has an `items_type` that names no field type, the server MUST restore the type as the archive holds it.
+
+**Reason:** an archive made by a server that took such a name must still restore. A replacement that keeps the name is refused as a registration is, so the owner corrects it there.
+
+**Tests:** `compliance/restore-array-items.test.ts › restores a type whose items_type names no field type, and its items take any elements`.
 
 ### `types/range-value-refused`
 

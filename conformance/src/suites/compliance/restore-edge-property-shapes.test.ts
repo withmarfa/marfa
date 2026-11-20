@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -25,11 +26,24 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
+/** What an archive holds: shape faults, and a `string` with a `format` a type absorbs. */
 const FAULTS: Record<string, Record<string, unknown>> = {
   list: { type: "array" },
   pick: { type: "enum" },
   stray: { type: "string", enum_values: ["a"] },
+  loose: { type: "array", items_type: "somethingelse" },
+  link: { type: "string", format: "url", enum_values: ["a"] },
 };
+
+/** What a registration would have stored for them. */
+const STORED: Record<string, Record<string, unknown>> = {
+  ...FAULTS,
+  link: { type: "url", enum_values: ["a"] },
+};
+
+/** An id of its own for each attempt, so a retry after a commit registers anew. */
+const attempt = (ctx: TestContext, name: string) =>
+  `mock.shapes.${name}-${randomBytes(4).toString("hex")}.${ctx.runId}`;
 
 const archiveOf = (id: string, properties: Record<string, unknown>) =>
   editLineFile(
@@ -49,17 +63,17 @@ const archiveOf = (id: string, properties: Record<string, unknown>) =>
   );
 
 describe("an edge type whose properties break the shape rules", () => {
-  it("restores from an archive and reads as the archive held it", async () => {
+  it("restores from an archive and reads as a registration would have stored it", async () => {
     const refused = await client.registerEdgeType({
       label: "Test edge type",
-      id: `mock.shapes.direct.${ctx.runId}`,
+      id: attempt(ctx, "direct"),
       cardinality: "many-to-many",
       property_schema: FAULTS,
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("invalid_schema");
 
-    const id = `mock.shapes.restored.${ctx.runId}`;
+    const id = attempt(ctx, "restored");
     trackEdgeType(ctx, id);
     const restored = await owner.restoreArchive(archiveOf(id, FAULTS));
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
@@ -67,11 +81,11 @@ describe("an edge type whose properties break the shape rules", () => {
     const read = (await client.listEdgeTypes()).data.data.find(
       (t) => t.id === id,
     );
-    expect(read?.property_schema).toEqual(FAULTS);
+    expect(read?.property_schema).toEqual(STORED);
   });
 
   it("takes a change of its endpoint constraints that leaves the properties as held, and judges a property the change alters", async () => {
-    const id = `mock.shapes.evolved.${ctx.runId}`;
+    const id = attempt(ctx, "evolved");
     trackEdgeType(ctx, id);
     const restored = await owner.restoreArchive(archiveOf(id, FAULTS));
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
@@ -88,7 +102,7 @@ describe("an edge type whose properties break the shape rules", () => {
       } as never);
 
     const changed = await evolve({
-      ...FAULTS,
+      ...STORED,
       list: { type: "array", description: "changed" },
     });
     expect(changed.status, JSON.stringify(changed.error)).toBe(400);
@@ -99,22 +113,43 @@ describe("an edge type whose properties break the shape rules", () => {
       ),
     ).toEqual(["property_schema.list.items_type"]);
     const mended = await evolve({
-      ...FAULTS,
+      ...STORED,
       list: { type: "array", items_type: "string" },
     });
     expect(mended.status, JSON.stringify(mended.error)).toBe(409);
     expect(mended.error?.error.code).toBe("conflict");
 
-    const widened = await evolve(FAULTS);
+    const widened = await evolve(STORED);
     expect(widened.status, JSON.stringify(widened.error)).toBe(200);
     expect(widened.data.from_type_constraints).toEqual([
       "core.note",
       "core.task",
     ]);
-    expect(widened.data.property_schema).toEqual(FAULTS);
+    expect(widened.data.property_schema).toEqual(STORED);
 
-    const added = await evolve({ ...FAULTS, fresh: { type: "array" } });
+    const added = await evolve({ ...STORED, fresh: { type: "array" } });
     expect(added.status).toBe(400);
     expect(added.error?.error.code).toBe("invalid_schema");
+  });
+
+  it("refuses an archive whose edge type holds a property of no field type, and registers nothing", async () => {
+    const id = attempt(ctx, "notype");
+    trackEdgeType(ctx, id);
+    const refused = await owner.restoreArchive(
+      archiveOf(id, { ...FAULTS, odd: { type: "mystery" } }),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    expect(
+      (refused.error?.error.details?.errors as { field: string }[]).map(
+        (error) => error.field,
+      ),
+    ).toEqual(["property_schema.odd.type"]);
+    const listed = await client.listEdgeTypes();
+    expect(listed.data.data.map((t) => t.id)).not.toContain(id);
+
+    // The witness: without that property the same archive restores.
+    const restored = await owner.restoreArchive(archiveOf(id, FAULTS));
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
   });
 });

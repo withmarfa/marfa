@@ -823,6 +823,8 @@ describe("null and format", () => {
       property_schema: {
         list: { type: "array" },
         pick: { type: "enum" },
+        odd: { type: "mystery" },
+        loose: { type: "array", items_type: "somethingelse" },
         fine: { type: "string" },
       },
     });
@@ -830,7 +832,69 @@ describe("null and format", () => {
     expect(refused.error?.error.code).toBe("invalid_schema");
     expect(named(refused.error?.error)).toEqual([
       "property_schema.list.items_type",
+      "property_schema.loose.items_type",
+      "property_schema.odd.type",
       "property_schema.pick.enum_values",
     ]);
+  });
+
+  it("refuses a property whose items_type names no field type, naming the property", async () => {
+    await refusesUntilMended(
+      `mock.propschema.unnamed.${ctx.runId}`,
+      { type: "array", items_type: "somethingelse" },
+      { type: "array", items_type: "string" },
+      "property_schema.kind.items_type",
+    );
+  });
+
+  it("judges a property an evolution sends in any form but the stored one", async () => {
+    const id = `mock.propschema.evolve.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      label: "Test edge type",
+      id,
+      cardinality: "many-to-many",
+      from_type_constraints: ["core.note"],
+      to_type_constraints: ["core.note"],
+      property_schema: { site: { type: "string", format: "url" } },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    trackEdgeType(ctx, id);
+    expect(registered.data.property_schema).toEqual({ site: { type: "url" } });
+
+    const evolve = (site: Record<string, unknown>, to: string[]) =>
+      client.registerEdgeType({
+        label: "Test edge type",
+        id,
+        cardinality: "many-to-many",
+        from_type_constraints: ["core.note"],
+        to_type_constraints: to,
+        property_schema: { site },
+        evolve_constraints: true,
+      } as never);
+
+    // Both normalize to the stored property, and only the first is one a registration takes.
+    const refused = await evolve({ type: "integer", format: "url" }, [
+      "core.note",
+      "core.task",
+    ]);
+    expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    expect(named(refused.error?.error)).toEqual([
+      "property_schema.site.format",
+    ]);
+    const held = await client.listEdgeTypes();
+    expect(
+      held.data.data.find((t) => t.id === id)?.to_type_constraints,
+    ).toEqual(["core.note"]);
+
+    for (const [site, to] of [
+      [{ type: "string", format: "url" }, ["core.note", "core.task"]],
+      [{ type: "url" }, ["core.note", "core.task"]],
+    ] as const) {
+      const widened = await evolve(site, [...to]);
+      expect(widened.status, JSON.stringify(widened.error)).toBe(200);
+      expect(widened.data.property_schema).toEqual({ site: { type: "url" } });
+      expect(widened.data.to_type_constraints).toEqual(to);
+    }
   });
 });

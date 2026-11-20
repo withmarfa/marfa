@@ -1668,7 +1668,7 @@ When a constraint evolution of a registered edge type names no `label`, or an em
 
 ### `edges/types-evolve-safe`
 
-If a constraint evolution removes an existing endpoint constraint token without making that endpoint unrestricted, or changes any definition member other than its endpoint constraints and its labels, then the server MUST answer `409 conflict` without changing the definition.
+If a constraint evolution that `edges/types-evolve-properties-judged` does not refuse removes an existing endpoint constraint token without making that endpoint unrestricted, or changes any definition member other than its endpoint constraints and its labels, then the server MUST answer `409 conflict` without changing the definition.
 
 **Reason:** a label is a heading and no rule that an edge or a file depends on, so a key may correct it; a changed cardinality, name or property would reread edges already stored. Retaining every token preserves its subtypes and role members, including future registrations; this conservative operation does not infer equivalent constraint sets from the current type inventory. An empty constraint list and a list containing `*` both permit every type.
 
@@ -1764,9 +1764,17 @@ If `POST /edge-types` names `enum_values` on a property whose `type` is neither 
 
 **Tests:** `compliance/edge-property-schema.test.ts › refuses enum_values on a string property, naming the property`.
 
+### `edges/types-register-items-type`
+
+If `POST /edge-types` names a property whose `items_type` names no field type, then the server MUST answer `400 invalid_schema` with `details.errors` naming `property_schema.<name>.items_type`.
+
+**Reason:** an element type that names no field type leaves the elements unchecked (`types/array-items-unnamed`), so a misspelling would turn the property's validation off without a word. A type's field is refused the same way (`types/field-grammar`).
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses a property whose items_type names no field type, naming the property`.
+
 ### `edges/types-register-shapes-named`
 
-If `POST /edge-types` names several properties that `edges/types-register-array-items`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind` refuse, then the server MUST name every such property in the `details.errors` of one answer.
+If `POST /edge-types` names several properties that `edges/types-register-property-type`, `edges/types-register-array-items`, `edges/types-register-items-type`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind` refuse, then the server MUST name every such property in the `details.errors` of one answer.
 
 **Tests:** `compliance/edge-property-schema.test.ts › refuses every property that breaks a rule in one answer`.
 
@@ -1776,23 +1784,39 @@ While a stored edge type holds a property that `edges/types-register-array-items
 
 **Reason:** preserving the stored property lets a client read the same definition the owner can export and restore (`archive/restore-compatible-types`).
 
-**Tests:** `compliance/restore-edge-property-shapes.test.ts › restores from an archive and reads as the archive held it`.
+**Tests:** `compliance/restore-edge-property-shapes.test.ts › restores from an archive and reads as a registration would have stored it`.
 
 ### `edges/types-restore-properties-kept`
 
-When `POST /restore` carries an edge type with a property that `edges/types-register-array-items`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind` refuses, the server MUST register the edge type with the property as the archive holds it.
+When `POST /restore` carries an edge type with a property that `edges/types-register-array-items`, `edges/types-register-enum-values`, `edges/types-register-enum-values-kind` or `edges/types-register-items-type` refuses, the server MUST register the edge type with the property's missing `items_type`, missing or empty `enum_values`, stray `enum_values` and unnamed `items_type` as the archive holds them.
 
-**Reason:** an archive lets the owner recover the edge type as stored. Format validity is governed by `edges/types-restore-format-fit`.
+**Reason:** an archive made by a server that took such a property must still restore, and an owner can then correct the property. The property is otherwise stored as a registration stores it (`edges/types-restore-format`): a `string` whose `format` is `url`, `email` or `date` becomes that type with no `format`, and keeps the `enum_values` it carried.
 
-**Tests:** `compliance/restore-edge-property-shapes.test.ts › restores from an archive and reads as the archive held it`.
+**Tests:** `compliance/restore-edge-property-shapes.test.ts › restores from an archive and reads as a registration would have stored it`.
+
+### `edges/types-restore-property-type`
+
+If `POST /restore` carries an edge type with a property whose `type` is not a field type a type's `fields` take, then the server MUST answer `400 invalid_schema` with `details.errors` naming `property_schema.<name>.type`, and register no edge type of the archive.
+
+**Reason:** a restore refuses only this and a `format` that does not suit its property (`edges/types-restore-format-fit`), and keeps every fault `edges/types-restore-properties-kept` names.
+
+**Tests:** `compliance/restore-edge-property-shapes.test.ts › refuses an archive whose edge type holds a property of no field type, and registers nothing`.
 
 ### `edges/types-evolve-properties-kept`
 
 When `POST /edge-types` with `evolve_constraints` names a property exactly as the stored edge type holds it, the server MUST NOT refuse the change for that property under `edges/types-register-array-items`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind`.
 
-**Reason:** a stored edge type that holds such a property could otherwise never have its endpoint constraints widened. A property the change adds or alters is judged as a registration judges it.
+**Reason:** a stored edge type that holds such a property could otherwise never have its endpoint constraints widened. "Exactly" means the definition as sent equals the stored one, not the form a registration would store it in.
 
 **Tests:** `compliance/restore-edge-property-shapes.test.ts › takes a change of its endpoint constraints that leaves the properties as held, and judges a property the change alters`.
+
+### `edges/types-evolve-properties-judged`
+
+When `POST /edge-types` with `evolve_constraints` names a property that is not exactly as the stored edge type holds it and that a registration would refuse, the server MUST answer `400 invalid_schema` naming the property, whatever else the change alters.
+
+**Reason:** a refusal for a fault in what the request names comes before the comparison with the stored definition that gives `409 conflict` (`edges/types-evolve-safe`). A stored `url` property is not `{ "type": "integer", "format": "url" }`, which a registration refuses, though both would store as a `url`.
+
+**Tests:** `compliance/edge-property-schema.test.ts › judges a property an evolution sends in any form but the stored one`, `compliance/restore-edge-property-shapes.test.ts › takes a change of its endpoint constraints that leaves the properties as held, and judges a property the change alters`.
 
 ### `edges/types-register-unknown-key`
 

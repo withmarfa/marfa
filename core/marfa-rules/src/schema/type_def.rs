@@ -1514,6 +1514,21 @@ mod tests {
     }
 
     #[test]
+    fn an_array_naming_no_field_type_is_refused_unless_restored() {
+        let input = json!({"id": "user.loose", "fields": {
+            "list": {"type": "array", "items_type": "somethingelse"},
+            "fine": {"type": "array", "items_type": "string"}
+        }});
+        assert_eq!(
+            refused(input.clone()),
+            vec![("fields.list.items_type".to_string(), None)]
+        );
+        let held = input.as_object().cloned().unwrap_or_default();
+        assert!(validate_replacing_type(&input, &registry(), &held).is_err());
+        assert!(validate_restored_type(&input, &registry()).is_ok());
+    }
+
+    #[test]
     fn a_version_policy_takes_the_instance_settings_ranges() {
         for policy in [
             json!({"max_versions": 1}),
