@@ -32,6 +32,7 @@ const SAID_BYTES: u64 = 64 << 10;
 const PENDING: &str = "pending.json";
 const LAST: &str = "last.json";
 const SUPERVISOR: &str = "supervisor.lock";
+const UPGRADE: &str = "upgrade.json";
 
 pub fn previous_of(programs: &Path, name: &str) -> PathBuf {
     programs.join(format!(".{name}.previous"))
@@ -55,6 +56,18 @@ pub struct Pending {
     /// that wrote none reads as `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<String>,
+    /// Why the time limit last ended a start of the new release, for the reason of a put-back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit_ended: Option<String>,
+}
+
+/// How far a start of the new release has come with upgrading the database, which the server
+/// marks so that `marfa server run` does not time the upgrade as a start that will not settle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Upgrade {
+    Began,
+    Ended,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,10 +156,32 @@ impl Folder {
         self.write(PENDING, &text)
     }
 
+    /// Clears the record of a swap, and the mark of an upgrade that belonged to it.
     pub fn clear_pending(&self) -> io::Result<()> {
         match fs::remove_file(self.0.join(PENDING)) {
             Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => sync_folder(&self.0).or(Ok(())),
+            _ => {
+                let _ = fs::remove_file(self.0.join(UPGRADE));
+                sync_folder(&self.0).or(Ok(()))
+            }
+        }
+    }
+
+    pub fn mark_upgrade(&self, mark: Upgrade) -> io::Result<()> {
+        let text = serde_json::to_string(&mark).map_err(io::Error::other)?;
+        self.write(UPGRADE, &text)
+    }
+
+    pub fn upgrade(&self) -> io::Result<Option<Upgrade>> {
+        self.read(UPGRADE)
+    }
+
+    /// Clears a mark an earlier start left, so that only this start's upgrade is timed.
+    pub fn clear_upgrade(&self) -> io::Result<()> {
+        match fs::remove_file(self.0.join(UPGRADE)) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+            Err(_) => Ok(()),
+            Ok(()) => sync_folder(&self.0),
         }
     }
 
@@ -334,6 +369,60 @@ pub fn release_of(program: &Path, limit: Duration) -> Result<String, String> {
         .ok_or_else(|| format!("{} did not say which release it is", program.display()))
 }
 
+/// Why release `pending.from` cannot run again, or `None` when it can: its server, kept aside,
+/// must open `database` as it stands now at the schema it had before the swap. `environment`
+/// adds to this process's own, as the server is started with it.
+pub fn cannot_put_back(
+    pending: &Pending,
+    database: &Path,
+    environment: &[(String, String)],
+) -> Option<String> {
+    let old = previous_of(&pending.programs, SERVER);
+    if !old.is_file() {
+        return Some(format!("{} is missing", old.display()));
+    }
+    let mut command = Command::new(&old);
+    command
+        .arg("--can-open")
+        .arg(database)
+        .envs(environment.iter().map(|(name, value)| (name, value)));
+    let from = &pending.from;
+    let ran = match run_within(command, ASK_LIMIT) {
+        Ok(ran) => ran,
+        Err(error) if error.kind() == io::ErrorKind::TimedOut => {
+            return Some(format!(
+                "release {from} did not say within {} seconds whether it opens the database",
+                ASK_LIMIT.as_secs()
+            ));
+        }
+        Err(error) => return Some(format!("release {from} could not be asked: {error}")),
+    };
+    if !ran.status.success() {
+        let said = ran.stderr.trim();
+        return Some(match said.is_empty() {
+            true => format!("release {from} will not open the database"),
+            false => format!("release {from} will not open the database: {said}"),
+        });
+    }
+    #[derive(Deserialize)]
+    struct Said {
+        schema: Option<u32>,
+    }
+    let text = |schema: Option<u32>| schema.map_or_else(|| "none".to_string(), |s| s.to_string());
+    match serde_json::from_str::<Said>(ran.stdout.trim()) {
+        Ok(said) if said.schema == pending.schema => None,
+        Ok(said) => Some(format!(
+            "release {} has changed the database's schema from {} to {}",
+            pending.to,
+            text(pending.schema),
+            text(said.schema)
+        )),
+        Err(_) => Some(format!(
+            "release {from} answered about the database in words that do not read"
+        )),
+    }
+}
+
 /// Drops a `.marfa.next` left by an update that ended without it.
 pub fn drop_next(programs: &Path) -> io::Result<()> {
     match fs::remove_file(next_marfa(programs)) {
@@ -364,6 +453,7 @@ mod tests {
             starts: 0,
             programs: bin.to_path_buf(),
             attempt: Some("second".into()),
+            limit_ended: None,
         }
     }
 
@@ -489,6 +579,62 @@ mod tests {
         let hangs = release_of(&program("hangs", "exec sleep 30"), limit).unwrap_err();
         assert!(hangs.contains("in time"), "{hangs}");
         assert!(release_of(&dir.join("absent"), limit).is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_old_release_comes_back_only_when_its_server_opens_the_database_at_the_old_schema() {
+        let (dir, _) = scratch("can-open");
+        let bin = dir.join("bin");
+        let pending = pending(&bin);
+        let database = dir.join("data/marfa.db");
+        let environment = [("MARFA_ASKED".to_string(), "yes".to_string())];
+        let old = |body: &str| {
+            let path = previous_of(&bin, SERVER);
+            fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        };
+        let asked = || cannot_put_back(&pending, &database, &environment);
+        let missing = asked().unwrap();
+        assert!(missing.contains("is missing"), "{missing}");
+        let opens = |schema: &str| {
+            format!(
+                r#"[ "$1" = --can-open ] && [ "$2" = "{}" ] && [ "$MARFA_ASKED" = yes ] || exit 9
+echo '{{"schema":{schema},"standing":"current"}}'"#,
+                database.display()
+            )
+        };
+        old(&opens("1"));
+        assert_eq!(asked(), None, "the witness");
+        old(&opens("2"));
+        let moved = asked().unwrap();
+        assert!(moved.contains("schema from 1 to 2"), "{moved}");
+        old("echo 'the database is newer' >&2; exit 78");
+        let refused = asked().unwrap();
+        assert!(
+            refused.contains("0.0.74 will not open the database: the database is newer"),
+            "{refused}"
+        );
+        old("echo something else");
+        assert!(asked().unwrap().contains("do not read"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_upgrade_mark_reads_as_kept_and_goes_with_the_record() {
+        let (dir, record) = scratch("upgrade");
+        assert_eq!(record.upgrade().unwrap(), None);
+        record.clear_upgrade().unwrap();
+        record.mark_upgrade(Upgrade::Began).unwrap();
+        assert_eq!(record.upgrade().unwrap(), Some(Upgrade::Began));
+        record.mark_upgrade(Upgrade::Ended).unwrap();
+        assert_eq!(record.upgrade().unwrap(), Some(Upgrade::Ended));
+        record.clear_upgrade().unwrap();
+        assert_eq!(record.upgrade().unwrap(), None);
+        record.mark_upgrade(Upgrade::Began).unwrap();
+        record.keep_pending(&pending(&dir.join("bin"))).unwrap();
+        record.clear_pending().unwrap();
+        assert_eq!(record.upgrade().unwrap(), None);
         let _ = fs::remove_dir_all(&dir);
     }
 

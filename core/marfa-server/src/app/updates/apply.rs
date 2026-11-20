@@ -206,6 +206,7 @@ pub(super) fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(),
         starts: 0,
         programs: job.programs.clone(),
         attempt: Some(job.attempt.clone()),
+        limit_ended: None,
     };
     job.record
         .keep_pending(&pending)

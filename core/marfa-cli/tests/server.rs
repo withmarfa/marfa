@@ -310,6 +310,11 @@ case "$1" in
 esac
 env > "$FAKE_DOCKER_STATE/server-env"
 echo $$ > "$FAKE_DOCKER_STATE/server-pid"
+if [ -n "$FAKE_SERVER_UPGRADE" ]; then
+  echo '"began"' > "$MARFA_INSTALL_DIR/data/update/upgrade.json"
+  i=0; while [ "$i" -lt "$FAKE_SERVER_UPGRADE" ]; do sleep 0.1; i=$((i + 1)); done
+  echo '"ended"' > "$MARFA_INSTALL_DIR/data/update/upgrade.json"
+fi
 if [ -n "$FAKE_SERVER_SETTLES" ]; then rm -f "$MARFA_INSTALL_DIR/data/update/pending.json"; fi
 if [ -n "$FAKE_SERVER_SAYS" ]; then echo "$FAKE_SERVER_SAYS"; fi
 if [ -n "$FAKE_SERVER_HANG" ]; then
@@ -4222,6 +4227,95 @@ fn a_new_release_that_settles_is_not_ended_by_the_limit() {
     assert_eq!(status.code(), Some(0), "{}", rig.run_said());
 }
 
+/// An upgrade limit short enough for a test; release builds read no such knob.
+const UPGRADE_LIMIT: (&str, &str) = ("MARFA_TEST_UPGRADE_LIMIT_MS", "3000");
+
+#[test]
+fn a_database_upgrade_longer_than_the_limit_is_not_ended_and_the_release_settles() {
+    let rig = Rig::new("u-upgrade-long");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    let mut child = rig.run_server(&[
+        NEW,
+        ("FAKE_SERVER_UPGRADE", "40"),
+        ("FAKE_SERVER_SETTLES", "1"),
+        ("FAKE_SERVER_TRAP", "0"),
+        TRIAL_LIMIT,
+        ("MARFA_TEST_UPGRADE_LIMIT_MS", "60000"),
+    ]);
+    wait_for(&rig.state.join("ready"));
+    std::thread::sleep(Duration::from_millis(2000));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "an upgrade is not timed by the settle limit: {}",
+        rig.run_said()
+    );
+    assert!(alive(&rig.server_pid()));
+    assert_eq!(rig.starts(), None, "it settled");
+    signal(&child, "TERM");
+    let status = ended(&mut child, 20).expect("run did not end");
+    assert_eq!(status.code(), Some(0), "{}", rig.run_said());
+}
+
+#[test]
+fn an_upgrade_that_never_ends_and_a_start_that_never_settles_after_one_are_each_ended() {
+    let rig = Rig::new("u-upgrade-hung");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    let upgrading = "did not finish upgrading the database within 3 seconds";
+    let upgraded = "did not settle within 1500 ms of upgrading the database";
+    for (round, tenths, said) in [(1, "600", upgrading), (2, "5", upgraded)] {
+        let _ = fs::remove_file(rig.state.join("ready"));
+        let code = rig.started_once(&[
+            NEW,
+            ("FAKE_SERVER_UPGRADE", tenths),
+            ("FAKE_SERVER_HANG", "1"),
+            TRIAL_LIMIT,
+            UPGRADE_LIMIT,
+        ]);
+        assert_eq!(code, Some(75), "round {round}: {}", rig.run_said());
+        assert!(
+            rig.run_said().contains(said),
+            "round {round}: {}",
+            rig.run_said()
+        );
+        assert!(gone(&rig.server_pid()), "round {round}");
+        assert_eq!(rig.starts(), Some(round), "round {round}");
+    }
+    let code = rig.started_once(&[NEW]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert!(!rig.server_started());
+    assert_eq!(
+        rig.program("marfa-server"),
+        old_server(OPENS_SCHEMA_1).as_bytes()
+    );
+    let (outcome, reason) = rig.last();
+    assert_eq!(outcome, "rolled_back");
+    assert!(
+        reason.contains("0.0.1 ended 2 times") && reason.contains(upgraded),
+        "the reason names the limit: {reason}"
+    );
+}
+
+#[test]
+fn a_mark_left_by_an_earlier_start_does_not_lengthen_the_limit() {
+    let rig = Rig::new("u-upgrade-stale");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    fs::write(rig.update_record().join("upgrade.json"), "\"began\"").unwrap();
+    let code = rig.started_once(&[
+        NEW,
+        ("FAKE_SERVER_HANG", "1"),
+        TRIAL_LIMIT,
+        ("MARFA_TEST_UPGRADE_LIMIT_MS", "60000"),
+    ]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert!(
+        rig.run_said()
+            .contains("did not settle within 1500 ms of starting"),
+        "{}",
+        rig.run_said()
+    );
+    assert_eq!(rig.starts(), Some(1));
+}
+
 #[test]
 fn a_new_server_that_does_not_say_its_release_is_counted_and_then_put_back() {
     let rig = Rig::new("u-silent");
@@ -4278,6 +4372,35 @@ fn a_start_waits_for_the_last_server_to_let_go_and_counts_nothing_while_it_holds
         "the witness: once it lets go, the start runs"
     );
     assert_eq!(rig.starts(), Some(2));
+}
+
+#[test]
+fn nothing_is_put_back_while_the_last_server_still_holds_the_database() {
+    let rig = Rig::new("u-held-back");
+    rig.swapped("0.0.0", "0.0.1", 2, OPENS_SCHEMA_1);
+    let new_server = rig.program("marfa-server");
+    let old_marfa = rig.program("marfa");
+    let lock = fs::File::create(rig.dir.join("data/marfa.db.server-lock")).unwrap();
+    lock.try_lock().unwrap();
+    let wait = ("MARFA_TEST_LET_GO_MS", "1000");
+    let code = rig.started_once(&[NEW, wait]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert!(rig.run_said().contains("still holds"), "{}", rig.run_said());
+    assert_eq!(rig.program("marfa-server"), new_server, "nothing was moved");
+    assert_eq!(rig.program("marfa"), old_marfa);
+    assert!(rig.programs().join(".marfa.next").exists());
+    assert_eq!(rig.starts(), Some(2));
+    assert!(!rig.update_record().join("last.json").exists());
+
+    drop(lock);
+    let code = rig.started_once(&[NEW, wait]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert_eq!(
+        rig.program("marfa-server"),
+        old_server(OPENS_SCHEMA_1).as_bytes(),
+        "the witness: once it lets go, the old release is put back"
+    );
+    assert_eq!(rig.last().0, "rolled_back");
 }
 
 #[test]

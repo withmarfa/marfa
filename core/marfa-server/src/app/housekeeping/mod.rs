@@ -566,6 +566,7 @@ mod tests {
             readers: 1,
             migrations: NO_CLOCK_TABLE,
             reserve: 0,
+            upgrade_marks: None,
         };
         let lock = crate::db::Lock::take(&options.path)
             .map_err(|failure| failure.message)
@@ -600,6 +601,7 @@ mod tests {
             readers: 1,
             migrations: crate::db::migrate::MIGRATIONS,
             reserve: 0,
+            upgrade_marks: None,
         };
         let lock = crate::db::Lock::take(&options.path)
             .map_err(|failure| failure.message)

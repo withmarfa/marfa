@@ -2017,6 +2017,7 @@ mod tests {
             readers: 1,
             migrations: MIGRATIONS,
             reserve: 0,
+            upgrade_marks: None,
         };
         let lock = Lock::take(&options.path)
             .map_err(|failure| failure.message)

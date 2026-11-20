@@ -110,6 +110,19 @@ impl Updates {
     }
 }
 
+/// Where this start marks an upgrade of the database: only a server that `marfa server run`
+/// started for an update to this release that has not settled. It blocks.
+pub fn upgrade_marks(database: &DatabasePath) -> Option<Folder> {
+    if !matches!(install::detect(), Install::Service { .. }) {
+        return None;
+    }
+    let record = pending::record_of(database)?;
+    match record.pending() {
+        Ok(Some(pending)) if pending.to == Version::running().to_string() => Some(record),
+        _ => None,
+    }
+}
+
 /// What `--can-open` prints for a database file.
 pub fn inspect(file: &Path) -> std::result::Result<String, Failure> {
     let looked = db::inspect(file, MIGRATIONS)?;
@@ -165,13 +178,12 @@ pub fn settle_when_up(app: &Arc<App>) {
         }
         let at = app.clock.stamp();
         let settled = tokio::task::spawn_blocking(move || {
-            let schema_now = || {
-                database
-                    .as_deref()
-                    .and_then(|file| db::inspect(file, MIGRATIONS).ok())
-                    .and_then(|looked| looked.schema)
+            // The old server gets this server's own environment, as `marfa server run` gave it.
+            let cannot = |pending: &pending::Pending| match database.as_deref() {
+                Some(file) => pending::cannot_put_back(pending, file, &[]),
+                None => Some("this server has no database file".to_string()),
             };
-            pending::settle(&record, &running, &at, &schema_now, &reports)
+            pending::settle(&record, &running, &at, &cannot, &reports)
         })
         .await;
         if let Ok(Settled::PutBack) = settled {

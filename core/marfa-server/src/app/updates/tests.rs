@@ -588,6 +588,7 @@ async fn no_update_starts_while_another_holds_or_has_not_settled_the_programs() 
             starts: 1,
             programs: case.bin(),
             attempt: None,
+            limit_ended: None,
         })
         .unwrap();
     let refused = case

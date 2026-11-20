@@ -3,8 +3,9 @@
 //!
 //! A self-update swaps in only the new `marfa-server`, so this process, of the release that ran
 //! before, tries the new server: it counts each start in the update's record before any program
-//! of the new release runs, ends a start that has not settled within [`TRIAL_LIMIT`], and puts
-//! the old server back when the new one does not stay up. The service definitions restart only a
+//! of the new release runs, ends a start that has not settled within [`TRIAL_LIMIT`] (not
+//! counting a database upgrade, which has [`UPGRADE_LIMIT`]), and puts the old server back when
+//! the new one does not stay up. The service definitions restart only a
 //! failed exit, so a start of the new release that ends unasked ends this process with
 //! [`RESTART`].
 
@@ -20,8 +21,8 @@ use std::time::{Duration, Instant, SystemTime};
 
 use marfa_rules::environment::INSTALL_DIR;
 use marfa_rules::update_record::{
-    self as record, ASK_LIMIT, MARFA, Outcome, Pending, UNFINISHED_STARTS, finish_swap,
-    previous_of, put_back, release_of, run_within,
+    self as record, ASK_LIMIT, MARFA, Outcome, Pending, UNFINISHED_STARTS, Upgrade,
+    cannot_put_back, finish_swap, previous_of, put_back, release_of,
 };
 
 #[cfg(target_os = "linux")]
@@ -45,9 +46,13 @@ const SERVER: &str = record::SERVER;
 /// What both service managers start again, as a failed exit.
 const RESTART: i32 = 75;
 
-/// How long a start of a new release may run without settling. A first start that migrates a
-/// large database on a slow disk takes minutes.
+/// How long a start of a new release may run without settling, from its start or from the end
+/// of its database upgrade.
 const TRIAL_LIMIT: Duration = Duration::from_secs(10 * 60);
+
+/// How long a start of a new release may spend upgrading the database. An upgrade rewrites the
+/// database in one transaction, which a large database on a slow disk takes many minutes for.
+const UPGRADE_LIMIT: Duration = Duration::from_secs(2 * 60 * 60);
 
 /// How long a start of a new release waits for the last server of the install to let go of its
 /// files, which a server that outlived its `marfa server run` holds until it ends.
@@ -124,6 +129,7 @@ fn limit(name: &str, otherwise: Duration) -> Duration {
 
 fn spoken(limit: Duration) -> String {
     match limit.as_secs() {
+        seconds if seconds >= 3600 && seconds % 3600 == 0 => format!("{} hours", seconds / 3600),
         seconds if seconds >= 60 && seconds % 60 == 0 => format!("{} minutes", seconds / 60),
         seconds if limit.subsec_millis() == 0 => format!("{seconds} seconds"),
         _ => format!("{} ms", limit.as_millis()),
@@ -320,6 +326,17 @@ impl Install {
     /// Counts this start before any program of the new release runs, so a start that hangs or
     /// dies on its first word is counted too. Ends the process when this start may not run.
     fn begin(&self, sink: &Sink, server: &Path, pending: Pending) -> Result<Start, CliError> {
+        // Before anything is decided or moved: a server that outlived its run may still be
+        // changing the database.
+        if let Some(lock) = self.still_held() {
+            sink.say(&format!(
+                "The last server of this install still holds {} after {}, so this start of release {} is not counted and ends for the service to start it again.",
+                lock.display(),
+                spoken(limit("MARFA_TEST_LET_GO_MS", LET_GO_WAIT)),
+                pending.to
+            ));
+            std::process::exit(RESTART);
+        }
         if self.ended(&pending) || (OWN != pending.from && OWN != pending.to) {
             let theirs = release(server)?;
             self.reconcile(sink, &pending, &theirs);
@@ -336,17 +353,20 @@ impl Install {
                     sink,
                     &pending,
                     &format!(
-                        "Release {to} ended {} times before it settled",
-                        pending.starts
+                        "Release {to} ended {} times before it settled{}",
+                        pending.starts,
+                        pending
+                            .limit_ended
+                            .as_ref()
+                            .map(|why| format!(", and a start was ended because it {why}"))
+                            .unwrap_or_default()
                     ),
                 ),
             }
         }
-        if let Some(lock) = self.still_held() {
+        if let Err(error) = self.record.clear_upgrade() {
             sink.say(&format!(
-                "The last server of this install still holds {} after {}, so this start of release {to} is not counted and ends for the service to start it again.",
-                lock.display(),
-                spoken(limit("MARFA_TEST_LET_GO_MS", LET_GO_WAIT))
+                "An earlier start's upgrade mark could not be cleared, so this start of release {to} is not counted and does not run: {error}"
             ));
             std::process::exit(RESTART);
         }
@@ -372,63 +392,11 @@ impl Install {
         }
     }
 
-    /// Why release `pending.from` cannot run again, or `None` when it can: it must open the
-    /// database, as it stands now, with the same schema as before the swap.
-    fn cannot_put_back(&self, pending: &Pending) -> Option<String> {
-        let old = previous_of(&pending.programs, SERVER);
-        if !old.is_file() {
-            return Some(format!("{} is missing", old.display()));
-        }
-        let mut command = Command::new(&old);
-        command
-            .arg("--can-open")
-            .arg(&self.database)
-            .envs(self.environment.iter().map(|(name, value)| (name, value)));
-        let from = &pending.from;
-        let ran = match run_within(command, ASK_LIMIT) {
-            Ok(ran) => ran,
-            Err(error) if error.kind() == ErrorKind::TimedOut => {
-                return Some(format!(
-                    "release {from} did not say within {} seconds whether it opens the database",
-                    ASK_LIMIT.as_secs()
-                ));
-            }
-            Err(error) => return Some(format!("release {from} could not be asked: {error}")),
-        };
-        if !ran.status.success() {
-            let said = ran.stderr.trim();
-            return Some(format!(
-                "release {from} will not open the database{}",
-                if said.is_empty() {
-                    String::new()
-                } else {
-                    format!(": {said}")
-                }
-            ));
-        }
-        #[derive(serde::Deserialize)]
-        struct Said {
-            schema: Option<u32>,
-        }
-        match serde_json::from_str::<Said>(ran.stdout.trim()) {
-            Ok(said) if said.schema == pending.schema => None,
-            Ok(said) => Some(format!(
-                "release {} has changed the database's schema from {} to {}",
-                pending.to,
-                schema_text(pending.schema),
-                schema_text(said.schema)
-            )),
-            Err(_) => Some(format!(
-                "release {from} answered about the database in words this marfa cannot read"
-            )),
-        }
-    }
-
     /// Puts the old server back when it can run, and otherwise finishes the swap, so the next
     /// start runs one release whole. Ends the process for the service to start again.
     fn roll_back(&self, sink: &Sink, pending: &Pending, why: &str) -> ! {
         let (from, to, programs) = (&pending.from, &pending.to, &pending.programs);
-        if let Some(cannot) = self.cannot_put_back(pending) {
+        if let Some(cannot) = cannot_put_back(pending, &self.database, &self.environment) {
             self.finish_forward(
                 sink,
                 pending,
@@ -540,10 +508,6 @@ impl Install {
         }
         false
     }
-}
-
-fn schema_text(schema: Option<u32>) -> String {
-    schema.map_or_else(|| "none".to_string(), |schema| schema.to_string())
 }
 
 pub fn run(args: &RunArgs) -> Result<(), CliError> {
@@ -658,18 +622,18 @@ pub fn run(args: &RunArgs) -> Result<(), CliError> {
             pumps.push(pump(err, log.clone()));
         }
     }
-    let (status, timed_out) = match &trial {
+    let (status, limit_ended) = match &trial {
         Some((install, pending)) => on_trial(install, &sink, &mut child, pending)?,
-        None => (child.wait()?, false),
+        None => (child.wait()?, None),
     };
     for pump in pumps {
         let _ = pump.join();
     }
     CHILD.store(0, Ordering::SeqCst);
     // A start ended at the limit stays counted, whatever stop came after.
-    let stopped = STOP.load(Ordering::SeqCst) && !timed_out;
+    let stopped = STOP.load(Ordering::SeqCst) && limit_ended.is_none();
     if let Some((install, pending)) = &trial {
-        ended_trial(install, &sink, pending, status, stopped);
+        ended_trial(install, &sink, pending, status, stopped, limit_ended);
     }
     if status.code() == Some(REFUSED) && !stopped {
         sink.say(&format!(
@@ -683,36 +647,69 @@ pub fn run(args: &RunArgs) -> Result<(), CliError> {
     std::process::exit(exit_code(status, stopped));
 }
 
+/// Where a start of the new release stands with the database upgrade the server marks.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Stage {
+    Starting,
+    Upgrading,
+    Upgraded,
+}
+
 /// Waits for a start of the new release, and ends it when its update has not settled within
-/// the trial limit: its status, and whether it was ended at the limit.
+/// its limit: its status, and why the limit ended it.
 fn on_trial(
     install: &Install,
     sink: &Sink,
     child: &mut Child,
     trial: &Pending,
-) -> std::io::Result<(ExitStatus, bool)> {
-    let allowed = limit("MARFA_TEST_TRIAL_LIMIT_MS", TRIAL_LIMIT);
-    let began = Instant::now();
-    let mut looked = began;
+) -> std::io::Result<(ExitStatus, Option<String>)> {
+    let settle_limit = limit("MARFA_TEST_TRIAL_LIMIT_MS", TRIAL_LIMIT);
+    let upgrade_limit = limit("MARFA_TEST_UPGRADE_LIMIT_MS", UPGRADE_LIMIT);
+    let allowed = |stage| match stage {
+        Stage::Upgrading => upgrade_limit,
+        Stage::Starting | Stage::Upgraded => settle_limit,
+    };
+    let (mut stage, mut since) = (Stage::Starting, Instant::now());
+    let mut looked = since;
     loop {
         if let Some(status) = child.try_wait()? {
-            return Ok((status, false));
+            return Ok((status, None));
         }
-        let over = began.elapsed() >= allowed;
-        if over || looked.elapsed() >= LOOK_EVERY {
+        if since.elapsed() >= allowed(stage) || looked.elapsed() >= LOOK_EVERY {
             looked = Instant::now();
             if install.settled(trial) {
-                return Ok((child.wait()?, false));
+                return Ok((child.wait()?, None));
+            }
+            let marked = install.record.upgrade().ok().flatten();
+            let now = match (stage, marked) {
+                (Stage::Starting, Some(Upgrade::Began)) => Stage::Upgrading,
+                (Stage::Starting | Stage::Upgrading, Some(Upgrade::Ended)) => Stage::Upgraded,
+                _ => stage,
+            };
+            if now != stage {
+                (stage, since) = (now, Instant::now());
             }
         }
         // A stop someone asked for has reached the server already.
-        if over && !STOP.load(Ordering::SeqCst) {
+        if since.elapsed() >= allowed(stage) && !STOP.load(Ordering::SeqCst) {
+            let why = match stage {
+                Stage::Starting => {
+                    format!("did not settle within {} of starting", spoken(settle_limit))
+                }
+                Stage::Upgrading => format!(
+                    "did not finish upgrading the database within {}",
+                    spoken(upgrade_limit)
+                ),
+                Stage::Upgraded => format!(
+                    "did not settle within {} of upgrading the database",
+                    spoken(settle_limit)
+                ),
+            };
             sink.say(&format!(
-                "Release {} did not settle within {}, so this start of it is ended.",
-                trial.to,
-                spoken(allowed)
+                "Release {} {why}, so this start of it is ended.",
+                trial.to
             ));
-            return Ok((stop(child)?, true));
+            return Ok((stop(child)?, Some(why)));
         }
         std::thread::sleep(POLL);
     }
@@ -744,7 +741,14 @@ fn exit_code(status: ExitStatus, stopped: bool) -> i32 {
 
 /// After a start of the new release while its update had not settled. Returns only when the
 /// update has settled or ended meanwhile, and the exit is then as for any other server.
-fn ended_trial(install: &Install, sink: &Sink, trial: &Pending, status: ExitStatus, stopped: bool) {
+fn ended_trial(
+    install: &Install,
+    sink: &Sink,
+    trial: &Pending,
+    status: ExitStatus,
+    stopped: bool,
+    limit_ended: Option<String>,
+) {
     let to = &trial.to;
     let pending = match install.record.pending() {
         Ok(Some(pending))
@@ -775,7 +779,17 @@ fn ended_trial(install: &Install, sink: &Sink, trial: &Pending, status: ExitStat
         }
         std::process::exit(exit_code(status, stopped));
     }
-    if status.code() == Some(REFUSED) {
+    if let Some(why) = limit_ended {
+        let limited = Pending {
+            limit_ended: Some(why),
+            ..pending.clone()
+        };
+        if let Err(error) = install.record.keep_pending(&limited) {
+            sink.say(&format!(
+                "Why the limit ended this start of release {to} could not be kept: {error}"
+            ));
+        }
+    } else if status.code() == Some(REFUSED) {
         install.roll_back(
             sink,
             &pending,
@@ -820,6 +834,7 @@ mod tests {
             starts: 0,
             programs: PathBuf::from("/bin"),
             attempt: None,
+            limit_ended: None,
         };
         assert!(trying(&pending, "0.0.74", "0.0.75"));
         assert!(trying(&pending, "0.0.75", "0.0.75"));
@@ -832,6 +847,7 @@ mod tests {
     #[test]
     fn a_limit_is_said_in_minutes_when_it_is_whole_minutes() {
         assert_eq!(spoken(TRIAL_LIMIT), "10 minutes");
+        assert_eq!(spoken(UPGRADE_LIMIT), "2 hours");
         assert_eq!(spoken(Duration::from_millis(1500)), "1500 ms");
         assert_eq!(spoken(LET_GO_WAIT), "30 seconds");
     }
