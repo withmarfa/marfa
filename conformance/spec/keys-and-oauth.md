@@ -2191,7 +2191,7 @@ When the server issues tokens for an authorization that did not ask for `offline
 
 ### `keys-and-oauth/refresh-rotates`
 
-When an app exchanges a live refresh token, the server MUST answer `200` with a new refresh token and an access token for the same scopes.
+When an app exchanges a live refresh token that `mcp/settings-step-up-refresh` does not refuse, the server MUST answer `200` with a new refresh token and an access token for the same scopes.
 
 **Tests:** `compliance/oauth-tokens.test.ts › rotate: a refresh answers a new refresh token and an access token that works`.
 
@@ -3763,7 +3763,7 @@ When a person's browser session ends, the server MUST keep valid every access to
 
 ### `keys-and-oauth/refresh-outlives-browser`
 
-When a person's browser session ends, the server MUST answer the exchange of a refresh token an app holds for that person `200` with tokens that are valid.
+When a person's browser session ends, the server MUST answer the exchange of a refresh token an app holds for that person, unless `mcp/settings-step-up-refresh` refuses it, `200` with tokens that are valid.
 
 **Tests:** `compliance/browser-sessions.test.ts › through browser sign-out leaves every app connected`, `› through ending one session leaves every app connected`, `› local recovery revokes browser sessions and keeps apps connected`, `compliance/owner-sign-ins.test.ts › through going unused for a week leaves every app connected`.
 
