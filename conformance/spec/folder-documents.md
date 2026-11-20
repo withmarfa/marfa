@@ -1174,9 +1174,9 @@ When a remote version change alters nothing rendered in the file, a device MUST 
 
 ### `folder-documents/version-own-edit-landed`
 
-When the file's own edit lands and the file remains unchanged since scan, a device MUST update its version line to the accepted version.
+When the file's own edit lands, the file remains unchanged since scan and no program holds it open for writing, a device MUST update its version line to the accepted version.
 
-**Tests:** `device/folders-placement.test.ts › does not rewrite a file for its version line alone`, `device/folders-placement.test.ts › writes the line into a file saved without one, once its edit lands`.
+**Tests:** `device/folders-placement.test.ts › does not rewrite a file for its version line alone`, `device/folders-placement.test.ts › writes the line into a file saved without one, once its edit lands`, `device/folders-open-writer.test.ts › leaves the file while the program holds it, and sends what the program wrote after the push`.
 
 ### `folder-documents/version-own-edit-after-pull`
 
