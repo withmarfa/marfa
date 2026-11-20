@@ -999,6 +999,130 @@ describe("a backup folder that lacks a file or its disk", () => {
       });
     });
   });
+
+  /** The stores `GET /blobs/stores` lists, by id, with whether each is detached. */
+  async function storesOf(server: FreshServer) {
+    const listed = await clientsFor(server).operator.listBlobStores();
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    return listed.data.data.map((store) => ({
+      id: store.id,
+      kind: store.kind,
+      locator: store.locator,
+      detached: store.detached_at !== null,
+    }));
+  }
+
+  const referencesOf = async (server: FreshServer) =>
+    (await backupConcerns(server)).map((concern) => concern.reference);
+
+  async function replicated(server: FreshServer) {
+    await waitFor("every file's copy in the folder", async () => {
+      const run = await runJob<{ remaining: number }>(
+        clientsFor(server).operator,
+        "blob-replicate",
+      );
+      return run.result.remaining === 0 ? true : undefined;
+    });
+  }
+
+  it("forgets nothing when it cannot record an adopt, and adopts on the next try", async () => {
+    await withFolder("backup-folder-adopt-unrecorded", async (server, root) => {
+      const id = await instanceIdOf(server);
+      const owner = ownerOf(server);
+      renameSync(join(root, "files", id), join(root, "old files"));
+      const stores = await storesOf(server);
+      const backups = (await owner.listBackups()).data.data;
+      expect(backups.length).toBeGreaterThan(0);
+
+      await server.setFault("fail:stores-record");
+      const refused = await owner.adoptBackupFolder();
+      await server.clearFault("fail:stores-record");
+      expect(refused.status, JSON.stringify(refused.data)).not.toBe(200);
+      expect(refused.error?.error.message).not.toContain("forgotten");
+      expect(await storesOf(server)).toEqual(stores);
+      expect((await owner.listBackups()).data.data).toEqual(backups);
+
+      const adopted = await owner.adoptBackupFolder();
+      expect(adopted.status, JSON.stringify(adopted.error)).toBe(200);
+      expect(adopted.data.backups_forgotten).toBe(backups.length);
+    });
+  });
+
+  it("gives the files folder the store an adopt recorded when the server ended before the folder took its marker", async () => {
+    await withFolder("backup-folder-adopt-ended", async (server, root) => {
+      const id = await instanceIdOf(server);
+      const area = join(root, "files", id);
+      const old = (await storesOf(server)).find(
+        (store) => store.kind === "folder",
+      )!;
+      renameSync(area, join(root, "old files"));
+
+      await server.setFault("hold:folder-marker");
+      const adopting = ownerOf(server).adoptBackupFolder();
+      await server.waitForHold("hold:folder-marker");
+      await server.restart({ signal: "SIGKILL" });
+      await adopting.catch(() => undefined);
+
+      const recorded = (await storesOf(server)).filter(
+        (store) => store.locator === area && !store.detached,
+      );
+      expect(recorded).toHaveLength(1);
+      expect(recorded[0]!.id).not.toBe(old.id);
+      expect(readFileSync(join(area, ".marfa-store"), "utf8").trim()).toBe(
+        recorded[0]!.id,
+      );
+      const next = await ownerOf(server).runBackup();
+      expect(next.status, JSON.stringify(next.error)).toBe(200);
+    });
+  });
+
+  it("lists in attention a files folder put in place of the one the server took, copies no file into it, and copies again once that folder is back", async () => {
+    await withFolder("backup-folder-replaced", async (server, root) => {
+      const id = await instanceIdOf(server);
+      const area = join(root, "files", id);
+      const moved = join(root, "moved files");
+      expect(await referencesOf(server)).not.toContain("folder_lock_lost");
+
+      renameSync(area, moved);
+      mkdirSync(area);
+      writeFileSync(
+        join(area, ".marfa-store"),
+        readFileSync(join(moved, ".marfa-store")),
+      );
+      const held = await fileItem(
+        server,
+        bytesOf("a file sent while another folder is in its place", 2048),
+      );
+      await runJob(clientsFor(server).operator, "blob-replicate");
+      expect(readdirSync(area)).toEqual([".marfa-store"]);
+      expect(await referencesOf(server)).toContain("folder_lock_lost");
+
+      rmSync(area, { recursive: true });
+      renameSync(moved, area);
+      await replicated(server);
+      expect(existsSync(copyIn(root, id, held.hash))).toBe(true);
+      expect(await referencesOf(server)).not.toContain("folder_lock_lost");
+    });
+  });
+
+  it("makes a removed lock file in the files folder again and says so in attention", async () => {
+    await withFolder("backup-folder-lock-file", async (server, root) => {
+      const id = await instanceIdOf(server);
+      const lock = join(root, "files", id, ".server-lock");
+      expect(existsSync(lock)).toBe(true);
+      expect(await referencesOf(server)).not.toContain("folder_lock_restored");
+
+      rmSync(lock);
+      const held = await fileItem(
+        server,
+        bytesOf("a file copied after the lock file went", 2048),
+      );
+      await replicated(server);
+      expect(existsSync(copyIn(root, id, held.hash))).toBe(true);
+      expect(existsSync(lock)).toBe(true);
+      expect(await referencesOf(server)).toContain("folder_lock_restored");
+    });
+  });
 });
 
 describe("where backups may go", () => {

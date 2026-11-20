@@ -1347,9 +1347,18 @@ impl App {
         {
             None => Err(late()),
             Some(Ok(())) => Ok(()),
+            // The record stays in doubt, so the next follow tries again.
             Some(Err(error)) => {
                 tracing::warn!(%error, "The backup folder's claim by an adopt could not be settled");
-                Ok(())
+                Err(Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!(
+                        "The backup folder {} keeps the claim of an adopt that did not finish, \
+                         and the claim could not be settled: {error}. Check that the folder is \
+                         writable; the server settles it once it can.",
+                        folder.root().display()
+                    ),
+                ))
             }
         }
     }
@@ -1391,7 +1400,7 @@ impl App {
                         && let Err(refused) = self.settle_folder(folder).await
                     {
                         tracing::error!(%refused, "The backup folder in use could not be checked against its record");
-                        return Err(unrecorded());
+                        return Err(refused);
                     }
                     match self.record_stores(&current).await {
                         Ok(Recorded::At(_)) => blobs.record_doubted.store(false, Ordering::SeqCst),

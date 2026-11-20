@@ -166,11 +166,10 @@ impl Folder {
             match recorded {
                 Some(id) => {
                     let (settling, recorded) = (area.clone(), id.clone());
-                    let promoted = tokio::task::spawn_blocking(move || {
-                        settled_at_start(&settling, &recorded)
-                    })
-                    .await
-                    .map_err(started)?;
+                    let promoted =
+                        tokio::task::spawn_blocking(move || settled_at_start(&settling, &recorded))
+                            .await
+                            .map_err(started)?;
                     match promoted {
                         Some(promoted) => promoted,
                         None => {
@@ -324,34 +323,41 @@ impl Folder {
 
     /// Settles a claim an adopt left in the files area against `recorded`, the store the record
     /// names there: promoted where it is that store, removed where the record names another.
-    /// With no claim, a store the record names in place of the one in use waits, unmounted,
-    /// until a folder holding its marker is back. It blocks.
+    /// Whether or not the claim settles, a store the record names in place of the one in use
+    /// is used from then on, unmounted until a folder holding its marker is back, so the
+    /// record is never written back to the store it replaced. It blocks.
     pub fn settle(&self, recorded: Option<String>) -> io::Result<()> {
         if self.reachable() {
             return Ok(());
         }
-        let (area, files) = (self.area(), self.files());
-        match (files.pending(&area)?, recorded) {
+        let area = self.area();
+        let settled = self.settle_claim(&area, recorded.as_deref());
+        if let Some(recorded) = recorded
+            && recorded != self.files().id()
+        {
+            self.swap(Disk::unmounted(recorded, area, Place::BackupFiles));
+        }
+        settled
+    }
+
+    fn settle_claim(&self, area: &Path, recorded: Option<&str>) -> io::Result<()> {
+        match (self.files().pending(area)?, recorded) {
             (Some(claim), Some(recorded)) if claim.id() == recorded => {
                 self.swap(claim.promote()?);
                 tracing::info!("The backup folder took the store an earlier adopt recorded");
-                Ok(())
             }
             (Some(claim), Some(_)) => {
                 claim.undo()?;
-                tracing::info!("The backup folder's claim by an adopt that did not finish was undone");
-                Ok(())
+                tracing::info!(
+                    "The backup folder's claim by an adopt that did not finish was undone"
+                );
             }
             (Some(_), None) => {
                 tracing::warn!("The backup folder holds a claim no record names, and it was kept");
-                Ok(())
             }
-            (None, Some(recorded)) if recorded != files.id() => {
-                self.swap(Disk::unmounted(recorded, area, Place::BackupFiles));
-                Ok(())
-            }
-            (None, _) => Ok(()),
+            (None, _) => {}
         }
+        Ok(())
     }
 
     fn checked(&self) -> io::Result<()> {
@@ -845,7 +851,12 @@ mod tests {
         fs::create_dir_all(&own).unwrap();
         let partial = own.join(".x.json.0190.partial");
         fs::write(&partial, b"half").unwrap();
-        let half = dir.path().join(FILES).join("instance").join("tmp").join("half");
+        let half = dir
+            .path()
+            .join(FILES)
+            .join("instance")
+            .join("tmp")
+            .join("half");
         fs::write(&half, b"half").unwrap();
         assert_eq!(folder.clear_leftovers().unwrap(), 0);
         assert!(partial.exists());
@@ -1053,11 +1064,7 @@ mod tests {
         let area = root.join(FILES).join("instance");
         fs::create_dir_all(&area).unwrap();
         fs::write(area.join(disk::PENDING), pending).unwrap();
-        folder.swap(Disk::unmounted(
-            recorded.into(),
-            area,
-            Place::BackupFiles,
-        ));
+        folder.swap(Disk::unmounted(recorded.into(), area, Place::BackupFiles));
         folder
     }
 
@@ -1070,7 +1077,10 @@ mod tests {
         assert!(folder.reachable());
         assert_eq!(folder.files().id(), recorded);
         let area = dir.path().join(FILES).join("instance");
-        assert_eq!(fs::read_to_string(area.join(disk::MARKER)).unwrap(), recorded);
+        assert_eq!(
+            fs::read_to_string(area.join(disk::MARKER)).unwrap(),
+            recorded
+        );
         assert!(!area.join(disk::PENDING).exists());
 
         let dir = TempDir::new().unwrap();
@@ -1098,7 +1108,10 @@ mod tests {
         fs::write(area.join(disk::PENDING), &recorded).unwrap();
         let promoted = settled_at_start(&area, &recorded).unwrap();
         assert_eq!(promoted.id(), recorded);
-        assert_eq!(fs::read_to_string(area.join(disk::MARKER)).unwrap(), recorded);
+        assert_eq!(
+            fs::read_to_string(area.join(disk::MARKER)).unwrap(),
+            recorded
+        );
 
         let dir = TempDir::new().unwrap();
         let area = dir.path().join(FILES).join("instance");

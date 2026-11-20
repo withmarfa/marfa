@@ -1,5 +1,17 @@
-import { chmod, link, rename, rm, stat, symlink } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  link,
+  mkdir,
+  readdir,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { basename, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
 import { controlRequest } from "../../utils/control-request.js";
@@ -180,6 +192,35 @@ describe("a second server on a running server's files", () => {
     expect(landed.status, JSON.stringify(landed.error)).toBe(201);
     const read = await operator.downloadBlob(landed.data.hash);
     expect(read.status).toBe(200);
+    expect(new Uint8Array(read.data)).toEqual(bytes);
+  }, 180_000);
+
+  it("is refused on the database and the blob folder once their lock files are removed or replaced, and leaves the upload in progress, which lands", async () => {
+    const { bytes, answer } = await heldUpload();
+    const before = await spool();
+    const folder = blobFolder(first);
+    await rm(`${first.sqlitePath}.server-lock`, { force: true });
+    const folderLock = join(folder, ".server-lock");
+    await rm(folderLock, { force: true });
+    await writeFile(folderLock, "", { mode: 0o600 });
+
+    const onDatabase = await refused({ MARFA_DATABASE_PATH: first.sqlitePath });
+    expect(onDatabase.code, onDatabase.output).toBe(1);
+    expect(onDatabase.output).toContain(
+      `${first.sqlitePath} is open in another`,
+    );
+    const onFolder = await refused({ MARFA_BLOB_PATH: folder });
+    expect(onFolder.code, onFolder.output).toBe(1);
+    expect(onFolder.output).toContain(
+      `The blob folder ${folder} is open in another Marfa server`,
+    );
+    expect(await spool()).toEqual(before);
+    expect(await health()).toBe(200);
+
+    await first.clearFault("hold:blob-write");
+    const landed = await answer;
+    expect(landed.status, JSON.stringify(landed.error)).toBe(201);
+    const read = await operator.downloadBlob(landed.data.hash);
     expect(new Uint8Array(read.data)).toEqual(bytes);
   }, 180_000);
 
@@ -401,6 +442,86 @@ describe("a blob folder that returns to a server started without it", () => {
     },
     3 * FRESH_SERVER_TIMEOUT_MS,
   );
+
+  it(
+    "stores nothing in a blob folder put in place of the one the server took, says blob storage is down, and stores again once that folder is back",
+    async () => {
+      const folder = join(tempFolder("marfa-one-server-disk-"), "blobs");
+      const moved = `${folder}.moved`;
+      const server = await bootFreshServer("one-server-replaced", {
+        ...DISK_ONLY,
+        MARFA_BLOB_PATH: folder,
+      });
+      const { working: client } = clientsFor(server);
+      try {
+        // The witness: the folder the server took stores a file.
+        const before = await client.uploadBlob(
+          new TextEncoder().encode("stored in the folder the server took"),
+          "text/plain",
+        );
+        expect(before.status, JSON.stringify(before.error)).toBe(201);
+        expect(await blobStorage(server)).toBe("ok");
+
+        await rename(folder, moved);
+        await mkdir(folder);
+        await copyFile(
+          join(moved, ".marfa-store"),
+          join(folder, ".marfa-store"),
+        );
+        const upload = await client.uploadBlob(
+          new TextEncoder().encode("sent while another folder is in its place"),
+          "text/plain",
+        );
+        expect(upload.status).toBe(503);
+        expect(upload.error?.error.code).toBe("blob_store_unavailable");
+        expect(await blobStorage(server)).toBe("down");
+        expect(await readdir(folder)).toEqual([".marfa-store"]);
+
+        await rm(folder, { recursive: true });
+        await rename(moved, folder);
+        expect(await blobStorage(server)).toBe("ok");
+        const after = await client.uploadBlob(
+          new TextEncoder().encode("stored once the folder is back"),
+          "text/plain",
+        );
+        expect(after.status, JSON.stringify(after.error)).toBe(201);
+      } finally {
+        await server.stop();
+      }
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("a database another program has open", () => {
+  it("is refused, naming that program's process, and opened once it closes", async () => {
+    const dir = tempFolder("marfa-in-use-");
+    removals.push(dir);
+    const file = join(dir, "marfa.db");
+    const program = new DatabaseSync(file);
+    try {
+      program.exec("PRAGMA journal_mode = WAL");
+      program.prepare("SELECT count(*) FROM sqlite_schema").get();
+      const second = await refused({ MARFA_DATABASE_PATH: file });
+      expect(second.code, second.output).toBe(1);
+      expect(second.output).toContain(`${file} is open in another process`);
+      expect(second.output).toContain(`(process ${String(process.pid)})`);
+    } finally {
+      program.close();
+    }
+
+    const opened = await bootFreshServer("one-server-in-use", {
+      ...DISK_ONLY,
+      MARFA_DATABASE_PATH: file,
+    });
+    try {
+      expect(
+        (await controlRequest(opened.controlSocket, "/health")).status,
+      ).toBe(200);
+    } finally {
+      await opened.stop();
+    }
+  }, 180_000);
 });
 
 describe("a restart on lock files opened to the server's group", () => {

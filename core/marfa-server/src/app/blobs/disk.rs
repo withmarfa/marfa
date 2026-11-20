@@ -183,8 +183,7 @@ pub enum Taken {
 
 /// Locks the blob folder `dir` the start opened, and its lock file where it is `marked`.
 pub fn take_blob_folder(dir: File, root: &Path) -> Result<Taken, Failure> {
-    let locked =
-        folder_lock::lock_dir(dir).map_err(|(why, _)| untaken(Place::Blobs, root, why))?;
+    let locked = folder_lock::lock_dir(dir).map_err(|(why, _)| untaken(Place::Blobs, root, why))?;
     let marked = matches!(marker_in(locked.dir(), root, Place::Blobs), Ok(Some(_)));
     if !marked {
         return Ok(Taken::Dir(locked));
@@ -859,6 +858,20 @@ fn read_in(dir: &File, name: &str) -> io::Result<Option<String>> {
     Ok(Some(text))
 }
 
+#[cfg(test)]
+thread_local! {
+    static ROOM: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `run` as if the disk had room for only `bytes` more on this thread.
+#[cfg(test)]
+fn with_room<T>(bytes: usize, run: impl FnOnce() -> T) -> T {
+    ROOM.set(Some(bytes));
+    let ran = run();
+    ROOM.set(None);
+    ran
+}
+
 /// Writes `text` as the file `name` in `dir`, synced with the folder that names it.
 fn write_in(dir: &File, name: &str, text: &str) -> io::Result<()> {
     let mut file = File::from(rustix::fs::openat(
@@ -867,6 +880,13 @@ fn write_in(dir: &File, name: &str, text: &str) -> io::Result<()> {
         OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC | OFlags::NOFOLLOW | OFlags::CLOEXEC,
         Mode::from_raw_mode(0o666),
     )?);
+    #[cfg(test)]
+    if let Some(room) = ROOM.get()
+        && room < text.len()
+    {
+        file.write_all(&text.as_bytes()[..room])?;
+        return Err(io::Error::from_raw_os_error(libc::ENOSPC));
+    }
     file.write_all(text.as_bytes())?;
     file.sync_all()?;
     drop(file);
@@ -1202,6 +1222,25 @@ mod tests {
     }
 
     #[test]
+    fn a_claim_on_a_full_disk_leaves_no_pending_marker_and_a_later_claim_succeeds() {
+        let dir = TempDir::new().unwrap();
+        let current = Disk::open(&dir.path().join("current"), Place::BackupFiles, None).unwrap();
+        let area = dir.path().join("adopted");
+        fs::create_dir(&area).unwrap();
+        let id = Uuid::now_v7().to_string();
+
+        let full = with_room(id.len() / 2, || current.claim(&area, &id)).unwrap_err();
+        assert_eq!(full.raw_os_error(), Some(libc::ENOSPC), "{full}");
+        assert!(!area.join(PENDING).exists());
+        assert!(!area.join(MARKER).exists());
+        assert!(current.pending(&area).unwrap().is_none());
+
+        let claim = current.claim(&area, &id).unwrap();
+        assert_eq!(fs::read_to_string(area.join(PENDING)).unwrap(), id);
+        claim.undo().unwrap();
+    }
+
+    #[test]
     fn a_claim_of_the_folder_the_store_holds_takes_no_second_lock() {
         let dir = TempDir::new().unwrap();
         let area = dir.path().join("area");
@@ -1414,9 +1453,8 @@ mod tests {
 
             let blobs = dir.path().join("blobs");
             let half = half_written(&blobs);
-            let refused =
-                without_locks_answering(code, || Disk::open(&blobs, Place::Blobs, None))
-                    .unwrap_err();
+            let refused = without_locks_answering(code, || Disk::open(&blobs, Place::Blobs, None))
+                .unwrap_err();
             assert!(
                 refused.message.contains("could not be locked"),
                 "{code}: {}",

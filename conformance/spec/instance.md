@@ -114,6 +114,30 @@ Where `backup_path` is set and the file system that holds `<backup_path>/files/<
 
 **Tests:** waiting on #3116.
 
+### `instance/attention-backup-lock-lost`
+
+Where `backup_path` is set, while the folder at `<backup_path>/files/<instance id>/` holds the marker of the store the server recorded there but is not the folder the server took for that store, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `folder_lock_lost`.
+
+**Reason:** a folder moved away and another put at its path, or a lock file another server holds, means the folder may be another server's. The server copies nothing into it until the folder it took is back, and the owner learns why the copies wait.
+
+**Tests:** `compliance/backup-folder.test.ts › lists in attention a files folder put in place of the one the server took, copies no file into it, and copies again once that folder is back`.
+
+### `instance/attention-backup-lock-restored`
+
+Where `backup_path` is set, if the lock file `<backup_path>/files/<instance id>/.server-lock` was removed or replaced while the server held the folder, then the server MUST include one entry of kind `backup` with the reference `folder_lock_restored` in each later `GET /attention` until it restarts.
+
+**Reason:** the server makes the lock file again under the folder's own lock, so it keeps copying, but something other than the server changed the folder, and the owner should know.
+
+**Tests:** `compliance/backup-folder.test.ts › makes a removed lock file in the files folder again and says so in attention`.
+
+### `instance/attention-backup-shared`
+
+Where `backup_path` is set and `<backup_path>/files/<instance id>/` is on a network file system, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `folder_shared`, whose description names that folder.
+
+**Reason:** the locks of a network file system may not reach a server on another machine, so a copy of the instance started there could remove the files this one is still copying.
+
+**Tests:** waiting on #3116.
+
 ### `instance/attention-backup-parts-damaged`
 
 While `instance/backup-health-parts-damaged` holds, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `parts_damaged`, whose description says how many parts are damaged.
@@ -124,7 +148,7 @@ While `instance/backup-health-parts-damaged` holds, when `GET /attention` comple
 
 ### `instance/attention-backup-quiet`
 
-Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the copy record holds a copy in the destination of each file the last backup put names, `backup_interval_seconds` is above 0, `instance/backup-health-parts-damaged` does not hold and no entry is listed under `instance/attention-backup-unlocked`, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
+Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the copy record holds a copy in the destination of each file the last backup put names, `backup_interval_seconds` is above 0, `instance/backup-health-parts-damaged` does not hold and no entry is listed under `instance/attention-backup-unlocked`, `instance/attention-backup-lock-lost`, `instance/attention-backup-lock-restored` or `instance/attention-backup-shared`, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
 
 **Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`, `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
@@ -811,6 +835,30 @@ If a caller holding `backups.manage` sends `POST /backups/folder/adopt` while `<
 **Reason:** the marker may be another instance's or another server's store, and adopting over it would take that store's files as this instance's own. The refusal leaves the marker as it is, and the error message says to remove it to adopt the folder afresh.
 
 **Tests:** `compliance/backup-folder.test.ts › refuses to adopt a files folder that holds another store's marker, and leaves the marker as it is`.
+
+### `instance/backup-folder-adopt-unrecorded`
+
+If the server cannot record an adopt under `instance/backup-folder-adopt`, then the server MUST answer later `GET /blobs/stores` and `GET /backups` as it did before the adopt.
+
+**Reason:** the server claims the files folder before it forgets any record, and takes the claim back when the record fails, so a failed adopt loses no backup and no copy.
+
+**Tests:** `compliance/backup-folder.test.ts › forgets nothing when it cannot record an adopt, and adopts on the next try`.
+
+### `instance/backup-folder-adopt-retry`
+
+When a caller holding `backups.manage` sends `POST /backups/folder/adopt` again after an adopt the server could not record, the server MUST adopt the files folder under `instance/backup-folder-adopt`.
+
+**Reason:** the claim a failed adopt took back leaves nothing in the folder that makes it look held or foreign.
+
+**Tests:** `compliance/backup-folder.test.ts › forgets nothing when it cannot record an adopt, and adopts on the next try`.
+
+### `instance/backup-folder-adopt-interrupted`
+
+If the server ends after it recorded an adopt and before `<backup_path>/files/<instance id>/` took the new store's marker, then the server MUST give that files folder the marker of the store the record names there when it next starts.
+
+**Reason:** the adopt leaves its claim beside the marker until the marker is written, and the next start settles the claim against the record, so the folder and the record never name different stores.
+
+**Tests:** `compliance/backup-folder.test.ts › gives the files folder the store an adopt recorded when the server ended before the folder took its marker`.
 
 ### `instance/backup-folder-missing-unusable`
 
@@ -2230,13 +2278,45 @@ If the server starts on a blob folder that another running server has open, then
 
 **Tests:** `compliance/one-server.test.ts › is refused on the blob folder though it has a database of its own, and names the folder`.
 
+### `instance/open-database-held-lock-lost`
+
+If the server starts on a database file that another running server has open, after the file `<database file>.server-lock` beside it was removed or replaced, then the server MUST refuse to start.
+
+**Reason:** a clean-up, a restore by hand or a sync tool can remove the lock file, and SQLite's own mark of an open database still shows that a process has the file. Without its lock file the server cannot tell that process is a Marfa server, so it names it as `instance/open-database-in-use-named` says.
+
+**Tests:** `compliance/one-server.test.ts › is refused on the database and the blob folder once their lock files are removed or replaced, and leaves the upload in progress, which lands`.
+
+### `instance/open-blobs-held-lock-lost`
+
+If the server starts on a blob folder that another running server has open, after the file `.server-lock` in it was removed or replaced, then the server MUST refuse to start.
+
+**Reason:** the running server locks the folder itself as well as the lock file in it, so a lock file removed or replaced does not set the folder free.
+
+**Tests:** `compliance/one-server.test.ts › is refused on the database and the blob folder once their lock files are removed or replaced, and leaves the upload in progress, which lands`.
+
+### `instance/open-database-in-use`
+
+If the server starts on a database file that another process holds open in SQLite's write-ahead-log mode, then the server MUST refuse to start.
+
+**Reason:** a server and another program writing one database through two logs damage it. A program such as the `sqlite3` shell may read the database while the server is stopped, and is closed first.
+
+**Tests:** `compliance/one-server.test.ts › is refused, naming that program's process, and opened once it closes`.
+
+### `instance/open-database-in-use-named`
+
+When the server refuses to start under `instance/open-database-in-use`, the server MUST name in its log message the database file and the id of the process that holds it open.
+
+**Reason:** the owner finds that process and closes it.
+
+**Tests:** `compliance/one-server.test.ts › is refused, naming that program's process, and opened once it closes`.
+
 ### `instance/open-held-named`
 
-When the server refuses to start under `instance/open-database-held` or `instance/open-blobs-held`, the server MUST name in its log message the database file or the blob folder it was given and say that another server has it open.
+When the server refuses to start under `instance/open-database-held`, `instance/open-blobs-held` or `instance/open-blobs-held-lock-lost`, the server MUST name in its log message the database file or the blob folder it was given and say that another server has it open.
 
 **Reason:** the owner stops the other server or gives this one files of its own, and needs to know which.
 
-**Tests:** `compliance/one-server.test.ts › is refused on the database however its path is written, though it has a control socket of its own, and names the database`, `› is refused on the database, not the control socket, when both have the socket beside the database`, `› is refused on the blob folder though it has a database of its own, and names the folder`.
+**Tests:** `compliance/one-server.test.ts › is refused on the database however its path is written, though it has a control socket of its own, and names the database`, `› is refused on the database, not the control socket, when both have the socket beside the database`, `› is refused on the blob folder though it has a database of its own, and names the folder`, `› is refused on the database and the blob folder once their lock files are removed or replaced, and leaves the upload in progress, which lands`.
 
 ### `instance/open-database-one-link`
 
@@ -2256,9 +2336,9 @@ When the server starts and its own account owns the file `<database file>.server
 
 ### `instance/open-held-leaves-files`
 
-If the server refuses to start under `instance/open-database-held` or `instance/open-blobs-held`, then the server MUST leave the running server's database, blob folder and uploads in progress as they were.
+If the server refuses to start under `instance/open-database-held`, `instance/open-blobs-held`, `instance/open-database-held-lock-lost` or `instance/open-blobs-held-lock-lost`, then the server MUST leave the running server's database, blob folder and uploads in progress as they were.
 
-**Tests:** `compliance/one-server.test.ts › leaves the running server's upload in progress, which lands once it is let go`.
+**Tests:** `compliance/one-server.test.ts › leaves the running server's upload in progress, which lands once it is let go`, `› is refused on the database and the blob folder once their lock files are removed or replaced, and leaves the upload in progress, which lands`.
 
 ### `instance/open-after-end`
 

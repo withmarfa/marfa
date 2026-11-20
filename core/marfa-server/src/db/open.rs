@@ -249,8 +249,7 @@ fn process_name(pid: libc::pid_t) -> Option<String> {
 fn process_name(pid: libc::pid_t) -> Option<String> {
     let mut buffer = [0u8; 256];
     // SAFETY: `buffer` is writable for the length given, and `proc_name` writes no more.
-    let written =
-        unsafe { libc::proc_name(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
+    let written = unsafe { libc::proc_name(pid, buffer.as_mut_ptr().cast(), buffer.len() as u32) };
     let written = usize::try_from(written).ok().filter(|count| *count > 0)?;
     Some(String::from_utf8_lossy(&buffer[..written.min(buffer.len())]).into_owned())
 }

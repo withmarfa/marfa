@@ -69,7 +69,9 @@ fn parent_of(path: &Path) -> Result<(File, String), Untaken> {
         .read(true)
         .custom_flags(libc::O_DIRECTORY | libc::O_NONBLOCK)
         .open(parent)
-        .map_err(|error| Untaken::Refused(format!("is in a folder that could not be opened: {error}")))?;
+        .map_err(|error| {
+            Untaken::Refused(format!("is in a folder that could not be opened: {error}"))
+        })?;
     Ok((dir, name))
 }
 
@@ -121,7 +123,10 @@ pub(crate) fn take_in(dir: &File, name: &str, me: u32) -> Result<File, Untaken> 
     }
     if held.mode() & 0o777 != PRIVATE_FILE {
         rustix::fs::fchmod(&file, Mode::from_raw_mode(PRIVATE_FILE as _)).map_err(|error| {
-            Untaken::Refused(format!("could not be made private: {}", io::Error::from(error)))
+            Untaken::Refused(format!(
+                "could not be made private: {}",
+                io::Error::from(error)
+            ))
         })?;
     }
     Ok(file)

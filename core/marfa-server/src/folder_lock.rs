@@ -126,12 +126,12 @@ impl DirLocked {
 
     /// Takes the lock file inside the locked folder.
     pub fn with_file(self) -> Result<Held, Untaken> {
-        let file = server_lock::take_in(&self.dir, LOCK, server_lock::me()).map_err(
-            |untaken| match untaken {
+        let file = server_lock::take_in(&self.dir, LOCK, server_lock::me()).map_err(|untaken| {
+            match untaken {
                 Untaken::Refused(why) => Untaken::Refused(format!("its lock file {why}")),
                 other => other,
-            },
-        )?;
+            }
+        })?;
         Ok(Held {
             dir: self.dir,
             lock: Some(Locked {
@@ -170,7 +170,9 @@ pub enum Standing {
     Kept,
     /// The path names another folder, or none; `gone` where the held one was removed or its
     /// disk went away, so that a folder returned to the path may be taken again.
-    Moved { gone: bool },
+    Moved {
+        gone: bool,
+    },
     /// The lock file was removed or replaced where the server cannot make it again alone.
     Lost(String),
 }
@@ -286,7 +288,9 @@ impl Held {
     /// Whether `dir` is the same folder as this one.
     pub fn is(&self, dir: &File) -> bool {
         match (rustix::fs::fstat(&self.dir), dir.metadata()) {
-            (Ok(own), Ok(other)) => (own.st_dev as u64, own.st_ino as u64) == (other.dev(), other.ino()),
+            (Ok(own), Ok(other)) => {
+                (own.st_dev as u64, own.st_ino as u64) == (other.dev(), other.ino())
+            }
             _ => false,
         }
     }
@@ -319,9 +323,11 @@ mod tests {
     fn a_folder_whose_lock_answers_that_locks_are_not_supported_is_never_taken() {
         let dir = tempfile::tempdir().unwrap();
         for code in [libc::ENOTSUP, libc::EOPNOTSUPP, libc::ENOLCK] {
-            let answer =
-                without_locks_answering(code, || lock_dir(open_dir(dir.path()).unwrap()));
-            assert!(matches!(answer, Err((Untaken::Unsupported(_), _))), "{code}");
+            let answer = without_locks_answering(code, || lock_dir(open_dir(dir.path()).unwrap()));
+            assert!(
+                matches!(answer, Err((Untaken::Unsupported(_), _))),
+                "{code}"
+            );
         }
     }
 
@@ -336,7 +342,10 @@ mod tests {
         std::fs::remove_file(dir.path().join(LOCK)).unwrap();
         assert_eq!(held.check(dir.path()), Standing::Kept);
         assert!(dir.path().join(LOCK).is_file());
-        assert!(held.note().is_some_and(|note| note.contains("made it again")));
+        assert!(
+            held.note()
+                .is_some_and(|note| note.contains("made it again"))
+        );
 
         let other = tempfile::tempdir().unwrap();
         let shared = on_a_network_share(|| {

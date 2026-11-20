@@ -136,6 +136,7 @@ pub struct Held {
 /// server is refused before it changes anything of the first's. It blocks.
 pub fn take_files(database: &DatabasePath, blobs: &Path) -> Result<(Kept, Held), Failure> {
     let judged = Kept::judged(database, blobs)?;
+    let database = Lock::take(database)?;
     let taken = judged
         .blob_folder()
         .map(|opened| {
@@ -149,7 +150,7 @@ pub fn take_files(database: &DatabasePath, blobs: &Path) -> Result<(Kept, Held),
         })
         .transpose()?;
     let held = Held {
-        database: Lock::take(database)?,
+        database,
         blobs: taken,
     };
     Ok((judged.keep()?, held))

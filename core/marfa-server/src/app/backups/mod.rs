@@ -1424,17 +1424,22 @@ impl App {
             .await;
         let claim = match claimed {
             Some(Ok(claim)) => claim,
-            Some(Err(error)) => {
-                let code = if error.kind() == std::io::ErrorKind::AlreadyExists {
-                    Code::Conflict
-                } else {
-                    Code::BlobStoreUnavailable
-                };
+            Some(Err(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 return Err(Refusal::new(
-                    code,
+                    Code::Conflict,
                     format!(
                         "The backup folder {root} could not be claimed, so nothing was adopted: \
                          {error}."
+                    ),
+                ));
+            }
+            Some(Err(error)) => {
+                return Err(Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!(
+                        "The backup folder {root} could not be claimed, so nothing was adopted: \
+                         {error}. Check that the folder is writable and its disk has room, then \
+                         try again."
                     ),
                 ));
             }
@@ -1475,7 +1480,9 @@ impl App {
                 return Err(refusal);
             }
             Err(refusal) => {
-                let undone = folder.within(deadline, move |_| claim.undo(), |()| {}).await;
+                let undone = folder
+                    .within(deadline, move |_| claim.undo(), |()| {})
+                    .await;
                 let why = match undone {
                     Some(Ok(())) => return Err(refusal),
                     Some(Err(error)) => error.to_string(),
@@ -1521,8 +1528,8 @@ impl App {
                     Code::BlobStoreUnavailable,
                     format!(
                         "The backup folder {root} could not take the new store's marker: {error}. \
-                         {forgot} Make the folder writable, then run `marfa backups folder adopt` \
-                         again."
+                         {forgot} Make the folder writable: the server gives it the marker then, \
+                         and backups wait until it does."
                     ),
                 ));
             }
