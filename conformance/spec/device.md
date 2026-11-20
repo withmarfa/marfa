@@ -1608,6 +1608,14 @@ When a device hydrates a copy it expired under `device/expire-log-behind`, `devi
 
 **Tests:** `device/server-restored-live.test.ts › keeps an item made since the backup, blocked until released, where the copy had not caught up past it`, `› keeps an item made since the backup where the server's log ends behind the copy's cursor`, `› keeps an item made since the backup where the restored server has written past the copy's cursor`, `› puts back an edit the restored server lost to an item it still holds`, `› removes again an edge the restored server holds after this device deleted it`, `› puts back the tags the restored server lost from an item it still holds`, `› puts back in the bin an item the restored server holds out of it after this device trashed it`, `› keeps a file attached since the backup, with an upload of the bytes the restored server lacks`, `› keeps nothing of a change another client made at the version the copy held`, `device/refill.test.ts › clears rather than fill again where the log ends before the head its refill started from`, `› clears rather than fill again where the server was restored before its refill began`.
 
+### `device/restored-kept-tags-read`
+
+When a device queues a tag replace under `device/restored-kept`, a device MUST name as `read_tags` the tags the server held when the copy was compared with it, and for an item it queues the create of, none.
+
+**Reason:** the replace is judged against the tags the server holds (`items/tags-replace-read-stale`). The tags the server held at the comparison are the ones the person's work was judged against, so another writer's change to them since makes the replace a conflict the person sees, and the copy keeps the person's tags. A create the device queues carries no tags, so the row it makes holds none until the replace lands.
+
+**Tests:** `device/server-restored-live.test.ts › puts back the tags the restored server lost from an item it still holds`, `› puts back the tags of an item made since the backup, named as the tags the item it makes holds`, `› puts back an edit and a tag change together on the tags the restored server holds, and blocks the tags where another writer changed them since`.
+
 ### `device/restored-checked-before-clear`
 
 When a device hydrates a copy of the same instance and reach that it clears or fills again for any reason other than those `device/restored-kept` names, a device MUST queue under `device/restored-kept` a write for each item and edge the server has lost of a write from this device that no event has shown (`device/expire-write-lost`).
@@ -1631,6 +1639,14 @@ When a device queues a create under `device/restored-kept`, a device MUST queue 
 **Reason:** a write sent to a restored server before the device found the restore is refused because the server lost the item or edge, so it is the person's work and waits on the create that puts the item or edge back (`device/restored-kept-first`). A row write is not queued again.
 
 **Tests:** `device/server-restored-live.test.ts › keeps an item made since the backup, with an edit the restored server refused before the copy expired waiting on its create`.
+
+### `device/restored-waiting-replace-unread`
+
+When a device makes a tag replace wait on a create queued under `device/restored-kept`, a device MUST remove the tags the replace read (`queue-and-verdicts/replace-tags-names-read`) from it.
+
+**Reason:** the server lost the item those tags were read from, and the create puts it back without them, so a replace that named them would be refused as a conflict with work the person already made.
+
+**Tests:** `device/server-restored-live.test.ts › sends a tag replace the restored server refused, once its item is made again, naming no tags it read`.
 
 ### `device/restored-kept-blocked`
 

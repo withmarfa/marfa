@@ -129,7 +129,7 @@ pub enum Change {
     SetTags {
         id: String,
         tags: Vec<String>,
-        version: Option<i64>,
+        read_tags: Option<Vec<String>>,
     },
     AddTags {
         id: String,
@@ -639,6 +639,16 @@ pub(super) fn stale_bare(row: &Item, named: i64) -> Result<Refusal> {
     .with_member("current", row.state_named()?))
 }
 
+fn stale_tags(row: &Item) -> Result<Refusal> {
+    Ok(Refusal::new(
+        Code::VersionConflict,
+        "The item's tags differ from the tags named as read. Re-read the item and send again with \
+         the tags it holds."
+            .to_string(),
+    )
+    .with_member("current", row.state_named()?))
+}
+
 /// A state change writes no version, so a job checks the state it matched as well.
 fn left_state(matched: &str, now: &str) -> Refusal {
     Refusal::new(
@@ -826,7 +836,11 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             Change::Folder(change) => self.folder(change),
             Change::Put(put) => self.put(*put),
             Change::Update(update) => self.update(*update),
-            Change::SetTags { id, tags, version } => self.set_tags(&id, tags, version),
+            Change::SetTags {
+                id,
+                tags,
+                read_tags,
+            } => self.set_tags(&id, tags, read_tags),
             Change::AddTags { id, tags, version } => self.add_tags(&id, tags, version),
             Change::RemoveTag { id, tag, version } => self.remove_tag(&id, &tag, version),
             Change::SetExtension {
@@ -1971,12 +1985,23 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         })
     }
 
-    fn set_tags(&self, id: &str, tags: Vec<String>, version: Option<i64>) -> Result<Done> {
+    fn set_tags(
+        &self,
+        id: &str,
+        tags: Vec<String>,
+        read_tags: Option<Vec<String>>,
+    ) -> Result<Done> {
         let tx = self.unit.tx();
-        let row = self.tag_row(id, version)?;
+        let row = self.tag_row(id, None)?;
         let tags = distinct(&tags);
-        let before = rows::tags(tx, row.seq)?.len();
-        validation::tag_count(before, tags.len()).map_err(ruled)?;
+        let held = rows::tags(tx, row.seq)?;
+        if let Some(read) = read_tags {
+            let read: std::collections::HashSet<&String> = read.iter().collect();
+            if read != held.iter().collect() {
+                return Err(stale_tags(&row)?);
+            }
+        }
+        validation::tag_count(held.len(), tags.len()).map_err(ruled)?;
         rows::set_tags(tx, row.seq, &tags)?;
         self.tags_landed(&row, json!({ "tags": tags }))
     }

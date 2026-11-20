@@ -2886,7 +2886,7 @@
           "error",
           "current"
         ],
-        "description": "A failed exact version precondition: the error and the item now."
+        "description": "A failed precondition on the item: the error and the item now."
       },
       "LinkTakenOrSourceIdConflictOrTypeMismatchRefusal": {
         "type": "object",
@@ -23146,7 +23146,7 @@
           "Metadata"
         ],
         "summary": "Replace an item's tags",
-        "description": "Replaces the item's tags with the ones you send and returns them. An empty list clears all tags.",
+        "description": "Replaces the item's tags with the ones you send and returns them. An empty list clears all tags. Send `read_tags` to replace them only if the item still has the tags you read.",
         "security": [
           {
             "bearerAuth": []
@@ -23200,6 +23200,13 @@
                     },
                     "default": [],
                     "description": "The tags the item will have: at most 100, each up to 128 characters. An empty list clears them."
+                  },
+                  "read_tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The tags you read. If the item now has a different set of tags, no tag changes; order and repeats don't count. Leave it out to replace the tags as the item stands."
                   }
                 },
                 "additionalProperties": false
@@ -23236,7 +23243,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `tags` is not a list of valid tags or has more than 100, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `validation_error`: `tags` is not a list of valid tags or has more than 100, `read_tags` is not a list of strings, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23347,11 +23354,14 @@
             }
           },
           "409": {
-            "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "description": "- `version_conflict`: `read_tags` differs from the item's tags. `current` is the item now; no tag changed.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
                     {
                       "$ref": "#/components/schemas/InstanceChangedRefusal"
                     },

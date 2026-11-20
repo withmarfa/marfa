@@ -1843,12 +1843,13 @@ pub struct TagsWrite {
 }
 
 impl TagsWrite {
-    pub(crate) fn payload(&self) -> std::result::Result<String, CoreError> {
+    /// `read` are the tags the copy held when the replace was made.
+    pub(crate) fn payload(&self, read: &[String]) -> std::result::Result<String, CoreError> {
+        let strings =
+            |tags: &[String]| Value::Array(tags.iter().cloned().map(Value::String).collect());
         let mut body = Map::new();
-        body.insert(
-            "tags".into(),
-            Value::Array(self.tags.iter().cloned().map(Value::String).collect()),
-        );
+        body.insert("tags".into(), strings(&self.tags));
+        body.insert("read_tags".into(), strings(read));
         Ok(serde_json::to_string(&Value::Object(body))?)
     }
 }
@@ -1889,6 +1890,19 @@ mod tests {
         assert_eq!(row.occurred_at, "2026-01-01T00:00:00.500Z");
         assert_eq!(row.created_at, row.occurred_at);
         assert_eq!(row.updated_at, row.occurred_at);
+    }
+
+    #[test]
+    fn a_tag_replace_names_the_tags_it_read_even_where_there_were_none() {
+        let write = TagsWrite {
+            tags: vec!["mine".into()],
+        };
+        let named: Value =
+            serde_json::from_str(&write.payload(&["theirs".into()]).unwrap()).unwrap();
+        assert_eq!(named["tags"], serde_json::json!(["mine"]));
+        assert_eq!(named["read_tags"], serde_json::json!(["theirs"]));
+        let none: Value = serde_json::from_str(&write.payload(&[]).unwrap()).unwrap();
+        assert_eq!(none["read_tags"], serde_json::json!([]));
     }
 
     fn row(verdict: Option<Verdict>, reason: Option<&str>, answer: Option<&str>) -> QueuedWrite {
