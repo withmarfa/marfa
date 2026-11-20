@@ -808,17 +808,17 @@ When `marfa_remove_file_copy` removes a copy, the server MUST answer under `byte
 
 ### `mcp/copy-remove-changed`
 
-If the store no longer records the copy the `marfa_remove_file_copy` preview read, or records it with another answer for whether the server wrote it, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale`, and with a new preview where the store records a copy of the file.
+If the store no longer records the copy the `marfa_remove_file_copy` preview read, records it with another answer for whether the server wrote it, or is an object store that records it in another object, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale`, and with a new preview where the store records a copy of the file.
 
-**Reason:** whether the server wrote the copy decides whether its bytes are deleted, so the confirmation covers it.
+**Reason:** whether the server wrote the copy decides whether its bytes are deleted, and an object store keeps each copy the server writes in an object of its own, so the confirmation covers the copy the preview showed and no other.
 
-**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once the copy was removed since the preview, without a new preview`, `› refuses a confirmation once the server wrote the copy it did not write at the preview, with a new preview`.
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once the copy was removed since the preview, without a new preview`, `› refuses a confirmation once the object store holds the copy in another object since the preview, with a new preview`, `› refuses a confirmation once the server wrote the copy it did not write at the preview, with a new preview`.
 
 ### `mcp/copy-remove-recorded-again`
 
-When the store's copy was removed and then recorded again with the same answer for whether the server wrote it since a `marfa_remove_file_copy` preview, the server MUST remove it on the confirmation.
+When a disk or folder store's copy was removed and then recorded again with the same answer for whether the server wrote it since a `marfa_remove_file_copy` preview, the server MUST remove it on the confirmation.
 
-**Reason:** the confirmation names the copy by its file, its store and whether the server wrote it, which a copy placed again shares.
+**Reason:** a disk or folder store keeps a file's copy under the file's hash, so the copy placed again is the one the preview showed.
 
 **Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once the copy was removed since the preview, without a new preview`.
 
