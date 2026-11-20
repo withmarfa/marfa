@@ -4817,7 +4817,7 @@ marfa server install [OPTIONS]
 | `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
 | `--name <NAME>` | What this install is called: the service, the container and the data volume are named from it. The default is `marfa`. |
 | `--docker` | Run the server in Docker, from the release's image, in place of as a service of this machine. Needs Docker with Compose. An install keeps its runtime: to change it, export the data and restore it into a new install. |
-| `--release <VERSION>` | The release of the image to run, such as `0.0.22`, for `--docker`. The default is this binary's own version, and for a server already installed, the release it runs: another release is refused, and `marfa server upgrade` moves the install. A native server runs the release installed beside this `marfa`. |
+| `--release <VERSION>` | The release of the image to run, such as `0.0.22`, for `--docker`. The default is this binary's own version, and for a server already installed, the release it is on: another release is refused, and `marfa server upgrade` moves the install. A native server runs the release installed beside this `marfa`. |
 | `--access <ACCESS>` | How the server is reached. Asked when not given. `local`: only this machine, at `http://localhost`. `tailscale`: your tailnet, through Tailscale Serve, at this machine's `ts.net` name. `cloudflare`: a Cloudflare Tunnel on this machine, at your own address. `proxy`: another proxy on this machine, such as Caddy or nginx, at your own address. One of `local`, `tailscale`, `cloudflare`, `proxy`. |
 | `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. Needed for `cloudflare` and `proxy`; `tailscale` reads it from Tailscale. The server holds it, and a link to set up the server is at it. A run that gives neither this nor a different `--access` leaves an address the server already holds, and says so; `--access local` clears it. |
 | `--port <PORT>` | The port on this machine's loopback address. The default is 8600, or the next free port. |
@@ -4832,9 +4832,9 @@ marfa server install [OPTIONS]
 
 Move the server to another release, newer or older.
 
-A native server moves to the release of the `marfa-server` installed beside this `marfa`. A Docker install moves to the release you name with `--release`, or to this binary's own. This is the only command that changes the release an install runs: `install`, `start` and `restart` keep it on the release it runs, which is the release of the `marfa-server` its service runs, or the image `.env` names for Docker.
+A native server moves to the release of the `marfa-server` installed beside this `marfa`. A Docker install moves to the release you name with `--release`, or to this binary's own. This is the only command that changes the release an install is on: `install`, `start` and `restart` keep it there. A native install is on the release that last served its database, and a Docker install on the image `.env` names.
 
-Before Marfa 0.1, a release may not read another release's database. This command first asks the release it moves to, newer or older, whether it opens the install's database and settings, and changes nothing when it does not. When the programs the service runs were already replaced, the error says how to put the earlier release back. A release that cannot be asked is started, and a Docker install whose new release then refuses the database starts its earlier release again. The way to move is then to export, make a new install of the other release and restore the archive there. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+Before Marfa 0.1, a release may not read another release's database. This command first asks the release it moves to, newer or older, whether it opens the install's database and settings, and changes nothing when it does not. When the programs the service runs were already replaced, the error says how to put back the release the install is on. A release that could not be asked is started, and a Docker install whose new release then refuses the database starts its earlier release again. A Docker image before 0.0.76 cannot be asked, so it is refused. The way to move is then to export, make a new install of the other release and restore the archive there. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
 
 To go back to an earlier release, install it the way you installed marfa and run this command with its `marfa`, or with `--release` for Docker.
 
@@ -4870,7 +4870,7 @@ marfa server status [OPTIONS]
 
 Start the server, if it is not running.
 
-A native install stays on the release it runs. A `marfa` of another release is refused, and so is a start after the programs the service runs were replaced in place while an earlier release still runs, as Homebrew and the install script do. `marfa server upgrade` moves the install. A `marfa` of the same release at another path is named there while the program the service runs is still in place; once that program is gone, `marfa server upgrade` names the new one.
+A native install stays on the release that last served its database. A `marfa` of another release is refused, and so is a start after the programs the service runs were replaced in place, as Homebrew and the install script do, while an earlier release ran or after it stopped. `marfa server upgrade` moves the install. A `marfa` of the same release at another path is named there while the program the service runs is still in place; once that program is gone, `marfa server upgrade` names the new one.
 
 On a Mac with a Docker install, this starts Docker's engine first if it is down: it is what the login agent runs.
 

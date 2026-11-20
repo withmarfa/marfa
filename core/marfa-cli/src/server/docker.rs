@@ -18,6 +18,8 @@ use crate::server::run::REFUSED;
 /// Where the image keeps its server and its database.
 const CONTAINER_SERVER: &str = "/usr/local/bin/marfa-server";
 const CONTAINER_DATABASE: &str = "/data/marfa.db";
+/// The first release whose server answers `--can-open`.
+pub const FIRST_ASKED: &str = "0.0.76";
 
 /// How long a server in a container may take to say whether it opens the database, starting the
 /// container included.
@@ -166,8 +168,8 @@ impl Docker {
     }
 
     /// What `image`'s server says when it will not run on `settings` and the database in the
-    /// volume `volume`, or `None` when it will, or when it could not be asked: an image before
-    /// 0.0.76 knows no such question, and a server asked to start judges both again. The values
+    /// volume `volume`, or `None` when it will, or when it could not be asked: a server asked to
+    /// start judges both again. An image before [`FIRST_ASKED`] knows no such question. The values
     /// reach the container through this command's environment, never its arguments.
     pub fn will_not_open(
         &self,

@@ -797,7 +797,7 @@ fn on_its_release(
             trace: false,
         };
         if service.exists() {
-            super::lifecycle::keeps_release(folder, &service, state.port)?;
+            super::lifecycle::keeps_release(folder, &service, state)?;
             return Ok(());
         }
     }

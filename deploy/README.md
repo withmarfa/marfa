@@ -111,22 +111,22 @@ Recovery changes the owner's password and ends browser sessions. Keys and approv
 
 ## Upgrade
 
-Before Marfa 0.1, a release may not read another release's database. `marfa server upgrade` is the only command that changes the release an install runs, newer or older. Before it changes anything, it asks the release it moves to whether it runs on the install's settings and database, and when that release says no, it changes nothing. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+Before Marfa 0.1, a release may not read another release's database. `marfa server upgrade` is the only command that changes the release an install is on, newer or older. Before it changes anything, it asks the release it moves to whether it runs on the install's settings and database, and when that release says no, it changes nothing. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
 
-An install runs the release of the `marfa-server` its service runs, or for Docker, the image that `.env` names. A native install's `.env` also names its release, because `marfa` up to 0.0.85 can't run the service without it.
+A native install is on the release that last served its database. Once it serves, the server names its release in `marfa.db.release` beside the database, and the commands read that file while the server is stopped. A database that only releases up to 0.0.85 have served has no such file, so the commands read the release that `.env` names. A native install's `.env` names its release because `marfa` up to 0.0.85 can't run the service without it. A Docker install is on the image that `.env` names.
 
-- **Native install:** install the other release's programs, then run `marfa server upgrade` with its `marfa`. When the release refuses the install's database, the service and the database stay as they were. If the programs the service runs were replaced in place, as Homebrew and the install script do, the server refuses to start the next time it starts, so the command's message says how to put the earlier release back.
-- **Docker install:** run `marfa server upgrade --release <version>`, or leave out `--release` to move to the release of your `marfa`. The command asks the image first. An image before 0.0.76 can't be asked; when it then refuses the database at start, the command starts the earlier release again.
+- **Native install:** install the other release's programs, then run `marfa server upgrade` with its `marfa`. When the release refuses the install's database, the service and the database stay as they were. If the programs the service runs were replaced in place, as Homebrew and the install script do, the server refuses to start the next time it starts, so the command's message says how to put back the release the install is on. This holds whether that release was running or stopped when the programs were replaced.
+- **Docker install:** run `marfa server upgrade --release <version>`, or leave out `--release` to move to the release of your `marfa`. The command asks the image first. An image before 0.0.76 can't be asked, so the command refuses it and changes nothing. When the question can't run and the image then refuses the database at start, the command starts the earlier release again.
 - **From the server:** `marfa update start` has the server update itself to the newest release it found, with the same check. When that release can't read the database, nothing changes, and `marfa update status` gives the reason.
 
-`marfa server install`, `marfa server start` and `marfa server restart` keep an install on the release it runs. Given another release, they change nothing and name the `marfa server upgrade` command that moves it.
+`marfa server install`, `marfa server start` and `marfa server restart` keep an install on the release it is on. Given another release, or programs replaced with another release's, they change nothing and name the `marfa server upgrade` command that moves it.
 
 ### Go back to an earlier release
 
 Going back is an upgrade to the earlier release, and the earlier release is asked first in the same way.
 
 - **Native install:** install the earlier release the way you installed `marfa`, then run `marfa server upgrade` with that release's `marfa`. The install script installs a release that `MARFA_VERSION` names, in the folder that `MARFA_INSTALL_DIR` names: `curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/install.sh | MARFA_VERSION=<version> sh`. Homebrew installs only its newest release, so with Homebrew, use the install script, which installs in `~/.local/bin`, and run `~/.local/bin/marfa server upgrade`.
-- **Docker install:** run `marfa server upgrade --release <version>`.
+- **Docker install:** run `marfa server upgrade --release <version>`. An image before 0.0.76 can't be asked whether it reads the database, so the command refuses it. To go back to one of them, move by export and restore, with `--release <version>` for the new install.
 
 The `marfa server upgrade` of releases up to 0.0.85 refuses to go back. To go back to one of them on a native install, install it the same way and run `marfa server restart` with its `marfa`. Its server refuses a database it can't read and changes nothing in it.
 
@@ -134,7 +134,7 @@ Keep the release pinned, so that it changes only when you upgrade: don't use `la
 
 When the release you want can't read the database, move by export and restore:
 
-1. While the release the install runs is running, export the data with `marfa export --output marfa-export.tar`.
+1. While the release the install is on is running, export the data with `marfa export --output marfa-export.tar`.
 2. Make a new install of the release you want in another `--dir`, with its own port.
 3. Restore the archive into the new install with `marfa restore marfa-export.tar`, pointed at that install, such as through its private socket with `--socket` (see [Claim the server](#claim-the-server)).
 

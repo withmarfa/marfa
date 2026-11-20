@@ -79,7 +79,7 @@ case "$1" in
     for word; do case "$word" in ghcr.io/*) tag="${word##*:}" ;; esac; done
     echo "$tag" >> "$S/asked-can-open"
     env | grep '^MARFA_' > "$S/can-open-env"
-    if [ -e "$S/old-image-$tag" ]; then echo "unknown flag: --can-open" >&2; exit 2; fi
+    if [ -e "$S/ask-fails-$tag" ]; then echo "docker: Error response from daemon: the question could not run" >&2; exit 125; fi
     if [ -e "$S/cannot-open-$tag" ]; then cat "$S/cannot-open-$tag" >&2; exit 78; fi
     echo '{"schema":1,"standing":"current"}' ;;
   inspect)
@@ -216,6 +216,8 @@ begin() {
   port=$(sed -n 's/^MARFA_PORT=//p' "$dir/.env")
   prog=$(awk '/<key>ProgramArguments<\/key>/{getline; getline; gsub(/.*<string>|<\/string>.*/, ""); print; exit}' "$plist")
   "$(dirname "$prog")/marfa-server" --version | awk '{print $NF}' > "$S/version-$port"
+  # A server that serves names its release beside the database, as releases up to 0.0.85 do not.
+  [ -e "$S/no-release-record" ] || { mkdir -p "$dir/data"; cp "$S/version-$port" "$dir/data/marfa.db.release"; }
   touch "$S/go-$port"
 }
 case "$1" in
@@ -268,6 +270,8 @@ begin() {
   port=$(sed -n 's/^MARFA_PORT=//p' "$dir/.env")
   prog=$(sed -n 's/^ExecStart="\{0,1\}\([^" ]*\).*/\1/p' "$f")
   "$(dirname "$prog")/marfa-server" --version | awk '{print $NF}' > "$S/version-$port"
+  # A server that serves names its release beside the database, as releases up to 0.0.85 do not.
+  [ -e "$S/no-release-record" ] || { mkdir -p "$dir/data"; cp "$S/version-$port" "$dir/data/marfa.db.release"; }
   touch "$S/go-$port"
 }
 case "$cmd" in
@@ -487,7 +491,7 @@ impl Rig {
                 "install",
                 "--docker",
                 "--release",
-                "0.0.22",
+                "0.0.92",
                 "--port",
                 &port,
             ])
@@ -513,7 +517,7 @@ impl Rig {
             "install",
             "--docker",
             "--release",
-            "0.0.22",
+            "0.0.92",
             "--port",
             &port,
             "--yes",
@@ -725,7 +729,7 @@ fn a_first_install_writes_the_files_and_prints_the_link_and_no_secret() {
     let dotenv = rig.file(".env");
     for line in [
         "MARFA_NAME=marfa",
-        "MARFA_RELEASE=0.0.22",
+        "MARFA_RELEASE=0.0.92",
         "MARFA_ACCESS=local",
     ] {
         assert!(dotenv.lines().any(|l| l == line), "{line}\n{dotenv}");
@@ -1037,7 +1041,7 @@ fn the_install_draws_color_on_a_terminal_and_the_same_words_everywhere_else() {
     let stderr = terminal::Ran::text(&ran.stderr);
     assert_eq!(ran.code, 0, "{stdout}\n{stderr}");
     assert!(
-        stdout.contains("\u{1b}[1;32mMarfa 0.0.22 is running.\u{1b}[0m"),
+        stdout.contains("\u{1b}[1;32mMarfa 0.0.92 is running.\u{1b}[0m"),
         "{stdout:?}"
     );
     assert!(
@@ -1130,7 +1134,7 @@ fn tailscale_without_tailscale_says_what_to_install() {
             "install",
             "--docker",
             "--release",
-            "0.0.22",
+            "0.0.92",
             "--port",
             &port,
             "--yes",
@@ -1224,7 +1228,7 @@ fn a_port_in_use_is_refused() {
         "install",
         "--docker",
         "--release",
-        "0.0.22",
+        "0.0.92",
         "--access",
         "local",
         "--yes",
@@ -1245,7 +1249,7 @@ fn no_docker_is_said_plainly() {
                 "install",
                 "--docker",
                 "--release",
-                "0.0.22",
+                "0.0.92",
                 "--access",
                 "local",
                 "--yes",
@@ -1265,10 +1269,10 @@ fn a_docker_upgrade_moves_newer_or_older_once_the_release_says_it_opens_the_data
     rig.installed(&["--access", "local"]);
     let salt = secrets(&rig);
     let (code, stdout, stderr) =
-        rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "5"]);
+        rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("0.0.22 to 0.0.23"), "{stdout}");
-    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.23\n"));
+    assert!(stdout.contains("0.0.92 to 0.0.93"), "{stdout}");
+    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.93\n"));
     assert_eq!(secrets(&rig), salt);
     // The settings reach the image's server through the environment, never the command.
     let given = fs::read_to_string(rig.state.join("can-open-env")).unwrap();
@@ -1285,22 +1289,22 @@ fn a_docker_upgrade_moves_newer_or_older_once_the_release_says_it_opens_the_data
 
     // Going back is the same move, asked the same way.
     let (code, stdout, stderr) =
-        rig.marfa(&["upgrade", "--release", "0.0.21", "--wait-seconds", "5"]);
+        rig.marfa(&["upgrade", "--release", "0.0.91", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("0.0.23 to 0.0.21"), "{stdout}");
-    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.21\n"));
+    assert!(stdout.contains("0.0.93 to 0.0.91"), "{stdout}");
+    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.91\n"));
     assert_eq!(
         fs::read_to_string(rig.state.join("asked-can-open")).unwrap(),
-        "0.0.23\n0.0.21\n"
+        "0.0.93\n0.0.91\n"
     );
 
     // A release that is already running is not asked again.
-    let (code, stdout, _) = rig.marfa(&["upgrade", "--release", "0.0.21", "--wait-seconds", "5"]);
+    let (code, stdout, _) = rig.marfa(&["upgrade", "--release", "0.0.91", "--wait-seconds", "5"]);
     assert_eq!(code, 0);
-    assert!(stdout.contains("Already on 0.0.21"), "{stdout}");
+    assert!(stdout.contains("Already on 0.0.91"), "{stdout}");
     assert_eq!(
         fs::read_to_string(rig.state.join("asked-can-open")).unwrap(),
-        "0.0.23\n0.0.21\n"
+        "0.0.93\n0.0.91\n"
     );
 }
 
@@ -1309,7 +1313,7 @@ fn a_docker_upgrade_to_a_release_that_will_not_open_the_database_changes_nothing
     let rig = Rig::new("upgrade-cannot-open");
     rig.installed(&["--access", "local"]);
     fs::write(
-        rig.state.join("cannot-open-0.0.21"),
+        rig.state.join("cannot-open-0.0.91"),
         "The database was written by a build this one does not read.",
     )
     .unwrap();
@@ -1317,27 +1321,27 @@ fn a_docker_upgrade_to_a_release_that_will_not_open_the_database_changes_nothing
     let ups = |rig: &Rig| rig.log().matches(" up ").count();
     let before = ups(&rig);
 
-    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.21", "--wait-seconds", "5"]);
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.91", "--wait-seconds", "5"]);
     assert_eq!(code, 3, "{stderr}");
     assert!(
         stderr.contains(
-            "0.0.21 will not run on this install's settings and database, so nothing was changed: the container and the database stay on 0.0.22"
+            "0.0.91 will not run on this install's settings and database, so nothing was changed: the container and the database stay on 0.0.92"
         ) && stderr.contains("a build this one does not read")
             && stderr.contains("marfa export")
-            && stderr.contains("--release 0.0.21"),
+            && stderr.contains("--release 0.0.91"),
         "{stderr}"
     );
     assert_eq!(rig.file(".env"), dotenv);
     assert_eq!(ups(&rig), before, "{}", rig.log());
     assert!(answers(rig.port));
 
-    // An image that cannot be asked, as before 0.0.76, is started, and judges the database
-    // itself; the witness that only a refusal stops the move.
-    fs::write(rig.state.join("old-image-0.0.21"), "").unwrap();
+    // An image whose question could not run is started, and judges the database itself; the
+    // witness that only a refusal stops the move.
+    fs::write(rig.state.join("ask-fails-0.0.91"), "").unwrap();
     let (code, stdout, stderr) =
-        rig.marfa(&["upgrade", "--release", "0.0.21", "--wait-seconds", "5"]);
+        rig.marfa(&["upgrade", "--release", "0.0.91", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("0.0.22 to 0.0.21"), "{stdout}");
+    assert!(stdout.contains("0.0.92 to 0.0.91"), "{stdout}");
     assert_eq!(ups(&rig), before + 1, "{}", rig.log());
 }
 
@@ -1345,20 +1349,20 @@ fn a_docker_upgrade_to_a_release_that_will_not_open_the_database_changes_nothing
 fn a_docker_upgrade_to_a_release_that_refuses_the_database_puts_the_earlier_release_back() {
     let rig = Rig::new("upgrade-refused");
     rig.installed(&["--access", "local"]);
-    // A release that cannot be asked first, as before 0.0.76, judges the database at start.
-    fs::write(rig.state.join("old-image-0.0.23"), "").unwrap();
-    fs::write(rig.state.join("refuses-0.0.23"), "").unwrap();
+    // A release whose question could not run judges the database at start.
+    fs::write(rig.state.join("ask-fails-0.0.93"), "").unwrap();
+    fs::write(rig.state.join("refuses-0.0.93"), "").unwrap();
 
-    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "5"]);
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "5"]);
     assert_eq!(code, 3, "{stderr}");
     assert!(
-        stderr.contains("0.0.23 did not update the database")
-            && stderr.contains("so 0.0.22 was put back and runs")
+        stderr.contains("0.0.93 did not update the database")
+            && stderr.contains("so 0.0.92 was put back and runs")
             && stderr.contains("marfa export")
             && stderr.contains("marfa restore"),
         "{stderr}"
     );
-    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.22\n"));
+    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.92\n"));
     assert!(answers(rig.port));
     let ups = rig
         .log()
@@ -1373,12 +1377,49 @@ fn a_docker_upgrade_to_a_release_that_refuses_the_database_puts_the_earlier_rele
     );
 
     // Witness: without the refusal, the same upgrade moves the install.
-    fs::remove_file(rig.state.join("refuses-0.0.23")).unwrap();
+    fs::remove_file(rig.state.join("refuses-0.0.93")).unwrap();
     let (code, stdout, stderr) =
-        rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "5"]);
+        rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("0.0.22 to 0.0.23"), "{stdout}");
-    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.23\n"));
+    assert!(stdout.contains("0.0.92 to 0.0.93"), "{stdout}");
+    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.93\n"));
+}
+
+#[test]
+fn a_docker_upgrade_to_an_image_too_old_to_be_asked_changes_nothing() {
+    let rig = Rig::new("upgrade-too-old");
+    rig.installed(&["--access", "local"]);
+    let dotenv = rig.file(".env");
+    let before = rig.log();
+
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.75", "--wait-seconds", "5"]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(
+        stderr.contains(
+            "0.0.75 cannot say whether it opens this install's database, because only releases from 0.0.76 answer that, so nothing was changed: the container and the database stay on 0.0.92"
+        ) && stderr.contains("export the data with `marfa export` while 0.0.92 runs")
+            && stderr.contains("make a new install with `--release 0.0.75`")
+            && stderr.contains("marfa restore"),
+        "{stderr}"
+    );
+    assert_eq!(rig.file(".env"), dotenv);
+    let since = &rig.log()[before.len()..];
+    assert!(
+        !since.contains("pull") && !since.contains("run ") && !since.contains(" up "),
+        "{since}"
+    );
+    assert!(!rig.state.join("asked-can-open").exists());
+    assert!(answers(rig.port));
+
+    // Witness: the first release that answers is asked, and moved to.
+    let (code, stdout, stderr) =
+        rig.marfa(&["upgrade", "--release", "0.0.76", "--wait-seconds", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("0.0.92 to 0.0.76"), "{stdout}");
+    assert_eq!(
+        fs::read_to_string(rig.state.join("asked-can-open")).unwrap(),
+        "0.0.76\n"
+    );
 }
 
 /// A line in the shape the server writes it, which the shared definition names.
@@ -1451,9 +1492,9 @@ fn an_upgrade_says_where_the_copy_of_the_database_is_and_that_the_next_one_repla
     .unwrap();
 
     let (code, stdout, stderr) =
-        rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "5"]);
+        rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("0.0.22 to 0.0.23"), "{stdout}");
+    assert!(stdout.contains("0.0.92 to 0.0.93"), "{stdout}");
     assert!(stdout.contains("from schema version 1 to 2"), "{stdout}");
     assert!(stdout.contains(COPY_PATH), "{stdout}");
     assert!(
@@ -1467,15 +1508,15 @@ fn an_upgrade_says_where_the_copy_of_the_database_is_and_that_the_next_one_repla
         upgraded_line(1, 2, Some(COPY_PATH)),
     )
     .unwrap();
-    let report = upgrade_json(&rig, "0.0.24");
+    let report = upgrade_json(&rig, "0.0.94");
     assert_eq!(report["database_update"]["schema_from"], 1);
     assert_eq!(report["database_update"]["schema_to"], 2);
     assert_eq!(report["database_update"]["copy"], COPY_PATH);
 
     // Witness: a start that logged no update says nothing of one.
     fs::write(rig.state.join("server-log"), "a line of the server's log\n").unwrap();
-    let report = upgrade_json(&rig, "0.0.25");
-    assert_eq!(report["release"], "0.0.25");
+    let report = upgrade_json(&rig, "0.0.95");
+    assert_eq!(report["release"], "0.0.95");
     assert_eq!(report["database_update"], serde_json::Value::Null);
 }
 
@@ -1486,14 +1527,14 @@ fn an_upgrade_of_a_database_with_no_data_says_that_no_copy_was_made() {
     fs::write(rig.state.join("server-log"), upgraded_line(1, 2, None)).unwrap();
 
     let (code, stdout, stderr) =
-        rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "5"]);
+        rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("from schema version 1 to 2"), "{stdout}");
     assert!(stdout.contains("no copy was made"), "{stdout}");
     assert!(!stdout.contains("before-upgrade"), "{stdout}");
 
     fs::write(rig.state.join("server-log"), upgraded_line(2, 3, None)).unwrap();
-    let report = upgrade_json(&rig, "0.0.24");
+    let report = upgrade_json(&rig, "0.0.94");
     assert_eq!(report["database_update"]["schema_to"], 3);
     assert_eq!(report["database_update"]["copy"], serde_json::Value::Null);
 }
@@ -1511,26 +1552,26 @@ fn a_retried_upgrade_still_says_where_the_copy_of_the_database_is() {
 
     // The wait ends while the server is still copying; the env file is
     // already on the target.
-    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "1"]);
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "1"]);
     assert_ne!(code, 0);
     assert!(stderr.contains("did not become healthy"), "{stderr}");
-    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.23"));
+    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.93"));
 
     // The update completed, and the operator runs the command again.
     fs::remove_file(rig.state.join("unhealthy")).unwrap();
     let (code, stdout, stderr) =
-        rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "5"]);
+        rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("Already on 0.0.23"), "{stdout}");
+    assert!(stdout.contains("Already on 0.0.93"), "{stdout}");
     assert!(stdout.contains("from schema version 1 to 2"), "{stdout}");
     assert!(stdout.contains(COPY_PATH), "{stdout}");
 
     // Witness: a retry whose log records no update says nothing of a copy.
     fs::write(rig.state.join("server-log"), "a line of the server's log\n").unwrap();
     let (code, stdout, stderr) =
-        rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "5"]);
+        rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("Already on 0.0.23"), "{stdout}");
+    assert!(stdout.contains("Already on 0.0.93"), "{stdout}");
     assert!(!stdout.contains("copy"), "{stdout}");
 }
 
@@ -1547,7 +1588,7 @@ fn an_upgrade_the_server_refuses_says_how_to_go_back() {
     .unwrap();
 
     let started = std::time::Instant::now();
-    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "30"]);
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "30"]);
     assert_ne!(code, 0);
     assert!(
         started.elapsed() < Duration::from_secs(20),
@@ -1555,11 +1596,11 @@ fn an_upgrade_the_server_refuses_says_how_to_go_back() {
     );
     assert!(stderr.contains("a newer build wrote"), "{stderr}");
     assert!(
-        stderr.contains("0.0.23 did not update the database"),
+        stderr.contains("0.0.93 did not update the database"),
         "{stderr}"
     );
     assert!(
-        stderr.contains("`marfa server upgrade --release 0.0.22 --dir "),
+        stderr.contains("`marfa server upgrade --release 0.0.92 --dir "),
         "{stderr}"
     );
 }
@@ -1577,7 +1618,7 @@ fn an_upgrade_whose_copy_the_server_could_not_make_says_why_and_how_to_go_back()
     .unwrap();
 
     let started = std::time::Instant::now();
-    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "30"]);
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "30"]);
     assert_ne!(code, 0);
     assert!(
         started.elapsed() < Duration::from_secs(20),
@@ -1585,14 +1626,14 @@ fn an_upgrade_whose_copy_the_server_could_not_make_says_why_and_how_to_go_back()
     );
     assert!(
         stderr.contains(
-            "0.0.23 did not update the database, because the copy kept first could not be made"
+            "0.0.93 did not update the database, because the copy kept first could not be made"
         ),
         "{stderr}"
     );
     assert!(stderr.contains("4096 bytes are free"), "{stderr}");
     assert!(stderr.contains("still reads it"), "{stderr}");
     assert!(
-        stderr.contains("`marfa server upgrade --release 0.0.22 --dir "),
+        stderr.contains("`marfa server upgrade --release 0.0.92 --dir "),
         "{stderr}"
     );
 
@@ -1602,7 +1643,7 @@ fn an_upgrade_whose_copy_the_server_could_not_make_says_why_and_how_to_go_back()
         start_failed_line("The port 8080 is already taken (EADDRINUSE)"),
     )
     .unwrap();
-    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "1"]);
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "1"]);
     assert_ne!(code, 0);
     assert!(!stderr.contains("the copy kept first"), "{stderr}");
     assert!(!stderr.contains("still reads it"), "{stderr}");
@@ -1624,7 +1665,7 @@ fn status_reports_in_json() {
             .env("MARFA_AUTOSTART_ROOT", rig.home()),
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["release"], "0.0.22");
+    assert_eq!(report["release"], "0.0.92");
     assert_eq!(report["healthy"], true);
     assert_eq!(report["claimed"], false);
     assert!(!String::from_utf8_lossy(&output.stdout).contains(&secrets(&rig)[0]));
@@ -1797,7 +1838,7 @@ fn the_servers_health_is_asked_directly_whatever_proxy_the_environment_names() {
             "install",
             "--docker",
             "--release",
-            "0.0.22",
+            "0.0.92",
             "--port",
             &port,
             "--yes",
@@ -2073,12 +2114,12 @@ fn install_never_moves_a_docker_install_to_another_release_and_names_upgrade() {
     rig.installed(&["--access", "local"]);
     let dotenv = rig.file(".env");
     let log = rig.log().len();
-    for release in ["0.0.23", "0.0.21"] {
+    for release in ["0.0.93", "0.0.91"] {
         let (code, _, stderr) = rig.install_as(&["--release", release]);
         assert_eq!(code, 2, "{release}: {stderr}");
         assert!(
             stderr.contains(&format!(
-                "this install runs 0.0.22 and --release names {release}: `marfa server upgrade --release {release} --dir "
+                "this install runs 0.0.92 and --release names {release}: `marfa server upgrade --release {release} --dir "
             )),
             "{stderr}"
         );
@@ -2087,7 +2128,7 @@ fn install_never_moves_a_docker_install_to_another_release_and_names_upgrade() {
     }
 
     // Witness: the release it runs is installed again.
-    let (code, _, stderr) = rig.install_as(&["--release", "0.0.22"]);
+    let (code, _, stderr) = rig.install_as(&["--release", "0.0.92"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(rig.log()[log..].contains(" up "), "{}", &rig.log()[log..]);
 }
@@ -2113,7 +2154,7 @@ fn an_upgrade_to_a_release_that_does_not_exist_writes_nothing() {
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("no release 9.9.9"), "{stderr}");
     assert_eq!(rig.file(".env"), before);
-    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "5"]);
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
 }
 
@@ -2173,7 +2214,7 @@ fn a_relative_folder_works_because_compose_reads_it_from_inside() {
                 "--dir",
                 "install",
                 "--release",
-                "0.0.22",
+                "0.0.92",
                 "--access",
                 "local",
                 "--yes",
@@ -2306,7 +2347,7 @@ fn a_busy_port_on_every_address_is_found_before_anything_is_written() {
         "install",
         "--docker",
         "--release",
-        "0.0.22",
+        "0.0.92",
         "--access",
         "local",
         "--yes",
@@ -2956,7 +2997,7 @@ fn an_install_keeps_its_runtime_and_a_release_is_for_docker() {
     assert!(rig.file(".env").contains("MARFA_RUNTIME=native"));
 
     let other = Rig::new("n-release");
-    let (code, _, stderr) = other.native(&["--release", "0.0.22"]);
+    let (code, _, stderr) = other.native(&["--release", "0.0.92"]);
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("--release is for --docker"), "{stderr}");
     assert!(!other.dir.exists());
@@ -3162,7 +3203,7 @@ fn start_and_restart_keep_an_install_on_its_release_and_name_the_command_that_mo
         assert_eq!(code, 2, "{command}: {stderr}");
         assert!(
             stderr.contains(
-                "this install runs 0.0.0-before, and the programs its service runs are now 0.0.0: "
+                "this install is on 0.0.0-before, and the programs its service runs are now 0.0.0: "
             ) && stderr.contains(&upgrade),
             "{command}: {stderr}"
         );
@@ -3518,12 +3559,177 @@ fn a_native_upgrade_to_a_release_that_will_not_open_the_database_changes_nothing
     assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.0\n"));
 }
 
+/// An install an earlier release served and stopped, whose programs were then replaced in
+/// place with this release's.
+fn stopped_and_replaced(name: &str) -> Rig {
+    let rig = Rig::new(name);
+    rig.isolate();
+    rig.native_installed(&["--access", "local"]);
+    rig.on_an_earlier_release();
+    let (code, _, stderr) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!answers(rig.port));
+    rig
+}
+
+#[test]
+fn a_stopped_install_whose_programs_were_replaced_is_moved_only_by_upgrade() {
+    let rig = stopped_and_replaced("n-stopped-replaced");
+    let service = fs::read_to_string(rig.service_file("marfa")).unwrap();
+    let calls = rig.manager_log().lines().count();
+    let moved_by = format!(
+        "this install is on 0.0.0-before, and the programs its service runs are now 0.0.0: `marfa server upgrade --dir '{}'` moves it to 0.0.0, once 0.0.0 has said it opens the database",
+        rig.real_dir().display()
+    );
+
+    for command in ["start", "restart"] {
+        let (code, _, stderr) = rig.marfa(&[command, "--wait-seconds", "5"]);
+        assert_eq!(code, 2, "{command}: {stderr}");
+        assert!(stderr.contains(&moved_by), "{command}: {stderr}");
+    }
+    let (code, _, stderr) = rig.native(&["--access", "local"]);
+    assert_eq!(code, 2, "install: {stderr}");
+    assert!(stderr.contains(&moved_by), "install: {stderr}");
+    assert_eq!(rig.service_moves_since(calls), Vec::<String>::new());
+    assert_eq!(
+        fs::read_to_string(rig.service_file("marfa")).unwrap(),
+        service
+    );
+    assert!(!answers(rig.port));
+    let (_, stdout, _) = rig.marfa(&["--json", "status"]);
+    let status: serde_json::Value = serde_json::from_str(&stdout).expect(&stdout);
+    assert_eq!(status["release"], "0.0.0-before", "{stdout}");
+    let (_, stdout, _) = rig.marfa(&["status"]);
+    assert!(
+        stdout.contains("Programs  0.0.0: `marfa server upgrade --dir "),
+        "{stdout}"
+    );
+
+    // Witness: once upgrade has moved it, the install starts and restarts.
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--wait-seconds", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, _, stderr) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0, "{stderr}");
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait-seconds", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("Started 0.0.0, which this install is on."),
+        "{stdout}"
+    );
+    // A release the install is on that refuses has nothing to go back to or move to.
+    let (code, _, stderr) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0, "{stderr}");
+    fs::write(rig.state.join("cannot-open"), "The settings do not read.").unwrap();
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--wait-seconds", "5"]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(
+        stderr.contains("0.0.0 will not run on this install's settings and database")
+            && stderr.contains("The settings do not read.")
+            && !stderr.contains("To put")
+            && !stderr.contains("marfa export"),
+        "{stderr}"
+    );
+    fs::remove_file(rig.state.join("cannot-open")).unwrap();
+    for command in ["start", "restart"] {
+        let (code, _, stderr) = rig.marfa(&[command, "--wait-seconds", "5"]);
+        assert_eq!(code, 0, "{command}: {stderr}");
+    }
+    let (_, stdout, _) = rig.marfa(&["status"]);
+    assert!(!stdout.contains("Programs"), "{stdout}");
+}
+
+#[test]
+fn a_refused_upgrade_of_a_stopped_install_puts_back_the_release_it_is_on() {
+    let rig = stopped_and_replaced("n-stopped-refused");
+    let calls = rig.manager_log().lines().count();
+    fs::write(
+        rig.state.join("cannot-open"),
+        "The database was written by a build this one does not read.",
+    )
+    .unwrap();
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--wait-seconds", "5"]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(
+        stderr.contains("To put 0.0.0-before back, install it the way you installed marfa")
+            && stderr.contains("MARFA_VERSION=0.0.0-before ")
+            && stderr.contains("while 0.0.0-before runs"),
+        "{stderr}"
+    );
+    assert_eq!(rig.service_moves_since(calls), Vec::<String>::new());
+    assert!(!answers(rig.port));
+}
+
+#[test]
+fn a_passing_upgrade_of_a_stopped_install_moves_it_from_the_release_it_is_on() {
+    let rig = stopped_and_replaced("n-stopped-passing");
+    let (code, stdout, stderr) = rig.marfa(&["--json", "upgrade", "--wait-seconds", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    let report: serde_json::Value = serde_json::from_str(&stdout).expect(&stdout);
+    assert_eq!(report["from"], "0.0.0-before", "{stdout}");
+    assert_eq!(report["release"], "0.0.0", "{stdout}");
+    assert_eq!(report["changed"], true, "{stdout}");
+    assert_eq!(rig.file("data/marfa.db.release"), "0.0.0\n");
+}
+
+#[test]
+fn an_install_whose_database_names_no_release_is_on_the_release_env_names() {
+    let rig = Rig::new("n-no-record");
+    rig.isolate();
+    // The release that served it, up to 0.0.85, named none beside the database.
+    fs::write(rig.state.join("no-release-record"), "").unwrap();
+    rig.native_installed(&["--access", "local"]);
+    assert!(!rig.dir.join("data/marfa.db.release").exists());
+    let (code, _, stderr) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0, "{stderr}");
+    rig.recorded_release("0.0.0-before");
+
+    let (code, _, stderr) = rig.marfa(&["start", "--wait-seconds", "5"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains(
+            "this install is on 0.0.0-before, and the programs its service runs are now 0.0.0: "
+        ),
+        "{stderr}"
+    );
+    let (_, stdout, _) = rig.marfa(&["--json", "status"]);
+    let status: serde_json::Value = serde_json::from_str(&stdout).expect(&stdout);
+    assert_eq!(status["release"], "0.0.0-before", "{stdout}");
+
+    // Witness: with `.env` on the release the programs are, it starts.
+    rig.recorded_release("0.0.0");
+    let (code, stdout, stderr) = rig.marfa(&["start", "--wait-seconds", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("marfa 0.0.0 is running"), "{stdout}");
+
+    // With neither, the release cannot be told, and only upgrade moves the install.
+    let (code, _, stderr) = rig.marfa(&["stop"]);
+    assert_eq!(code, 0, "{stderr}");
+    let dotenv: String = rig
+        .file(".env")
+        .lines()
+        .filter(|line| !line.starts_with("MARFA_RELEASE="))
+        .map(|line| format!("{line}\n"))
+        .collect();
+    fs::write(rig.dir.join(".env"), dotenv).unwrap();
+    let (code, _, stderr) = rig.marfa(&["start", "--wait-seconds", "5"]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(
+        stderr.contains("the release this install is on cannot be told, because neither ")
+            && stderr.contains("`marfa server upgrade --dir "),
+        "{stderr}"
+    );
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait-seconds", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("Upgraded to 0.0.0"), "{stdout}");
+}
+
 impl Rig {
     /// The server still running an earlier release, after the programs the service runs were
     /// replaced in place by this one's, as Homebrew and the install script do, so that an
     /// upgrade moves it.
     fn on_an_earlier_release(&self) {
         self.running("0.0.0-before");
+        self.name_served("0.0.0-before");
         self.recorded_release("0.0.0-before");
     }
 
@@ -3585,6 +3791,7 @@ impl Rig {
         let moved = text.replacen(&program, &programs.join("marfa").to_string_lossy(), 1);
         fs::write(&file, moved).unwrap();
         self.running(release);
+        self.name_served(release);
     }
 
     /// What the server logs when the service starts it, and whether it then stays down.
@@ -3702,13 +3909,13 @@ fn a_native_upgrade_reads_only_what_this_start_logged() {
     assert_ne!(code, 0, "{stderr}");
     assert!(!stderr.contains("did not update the database"), "{stderr}");
 
-    // The service now runs 0.0.0's programs, and this run starts its server.
+    // The service now runs 0.0.0's programs, which never served, and this run starts its server.
     fs::remove_file(rig.state.join("stops")).unwrap();
     fs::remove_file(rig.state.join("logs-with")).unwrap();
     let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(
-        stdout.contains("Started 0.0.0, which this install is on."),
+        stdout.contains("Upgraded from 0.0.0-before to 0.0.0."),
         "{stdout}"
     );
     assert!(!stdout.contains("schema version"), "{stdout}");
@@ -3812,13 +4019,13 @@ fn a_docker_upgrade_reads_only_the_containers_current_run() {
         start_failed_line("The port 8080 is already taken (EADDRINUSE)"),
     )
     .unwrap();
-    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "1"]);
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "1"]);
     assert_ne!(code, 0, "{stderr}");
     assert!(!stderr.contains("did not update the database"), "{stderr}");
 
     fs::remove_file(rig.state.join("unhealthy")).unwrap();
     fs::write(rig.state.join("server-log"), "a line of the server's log\n").unwrap();
-    let report = upgrade_json(&rig, "0.0.24");
+    let report = upgrade_json(&rig, "0.0.94");
     assert_eq!(report["database_update"], serde_json::Value::Null);
 }
 
@@ -3834,18 +4041,18 @@ fn a_docker_upgrade_whose_run_cannot_be_told_from_an_earlier_one_says_the_log_co
     fs::write(rig.state.join("started-at-unreadable"), "").unwrap();
 
     let (code, stdout, stderr) =
-        rig.marfa(&["upgrade", "--release", "0.0.23", "--wait-seconds", "5"]);
+        rig.marfa(&["upgrade", "--release", "0.0.93", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("The log could not be read"), "{stdout}");
     assert!(!stdout.contains("no copy was made"), "{stdout}");
     assert!(!stdout.contains(COPY_PATH), "{stdout}");
-    let report = upgrade_json(&rig, "0.0.24");
+    let report = upgrade_json(&rig, "0.0.94");
     assert_eq!(report["database_update"], serde_json::Value::Null);
     assert_eq!(report["log_read"], false);
 
     // Witness: with the start readable, the same log is read and says so.
     fs::remove_file(rig.state.join("started-at-unreadable")).unwrap();
-    let report = upgrade_json(&rig, "0.0.25");
+    let report = upgrade_json(&rig, "0.0.95");
     assert_eq!(report["database_update"]["copy"], COPY_PATH);
     assert_eq!(report["log_read"], true);
 }

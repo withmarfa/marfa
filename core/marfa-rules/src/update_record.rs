@@ -441,8 +441,7 @@ pub fn served_release(database: &Path) -> io::Result<Option<String>> {
         Err(error) => return Err(error),
     };
     let release = text.trim_end_matches('\n');
-    let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+');
-    if release.is_empty() || text.len() as u64 > RELEASE_BYTES || !release.chars().all(plain) {
+    if text.len() as u64 > RELEASE_BYTES || !names_a_release(release) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("{} does not name a release", path.display()),
@@ -452,6 +451,12 @@ pub fn served_release(database: &Path) -> io::Result<Option<String>> {
 }
 
 const RELEASE_BYTES: u64 = 64;
+
+/// Whether `text` reads as a release: short, and safe to put in a command an owner is told to run.
+pub fn names_a_release(text: &str) -> bool {
+    let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+');
+    !text.is_empty() && text.len() as u64 <= RELEASE_BYTES && text.chars().all(plain)
+}
 
 /// Names `release` in [`release_record`], whole or not at all.
 pub fn keep_served_release(database: &Path, release: &str) -> io::Result<()> {

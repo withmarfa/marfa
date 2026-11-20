@@ -1,8 +1,9 @@
 //! `marfa server`: a Marfa server on this machine, run natively or in Docker.
 //!
 //! The install is a folder holding `.env` (name, port, runtime, how the server is
-//! reached, and a Docker install's release) and `marfa.env` (the server's secrets and
-//! proxy trust). A native install's release is that of the `marfa-server` its service runs.
+//! reached, and the release) and `marfa.env` (the server's secrets and proxy trust). A Docker
+//! install runs the release `.env` names. A native install is on the release that last served
+//! its database, which that server names beside the database.
 
 mod account;
 pub(crate) mod address;
@@ -27,6 +28,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, Subcommand, ValueEnum};
+use marfa_rules::update_record::names_a_release;
 
 use crate::error::CliError;
 use crate::output::Printer;
@@ -66,19 +68,19 @@ pub enum ServerCommand {
     ///
     /// A native server moves to the release of the `marfa-server` installed beside this `marfa`.
     /// A Docker install moves to the release you name with `--release`, or to this binary's own.
-    /// This is the only command that changes the release an install runs: `install`, `start`
-    /// and `restart` keep it on the release it runs, which is the release of the `marfa-server`
-    /// its service runs, or the image `.env` names for Docker.
+    /// This is the only command that changes the release an install is on: `install`, `start`
+    /// and `restart` keep it there. A native install is on the release that last served its
+    /// database, and a Docker install on the image `.env` names.
     ///
     /// Before Marfa 0.1, a release may not read another release's database. This command first
     /// asks the release it moves to, newer or older, whether it opens the install's database
     /// and settings, and changes nothing when it does not. When the programs the service runs
-    /// were already replaced, the error says how to put the earlier release back. A release that
-    /// cannot be asked is started, and a Docker install whose new release then refuses the
-    /// database starts its earlier release again. The way to move is then to export, make a new
-    /// install of the other release and restore the archive there. A release that changes how
-    /// the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside
-    /// it.
+    /// were already replaced, the error says how to put back the release the install is on. A
+    /// release that could not be asked is started, and a Docker install whose new release then
+    /// refuses the database starts its earlier release again. A Docker image before 0.0.76
+    /// cannot be asked, so it is refused. The way to move is then to export, make a new install
+    /// of the other release and restore the archive there. A release that changes how the
+    /// database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
     ///
     /// To go back to an earlier release, install it the way you installed marfa and run this
     /// command with its `marfa`, or with `--release` for Docker.
@@ -100,11 +102,11 @@ pub enum ServerCommand {
     Status(DirArgs),
     /// Start the server, if it is not running.
     ///
-    /// A native install stays on the release it runs. A `marfa` of another
-    /// release is refused, and so is a start after the programs the service
-    /// runs were replaced in place while an earlier release still runs, as
-    /// Homebrew and the install script do. `marfa server upgrade` moves the
-    /// install. A `marfa` of the same release at another path is named there
+    /// A native install stays on the release that last served its database.
+    /// A `marfa` of another release is refused, and so is a start after the
+    /// programs the service runs were replaced in place, as Homebrew and the
+    /// install script do, while an earlier release ran or after it stopped.
+    /// `marfa server upgrade` moves the install. A `marfa` of the same release at another path is named there
     /// while the program the service runs is still in place; once that
     /// program is gone, `marfa server upgrade` names the new one.
     ///
@@ -224,7 +226,7 @@ pub struct InstallArgs {
     docker: bool,
     /// The release of the image to run, such as `0.0.22`, for `--docker`. The
     /// default is this binary's own version, and for a server already
-    /// installed, the release it runs: another release is refused, and
+    /// installed, the release it is on: another release is refused, and
     /// `marfa server upgrade` moves the install. A native server runs the
     /// release installed beside this `marfa`.
     #[arg(long, value_name = "VERSION")]
@@ -330,10 +332,10 @@ pub fn run(command: ServerCommand, out: &Printer) -> Result<(), CliError> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct State {
     name: String,
-    /// The release of a Docker install's image, which only `marfa server upgrade` changes. A
-    /// native install's release is that of the program its service runs:
-    /// [`service::Service::release`].
-    image: Option<String>,
+    /// The `MARFA_RELEASE` line. A Docker install runs this image, which only
+    /// `marfa server upgrade` changes. A native install is on the release that last served its
+    /// database, and this line only stands in for it: [`lifecycle::install_release`].
+    release: Option<String>,
     port: u16,
     access: Access,
     https_port: Option<u16>,
@@ -352,7 +354,7 @@ struct State {
 impl State {
     /// The release a Docker install's image is.
     fn image(&self) -> &str {
-        self.image
+        self.release
             .as_deref()
             .expect("a Docker install records its release")
     }
@@ -621,13 +623,15 @@ impl Folder {
                     .map_err(|_| CliError::Usage("MARFA_HTTPS_PORT in .env is not a port".into()))
             })
             .transpose()?;
-        let image = match runtime {
+        let release = match runtime {
             Runtime::Docker => Some(field("MARFA_RELEASE")?),
-            Runtime::Native => None,
+            Runtime::Native => dotenv
+                .get("MARFA_RELEASE")
+                .filter(|release| names_a_release(release)),
         };
         let state = State {
             name: field("MARFA_NAME")?,
-            image,
+            release,
             port,
             access,
             https_port,
