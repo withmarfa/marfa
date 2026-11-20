@@ -232,6 +232,9 @@ stays because that thing is what it checks.
   it cannot read, and deletes it when the owner discards it", spoils the
   record a folder's store keeps for a file it keeps. No operation or fault
   writes a record a later build cannot read.
+- `device/folders-open-writer.test.ts`, "keeps a file it keeps under a record
+  it cannot read when a program wrote to it, though the owner discards",
+  spoils the same record, for the same reason.
 - `inbound-faults`, `inbound-logs` and the other fixtures that read the log
   through `serverOutput` check what the server logged. The log is the subject.
 

@@ -433,6 +433,43 @@ describe("a file a program holds open for writing", () => {
     expect(read(harness, "Note.md")).toContain("marfa_version: 2\n");
   });
 
+  it("keeps a file it keeps under a record it cannot read when a program wrote to it, though the owner discards", async () => {
+    const harness = await noteFolder("folder-open-writer-unread-written");
+    holdOpen(harness);
+    write("first half\n");
+    await setAsideUnknown(harness);
+    const [name] = keptNames(harness);
+    expect(name).toBeDefined();
+    write("second half\n");
+    close();
+    const db = new DatabaseSync(harness.folder.store);
+    try {
+      db.prepare(
+        "UPDATE meta SET value = json_set(value, '$.retained.since', 'soon') WHERE key LIKE 'folder_retained:%'",
+      ).run();
+    } finally {
+      db.close();
+    }
+
+    const discarded = await harness.folder.discardKept();
+    expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+    if (!discarded.ok) return;
+    expect(
+      discarded.value.discarded,
+      "a discard deleted a kept file a program wrote to, whose record does not read",
+    ).toEqual([]);
+    expect(keptNames(harness)).toEqual([name]);
+    const kept = await harness.folder.kept();
+    expect(kept.ok, JSON.stringify(kept)).toBe(true);
+    if (!kept.ok) return;
+    expect(kept.value.kept).toEqual([
+      expect.objectContaining({
+        path: name,
+        reason: "Marfa could not read its record",
+      }),
+    ]);
+  });
+
   it("puts back a file it kept that a program wrote to, when the owner discards the files it keeps", async () => {
     const harness = await noteFolder("folder-open-writer-discard-changed");
     holdOpen(harness);

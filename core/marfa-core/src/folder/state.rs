@@ -508,6 +508,8 @@ pub(crate) struct Unread {
     pub(crate) kept: String,
     /// The path it came from, where the row names one.
     pub(crate) from: String,
+    /// The hash of the bytes set aside, where the row still holds one.
+    pub(crate) hash: Option<String>,
 }
 
 impl Unread {
@@ -524,6 +526,7 @@ impl Unread {
             .map(|(dir, target)| super::joined(&dir, &target))
             .unwrap_or_default();
         Unread {
+            hash: text(&row["retained"]["read"]["hash"]),
             aside: text(&row["aside"]).unwrap_or_default(),
             kept,
             from,

@@ -427,15 +427,37 @@ impl Folder {
     }
 
     /// Deletes the file of a row that does not read, which only the owner's
-    /// discard does, since nothing tells whether a program wrote to it.
+    /// discard does, and only where its bytes are still the ones the row
+    /// says were set aside: anything else may be what a program wrote, and
+    /// stays listed.
     fn discard_unread(
         &self,
         conn: &rusqlite::Connection,
         row: &state::Unread,
     ) -> Result<RowSettled> {
-        let removed = self
-            .place_dir(&row.aside)
-            .and_then(|aside| aside.unlink(Path::new(&row.kept)));
+        let aside = match self.place_dir(&row.aside) {
+            Ok(aside) => aside,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                state::clear_retained(conn, &row.id)?;
+                return Ok(RowSettled::Gone);
+            }
+            Err(_) => return Ok(RowSettled::Kept),
+        };
+        let unchanged = match aside.read(Path::new(&row.kept)) {
+            Ok(bytes) => row
+                .hash
+                .as_deref()
+                .is_some_and(|hash| state::hash(&bytes) == hash),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                state::clear_retained(conn, &row.id)?;
+                return Ok(RowSettled::Gone);
+            }
+            Err(_) => false,
+        };
+        if !unchanged {
+            return Ok(RowSettled::Kept);
+        }
+        let removed = aside.unlink(Path::new(&row.kept));
         let settled = match removed {
             Ok(()) => RowSettled::Discarded,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => RowSettled::Gone,

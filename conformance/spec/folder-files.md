@@ -1070,9 +1070,17 @@ The CLI MUST list in `folders kept` each file a folder keeps under a name of the
 
 ### `folder-files/write-retained-unread-discard`
 
-When the owner confirms `folders kept --discard`, the CLI MUST delete each file the folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read.
+When the owner confirms `folders kept --discard`, the CLI MUST delete each file the folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, where the file holds the bytes the record says were set aside.
 
 **Tests:** `device/folders-open-writer.test.ts › lists a file it keeps under a record it cannot read, and deletes it when the owner discards it`.
+
+### `folder-files/write-retained-unread-written-kept`
+
+When the owner confirms `folders kept --discard`, the CLI MUST NOT delete a file the folder keeps under a record it cannot read where the file's bytes differ from the bytes the record says were set aside, or the record holds no hash of them.
+
+**Reason:** a program may have written to the file after it was set aside, and with its record unread the device cannot put the file back, so it keeps the file listed for the owner to look at.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps a file it keeps under a record it cannot read when a program wrote to it, though the owner discards`.
 
 ## Deletion, purges and missing directories
 
