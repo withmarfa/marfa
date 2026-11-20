@@ -2298,6 +2298,7 @@ mod dispatch {
                 command: items::ItemTagsCommand::Replace {
                     id: "i".into(),
                     tags: vec!["a".into()],
+                    version: Some(4),
                     idempotency: key("replace"),
                 },
             },
@@ -2343,7 +2344,7 @@ mod dispatch {
         let expected = [
             ("POST", "/items/i/tags", "tag"),
             ("DELETE", "/items/i/tags/a", "untag"),
-            ("PUT", "/items/i/tags", "replace"),
+            ("PUT", "/items/i/tags?version=4", "replace"),
             ("PUT", "/items/i/extensions/app.cursor", "write"),
             ("DELETE", "/items/i/extensions/app.cursor", "delete"),
         ]

@@ -264,6 +264,10 @@ pub enum ItemTagsCommand {
         id: String,
         /// The tags the item is to carry.
         tags: Vec<String>,
+        /// The item version you read. If the item has changed since, the tags
+        /// stay as they are.
+        #[arg(long)]
+        version: Option<i64>,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -837,8 +841,10 @@ pub fn untag_request(id: &str, tag: &str, version: Option<i64>) -> Request {
         .query_opt("version", version.map(|v| v.to_string()))
 }
 
-pub fn replace_tags_request(id: &str, tags: &[String]) -> Request {
-    Request::put(&["items", id, "tags"]).json(json!({ "tags": tags }))
+pub fn replace_tags_request(id: &str, tags: &[String], version: Option<i64>) -> Request {
+    Request::put(&["items", id, "tags"])
+        .query_opt("version", version.map(|v| v.to_string()))
+        .json(json!({ "tags": tags }))
 }
 
 pub fn edges_request(args: &ItemEdgesArgs, inbound: bool) -> Request {
@@ -1242,8 +1248,9 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
             ItemTagsCommand::Replace {
                 id,
                 tags,
+                version,
                 idempotency,
-            } => idempotency.apply(replace_tags_request(id, tags)),
+            } => idempotency.apply(replace_tags_request(id, tags, *version)),
         },
         ItemsCommand::Edges(args) => return edges(args, false, remote, out),
         ItemsCommand::Backrefs(args) => return edges(args, true, remote, out),
