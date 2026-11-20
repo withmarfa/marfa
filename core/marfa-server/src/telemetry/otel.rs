@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -40,12 +41,28 @@ const BATCH: usize = 512;
 const SPAN_DELAY: Duration = Duration::from_secs(5);
 const LOG_DELAY: Duration = Duration::from_secs(1);
 
-/// Sends only the stored headers: the exporter adds `OTEL_EXPORTER_OTLP_*HEADERS` on its own.
+/// Set when an exporter is replaced: its client sends nothing more, so what it holds is dropped.
+#[derive(Debug, Clone, Default)]
+pub struct Halt(Arc<AtomicBool>);
+
+impl Halt {
+    pub fn set(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+
+    fn is_set(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
+
+/// Sends only the stored headers: the exporter adds `OTEL_EXPORTER_OTLP_*HEADERS` on its own,
+/// a `content-type` among them.
 #[derive(Debug)]
 struct Blocking {
     url: String,
     headers: Vec<(HeaderName, HeaderValue)>,
     private_allowed: bool,
+    halt: Halt,
 }
 
 impl HttpClient for Blocking {
@@ -57,12 +74,14 @@ impl HttpClient for Blocking {
         'a: 'b,
         Self: 'b,
     {
-        let (mut parts, body) = request.into_parts();
-        let content_type = parts.headers.remove(CONTENT_TYPE);
-        parts.headers.clear();
-        if let Some(content_type) = content_type {
-            parts.headers.insert(CONTENT_TYPE, content_type);
+        if self.halt.is_set() {
+            return Box::pin(async { Err(HttpError::from("the exporter was replaced")) });
         }
+        let (mut parts, body) = request.into_parts();
+        parts.headers.clear();
+        parts
+            .headers
+            .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         for (name, value) in &self.headers {
             parts.headers.insert(name.clone(), value.clone());
         }
@@ -116,7 +135,7 @@ fn plain_integers(body: &[u8]) -> Vec<u8> {
 }
 
 /// A header the settings' rule took but HTTP cannot carry is left out.
-fn client(export: &Export) -> Blocking {
+fn client(export: &Export, halt: &Halt) -> Blocking {
     Blocking {
         url: export.url.clone(),
         headers: export
@@ -130,6 +149,7 @@ fn client(export: &Export) -> Blocking {
             })
             .collect(),
         private_allowed: export.private_allowed,
+        halt: halt.clone(),
     }
 }
 
@@ -158,9 +178,10 @@ pub fn relay_provider(relay: Relay) -> SdkTracerProvider {
 
 /// The batch's every field is set, since the defaults read `OTEL_BSP_*`.
 pub fn trace_leg(export: &Export, pairs: &[(String, String)], ratio: f64) -> Result<Leg, String> {
+    let halt = Halt::default();
     let exporter = SpanExporter::builder()
         .with_http()
-        .with_http_client(client(export))
+        .with_http_client(client(export, &halt))
         .with_protocol(Protocol::HttpJson)
         .with_endpoint(export.url.clone())
         .with_timeout(DEFAULT_TIMEOUT)
@@ -176,17 +197,18 @@ pub fn trace_leg(export: &Export, pairs: &[(String, String)], ratio: f64) -> Res
         .with_batch_config(config)
         .build();
     batch.set_resource(&resource(pairs));
-    Ok(Leg(Tail::new(batch, Sampler::Ratio(ratio))))
+    Ok(Leg {
+        tail: Tail::new(batch, Sampler::Ratio(ratio)),
+        halt,
+    })
 }
 
 /// The batch's every field is set, since the defaults read `OTEL_BLRP_*`.
-pub fn logger_provider(
-    export: &Export,
-    pairs: &[(String, String)],
-) -> Result<SdkLoggerProvider, String> {
+pub fn logger_provider(export: &Export, pairs: &[(String, String)]) -> Result<Loggers, String> {
+    let halt = Halt::default();
     let exporter = LogExporter::builder()
         .with_http()
-        .with_http_client(client(export))
+        .with_http_client(client(export, &halt))
         .with_protocol(Protocol::HttpJson)
         .with_endpoint(export.url.clone())
         .with_timeout(DEFAULT_TIMEOUT)
@@ -198,23 +220,33 @@ pub fn logger_provider(
         .with_scheduled_delay(LOG_DELAY)
         .with_max_export_batch_size(BATCH)
         .build();
-    Ok(SdkLoggerProvider::builder()
+    let provider = SdkLoggerProvider::builder()
         .with_resource(resource(pairs))
         .with_log_processor(
             BatchLogProcessor::builder(exporter)
                 .with_batch_config(config)
                 .build(),
         )
-        .build())
+        .build();
+    Ok(Loggers { provider, halt })
+}
+
+/// The exporter one set of log settings built.
+pub struct Loggers {
+    pub provider: SdkLoggerProvider,
+    pub halt: Halt,
 }
 
 /// The exporter one set of trace settings built, with its own resource.
 #[derive(Debug)]
-pub struct Leg(Tail<BatchSpanProcessor>);
+pub struct Leg {
+    tail: Tail<BatchSpanProcessor>,
+    pub halt: Halt,
+}
 
 impl Leg {
     pub fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
-        self.0.shutdown_with_timeout(timeout)
+        self.tail.shutdown_with_timeout(timeout)
     }
 }
 
@@ -226,13 +258,13 @@ pub struct Relay(pub Arc<ArcSwapOption<Leg>>);
 impl SpanProcessor for Relay {
     fn on_start(&self, span: &mut Span, cx: &opentelemetry::Context) {
         if let Some(leg) = self.0.load().as_ref() {
-            leg.0.on_start(span, cx);
+            leg.tail.on_start(span, cx);
         }
     }
 
     fn on_end(&self, span: SpanData) {
         if let Some(leg) = self.0.load().as_ref() {
-            leg.0.on_end(span);
+            leg.tail.on_end(span);
         }
     }
 
@@ -240,7 +272,7 @@ impl SpanProcessor for Relay {
         self.0
             .load()
             .as_ref()
-            .map_or(Ok(()), |leg| leg.0.force_flush())
+            .map_or(Ok(()), |leg| leg.tail.force_flush())
     }
 
     fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {

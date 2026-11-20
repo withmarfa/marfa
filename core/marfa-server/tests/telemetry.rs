@@ -220,6 +220,16 @@ impl Instance {
             .unwrap();
     }
 
+    /// A write under `request_id` that ends in an unhandled fault.
+    async fn fail_note(&self, request_id: &str) {
+        self.break_writes();
+        assert_eq!(
+            self.write_note(request_id).await,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
+        self.mend_writes();
+    }
+
     /// A write through the private local door, as `marfa config set` makes one.
     async fn configure(&self, body: Value) -> (StatusCode, Value) {
         send(
@@ -490,8 +500,19 @@ fn pair(id: &str, header: &str) -> (String, String) {
     (id.to_string(), header.to_string())
 }
 
+/// How many requests the receiver has taken so far.
+fn mark(received: &Received) -> usize {
+    received.lock().unwrap().len()
+}
+
+/// What the receiver took from `from` on.
+fn since(received: &Received, from: usize) -> Received {
+    Arc::new(Mutex::new(received.lock().unwrap()[from..].to_vec()))
+}
+
 #[tokio::test]
-async fn a_change_to_the_endpoint_headers_or_switch_is_followed_with_no_restart() {
+async fn a_change_to_the_endpoint_headers_or_switch_is_followed_with_no_restart_and_drops_what_was_queued()
+ {
     let (host, received) = receiver(false);
     let (instance, guard) = Instance::start(&[
         ("MARFA_OTEL_SAMPLE_RATIO", "1"),
@@ -506,7 +527,17 @@ async fn a_change_to_the_endpoint_headers_or_switch_is_followed_with_no_restart(
         }))
         .await;
     assert_eq!(status, StatusCode::OK, "{answer}");
+    instance.write_note("queued").await;
+    let switched = mark(&received);
+    instance
+        .configure(json!({ "telemetry_enabled": false }))
+        .await;
+    instance.write_note("switched-off").await;
+    instance
+        .configure(json!({ "telemetry_enabled": true }))
+        .await;
     instance.write_note("first").await;
+    let changed = mark(&received);
     // A span that starts before the change ends into the exporter the change built.
     let swapped = instance
         .configure_as(
@@ -516,29 +547,95 @@ async fn a_change_to_the_endpoint_headers_or_switch_is_followed_with_no_restart(
         .await;
     assert_eq!(swapped, StatusCode::OK);
     instance.write_note("second").await;
-    instance
-        .configure(json!({ "telemetry_enabled": false }))
+    let (status, answer) = instance
+        .configure(json!({ "trash_retention_days": 7 }))
         .await;
-    instance.write_note("switched-off").await;
-    instance
-        .configure(json!({ "telemetry_enabled": true }))
-        .await;
-    instance.write_note("again").await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
     guard.stop(Duration::from_secs(10));
 
-    let ids = ["unset", "first", "swap", "second", "switched-off", "again"];
     for prefix in ["/v1/traces", "/v1/logs"] {
+        // The witness: records queued across a change of another setting are sent.
         assert_eq!(
-            sent_with(&received, prefix, &ids, "authorization"),
-            [
-                pair("again", "Bearer two"),
-                pair("first", "Bearer one"),
-                pair("second", "Bearer two"),
-                pair("swap", "Bearer two"),
-            ],
+            sent_with(&received, prefix, &["swap", "second"], "authorization"),
+            [pair("second", "Bearer two"), pair("swap", "Bearer two")],
+            "{prefix}"
+        );
+        assert_eq!(
+            sent_with(
+                &since(&received, switched),
+                prefix,
+                &["queued"],
+                "authorization"
+            ),
+            [],
+            "{prefix}"
+        );
+        assert_eq!(
+            sent_with(
+                &since(&received, changed),
+                prefix,
+                &["first"],
+                "authorization"
+            ),
+            [],
+            "{prefix}"
+        );
+        assert!(
+            sent_with(&received, prefix, &["queued", "first"], "authorization")
+                .iter()
+                .all(|(_, carried)| carried == "Bearer one"),
+            "{prefix}"
+        );
+        assert_eq!(
+            sent_with(
+                &received,
+                prefix,
+                &["unset", "switched-off"],
+                "authorization"
+            ),
+            [],
             "{prefix}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_report_queued_before_reporting_is_switched_off_or_moved_is_dropped() {
+    let (host, received) = receiver(false);
+    let (other, moved) = receiver(false);
+    let mut pairs = posthog(&host).to_vec();
+    pairs.push(("MARFA_ALLOW_PRIVATE_ADDRESSES", "true".to_string()));
+    let pairs: Vec<(String, String)> = pairs
+        .into_iter()
+        .map(|(key, value)| (key.to_string(), value))
+        .collect();
+    let (instance, guard) = Instance::start(&borrowed(&pairs)).await;
+
+    instance.fail_note("queued").await;
+    let switched = mark(&received);
+    instance
+        .configure(json!({ "telemetry_enabled": false }))
+        .await;
+    instance
+        .configure(json!({ "telemetry_enabled": true }))
+        .await;
+    instance.fail_note("before-the-move").await;
+    let changed = mark(&received);
+    let (status, answer) = instance.configure(json!({ "posthog_host": other })).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    instance.fail_note("kept").await;
+    let (status, answer) = instance
+        .configure(json!({ "trash_retention_days": 7 }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    guard.stop(Duration::from_secs(5));
+
+    // The witness: a report queued across a change of another setting is sent.
+    assert_eq!(ids(&exceptions(&moved), "request_id"), ["kept"]);
+    let late = ids(&exceptions(&since(&received, switched)), "request_id");
+    assert!(!late.contains(&"queued".to_string()), "{late:?}");
+    let late = ids(&exceptions(&since(&received, changed)), "request_id");
+    assert!(!late.contains(&"before-the-move".to_string()), "{late:?}");
 }
 
 #[tokio::test]
@@ -651,7 +748,10 @@ fn a_platform_variable_never_overrides_the_stored_settings() {
     let planted_variables = [
         ("OTEL_EXPORTER_OTLP_ENDPOINT", planted_host.as_str()),
         ("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", planted_host.as_str()),
-        ("OTEL_EXPORTER_OTLP_HEADERS", "authorization=planted"),
+        (
+            "OTEL_EXPORTER_OTLP_HEADERS",
+            "authorization=planted,content-type=application/x-planted",
+        ),
         ("OTEL_EXPORTER_OTLP_TRACES_HEADERS", "x-planted=traces"),
         ("OTEL_EXPORTER_OTLP_LOGS_HEADERS", "x-planted=logs"),
         ("OTEL_EXPORTER_OTLP_TIMEOUT", "1"),
@@ -703,6 +803,11 @@ fn a_platform_variable_never_overrides_the_stored_settings() {
         assert_eq!(
             sent_with(&received, prefix, &["planted-around"], "authorization"),
             [pair("planted-around", "stored")],
+            "{prefix}"
+        );
+        assert_eq!(
+            sent_with(&received, prefix, &["planted-around"], "content-type"),
+            [pair("planted-around", "application/json")],
             "{prefix}"
         );
         assert!(

@@ -13,13 +13,12 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use arc_swap::ArcSwap;
+use arc_swap::ArcSwapOption;
 use http::HeaderMap;
 use opentelemetry::propagation::TextMapPropagator;
 use opentelemetry::trace::{Span as _, SpanKind, Status, Tracer, TracerProvider as _};
 use opentelemetry::{Context, KeyValue};
 use opentelemetry_http::HeaderExtractor;
-use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider, Span};
 
@@ -28,8 +27,8 @@ pub use logs::{Logs, REQUEST_TARGET};
 
 use config::Wanted;
 use lane::Lane;
-use otel::{Leg, Relay};
-use sinks::{Failed, Raised, Report, Tracked};
+use otel::{Leg, Loggers, Relay};
+use sinks::{Failed, Raised, Report, Route, Tracked};
 
 use crate::settings::registry::{
     ALLOW_PRIVATE_ADDRESSES, ERROR_REPORTING_ENABLED, TELEMETRY_ENABLED,
@@ -37,7 +36,7 @@ use crate::settings::registry::{
 use crate::settings::{Settings, Snapshot};
 
 pub const FLUSH_WITHIN: Duration = Duration::from_millis(750);
-/// How long a retired exporter has to send what it holds.
+/// How long a retired exporter has to stop; its client sends nothing, so this is rarely spent.
 const RETIRE_WITHIN: Duration = Duration::from_secs(3);
 const CONNECTOR_RUN_FAILED: &str = "ConnectorRunFailed";
 const CONNECTOR_RUN_FAILED_VALUE: &str = "A connector reported that its last run failed.";
@@ -58,10 +57,10 @@ pub struct Finished<'a> {
     pub timestamp: &'a str,
 }
 
-/// An exporter taken out of use, shut down off the request path.
+/// An exporter taken out of use, its client halted, shut down off the request path.
 enum Retired {
     Traces(Arc<Leg>),
-    Logs(SdkLoggerProvider),
+    Logs(Loggers),
     Drained(mpsc::SyncSender<()>),
 }
 
@@ -72,13 +71,15 @@ struct Started {
     tracer: SdkTracer,
     tracers: SdkTracerProvider,
     exceptions: Lane<Tracked>,
+    /// Where exception reports go now; `None` while none are sent.
+    route: Arc<ArcSwapOption<Route>>,
     retire: Sender<Retired>,
 }
 
 #[derive(Default)]
 struct Applied {
     wanted: Option<Wanted>,
-    loggers: Option<SdkLoggerProvider>,
+    loggers: Option<Loggers>,
     stopped: bool,
 }
 
@@ -86,7 +87,6 @@ struct Applied {
 struct Inner {
     started: OnceLock<Started>,
     applied: Mutex<Applied>,
-    pairs: ArcSwap<Vec<(String, String)>>,
 }
 
 /// Traces, log records and exception reports, rebuilt when their settings change.
@@ -127,8 +127,8 @@ fn retirer() -> Sender<Retired> {
                 Retired::Traces(leg) => {
                     let _ = leg.shutdown_with_timeout(RETIRE_WITHIN);
                 }
-                Retired::Logs(provider) => {
-                    let _ = provider.shutdown_with_timeout(RETIRE_WITHIN);
+                Retired::Logs(loggers) => {
+                    let _ = loggers.provider.shutdown_with_timeout(RETIRE_WITHIN);
                 }
                 Retired::Drained(done) => {
                     let _ = done.send(());
@@ -148,12 +148,14 @@ impl Telemetry {
     pub fn start(&self, instance_id: &str, settings: &Settings) -> Guard {
         let relay = Relay::default();
         let tracers = otel::relay_provider(relay.clone());
+        let route = Arc::new(ArcSwapOption::empty());
         let started = Started {
             instance_id: instance_id.to_string(),
             tracer: tracers.tracer("marfa-server"),
             relay,
             tracers,
-            exceptions: sinks::exceptions(),
+            exceptions: sinks::exceptions(route.clone()),
+            route,
             retire: retirer(),
         };
         let _ = self.inner.started.set(started);
@@ -164,7 +166,8 @@ impl Telemetry {
         }
     }
 
-    /// Reads the settings under the lock, so the newest change wins whichever caller is last.
+    /// Reads the settings under the lock, so the newest change wins whichever caller is last. A
+    /// replaced exporter is halted first, so nothing queued under the old settings is sent.
     pub fn follow(&self, settings: &Settings) {
         let Some(started) = self.inner.started.get() else {
             return;
@@ -180,6 +183,18 @@ impl Telemetry {
         let live = settings.live();
         fault::capture_stacks(live.get(TELEMETRY_ENABLED) && live.exception_receiver().is_some());
         let wanted = config::wanted(&live, &started.instance_id);
+        let route = live
+            .get(TELEMETRY_ENABLED)
+            .then(|| live.exception_receiver())
+            .flatten()
+            .map(|receiver| Route {
+                receiver,
+                private_allowed: live.get(ALLOW_PRIVATE_ADDRESSES),
+                attributes: wanted.pairs.clone(),
+            });
+        if started.route.load().as_deref() != route.as_ref() {
+            started.route.store(route.map(Arc::new));
+        }
         if applied.wanted.as_ref() == Some(&wanted) {
             return;
         }
@@ -190,7 +205,6 @@ impl Telemetry {
         let logs_same = before
             .as_ref()
             .is_some_and(|held| held.logs == wanted.logs && held.pairs == wanted.pairs);
-        self.inner.pairs.store(Arc::new(wanted.pairs.clone()));
         if !traces_same {
             let leg = wanted.traces.as_ref().and_then(|export| {
                 otel::trace_leg(export, &wanted.pairs, wanted.ratio)
@@ -198,20 +212,22 @@ impl Telemetry {
                     .ok()
             });
             if let Some(old) = started.relay.0.swap(leg.map(Arc::new)) {
+                old.halt.set();
                 let _ = started.retire.send(Retired::Traces(old));
             }
         }
         if !logs_same {
-            let provider = wanted.logs.as_ref().and_then(|export| {
+            let loggers = wanted.logs.as_ref().and_then(|export| {
                 otel::logger_provider(export, &wanted.pairs)
                     .map_err(|error| tracing::error!(%error, "Logs could not be set up"))
                     .ok()
             });
-            match &provider {
-                Some(provider) => crate::log::logs().connect(provider),
+            match &loggers {
+                Some(loggers) => crate::log::logs().connect(&loggers.provider),
                 None => crate::log::logs().disconnect(),
             }
-            if let Some(old) = std::mem::replace(&mut applied.loggers, provider) {
+            if let Some(old) = std::mem::replace(&mut applied.loggers, loggers) {
+                old.halt.set();
                 let _ = started.retire.send(Retired::Logs(old));
             }
         }
@@ -283,7 +299,8 @@ impl Telemetry {
         );
     }
 
-    /// Error tracking takes a report only while the settings name a receiver and allow it.
+    /// Error tracking takes a report only while the settings name a receiver and allow it, and
+    /// only on the route telemetry follows now.
     fn offer(&self, settings: &Snapshot, report: Report) {
         let Some(started) = self.inner.started.get() else {
             return;
@@ -291,13 +308,16 @@ impl Telemetry {
         if !settings.get(TELEMETRY_ENABLED) || !settings.get(ERROR_REPORTING_ENABLED) {
             return;
         }
-        if let Some(receiver) = settings.exception_receiver() {
-            started.exceptions.offer(Tracked {
-                report,
-                receiver,
-                private_allowed: settings.get(ALLOW_PRIVATE_ADDRESSES),
-                attributes: self.inner.pairs.load_full(),
-            });
+        let Some(receiver) = settings.exception_receiver() else {
+            return;
+        };
+        let Some(route) = started.route.load_full() else {
+            return;
+        };
+        if route.receiver == receiver
+            && route.private_allowed == settings.get(ALLOW_PRIVATE_ADDRESSES)
+        {
+            started.exceptions.offer(Tracked { report, route });
         }
     }
 
@@ -320,8 +340,8 @@ impl Telemetry {
         let left = || deadline.saturating_duration_since(Instant::now());
         let _ = started.tracers.shutdown_with_timeout(left());
         crate::log::logs().disconnect();
-        if let Some(provider) = loggers {
-            let _ = provider.shutdown_with_timeout(left());
+        if let Some(loggers) = loggers {
+            let _ = loggers.provider.shutdown_with_timeout(left());
         }
         started.exceptions.flush(left());
         let (done, drained) = mpsc::sync_channel(1);
