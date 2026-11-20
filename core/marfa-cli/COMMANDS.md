@@ -2207,7 +2207,7 @@ Preserves item and edge IDs, created_at and updated_at dates, current versions, 
 
 The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It holds no sign-in, keys, apps, webhooks, inbound endpoints, connector keys, addresses, name or logs, so set those up again after a restore; the command prints one line for each. Each setting, enforcement setting, type icon, source name, and connector state comes back only where this instance has none of its own. After a restore of another instance's archive, the command names where the backup destination keeps that instance's backups: delete them only once that instance no longer runs and nothing else restores from them. An archive holds the items in the bin only if its export did: `marfa export` carries them unless `--state` names other states.
 
-A build restores every archive version up to its own and refuses a later one, or one whose `manifest.json` names no format, which only releases before 0.0.72 wrote, naming the build that wrote it. An entry the build does not know, such as one a tar tool adds, is skipped, and the answer names it in `entries_skipped`, which the command also prints.
+A build restores every archive version up to its own and refuses a later one, or one whose `manifest.json` names no format or another format, as every release before 0.0.72 wrote, naming the build or the format. An entry the build does not know, such as one a tar tool adds, is skipped, and the answer names it in `entries_skipped`, which the command also prints.
 
 When the archive lacks blobs it names and this instance does not hold them either, the answer lists them in `blobs_missing`, and the command prints it and exits 1 with `blobs_missing`. Upload their bytes again with `blobs upload` to restore them.
 
@@ -4817,7 +4817,7 @@ marfa server install [OPTIONS]
 | `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
 | `--name <NAME>` | What this install is called: the service, the container and the data volume are named from it. The default is `marfa`. |
 | `--docker` | Run the server in Docker, from the release's image, in place of as a service of this machine. Needs Docker with Compose. An install keeps its runtime: to change it, export the data and restore it into a new install. |
-| `--release <VERSION>` | The release of the image to run, such as `0.0.22`, for `--docker`. The default is this binary's own version, and for a server already installed, the release it runs. A native server runs the release installed beside this `marfa`. |
+| `--release <VERSION>` | The release of the image to run, such as `0.0.22`, for `--docker`. The default is this binary's own version, and for a server already installed, the release it runs: another release is refused, and `marfa server upgrade` moves the install. A native server runs the release installed beside this `marfa`. |
 | `--access <ACCESS>` | How the server is reached. Asked when not given. `local`: only this machine, at `http://localhost`. `tailscale`: your tailnet, through Tailscale Serve, at this machine's `ts.net` name. `cloudflare`: a Cloudflare Tunnel on this machine, at your own address. `proxy`: another proxy on this machine, such as Caddy or nginx, at your own address. One of `local`, `tailscale`, `cloudflare`, `proxy`. |
 | `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. Needed for `cloudflare` and `proxy`; `tailscale` reads it from Tailscale. The server holds it, and a link to set up the server is at it. A run that gives neither this nor a different `--access` leaves an address the server already holds, and says so; `--access local` clears it. |
 | `--port <PORT>` | The port on this machine's loopback address. The default is 8600, or the next free port. |
@@ -4830,11 +4830,13 @@ marfa server install [OPTIONS]
 
 ### marfa server upgrade
 
-Move the server to a newer release that is installed.
+Move the server to another release, newer or older.
 
-A native server moves to the release of the `marfa-server` installed beside this `marfa`. A Docker install moves to the release you name with `--release`, or to this binary's own. It refuses a release older than the one the install runs.
+A native server moves to the release of the `marfa-server` installed beside this `marfa`. A Docker install moves to the release you name with `--release`, or to this binary's own. This is the only command that changes the release an install runs: `install`, `start` and `restart` keep it on the release it runs, which is the release of the `marfa-server` its service runs, or the image `.env` names for Docker.
 
-Before Marfa 0.1, a newer release may not read an earlier release's database. When it cannot, the install stays on its release and the database stays as it was: a native install asks the newer `marfa-server` first and changes nothing, and a Docker install starts its earlier release again. The way to move is then to export, make a new install of the newer release and restore the archive there. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+Before Marfa 0.1, a release may not read another release's database. This command first asks the release it moves to, newer or older, whether it opens the install's database and settings, and changes nothing when it does not. When the programs the service runs were already replaced, the error says how to put the earlier release back. A release that cannot be asked is started, and a Docker install whose new release then refuses the database starts its earlier release again. The way to move is then to export, make a new install of the other release and restore the archive there. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+
+To go back to an earlier release, install it the way you installed marfa and run this command with its `marfa`, or with `--release` for Docker.
 
 `marfa update start` has the server update itself to a release it found, with the same checks. This command moves an install to a release you have installed yourself.
 
@@ -4845,7 +4847,7 @@ marfa server upgrade [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
-| `--release <VERSION>` | The release to move to, for a Docker install. The default is this binary's own version. A native server moves to the release installed. |
+| `--release <VERSION>` | The release to move to, newer or older, for a Docker install. The default is this binary's own version. A native server moves to the release installed beside this `marfa`. |
 | `--wait-seconds <SECONDS>` | How long to wait for the server to answer, in seconds. Default: `120`. |
 
 ### marfa server status
@@ -4868,7 +4870,7 @@ marfa server status [OPTIONS]
 
 Start the server, if it is not running.
 
-A native install stays on the release it runs: a `marfa` of another release is refused, and `marfa server upgrade` moves the install. A `marfa` of the same release that has moved is named by its new path.
+A native install stays on the release it runs. A `marfa` of another release is refused, and so is a start after the programs the service runs were replaced in place while an earlier release still runs, as Homebrew and the install script do. `marfa server upgrade` moves the install. A `marfa` of the same release that has moved is named by its new path.
 
 On a Mac with a Docker install, this starts Docker's engine first if it is down: it is what the login agent runs.
 

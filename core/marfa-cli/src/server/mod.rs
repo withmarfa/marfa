@@ -100,11 +100,12 @@ pub enum ServerCommand {
     Status(DirArgs),
     /// Start the server, if it is not running.
     ///
-    /// A native install stays on the release it runs: a `marfa` of another
-    /// release is refused, and so is a start while an earlier release runs
-    /// than the programs the service now names. `marfa server upgrade` moves
-    /// the install. A `marfa` of the same release that has moved is named by
-    /// its new path.
+    /// A native install stays on the release it runs. A `marfa` of another
+    /// release is refused, and so is a start after the programs the service
+    /// runs were replaced in place while an earlier release still runs, as
+    /// Homebrew and the install script do. `marfa server upgrade` moves the
+    /// install. A `marfa` of the same release that has moved is named by its
+    /// new path.
     ///
     /// On a Mac with a Docker install, this starts Docker's engine first if it
     /// is down: it is what the login agent runs.
