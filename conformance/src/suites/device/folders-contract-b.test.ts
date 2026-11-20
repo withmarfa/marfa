@@ -134,6 +134,34 @@ it.each(["trashed", "archived"] as const)(
   },
 );
 
+it("reports a paused pull removal the volume refused, and keeps it paused", async () => {
+  harness = await departing("contract-b-confirm-refused");
+  const paused = await harness.folder.pull();
+  expect(paused.ok && paused.value.paused).toBe(3);
+  const refused = await fault("rename-new-unsupported=Note 0.md", () =>
+    harness!.folder.confirm(),
+  );
+  expect(refused.ok, JSON.stringify(refused)).toBe(true);
+  if (!refused.ok) return;
+  expect(refused.value.removed).toBe(2);
+  expect(
+    refused.value.refused.map((file) => file.path),
+    "a removal the volume refused went unreported",
+  ).toEqual(["Note 0.md"]);
+  expect(refused.value.refused[0]!.reason).toMatch(
+    /rename a file without replacing another/,
+  );
+  expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(true);
+  const status = await harness.folder.status();
+  expect(status.ok && status.value.paused.pull).toBe(1);
+  // The witness: where the volume takes it, the same confirmation does.
+  const confirmed = await harness.folder.confirm();
+  expect(
+    confirmed.ok && [confirmed.value.removed, confirmed.value.refused],
+  ).toEqual([1, []]);
+  expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(false);
+});
+
 it.each(["trashed", "archived"] as const)(
   "restores a paused pull removal of %s items into a held state",
   async (state) => {

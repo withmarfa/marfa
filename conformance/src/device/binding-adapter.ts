@@ -1032,6 +1032,7 @@ export class BindingFolder {
     removed: number;
     added: number;
     unsure: Array<{ path: string; reason: string }>;
+    refused: Array<{ path: string; reason: string }>;
   }> {
     return this.device.folderCall("confirm", this.dir);
   }

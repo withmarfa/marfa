@@ -1753,6 +1753,7 @@ export class CliFolder {
       unsure: Array<{ path: string; reason: string }>;
       removed: number;
       added: number;
+      refused: Array<{ path: string; reason: string }>;
     }>
   > {
     return this.run(["folders", "confirm", this.dir]);

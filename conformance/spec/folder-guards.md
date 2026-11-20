@@ -254,6 +254,18 @@ When a paused pull removal is confirmed and the files still contain their folder
 
 **Tests:** `device/folders-contract-b.test.ts › confirms a paused pull removal of %s items`.
 
+### `folder-guards/confirm-pull-refused-reported`
+
+When a paused pull removal is confirmed and the volume refuses a departed file's safe removal, a device MUST report that file in `refused` with the reason.
+
+**Tests:** `device/folders-contract-b.test.ts › reports a paused pull removal the volume refused, and keeps it paused`.
+
+### `folder-guards/confirm-pull-refused-paused`
+
+When a paused pull removal is confirmed and the volume refuses a departed file's safe removal, a device MUST keep that file's removal paused.
+
+**Tests:** `device/folders-contract-b.test.ts › reports a paused pull removal the volume refused, and keeps it paused`.
+
 ### `folder-guards/restore-disk-files`
 
 When a paused disk removal is restored and the missing files’ items still match the folder’s query, a device MUST write the missing files back from the held copy.
