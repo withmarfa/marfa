@@ -119,9 +119,8 @@ fn by_mode(link: bool, folder: bool, owner: u32, mode: u32, trusted: u32) -> Opt
     }
 }
 
-/// Makes `path` and each folder missing above it private to this process's account, whatever
-/// the umask: mode 0700, with no access control list entry taken from the folder it is made in.
-/// A folder already there is left as it is.
+/// Makes `path` and each missing folder above it 0700 whatever the umask, with no access control
+/// list entry inherited from its parent. A folder already there is left as it is.
 pub fn make_private_folders(path: &Path) -> std::io::Result<()> {
     use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 

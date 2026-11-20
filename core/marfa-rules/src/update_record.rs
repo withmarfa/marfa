@@ -123,8 +123,7 @@ impl Folder {
         &self.0
     }
 
-    /// The folder holding the database is made here when the server has not made it yet, so it
-    /// is made as the server makes it.
+    /// Also makes `data` when the server has not yet, so it is made as the server makes it.
     fn make(&self) -> io::Result<()> {
         marfa_acl::make_private_folders(&self.0)
     }
