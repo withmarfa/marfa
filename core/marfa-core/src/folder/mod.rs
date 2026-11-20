@@ -1692,27 +1692,30 @@ impl Folder {
     }
 
     /// Ends each row whose directory a complete walk of the whole folder
-    /// did not find, nor its reserved name, and answers each one's file, for
-    /// the pass to report this once.
-    fn clear_unfound(&self, walked: &[(WalkRoute, String)]) -> Result<Vec<Flagged>> {
+    /// did not find, nor its reserved name. Its file joins the files kept
+    /// since the last report in the same step, so a pass that ends before it
+    /// reports still leaves the report to the next one.
+    fn clear_unfound(&self, walked: &[(WalkRoute, String)]) -> Result<()> {
         let unfound = self.unsettled(walked)?;
-        let conn = self.core.conn()?;
-        for (id, _) in &unfound {
-            state::clear_displaced(&conn, id)?;
+        if unfound.is_empty() {
+            return Ok(());
         }
-        Ok(unfound.into_iter().map(|(_, flagged)| flagged).collect())
+        let conn = self.core.conn()?;
+        let tx = conn.unchecked_transaction()?;
+        for (id, flagged) in &unfound {
+            state::put_kept(&tx, &flagged.path, &flagged.reason)?;
+            state::clear_displaced(&tx, id)?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
-    /// What a pass reports kept: what was kept since the last report, each
-    /// file the walk met under a reserved name, and each row's file that the
-    /// pass ended unfound, each path once.
-    fn kept_report(
-        &self,
-        walked: &[(WalkRoute, String)],
-        unfound: Vec<Flagged>,
-    ) -> Result<Vec<Flagged>> {
+    /// What a pass reports kept: what was kept since the last report,
+    /// including each row's file a pass ended unfound, and each file the walk
+    /// met under a reserved name, each path once.
+    fn kept_report(&self, walked: &[(WalkRoute, String)]) -> Result<Vec<Flagged>> {
         let mut report = self.take_kept()?;
-        for flagged in self.walked_kept(walked).chain(unfound) {
+        for flagged in self.walked_kept(walked) {
             if !report.iter().any(|kept| kept.path == flagged.path) {
                 report.push(flagged);
             }

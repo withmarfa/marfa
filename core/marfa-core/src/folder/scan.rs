@@ -551,11 +551,9 @@ impl Folder {
         let incomplete = walked.incomplete();
         // Only a complete walk of the whole folder shows a reserved name is
         // in none of it.
-        let unfound = if scoped.is_none() && reads.full && !incomplete {
-            self.clear_unfound(&walked.kept)?
-        } else {
-            Vec::new()
-        };
+        if scoped.is_none() && reads.full && !incomplete {
+            self.clear_unfound(&walked.kept)?;
+        }
         self.settle_landings()?;
         swap_root(&self.root, "replace-root-before-capture");
         if let Some(gone) = self.root_gone() {
@@ -579,9 +577,7 @@ impl Folder {
         for left in state_left {
             let _ = self.state_dir.unlink(&left);
         }
-        report
-            .flagged
-            .extend(self.kept_report(&walked.kept, unfound)?);
+        report.flagged.extend(self.kept_report(&walked.kept)?);
         report.directories = walked.directories.clone();
         report.secrets = walked.secrets.clone();
         let unanswered = crate::store::items_awaiting_their_write(&*self.core.conn()?)?;

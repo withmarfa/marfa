@@ -301,6 +301,46 @@ fn a_save_whose_directory_left_the_folder_is_reported_once_and_let_go() {
 
 #[cfg(debug_assertions)]
 #[test]
+fn a_report_of_a_save_that_left_the_folder_survives_a_pass_that_ends_early() {
+    let (dir, folder) = scanned_folder();
+    let root = dir.path().canonicalize().unwrap();
+    stopped_after_the_exchange(&folder, &root);
+    let elsewhere = tempfile::tempdir_in(root.join("..")).unwrap();
+    std::fs::rename(root.join("Projects"), elsewhere.path().join("Projects")).unwrap();
+    std::fs::create_dir(root.with_extension("replacement")).unwrap();
+
+    // SAFETY: nextest runs each test in a process of its own, and nothing
+    // else in this one reads the environment while it changes.
+    unsafe { std::env::set_var("MARFA_TEST_FAULT", "replace-root-before-capture") };
+    let ended = folder.scan();
+    // SAFETY: as above.
+    unsafe { std::env::remove_var("MARFA_TEST_FAULT") };
+    assert!(ended.unwrap().root_gone.is_some());
+    std::fs::rename(&root, root.with_extension("swapped")).unwrap();
+    std::fs::rename(root.with_extension("original"), &root).unwrap();
+
+    let report = folder.scan().unwrap();
+    let kept: Vec<&Flagged> = report
+        .flagged
+        .iter()
+        .filter(|flagged| flagged.flag == "kept")
+        .collect();
+    assert_eq!(
+        kept.len(),
+        1,
+        "the report of a save that left the folder was lost with the pass that ended early: {:?}",
+        report.flagged
+    );
+    assert!(
+        kept[0].reason.contains("no longer in the folder"),
+        "{kept:?}"
+    );
+    assert!(kept_flags(&folder.scan().unwrap()).is_empty());
+    std::fs::remove_dir_all(root.with_extension("swapped")).unwrap();
+}
+
+#[cfg(debug_assertions)]
+#[test]
 fn a_deleted_directorys_row_is_let_go_after_one_report() {
     let (dir, folder) = scanned_folder();
     let root = dir.path().canonicalize().unwrap();
