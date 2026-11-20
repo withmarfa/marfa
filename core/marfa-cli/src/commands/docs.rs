@@ -45,7 +45,7 @@ const BODY_LIMIT: u64 = 10 * 1024 * 1024;
 #[command(
     args_conflicts_with_subcommands = true,
     arg_required_else_help = true,
-    after_long_help = "Examples:\n  marfa docs search \"restore an archive\" --limit 5\n  marfa docs topics\n  marfa docs build/files\n  marfa docs cli --section \"Use another keychain file\""
+    after_long_help = "Examples:\n  marfa docs search \"restore an archive\" --limit 5\n  marfa docs topics\n  marfa docs build/files\n  marfa docs reference/cli --section \"Use another keychain file\""
 )]
 pub struct DocsArgs {
     /// The page to print, as Markdown: its path on the docs site, or its address.

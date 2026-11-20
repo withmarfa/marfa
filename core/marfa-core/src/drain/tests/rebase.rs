@@ -167,6 +167,7 @@ fn a_first_answer_not_retained_settles_by_the_status_it_carried() {
             retry_after_seconds: None,
             replayed: false,
             contract_named: true,
+            request_id: None,
         })
     };
     let succeeded = not_retained(json!({ "original_status": 201 }));
@@ -279,6 +280,7 @@ fn failed_verdicts_restore_unsent_followers_base_without_reading_or_rewriting_se
                     retry_after_seconds: None,
                     replayed: false,
                     contract_named: true,
+                    request_id: None,
                 })
             };
             settle(

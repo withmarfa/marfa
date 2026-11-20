@@ -2024,6 +2024,7 @@ mod tests {
             message: String::new(),
             retry_after_seconds: Some(seconds),
             details: None,
+            request_id: None,
         };
         assert_eq!(
             retry_schedule(SECOND, &limited(45)),
@@ -2639,6 +2640,7 @@ mod tests {
             status: 401,
             code: Some("unauthorized".into()),
             details: Some(serde_json::json!({ "ended": "revoked" })),
+            request_id: None,
         };
         let mut stopped = drained();
         stopped.report.stopped = Some("the server refused the credential".into());

@@ -1391,6 +1391,8 @@ pub struct ServerAnswer {
     pub status: u16,
     pub code: Option<String>,
     pub details: Option<JsonValue>,
+    /// The server's `X-Request-ID`, which a report of a problem can quote.
+    pub request_id: Option<String>,
 }
 
 impl From<marfa_core::ServerAnswer> for ServerAnswer {
@@ -1399,6 +1401,7 @@ impl From<marfa_core::ServerAnswer> for ServerAnswer {
             status: answer.status,
             code: answer.code,
             details: answer.details.map(JsonValue::from),
+            request_id: answer.request_id,
         }
     }
 }
@@ -1815,7 +1818,7 @@ impl From<marfa_core::CoreError> for MarfaError {
                 unsent,
                 message,
             },
-            E::ReadingHandle => MarfaError::ReadingHandle { message },
+            E::ReadingHandle | E::OpenedToRead => MarfaError::ReadingHandle { message },
             E::StoreDamaged {
                 path,
                 reason,
@@ -3528,12 +3531,14 @@ mod tests {
                 message: text(),
                 retry_after_seconds: None,
                 details: None,
+                request_id: None,
             },
             E::Server {
                 status: 500,
                 code: text(),
                 message: text(),
                 details: None,
+                request_id: None,
             },
             E::Io(text()),
             E::Network(text()),
@@ -3972,6 +3977,7 @@ mod tests {
                     message: text(),
                     retry_after_seconds: Some(1),
                     details: None,
+                    request_id: None,
                 }
                 .into(),
                 "RateLimited",
@@ -3982,6 +3988,7 @@ mod tests {
                     code: text(),
                     message: text(),
                     details: None,
+                    request_id: None,
                 }
                 .into(),
                 "Server",
@@ -4161,6 +4168,7 @@ mod tests {
                 status,
                 code: Some(code.into()),
                 details: Some(details.clone()),
+                request_id: None,
             }))
         };
         let crossed = MarfaError::from(E::Forbidden {
@@ -4199,6 +4207,7 @@ mod tests {
             code: "internal_error".into(),
             message: "no".into(),
             details: Some(Box::new(details.clone())),
+            request_id: None,
         });
         assert!(matches!(
             carried,
@@ -4237,6 +4246,7 @@ mod tests {
             code: "version_conflict".into(),
             message: "stale".into(),
             details: Some(details()),
+            request_id: None,
         };
         let answered = [
             server(),
@@ -4246,6 +4256,7 @@ mod tests {
                 message: "slow".into(),
                 retry_after_seconds: Some(3),
                 details: Some(details()),
+                request_id: None,
             },
             E::Unnamed {
                 origin: "https://marfa.example".into(),

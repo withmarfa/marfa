@@ -387,7 +387,7 @@ impl Core {
             http: None,
             cache: Some(blob::Cache::beside(path)),
             catch_up_idle: DEFAULT_CATCH_UP_IDLE,
-            lock: Arc::new(lock::WriterLock::reader()),
+            lock: Arc::new(lock::WriterLock::opened_to_read()),
             streaming: Mutex::default(),
             draining: Mutex::new(()),
             removing,

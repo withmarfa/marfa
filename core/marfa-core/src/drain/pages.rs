@@ -1218,6 +1218,7 @@ pub(super) fn settle_owed(
                     retry_after_seconds: None,
                     replayed: true,
                     contract_named: true,
+                    request_id: None,
                 };
                 settle_success(
                     core,
@@ -1322,6 +1323,7 @@ fn settle_one(
         retry_after_seconds: None,
         replayed: false,
         contract_named: true,
+        request_id: None,
     };
     let settled = match settle_success(core, stop, row, &answer, shape, pass, true, Some(read)) {
         Ok(settled) => settled,

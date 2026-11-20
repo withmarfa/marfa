@@ -134,6 +134,7 @@ pub(super) fn read_owed_backs(
             retry_after_seconds: None,
             replayed: true,
             contract_named: true,
+            request_id: None,
         };
         let settled = if let Some(id) = shape.strip_prefix("land:") {
             land(

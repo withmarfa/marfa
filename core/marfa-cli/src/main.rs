@@ -480,6 +480,20 @@ fn refused(error: &CliError, json: bool) -> ExitCode {
     ExitCode::from(error.exit() as u8)
 }
 
+/// What a refusal says on standard error: its message, then a server's
+/// request ID on a line of its own. An install's log tail keeps its line
+/// breaks; everything else about it is escaped as any other text is.
+fn refusal_text(error: &CliError) -> String {
+    let mut text = match error {
+        CliError::Install(log) => output::printable_lines(log),
+        _ => output::printable(&error.to_string()),
+    };
+    if let Some(id) = error.request_id() {
+        text.push_str(&format!("\nRequest ID: {}", output::printable(&id)));
+    }
+    text
+}
+
 fn print_refusal(error: &CliError, json: bool, aim: Option<&hint::Aim>) {
     if json {
         let _ = writeln!(output::stderr_json(), "{}", error.envelope());
@@ -487,7 +501,7 @@ fn print_refusal(error: &CliError, json: bool, aim: Option<&hint::Aim>) {
         crate::errln!(
             "{} {}",
             style::bad(style::Stream::Err, "marfa:"),
-            output::printable(&error.to_string())
+            refusal_text(error)
         );
         if let Some(hint) = aim.and_then(|aim| hint::for_error(error, aim)) {
             crate::errln!("{hint}");
@@ -747,6 +761,57 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
 mod tests {
     use super::*;
     use clap::CommandFactory;
+
+    #[test]
+    fn a_server_refusal_names_its_request_id_on_its_own_line() {
+        let refusal = |request_id: Option<&str>| CliError::Refused {
+            status: 403,
+            code: "forbidden".into(),
+            message: "no".into(),
+            retry_after_seconds: None,
+            details: None,
+            request_id: request_id.map(str::to_string),
+        };
+        assert_eq!(
+            refusal_text(&refusal(Some("req-1"))),
+            "the server refused (403 forbidden): no\nRequest ID: req-1"
+        );
+        assert_eq!(
+            refusal_text(&refusal(None)),
+            "the server refused (403 forbidden): no"
+        );
+        assert_eq!(refusal_text(&CliError::NoStoreNamed).lines().count(), 1);
+    }
+
+    #[test]
+    fn a_refusal_through_the_core_names_the_request_id_the_server_sent() {
+        let refusal = |request_id: Option<&str>| {
+            CliError::from(marfa_core::CoreError::Forbidden {
+                code: "type_not_permitted".into(),
+                message: "no".into(),
+                server: Some(Box::new(marfa_core::ServerAnswer {
+                    status: 403,
+                    code: Some("type_not_permitted".into()),
+                    details: None,
+                    request_id: request_id.map(str::to_string),
+                })),
+            })
+        };
+        let sent = refusal(Some("req-2"));
+        assert!(refusal_text(&sent).ends_with("\nRequest ID: req-2"));
+        assert_eq!(sent.envelope()["error"]["server"]["request_id"], "req-2");
+        assert!(!refusal_text(&refusal(None)).contains("Request ID"));
+    }
+
+    #[test]
+    fn a_failed_install_shows_its_log_tail_a_line_to_a_line() {
+        let error =
+            CliError::Install("the server stopped. Its log ends:\nfirst\n\u{1b}[2Jsecond".into());
+        assert_eq!(
+            refusal_text(&error),
+            "the server stopped. Its log ends:\nfirst\n\\u{1b}[2Jsecond"
+        );
+    }
 
     #[test]
     fn device_views_parse_and_replace_folder_selection() {
