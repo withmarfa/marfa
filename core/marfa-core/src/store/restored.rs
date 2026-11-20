@@ -1062,16 +1062,16 @@ mod tests {
         assert_eq!(unseen_receipts(&conn, opened + 1).unwrap().len(), 1);
     }
 
-    /// With `MARFA_RECEIPT_BENCH_ROWS` set, keeps that many receipts, half of
+    /// With `MARFA_TEST_RECEIPT_BENCH_ROWS` set, keeps that many receipts, half of
     /// them removals, and prints what keeping one more, settling one from
     /// the stream and reading the removals cost. Run it in a release build:
     ///
     /// ```sh
-    /// MARFA_RECEIPT_BENCH_ROWS=50000 cargo nextest run --release -p marfa-core --lib receipt_bench --no-capture
+    /// MARFA_TEST_RECEIPT_BENCH_ROWS=50000 cargo nextest run --release -p marfa-core --lib receipt_bench --no-capture
     /// ```
     #[test]
     fn receipt_bench_times_keeping_and_settling() {
-        let rows: usize = std::env::var("MARFA_RECEIPT_BENCH_ROWS")
+        let rows: usize = std::env::var("MARFA_TEST_RECEIPT_BENCH_ROWS")
             .ok()
             .and_then(|rows| rows.parse().ok())
             .unwrap_or(500);
