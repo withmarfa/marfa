@@ -162,9 +162,10 @@ pub enum FoldersCommand {
     /// or, where it cannot tell, once it has been unchanged for 7 days. A file
     /// a program wrote to goes back to its path, and the next push sends what
     /// the program wrote; `--discard` puts such a file back too, in place of
-    /// deleting it. With `--discard`, a watch holding the directory lets it go
-    /// while this runs, and this is refused if the process holding the directory
-    /// does not let it go within 10 seconds.
+    /// deleting it, except one whose record Marfa could not read, which it
+    /// deletes whatever it holds. With `--discard`, a watch holding the
+    /// directory lets it go while this runs, and this is refused if the process
+    /// holding the directory does not let it go within 10 seconds.
     Kept {
         /// The directory.
         dir: PathBuf,
@@ -868,7 +869,7 @@ fn asks_to_discard(dir: &Path, going: &[String]) -> Result<bool, CliError> {
     let mut question = crate::output::stderr();
     writeln!(
         question,
-        "{} kept file(s) in {} would be deleted, unless a program wrote to one, which goes back to its path:",
+        "{} kept file(s) in {} would be deleted. A file a program wrote to goes back to its path instead, except one whose record Marfa could not read:",
         going.len(),
         dir.display()
     )?;
