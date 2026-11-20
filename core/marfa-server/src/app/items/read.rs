@@ -810,8 +810,7 @@ pub async fn bin_selection(
     .await
 }
 
-/// What the bin lists to the caller: every item of a type it may write that its source filter
-/// leaves it.
+/// How many items the bin lists to the caller.
 pub async fn bin_total(app: &App, caller: &Caller) -> Result<i64> {
     reading(app, caller, move |read| {
         let levers = read.caller.levers()?;
@@ -853,8 +852,7 @@ pub struct GoesWith {
     pub connector_agreements: i64,
 }
 
-/// One walk from every chosen row, as [`write::purge_chosen`](super::write::purge_chosen) takes
-/// it. `digest` covers what the caller cannot see as well.
+/// The walk [`write::purge_chosen`](super::write::purge_chosen) takes; `digest` covers hidden rows.
 #[derive(Clone, Debug)]
 pub struct PurgePreview {
     pub ids: Vec<String>,

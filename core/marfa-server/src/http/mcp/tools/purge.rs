@@ -1,5 +1,4 @@
-//! `marfa_purge`: previews purging chosen items or a page of the trash, then purges on a
-//! single-use confirmation.
+//! `marfa_purge`: previews purging chosen items or a page of the trash, then purges on confirm.
 
 use std::sync::Arc;
 
@@ -45,7 +44,7 @@ pub fn definition() -> Definition {
                     "description": format!("The items' IDs, at most {MAX_IDS}. Each must be in the trash.") },
                 "page": { "type": "object",
                     "properties": { "cursor": { "type": "string", "minLength": 1,
-                        "description": "A next_cursor from a preview or from marfa_trash." } },
+                        "description": "A next_cursor from a preview, or from marfa_trash called without type or q." } },
                     "additionalProperties": false,
                     "description": "Preview one page of the trash instead of naming ids." },
                 "confirm": { "type": "string", "minLength": 1,
@@ -197,8 +196,7 @@ fn choosing(arguments: &Map<String, Value>) -> Result<Choosing, Stop> {
     }
 }
 
-/// The bin as the caller sees it after the purge, or nothing where that read fails: the purge
-/// has committed either way.
+/// The bin's count after the commit, or null where that read fails.
 async fn remaining(app: &App, caller: &Caller) -> Value {
     items::bin_total(app, caller)
         .await

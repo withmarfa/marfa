@@ -378,7 +378,7 @@ When a `marfa_delete` call carries a `confirm` token that an earlier call used t
 
 ## Purging items
 
-`marfa_purge` purges items from the trash in two calls: a preview, of the IDs it names or of one page of the trash, that answers the IDs to confirm and everything the purge would take, with a `confirm` token, and a call that sends those IDs with that token. The purge takes the walk of `POST /items/{id}/purge` from all the named items at once: each item's edges, and each part in the trash whose every host the walk takes.
+`marfa_purge` purges items from the trash in two calls: a preview, of the IDs it names or of one page of the trash, that answers the IDs to confirm and everything the purge would take, with a `confirm` token, and a call that sends those IDs with that token. The purge takes the walk of `POST /items/{id}/purge` from all the named items at once: each item's edges, and each part that went to the trash with its hosts once the walk takes every one of them.
 
 ### `mcp/purge-destructive`
 

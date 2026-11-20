@@ -192,8 +192,7 @@ impl Signer {
         )
     }
 
-    /// A confirmation whose target is signed apart from its subject, so the target is checked
-    /// before anything about it is read.
+    /// A confirmation whose target is signed apart from its subject, to be checked unread.
     pub fn issue_bound(
         &self,
         tool: &str,
@@ -239,8 +238,7 @@ impl Signer {
         ))
     }
 
-    /// Judges a bound confirmation in the write that would spend it, in this order: the target's
-    /// signature, the spent record, then the expiry. Nothing of the target is read here.
+    /// Judges a bound confirmation in the write that would spend it, without reading its target.
     pub fn open(
         &self,
         tx: &Transaction<'_>,

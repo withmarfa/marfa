@@ -40,8 +40,7 @@ pub fn token_for(app: &App, caller: &Caller, preview: &PurgePreview) -> Result<c
     )
 }
 
-/// The token is judged, the ids read and walked, the walk purged and the token spent in one write,
-/// so a failure anywhere leaves every row and the token as they were.
+/// Judges the token, purges the walk and spends the token in one write.
 pub async fn confirmed(
     app: &Arc<App>,
     caller: &Caller,

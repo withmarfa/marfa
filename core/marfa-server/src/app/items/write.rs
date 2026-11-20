@@ -319,9 +319,7 @@ pub enum Chosen {
     Changed,
 }
 
-/// Purges the rows the owner chose and everything one walk from all of them takes, in the
-/// caller's write, so whatever else that write records commits or fails with the purge.
-/// `agree` sees the digest of the walk before anything is taken.
+/// Purges one walk from the chosen rows in the caller's write, once `agree` accepts its digest.
 pub fn purge_chosen(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,

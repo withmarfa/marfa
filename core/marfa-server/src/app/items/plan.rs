@@ -94,8 +94,7 @@ impl<'c> Gate<'_, 'c> {
             .ok_or_else(not_found)
     }
 
-    /// The row as the owner's bin and history doors see it: never `system.*`, and never one the
-    /// credential's source filter leaves out.
+    /// The row as the owner's bin and history doors see it.
     pub fn owner_row(&self, id: &str) -> Result<Item> {
         let levers = self.caller.levers()?;
         rows::by_id(self.tx, id)?
@@ -440,8 +439,7 @@ fn purged(gate: &Gate<'_, '_>, asked: &[Asked]) -> Result<Plan> {
     })
 }
 
-/// The rows the owner chose, each as [`Gate::owner_row`] finds it, and one walk from all of them
-/// at once, so a part bound to two chosen hosts goes with them.
+/// One walk from every chosen row at once, so a part two chosen hosts share goes with them.
 pub(super) fn chosen(gate: &Gate<'_, '_>, ids: &[String]) -> Result<Plan> {
     gate.caller.require(Permission::ItemsPurge)?;
     let mut seen = HashSet::new();
