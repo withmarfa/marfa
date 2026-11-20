@@ -25,7 +25,7 @@ import {
   tempFolder,
 } from "../../utils/temp-folder.js";
 const execute = promisify(execFile);
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   copyItemEvent,
   refusal,
@@ -811,6 +811,157 @@ it("trashes no item whose file moved to a name the folder does not send", async 
         .filter((r) => r.kind === "delete_item")
         .map((r) => r.item_id),
   ).toEqual([row(1).item.id]);
+});
+
+it("flags a pull's item with the file that carries it, as no download", async () => {
+  harness = await folderHarness("contract-b-pull-carried", {
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: {
+      query: { types: ["core.note"] },
+      removal_threshold: { files: 100, fraction: 1 },
+    },
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  renameSync(join(harness.dir, "Note 0.md"), join(harness.dir, "Note 0.bin"));
+  rmSync(join(harness.dir, "Note 1.md"));
+  const scanned = await harness.folder.scan();
+  expect(scanned.ok && scanned.value.missing, JSON.stringify(scanned)).toBe(1);
+  const pulled = await harness.folder.pull();
+  expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+  const flagged = pulled.ok ? pulled.value.flagged : [];
+  const carried = flagged.find((file) => file.item === row(0).item.id);
+  expect([carried?.path, carried?.flag]).toEqual(["Note 0.md", "carried"]);
+  expect(carried?.reason).toContain("Note 0.bin");
+  expect(pulled.ok && pulled.value.unwritten, JSON.stringify(pulled)).toBe(0);
+  // The first pull wrote the note's file; this one writes no second one.
+  expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(false);
+});
+
+/** The requests a harness's server heard with this method, under `/items`. */
+function itemRequests(made: FolderHarness, method: string) {
+  return made.server.requests.filter(
+    (request) =>
+      request.method === method && request.pathname.startsWith("/items"),
+  );
+}
+
+/** Writes a new note, as a sentinel, and waits for the watch to send it. */
+async function sentinel(made: FolderHarness, name: string) {
+  const before = itemRequests(made, "POST").length;
+  writeFileSync(join(made.dir, name), `---\ntitle: ${name}\n---\nbody\n`);
+  await vi.waitFor(
+    () => {
+      expect(itemRequests(made, "POST").length).toBeGreaterThan(before);
+    },
+    { timeout: 30_000, interval: 200 },
+  );
+}
+
+it("trashes no item a watch's quick passes meet while a file the folder does not send carries it", async () => {
+  harness = await folderHarness("contract-b-watch-skipped", {
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: {
+      query: { types: ["core.note"] },
+      removal_threshold: { files: 100, fraction: 1 },
+    },
+  });
+  scriptFolderWrites(harness);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  const made = harness;
+  const deleted = () =>
+    itemRequests(made, "DELETE").map((request) =>
+      request.pathname.split("/").at(-1),
+    );
+  const watching = harness.folder.watch();
+  try {
+    // The witness: a file deleted while the watch runs is sent as a delete.
+    rmSync(join(harness.dir, "Note 1.md"));
+    await vi.waitFor(
+      () => {
+        expect(deleted()).toEqual([row(1).item.id]);
+      },
+      { timeout: 30_000, interval: 200 },
+    );
+    renameSync(join(harness.dir, "Note 0.md"), join(harness.dir, "Note 0.bin"));
+    await sentinel(harness, "first.md");
+    // Quick passes that each name only a file the folder does not send.
+    writeFileSync(join(harness.dir, "c.bin"), "other bytes");
+    await sentinel(harness, "second.md");
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    writeFileSync(join(harness.dir, "d.bin"), "other bytes");
+    await sentinel(harness, "third.md");
+    // A delete made after them is sent after anything they let go.
+    rmSync(join(harness.dir, "Note 2.md"));
+    await vi.waitFor(
+      () => {
+        expect(deleted()).toContain(row(2).item.id);
+      },
+      { timeout: 30_000, interval: 200 },
+    );
+    expect(deleted()).toEqual([row(1).item.id, row(2).item.id]);
+    // Once no file carries it, its item goes too.
+    rmSync(join(harness.dir, "Note 0.bin"));
+    await vi.waitFor(
+      () => {
+        expect(deleted()).toContain(row(0).item.id);
+      },
+      { timeout: 30_000, interval: 200 },
+    );
+    expect(watching.running(), watching.stderr).toBe(true);
+  } finally {
+    await watching.stop();
+  }
+});
+
+it("makes a new item of a new file a watch finds at the path of a file the folder does not send", async () => {
+  harness = await folderHarness("contract-b-watch-new-at-carried", {
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: {
+      query: { types: ["core.note"] },
+      removal_threshold: { files: 100, fraction: 1 },
+    },
+  });
+  scriptFolderWrites(harness);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  const made = harness;
+  const updated = (id: string) =>
+    itemRequests(made, "PATCH").filter(
+      (request) => request.pathname === `/items/${id}`,
+    ).length;
+  const created = (title: string) =>
+    itemRequests(made, "POST").filter(
+      (request) =>
+        request.pathname === "/items" &&
+        (JSON.parse(request.body) as { properties?: { title?: string } })
+          .properties?.title === title,
+    ).length;
+  const watching = harness.folder.watch();
+  try {
+    // The witness: a file saved anew at a note's path is that note's edit.
+    const note = readFileSync(join(harness.dir, "Note 3.md"), "utf8");
+    rmSync(join(harness.dir, "Note 3.md"));
+    writeFileSync(join(harness.dir, "Note 3.md"), `${note}edited\n`);
+    await vi.waitFor(
+      () => {
+        expect(updated(row(3).item.id)).toBe(1);
+      },
+      { timeout: 30_000, interval: 200 },
+    );
+    renameSync(join(harness.dir, "Note 0.md"), join(harness.dir, "Note 0.bin"));
+    await sentinel(harness, "first.md");
+    writeFileSync(join(harness.dir, "Note 0.md"), "a different note\n");
+    await vi.waitFor(
+      () => {
+        expect(created("Note 0")).toBe(1);
+      },
+      { timeout: 30_000, interval: 200 },
+    );
+    expect(updated(row(0).item.id)).toBe(0);
+    expect(itemRequests(made, "DELETE")).toEqual([]);
+    expect(watching.running(), watching.stderr).toBe(true);
+  } finally {
+    await watching.stop();
+  }
 });
 
 it("keeps a paused removal unsure while part of the folder cannot be read", async () => {
