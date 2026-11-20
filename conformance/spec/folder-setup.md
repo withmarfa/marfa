@@ -456,6 +456,14 @@ While a device holds a folder's writer role, when it refuses the directory's sto
 
 **Tests:** `device/folders-refused-store-live.test.ts › replaces a folder's store another build made that holds nothing unsent, and sends what was edited while it was refused`, `› replaces a folder's refused store for a watch of the folder, and sends an edit`, `› watches every folder: replaces a refused store that holds nothing unsent, and leaves one that does`, `› replaces a refused store a running watch hands to a push, and the watch takes the new store back and sends an edit`, `› keeps a file deleted while its store was refused deleted, and sends the deletion`, `› takes away the file of a note put in the bin while its store was refused, and sends no new note`, `› sends an edit of a text file made while its store was refused to the item the file is`, `› keeps holding a file the server refused because its note is in the bin, and sends no new note`, `› keeps a first sync still waiting, and the server the store was filled from, when it replaces the store`.
 
+### `folder-setup/refused-store-checks-carried`
+
+While a directory's store holds a record of the folder's files whose tables have the columns this build makes, a device MUST read the record as one this build can read for `folder-setup/refused-store-replaced`, whatever checks those tables carry.
+
+**Reason:** a release that only widens the values a column takes would otherwise leave every folder stopped until the person removed it and added it again. A row the new checks refuse fails the replacement, which leaves the store as it was.
+
+**Tests:** `device/folders-refused-store-live.test.ts › replaces a store whose record of missing files has the same columns and other checks, and sends the deletion it records`.
+
 ### `folder-setup/refused-store-kept`
 
 When a device replaces a directory's store, a device MUST keep the folder following the `system.folder` that the replaced store named.

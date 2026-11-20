@@ -692,6 +692,58 @@ it("keeps a file deleted while its store was refused deleted, and sends the dele
   expect(await serverNote(titles.stays)).toBeDefined();
 });
 
+it("replaces a store whose record of missing files has the same columns and other checks, and sends the deletion it records", async () => {
+  const at = machine("refused-store-checks");
+  const own = ownTag("checks");
+  const titles = {
+    deleted: `Checked away ${ctx.runId}`,
+    stays: `Checked stays ${ctx.runId}`,
+  };
+  const folder = await added(
+    at,
+    "notes",
+    own.query,
+    {
+      "Deleted.md": note(titles.deleted, "body"),
+      "Stays.md": note(titles.stays, "body"),
+    },
+    own.defaults,
+  );
+  value(await folder.push());
+  expect(await serverNote(titles.deleted)).toBeDefined();
+  rmSync(join(folder.dir, "Deleted.md"));
+  expect(value(await folder.scan()).missing).toBe(1);
+  // The journal as an earlier build made it: the same columns, with a
+  // check that allows fewer values.
+  const db = new DatabaseSync(folder.store);
+  try {
+    db.exec(`
+      CREATE TABLE journal_rows AS SELECT * FROM folder_journal;
+      DROP TABLE folder_journal;
+      CREATE TABLE folder_journal (
+        path TEXT PRIMARY KEY,
+        item_id TEXT NOT NULL,
+        missing_since TEXT NOT NULL,
+        kept TEXT CHECK (kept IN ('arriving', 'unsure')),
+        reason TEXT
+      ) WITHOUT ROWID;
+      INSERT INTO folder_journal SELECT * FROM journal_rows;
+      DROP TABLE journal_rows;
+      PRAGMA user_version = 10;
+    `);
+  } finally {
+    db.close();
+  }
+  await pastRenameGrace();
+
+  const push = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(push.exitCode(), push.stderr).toBe(0);
+  expect(push.stderr).toContain(REPLACED);
+  expect(Object.keys(filesOf(folder.dir))).toEqual(["Stays.md"]);
+  expect(await serverNote(titles.deleted)).toBeUndefined();
+  expect(await serverNote(titles.stays)).toBeDefined();
+});
+
 it("takes away the file of a note put in the bin while its store was refused, and sends no new note", async () => {
   const at = machine("refused-store-binned");
   const own = ownTag("binned");
