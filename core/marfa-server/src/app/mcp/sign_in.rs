@@ -79,9 +79,18 @@ pub struct AppEnding {
 }
 
 pub enum Ending {
-    Browser { sign_in: Value, digest: String },
-    App { app: Box<AppEnding>, digest: String },
-    Passkey { passkey: Value, digest: String },
+    Browser {
+        sign_in: Value,
+        digest: String,
+    },
+    App {
+        app: Box<AppEnding>,
+        digest: String,
+    },
+    Passkey {
+        passkey: Value,
+        digest: String,
+    },
     /// A key, which `marfa_revoke_key` revokes.
     Key,
 }
@@ -292,7 +301,11 @@ pub async fn end_confirmed(
     let mut signed = None;
     for kind in kinds {
         let target = kind.target(&id, revoke_keys);
-        if app.mcp.signer.holds_target(TOOL, &credential, &target, &bound)? {
+        if app
+            .mcp
+            .signer
+            .holds_target(TOOL, &credential, &target, &bound)?
+        {
             signed = Some((*kind, target));
             break;
         }

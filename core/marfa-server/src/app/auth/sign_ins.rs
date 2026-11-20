@@ -165,14 +165,26 @@ fn to_end(tx: &Transaction<'_>, id: &str, with_keys: bool, at: &str) -> Result<N
 /// What an ID names that a caller may end, read for a preview.
 pub(crate) enum Held {
     /// The token's digest never changes while the session lasts.
-    Browser { shown: SignIn, token_digest: String },
-    App { shown: SignIn, consent: Box<Consent> },
+    Browser {
+        shown: SignIn,
+        token_digest: String,
+    },
+    App {
+        shown: SignIn,
+        consent: Box<Consent>,
+    },
     Key,
 }
 
 /// A browser sign-in needs `sign_ins.manage`, and an app it or `grants.manage`, as
 /// `DELETE /owner/sign-ins/{id}` and `DELETE /oauth/grants/{id}` each allow.
-pub(crate) fn held(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str, days: u64) -> Result<Held> {
+pub(crate) fn held(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    id: &str,
+    at: &str,
+    days: u64,
+) -> Result<Held> {
     let app = |consent: Consent| -> Result<Held> {
         Ok(Held::App {
             shown: app_of(tx, &consent, days)?,

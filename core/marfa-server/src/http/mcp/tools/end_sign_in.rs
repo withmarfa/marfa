@@ -14,7 +14,7 @@ use crate::app::auth::Visit;
 use crate::app::mcp::confirm;
 use crate::app::mcp::connector::Confirmed;
 use crate::app::mcp::sign_in::{self, AppEnding, Ending, Kind, Named};
-use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list};
+use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list, json_length};
 
 pub const NAME: &str = sign_in::TOOL;
 
@@ -26,13 +26,13 @@ const BROWSER_NEXT: &str =
 const APP_NEXT: &str = "Nothing has been ended. Ending this app ends its access at every MCP endpoint and the API, ends its token chains and deletes its webhooks with the events they have not delivered yet. To connect again, it must ask the owner to approve it again.";
 const PASSKEY_NEXT: &str = "Nothing has been removed. Removing this passkey means it can no longer sign the owner in. This cannot be undone: the owner adds a new passkey from a browser.";
 const OWN: &str = "This is the credential making this call. Ending it ends this connection at /mcp, /mcp/schema and /mcp/admin alike, so no call after the confirming one works until the app is connected again.";
-const KEYS_KEPT: &str = "The app's keys keep working. To revoke them with the app, preview again with revoke_keys.";
+const KEYS_KEPT: &str =
+    "The app's keys keep working. To revoke them with the app, preview again with revoke_keys.";
 const UNBOUND: &str = "Token chains are counted as they stand now. The app refreshes them as it works, so the confirmation does not cover them: ending the app ends every token chain it has when it happens.";
 const KEY: &str = "This ID names a key. Revoke a key with marfa_revoke_key.";
 
 const ENDED_BROWSER: &str = "Ended. That browser is signed out.";
-const ENDED_APP: &str =
-    "Ended. The app's access, token chains and webhooks are gone, with any keys the preview listed.";
+const ENDED_APP: &str = "Ended. The app's access, token chains and webhooks are gone, with any keys the preview listed.";
 const REMOVED_PASSKEY: &str = "Removed. The passkey no longer signs the owner in.";
 const REPEATED: &str = "This confirmation already did this. This call changed nothing.";
 
@@ -53,7 +53,7 @@ pub fn definition() -> Definition {
                 "kind": { "type": "string", "enum": ["sign_in", "passkey"],
                     "description": "What id names: a sign-in, which is a browser or an app, or a passkey. A sign-in when left out." },
                 "id": { "type": "string", "minLength": 1,
-                    "description": "The sign-in or passkey, as marfa_sign_ins shows it." },
+                    "description": "The sign-in or passkey, as marfa_sign_ins shows it. An app's ID is also its grant, as marfa_apps shows it." },
                 "revoke_keys": { "type": "boolean",
                     "description": "For an app, also revoke every key it made. False when left out." },
                 "confirm": { "type": "string", "minLength": 1,
@@ -81,7 +81,6 @@ pub fn definition() -> Definition {
                 "token_chains": { "type": "integer" },
                 "ends_this_connection": { "type": "boolean",
                     "description": "Whether ending the app ends the credential making this call." },
-                "counts": { "type": "string" },
                 "confirm": { "type": "string" },
                 "expires_at": { "type": "string" },
                 "ended": { "type": "boolean" },
@@ -101,9 +100,10 @@ pub fn definition() -> Definition {
 }
 
 fn app_body(body: &mut Map<String, Value>, app: AppEnding) -> String {
+    let scopes = json!(app.scopes);
+    let room = ROOM.saturating_sub(json_length(&app.sign_in) + json_length(&scopes)) / 2;
     body.insert("sign_in".into(), app.sign_in);
-    body.insert("scopes".into(), json!(app.scopes));
-    let room = ROOM / 2;
+    body.insert("scopes".into(), scopes);
     let (hooks, hooks_left) = fit_list(app.webhooks, room);
     body.insert("webhooks".into(), Value::Array(hooks));
     if hooks_left > 0 {
@@ -126,7 +126,7 @@ fn app_body(body: &mut Map<String, Value>, app: AppEnding) -> String {
         }
     }
     body.insert("token_chains".into(), app.token_chains.into());
-    body.insert("counts".into(), UNBOUND.into());
+    next.push(UNBOUND);
     body.insert("ends_this_connection".into(), app.ends_caller.into());
     if app.ends_caller {
         next.push(OWN);
@@ -227,8 +227,7 @@ pub async fn run(
         return Err(stale(STALE, None));
     };
     let (kind, confirmed) =
-        sign_in::end_confirmed(app, caller, (named, id.clone(), revoke_keys), bound, visit)
-            .await?;
+        sign_in::end_confirmed(app, caller, (named, id.clone(), revoke_keys), bound, visit).await?;
     match (kind, confirmed) {
         (Some(kind), Confirmed::Done { total }) => Ok(done(kind, total, false)),
         (Some(kind), Confirmed::Repeated { total }) => Ok(done(kind, total, true)),
