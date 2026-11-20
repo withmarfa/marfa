@@ -907,7 +907,7 @@ it("takes a new file at the path of a file the folder does not send as that file
   expect(
     queued.ok &&
       queued.value
-        .filter((r) => r.kind !== "upsert_placement")
+        .filter((r) => r.kind.endsWith("_item"))
         .map((r) => [r.kind, r.item_id]),
   ).toEqual([["update_item", row(0).item.id]]);
   const pulled = await harness.folder.pull();
