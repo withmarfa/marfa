@@ -837,8 +837,18 @@ it("flags a pull's item with the file that carries it, as no download", async ()
   expect(existsSync(join(harness.dir, "Note 0.md"))).toBe(false);
 });
 
-it("keeps the item of a file the folder does not send when a new file takes its path, and trashes it once no file carries it", async () => {
-  harness = await folderHarness("contract-b-carried-path-taken", {
+/** The item writes a harness's device queued, as kind and item. */
+async function itemWrites(made: FolderHarness) {
+  const queued = await made.folder.device().queue();
+  return queued.ok
+    ? queued.value
+        .filter((r) => r.kind.endsWith("_item"))
+        .map((r) => [r.kind, r.item_id])
+    : undefined;
+}
+
+it("holds a new file at the path of a file the folder does not send, and sends it once that file has a name the folder sends", async () => {
+  harness = await folderHarness("contract-b-carried-path-held", {
     items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
     settings: {
       query: { types: ["core.note"] },
@@ -850,38 +860,98 @@ it("keeps the item of a file the folder does not send when a new file takes its 
   const moved = await harness.folder.scan();
   expect(moved.ok && moved.value.missing, JSON.stringify(moved)).toBe(0);
   writeFileSync(join(harness.dir, "Note 0.md"), "a different note\n");
-  const taken = await harness.folder.scan();
-  expect(taken.ok && taken.value.created, JSON.stringify(taken)).toBe(1);
+  for (const pass of ["first", "second"]) {
+    const held = await harness.folder.scan();
+    expect(
+      held.ok && [held.value.created, held.value.updated, held.value.missing],
+      `${pass}: ${JSON.stringify(held)}`,
+    ).toEqual([0, 0, 0]);
+    const waits = (held.ok ? held.value.flagged : []).find(
+      (file) => file.path === "Note 0.md",
+    );
+    expect(waits?.flag).toBe("waiting");
+    expect(waits?.reason).toContain("Note 0.bin carries");
+  }
+  expect(await itemWrites(harness)).toEqual([]);
   const pulled = await harness.folder.pull();
   expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
   const carried = (pulled.ok ? pulled.value.flagged : []).find(
     (file) => file.item === row(0).item.id,
   );
   expect([carried?.path, carried?.flag]).toEqual(["Note 0.md", "carried"]);
-  expect(carried?.reason).toContain("Note 0.bin");
   expect(pulled.ok && pulled.value.unwritten, JSON.stringify(pulled)).toBe(0);
-  const deletes = async () => {
-    const queued = await harness.folder.device().queue();
-    return queued.ok
-      ? queued.value
-          .filter((r) => r.kind === "delete_item")
-          .map((r) => r.item_id)
-      : undefined;
-  };
-  expect(await deletes()).toEqual([]);
+  expect(readFileSync(join(harness.dir, "Note 0.md"), "utf8")).toBe(
+    "a different note\n",
+  );
+  const status = await harness.folder.status();
+  const files = status.ok ? status.value.files : [];
+  const at = (path: string) => files.find((file) => file.path === path);
+  expect([at("Note 0.md")?.flag, at("Note 0.md")?.item_id]).toEqual([
+    "waiting",
+    undefined,
+  ]);
+  expect(at("Note 0.bin")?.item_id).toBe(row(0).item.id);
 
-  rmSync(join(harness.dir, "Note 0.bin"));
-  const gone = await harness.folder.scan();
-  expect(gone.ok && gone.value.missing, JSON.stringify(gone)).toBe(1);
+  renameSync(join(harness.dir, "Note 0.bin"), join(harness.dir, "Moved.md"));
+  const sent = await harness.folder.scan();
+  expect(
+    sent.ok && [sent.value.created, sent.value.renamed],
+    JSON.stringify(sent),
+  ).toEqual([1, 1]);
+  const writes = (await itemWrites(harness)) ?? [];
+  expect(writes.filter(([kind]) => kind === "create_item")).toHaveLength(1);
+  expect(writes.filter(([kind]) => kind === "delete_item")).toEqual([]);
+});
+
+it("holds a new file at the path of a file the folder does not send while that file is renamed again, and trashes nothing", async () => {
+  harness = await folderHarness("contract-b-carried-path-renamed", {
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: {
+      query: { types: ["core.note"] },
+      removal_threshold: { files: 100, fraction: 1 },
+    },
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  renameSync(join(harness.dir, "Note 0.md"), join(harness.dir, "Note 0.bin"));
+  const moved = await harness.folder.scan();
+  expect(moved.ok && moved.value.missing, JSON.stringify(moved)).toBe(0);
+  renameSync(join(harness.dir, "Note 0.bin"), join(harness.dir, "Note 0.dat"));
+  writeFileSync(join(harness.dir, "Note 0.md"), "a different note\n");
+  const held = await harness.folder.scan();
+  expect(
+    held.ok && [held.value.created, held.value.updated],
+    JSON.stringify(held),
+  ).toEqual([0, 0]);
+  const waits = (held.ok ? held.value.flagged : []).find(
+    (file) => file.path === "Note 0.md",
+  );
+  expect(waits?.reason).toContain("Note 0.dat carries");
+  expect(await itemWrites(harness)).toEqual([]);
+  renameSync(join(harness.dir, "Note 0.dat"), join(harness.dir, "Note 0.bak"));
+  const again = await harness.folder.scan();
+  expect(again.ok && again.value.missing, JSON.stringify(again)).toBe(0);
   await new Promise((resolve) => setTimeout(resolve, 6_000));
   const swept = await harness.folder.scan();
-  expect(swept.ok && swept.value.trashed, JSON.stringify(swept)).toEqual([
-    "Note 0.md",
-  ]);
-  expect(await deletes()).toEqual([row(0).item.id]);
-  expect(readFileSync(join(harness.dir, "Note 0.md"), "utf8")).toContain(
-    "a different note",
-  );
+  expect(swept.ok && swept.value.trashed, JSON.stringify(swept)).toEqual([]);
+  expect(await itemWrites(harness)).toEqual([]);
+  // Deleted while it waits, the new file leaves nothing to send or fetch.
+  rmSync(join(harness.dir, "Note 0.md"));
+  for (const pass of ["first", "second"]) {
+    const scanned = await harness.folder.scan();
+    expect(
+      scanned.ok && scanned.value.missing,
+      `${pass}: ${JSON.stringify(scanned)}`,
+    ).toBe(0);
+  }
+  const pulled = await harness.folder.pull();
+  expect(pulled.ok && pulled.value.unwritten, JSON.stringify(pulled)).toBe(0);
+  expect(
+    (pulled.ok ? pulled.value.flagged : []).map((file) => [
+      file.item,
+      file.flag,
+    ]),
+  ).toEqual([[row(0).item.id, "carried"]]);
+  expect(await itemWrites(harness)).toEqual([]);
 });
 
 it("takes a new file at the path of a file the folder does not send as that file's edit once the other file is gone too", async () => {
@@ -903,13 +973,7 @@ it("takes a new file at the path of a file the folder does not send as that file
     saved.ok && [saved.value.created, saved.value.updated],
     JSON.stringify(saved),
   ).toEqual([0, 1]);
-  const queued = await harness.folder.device().queue();
-  expect(
-    queued.ok &&
-      queued.value
-        .filter((r) => r.kind.endsWith("_item"))
-        .map((r) => [r.kind, r.item_id]),
-  ).toEqual([["update_item", row(0).item.id]]);
+  expect(await itemWrites(harness)).toEqual([["update_item", row(0).item.id]]);
   const pulled = await harness.folder.pull();
   expect(
     pulled.ok && pulled.value.flagged.filter((f) => f.item === row(0).item.id),
@@ -993,8 +1057,8 @@ it("trashes no item a watch's quick passes meet while a file the folder does not
   }
 });
 
-it("makes a new item of a new file a watch finds at the path of a file the folder does not send", async () => {
-  harness = await folderHarness("contract-b-watch-new-at-carried", {
+it("holds a new file a watch finds at the path of a file the folder does not send, and sends it as that file's edit once the other file is deleted", async () => {
+  harness = await folderHarness("contract-b-watch-held-at-carried", {
     items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
     settings: {
       query: { types: ["core.note"] },
@@ -1030,13 +1094,19 @@ it("makes a new item of a new file a watch finds at the path of a file the folde
     renameSync(join(harness.dir, "Note 0.md"), join(harness.dir, "Note 0.bin"));
     await sentinel(harness, "first.md");
     writeFileSync(join(harness.dir, "Note 0.md"), "a different note\n");
+    await sentinel(harness, "second.md");
+    writeFileSync(join(harness.dir, "c.bin"), "other bytes");
+    await sentinel(harness, "third.md");
+    expect(created("Note 0")).toBe(0);
+    expect(updated(row(0).item.id)).toBe(0);
+    rmSync(join(harness.dir, "Note 0.bin"));
     await vi.waitFor(
       () => {
-        expect(created("Note 0")).toBe(1);
+        expect(updated(row(0).item.id)).toBe(1);
       },
       { timeout: 30_000, interval: 200 },
     );
-    expect(updated(row(0).item.id)).toBe(0);
+    expect(created("Note 0")).toBe(0);
     expect(itemRequests(made, "DELETE")).toEqual([]);
     expect(watching.running(), watching.stderr).toBe(true);
   } finally {

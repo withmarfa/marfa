@@ -63,17 +63,6 @@ struct Renaming<'a> {
     lists: &'a Lists,
 }
 
-fn carried_flag(path: &str, carrier: &str, item_id: &str) -> Flagged {
-    Flagged {
-        path: path.to_string(),
-        flag: "carried",
-        reason: format!(
-            "its file is now {carrier}, which the folder holds for its name or does not send, so the pull writes no second file"
-        ),
-        item: Some(item_id.to_string()),
-    }
-}
-
 fn journaled_for(conn: &rusqlite::Connection, path: &str, item_id: &str) -> Result<bool> {
     Ok(state::journaled(conn)?
         .iter()
@@ -616,15 +605,6 @@ impl Folder {
             .iter()
             .map(|row| (row.path.clone(), row.item_id.clone()))
             .collect();
-        let carried: HashMap<String, (String, String)> = journal
-            .iter()
-            .filter_map(|row| match &row.kept {
-                Some(state::Kept::Carried(carrier)) => {
-                    Some((row.item_id.clone(), (row.path.clone(), carrier.clone())))
-                }
-                _ => None,
-            })
-            .collect();
         let kept: HashMap<String, (String, state::Kept)> = journal
             .into_iter()
             .filter_map(|row| Some((row.path, (row.item_id, row.kept?))))
@@ -667,29 +647,25 @@ impl Folder {
             }
             // A missing file the sweep kept bound is another folder's to take,
             // or a full pass's to tell; written anew it would read there as a
-            // copy.
+            // copy. A file at a carried item's path is another, held file.
             if let Some(bound) = &bound
                 && let Some((kept_for, why)) = kept.get(&bound.path)
                 && *kept_for == item.id
-                && !self.exists(self.root.join(&bound.path))
+                && (matches!(why, state::Kept::Carried(_))
+                    || !self.exists(self.root.join(&bound.path)))
             {
                 match why {
                     state::Kept::Arriving => report.elsewhere += 1,
-                    state::Kept::Carried(carrier) => {
-                        report
-                            .flagged
-                            .push(carried_flag(&bound.path, carrier, &item.id));
-                    }
+                    state::Kept::Carried(carrier) => report.flagged.push(Flagged {
+                        path: bound.path.clone(),
+                        flag: "carried",
+                        reason: format!(
+                            "its file is now {carrier}, which the folder holds for its name or does not send, so the pull writes no second file"
+                        ),
+                        item: Some(item.id.clone()),
+                    }),
                     state::Kept::Unsure(_) => {}
                 }
-                continue;
-            }
-            // Another file took its path while a file the scan does not read
-            // carries it.
-            if bound.is_none()
-                && let Some((path, carrier)) = carried.get(&item.id)
-            {
-                report.flagged.push(carried_flag(path, carrier, &item.id));
                 continue;
             }
             // Moved to another folder here and not yet taken there, written
@@ -1484,7 +1460,7 @@ impl Folder {
             if journaled_for(&conn, &bound.path, &item.id)? {
                 report.revived += 1;
             }
-            state::journal_clear_for(&conn, &bound.path, &item.id)?;
+            state::journal_clear(&conn, &bound.path)?;
             report.moved += 1;
         }
         report.placed += usize::from(self.place(&item.id, &want, withheld)?);
@@ -1629,7 +1605,7 @@ impl Folder {
         let swap = conn.unchecked_transaction()?;
         rendering.bind(&swap, &moved)?;
         rendering.unbind(&swap, &bound.path)?;
-        state::journal_clear_for(&swap, &bound.path, &item.id)?;
+        state::journal_clear(&swap, &bound.path)?;
         state::journal_clear_for(&swap, want, &item.id)?;
         state::set_moved_from(
             &swap,
@@ -1991,7 +1967,7 @@ impl Folder {
         let ended = self.end_placement(item_id, &bound.path)?;
         let conn = self.core.conn()?;
         state::unbind(&conn, &bound.path)?;
-        state::journal_clear_for(&conn, &bound.path, item_id)?;
+        state::journal_clear(&conn, &bound.path)?;
         report.ended += ended;
         report.let_go += 1;
         Ok(LetGo::Removed)
@@ -2224,7 +2200,7 @@ impl Folder {
             }
         }
         context.change_pins(&conn, || state::unbind(&conn, &row.path))?;
-        state::journal_clear_for(&conn, &row.path, &row.item_id)?;
+        state::journal_clear(&conn, &row.path)?;
         Ok(TakenAway::Ended(ended))
     }
 

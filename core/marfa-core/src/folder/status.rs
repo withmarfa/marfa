@@ -228,6 +228,21 @@ impl Folder {
                 )
                 .collect(),
         };
+        // Each bound path the last sweep found another file carrying, with
+        // its item and that file.
+        let carried: HashMap<String, (String, String)> = state::journaled(&*self.core.conn()?)?
+            .into_iter()
+            .filter_map(|row| match row.kept {
+                Some(state::Kept::Carried(carrier))
+                    if by_path
+                        .get(row.path.as_str())
+                        .is_some_and(|bound| bound.item_id == row.item_id) =>
+                {
+                    Some((row.path, (row.item_id, carrier)))
+                }
+                _ => None,
+            })
+            .collect();
         let limit = catalog.request_limit();
         let mut seen: HashSet<String> = HashSet::new();
         let mut files: Vec<FileStatus> = Vec::new();
@@ -277,6 +292,10 @@ impl Folder {
                     &catalog,
                 )?;
             let mut entry = match by_path.get(key.as_str()) {
+                Some(_) if let Some((_, carrier)) = carried.get(key) => {
+                    FileStatus::new(key, None, "held")
+                        .because("waiting", super::scan::carried_path_waits(carrier))
+                }
                 Some(bound) => self.bound_status(
                     bound,
                     found.hash().map(str::to_string),
@@ -325,9 +344,9 @@ impl Folder {
             .map(|flagged| flagged.reason);
             files.push(entry);
         }
-        let carried = self.name_carriers(&snapshot, &seen, &mut files)?;
+        let named = name_carriers(&carried, &mut files);
         for bound in &snapshot {
-            if seen.contains(&bound.path) || carried.contains(&bound.path) {
+            if seen.contains(&bound.path) || named.contains(bound.path.as_str()) {
                 continue;
             }
             let at = Some(bound.item_id.as_str());
@@ -515,44 +534,6 @@ impl Folder {
         Ok(FileStatus { status, ..entry })
     }
 
-    /// Names each missing bound file's item on the file the last sweep found
-    /// carrying it, and answers the bound paths it named.
-    fn name_carriers(
-        &self,
-        snapshot: &[state::Bound],
-        seen: &HashSet<String>,
-        files: &mut [FileStatus],
-    ) -> Result<HashSet<String>> {
-        let mut named = HashSet::new();
-        for row in state::journaled(&*self.core.conn()?)? {
-            let Some(state::Kept::Carried(carrier)) = &row.kept else {
-                continue;
-            };
-            let bound_here = snapshot
-                .iter()
-                .any(|bound| bound.path == row.path && bound.item_id == row.item_id);
-            // Unbound, it is carried only while no file here is bound to it.
-            let stale = if bound_here {
-                seen.contains(&row.path)
-            } else {
-                snapshot.iter().any(|bound| bound.item_id == row.item_id)
-            };
-            if stale {
-                continue;
-            }
-            if let Some(file) = files
-                .iter_mut()
-                .find(|file| file.path == *carrier && file.item_id.is_none())
-            {
-                file.item_id = Some(row.item_id.clone());
-                if bound_here {
-                    named.insert(row.path);
-                }
-            }
-        }
-        Ok(named)
-    }
-
     fn unbound_status(
         &self,
         key: &str,
@@ -726,6 +707,25 @@ fn display_dir(path: &str) -> String {
     } else {
         path.to_string()
     }
+}
+
+/// Names each carried item on the file the last sweep found carrying it, and
+/// answers the bound paths it named.
+fn name_carriers<'a>(
+    carried: &'a HashMap<String, (String, String)>,
+    files: &mut [FileStatus],
+) -> HashSet<&'a str> {
+    let mut named = HashSet::new();
+    for (path, (item_id, carrier)) in carried {
+        if let Some(file) = files
+            .iter_mut()
+            .find(|file| file.path == *carrier && file.item_id.is_none())
+        {
+            file.item_id = Some(item_id.clone());
+            named.insert(path.as_str());
+        }
+    }
+    named
 }
 
 #[cfg(test)]

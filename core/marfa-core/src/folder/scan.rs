@@ -129,6 +129,9 @@ struct ScanState {
     files: Vec<Scanned>,
     /// Why each stale save waits, by path.
     stale: HashMap<String, String>,
+    /// Each path whose file waits while another file carries the item bound
+    /// there, with that item and the carrier.
+    held_carried: HashMap<String, (String, String)>,
 }
 
 /// What a pass that looked only at named paths keeps for its end.
@@ -194,6 +197,13 @@ pub(super) enum Missing {
     Gone,
     /// Still bound, while another file carries it.
     Carried,
+}
+
+/// Why a file at the path of an item another file carries is not sent.
+pub(super) fn carried_path_waits(carrier: &str) -> String {
+    format!(
+        "Marfa still holds this path for an item that {carrier} carries. Move {carrier} to a name the folder sends, or delete it, and this file is sent"
+    )
 }
 
 /// Bounded, so a row another device keeps changing ends the sweep's decision
@@ -354,7 +364,7 @@ impl Folder {
             self.fold_stale_saves(&mut scan.files, &scan.snapshot, &mut scan.seen, scan.mode)?;
         self.refresh_catalog(&mut scan)?;
         let peers = Peers::of(self, scan.doubt.take());
-        let (claims, waiting) = self.claim_scanned(&scan, &peers)?;
+        let (claims, waiting) = self.claim_scanned(&mut scan, &peers)?;
         self.follow_embeds_of_documents(&mut scan, &claims)?;
         let work = match self.queue_scanned(&mut scan, claims, waiting)? {
             ControlFlow::Break(()) => return Ok(scan.report),
@@ -657,6 +667,7 @@ impl Folder {
             only_embedded: HashSet::new(),
             files: Vec::new(),
             stale: HashMap::new(),
+            held_carried: HashMap::new(),
         }))
     }
 
@@ -1056,20 +1067,76 @@ impl Folder {
     /// that wait: a stale save, and what the claim cannot yet give.
     fn claim_scanned(
         &self,
-        scan: &ScanState,
+        scan: &mut ScanState,
         peers: &Peers<'_>,
     ) -> Result<(Vec<Option<Claim>>, Waiting)> {
-        let (files, snapshot, stale) = (&scan.files, &scan.snapshot, &scan.stale);
-        let (settings, catalog) = (&scan.settings, &scan.catalog);
-        let (mut claims, mut waiting) =
-            self.claim(files, snapshot, settings, catalog, peers, &scan.shown)?;
+        let carried = self.still_carried(scan)?;
+        let (mut claims, mut waiting) = self.claim(scan, peers, &carried)?;
+        let (files, stale) = (&scan.files, &scan.stale);
         for (at, file) in files.iter().enumerate() {
             if let Some(reason) = stale.get(&file.key) {
                 claims[at] = None;
                 waiting.insert(at, reason.clone());
             }
         }
+        // Not the carried item's file, so its record stands.
+        scan.held_carried = carried
+            .into_iter()
+            .filter(|(path, (item_id, _))| {
+                files.iter().zip(&claims).any(|(file, claim)| {
+                    file.key == *path
+                        && claim.as_ref().is_none_or(|claim| claim.item_id != *item_id)
+                })
+            })
+            .collect();
         Ok((claims, waiting))
+    }
+
+    /// Each binding the journal records another file carrying, whose path a
+    /// read file stands at, by path, with its item and the file that carries
+    /// it now. A walk looks for that file; a quick pass, which walks when it
+    /// touches a carrier, keeps the record's. Where a file that may carry it
+    /// cannot be read, the record's too.
+    fn still_carried(&self, scan: &ScanState) -> Result<HashMap<String, (String, String)>> {
+        let rows: Vec<state::Journaled> = state::journaled(&*self.core.conn()?)?
+            .into_iter()
+            .filter(|row| {
+                row.carried()
+                    && scan.files.iter().any(|file| file.key == row.path)
+                    && scan
+                        .snapshot
+                        .iter()
+                        .any(|bound| bound.path == row.path && bound.item_id == row.item_id)
+            })
+            .collect();
+        let mut carried = HashMap::new();
+        if rows.is_empty() {
+            return Ok(carried);
+        }
+        let carriers = if scan.scope.is_some() {
+            None
+        } else {
+            self.carriers(&scan.walked, &scan.paths, &scan.skipped_keys)?
+                .ok()
+        };
+        for row in rows {
+            let Some(state::Kept::Carried(recorded)) = row.kept else {
+                continue;
+            };
+            let carrier = match &carriers {
+                Some(carriers) => scan
+                    .snapshot
+                    .iter()
+                    .find(|bound| bound.path == row.path)
+                    .and_then(|bound| carriers.carrying(bound))
+                    .map(str::to_string),
+                None => Some(recorded),
+            };
+            if let Some(carrier) = carrier {
+                carried.insert(row.path, (row.item_id, carrier));
+            }
+        }
+        Ok(carried)
     }
 
     /// Embeds are read by name, before the claim says whose each file is. A
@@ -1621,19 +1688,14 @@ impl Folder {
             .filter(|(path, _)| seen.contains(path))
             .map(|(_, item_id)| item_id.clone())
             .collect();
-        let bound_items: HashSet<String> = bound.iter().map(|(_, item)| item.clone()).collect();
-        // A new file at the path took the binding; the item is still carried.
-        let unbound_carried: Vec<(String, String, String)> = journaled
-            .iter()
-            .filter_map(|((path, item_id), kept)| match kept {
-                Some(state::Kept::Carried(carrier))
-                    if !bound.contains(&(path.clone(), item_id.clone())) =>
-                {
-                    Some((path.clone(), item_id.clone(), carrier.clone()))
-                }
-                _ => None,
-            })
-            .collect();
+        // Its binding gone, the record keeps nothing.
+        for ((path, item_id), kept) in &journaled {
+            if matches!(kept, Some(state::Kept::Carried(_)))
+                && !bound.contains(&(path.clone(), item_id.clone()))
+            {
+                state::journal_clear_for(&*self.core.conn()?, path, item_id)?;
+            }
+        }
         for (path, item_id) in bound {
             let row = journaled.get(&(path.clone(), item_id.clone()));
             let held = row.is_some();
@@ -1647,9 +1709,14 @@ impl Folder {
                 return Ok(ControlFlow::Break(()));
             }
             if stands {
-                // Back inside the grace, so the server never hears of it.
                 let conn = self.core.conn()?;
-                state::journal_clear_for(&conn, &path, &item_id)?;
+                if let Some((_, carrier)) = scan.held_carried.get(&path) {
+                    state::journal_carried(&conn, &path, &item_id, carrier)?;
+                    report.unreached += 1;
+                    continue;
+                }
+                // Back inside the grace, so the server never hears of it.
+                state::journal_clear(&conn, &path)?;
                 continue;
             }
             // Not reached is not gone: the item of a file the lists stopped
@@ -1657,7 +1724,7 @@ impl Folder {
             if !self.reaches(lists, &path) || walked.passed_over(&path) {
                 if held {
                     let conn = self.core.conn()?;
-                    state::journal_clear_for(&conn, &path, &item_id)?;
+                    state::journal_clear(&conn, &path)?;
                 }
                 report.unreached += 1;
                 continue;
@@ -1666,7 +1733,7 @@ impl Folder {
             if present.contains(&item_id) {
                 let conn = self.core.conn()?;
                 state::unbind(&conn, &path)?;
-                state::journal_clear_for(&conn, &path, &item_id)?;
+                state::journal_clear(&conn, &path)?;
                 continue;
             }
             // An unread part of the inventory may hold a file moved from
@@ -1674,16 +1741,24 @@ impl Folder {
             if incomplete {
                 continue;
             }
-            let Some(carriers) = self.carriers_once(
-                &mut carriers,
-                walked,
-                &scan.paths,
-                &scan.skipped_keys,
-                report,
-            )?
-            else {
-                incomplete = true;
-                continue;
+            let carriers = match carriers {
+                Some(ref carriers) => carriers,
+                None => match self.carriers(walked, &scan.paths, &scan.skipped_keys)? {
+                    Ok(found) => carriers.insert(found),
+                    // Unread, it may carry this item or any other.
+                    Err((key, error)) => {
+                        report.flagged.push(Flagged {
+                            path: key,
+                            flag: "unreadable",
+                            reason: format!(
+                                "{error}, so this pass journals no missing file until it can be read"
+                            ),
+                            item: None,
+                        });
+                        incomplete = true;
+                        continue;
+                    }
+                },
             };
             let conn = self.core.conn()?;
             let carrier = state::bound_at(&conn, &path)?
@@ -1711,39 +1786,6 @@ impl Folder {
             }
             report.missing += 1;
         }
-        for (path, item_id, carrier) in unbound_carried {
-            // Read elsewhere in the folder, its file is no longer missing.
-            if bound_items.contains(&item_id) {
-                state::journal_clear_for(&*self.core.conn()?, &path, &item_id)?;
-                continue;
-            }
-            // Without its binding only a whole walk can tell who carries it.
-            if quick || incomplete || scan.walk_again {
-                continue;
-            }
-            let Some(carriers) = self.carriers_once(
-                &mut carriers,
-                walked,
-                &scan.paths,
-                &scan.skipped_keys,
-                report,
-            )?
-            else {
-                incomplete = true;
-                continue;
-            };
-            let conn = self.core.conn()?;
-            match carriers.carrying_unbound(&item_id, &carrier) {
-                Some(carrier) => {
-                    state::journal_carried(&conn, &path, &item_id, carrier)?;
-                    report.unreached += 1;
-                }
-                None => {
-                    state::journal_uncarried(&conn, &path, &item_id)?;
-                    report.missing += 1;
-                }
-            }
-        }
         if scan.walk_again {
             return Ok(ControlFlow::Continue(()));
         }
@@ -1756,36 +1798,6 @@ impl Folder {
             self.note_kept_look_passed()?;
         }
         Ok(ControlFlow::Continue(()))
-    }
-
-    /// The carriers of this pass, found once; `None` where a file that may
-    /// carry an item cannot be read, which is flagged.
-    fn carriers_once<'a>(
-        &self,
-        found: &'a mut Option<Carriers>,
-        walked: &Walked,
-        paths: &[PathBuf],
-        skipped: &[String],
-        report: &mut ScanReport,
-    ) -> Result<Option<&'a Carriers>> {
-        if found.is_none() {
-            match self.carriers(walked, paths, skipped)? {
-                Ok(carriers) => *found = Some(carriers),
-                // Unread, it may carry this item or any other.
-                Err((key, error)) => {
-                    report.flagged.push(Flagged {
-                        path: key,
-                        flag: "unreadable",
-                        reason: format!(
-                            "{error}, so this pass journals no missing file until it can be read"
-                        ),
-                        item: None,
-                    });
-                    return Ok(None);
-                }
-            }
-        }
-        Ok(found.as_ref())
     }
 
     /// The files `one_per_name` held and those the pass skipped, which are no
@@ -2036,30 +2048,21 @@ impl Folder {
     /// identity.
     fn claim(
         &self,
-        files: &[Scanned],
-        snapshot: &[state::Bound],
-        settings: &Settings,
-        catalog: &Catalog,
+        scan: &ScanState,
         peers: &Peers<'_>,
-        shown: &HashMap<String, Vec<(String, embeds::Target)>>,
+        carried: &HashMap<String, (String, String)>,
     ) -> Result<(Vec<Option<Claim>>, Waiting)> {
+        let (files, snapshot, shown) = (&scan.files, &scan.snapshot, &scan.shown);
+        let (settings, catalog) = (&scan.settings, &scan.catalog);
         let by_mark: HashMap<&str, &state::Bound> = snapshot
             .iter()
             .filter_map(|row| row.identity.as_deref().map(|mark| (mark, row)))
             .collect();
-        // Another file carries such a binding, so a file at its path is new.
-        // Once that file is gone too, a file at the path is the item's again.
-        let carried: HashSet<(String, String)> = state::journaled(&*self.core.conn()?)?
-            .into_iter()
-            .filter(|row| match &row.kept {
-                Some(state::Kept::Carried(carrier)) => self.exists(self.root.join(carrier)),
-                _ => false,
-            })
-            .map(|row| (row.path, row.item_id))
-            .collect();
+        // Another file carries such a binding, so a file at its path is not
+        // its item's.
         let by_path: HashMap<&str, &state::Bound> = snapshot
             .iter()
-            .filter(|row| !carried.contains(&(row.path.clone(), row.item_id.clone())))
+            .filter(|row| !carried.contains_key(&row.path))
             .map(|row| (row.path.as_str(), row))
             .collect();
         let by_item: HashMap<&str, &state::Bound> = snapshot
@@ -2191,6 +2194,16 @@ impl Folder {
                     item_id: bound.item_id.clone(),
                     bound: Some((*bound).clone()),
                 });
+            }
+        }
+        // Sent as new, it would take the path and so the carried item's
+        // binding, its identity and what the folder agreed with the server.
+        for (at, file) in files.iter().enumerate() {
+            if claims[at].is_some() || waiting.contains_key(&at) {
+                continue;
+            }
+            if let Some((_, carrier)) = carried.get(&file.key) {
+                waiting.insert(at, carried_path_waits(carrier));
             }
         }
         // A file that carries no id and that no record here names, the
@@ -2400,7 +2413,6 @@ impl Folder {
         }
         if bound.path != file.key || bound.identity != file.mark {
             let conn = self.core.conn()?;
-            let item_id = bound.item_id.clone();
             state::bind(
                 &conn,
                 &state::Bound {
@@ -2410,7 +2422,7 @@ impl Folder {
                     ..bound
                 },
             )?;
-            state::journal_clear_for(&conn, &file.key, &item_id)?;
+            state::journal_clear(&conn, &file.key)?;
         }
         Ok(())
     }
@@ -2825,7 +2837,7 @@ impl Folder {
                 ..bound.clone()
             },
         )?;
-        state::journal_clear_for(&conn, &file.key, &bound.item_id)
+        state::journal_clear(&conn, &file.key)
     }
 
     /// Leaves the old path to another file bound there earlier in this scan.
@@ -2833,7 +2845,7 @@ impl Folder {
         let conn = self.core.conn()?;
         if state::bound_at(&conn, &bound.path)?.is_some_and(|row| row.item_id == bound.item_id) {
             state::unbind(&conn, &bound.path)?;
-            state::journal_clear_for(&conn, &bound.path, &bound.item_id)?;
+            state::journal_clear(&conn, &bound.path)?;
         }
         Ok(())
     }
@@ -3165,11 +3177,8 @@ impl Folder {
             self.end_placement(item_id, path)?;
         }
         let conn = self.core.conn()?;
-        state::journal_clear_for(&conn, path, item_id)?;
-        // Another item's file may hold the path now.
-        if bound.is_some() {
-            state::unbind(&conn, path)?;
-        }
+        state::journal_clear(&conn, path)?;
+        state::unbind(&conn, path)?;
         Ok(missing)
     }
 }

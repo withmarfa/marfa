@@ -148,13 +148,13 @@ pub(crate) fn settle_landings(
                         .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
                     {
                         unbind(conn, &left.path)?;
-                        journal_clear_for(conn, &left.path, &left.item_id)?;
+                        journal_clear(conn, &left.path)?;
                     }
                 }
             }
             Some(None) => {
                 unbind(conn, &row.path)?;
-                journal_clear_for(conn, &row.path, &row.item_id)?;
+                journal_clear(conn, &row.path)?;
             }
         }
     }
@@ -774,9 +774,12 @@ pub fn journal_missing(conn: &Connection, path: &str, item_id: &str) -> Result<(
     Ok(())
 }
 
-/// A row that outlives its question becomes a delete nobody asked for. Only
-/// the item's own: another item's row at the path is a delete that the file
-/// there does not answer.
+/// A row that outlives its question becomes a delete nobody asked for.
+pub fn journal_clear(conn: &Connection, path: &str) -> Result<(), CoreError> {
+    conn.execute_cached("DELETE FROM folder_journal WHERE path = ?1", [path])?;
+    Ok(())
+}
+
 pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     conn.execute_cached(
         "DELETE FROM folder_journal WHERE path = ?1 AND item_id = ?2",
@@ -796,8 +799,8 @@ pub fn journal_carried(
     conn.execute_cached(
         "INSERT INTO folder_journal (path, item_id, missing_since, kept, reason)
          VALUES (?1, ?2, ?3, 'carried', ?4)
-         ON CONFLICT (path) DO UPDATE SET kept = 'carried', reason = excluded.reason
-           WHERE folder_journal.item_id = excluded.item_id",
+         ON CONFLICT (path) DO UPDATE SET
+           item_id = excluded.item_id, kept = 'carried', reason = excluded.reason",
         params![
             path,
             item_id,
@@ -811,8 +814,8 @@ pub fn journal_carried(
 /// Journals as missing from now a file no other file carries any longer.
 pub fn journal_uncarried(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
     conn.execute_cached(
-        "DELETE FROM folder_journal WHERE path = ?1 AND item_id = ?2 AND kept = 'carried'",
-        [path, item_id],
+        "DELETE FROM folder_journal WHERE path = ?1 AND kept = 'carried'",
+        [path],
     )?;
     journal_missing(conn, path, item_id)
 }
