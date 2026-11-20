@@ -24,7 +24,7 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `format` of `marfa-archive`.
 
-**Reason:** a restore knows an archive by its format before it reads its version, and refuses a manifest without one as written before Marfa 0.1 (`archive/restore-format`).
+**Reason:** a restore knows an archive by its format before it reads its version, and refuses a manifest without one, which only releases before 0.0.72 wrote (`archive/restore-format`).
 
 **Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
 
@@ -32,7 +32,7 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `written_by` of `marfa-server` and the version of the build, separated by a space.
 
-**Reason:** a restore that refuses an archive written before Marfa 0.1, or at a later version, names the build that wrote it, and only the manifest says which build that was.
+**Reason:** a restore that refuses an archive with no format, or at a later version, names the build that wrote it, and only the manifest says which build that was.
 
 **Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
 
@@ -872,17 +872,17 @@ When the server refuses a body of `POST /restore` that it cannot read, the serve
 
 ### `archive/restore-format`
 
-If the `manifest.json` of an archive holds no `format`, then the server MUST answer `400 validation_error` with a message naming the archive's `written_by` and saying that it was written before Marfa 0.1.
+If the `manifest.json` of an archive holds no `format`, then the server MUST answer `400 validation_error` with a message naming the archive's `written_by` and saying that its `manifest.json` names no format.
 
-**Reason:** an archive written before Marfa 0.1 lays out its entries in a way that no build from 0.1 on reads, and the message says which build can read it.
+**Reason:** only releases before 0.0.72 wrote a manifest with no format, and they laid out its entries in a way this build does not read, so the message names the build that can read it.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses an archive written before Marfa 0.1 or at a later version, naming the build that wrote it`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive with no format, another format or a later version, naming the build that wrote it`.
 
 ### `archive/restore-format-other`
 
 If the `manifest.json` of an archive names a `format` other than `marfa-archive`, then the server MUST answer `400 validation_error` naming the format.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses an archive written before Marfa 0.1 or at a later version, naming the build that wrote it`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive with no format, another format or a later version, naming the build that wrote it`.
 
 ### `archive/restore-version`
 
@@ -890,7 +890,7 @@ If the `manifest.json` of an archive names a `version` greater than the archive 
 
 **Reason:** a build reads every archive version up to its own, so an archive of a later version is for a later build, and the message says which build wrote it.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses an archive written before Marfa 0.1 or at a later version, naming the build that wrote it`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive with no format, another format or a later version, naming the build that wrote it`.
 
 ### `archive/archive-version-additions`
 

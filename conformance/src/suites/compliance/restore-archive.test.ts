@@ -562,7 +562,7 @@ describe("restore", () => {
     },
   );
 
-  it("refuses an archive written before Marfa 0.1 or at a later version, naming the build that wrote it", async () => {
+  it("refuses an archive with no format, another format or a later version, naming the build that wrote it", async () => {
     const witness = uuidv7();
     const other = uuidv7();
     const archiveWith = (
@@ -598,7 +598,7 @@ describe("restore", () => {
       [
         "no format",
         ({ format: _format, ...m }) => m,
-        "This archive was written by marfa-server 0.0.1, before Marfa 0.1, and this build cannot read it.",
+        "This archive was written by marfa-server 0.0.1, and its manifest.json names no format, which only releases before 0.0.72 left out, so this build cannot read it.",
       ],
       [
         "a later version",
