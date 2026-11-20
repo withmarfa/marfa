@@ -94,7 +94,7 @@ impl Caller {
         }
         Err(Refusal::new(
             Code::Forbidden,
-            "Changing guidance requires schema.write, which a credential holding metadata.types:write alone lacks.",
+            "Adding, changing, or removing type guidance requires schema.write.",
         )
         .with_detail("required_scope", Permission::SchemaWrite.word())
         .with_detail("changes", vec!["guidance"]))

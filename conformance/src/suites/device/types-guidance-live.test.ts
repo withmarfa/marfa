@@ -104,9 +104,7 @@ describe("a type's guidance beside its definition", () => {
     trackType(ctx, id, client);
     expect((await client.getType(id)).data).not.toHaveProperty("guidance");
 
-    // Files named for a definition and for `-` sit unread: --body and --file - name no path.
-    const decoy = idOf("inline");
-    write(decoy, { id: decoy, fields: FIELDS }, "Not sent.");
+    // Inline and stdin input name no file, even when a matching file exists.
     writeFileSync(join(folder, "-.md"), "Not sent.");
     const sources: [
       string[],
@@ -118,6 +116,7 @@ describe("a type's guidance beside its definition", () => {
     for (const [flags, give] of sources) {
       const label = flags.join(" ");
       const name = idOf(`registered_${flags.length}`);
+      write(name, { id: name, fields: FIELDS }, "Not sent.");
       const { args, input } = give(
         JSON.stringify({ id: name, fields: FIELDS }),
       );
@@ -147,6 +146,9 @@ describe("a type's guidance beside its definition", () => {
     for (const [index, [flags, give]] of replacements.entries()) {
       const label = flags.join(" ");
       const name = idOf(`replaced_${index}`);
+      if (index < sources.length) {
+        write(name, { id: name, fields: FIELDS }, "Not sent.");
+      }
       const guided = await client.registerType({
         id: name,
         guidance: "Stored.",

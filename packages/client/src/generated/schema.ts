@@ -2439,7 +2439,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Restores an exported archive atomically and returns counts of written and skipped records. Other writes are turned away meanwhile. Requires `backups.manage`, a recent sign-in, `config.manage` to add settings and `schema.write` to add guidance.
+         * @description Restores an archive atomically and returns write and skip counts. Marfa blocks other writes during the restore. Requires `backups.manage`, `config.manage` to add settings, and `schema.write` to register a type with guidance.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -2503,7 +2503,7 @@ export interface paths {
         put?: never;
         /**
          * Restore a backup
-         * @description Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. Requires what `POST /restore` requires.
+         * @description Restores a backup from the backup folder or object store and returns write and skip counts. Requires `backups.manage`, `config.manage` to add settings, and `schema.write` to register a type with guidance.
          */
         post: operations["restoreBackup"];
         delete?: never;
@@ -38148,8 +38148,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you don't hold `backups.manage`, or the archive would store settings and you don't hold `config.manage`. `details.required_scope` names the missing permission. For `config.manage`, `details.settings` lists the settings.
-             *     - `app_sign_in_required`: you are an API key. A person restores from an app they signed in to, or with the private local command.
+             * @description - `forbidden`: `details.required_scope` names the missing permission. `details.settings` lists settings for `config.manage`, and `details.changes` lists `guidance` for `schema.write`.
+             *     - `app_sign_in_required`: you are using an API key. Use an app you signed in to or the private local command.
              */
             403: {
                 headers: {
@@ -38955,8 +38955,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you don't hold `backups.manage`, or the archive would store settings and you don't hold `config.manage`. `details.required_scope` names the missing permission. For `config.manage`, `details.settings` lists the settings.
-             *     - `app_sign_in_required`: you are an API key. A person restores from an app they signed in to, or with the private local command.
+             * @description - `forbidden`: `details.required_scope` names the missing permission. `details.settings` lists settings for `config.manage`, and `details.changes` lists `guidance` for `schema.write`.
+             *     - `app_sign_in_required`: you are using an API key. Use an app you signed in to or the private local command.
              */
             403: {
                 headers: {

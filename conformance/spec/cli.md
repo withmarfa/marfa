@@ -1444,7 +1444,7 @@ If the `--parent` of `marfa types scaffold` breaks the type grammar or names the
 
 If the `--description` of `marfa types scaffold` is longer than 200 Unicode code points (`types/description-limit`), then the CLI MUST exit 1 with `invalid`, naming `description`.
 
-**Reason:** the server would refuse a registration of the definition, so the one printed for it would be one nothing could register.
+**Reason:** the server refuses to register a definition with a description over the limit.
 
 **Tests:** `device/types-scaffold.test.ts › refuses a description over 200 code points and prints one at the limit`.
 
