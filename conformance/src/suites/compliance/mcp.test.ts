@@ -1226,7 +1226,11 @@ describe("the owner-task tools' annotations", () => {
     try {
       const { tools } = await admin.client.listTools();
       const hints = new Map(tools.map((tool) => [tool.name, tool.annotations]));
-      for (const name of ["marfa_narrow_app", "marfa_purge", "marfa_maintain"]) {
+      for (const name of [
+        "marfa_narrow_app",
+        "marfa_purge",
+        "marfa_maintain",
+      ]) {
         expect(hints.get(name)?.destructiveHint, name).toBe(true);
         expect(hints.get(name)?.readOnlyHint, name).toBe(false);
       }

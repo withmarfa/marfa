@@ -424,11 +424,17 @@ describe("a marfa_purge confirmation is used once", () => {
     await trash(id, left);
     const shown = await preview({ ids: [id] });
     const first = toolResult(
-      await callTool(admin, "marfa_purge", { ids: [id], confirm: shown.confirm }),
+      await callTool(admin, "marfa_purge", {
+        ids: [id],
+        confirm: shown.confirm,
+      }),
     );
     expect(first.purged).toBe(1);
     const again = toolResult(
-      await callTool(admin, "marfa_purge", { ids: [id], confirm: shown.confirm }),
+      await callTool(admin, "marfa_purge", {
+        ids: [id],
+        confirm: shown.confirm,
+      }),
     );
     expect(again.already_purged).toBe(true);
     expect(again.purged).toBe(1);
