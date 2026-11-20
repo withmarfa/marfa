@@ -5407,6 +5407,9 @@ fn an_install_and_a_run_under_an_open_umask_keep_the_folders_on_the_way_private(
             fs::metadata(path).unwrap().permissions().mode() & 0o777
         )
     };
+    // On a Mac the install makes the log folder with a plain create; on Linux a run makes it,
+    // under its own umask.
+    #[cfg(target_os = "macos")]
     assert_eq!(
         mode(&rig.home().join("Library/Logs/Marfa")),
         "775",
