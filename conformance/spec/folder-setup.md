@@ -458,9 +458,9 @@ While a device holds a folder's writer role, when it refuses the directory's sto
 
 ### `folder-setup/refused-store-checks-carried`
 
-While a directory's store holds a record of the folder's files whose tables have the columns this build makes, a device MUST read the record as one this build can read for `folder-setup/refused-store-replaced`, whatever checks those tables carry.
+While a directory's store holds a record of the folder's files whose tables have the columns this build makes and whose rows meet this build's checks, a device MUST read the record as one this build can read for `folder-setup/refused-store-replaced`.
 
-**Reason:** a release that only widens the values a column takes would otherwise leave every folder stopped until the person removed it and added it again. A row the new checks refuse fails the replacement, which leaves the store as it was.
+**Reason:** a release that only widens the values a column takes would otherwise leave every folder stopped until the person removed it and added it again.
 
 **Tests:** `device/folders-refused-store-live.test.ts › replaces a store whose record of missing files has the same columns and other checks, and sends the deletion it records`.
 
