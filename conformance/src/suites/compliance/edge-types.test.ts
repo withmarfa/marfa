@@ -1351,6 +1351,10 @@ describe("custom edge-type registration", () => {
       "mock..name",
       "mock.1name",
       "app.two-segments",
+      "ends-with-hyphen-",
+      "ends_with_underscore_",
+      "1starts-with-a-digit",
+      "_starts_with_underscore",
     ]) {
       const r = await client.registerEdgeType({
         label: "Test edge type",
@@ -1363,8 +1367,13 @@ describe("custom edge-type registration", () => {
     const listed = await client.listEdgeTypes();
     expect(listed.data.data.map((t) => t.id)).not.toContain("Bad Id");
 
-    // The witnesses: the kebab form a shipped type has, and the dotted form.
-    for (const id of [`mock-kebab-${ctx.runId}`, `mock.dotted.${ctx.runId}`]) {
+    // The witnesses: the kebab form a shipped type has, an undotted name with
+    // an underscore and a digit, and the dotted form.
+    for (const id of [
+      `mock-kebab-${ctx.runId}`,
+      `mock_snake_case_${ctx.runId}`,
+      `mock.dotted.${ctx.runId}`,
+    ]) {
       const r = await client.registerEdgeType({
         label: "Test edge type",
         id,
@@ -1514,6 +1523,17 @@ describe("custom edge-type registration", () => {
     });
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("validation_error");
+
+    // The witness: an undotted reverse name with an underscore registers.
+    const id = `mock.rev-snake.${ctx.runId}`;
+    const taken = await client.registerEdgeType({
+      label: "Test edge type",
+      id,
+      cardinality: "many-to-many",
+      reverse_name: `reverse_snake_${ctx.runId}`,
+    });
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+    trackEdgeType(ctx, id);
   });
 
   it("rejects registration that attempts extends on a core edge type (custom edges do not inherit)", async () => {

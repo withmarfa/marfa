@@ -1710,9 +1710,9 @@ When `POST /edge-types` reads `evolve_constraints`, the server MUST treat it as 
 
 ### `edges/types-register-id`
 
-If `POST /edge-types` names an `id` that is not an edge type identifier, then the server MUST answer `400 validation_error`.
+If `POST /edge-types` names an `id` that is neither a type identifier (`types/id-grammar`) nor one segment that starts with a lowercase letter, ends with a lowercase letter or a digit, and holds only lowercase letters, digits, hyphens and underscores, then the server MUST answer `400 validation_error`.
 
-**Reason:** an identifier is a lowercase kebab name such as `parent-of`, or a dotted type identifier.
+**Reason:** a shipped edge type is one segment such as `parent-of`, and a registered one is usually a type identifier such as `acme.parent-of`. A one-segment name with an underscore, such as `parent_of`, is as good a name. A dotted identifier is one a type could have, so a root the server reserves (`types/id-reserved-scope-root`) is refused.
 
 **Tests:** `compliance/edge-types.test.ts › refuses an id that is not an edge type identifier with 400 validation_error, and registers one that is`.
 
@@ -1740,6 +1740,60 @@ If `POST /edge-types` names a property whose `type` is neither `thumbnail` nor a
 
 **Tests:** `compliance/edge-types.test.ts › refuses an edge property of an unknown type with the code a type's field gets`.
 
+### `edges/types-register-array-items`
+
+If `POST /edge-types` names a property whose `type` is `array` and that names no `items_type`, then the server MUST answer `400 invalid_schema` with `details.errors` naming `property_schema.<name>.items_type`.
+
+**Reason:** the code and the fault a type's field gets (`types/field-grammar`). An array with no element type holds any element.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses an array property with no items_type, naming the property`.
+
+### `edges/types-register-enum-values`
+
+If `POST /edge-types` names a property whose `type` is `enum` and that names no `enum_values` or an empty list, then the server MUST answer `400 invalid_schema` with `details.errors` naming `property_schema.<name>.enum_values`.
+
+**Reason:** the code and the fault a type's field gets (`types/field-grammar`). An enum with no values takes any string.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses an enum property with no enum_values or an empty list, naming the property`.
+
+### `edges/types-register-enum-values-kind`
+
+If `POST /edge-types` names `enum_values` on a property whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, then the server MUST answer `400 invalid_schema` with `details.errors` naming `property_schema.<name>.enum_values`.
+
+**Reason:** the fault a type's field gets (`types/enum-values-kind`). Only an enum checks its values, so the list would read as a rule that nothing keeps.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses enum_values on a property that is not an enum, naming the property`.
+
+### `edges/types-register-shapes-named`
+
+If `POST /edge-types` names several properties that `edges/types-register-array-items`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind` refuse, then the server MUST name every such property in the `details.errors` of one answer.
+
+**Tests:** `compliance/edge-property-schema.test.ts › refuses every property that breaks a rule in one answer`.
+
+### `edges/types-properties-kept`
+
+While a stored edge type holds a property that `edges/types-register-array-items`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind` refuses, the server MUST answer a read of the edge type with the property as stored.
+
+**Reason:** a registration the server accepted before those rules stays readable (`archive/restore-compatible-types`).
+
+**Tests:** `compliance/restore-edge-property-shapes.test.ts › restores from an archive and reads as the archive held it`.
+
+### `edges/types-restore-properties-kept`
+
+When `POST /restore` carries an edge type with a property that `edges/types-register-array-items`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind` refuses, the server MUST register the edge type with the property as the archive holds it.
+
+**Reason:** an archive records an edge type as the instance stored it, and a server that took the registration wrote it. A `format` that does not suit its property is still refused (`edges/types-restore-format-fit`).
+
+**Tests:** `compliance/restore-edge-property-shapes.test.ts › restores from an archive and reads as the archive held it`.
+
+### `edges/types-evolve-properties-kept`
+
+When `POST /edge-types` with `evolve_constraints` names a property exactly as the stored edge type holds it, the server MUST NOT refuse the change for that property under `edges/types-register-array-items`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind`.
+
+**Reason:** a stored edge type that holds such a property could otherwise never have its endpoint constraints widened. A property the change adds or alters is judged as a registration judges it.
+
+**Tests:** `compliance/restore-edge-property-shapes.test.ts › takes a change of its endpoint constraints that leaves the properties as held, and judges a property the change alters`.
+
 ### `edges/types-register-unknown-key`
 
 If `POST /edge-types` names a key the edge type does not define, at the top level or in a property of `property_schema`, which takes only `type`, `description`, `required`, `enum_values`, `items_type` and `format`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
@@ -1764,7 +1818,7 @@ When a key registers an edge type with a `reverse_name`, the server MUST list an
 
 ### `edges/types-reverse-grammar`
 
-If `POST /edge-types` names a `reverse_name` that is not an edge type identifier, then the server MUST answer `400 validation_error`.
+If `POST /edge-types` names a `reverse_name` that is not an edge type identifier as `edges/types-register-id` states it, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/edge-types.test.ts › refuses a reverse name that is not an edge type identifier`.
 

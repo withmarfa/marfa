@@ -746,4 +746,93 @@ describe("null and format", () => {
     )?.errors?.map((e) => e.field);
     expect(paths).toEqual(["property_schema.size.format"]);
   });
+
+  /**
+   * Each shape fault is refused naming its property, and the same property
+   * with the fault mended registers: the witness that the refusal is the fault.
+   */
+  async function refusesUntilMended(
+    id: string,
+    fault: Record<string, unknown>,
+    mended: Record<string, unknown>,
+    path: string,
+  ) {
+    const refused = await client.registerEdgeType({
+      label: "Test edge type",
+      id,
+      cardinality: "many-to-many",
+      property_schema: { kind: fault },
+    });
+    expect(refused.status, JSON.stringify(fault)).toBe(400);
+    expect(refused.error?.error.code, JSON.stringify(fault)).toBe(
+      "invalid_schema",
+    );
+    expect(named(refused.error), JSON.stringify(fault)).toEqual([path]);
+    const listed = await client.listEdgeTypes();
+    expect(listed.data.data.map((t) => t.id)).not.toContain(id);
+
+    const registered = await client.registerEdgeType({
+      label: "Test edge type",
+      id,
+      cardinality: "many-to-many",
+      property_schema: { kind: mended },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    trackEdgeType(ctx, id);
+  }
+
+  it("refuses an array property with no items_type, naming the property", async () => {
+    await refusesUntilMended(
+      `mock.propschema.noitems.${ctx.runId}`,
+      { type: "array" },
+      { type: "array", items_type: "string" },
+      "property_schema.kind.items_type",
+    );
+  });
+
+  it("refuses an enum property with no enum_values or an empty list, naming the property", async () => {
+    await refusesUntilMended(
+      `mock.propschema.novalues.${ctx.runId}`,
+      { type: "enum" },
+      { type: "enum", enum_values: ["a"] },
+      "property_schema.kind.enum_values",
+    );
+    const empty = await client.registerEdgeType({
+      label: "Test edge type",
+      id: `mock.propschema.emptyvalues.${ctx.runId}`,
+      cardinality: "many-to-many",
+      property_schema: { kind: { type: "enum", enum_values: [] } },
+    });
+    expect(empty.status).toBe(400);
+    expect(empty.error?.error.code).toBe("invalid_schema");
+    expect(named(empty.error)).toEqual(["property_schema.kind.enum_values"]);
+  });
+
+  it("refuses enum_values on a property that is not an enum, naming the property", async () => {
+    await refusesUntilMended(
+      `mock.propschema.strayvalues.${ctx.runId}`,
+      { type: "string", enum_values: ["a"] },
+      { type: "enum", enum_values: ["a"] },
+      "property_schema.kind.enum_values",
+    );
+  });
+
+  it("refuses every property that breaks a rule in one answer", async () => {
+    const refused = await client.registerEdgeType({
+      label: "Test edge type",
+      id: `mock.propschema.several.${ctx.runId}`,
+      cardinality: "many-to-many",
+      property_schema: {
+        list: { type: "array" },
+        pick: { type: "enum" },
+        fine: { type: "string" },
+      },
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    expect(named(refused.error)).toEqual([
+      "property_schema.list.items_type",
+      "property_schema.pick.enum_values",
+    ]);
+  });
 });

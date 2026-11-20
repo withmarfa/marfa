@@ -30,6 +30,17 @@ pub enum EdgeIssues {
     },
 }
 
+/// How the properties of an edge type are judged for their shape.
+#[derive(Clone, Copy, PartialEq)]
+pub enum Judging<'a> {
+    /// A new registration: every property is judged as a type's field is.
+    Register,
+    /// A constraint evolution of the stored edge type: a property left as the stored type holds it is not judged again.
+    Evolve(&'a Obj),
+    /// An archive's edge type: it holds what an earlier registration accepted, so only a format that does not suit its property is refused.
+    Restore,
+}
+
 fn invalid(message: impl Into<String>, field: Option<&str>) -> EdgeIssues {
     EdgeIssues::Validation {
         message: message.into(),
@@ -219,6 +230,7 @@ fn names_free(
 pub fn edge_type_from_request(
     body: &Obj,
     taken: &dyn Fn(&str) -> Option<String>,
+    judging: Judging<'_>,
 ) -> Result<Obj, EdgeIssues> {
     let id = text(body, "id").unwrap_or_default();
     let properties = as_obj(body.get("property_schema"))
@@ -245,30 +257,36 @@ pub fn edge_type_from_request(
     let mut refused = Vec::new();
     let mut normalized = Map::new();
     for (name, definition) in &properties {
+        let record = definition.as_object();
+        let kept = match judging {
+            Judging::Evolve(held) => record.is_some_and(|record| {
+                as_obj(held.get("property_schema"))
+                    .and_then(|held| held.get(name))
+                    .is_some_and(|held| *held == Value::Object(normalize_field(record, None)))
+            }),
+            Judging::Register | Judging::Restore => false,
+        };
+        let prefix = format!("property_schema.{name}");
         let mut found = Vec::new();
-        validate_field_shape(
-            name,
-            definition,
-            &mut found,
-            &Shape {
-                inherits_status: false,
-                path: None,
-                stray: Stray::Refuse,
-            },
-        );
-        let prefix = format!("fields.{name}.format");
+        if !kept {
+            validate_field_shape(
+                name,
+                definition,
+                &mut found,
+                &Shape {
+                    inherits_status: false,
+                    path: Some(&prefix),
+                    stray: Stray::Refuse,
+                },
+            );
+        }
+        if judging == Judging::Restore {
+            found.retain(|issue| issue.field == format!("{prefix}.format"));
+        }
         let before = refused.len();
-        refused.extend(
-            found
-                .into_iter()
-                .filter(|i| i.field == prefix)
-                .map(|mut i| {
-                    i.field = format!("property_schema.{name}.format");
-                    i
-                }),
-        );
+        refused.extend(found);
         if refused.len() == before
-            && let Some(record) = definition.as_object()
+            && let Some(record) = record
         {
             normalized.insert(name.clone(), Value::Object(normalize_field(record, None)));
         }
@@ -389,7 +407,85 @@ pub fn constraint_evolution_changes(stored: &Obj, next: &Obj) -> Vec<&'static st
 
 #[cfg(test)]
 mod tests {
-    use super::edge_id;
+    use serde_json::{Value, json};
+
+    use super::{EdgeIssues, Judging, Obj, edge_id, edge_type_from_request};
+
+    fn judged(property: Value, judging: Judging<'_>) -> Result<Obj, Vec<String>> {
+        let body = json!({"id": "user.cites", "cardinality": "many-to-many",
+            "property_schema": {"p": property}});
+        match edge_type_from_request(body.as_object().unwrap_or(&Obj::new()), &|_| None, judging) {
+            Ok(built) => Ok(built),
+            Err(EdgeIssues::Schema(issues)) => {
+                Err(issues.into_iter().map(|issue| issue.field).collect())
+            }
+            Err(other) => panic!("{other:?}"),
+        }
+    }
+
+    fn registered(property: Value) -> Result<(), Vec<String>> {
+        judged(property, Judging::Register).map(|_| ())
+    }
+
+    #[test]
+    fn a_property_is_refused_for_each_shape_fault_a_field_is_refused_for() {
+        assert_eq!(
+            registered(json!({"type": "array", "items_type": "string"})),
+            Ok(())
+        );
+        assert_eq!(
+            registered(json!({"type": "enum", "enum_values": ["a"]})),
+            Ok(())
+        );
+        for (property, path) in [
+            (json!({"type": "array"}), "property_schema.p.items_type"),
+            (json!({"type": "enum"}), "property_schema.p.enum_values"),
+            (
+                json!({"type": "enum", "enum_values": []}),
+                "property_schema.p.enum_values",
+            ),
+            (
+                json!({"type": "string", "enum_values": ["a"]}),
+                "property_schema.p.enum_values",
+            ),
+        ] {
+            assert_eq!(
+                registered(property.clone()),
+                Err(vec![path.to_string()]),
+                "{property}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_restore_and_an_unchanged_property_keep_what_a_registration_would_refuse() {
+        let faults = [
+            json!({"type": "array"}),
+            json!({"type": "enum"}),
+            json!({"type": "string", "enum_values": ["a"]}),
+        ];
+        for fault in faults {
+            let restored = judged(fault.clone(), Judging::Restore)
+                .unwrap_or_else(|issues| panic!("{fault}: {issues:?}"));
+            assert_eq!(restored["property_schema"]["p"]["type"], fault["type"]);
+            assert!(judged(fault.clone(), Judging::Register).is_err(), "{fault}");
+            assert!(
+                judged(fault.clone(), Judging::Evolve(&restored)).is_ok(),
+                "{fault}: unchanged"
+            );
+            let mut changed = fault.clone();
+            changed["description"] = json!("now described");
+            assert!(
+                judged(changed, Judging::Evolve(&restored)).is_err(),
+                "{fault}: changed"
+            );
+        }
+        let format = json!({"type": "integer", "format": "url"});
+        assert_eq!(
+            judged(format, Judging::Restore),
+            Err(vec!["property_schema.p.format".to_string()])
+        );
+    }
 
     #[test]
     fn an_edge_type_is_one_kebab_word_or_a_namespaced_type_identifier() {
