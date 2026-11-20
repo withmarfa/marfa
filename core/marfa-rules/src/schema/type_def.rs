@@ -177,14 +177,6 @@ fn judge_type(
         &mut errors,
         "The name for more than one item, such as People. Omit it to make one from the label.",
     );
-    if obj.get("description").is_some_and(|d| !d.is_string()) {
-        errors.push(Issue::new(
-            "description",
-            "a string, or nothing",
-            describe(obj.get("description")),
-            "description is rendered on the consent screen and in the type catalog.",
-        ));
-    }
     validate_text(obj, id, limits, &mut errors);
     if obj.get("parent").is_some_and(|p| !p.is_string()) {
         errors.push(Issue::new(
@@ -629,8 +621,28 @@ fn thumbnail_names(fields: Option<&Obj>, ancestry: &Ancestry) -> HashSet<String>
     found
 }
 
+/// The faults in a type's description, guidance and nested descriptions, as a registration finds them.
+pub fn text_issues(obj: &Obj) -> Vec<Issue> {
+    let mut errors = Vec::new();
+    validate_text(
+        obj,
+        obj.get("id").and_then(Value::as_str),
+        Limits::Enforced,
+        &mut errors,
+    );
+    errors
+}
+
 fn validate_text(obj: &Obj, id: Option<&str>, limits: Limits, errors: &mut Vec<Issue>) {
     let enforced = limits == Limits::Enforced;
+    if obj.get("description").is_some_and(|d| !d.is_string()) {
+        errors.push(Issue::new(
+            "description",
+            "a string, or nothing",
+            describe(obj.get("description")),
+            "description is rendered on the consent screen and in the type catalog.",
+        ));
+    }
     if enforced {
         errors.extend(length_issue(
             "description",

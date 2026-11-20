@@ -411,6 +411,7 @@ impl App {
                         if !conflicts.is_empty() {
                             return Err(conflicting(conflicts));
                         }
+                        types_plan.require_guidance(&unit.caller)?;
                         let (types_registered, types_skipped) =
                             (types_plan.registered(), types_plan.skipped);
                         let (edge_types_registered, edge_types_skipped) =

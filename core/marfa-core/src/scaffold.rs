@@ -149,6 +149,9 @@ pub fn scaffold_type(
         row.insert("parent".into(), parent.into());
     }
     row.insert("fields".into(), Value::Object(held));
+    if let Some(issue) = marfa_rules::schema::text_issues(&row).into_iter().next() {
+        return Err(invalid(format!("{}: {}", issue.field, issue.message())));
+    }
     Ok(Value::Object(row))
 }
 
@@ -378,6 +381,19 @@ mod tests {
             let message = refusal("user.ticket", parent, &fields);
             assert!(message.contains(said), "{fields:?}: {message}");
         }
+    }
+
+    #[test]
+    fn a_description_over_the_limit_is_refused_as_a_registration_would() {
+        let over = "d".repeat(201);
+        let Err(CoreError::Invalid(message)) = scaffold_type("user.recipe", None, Some(&over), &[])
+        else {
+            panic!("a description of 201 characters was printed");
+        };
+        assert!(message.contains("description"), "{message}");
+        assert!(message.contains("200"), "{message}");
+        let at = "d".repeat(200);
+        assert!(scaffold_type("user.recipe", None, Some(&at), &[]).is_ok());
     }
 
     #[test]

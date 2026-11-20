@@ -1440,6 +1440,14 @@ If the `--parent` of `marfa types scaffold` breaks the type grammar or names the
 
 **Tests:** `device/types-scaffold.test.ts › refuses a parent that breaks the grammar or is the type itself`.
 
+### `cli/types-scaffold-description-refused`
+
+If the `--description` of `marfa types scaffold` is longer than 200 Unicode code points (`types/description-limit`), then the CLI MUST exit 1 with `invalid`, naming `description`.
+
+**Reason:** the server would refuse a registration of the definition, so the one printed for it would be one nothing could register.
+
+**Tests:** `device/types-scaffold.test.ts › refuses a description over 200 code points and prints one at the limit`.
+
 ### `cli/types-scaffold-parent-shape-refused`
 
 If a `--field` of `marfa types scaffold` redeclares a field of a parent Marfa ships with another `type`, `format`, `items_type`, `searchable`, `max_length`, `max_items` or `enum_values`, or makes a field the parent requires optional (`types/child-shape`), then the CLI MUST exit 1 with `invalid`, naming the reason.
@@ -1562,7 +1570,7 @@ To keep a type's guidance in a separate Markdown file, name it `PATH.md` and pla
 
 ### `cli/types-guidance-file`
 
-When `marfa types register`, `marfa types replace` or `marfa types normalize` reads a definition from `--file PATH.json` and a file `PATH.md` exists, the CLI MUST send the text of `PATH.md` with its trailing whitespace removed as the definition's `guidance`.
+When `marfa types register`, `marfa types replace` or `marfa types normalize` reads a definition that names no `guidance` from `--file PATH.json`, and a file `PATH.md` exists that is UTF-8 with no byte-order mark and holds more than white space, the CLI MUST send the text of `PATH.md` with its trailing whitespace removed as the definition's `guidance`.
 
 **Tests:** `device/types-guidance-live.test.ts › sends the Markdown file beside the definition as its guidance on register, replace and normalize`.
 
@@ -1572,29 +1580,41 @@ When `marfa types register` or `marfa types replace` reads its definition from `
 
 **Reason:** a replacement without guidance removes it (`types/guidance-replace-permission`), so the command adds nothing the author did not write.
 
-**Tests:** `device/types-guidance-live.test.ts › sends a definition as it is when no Markdown file sits beside it`.
+**Tests:** `device/types-guidance-live.test.ts › sends a definition as it is when no Markdown file sits beside it, on register and replace, from a file, --body and --file -`.
 
 ### `cli/types-guidance-empty-file`
 
-When the file `PATH.md` beside `--file PATH.json` holds only whitespace, the CLI MUST send the definition with no `guidance`.
+When `marfa types register`, `marfa types replace` or `marfa types normalize` reads a definition that names no `guidance` from `--file PATH.json`, and the file `PATH.md` is UTF-8 with no byte-order mark and holds only white space, the CLI MUST send the definition with no `guidance`.
 
 **Tests:** `device/types-guidance-live.test.ts › sends no guidance for a Markdown file that holds only whitespace`.
 
 ### `cli/types-guidance-ambiguous`
 
-If the definition of `--file PATH.json` names `guidance` and a file `PATH.md` exists, then the CLI MUST exit 1 with `invalid` and send no request.
+If the definition of `--file PATH.json` names `guidance` and a file `PATH.md` exists, then the CLI MUST exit 1 with `invalid`.
 
 **Reason:** two places for one text cannot both be right.
 
-**Tests:** `device/types-guidance-live.test.ts › refuses a definition that names guidance beside a Markdown file, sending nothing`.
+**Tests:** `device/types-guidance-live.test.ts › exits 1 with invalid for a definition that names guidance beside a Markdown file, on register, replace and normalize`.
+
+### `cli/types-guidance-ambiguous-offline`
+
+If the definition of `--file PATH.json` names `guidance` and a file `PATH.md` exists, then the CLI MUST send no request.
+
+**Tests:** `device/types-guidance-live.test.ts › sends no request for a definition that names guidance beside a Markdown file, though the same definition without the file sends one`.
 
 ### `cli/types-guidance-file-refused`
 
-If the file `PATH.md` beside `--file PATH.json` is not UTF-8 or starts with a byte-order mark, then the CLI MUST exit 1 with `invalid` and send no request.
+If the file `PATH.md` beside `--file PATH.json` is not UTF-8 or starts with a byte-order mark, then the CLI MUST exit 1 with `invalid`.
 
 **Reason:** a byte-order mark would be stored as the first character of the guidance, and text that is not UTF-8 cannot be sent.
 
-**Tests:** `device/types-guidance-live.test.ts › refuses a Markdown file that is not UTF-8 or starts with a byte-order mark, sending nothing`.
+**Tests:** `device/types-guidance-live.test.ts › exits 1 with invalid for a Markdown file that is not UTF-8 or starts with a byte-order mark, on register, replace and normalize`.
+
+### `cli/types-guidance-file-offline`
+
+If the file `PATH.md` beside `--file PATH.json` is not UTF-8 or starts with a byte-order mark, then the CLI MUST send no request.
+
+**Tests:** `device/types-guidance-live.test.ts › sends no request for a Markdown file that is not UTF-8 or starts with a byte-order mark, though a readable one sends one`.
 
 ### `cli/types-get-guidance`
 

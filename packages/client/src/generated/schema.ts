@@ -2439,7 +2439,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Restores an exported archive atomically and returns counts of written and skipped records. While it writes, Marfa turns other writes away. Requires `backups.manage`, `config.manage` to add settings, and a sign-in from the last fifteen minutes.
+         * @description Restores an exported archive atomically and returns counts of written and skipped records. Other writes are turned away meanwhile. Requires `backups.manage`, a recent sign-in, `config.manage` to add settings and `schema.write` to add guidance.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -2503,7 +2503,7 @@ export interface paths {
         put?: never;
         /**
          * Restore a backup
-         * @description Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. Requires `backups.manage`, `config.manage` to add settings, and a sign-in from the last fifteen minutes.
+         * @description Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. Requires what `POST /restore` requires.
          */
         post: operations["restoreBackup"];
         delete?: never;

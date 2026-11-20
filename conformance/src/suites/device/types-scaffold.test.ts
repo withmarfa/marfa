@@ -304,6 +304,24 @@ describe("a starting definition for a type", () => {
     }
   });
 
+  it("refuses a description over 200 code points and prints one at the limit", async () => {
+    expect(
+      await refused(
+        ["user.recipe", "--description", "\u{1F600}".repeat(201)],
+        "invalid",
+        1,
+      ),
+    ).toContain("description");
+    // Witness: the same text at the limit is printed.
+    const ran = await scaffold([
+      "user.recipe",
+      "--description",
+      "\u{1F600}".repeat(200),
+    ]);
+    expect(ran.code, ran.stderr).toBe(0);
+    expect(JSON.parse(ran.stdout).description).toBe("\u{1F600}".repeat(200));
+  });
+
   it("refuses a field a shipped parent holds to another shape, or to be required", async () => {
     expect(
       await refused(

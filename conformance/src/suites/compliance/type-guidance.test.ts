@@ -435,11 +435,10 @@ describe("a type's description and guidance", () => {
     expect(quiet.status, JSON.stringify(quiet.error)).toBe(201);
   });
 
-  it("refuses a key with metadata.types:write alone guidance when it registers a type, and registers the same type without it", async () => {
+  it("answers 403 forbidden naming schema.write and guidance to a key with metadata.types:write alone that registers a type with guidance", async () => {
     const own = await keyFor("register", []);
-    const id = `user.guide-register-${unique()}`;
     const res = await register(own, {
-      id,
+      id: `user.guide-register-${unique()}`,
       guidance: "Use it.",
       fields: FIELDS,
     });
@@ -448,6 +447,17 @@ describe("a type's description and guidance", () => {
     expect(res.error?.error.details?.required_scope).toBe("schema.write");
     expect(res.error?.error.details?.changes).toEqual(["guidance"]);
     await expectMatchesSchema("POST", "/types", 403, res.error);
+  });
+
+  it("registers no type for a key with metadata.types:write alone that names guidance, though the same type registers without it and with schema.write", async () => {
+    const own = await keyFor("register-nothing", []);
+    const id = `user.guide-register-nothing-${unique()}`;
+    const res = await register(own, {
+      id,
+      guidance: "Use it.",
+      fields: FIELDS,
+    });
+    expect(res.status).toBe(403);
     expect((await client.getType(id)).status).toBe(404);
     // The witness: the same type with no guidance registers for this key, and with it for a key that holds schema.write.
     expect((await register(own, { id, fields: FIELDS })).status).toBe(201);
@@ -462,9 +472,8 @@ describe("a type's description and guidance", () => {
     expect((await client.getType(guided)).data.guidance).toBe("Use it.");
   });
 
-  it("refuses a key with metadata.types:write alone a replacement that adds, changes or removes guidance, and lands each with schema.write", async () => {
-    const own = await keyFor("replace", []);
-    const writer = await keyFor("replace-writer", ["schema.write"]);
+  /** A plain type and a guided one, for the replacements below. */
+  async function replaceCases(): Promise<[string, string, Definition][]> {
     const plain = `user.guide-add-${unique()}`;
     const guided = `user.guide-change-${unique()}`;
     expect((await register(client, { id: plain, fields: FIELDS })).status).toBe(
@@ -479,13 +488,16 @@ describe("a type's description and guidance", () => {
         })
       ).status,
     ).toBe(201);
-    const cases: [string, string, Definition][] = [
+    return [
       ["adds", plain, { guidance: "Use it.", fields: FIELDS }],
       ["changes", guided, { guidance: "Second.", fields: FIELDS }],
       ["removes", guided, { fields: FIELDS }],
     ];
-    for (const [what, id, body] of cases) {
-      const before = (await client.getType(id)).data;
+  }
+
+  it("answers 403 forbidden naming schema.write and guidance to a key with metadata.types:write alone whose replacement adds, changes or removes guidance", async () => {
+    const own = await keyFor("replace", []);
+    for (const [what, id, body] of await replaceCases()) {
       const res = await own.replaceType(id, body);
       expect(res.status, what).toBe(403);
       expect(res.error?.error.code, what).toBe("forbidden");
@@ -494,6 +506,15 @@ describe("a type's description and guidance", () => {
       );
       expect(res.error?.error.details?.changes, what).toEqual(["guidance"]);
       await expectMatchesSchema("PUT", "/types/{id}", 403, res.error);
+    }
+  });
+
+  it("leaves a type as stored when a key with metadata.types:write alone replaces its guidance, though schema.write lands each replacement", async () => {
+    const own = await keyFor("replace-nothing", []);
+    const writer = await keyFor("replace-writer", ["schema.write"]);
+    for (const [what, id, body] of await replaceCases()) {
+      const before = (await client.getType(id)).data;
+      expect((await own.replaceType(id, body)).status, what).toBe(403);
       expect((await client.getType(id)).data, what).toEqual(before);
       const landed = await writer.replaceType(id, body);
       expect(landed.status, `${what}: ${JSON.stringify(landed.error)}`).toBe(
@@ -503,7 +524,7 @@ describe("a type's description and guidance", () => {
         (body as { guidance?: string }).guidance,
       );
       // Put it back for the next case, which expects the first text.
-      if (id === guided) {
+      if (id.includes("-change-")) {
         await writer.replaceType(id, { guidance: "First.", fields: FIELDS });
       }
     }

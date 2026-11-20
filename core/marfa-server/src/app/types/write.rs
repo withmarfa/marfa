@@ -571,6 +571,13 @@ impl Restoring {
         self.fresh.len()
     }
 
+    /// Guidance is read as instructions, so the definitions the plan registers need the permission a registration does.
+    pub fn require_guidance(&self, caller: &Caller) -> Result<()> {
+        self.fresh.iter().try_for_each(|(_, schema, _)| {
+            caller.require_guidance(None, text_of(schema, "guidance"))
+        })
+    }
+
     /// The definitions the plan registers.
     pub fn rows(&self) -> Vec<Obj> {
         self.fresh

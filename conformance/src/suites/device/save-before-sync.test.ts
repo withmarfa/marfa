@@ -583,6 +583,126 @@ describe("a copy no server has been named for", () => {
     expect(value(await device.declaredTypes())).toHaveLength(1);
   });
 
+  it("refuses a declared status word that lacks a group, holds a member beside value, group and description, or has a description that is not text, naming the field, and declares a word with a description", async () => {
+    const device = await offline("save-declare-status-words");
+    const declare = (word: Record<string, unknown>) =>
+      device.declareTypes([
+        {
+          id: "app.ticket.entry",
+          fields: { stage: { type: "status", status_values: [word] } },
+        },
+      ]);
+    for (const [what, word] of [
+      ["a word with no group", { value: "open" }],
+      [
+        "a word with a member beside value, group and description",
+        { value: "open", group: "not_started", color: "red" },
+      ],
+      [
+        "a description that is not text",
+        { value: "open", group: "not_started", description: 7 },
+      ],
+    ] as const) {
+      const refused = await declare(word);
+      expect(
+        refused.ok ? "declared" : refused.refusal.code,
+        `${what} was declared`,
+      ).toBe("invalid");
+      if (!refused.ok) expect(refused.refusal.raw, what).toContain("stage");
+    }
+    expect(value(await device.declaredTypes())).toEqual([]);
+    // The witness: the same word with a text description is declared.
+    value(
+      await declare({
+        value: "open",
+        group: "not_started",
+        description: "Nobody has looked yet.",
+      }),
+    );
+    expect(value(await device.declaredTypes())).toHaveLength(1);
+  });
+
+  it("refuses a declaration whose guidance or descriptions a registration refuses, naming the path, and declares the same text within the limits", async () => {
+    const device = await offline("save-declare-text");
+    const fields = { title: { type: "string" } };
+    const over = (count: number) => "\u{1F600}".repeat(count);
+    const refusals: [string, string, Record<string, unknown>][] = [
+      [
+        "guidance on an app type",
+        "guidance",
+        { id: "app.ticket.note", guidance: "Use it.", fields },
+      ],
+      [
+        "guidance over 1,000 code points",
+        "guidance",
+        { id: "user.note", guidance: over(1001), fields },
+      ],
+      [
+        "guidance that is not text",
+        "guidance",
+        { id: "user.note", guidance: 7, fields },
+      ],
+      [
+        "a type description over 200 code points",
+        "description",
+        { id: "user.note", description: over(201), fields },
+      ],
+      [
+        "a field description over 300 code points",
+        "fields.title.description",
+        {
+          id: "user.note",
+          fields: { title: { type: "string", description: over(301) } },
+        },
+      ],
+      [
+        "a status word description over 120 code points",
+        "fields.stage.status_values.0.description",
+        {
+          id: "user.note",
+          fields: {
+            stage: {
+              type: "status",
+              status_values: [
+                { value: "open", group: "not_started", description: over(121) },
+              ],
+            },
+          },
+        },
+      ],
+    ];
+    for (const [what, path, type] of refusals) {
+      const refused = await device.declareTypes([type]);
+      expect(
+        refused.ok ? "declared" : refused.refusal.code,
+        `${what} was declared`,
+      ).toBe("invalid");
+      if (!refused.ok) expect(refused.refusal.raw, what).toContain(path);
+    }
+    expect(value(await device.declaredTypes())).toEqual([]);
+    // The witness: the same text within the limits, and empty guidance on an app type, are declared.
+    value(
+      await device.declareTypes([
+        {
+          id: "user.note",
+          description: over(200),
+          guidance: over(1000),
+          fields: {
+            title: { type: "string", description: over(300) },
+            stage: {
+              type: "status",
+              status_values: [
+                { value: "open", group: "not_started", description: over(120) },
+              ],
+            },
+          },
+        },
+        { id: "app.ticket.note", guidance: "", fields },
+      ]),
+    );
+    expect(value(await device.declaredTypes())).toHaveLength(2);
+  });
+
   it("holds a member of a list's entries to the checks a declaration makes of a field, naming the field", async () => {
     const device = await offline("save-declare-member-checks");
     const word = { value: "open", group: "not_started" };

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
+import { ScriptedServer } from "../../device/scripted-server.js";
 import { cleanup, createTestContext, trackType } from "../../utils/setup.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 import { marfa, NO_KEYCHAIN, refusal } from "./types-scaffold.shared.js";
@@ -18,6 +19,8 @@ let client: MarfaClient;
 let ctx: TestContext;
 let env: Record<string, string>;
 let folder: string;
+let heard: ScriptedServer;
+let quietEnv: Record<string, string>;
 
 beforeAll(async () => {
   let apiUrl: string;
@@ -28,8 +31,11 @@ beforeAll(async () => {
   ));
   env = { ...NO_KEYCHAIN, MARFA_API_URL: apiUrl, MARFA_API_KEY: apiKey };
   folder = tempFolder("marfa-guidance-");
+  heard = await ScriptedServer.start();
+  quietEnv = { ...NO_KEYCHAIN, MARFA_API_URL: heard.url, MARFA_API_KEY: "k" };
 });
 afterAll(async () => {
+  await heard?.stop();
   if (ctx) await cleanup(ctx);
 });
 
@@ -87,7 +93,7 @@ describe("a type's guidance beside its definition", () => {
     expect((await client.getType(id)).data.guidance).toBe(next);
   });
 
-  it("sends a definition as it is when no Markdown file sits beside it", async () => {
+  it("sends a definition as it is when no Markdown file sits beside it, on register and replace, from a file, --body and --file -", async () => {
     const id = idOf("unbesides");
     const path = write(id, { id, fields: FIELDS });
     const made = await marfa(
@@ -98,22 +104,69 @@ describe("a type's guidance beside its definition", () => {
     trackType(ctx, id, client);
     expect((await client.getType(id)).data).not.toHaveProperty("guidance");
 
-    // The witness: the same definition read from --body ignores a file of the same name.
-    const body = idOf("inline");
-    write(body, { id: body, fields: FIELDS }, "Not sent.");
-    const inline = await marfa(
+    // Files named for a definition and for `-` sit unread: --body and --file - name no path.
+    const decoy = idOf("inline");
+    write(decoy, { id: decoy, fields: FIELDS }, "Not sent.");
+    writeFileSync(join(folder, "-.md"), "Not sent.");
+    const sources: [
+      string[],
+      (text: string) => { args: string[]; input?: string },
+    ][] = [
+      [["--body"], (text) => ({ args: [text] })],
+      [["--file", "-"], (text) => ({ args: [], input: text })],
+    ];
+    for (const [flags, give] of sources) {
+      const label = flags.join(" ");
+      const name = idOf(`registered_${flags.length}`);
+      const { args, input } = give(
+        JSON.stringify({ id: name, fields: FIELDS }),
+      );
+      const ran = await marfa(
+        ["--json", "types", "register", ...flags, ...args],
+        env,
+        { cwd: folder, input },
+      );
+      expect(ran.code, `${label}: ${ran.stderr}`).toBe(0);
+      trackType(ctx, name, client);
+      expect((await client.getType(name)).data, label).not.toHaveProperty(
+        "guidance",
+      );
+    }
+
+    // A replacement from each source holds no guidance, so it removes what was stored.
+    const replacements: [
+      string[],
+      (text: string) => { args: string[]; input?: string },
+    ][] = [
+      ...sources,
       [
-        "--json",
-        "types",
-        "register",
-        "--body",
-        JSON.stringify({ id: body, fields: FIELDS }),
+        ["--file"],
+        (text) => ({ args: [write(idOf("replacement"), JSON.parse(text))] }),
       ],
-      env,
-    );
-    expect(inline.code, inline.stderr).toBe(0);
-    trackType(ctx, body, client);
-    expect((await client.getType(body)).data).not.toHaveProperty("guidance");
+    ];
+    for (const [index, [flags, give]] of replacements.entries()) {
+      const label = flags.join(" ");
+      const name = idOf(`replaced_${index}`);
+      const guided = await client.registerType({
+        id: name,
+        guidance: "Stored.",
+        fields: FIELDS,
+      } as never);
+      expect(guided.status, JSON.stringify(guided.error)).toBe(201);
+      trackType(ctx, name, client);
+      const { args, input } = give(JSON.stringify({ fields: FIELDS }));
+      const ran = await marfa(
+        ["--json", "types", "replace", name, ...flags, ...args],
+        env,
+        { cwd: folder, input },
+      );
+      expect(ran.code, `${label}: ${ran.stderr}`).toBe(0);
+      expect((await client.getType(name)).data, label).not.toHaveProperty(
+        "guidance",
+      );
+    }
+
+    // The witness: a Markdown file beside a JSON file is sent.
     const beside = idOf("beside");
     const withFile = await marfa(
       [
@@ -142,20 +195,26 @@ describe("a type's guidance beside its definition", () => {
     expect((await client.getType(id)).data).not.toHaveProperty("guidance");
   });
 
-  it("refuses a definition that names guidance beside a Markdown file, sending nothing", async () => {
+  /** Runs register, replace and normalize on `path`. */
+  async function onEach(path: string, id: string, via: Record<string, string>) {
+    return [
+      await marfa(["--json", "types", "register", "--file", path], via),
+      await marfa(["--json", "types", "replace", id, "--file", path], via),
+      await marfa(["--json", "types", "normalize", "--file", path], via),
+    ];
+  }
+
+  it("exits 1 with invalid for a definition that names guidance beside a Markdown file, on register, replace and normalize", async () => {
     const id = idOf("twice");
     const path = write(
       id,
       { id, fields: FIELDS, guidance: "In the JSON." },
       "In the file.",
     );
-    const ran = await marfa(
-      ["--json", "types", "register", "--file", path],
-      env,
-    );
-    expect(ran.code, ran.stdout).toBe(1);
-    expect(refusal(ran).error.code).toBe("invalid");
-    expect(await registered(id)).toBe(false);
+    for (const ran of await onEach(path, id, env)) {
+      expect(ran.code, ran.stdout).toBe(1);
+      expect(refusal(ran).error.code).toBe("invalid");
+    }
     // The witness: without the file the same definition registers.
     const alone = idOf("twice_alone");
     const ok = await marfa(
@@ -173,26 +232,45 @@ describe("a type's guidance beside its definition", () => {
     expect((await client.getType(alone)).data.guidance).toBe("In the JSON.");
   });
 
-  it("refuses a Markdown file that is not UTF-8 or starts with a byte-order mark, sending nothing", async () => {
-    for (const [name, bytes] of [
-      ["bom", Buffer.from("﻿Use it.", "utf8")],
-      ["latin", Buffer.from([0x55, 0x73, 0x65, 0x20, 0xe9, 0x20, 0x69, 0x74])],
-    ] as const) {
+  it("sends no request for a definition that names guidance beside a Markdown file, though the same definition without the file sends one", async () => {
+    const id = idOf("twice_quiet");
+    const path = write(
+      id,
+      { id, fields: FIELDS, guidance: "In the JSON." },
+      "In the file.",
+    );
+    const before = heard.requests.length;
+    await onEach(path, id, quietEnv);
+    expect(heard.requests.length).toBe(before);
+    const alone = idOf("twice_quiet_alone");
+    await marfa(
+      [
+        "--json",
+        "types",
+        "register",
+        "--file",
+        write(alone, { id: alone, fields: FIELDS, guidance: "In the JSON." }),
+      ],
+      quietEnv,
+    );
+    expect(heard.requests.length).toBeGreaterThan(before);
+  });
+
+  const UNREADABLE = [
+    ["bom", Buffer.from("﻿Use it.", "utf8")],
+    ["latin", Buffer.from([0x55, 0x73, 0x65, 0x20, 0xe9, 0x20, 0x69, 0x74])],
+  ] as const;
+
+  it("exits 1 with invalid for a Markdown file that is not UTF-8 or starts with a byte-order mark, on register, replace and normalize", async () => {
+    for (const [name, bytes] of UNREADABLE) {
       const id = idOf(`bad_${name}`);
-      const ran = await marfa(
-        [
-          "--json",
-          "types",
-          "register",
-          "--file",
-          write(id, { id, fields: FIELDS }, bytes),
-        ],
-        env,
-      );
-      expect(ran.code, `${name}: ${ran.stdout}`).toBe(1);
-      expect(refusal(ran).error.code, name).toBe("invalid");
-      expect(await registered(id), name).toBe(false);
+      const path = write(id, { id, fields: FIELDS }, bytes);
+      for (const ran of await onEach(path, id, env)) {
+        expect(ran.code, `${name}: ${ran.stdout}`).toBe(1);
+        expect(refusal(ran).error.code, name).toBe("invalid");
+      }
     }
+    // The witness: text that is UTF-8 with no mark is sent.
     const id = idOf("good_utf8");
     const ok = await marfa(
       [
@@ -206,6 +284,27 @@ describe("a type's guidance beside its definition", () => {
     );
     expect(ok.code, ok.stderr).toBe(0);
     trackType(ctx, id, client);
+  });
+
+  it("sends no request for a Markdown file that is not UTF-8 or starts with a byte-order mark, though a readable one sends one", async () => {
+    const before = heard.requests.length;
+    for (const [name, bytes] of UNREADABLE) {
+      const id = idOf(`bad_quiet_${name}`);
+      await onEach(write(id, { id, fields: FIELDS }, bytes), id, quietEnv);
+    }
+    expect(heard.requests.length).toBe(before);
+    const id = idOf("good_quiet");
+    await marfa(
+      [
+        "--json",
+        "types",
+        "register",
+        "--file",
+        write(id, { id, fields: FIELDS }, "Use it."),
+      ],
+      quietEnv,
+    );
+    expect(heard.requests.length).toBeGreaterThan(before);
   });
 
   it("prints a type's guidance and its ancestors' as members under --json and as text otherwise", async () => {

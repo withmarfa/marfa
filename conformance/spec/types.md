@@ -248,14 +248,6 @@ If `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names a `descript
 
 **Tests:** `compliance/type-guidance.test.ts › takes a status word description at its limit and refuses one over it or not text`.
 
-### `types/status-word-description-free`
-
-When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` that changes only the `description` of a status word, the server MUST take the replacement.
-
-**Reason:** a description changes nothing an item holds, as a field's description does not (`types/evolve-free`).
-
-**Tests:** `compliance/type-guidance.test.ts › lets a key with metadata.types:write alone change a status word's description and a guided type's description`.
-
 ### `types/guidance`
 
 Where `POST /types` or `PUT /types/{id}` names `guidance` for a type, the server MUST keep it with the type and answer it as `guidance` on `GET /types/{id}` and in `GET /types`.
@@ -286,23 +278,35 @@ If `POST /types` or `PUT /types/{id}` names `guidance` that is an empty string, 
 
 ### `types/guidance-register-permission`
 
-If a key without `schema.write` sends `POST /types` naming non-empty `guidance`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` and `details.changes` listing `guidance`, and register nothing.
+If a key without `schema.write` sends `POST /types` naming non-empty `guidance`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` and `details.changes` listing `guidance`.
 
 **Reason:** guidance tells agents how to fill a type, so adding it is a schema change beyond `metadata.types:write`.
 
-**Tests:** `compliance/type-guidance.test.ts › refuses a key with metadata.types:write alone guidance when it registers a type, and registers the same type without it`.
+**Tests:** `compliance/type-guidance.test.ts › answers 403 forbidden naming schema.write and guidance to a key with metadata.types:write alone that registers a type with guidance`.
+
+### `types/guidance-register-no-write`
+
+If a key without `schema.write` sends `POST /types` naming non-empty `guidance`, then the server MUST NOT register the type.
+
+**Tests:** `compliance/type-guidance.test.ts › registers no type for a key with metadata.types:write alone that names guidance, though the same type registers without it and with schema.write`.
 
 ### `types/guidance-replace-permission`
 
-If a key without `schema.write` sends `PUT /types/{id}` that adds, changes or removes the type's `guidance`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` and `details.changes` listing `guidance`, and change nothing.
+If a key without `schema.write` sends `PUT /types/{id}` that adds, changes or removes the type's `guidance`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` and `details.changes` listing `guidance`.
 
-**Tests:** `compliance/type-guidance.test.ts › refuses a key with metadata.types:write alone a replacement that adds, changes or removes guidance, and lands each with schema.write`.
+**Tests:** `compliance/type-guidance.test.ts › answers 403 forbidden naming schema.write and guidance to a key with metadata.types:write alone whose replacement adds, changes or removes guidance`.
+
+### `types/guidance-replace-no-change`
+
+If a key without `schema.write` sends `PUT /types/{id}` that adds, changes or removes the type's `guidance`, then the server MUST leave the type as stored.
+
+**Tests:** `compliance/type-guidance.test.ts › leaves a type as stored when a key with metadata.types:write alone replaces its guidance, though schema.write lands each replacement`.
 
 ### `types/guidance-unchanged`
 
-When a key without `schema.write` sends a `PUT /types/{id}` that leaves the type's `guidance` as stored and changes nothing else that needs `schema.write`, the server MUST take the replacement.
+When a key without `schema.write` sends `PUT /types/{id}` that leaves the type's `guidance` as stored, the server MUST NOT refuse it under `types/guidance-replace-permission`.
 
-**Reason:** a value that is the same is not a change, and a connector that holds no `schema.write` must keep updating the types it registered.
+**Reason:** a value that is the same is not a change, and a connector that holds no `schema.write` must keep updating the types it registered. Whether the replacement is otherwise taken is decided by `types/evolve-schema-change` and `types/limits-replace-stored`.
 
 **Tests:** `compliance/type-guidance.test.ts › lets a key with metadata.types:write alone replace a guided type when its guidance stays as it is`.
 
@@ -332,7 +336,7 @@ If `PUT /types/{id}` names `ancestor_guidance`, as a read of the type answers it
 
 If `PUT /types/{id}` names text over a limit of `types/description-limit`, `types/field-description-limit`, `types/status-word-description-limit` or `types/guidance-limit` that the type already holds, then the server MUST answer `400 invalid_schema` naming it.
 
-**Reason:** a type stored over a limit reads as it is (`archive/restore-type-text-limits`), and the next replacement brings it within.
+**Reason:** a type stored over a limit reads as it is (`archive/restore-type-text-limits`), and a replacement of it, unchanged or not, is taken only once the text is within the limits.
 
 **Tests:** `compliance/type-guidance-restore.test.ts › reads a type stored over the limits as it is, and refuses a replacement that keeps the text until it is within`.
 
@@ -866,7 +870,7 @@ A status field is a field of the `status` kind, whatever its name: `core.task` c
 
 ### `types/status-groups`
 
-When a type declares a status field whose `status_values` holds one or more entries, each an object of exactly a `value` matching `^[a-z][a-z0-9_]{0,63}$` that no other entry holds and a `group` of `not_started`, `in_progress`, `completed` or `canceled`, the server MUST take it and answer the entries, in order, on `GET /types/{id}`.
+When a type declares a status field whose `status_values` holds one or more entries, each an object of a `value` matching `^[a-z][a-z0-9_]{0,63}$` that no other entry holds, a `group` of `not_started`, `in_progress`, `completed` or `canceled`, and no member but an optional `description` (`types/status-word-description`), the server MUST take it and answer the entries, in order, on `GET /types/{id}`.
 
 **Reason:** the groups are fixed so that a filter, a view or an app reads the same four meanings on every type; a word is a type's own name for where its item stands.
 
@@ -874,7 +878,7 @@ When a type declares a status field whose `status_values` holds one or more entr
 
 ### `types/status-refused`
 
-If a type declares a status field it does not inherit with no `status_values`, any status field with an empty `status_values`, an entry other than an object of exactly `value` and `group`, a word outside `^[a-z][a-z0-9_]{0,63}$` or held twice, a group outside the four, or `enum_values`, or declares `status_values` on a field of another type, or an `array` whose `items_type` is `status`, then the server MUST answer `400 invalid_schema` naming the member.
+If a type declares a status field it does not inherit with no `status_values`, any status field with an empty `status_values`, an entry other than an object of a `value` and a `group` with at most a `description` beside them, a word outside `^[a-z][a-z0-9_]{0,63}$` or held twice, a group outside the four, or `enum_values`, or declares `status_values` on a field of another type, or an `array` whose `items_type` is `status`, then the server MUST answer `400 invalid_schema` naming the member.
 
 **Reason:** a subtype may declare the field it inherits without `status_values`, because its chain gives the words (`types/child-adds`).
 
@@ -1180,11 +1184,11 @@ A connector's key holds `metadata.types:write` and not `schema.write`, so that a
 
 ### `types/evolve-free`
 
-When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `plural`, `description`, `display_hints`, `version`, or a kept field's `description` or the `label` of the field or of a member of its entries, including when its retained parent or compatibility targets are outside the key's write permissions.
+When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `plural`, `description`, `display_hints`, `version`, or a kept field's `description` or the `label` of the field or of a member of its entries, or the `description` of a kept status word, including when its retained parent or compatibility targets are outside the key's write permissions.
 
-**Reason:** each release of a connector adds fields, and these change no stored item and only how the type is presented.
+**Reason:** each release of a connector adds fields, and these change no stored item and only how the type is presented. A status word's `description` changes nothing an item holds, as a field's does not.
 
-**Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`, `› admits a change to the plural and to a kept field's labels on metadata.types:write alone`, `compliance/type-dependency-permissions.test.ts › permits connector label and optional-field updates retaining %s without target write permission`.
+**Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`, `› admits a change to the plural and to a kept field's labels on metadata.types:write alone`, `compliance/type-guidance.test.ts › lets a key with metadata.types:write alone change a status word's description and a guided type's description`, `compliance/type-dependency-permissions.test.ts › permits connector label and optional-field updates retaining %s without target write permission`.
 
 ### `types/evolve-held-name`
 

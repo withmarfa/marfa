@@ -48,7 +48,7 @@ pub use tables::{
     searchable_columns, with_set_stored, with_table_labels,
 };
 pub use type_def::{
-    declared_conflicts, validate_replacing_type, validate_restored_type, validate_type,
+    declared_conflicts, text_issues, validate_replacing_type, validate_restored_type, validate_type,
 };
 pub use unread::{unread_edge_keys, unread_keys};
 

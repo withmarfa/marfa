@@ -238,6 +238,13 @@ pub fn declaration(
             "{id} is Marfa's, and an app declares types under its own namespace: `app.`, `user.` or a name of its own"
         )));
     }
+    if let Some(issue) = crate::schema::text_issues(row).into_iter().next() {
+        return Err(invalid(format!(
+            "{id} declares text that does not hold: {}: {}",
+            issue.field,
+            issue.message()
+        )));
+    }
     let mut row = row.clone();
     match row.get("fields") {
         None => {

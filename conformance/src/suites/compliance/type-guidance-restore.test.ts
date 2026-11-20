@@ -6,6 +6,12 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import {
+  connect,
+  issuerOrigin,
+  registerApp,
+  signIn,
+} from "../../utils/signed-in.js";
 
 /**
  * Guidance and descriptions go through an export and a restore. A type stored
@@ -22,6 +28,7 @@ const WORD = "Nobody has looked yet.";
 
 let origin: FreshServer;
 let destination: FreshServer;
+let keyed: FreshServer;
 let source: MarfaClient;
 let worker: MarfaClient;
 let restoring: MarfaClient;
@@ -65,9 +72,10 @@ function edited(
 }
 
 beforeAll(async () => {
-  [origin, destination] = await Promise.all([
+  [origin, destination, keyed] = await Promise.all([
     bootFreshServer("guidance-origin"),
     bootFreshServer("guidance-destination"),
+    bootFreshServer("guidance-keyed"),
   ]);
   source = new MarfaClient({
     baseUrl: origin.apiUrl,
@@ -103,14 +111,14 @@ beforeAll(async () => {
     baseUrl: destination.apiUrl,
     apiKey: destination.workingKey,
   });
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+}, 3 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
-  await Promise.all([origin?.stop(), destination?.stop()]);
+  await Promise.all([origin?.stop(), destination?.stop(), keyed?.stop()]);
 }, FRESH_SERVER_TIMEOUT_MS);
 
 describe("a type's guidance and descriptions in an archive", () => {
-  it("refuses an archive that gives an app type guidance, and writes nothing", async () => {
+  it("answers 400 invalid_schema naming guidance for an archive that gives an app type guidance", async () => {
     const bad = edited(exported, [APP, BESIDE], (line) => {
       if (line.type?.id === APP) line.type.guidance = "Use it.";
     });
@@ -118,9 +126,34 @@ describe("a type's guidance and descriptions in an archive", () => {
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("invalid_schema");
     expect(JSON.stringify(refused.error?.error.details)).toContain("guidance");
-    // Nothing was written: not the app type, and not the type beside it.
+  });
+
+  it("writes no type of an archive that gives an app type guidance, though the archive without that guidance writes them", async () => {
+    const bad = edited(exported, [APP, BESIDE], (line) => {
+      if (line.type?.id === APP) line.type.guidance = "Use it.";
+    });
+    expect((await restoring.restoreArchive(bad)).status).toBe(400);
+    // Not the app type, and not the type beside it.
     expect((await worker.getType(APP)).status).toBe(404);
     expect((await worker.getType(BESIDE)).status).toBe(404);
+    expect((await worker.getType(KEPT)).status).toBe(404);
+    // The witness: the archive as exported restores them on a server of its own.
+    const witness = await bootFreshServer("guidance-app-witness");
+    try {
+      const restored = await new MarfaClient({
+        baseUrl: witness.apiUrl,
+        controlSocket: witness.controlSocket,
+      }).restoreArchive(exported);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      const own = new MarfaClient({
+        baseUrl: witness.apiUrl,
+        apiKey: witness.workingKey,
+      });
+      expect((await own.getType(APP)).status).toBe(200);
+      expect((await own.getType(BESIDE)).status).toBe(200);
+    } finally {
+      await witness.stop();
+    }
   });
 
   it("carries a type's guidance and status word descriptions through an export and a restore into a new instance", async () => {
@@ -132,9 +165,37 @@ describe("a type's guidance and descriptions in an archive", () => {
       { value: "open", group: "not_started", description: WORD },
       { value: "done", group: "completed" },
     ]);
-    // The witness: the archive without the app type's guidance restores it, so the refusal above was the guidance.
-    expect((await worker.getType(APP)).status).toBe(200);
-    expect((await worker.getType(BESIDE)).status).toBe(200);
+  });
+
+  it("registers a type with no guidance and no status word description where the archive holds them empty", async () => {
+    const destinationThree = await bootFreshServer(
+      "guidance-empty-destination",
+    );
+    try {
+      const empty = edited(exported, [KEPT], (line) => {
+        const type = line.type!;
+        type.guidance = "";
+        type.fields!.stage.status_values![0].description = "";
+      });
+      const restored = await new MarfaClient({
+        baseUrl: destinationThree.apiUrl,
+        controlSocket: destinationThree.controlSocket,
+      }).restoreArchive(empty);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      const read = (
+        await new MarfaClient({
+          baseUrl: destinationThree.apiUrl,
+          apiKey: destinationThree.workingKey,
+        }).getType(KEPT)
+      ).data;
+      expect(read).not.toHaveProperty("guidance");
+      expect(read.fields.stage.status_values?.[0]).toEqual({
+        value: "open",
+        group: "not_started",
+      });
+    } finally {
+      await destinationThree.stop();
+    }
   });
 
   it("reads a type stored over the limits as it is, and refuses a replacement that keeps the text until it is within", async () => {
@@ -213,5 +274,50 @@ describe("a type's guidance and descriptions in an archive", () => {
     } finally {
       await destinationTwo.stop();
     }
+  });
+});
+
+/** An app's access token holding `scope`, whose owner signed in just now. */
+async function appToken(scope: string): Promise<MarfaClient> {
+  const issuer = await issuerOrigin(keyed);
+  const app = await registerApp(keyed, scope);
+  const tokens = await connect(
+    keyed,
+    issuer,
+    await signIn(keyed, issuer),
+    app,
+    scope,
+  );
+  return new MarfaClient({
+    baseUrl: keyed.apiUrl,
+    apiKey: tokens.access_token,
+  });
+}
+
+describe("an app restoring an archive that carries guidance", () => {
+  it("answers 403 forbidden naming schema.write and guidance to an app holding backups.manage without schema.write", async () => {
+    const app = await appToken("backups.manage");
+    const refused = await app.restoreArchive(exported);
+    expect(refused.status, JSON.stringify(refused.error)).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+    expect(refused.error?.error.details?.required_scope).toBe("schema.write");
+    expect(refused.error?.error.details?.changes).toEqual(["guidance"]);
+  });
+
+  it("writes no type of an archive that carries guidance for an app without schema.write, though an app holding schema.write restores it", async () => {
+    const lacking = await appToken("backups.manage");
+    expect((await lacking.restoreArchive(exported)).status).toBe(403);
+    const reader = new MarfaClient({
+      baseUrl: keyed.apiUrl,
+      apiKey: keyed.workingKey,
+    });
+    for (const id of [KEPT, LONG, APP, BESIDE]) {
+      expect((await reader.getType(id)).status, id).toBe(404);
+    }
+    // The witness: the same archive restores for an app that also holds schema.write.
+    const holding = await appToken("backups.manage schema.write");
+    const restored = await holding.restoreArchive(exported);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect((await reader.getType(KEPT)).data.guidance).toBe(GUIDANCE);
   });
 });
