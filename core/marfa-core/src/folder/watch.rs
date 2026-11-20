@@ -679,6 +679,7 @@ impl Folder {
     ) -> Result<Option<Duration>, WatchError<E>> {
         let asking = || asked.load(Ordering::SeqCst);
         telling.at_rest = false;
+        telling.failing = false;
         let settings = self.send_settings_edit()?;
         if asking() {
             return Ok(None);
