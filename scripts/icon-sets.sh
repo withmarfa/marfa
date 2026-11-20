@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Writes the icon sets from the pinned Iconify npm releases listed in scripts/icon-sets.txt.
-#
-# usage: scripts/icon-sets.sh [output folder]
-#
-# Each tarball is checked against its pinned integrity hash before anything is read from it, and
-# nothing reaches the output folder unless every set was written.
+# Usage: scripts/icon-sets.sh [output folder]
+# The release pins and integrity hashes are in scripts/icon-sets.txt.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

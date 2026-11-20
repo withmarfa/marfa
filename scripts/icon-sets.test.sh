@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Runs scripts/icon-sets.sh against a registry on disk: the pinned set is written, and every way
-# the run can go wrong refuses and leaves the output folder as it was.
+# Exercises generation and input failures against a local registry fixture.
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -10,7 +9,7 @@ trap 'rm -rf -- "${work}"' EXIT
 registry="${work}/registry/@iconify-json/demo/-"
 mkdir -p -- "${registry}"
 
-# A tarball of a set, as npm lays it out, and the line that pins it.
+# The fixture tarball uses npm's package/ directory.
 make_tarball() { # prefix version file
   local source="${work}/source-$3"
   mkdir -p -- "${source}/package"

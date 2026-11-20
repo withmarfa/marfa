@@ -25,7 +25,7 @@ const FLAT_EDGE_TYPE: &str = "in-collection";
 /// Keys a definition carries only for a person reading it.
 const PROSE_KEYS: [&str; 5] = ["label", "plural", "reverse_label", "description", "id"];
 
-/// Keys whose value maps a name the definition chose to what it names, so a field called `description` keeps its name.
+/// Keep names such as a field called `description` in a shape digest.
 const NAMED_MAPS: [&str; 5] = [
     "fields",
     "property_schema",
@@ -34,10 +34,8 @@ const NAMED_MAPS: [&str; 5] = [
     "columns",
 ];
 
-/// The largest whole number a property keeps as written.
 const LARGEST_WHOLE: f64 = 9_007_199_254_740_991.0;
 
-/// A definition file's name and what it holds.
 pub(super) type Source = (String, Obj);
 
 pub(super) fn definitions() -> PathBuf {
@@ -52,7 +50,6 @@ pub(super) fn digest_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/types/shipped-shapes.sha256")
 }
 
-/// A number written as JavaScript writes it, or none: a whole number as digits, a fraction in plain decimals.
 fn plain_number(file: &str, path: &str, value: &mut Value) -> Result<(), String> {
     match value {
         Value::Number(number) if number.is_f64() => {
@@ -120,7 +117,6 @@ pub(super) fn read_folder(folder: &Path) -> Result<Vec<Source>, String> {
         .collect()
 }
 
-/// Every type definition under `root`, and every edge type under `edges/`.
 pub(super) fn shipped_sources(root: &Path) -> Result<(Vec<Source>, Vec<Source>), String> {
     let mut folders: Vec<String> = fs::read_dir(root)
         .map_err(|e| format!("{}: {e}", root.display()))?
@@ -160,7 +156,6 @@ fn names_of(value: &Value, known: &BTreeSet<String>, found: &mut BTreeSet<String
     }
 }
 
-/// Each type after the shipped types it names: its parent and the types its table columns point at.
 fn in_dependency_order(types: &[Source]) -> Result<Vec<&Source>, String> {
     let ids: Vec<String> = types
         .iter()
@@ -198,7 +193,6 @@ fn in_dependency_order(types: &[Source]) -> Result<Vec<&Source>, String> {
     Ok(ordered)
 }
 
-/// A type as registered, and the fields, merge policy and roles it holds with its ancestors'.
 pub(super) struct Registered {
     pub id: String,
     pub stored: Obj,
@@ -218,7 +212,6 @@ fn with_required_above(inherited: Option<&Value>, merged: Value) -> Value {
     }
 }
 
-/// Registers each shipped type as a person would, and refuses the lot with every fault if any is refused.
 pub(super) fn register_types(types: &[Source]) -> Result<Vec<Registered>, Vec<String>> {
     let ordered = in_dependency_order(types).map_err(|e| vec![e])?;
     let mut registry = Registry::default();
@@ -291,7 +284,6 @@ pub(super) fn register_types(types: &[Source]) -> Result<Vec<Registered>, Vec<St
     Ok(held.into_values().collect())
 }
 
-/// Each shipped edge type as a person would register it, with every fault of every file if any is refused.
 pub(super) fn register_edges(edges: &[Source]) -> Result<Vec<Obj>, Vec<String>> {
     let mut refused: Vec<String> = Vec::new();
     let mut found: Vec<Obj> = Vec::new();
@@ -338,7 +330,7 @@ fn non_empty<'a>(row: &'a Obj, key: &str) -> Option<&'a Value> {
         .filter(|value| value.as_str().is_none_or(|text| !text.is_empty()))
 }
 
-/// A field as the catalog writes it: the keys it names in one fixed order, so a merge that built it another way writes the same text.
+/// Merges can leave equivalent fields with different key orders.
 fn written_field(field: &Obj) -> Obj {
     let mut out = Obj::new();
     for key in [
@@ -388,7 +380,6 @@ fn put(out: &mut Obj, key: &str, value: Value) {
     out.insert(key.into(), value);
 }
 
-/// A type as the catalog lists it.
 fn written_type(held: &Registered, tables: Option<&Value>) -> Obj {
     let stored = &held.stored;
     let mut out = Obj::new();
@@ -513,7 +504,7 @@ fn written_edge(stored: &Obj) -> Obj {
     out
 }
 
-/// `JSON.stringify(value, null, 1)` and a newline.
+/// Match the committed catalog's one-space indentation.
 fn pretty(value: &Value) -> String {
     use serde::Serialize;
     let mut bytes = Vec::new();
@@ -535,7 +526,6 @@ fn sorted_keys(members: &Obj) -> Vec<&String> {
     keys
 }
 
-/// A definition as its shape: every key sorted, the prose and the id left out.
 fn shape(value: &Value) -> Value {
     match value {
         Value::Array(items) => Value::Array(items.iter().map(shape).collect()),
@@ -563,7 +553,6 @@ fn shape(value: &Value) -> Value {
     }
 }
 
-/// The shape of each definition, by id in code unit order.
 fn shapes(definitions: &[Obj]) -> Value {
     let mut ordered: Vec<&Obj> = definitions.iter().collect();
     ordered.sort_by_key(|row| {
@@ -584,7 +573,6 @@ fn shapes(definitions: &[Obj]) -> Value {
     )
 }
 
-/// The two files, as they would be written.
 pub(super) struct Written {
     pub catalog: String,
     pub digest: String,
@@ -687,7 +675,6 @@ pub(super) fn write(root: &Path) -> Result<Written, Vec<String>> {
     })
 }
 
-/// A type with everything its validation kept, which is what its shape is read from.
 fn shaped_type(held: &Registered, tables: Option<&Value>) -> Obj {
     let mut row = held.stored.clone();
     row.insert("fields".into(), Value::Object(held.fields.clone()));
@@ -709,7 +696,6 @@ mod tests {
 
     const WRITE: &str = "MARFA_WRITE_CATALOG";
 
-    /// Compares `written` with the file at `path`, or writes it when `MARFA_WRITE_CATALOG` is set.
     fn agrees(path: &Path, written: &str, how: &str) {
         if std::env::var_os(WRITE).is_some() {
             fs::write(path, written).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
@@ -724,7 +710,6 @@ mod tests {
         );
     }
 
-    /// A copy of the definition files that goes when it is dropped.
     struct Copy(PathBuf);
 
     impl Copy {

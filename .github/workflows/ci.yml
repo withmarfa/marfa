@@ -1521,10 +1521,7 @@ jobs:
             echo "Generated type registry is out of date, or holds a file the generator did not write. Run 'pnpm --filter @withmarfa/types generate' and commit."
             exit 1
           fi
-      # The rules crate writes the shapes' digest and the icon sets too, from
-      # the same definitions and the pinned Iconify releases, over the committed
-      # files (it embeds them, so they cannot be removed first). Each writer's
-      # output is held to the committed files, so the two agree with each other.
+      # Keep the existing icon sets for compilation because the rules crate embeds them.
       - uses: ./.github/actions/rust-toolchain
       - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
         with:

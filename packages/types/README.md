@@ -53,9 +53,9 @@ pnpm shapes:digest # rewrite shipped-shapes.sha256 after a shipped shape changes
 pnpm typecheck
 ```
 
-The rules crate writes the same catalog, digest and icon sets: see "The shipped catalog" in `core/AGENTS.md`. CI checks that both writers agree.
-
 These run in this folder, or from the root with `pnpm --filter @withmarfa/types <script>`. CI's `Types codegen freshness` job runs `validate`, empties `generated/`, regenerates it, and refuses any difference, a file the generator did not write included. `Generated clients are fresh` does the same for `core/marfa-rules/src/builtin_catalog.json`, which the root `pnpm generate:core` writes from this package.
+
+For the Rust commands that generate the catalog, digest, and icon sets, see [The shipped catalog](../../core/AGENTS.md#the-shipped-catalog).
 
 ## Adding a new type
 

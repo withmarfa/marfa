@@ -1,10 +1,4 @@
 //! Writes the list of icons a type's `display_hints.icon` may name from one Iconify set.
-//!
-//! Usage: `icon_set <package.json> <icons.json> <prefix> <package> <version> <output>`.
-//! `scripts/icon-sets.sh` runs it on a tarball it has checked against its pinned hash.
-//!
-//! The set's icons exclude the ones it marks hidden, and its aliases keep only the names that
-//! resolve, through any chain of aliases, to a listed icon.
 
 use std::collections::HashSet;
 use std::fs;
@@ -32,7 +26,6 @@ fn text<'a>(value: &'a Value, key: &str, what: &str) -> Result<&'a str, String> 
         .ok_or_else(|| format!("{what} has no `{key}` that is text"))
 }
 
-/// The file's text for one set, or the reason the set is refused.
 fn build(
     package_json: &str,
     icons_json: &str,
@@ -114,7 +107,6 @@ fn build(
     Ok(out)
 }
 
-/// The file is replaced whole or not at all: it is written beside the output and renamed onto it.
 fn write_whole(output: &Path, text: &str) -> Result<(), String> {
     let mut staged = output.as_os_str().to_owned();
     staged.push(".partial");

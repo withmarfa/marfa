@@ -72,7 +72,7 @@ const LIMITS: Record<string, number> = {
   // The native build again, and the image after it: a cold native rebuild took
   // up to 41.7 minutes.
   "ci.yml:image": 60,
-  // No runs yet with the Rust writers: a cold build of the rules crate and its tests.
+  // Allow for a cold build of the rules crate and its tests.
   "ci.yml:types-freshness": 15,
   "ci.yml:version-fields": 5,
   // The same cold build of the rules crate.
