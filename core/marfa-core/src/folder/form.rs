@@ -334,7 +334,15 @@ impl Folder {
             .iter()
             .any(|write| {
                 write.verdict.is_none()
-                    && matches!(write.kind, WriteKind::CreateItem | WriteKind::UpdateItem)
+                    && matches!(
+                        write.kind,
+                        WriteKind::CreateItem
+                            | WriteKind::UpdateItem
+                            | WriteKind::TransitionItem
+                            | WriteKind::ReplaceTags
+                            | WriteKind::AddTag
+                            | WriteKind::RemoveTag
+                    )
             });
         if waits {
             owed.insert(item.to_string());

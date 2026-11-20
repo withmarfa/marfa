@@ -9887,7 +9887,9 @@ mod tests {
             .queue()
             .unwrap()
             .into_iter()
-            .find(|row| row.kind == WriteKind::UpdateEdge)
+            .find(|row| {
+                row.kind == WriteKind::UpdateEdge && row.edge_id.as_deref() == Some("threaded")
+            })
             .expect("the move is queued");
         // Another machine deleted the edge before the move reached it, and
         // the item the line names went to the bin since.
