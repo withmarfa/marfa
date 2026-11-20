@@ -13,7 +13,6 @@ use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, fit_list};
 pub const LIST_NAME: &str = "marfa_sign_ins";
 pub const RENAME_NAME: &str = "marfa_rename_sign_in";
 
-const OWNER_PAGE: &str = "/auth/owner/passkeys";
 const OWNER_PAGE_OFFERS: &str = "The owner adds a passkey or changes the password on this page, signed in in a browser, since a passkey needs the browser and a password must not pass through a tool. The command line changes the password too: marfa owner password, which asks for it with no echo.";
 
 pub fn list_definition() -> Definition {
@@ -98,7 +97,7 @@ pub async fn list(app: &Arc<App>, caller: &Caller) -> Outcome {
     }
     answer.insert(
         "owner_page".into(),
-        format!("{}{OWNER_PAGE}", app.addresses().sign_in().origin()).into(),
+        format!("{}{}", app.addresses().sign_in().origin(), passkeys::PAGE).into(),
     );
     answer.insert("owner_page_offers".into(), OWNER_PAGE_OFFERS.into());
     Ok(Value::Object(answer))

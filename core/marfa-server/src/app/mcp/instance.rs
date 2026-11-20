@@ -50,8 +50,8 @@ fn issue(
     )
 }
 
-/// What a confirmation of the clock binds: the trusted time, and the reading the hold's
-/// running time is counted from, which any jump since moves.
+/// What a confirmation of the clock binds: the trusted time, and the wall reading at the hold's
+/// start, which any jump or restart since moves.
 pub fn hold_digest(standing: Standing, from: Stamp) -> Option<String> {
     match standing {
         Standing::Ahead { trusted, .. } => Some(format!("{} {}", trusted.ms(), from.ms())),

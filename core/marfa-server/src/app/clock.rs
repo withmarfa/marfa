@@ -34,7 +34,7 @@ struct Guard {
     last: Option<(i64, i64)>,
     /// The running time counted toward a hold's end, while clean-up holds.
     held_ms: Option<i64>,
-    /// The wall reading at which that count began, which a jump or a restart begins again.
+    /// The wall reading at the hold's start, its last jump or the server's last start.
     held_from: Option<i64>,
 }
 
@@ -254,8 +254,8 @@ impl Clock {
         guard.standing(wall, steady)
     }
 
-    /// The hold on clean-up as it stands, with the wall reading its running time is counted
-    /// from, which a jump or a restart moves; `None` while nothing is held.
+    /// The hold on clean-up as it stands, with the wall reading at its start, its last jump or
+    /// the server's last start; `None` while nothing is held.
     pub fn hold(&self) -> Option<(Standing, Stamp)> {
         let (mut guard, (wall, steady)) = (self.guard(), self.readings());
         let standing = guard.standing(wall, steady);

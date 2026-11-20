@@ -515,7 +515,7 @@ pub enum ClockConfirmed<T> {
 /// The jobs a clock far ahead holds, which run once the clock is confirmed.
 pub fn held_jobs(app: &App) -> Vec<&'static str> {
     JOBS.iter()
-        .filter(|job| job.deletes && job.switch.is_none_or(|on| on(app)))
+        .filter(|job| job.deletes && job.runs_here(app))
         .map(|job| job.name)
         .collect()
 }
