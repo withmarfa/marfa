@@ -396,6 +396,7 @@ pub fn run(
                     "unsure": confirmed.unsure,
                     "removed": confirmed.removed,
                     "added": confirmed.added,
+                    "refused": confirmed.refused,
                 }),
                 json,
                 || {
@@ -417,6 +418,11 @@ pub fn run(
                                 printable(&file.path),
                                 printable(&file.reason)
                             ))
+                            .chain(confirmed.refused.iter().map(|file| format!(
+                                "\n{}: not taken away, still paused; {}",
+                                printable(&file.path),
+                                printable(&file.reason)
+                            )))
                             .collect::<String>()
                     )
                 },

@@ -222,6 +222,14 @@ impl Sweep {
     }
 }
 
+/// What a pass reads: every file where `every`, and `full` where it is the
+/// full pass the caller asked for, not one that rereads every file once.
+#[derive(Clone, Copy)]
+struct Reads {
+    every: bool,
+    full: bool,
+}
+
 /// A time this cannot read has not passed, since a delete cannot be taken
 /// back.
 fn elapsed_past(since: &str, now_ms: i64, grace: Duration) -> bool {
@@ -310,7 +318,11 @@ impl Folder {
             }
         };
         let keep = watching && !matches!(reading, Reading::Walk);
-        let mut scan = match self.walk_for_scan(start, full || reread_embeds, settle, mode, plan)? {
+        let reads = Reads {
+            every: full || reread_embeds,
+            full,
+        };
+        let mut scan = match self.walk_for_scan(start, reads, settle, mode, plan)? {
             ControlFlow::Break(report) => return Ok(report),
             ControlFlow::Continue(scan) => scan,
         };
@@ -453,7 +465,7 @@ impl Folder {
         if mode == Files::Write {
             self.settle_displaced()?;
         }
-        state::settle_landings(&*self.core.conn()?, &self.root_dir)?;
+        self.settle_landings()?;
         // Every pass, so a watch lists its folder again too.
         let (registry, lost) = self.register();
         let doubt = registry.clone().filter(|_| lost);
@@ -485,7 +497,7 @@ impl Folder {
     fn walk_for_scan(
         &self,
         start: ScanStart,
-        full: bool,
+        reads: Reads,
         settle: Option<Duration>,
         mode: Files,
         plan: Option<Plan>,
@@ -537,6 +549,14 @@ impl Folder {
             }
         };
         let incomplete = walked.incomplete();
+        // Only a complete walk of the whole folder shows a reserved name is
+        // in none of it.
+        let unfound = if scoped.is_none() && reads.full && !incomplete {
+            self.clear_unfound(&walked.kept)?
+        } else {
+            Vec::new()
+        };
+        self.settle_landings()?;
         swap_root(&self.root, "replace-root-before-capture");
         if let Some(gone) = self.root_gone() {
             report.root_gone = Some(gone);
@@ -559,7 +579,9 @@ impl Folder {
         for left in state_left {
             let _ = self.state_dir.unlink(&left);
         }
-        report.flagged.extend(self.kept_report(&walked.kept)?);
+        report
+            .flagged
+            .extend(self.kept_report(&walked.kept, unfound)?);
         report.directories = walked.directories.clone();
         report.secrets = walked.secrets.clone();
         let unanswered = crate::store::items_awaiting_their_write(&*self.core.conn()?)?;
@@ -595,7 +617,7 @@ impl Folder {
         };
         Ok(ControlFlow::Continue(ScanState {
             began,
-            full,
+            full: reads.every,
             journal: Journal::Sweep,
             guard,
             scope,

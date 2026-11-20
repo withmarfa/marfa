@@ -117,13 +117,18 @@ pub(crate) fn settled(row: &Bound, root: &crate::directory::Directory) -> Option
     Some(landing.before.as_deref().cloned())
 }
 
-/// Recover landed writes before a scan mistakes them for edits or deletions.
+/// Recover landed writes before a scan mistakes them for edits or deletions,
+/// except at the paths in `waiting`, whose bytes may have landed elsewhere.
 pub(crate) fn settle_landings(
     conn: &Connection,
     root: &crate::directory::Directory,
+    waiting: &std::collections::HashSet<String>,
 ) -> Result<(), CoreError> {
     let rows = every_bound(conn)?;
     for row in &rows {
+        if waiting.contains(&row.path) {
+            continue;
+        }
         match settled(row, root) {
             None => {}
             Some(Some(settled)) => {

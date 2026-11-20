@@ -18,6 +18,9 @@ pub struct Confirmed {
     pub removed: usize,
     /// Held new files the confirmation let go of, sent at the next push.
     pub added: usize,
+    /// Paused files the volume could not take away safely, each with why.
+    /// Each stays, and stays paused.
+    pub refused: Vec<Unsure>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -81,20 +84,30 @@ impl Folder {
             let Some(row) = state::bound_at(&*self.core.conn()?, path)? else {
                 continue;
             };
-            if matches!(
+            if !matches!(
                 self.departing(&row, &members, &settings, &lists)?,
                 Departing::Yes
-            ) && matches!(
-                self.take_away(&row, &mut context)?,
-                super::pull::TakenAway::Ended(_)
             ) {
-                confirmed.removed += 1;
+                continue;
+            }
+            match self.take_away(&row, &mut context)? {
+                super::pull::TakenAway::Ended(_) => confirmed.removed += 1,
+                super::pull::TakenAway::Kept => {}
+                super::pull::TakenAway::Refused(reason) => confirmed.refused.push(Unsure {
+                    path: path.clone(),
+                    reason: format!("Marfa left the file rather than remove it: {reason}"),
+                }),
             }
         }
         {
             let conn = self.core.conn()?;
+            let refused: Vec<String> = confirmed
+                .refused
+                .iter()
+                .map(|file| file.path.clone())
+                .collect();
             state::set_paused(&conn, state::Removal::Disk, &[])?;
-            state::set_paused(&conn, state::Removal::Pull, &[])?;
+            state::set_paused(&conn, state::Removal::Pull, &refused)?;
         }
         Ok(confirmed)
     }

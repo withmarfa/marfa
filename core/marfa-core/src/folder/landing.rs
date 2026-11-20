@@ -756,6 +756,7 @@ fn without_exchange(
     let landed = match found(guard.aside, &aside, known)? {
         Found::Read => match rename_new_at(guard.aside, &waiting, dir, target) {
             Ok(()) => {
+                stop_if_asked(target, "crash-after-aside-landing");
                 discard(guard.aside, &aside)?;
                 Ok(())
             }
@@ -913,11 +914,14 @@ pub(crate) fn settle(
             Found::Absent => {}
             Found::Ours => guard.aside.unlink(name)?,
             Found::Read => match (displacement.kind, found(dir, target, known)?) {
-                // The path is empty in the gap only where the volume cannot
-                // exchange names.
-                (Displaced::Aside, Found::Absent) => restore(dir, guard, target, name)?,
-                // After an exchange, an empty path is the person's delete.
-                (Displaced::Exchange, Found::Absent) => guard.ledger.kept(
+                // Where the volume cannot exchange names, the path is empty
+                // in the gap, while the new file still waits.
+                (Displaced::Aside, Found::Absent) if waits(guard, displacement)? => {
+                    restore(dir, guard, target, name)?
+                }
+                // Once the new file has taken the path, an empty path is the
+                // person's delete.
+                (Displaced::Aside | Displaced::Exchange, Found::Absent) => guard.ledger.kept(
                     name,
                     true,
                     format!(
@@ -932,6 +936,19 @@ pub(crate) fn settle(
     }
     guard.ledger.clear(displacement);
     Ok(())
+}
+
+/// Whether the new file of `displacement` still waits under its reserved
+/// name, so it never took the path.
+fn waits(guard: Guard<'_>, displacement: &Displacement) -> io::Result<bool> {
+    let Some((waiting, _)) = &displacement.ours else {
+        return Ok(false);
+    };
+    Ok(found(
+        guard.aside,
+        Path::new(waiting),
+        Known::Recorded(displacement),
+    )? == Found::Ours)
 }
 
 /// Move only into an absent directory entry, including refusing a dangling
@@ -1034,11 +1051,12 @@ pub(crate) fn withdraw_at(
         .ledger
         .record(&displacement)
         .map_err(RemoveError::Remove)?;
-    let moved = if named_for(target, "rename-new-unsupported") {
-        Err(io::Error::from(io::ErrorKind::Unsupported))
-    } else {
-        rename_new_at(dir, target, guard.aside, &aside)
-    };
+    let moved =
+        if failing_here("rename-new-unsupported") || named_for(target, "rename-new-unsupported") {
+            Err(io::Error::from(io::ErrorKind::Unsupported))
+        } else {
+            rename_new_at(dir, target, guard.aside, &aside)
+        };
     if let Err(error) = moved {
         guard.ledger.clear(&displacement);
         return match error.kind() {

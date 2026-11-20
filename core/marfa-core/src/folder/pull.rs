@@ -377,7 +377,7 @@ impl Folder {
         let flushed = self.flush_landed();
         match (pulled, flushed) {
             (Ok(done), Ok(())) => {
-                report.flagged.extend(self.kept_report(&[])?);
+                report.flagged.extend(self.take_kept()?);
                 Ok(done)
             }
             (Err(error), _) => Err(error),
@@ -397,7 +397,7 @@ impl Folder {
         }
         let context = crate::reach::Context::capture(&*self.core.conn()?)?;
         self.settle_displaced()?;
-        state::settle_landings(&*self.core.conn()?, &self.root_dir)?;
+        self.settle_landings()?;
         let mut pick = match &selection {
             Some(selection) => Some(selection.begin(self)?),
             None => None,
