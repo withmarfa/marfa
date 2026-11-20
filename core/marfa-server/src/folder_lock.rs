@@ -55,15 +55,30 @@ fn shared_by(found: &rustix::fs::StatFs) -> Option<String> {
     if let Some(named) = SHARED.with_borrow(Clone::clone) {
         return Some(named);
     }
-    // ext2, ext3 and ext4; XFS; Btrfs; tmpfs; ZFS. An overlay, as a container's own file system
-    // is, does not share its locks with the host.
-    const LOCAL: [i64; 5] = [0xEF53, 0x5846_5342, 0x9123_683E, 0x0102_1994, 0x2FC1_2FC1];
-    #[allow(clippy::unnecessary_cast, reason = "f_type is i32 on some targets")]
-    let kind = found.f_type as i64;
-    if LOCAL.contains(&kind) {
+    // f_type is i32, u32 or i64 by target; every magic number fits in 32 bits.
+    #[allow(clippy::unnecessary_cast, reason = "f_type is u32 on some targets")]
+    let kind = found.f_type as u32;
+    if local_on_linux(kind) {
         return None;
     }
     Some(format!("type {kind:#x}"))
+}
+
+/// Whether a Linux file system of the type `kind` is local to the kernel that mounts it.
+#[cfg(any(test, not(target_os = "macos")))]
+fn local_on_linux(kind: u32) -> bool {
+    // ext2, ext3 and ext4; XFS; Btrfs; tmpfs; ZFS; overlayfs, a container's own; F2FS; bcachefs.
+    const LOCAL: [u32; 8] = [
+        0xEF53,
+        0x5846_5342,
+        0x9123_683E,
+        0x0102_1994,
+        0x2FC1_2FC1,
+        0x794C_7630,
+        0xF2F5_2010,
+        0xCA45_1A4E,
+    ];
+    LOCAL.contains(&kind)
 }
 
 #[cfg(test)]
@@ -357,6 +372,17 @@ mod tests {
         std::fs::remove_file(other.path().join(LOCK)).unwrap();
         assert!(matches!(shared.check(other.path()), Standing::Lost(_)));
         assert!(!other.path().join(LOCK).exists());
+    }
+
+    #[test]
+    fn a_container_overlay_and_other_local_linux_file_systems_are_local_and_shares_are_not() {
+        for local in [0xEF53, 0x5846_5342, 0x794C_7630, 0xF2F5_2010, 0xCA45_1A4E] {
+            assert!(local_on_linux(local), "{local:#x}");
+        }
+        // NFS, SMB2, CIFS, and FUSE, which Docker Desktop's and virtiofs shares use.
+        for shared in [0x6969, 0xFE53_4D42, 0xFF53_4D42, 0x6573_5546] {
+            assert!(!local_on_linux(shared), "{shared:#x}");
+        }
     }
 
     #[test]
