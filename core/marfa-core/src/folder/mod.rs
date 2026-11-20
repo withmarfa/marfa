@@ -9,6 +9,7 @@ mod every;
 mod executable;
 pub mod fields;
 mod first;
+mod form;
 mod handover;
 pub mod identity;
 mod landing;
@@ -3085,6 +3086,44 @@ impl Folder {
         tests::RENDERED_ITEMS.with(|rendered| rendered.borrow_mut().insert(item.id.clone()));
         #[cfg(debug_assertions)]
         crate::fault::hold(|| "folder-render");
+        let rendered = self.render_with(item, path, line, catalog, edge_types, lines)?;
+        let (names, typed, recorded) = lines;
+        // A file this directory never had is written in the form its
+        // placement holds, through the same rewrite as a file it had.
+        if typed.is_none()
+            && carries_frontmatter(Path::new(path))
+            && let Ok(text) = &rendered.text
+            && let Some(form) = self.placement(&item.id)?.and_then(|edge| {
+                edge.properties
+                    .get(form::FORM_PROPERTY)
+                    .and_then(form::Form::read)
+            })
+            && let Some(stand_in) = form.stand_in(&document::read(text).front, &item.occurred_at)
+        {
+            let shaped = self.render_with(
+                item,
+                path,
+                line,
+                catalog,
+                edge_types,
+                (names, Some(&stand_in), recorded),
+            )?;
+            if shaped.text.is_ok() {
+                return Ok(shaped);
+            }
+        }
+        Ok(rendered)
+    }
+
+    fn render_with(
+        &self,
+        item: &Item,
+        path: &str,
+        line: Option<i64>,
+        catalog: &Catalog,
+        edge_types: &EdgeTypes,
+        lines: LinesBy<'_>,
+    ) -> Result<Rendered> {
         let body_field = fields::body_field(catalog, &item.r#type);
         let body = item
             .properties
@@ -3346,6 +3385,8 @@ fn typed_title(
 mod answered_tests;
 #[cfg(all(test, unix))]
 mod displaced_tests;
+#[cfg(test)]
+mod form_tests;
 #[cfg(test)]
 mod held_links_tests;
 #[cfg(test)]
@@ -9976,7 +10017,9 @@ mod tests {
             .queue()
             .unwrap()
             .into_iter()
-            .find(|row| row.kind == WriteKind::UpdateEdge)
+            .find(|row| {
+                row.kind == WriteKind::UpdateEdge && row.edge_id.as_deref() == Some("threaded")
+            })
             .expect("the move is queued");
         // Another machine deleted the edge before the move reached it, and
         // the item the line names went to the bin since.
