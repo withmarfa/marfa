@@ -67,6 +67,7 @@ pub fn parse(token: &str) -> Option<Parsed> {
 }
 
 /// A confirmation of an owner's destructive tool, whose target is judged before the target is read.
+#[derive(Clone)]
 pub struct Bound {
     pub expires_at_ms: i64,
     target: String,
@@ -266,6 +267,32 @@ impl Signer {
             return Ok(Opening::Stale);
         }
         Ok(Opening::Open)
+    }
+
+    /// Judges a bound confirmation in a read as `open` would in the write, before anything costly.
+    pub fn peek(
+        &self,
+        tx: &Transaction<'_>,
+        tool: &str,
+        credential: &str,
+        target: &str,
+        bound: &Bound,
+        now: Stamp,
+    ) -> Result<Opening> {
+        if !self.holds_target(tool, credential, target, bound)? {
+            return Ok(Opening::Stale);
+        }
+        // A spent record lasts as long as its token, so an expired token has none `open` keeps.
+        if bound.expires_at_ms <= now.ms() {
+            return Ok(Opening::Stale);
+        }
+        Ok(match spent(tx, &bound.signature)? {
+            Some(spent) if spent.credential == credential && spent.ids_digest == target => {
+                Opening::Spent { total: spent.total }
+            }
+            Some(_) => Opening::Stale,
+            None => Opening::Open,
+        })
     }
 }
 
@@ -537,5 +564,35 @@ mod tests {
         // A spent record lasts as long as the token, and no longer.
         assert_eq!(open("key-a", "target", 1_000 + LIFE_MS), Opening::Stale);
         assert_eq!(open("key-a", "target", 2_000), Opening::Open);
+    }
+
+    #[test]
+    fn a_peek_judges_a_bound_token_as_open_would_and_writes_nothing() {
+        let signer = signer();
+        let mut connection = spent_table();
+        let tx = connection.transaction().unwrap();
+        let token = signer
+            .issue_bound("marfa_purge", "key-a", "target", "subject", 1_000)
+            .unwrap();
+        let bound = parse_bound(&token.text).unwrap();
+        let at = |ms: i64| Stamp::from_ms(ms).unwrap();
+        let peek = |credential: &str, target: &str, ms: i64| {
+            signer
+                .peek(&tx, "marfa_purge", credential, target, &bound, at(ms))
+                .unwrap()
+        };
+        assert_eq!(peek("key-a", "target", 2_000), Opening::Open);
+        assert_eq!(peek("key-b", "target", 2_000), Opening::Stale);
+        assert_eq!(peek("key-a", "other", 2_000), Opening::Stale);
+        assert_eq!(peek("key-a", "target", 1_000 + LIFE_MS), Opening::Stale);
+        spend_bound(&tx, &bound, "key-a", "target", 3).unwrap();
+        assert_eq!(peek("key-a", "target", 2_000), Opening::Spent { total: 3 });
+        assert_eq!(peek("key-b", "target", 2_000), Opening::Stale);
+        assert_eq!(peek("key-a", "target", 1_000 + LIFE_MS), Opening::Stale);
+        assert_eq!(
+            peek("key-a", "target", 2_000),
+            Opening::Spent { total: 3 },
+            "a peek swept the spent record"
+        );
     }
 }

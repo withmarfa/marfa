@@ -40,8 +40,9 @@ import { fileURLToPath } from "node:url";
 
 /** Each output, named for the job that reads it. */
 export const JOBS = [
-  // `Quick checks`. It runs the format check, this classifier's test and the
-  // contract's reference check for any change. `workspace` is the build,
+  // `Quick checks`. It runs the format check, this classifier's test, the
+  // vendor check (`ci/no-vendor-in-product.test.ts`) and the contract's
+  // reference check for any change. `workspace` is the build,
   // typecheck and `Workspace tests`, which run unless the pull request is a
   // draft.
   "quick-checks",
@@ -857,8 +858,8 @@ export function affected(path: string): Set<Job> {
   if (readsDependencies(path)) jobs.add("core-deny");
   if (linted(path)) jobs.add("workspace");
   if (lintReads(path)) jobs.add("lint");
-  // Its format check, this classifier's test and the contract's reference
-  // check read every path.
+  // Its format check, this classifier's test, the vendor check and the
+  // contract's reference check read every path.
   jobs.add("quick-checks");
   return jobs;
 }
@@ -909,8 +910,8 @@ export function forNightly(): Record<Job, boolean> {
 
 /**
  * Whether an answer runs nothing but `Quick checks`' format check, this
- * classifier's test and the contract's reference check, as a change to
- * documentation or agent instructions does.
+ * classifier's test, the vendor check and the contract's reference check, as a
+ * change to documentation or agent instructions does.
  */
 export function documentationOnly(answer: Record<Job, boolean>): boolean {
   return JOBS.every((job) => job === "quick-checks" || !answer[job]);

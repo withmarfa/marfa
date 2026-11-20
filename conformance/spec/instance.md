@@ -860,6 +860,14 @@ When a caller holding `backups.manage` sends `POST /backups/folder/adopt` again 
 
 **Tests:** `compliance/backup-folder.test.ts › forgets nothing when it cannot record an adopt, and adopts on the next try`.
 
+### `instance/backup-folder-adopt-claim-late`
+
+If `<backup_path>/files/<instance id>/` does not answer in time once a `POST /backups/folder/adopt` made its claim there, then the server MUST answer `503 blob_store_unavailable` with a message that says the folder may keep the adopt's claim.
+
+**Reason:** the server records nothing before the claim answers, so nothing was adopted, but the claim goes on in the folder after the server stops waiting.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › answers that the folder may keep the claim, not a stale confirmation, when the claim does not answer in time, and so does the adopt door`.
+
 ### `instance/backup-folder-adopt-interrupted`
 
 If the server ends after it recorded an adopt and before `<backup_path>/files/<instance id>/` took the new store's marker, and that files folder is there when the server next starts, then the server MUST give it the marker of the store the record names there as it starts.

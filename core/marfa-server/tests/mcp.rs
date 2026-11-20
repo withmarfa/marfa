@@ -1804,12 +1804,19 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
             "grants.manage",
             &["marfa_apps", "marfa_end_sign_in", "marfa_narrow_app"],
         ),
-        ("backups.manage", &["marfa_backups", "marfa_take_backup"]),
+        (
+            "backups.manage",
+            &[
+                "marfa_adopt_backup_folder",
+                "marfa_backups",
+                "marfa_take_backup",
+            ],
+        ),
         (
             "instance.maintain",
             &["marfa_maintain", "marfa_update_server"],
         ),
-        ("blobs.manage", &["marfa_files"]),
+        ("blobs.manage", &["marfa_files", "marfa_remove_file_copy"]),
         (
             "sign_ins.manage",
             &[
@@ -1892,6 +1899,11 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         ),
         ("marfa_update_server", json!({})),
         ("marfa_files", json!({ "hash": "00" })),
+        (
+            "marfa_remove_file_copy",
+            json!({ "hash": "00", "store_id": "x" }),
+        ),
+        ("marfa_adopt_backup_folder", json!({})),
         ("marfa_sign_ins", json!({})),
         (
             "marfa_rename_sign_in",
@@ -2338,8 +2350,6 @@ async fn no_tool_offers_a_withheld_owner_task() {
                 "recover",
                 "password",
                 "add_passkey",
-                "adopt",
-                "drop",
                 "remove_passkey",
                 "revoke_app",
             ] {
