@@ -3119,7 +3119,9 @@ impl Folder {
         let mut outside = embeds.clone();
         if !outside.is_empty() {
             let settings = self.settings()?;
-            let held = self.core.held_among(&*self.holds_by(&settings)?, &outside)?;
+            let held = self
+                .core
+                .held_among(&*self.holds_by(&settings)?, &outside)?;
             outside.retain(|id| !held.contains(id));
         }
         let (names, typed, recorded) = lines;
