@@ -557,8 +557,7 @@ pub fn open(options: &Options, lock: Lock, faults: &Faults) -> Result<Opened, Fa
     let target = Target::of(&options.path);
     let label = target.label();
     let file = options.path.file();
-    // A URI that names a file on disk is judged, and copied before an upgrade, as that file: its
-    // own parameters, such as `mode=rw`, could fail a read-only open of a file that holds data.
+    // A disk URI's mode=rw would reject a read-only inspection.
     let judged = match (&target, file.as_deref()) {
         (Target::Memory(_), _) => Judged::plain(Standing::Unfinished),
         (_, Some(path)) => judge_file(path, options, &label)?,
