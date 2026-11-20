@@ -155,7 +155,6 @@ fn a_hostile_value_stays_text_on_every_other_page() {
         setup_code(&SetupCode {
             instance_name: HOSTILE.into(),
             problem: None,
-            recovering: false,
             return_to: HOSTILE.into(),
             app: Some(AskingApp {
                 name: HOSTILE.into(),
@@ -372,7 +371,6 @@ fn code_page(return_to: &str, app: Option<AskingApp>) -> String {
     setup_code(&SetupCode {
         instance_name: "Marfa".into(),
         problem: None,
-        recovering: false,
         return_to: return_to.into(),
         app,
     })
@@ -410,18 +408,17 @@ fn the_setup_code_page_names_an_app_only_beside_its_host() {
 }
 
 #[test]
-fn the_recovery_page_carries_no_return_to() {
-    let recovery = setup_code(&SetupCode {
+fn only_the_recovery_page_says_its_code_is_a_recovery_code() {
+    let recovery = recovery_code(&RecoveryCode {
         instance_name: "Marfa".into(),
         problem: None,
-        recovering: true,
-        return_to: "/oauth/authorize?client_id=a".into(),
-        app: None,
     })
     .unwrap()
     .html;
     assert!(recovery.contains("Recovery code"));
+    assert!(recovery.contains("<input type=\"hidden\" name=\"purpose\" value=\"recovery\">"));
     assert!(!recovery.contains("name=\"return_to\""));
+    assert!(!code_page("/", None).contains("name=\"purpose\""));
 }
 
 #[test]

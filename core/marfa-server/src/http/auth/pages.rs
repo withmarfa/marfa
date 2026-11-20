@@ -10,7 +10,7 @@ use super::{cookies, require_safe_transport};
 use crate::app::access::Caller;
 use crate::app::auth::claim;
 use crate::app::auth::owner;
-use crate::app::auth::return_to::kept;
+use crate::app::auth::return_to::{HOME, kept};
 use crate::app::oauth::authorize::app_named;
 use crate::app::oauth::redirect::shown_destination;
 use crate::app::oauth::signed_link::{self, Verified};
@@ -20,15 +20,13 @@ use crate::http::answer::{Answer, Page as RefusalMark, asks_for_html, refusal_an
 use crate::http::caller::browser_owner;
 use crate::http::pages::{
     self, AskingApp, AuthError, AuthErrorCode, DeviceEntry, DeviceProblem, Notice, RecoverPassword,
-    SetupCode, SetupCodeProblem, SetupDetails, SetupFieldErrors, SignIn, SignInProblem, SignedIn,
-    Wait,
+    RecoveryCode, SetupCode, SetupCodeProblem, SetupDetails, SetupFieldErrors, SignIn,
+    SignInProblem, SignedIn, Wait,
 };
 use crate::http::query;
 
 /// Short enough that a link cannot fill a page with an address.
 const SHOWN_CHARS: usize = 320;
-/// Where `kept` sends a browser that names nowhere it may go.
-const HOME: &str = "/";
 
 fn first<'p>(pairs: &'p [(String, String)], name: &str) -> Option<&'p str> {
     pairs
@@ -91,7 +89,6 @@ pub async fn sign_in(State(app): State<Arc<App>>, request: Request) -> Answer {
         let view = SetupCode {
             instance_name: name,
             problem: None,
-            recovering: false,
             app: asking_app(&app, sent.as_ref()).await?,
             return_to,
         };
@@ -155,7 +152,6 @@ pub async fn setup(State(app): State<Arc<App>>, headers: HeaderMap, uri: Uri) ->
         pages::setup_code(&SetupCode {
             instance_name: name,
             problem: None,
-            recovering: false,
             return_to,
             app: None,
         })?
@@ -177,12 +173,9 @@ async fn recovery_page(app: &App, headers: &HeaderMap, name: String) -> Result<p
         });
     }
     if claim::recovery_offered(app).await? {
-        return pages::setup_code(&SetupCode {
+        return pages::recovery_code(&RecoveryCode {
             instance_name: name,
             problem: None,
-            recovering: true,
-            return_to: HOME.to_owned(),
-            app: None,
         });
     }
     pages::notice(&Notice::already_claimed(&name, HOME))
@@ -227,18 +220,26 @@ fn wait_of(refusal: &Refusal) -> Option<Wait> {
     Wait::from_query(Some(&seconds.to_string()))
 }
 
-/// `return_to` is the setup code form's own, which the recovery code form does not carry.
+/// The form a code was posted from, which decides how the code is read.
+pub enum CodeForm {
+    /// The setup code form, with the `return_to` it carried as `kept` read it.
+    Setup(String),
+    Recovery,
+}
+
 async fn exchange_page(
     app: &App,
     refusal: &Refusal,
-    return_to: Option<String>,
+    form: &CodeForm,
 ) -> Result<Option<pages::Page>> {
     let name = instance::name(app).await?;
-    let recovering = return_to.is_none() && claim::is_claimed(app).await?;
-    let return_to = return_to.unwrap_or_else(|| HOME.to_owned());
+    let return_to = match form {
+        CodeForm::Setup(back) => back.as_str(),
+        CodeForm::Recovery => HOME,
+    };
     let problem = match refusal.code {
         Code::OwnerExists => {
-            let notice = Notice::already_claimed(&name, &return_to);
+            let notice = Notice::already_claimed(&name, return_to);
             return Ok(Some(pages::notice(&notice)?));
         }
         Code::ValidationError => SetupCodeProblem::MissingCode,
@@ -247,22 +248,25 @@ async fn exchange_page(
         Code::InternalError => SetupCodeProblem::Other,
         _ => return Ok(None),
     };
-    let view = SetupCode {
-        instance_name: name,
-        problem: Some(problem),
-        recovering,
-        return_to,
-        app: None,
+    let problem = Some(problem);
+    let page = if matches!(form, CodeForm::Recovery) && claim::is_claimed(app).await? {
+        pages::recovery_code(&RecoveryCode {
+            instance_name: name,
+            problem,
+        })?
+    } else {
+        pages::setup_code(&SetupCode {
+            instance_name: name,
+            problem,
+            return_to: return_to.to_owned(),
+            app: None,
+        })?
     };
-    Ok(Some(pages::setup_code(&view)?))
+    Ok(Some(page))
 }
 
-pub async fn exchange_refused(
-    app: &App,
-    refusal: &Refusal,
-    return_to: Option<String>,
-) -> Result<Response> {
-    Ok(match exchange_page(app, refusal, return_to).await? {
+pub async fn exchange_refused(app: &App, refusal: &Refusal, form: &CodeForm) -> Result<Response> {
+    Ok(match exchange_page(app, refusal, form).await? {
         Some(page) => refused_with(refusal, page),
         None => refusal_answer(refusal),
     })
@@ -319,7 +323,6 @@ async fn details_page(
             let view = SetupCode {
                 instance_name: name,
                 problem: Some(SetupCodeProblem::SessionEnded),
-                recovering: false,
                 return_to,
                 app: None,
             };
@@ -367,14 +370,11 @@ async fn recover_page(app: &App, refusal: &Refusal) -> Result<Option<pages::Page
                 Code::RateLimited => SetupCodeProblem::TooManyAttempts(wait_of(refusal)),
                 _ => SetupCodeProblem::SessionEnded,
             };
-            let view = SetupCode {
+            let view = RecoveryCode {
                 instance_name: name,
                 problem: Some(problem),
-                recovering: true,
-                return_to: HOME.to_owned(),
-                app: None,
             };
-            return Ok(Some(pages::setup_code(&view)?));
+            return Ok(Some(pages::recovery_code(&view)?));
         }
         Code::ValidationError => match field_errors(refusal).and_then(|found| found.password) {
             Some(message) => (Some(message), None),

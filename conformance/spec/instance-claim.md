@@ -62,7 +62,7 @@ If `POST /setup/exchange` or `POST /setup/claim`, with a JSON body or a form, ca
 
 **Reason:** these two doors are the browser's way to the same claim as `POST /owner`, which refuses an undeclared key, so a key dropped here would be a claim half performed and answered as success.
 
-**Tests:** `compliance/owner.test.ts › refuses a key the setup doors do not declare, in a JSON or a form body, without consuming valid setup proof`.
+**Tests:** `compliance/owner.test.ts › refuses a key the setup doors do not declare, in a JSON or a form body, without consuming valid setup proof`, `compliance/claim-from-app.test.ts › refuses return_to in a JSON body on POST /setup/exchange and POST /setup/claim without spending the setup code`.
 
 ### `instance-claim/exchange-answer`
 
@@ -302,7 +302,7 @@ When the server logs setup exchange requests, the server MUST omit submitted set
 
 ## Claiming in the sign-in page an app opens
 
-An app that reaches an instance with no owner opens its sign-in page, and the person claims the instance there. `return_to` is where the browser goes once setup is done, such as the app's authorization request or a device code's approval page. Only the setup code form and the owner-details form carry it, and `POST /owner` does not take it (`instance-claim/owner-undeclared-key`).
+An app that reaches an instance with no owner opens its sign-in page, and the person claims the instance there. `return_to` is where the browser goes once setup is done, such as the app's authorization request or a device code's approval page. Only the setup code form and the owner-details form carry it: a JSON body to `POST /setup/exchange` or `POST /setup/claim` does not take it (`instance-claim/setup-undeclared-key`), and neither does `POST /owner` (`instance-claim/owner-undeclared-key`).
 
 ### `instance-claim/sign-in-is-setup`
 
@@ -322,7 +322,7 @@ When the server answers the setup code page while an instance has no owner, the 
 
 ### `instance-claim/setup-page-app-host`
 
-When an authorization the instance signed, whose window is open and whose redirect URI is not on the loopback, sends a person to the setup code page, the server MUST name the app on it together with the host of that redirect URI.
+When an authorization the instance signed, whose window is open and whose redirect URI is not on the loopback, sends a person to the setup code page, the server MUST name the app on it together with the host of that redirect URI, or its scheme where it has no host.
 
 **Reason:** The name is whatever the app registered under. The host is where the approval will go, which the person can check before they make the account the app will ask to use.
 
@@ -404,15 +404,23 @@ While an instance has an owner, when a browser that asks for a page sends a form
 
 **Reason:** A second tab, or a setup page left open while another finished the claim, continues to the app through sign-in.
 
-**Tests:** `compliance/claim-from-app.test.ts › answers a second tab's setup forms with the claimed notice, whose sign-in continues to return_to, and spends no recovery attempt`.
+**Tests:** `compliance/claim-from-app.test.ts › answers a second tab's setup forms with the claimed notice, whose sign-in continues to return_to, and spends no recovery attempt`, `› reads a code form from a plain /setup page left open while the instance was claimed as a setup code, with or without its return_to, and spends no recovery attempt`.
 
 ### `instance-claim/setup-form-no-recovery`
 
-Where owner recovery is on, while an instance has an owner, the server MUST NOT take a code posted to `POST /setup/exchange` with a `return_to` as a recovery code or count it as a code attempt.
+Where owner recovery is on, while an instance has an owner, the server MUST NOT take a code that a form post to `POST /setup/exchange` carries without `purpose` set to `recovery` as a recovery code or count it as a code attempt.
 
-**Reason:** The setup code form carries `return_to` and the recovery code form does not. A setup page left open must not spend the address's recovery attempts.
+**Reason:** Only the recovery code form says its code is a recovery code. A setup page left open must not spend the address's recovery attempts, whatever `return_to` its form carries.
 
-**Tests:** `compliance/claim-from-app.test.ts › answers a second tab's setup forms with the claimed notice, whose sign-in continues to return_to, and spends no recovery attempt`.
+**Tests:** `compliance/claim-from-app.test.ts › answers a second tab's setup forms with the claimed notice, whose sign-in continues to return_to, and spends no recovery attempt`, `› reads a code form from a plain /setup page left open while the instance was claimed as a setup code, with or without its return_to, and spends no recovery attempt`.
+
+### `instance-claim/setup-form-purpose`
+
+If a form post to `POST /setup/exchange` carries a `purpose` other than `recovery`, or carries `purpose` together with `return_to`, then the server MUST answer `400 validation_error` without consuming valid setup proof.
+
+**Reason:** A form that names a kind of code the server does not read, or that both recovers the owner and continues to an app, was not sent by either code page.
+
+**Tests:** `compliance/claim-from-app.test.ts › refuses a code form that names a purpose other than recovery, or recovery with return_to, without spending the setup code`.
 
 ## Ownership and recovery
 

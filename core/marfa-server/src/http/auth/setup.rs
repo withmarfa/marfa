@@ -5,33 +5,47 @@ use axum::http::{HeaderMap, StatusCode};
 use serde_json::{Map, Value, json};
 
 use super::origin::{self, Source, not_our_page};
-use super::pages::{self, Typed};
+use super::pages::{self, CodeForm, Typed};
 use super::sign_in::signed_in_cookies;
 use super::{cookies, redirect, require_safe_caller, with_cookie};
 use crate::app::App;
 use crate::app::auth::claim::{self, Presented, Proof};
 use crate::app::auth::owner::{Details, Owner, optional_text};
-use crate::app::auth::return_to::{kept, through_sign_in};
+use crate::app::auth::return_to::{HOME, encoded, kept, through_sign_in};
 use crate::app::auth::{Visit, own_origins, sign_in};
 use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, Stopped, json_answer};
 use crate::http::body::{JsonBody, only_declared};
 
-const EXCHANGE_FIELDS: [&str; 3] = ["ticket", "code", RETURN_TO];
+const EXCHANGE_FIELDS: [&str; 2] = ["ticket", "code"];
+const EXCHANGE_FORM_FIELDS: [&str; 4] = ["ticket", "code", RETURN_TO, PURPOSE];
 const CLAIM_FIELDS: [&str; 5] = ["username", "password", "name", "email", "code"];
 const RECOVER_FIELDS: [&str; 2] = ["password", "code"];
 const AFTER_CLAIM: &str = "/auth/sign-in";
-/// Where the browser goes once the instance is claimed. Only the setup pages' doors take it.
+/// Where the browser goes once the instance is claimed. Only the setup pages' forms carry it.
 const RETURN_TO: &str = "return_to";
-const HOME: &str = "/";
+/// Only the recovery code form carries it, so a form without it holds a setup code.
+const PURPOSE: &str = "purpose";
+const RECOVERY: &str = "recovery";
 
-fn return_to_of(app: &App, fields: &Map<String, Value>) -> Option<String> {
-    let value = fields.get(RETURN_TO)?.as_str()?;
-    Some(kept(value, app.addresses().sign_in().origin()))
+/// A form's `return_to` as `kept` reads it, taken out of the fields.
+fn take_return_to(app: &App, fields: &mut Map<String, Value>) -> String {
+    match fields.remove(RETURN_TO) {
+        Some(Value::String(value)) => kept(&value, app.addresses().sign_in().origin()),
+        _ => HOME.to_owned(),
+    }
 }
 
-fn encoded(text: &str) -> String {
-    url::form_urlencoded::byte_serialize(text.as_bytes()).collect()
+fn code_form(app: &App, fields: &mut Map<String, Value>) -> Result<CodeForm, Refusal> {
+    match fields.remove(PURPOSE) {
+        None => Ok(CodeForm::Setup(take_return_to(app, fields))),
+        Some(Value::String(purpose)) if purpose == RECOVERY && !fields.contains_key(RETURN_TO) => {
+            Ok(CodeForm::Recovery)
+        }
+        Some(_) => Err(Refusal::validation(
+            "A code form's purpose can only be recovery, which carries no return_to.",
+        )),
+    }
 }
 
 pub async fn exchange(
@@ -44,46 +58,48 @@ pub async fn exchange(
     if origin::said(&headers, &own_origins(&app)) != Source::Own {
         return Err(not_our_page().into());
     }
-    let form = body.declares_form();
-    let fields = if form {
-        only_declared(body.form().await?, &EXCHANGE_FIELDS)?
-    } else {
-        body.object(&EXCHANGE_FIELDS).await?
-    };
-    let text = |name: &str| fields.get(name).and_then(Value::as_str);
-    let return_to = return_to_of(&app, &fields);
-    let exchanged = if return_to.is_some() && claim::is_claimed(&app).await? {
-        Err(claim::already_claimed())
-    } else {
-        match (text("ticket"), text("code")) {
-            (Some(ticket), _) if !form => claim::exchange_ticket(&app, ticket, visit).await,
-            (_, Some(code)) if !code.trim().is_empty() || !form => match return_to {
-                Some(_) => claim::exchange_setup_code(&app, code, visit).await,
-                None => claim::exchange_code(&app, code, visit).await,
-            },
-            _ => Err(Refusal::validation(
-                "Enter a setup code or open a new setup link.",
-            )),
-        }
+    if !body.declares_form() {
+        let fields = body.object(&EXCHANGE_FIELDS).await?;
+        let text = |name: &str| fields.get(name).and_then(Value::as_str);
+        let session = match (text("ticket"), text("code")) {
+            (Some(ticket), _) => claim::exchange_ticket(&app, ticket, visit).await?,
+            (_, Some(code)) => claim::exchange_code(&app, code, visit).await?,
+            _ => {
+                return Err(
+                    Refusal::validation("Enter a setup code or open a new setup link.").into(),
+                );
+            }
+        };
+        let cookie = cookies::setup(&app.addresses().sign_in(), &session.token)?;
+        let answer = json_answer(StatusCode::OK, &json!({ "ok": true }));
+        return Ok(with_cookie(answer, cookie));
+    }
+    let mut fields = only_declared(body.form().await?, &EXCHANGE_FORM_FIELDS)?;
+    let form = code_form(&app, &mut fields)?;
+    let code = fields
+        .get("code")
+        .and_then(Value::as_str)
+        .filter(|code| !code.trim().is_empty());
+    let exchanged = match (code, &form) {
+        (None, _) => Err(Refusal::validation(
+            "Enter a setup code or open a new setup link.",
+        )),
+        (Some(code), CodeForm::Setup(_)) => claim::exchange_setup_code(&app, code, visit).await,
+        (Some(code), CodeForm::Recovery) => claim::exchange_code(&app, code, visit).await,
     };
     let session = match exchanged {
         Ok(session) => session,
-        Err(refusal) if form && pages::wants_page(&headers) => {
-            return Ok(pages::exchange_refused(&app, &refusal, return_to).await?);
+        Err(refusal) if pages::wants_page(&headers) => {
+            return Ok(pages::exchange_refused(&app, &refusal, &form).await?);
         }
         Err(refusal) => return Err(refusal.into()),
     };
     let cookie = cookies::setup(&app.addresses().sign_in(), &session.token)?;
-    let answer = if form {
-        let next = match return_to.as_deref() {
-            None | Some(HOME) => "/setup".to_owned(),
-            Some(back) => format!("/setup?{RETURN_TO}={}", encoded(back)),
-        };
-        redirect(StatusCode::SEE_OTHER, &next)?
-    } else {
-        json_answer(StatusCode::OK, &json!({ "ok": true }))
+    let next = match &form {
+        CodeForm::Setup(back) if back != HOME => format!("/setup?{RETURN_TO}={}", encoded(back)),
+        _ => "/setup".to_owned(),
     };
-    Ok(with_cookie(answer, cookie))
+    Ok(with_cookie(redirect(StatusCode::SEE_OTHER, &next)?, cookie))
 }
 
 /// A code in the body, or else the setup cookie.
@@ -163,18 +179,18 @@ pub async fn claim(
         && browser
         && pages::wants_page(&headers)
     {
-        let fields = body.form().await?;
-        let return_to = return_to_of(&app, &fields).unwrap_or_else(|| HOME.to_owned());
+        let mut fields = body.form().await?;
+        let return_to = take_return_to(&app, &mut fields);
         return Ok(pages::claim_refused(&app, refusal, Typed::of(&fields), return_to).await?);
     }
     admitted?;
-    let mut fields = if form {
-        body.form().await?
+    let (mut fields, return_to) = if form {
+        let mut fields = body.form().await?;
+        let return_to = take_return_to(&app, &mut fields);
+        (fields, return_to)
     } else {
-        body.open_object().await?
+        (body.open_object().await?, HOME.to_owned())
     };
-    let return_to = return_to_of(&app, &fields).unwrap_or_else(|| HOME.to_owned());
-    fields.remove(RETURN_TO);
     let typed = Typed::of(&fields);
     if form
         && fields

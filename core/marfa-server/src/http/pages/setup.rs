@@ -60,11 +60,16 @@ fn connects_an_app(return_to: &str) -> bool {
 pub struct SetupCode {
     pub instance_name: String,
     pub problem: Option<SetupCodeProblem>,
-    /// The instance has an owner and offers a recovery code.
-    pub recovering: bool,
     /// Where the browser goes once the instance is claimed, as `kept` read it.
     pub return_to: String,
     pub app: Option<AskingApp>,
+}
+
+/// The code page of an instance that has an owner and offers a recovery code.
+#[derive(Debug, Clone)]
+pub struct RecoveryCode {
+    pub instance_name: String,
+    pub problem: Option<SetupCodeProblem>,
 }
 
 #[derive(Template)]
@@ -87,23 +92,9 @@ struct RecoveryCodeBody {
 /// The page also takes a `/setup#handoff=` link: its script exchanges the
 /// ticket and reloads.
 pub fn setup_code(view: &SetupCode) -> Result<Page> {
-    let problem_message = view.problem.map(|problem| problem.message(view.recovering));
-    let has_problem = view.problem.is_some();
-    if view.recovering {
-        let body = render_body(&RecoveryCodeBody {
-            problem_message,
-            has_problem,
-        })?;
-        return document(
-            "Recover the owner",
-            &view.instance_name,
-            &body,
-            Needs::default(),
-        );
-    }
     let body = render_body(&SetupCodeBody {
-        problem_message,
-        has_problem,
+        problem_message: view.problem.map(|problem| problem.message(false)),
+        has_problem: view.problem.is_some(),
         return_to: &view.return_to,
         app: view.app.as_ref(),
         connecting: connects_an_app(&view.return_to),
@@ -116,6 +107,19 @@ pub fn setup_code(view: &SetupCode) -> Result<Page> {
             connect: true,
             confirm_dialog: false,
         },
+    )
+}
+
+pub fn recovery_code(view: &RecoveryCode) -> Result<Page> {
+    let body = render_body(&RecoveryCodeBody {
+        problem_message: view.problem.map(|problem| problem.message(true)),
+        has_problem: view.problem.is_some(),
+    })?;
+    document(
+        "Recover the owner",
+        &view.instance_name,
+        &body,
+        Needs::default(),
     )
 }
 

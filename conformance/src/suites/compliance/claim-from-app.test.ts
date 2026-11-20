@@ -4,7 +4,11 @@ import {
   bootUnclaimedServer,
   stopServer,
 } from "../../../scripts/marfa-server.js";
-import { offeredValues, visibleText } from "../../utils/approval-form.js";
+import {
+  offeredValues,
+  readControls,
+  visibleText,
+} from "../../utils/approval-form.js";
 import { controlRequest } from "../../utils/control-request.js";
 import {
   FRESH_SERVER_TIMEOUT_MS,
@@ -193,6 +197,13 @@ function pathAndQuery(target: string, base: string): string {
 /** The `return_to` a page's forms carry. */
 function carried(html: string): string[] {
   return offeredValues(html, "return_to");
+}
+
+/** The hidden fields a page's form posts beside what the person types. */
+function hiddenFields(html: string): [string, string][] {
+  return readControls(html)
+    .filter((control) => control.type === "hidden")
+    .map((control) => [control.name, control.value]);
 }
 
 /** The sign-in page that continues to `back`. */
@@ -741,6 +752,85 @@ describe("return_to through setup", () => {
     },
     BUDGET_MS,
   );
+
+  it(
+    "refuses return_to in a JSON body on POST /setup/exchange and POST /setup/claim without spending the setup code",
+    async () => {
+      await withInstance({}, async (instance) => {
+        const code = await instance.code();
+        const json = (path: string, body: Record<string, unknown>) =>
+          fetch(`${instance.url}${path}`, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              origin: instance.origin,
+              [CLIENT]: "192.0.2.80",
+            },
+            body: JSON.stringify(body),
+          });
+        const refused = async (path: string, body: Record<string, unknown>) => {
+          const answer = await json(path, body);
+          expect(answer.status, path).toBe(400);
+          const error = (
+            (await answer.json()) as {
+              error: {
+                code: string;
+                details: { unknown_body_fields: string[] };
+              };
+            }
+          ).error;
+          expect(error.code, path).toBe("validation_error");
+          expect(error.details.unknown_body_fields, path).toEqual([
+            "return_to",
+          ]);
+        };
+        for (const back of [AUTHORIZE, 5]) {
+          await refused("/setup/exchange", { code, return_to: back });
+          await refused("/setup/claim", { ...OWNER, code, return_to: back });
+        }
+        // The witness: the same bodies without return_to exchange the code
+        // and claim the instance.
+        expect((await json("/setup/exchange", { code })).status).toBe(200);
+        expect((await json("/setup/claim", { ...OWNER, code })).status).toBe(
+          201,
+        );
+      });
+    },
+    BUDGET_MS,
+  );
+
+  it(
+    "refuses a code form that names a purpose other than recovery, or recovery with return_to, without spending the setup code",
+    async () => {
+      await withInstance({}, async (instance) => {
+        const browser = new Browser(instance, "192.0.2.81");
+        const code = await instance.code();
+        for (const fields of [
+          [
+            ["code", code],
+            ["purpose", "setup"],
+          ],
+          [
+            ["code", code],
+            ["purpose", "recovery"],
+            ["return_to", AUTHORIZE],
+          ],
+        ] as [string, string][][]) {
+          const answer = await browser.post("/setup/exchange", fields);
+          expect(answer.status).toBe(400);
+        }
+        expect(browser.holds("marfa_setup")).toBe(false);
+        // The witness: the setup code form exchanges the same code.
+        const exchanged = await browser.post("/setup/exchange", [
+          ["code", code],
+          ["return_to", AUTHORIZE],
+        ]);
+        expect(exchanged.status).toBe(303);
+        expect(browser.holds("marfa_setup")).toBe(true);
+      });
+    },
+    BUDGET_MS,
+  );
 });
 
 describe("a claim another tab or a refused sign-in finished", () => {
@@ -811,10 +901,63 @@ describe("a claim another tab or a refused sign-in finished", () => {
           expect(answer.status).toBe(409);
         }
         const recovery = (browser: Browser) =>
-          browser.post("/setup/exchange", [["code", "WRONG-RECOVERY"]]);
+          browser.post("/setup/exchange", [
+            ["code", "WRONG-RECOVERY"],
+            ["purpose", "recovery"],
+          ]);
         expect((await recovery(stale)).status).toBe(401);
         // The witness: ten recovery codes spend an address's attempts.
         const spender = new Browser(instance, "192.0.2.63");
+        for (let i = 0; i < 10; i++)
+          expect((await recovery(spender)).status).toBe(401);
+        expect((await recovery(spender)).status).toBe(429);
+      });
+    },
+    BUDGET_MS,
+  );
+
+  it(
+    "reads a code form from a plain /setup page left open while the instance was claimed as a setup code, with or without its return_to, and spends no recovery attempt",
+    async () => {
+      await withInstance({ MARFA_OWNER_RECOVERY: "true" }, async (instance) => {
+        const stale = new Browser(instance, "192.0.2.64");
+        const setupHtml = await (await stale.get("/setup")).text();
+        expect(setupHtml).toContain('action="/setup/exchange"');
+        const setupForm = hiddenFields(setupHtml);
+        const owner = await fetch(`${instance.url}/owner`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...OWNER, code: await instance.code() }),
+        });
+        expect(owner.status).toBe(201);
+        // A start with recovery on prints a recovery code, which the
+        // recovery page then offers.
+        await instance.restart();
+        const recoveryHtml = await (await stale.get("/setup")).text();
+        expect(visibleText(recoveryHtml)).toContain("Recover the owner");
+        const recoveryForm = hiddenFields(recoveryHtml);
+
+        // The setup code form as the page sent it, then ten with no hidden
+        // field at all: each is answered with the notice.
+        for (let i = 0; i < 11; i++) {
+          const answer = await stale.post("/setup/exchange", [
+            ...(i === 0 ? setupForm : []),
+            ["code", `STALE-CODE-${String(i)}`],
+          ]);
+          expect(answer.status).toBe(409);
+          expect(visibleText(await answer.text())).toContain(
+            "This Marfa already has an owner",
+          );
+        }
+        const recovery = (browser: Browser) =>
+          browser.post("/setup/exchange", [
+            ...recoveryForm,
+            ["code", "WRONG-RECOVERY"],
+          ]);
+        expect((await recovery(stale)).status).toBe(401);
+        // The witness: ten codes from the recovery page's form spend an
+        // address's attempts.
+        const spender = new Browser(instance, "192.0.2.65");
         for (let i = 0; i < 10; i++)
           expect((await recovery(spender)).status).toBe(401);
         expect((await recovery(spender)).status).toBe(429);
