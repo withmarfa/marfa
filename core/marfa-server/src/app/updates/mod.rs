@@ -17,7 +17,6 @@ use serde_json::{Value, json};
 use tokio::sync::Notify;
 
 pub use check::{JOB as CHECK_JOB, enabled as checking, job as check};
-pub use pending::{Start, on_start};
 
 use super::refusal::{Code, Refusal, Result};
 use super::{App, health};
@@ -26,7 +25,7 @@ use crate::failure::Failure;
 use crate::settings::DatabasePath;
 use feed::Feed;
 use install::Install;
-use pending::{Folder, Outcome};
+use pending::{Folder, Outcome, Settled};
 use release::{Latest, Version};
 
 /// The exit status that asks a service manager to start the server again.
@@ -68,7 +67,7 @@ impl Updates {
             state: Mutex::default(),
             restart: Notify::new(),
             install: install::detect(),
-            record: Folder::of(database),
+            record: pending::record_of(database),
         }
     }
 
@@ -111,6 +110,19 @@ impl Updates {
     }
 }
 
+/// Where this start marks an upgrade of the database: only a server that `marfa server run`
+/// started for an update to this release that has not settled. It blocks.
+pub fn upgrade_marks(database: &DatabasePath) -> Option<Folder> {
+    if !matches!(install::detect(), Install::Service { .. }) {
+        return None;
+    }
+    let record = pending::record_of(database)?;
+    match record.pending() {
+        Ok(Some(pending)) if pending.to == Version::running().to_string() => Some(record),
+        _ => None,
+    }
+}
+
 /// What `--can-open` prints for a database file.
 pub fn inspect(file: &Path) -> std::result::Result<String, Failure> {
     let looked = db::inspect(file, MIGRATIONS)?;
@@ -122,33 +134,35 @@ pub fn inspect(file: &Path) -> std::result::Result<String, Failure> {
     Ok(json!({ "schema": looked.schema, "standing": standing }).to_string())
 }
 
-/// Before the files are touched: puts the old programs back after a release that did not stay up.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "this runs before the settings are read and the clock exists"
-)]
-pub fn before_start(database: &DatabasePath) -> Start {
-    let Some(record) = Folder::of(database) else {
-        return Start::Proceed;
-    };
-    let file = database.file();
-    let at = marfa_rules::time::written(jiff::Timestamp::now().as_millisecond());
-    pending::on_start(&record, &Version::running().to_string(), &at, &|| {
-        file.as_deref()
-            .and_then(|file| db::inspect(file, MIGRATIONS).ok())
-            .and_then(|looked| looked.schema)
-    })
+/// What a program prints for `--version`, or `None` when it does not run and say.
+fn reports(program: &Path) -> Option<String> {
+    apply::ask(program, &["--version".as_ref()])
+        .ok()
+        .filter(|ran| ran.status.success())
+        .map(|ran| ran.stdout.trim().to_string())
 }
 
+/// Only a server `marfa server run` started settles: one started another way could move the
+/// programs while that command supervises them.
 pub fn settle_when_up(app: &Arc<App>) {
     let Some(record) = app.updates.record.clone() else {
         return;
     };
-    if record.pending().is_none() {
+    if !matches!(app.updates.install, Install::Service { .. }) {
         return;
     }
+    let database = app.settings.start.database.file();
     let app = app.clone();
     tokio::spawn(async move {
+        let unsettled = {
+            let record = record.clone();
+            tokio::task::spawn_blocking(move || record.pending())
+                .await
+                .is_ok_and(|read| !matches!(read, Ok(None)))
+        };
+        if !unsettled {
+            return;
+        }
         let mut stopping = app.stopping();
         let running = Version::running().to_string();
         let mut wait = SETTLE_AFTER;
@@ -162,9 +176,25 @@ pub fn settle_when_up(app: &Arc<App>) {
             }
             wait = SETTLE_LOOKS_AGAIN;
         }
-        let record = record.clone();
         let at = app.clock.stamp();
-        let _ = tokio::task::spawn_blocking(move || pending::settle(&record, &running, &at)).await;
+        let settled = tokio::task::spawn_blocking(move || {
+            // The old server gets this server's own environment, as `marfa server run` gave it.
+            let cannot = |pending: &pending::Pending| match database.as_deref() {
+                Some(file) => pending::cannot_put_back(pending, file, &[]),
+                None => Some("this server has no database file".to_string()),
+            };
+            pending::settle(&record, &running, &at, &cannot, &reports)
+        })
+        .await;
+        if let Ok(Settled::PutBack) = settled {
+            tracing::warn!(
+                "The new release's programs were not all in place, and the server ends to start the old ones"
+            );
+            app.updates.set(State::Restarting {
+                version: Version::running().to_string(),
+            });
+            app.updates.restart.notify_one();
+        }
     });
 }
 
@@ -215,7 +245,18 @@ pub async fn status(app: &App) -> Result<Value> {
     };
     let record = app.updates.record.clone();
     let (settling, last) = tokio::task::spawn_blocking(move || {
-        record.map_or((None, None), |record| (record.pending(), record.last()))
+        fn read<T>(name: &str, read: std::io::Result<Option<T>>) -> Option<T> {
+            read.unwrap_or_else(|error| {
+                tracing::warn!("The update's {name} could not be read: {error}");
+                None
+            })
+        }
+        record.map_or((None, None), |record| {
+            (
+                read("record", record.pending()),
+                read("outcome", record.last()),
+            )
+        })
     })
     .await
     .map_err(|_| Refusal::internal("the update's record did not read"))?;
@@ -241,7 +282,12 @@ pub async fn status(app: &App) -> Result<Value> {
         "method": method,
         "step": step,
         "progress": progress,
-        "last": last,
+        "last": last.map(|last| json!({
+            "outcome": last.outcome,
+            "release": last.release,
+            "finished_at": last.finished_at,
+            "reason": last.reason,
+        })),
     }))
 }
 
@@ -257,7 +303,7 @@ pub async fn start(app: &Arc<App>) -> Result<Value> {
             "No release newer than the running one has been found.",
         ));
     };
-    let (Install::Service { programs }, Some(archive), Some(checksums), Some(platform)) = (
+    let (Install::Service { programs, dir }, Some(archive), Some(checksums), Some(platform)) = (
         &app.updates.install,
         latest.archive.clone(),
         latest.checksums.clone(),
@@ -292,8 +338,10 @@ pub async fn start(app: &Arc<App>) -> Result<Value> {
             archive,
             checksums,
             programs: programs.clone(),
+            dir: dir.clone(),
             database: file,
             record,
+            attempt: uuid::Uuid::now_v7().to_string(),
         };
         run(app.clone(), job);
     }
@@ -305,6 +353,7 @@ fn run(app: Arc<App>, job: apply::Job) {
     tokio::spawn(async move {
         let version = job.version.clone();
         let record = job.record.clone();
+        let attempt = job.attempt.clone();
         let stages = app.clone();
         let done = tokio::task::spawn_blocking(move || {
             apply::run(&feed, &job, &|stage| stages.updates.stage(stage))
@@ -322,7 +371,14 @@ fn run(app: Arc<App>, job: apply::Job) {
                 let record = record.clone();
                 let at = app.clock.stamp();
                 let _ = tokio::task::spawn_blocking(move || {
-                    record.end(&at, Outcome::Failed, &version, Some(reason));
+                    pending::end(
+                        &record,
+                        &at,
+                        Outcome::Failed,
+                        &version,
+                        Some(reason),
+                        Some(&attempt),
+                    );
                 })
                 .await;
                 app.updates.set(State::Idle);

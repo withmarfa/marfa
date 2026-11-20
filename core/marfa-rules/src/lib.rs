@@ -1,6 +1,7 @@
 //! Marfa's pure rules: what a client and a server both judge, with no
-//! storage, network, runtime or client code. A refusal is data: see
-//! [`RuleError`].
+//! database, network, runtime or client code. A refusal is data: see
+//! [`RuleError`]. The one record on disk is the self-update's, which
+//! the server and `marfa server run` both keep ([`update_record`]).
 
 #![forbid(unsafe_code)]
 
@@ -30,6 +31,8 @@ pub mod server_log;
 pub mod thumbnail;
 pub mod time;
 pub mod type_move;
+#[cfg(unix)]
+pub mod update_record;
 pub mod url_host;
 pub mod validation;
 pub mod wire;

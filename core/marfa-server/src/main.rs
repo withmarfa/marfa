@@ -9,7 +9,7 @@ use std::process::ExitCode;
 use clap::Parser;
 use marfa_server::app::updates;
 use marfa_server::failure::Failure;
-use marfa_server::settings::{DatabasePath, Environment, Refused, Settings};
+use marfa_server::settings::{Environment, Refused, Settings};
 use marfa_server::telemetry::config::{self, Config};
 use marfa_server::{log, run, telemetry};
 
@@ -50,18 +50,7 @@ fn read_settings() -> Result<(marfa_server::settings::Accepted, Config), Failure
 }
 
 fn start() -> Result<u8, Failure> {
-    let (accepted, telemetry) = match read_settings() {
-        Ok(read) => read,
-        Err(failure) => {
-            // A refused start of a release that has not settled counts as a start.
-            let database = DatabasePath::named_by(&Environment::of_process());
-            if updates::before_start(&database) == updates::Start::Restart {
-                log::start_failed(&failure);
-                return Ok(updates::RESTART_STATUS);
-            }
-            return Err(failure);
-        }
-    };
+    let (accepted, telemetry) = read_settings()?;
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()

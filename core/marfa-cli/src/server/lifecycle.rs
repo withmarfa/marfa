@@ -76,7 +76,7 @@ fn upgrade_native(
             service.describe()
         )));
     }
-    let server = run::locate()?;
+    let server = run::locate(Some(&folder.dir))?;
     let binary = native::stable_binary_of_this()?;
     let unchanged = target == state.release;
     if !unchanged {
@@ -396,7 +396,7 @@ fn started(args: StartArgs, out: &Printer) -> Result<(Value, String), CliError> 
                     service.describe()
                 )));
             }
-            let server = run::locate()?;
+            let server = run::locate(Some(&folder.dir))?;
             let binary = native::stable_binary_of_this()?;
             steps.say(&format!("Starting {}...", state.name));
             let mark = service.mark();

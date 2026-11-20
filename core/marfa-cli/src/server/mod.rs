@@ -104,6 +104,14 @@ pub enum ServerCommand {
     /// status. On a Mac it keeps the server's output in
     /// `~/Library/Logs/Marfa`. A server that refuses its database is not
     /// started again: this command says so and waits until it is stopped.
+    ///
+    /// After a self-update, this command tries the new `marfa-server` before
+    /// the new `marfa` takes its place. It counts each start of the new
+    /// release that ends before the release settles, and does not count one
+    /// that a stop ended. After two such starts, or when the new release
+    /// refuses its database, it puts the old release back when that release
+    /// can still open the database, and otherwise keeps the new one.
+    /// `marfa update status` shows what happened.
     Run(RunArgs),
     /// Remove the service, keeping its data and settings.
     ///
@@ -125,6 +133,11 @@ pub struct DirArgs {
 pub struct RunArgs {
     #[command(flatten)]
     dir: DirArgs,
+    /// Check that this `marfa` can run the install, with the `marfa-server`
+    /// beside it, and end without starting the server. A self-update runs
+    /// this with the new release's `marfa` before it swaps the programs.
+    #[arg(long, requires = "dir")]
+    check: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -279,7 +292,7 @@ pub fn run(command: ServerCommand, out: &Printer) -> Result<(), CliError> {
         ServerCommand::Restart(args) => lifecycle::restart(args, out),
         ServerCommand::Status(args) => lifecycle::status(args, out),
         ServerCommand::Uninstall(args) => lifecycle::uninstall(args, out),
-        ServerCommand::Run(args) => run::run(&args.dir),
+        ServerCommand::Run(args) => run::run(&args),
     }
 }
 

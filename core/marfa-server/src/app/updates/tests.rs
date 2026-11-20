@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 
 use super::apply::{self, Job};
 use super::feed::Feed;
-use super::pending::{Folder, PROGRAMS, previous_of};
+use super::pending::{self, Folder, MARFA, PROGRAMS, Pending, SERVER, next_marfa, previous_of};
 use super::release::{Asset, archive_name};
 use super::{State, Updates};
 use crate::app::faults::Faults;
@@ -78,10 +78,18 @@ impl Stand {
 }
 
 fn program(name: &str, version: &str, can_open: &str) -> String {
+    program_checking(name, version, can_open, CHECKS)
+}
+
+/// `check` is what `marfa server run --dir <dir> --check` does.
+fn program_checking(name: &str, version: &str, can_open: &str, check: &str) -> String {
     format!(
-        "#!/bin/sh\ncase \"$1\" in\n--version) echo \"{name} {version}\";;\n--can-open) {can_open};;\nesac\n"
+        "#!/bin/sh\ncase \"$1\" in\n--version) echo \"{name} {version}\";;\n--can-open) {can_open};;\nserver) {check};;\nesac\n"
     )
 }
+
+/// Passes only when asked exactly as the swap asks, about a folder that exists.
+const CHECKS: &str = "[ \"$2 $3 $5\" = 'run --dir --check' ] && [ -d \"$4\" ] || { echo \"asked: $*\" >&2; exit 9; }";
 
 const OPENS: &str = "echo '{\"schema\":1,\"standing\":\"current\"}'";
 
@@ -151,7 +159,7 @@ impl Case {
     }
 
     fn record(&self) -> Folder {
-        Folder::of(&DatabasePath::File(self.root.join("data/marfa.db"))).unwrap()
+        Folder::beside(&self.root.join("data/marfa.db"))
     }
 
     /// The release's files served, with the checksums line `sum` gives (the archive's own when
@@ -184,6 +192,8 @@ impl Case {
             programs: self.bin(),
             database: self.root.join("data/marfa.db"),
             record: self.record(),
+            dir: self.root.clone(),
+            attempt: "attempt".into(),
         }
     }
 
@@ -203,7 +213,8 @@ impl Case {
             assert_eq!(self.text(name), program(name, "0.0.74", OPENS), "{name}");
             assert!(!previous_of(&self.bin(), name).exists(), "{name}");
         }
-        assert!(self.record().pending().is_none());
+        assert!(!next_marfa(&self.bin()).exists());
+        assert_eq!(self.record().pending().unwrap(), None);
         let staged = fs::read_dir(self.bin()).unwrap().flatten().any(|entry| {
             entry
                 .file_name()
@@ -234,24 +245,33 @@ fn good(can_open: &str) -> Vec<(&'static str, String)> {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_release_that_checks_out_replaces_both_programs_and_keeps_the_old_ones() {
+async fn a_release_that_checks_out_swaps_in_its_server_and_stages_its_marfa() {
     let case = Case::new("swaps");
     let job = case.release(&good(OPENS), None, None);
     case.run(job).await.unwrap();
-    for name in PROGRAMS {
-        assert_eq!(case.text(name), program(name, "0.0.75", OPENS), "{name}");
-        assert_eq!(
-            fs::read_to_string(previous_of(&case.bin(), name)).unwrap(),
-            program(name, "0.0.74", OPENS),
-            "the old {name} is kept to put back"
-        );
-    }
-    let pending = case.record().pending().unwrap();
+    assert_eq!(case.text(SERVER), new_program(SERVER));
+    assert_eq!(
+        fs::read_to_string(previous_of(&case.bin(), SERVER)).unwrap(),
+        program(SERVER, "0.0.74", OPENS),
+        "the old server is kept to put back"
+    );
+    assert_eq!(
+        case.text(MARFA),
+        program(MARFA, "0.0.74", OPENS),
+        "the running release's marfa stays to supervise the new server"
+    );
+    assert_eq!(
+        fs::read_to_string(next_marfa(&case.bin())).unwrap(),
+        new_program(MARFA)
+    );
+    assert!(!previous_of(&case.bin(), MARFA).exists());
+    let pending = case.record().pending().unwrap().unwrap();
     assert_eq!(
         (pending.from.as_str(), pending.to.as_str()),
         ("0.0.74", "0.0.75")
     );
     assert_eq!((pending.schema, pending.starts), (Some(1), 0));
+    assert_eq!(pending.attempt.as_deref(), Some("attempt"));
     assert!(!case.bin().join(".marfa-update-0.0.75").exists());
 }
 
@@ -388,7 +408,7 @@ fn a_refused_link_keeps_the_old_program_as_an_executable_copy() {
     let live = case.bin().join("marfa-server");
     let kept = previous_of(&case.bin(), "marfa-server");
     let refused = |_: &Path, _: &Path| Err(std::io::Error::other("links refused here"));
-    apply::keep_aside(&live, &kept, refused).unwrap();
+    pending::keep_aside(&live, &kept, refused).unwrap();
     assert_eq!(fs::read(&kept).unwrap(), fs::read(&live).unwrap());
     assert_eq!(
         fs::metadata(&kept).unwrap().permissions().mode() & 0o777,
@@ -396,7 +416,7 @@ fn a_refused_link_keeps_the_old_program_as_an_executable_copy() {
     );
     fs::remove_file(&kept).unwrap();
     assert!(
-        apply::keep_aside(&case.bin().join("absent"), &kept, refused).is_err(),
+        pending::keep_aside(&case.bin().join("absent"), &kept, refused).is_err(),
         "the witness: with nothing to copy the fallback fails too"
     );
 }
@@ -442,14 +462,14 @@ async fn entries_outside_the_archive_or_named_as_a_program_but_not_a_file_are_ne
     ]);
     case.run(case.release_of(packed, None, None)).await.unwrap();
     assert_eq!(
-        case.text("marfa"),
+        fs::read_to_string(next_marfa(&case.bin())).unwrap(),
         cli,
         "the witness: the real entries were used"
     );
     assert_eq!(
-        fs::read_to_string(previous_of(&case.bin(), "marfa")).unwrap(),
+        case.text("marfa"),
         program("marfa", "0.0.74", OPENS),
-        "nothing replaced the running program before the swap"
+        "nothing replaced the running program"
     );
     assert!(!Path::new(outside).exists());
     assert!(!case.root.join("marfa").exists());
@@ -485,31 +505,111 @@ async fn an_archive_that_holds_a_program_twice_is_refused() {
     case.untouched();
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn a_swap_that_fails_on_the_second_program_puts_both_back_and_replaces_a_copy_left_earlier() {
+#[test]
+fn a_swap_that_fails_part_way_puts_the_old_server_back_and_replaces_a_copy_left_earlier() {
     let case = Case::new("undo");
-    let staging = case.bin().join(".staging");
-    fs::create_dir(&staging).unwrap();
-    fs::write(staging.join("marfa-server"), new_program("marfa-server")).unwrap();
     let job = case.release(&good(OPENS), None, None);
-    let failed = apply::swap(&staging, &job, Some(1)).unwrap_err();
-    assert!(failed.contains("placing the new program"), "{failed}");
-    let _ = fs::remove_dir_all(&staging);
-    case.untouched();
+    let staging = case.bin().join(".staging");
+    for (missing, said) in [
+        (MARFA, "staging the new marfa"),
+        (SERVER, "placing the new program"),
+    ] {
+        fs::create_dir(&staging).unwrap();
+        for name in PROGRAMS.iter().filter(|name| **name != missing) {
+            fs::write(staging.join(name), new_program(name)).unwrap();
+        }
+        let failed = apply::swap(&staging, &job, Some(1)).unwrap_err();
+        assert!(failed.contains(said), "{failed}");
+        fs::remove_dir_all(&staging).unwrap();
+        case.untouched();
+    }
 
     fs::create_dir(&staging).unwrap();
     for name in PROGRAMS {
         fs::write(staging.join(name), new_program(name)).unwrap();
     }
-    let stale = previous_of(&case.bin(), "marfa");
+    let stale = previous_of(&case.bin(), SERVER);
     fs::write(&stale, "left by an earlier run").unwrap();
     apply::swap(&staging, &job, Some(1)).unwrap();
-    for name in PROGRAMS {
-        assert_eq!(case.text(name), new_program(name), "{name}");
-        assert_eq!(
-            fs::read_to_string(previous_of(&case.bin(), name)).unwrap(),
-            program(name, "0.0.74", OPENS),
-            "the witness: a copy left earlier is replaced by the running program"
-        );
-    }
+    assert_eq!(case.text(SERVER), new_program(SERVER));
+    assert_eq!(
+        fs::read_to_string(&stale).unwrap(),
+        program(SERVER, "0.0.74", OPENS),
+        "the witness: a copy left earlier is replaced by the running program"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_whose_marfa_will_not_run_this_install_is_not_swapped_in() {
+    let case = Case::new("check");
+    let mut files = good(OPENS);
+    files[0].1 = program_checking(
+        MARFA,
+        "0.0.75",
+        OPENS,
+        "echo 'this install is not one I can run' >&2; exit 1",
+    );
+    let refused = case
+        .run(case.release(&files, None, None))
+        .await
+        .unwrap_err();
+    assert!(
+        refused.contains("will not run this install")
+            && refused.contains("this install is not one I can run"),
+        "{refused}"
+    );
+    case.untouched();
+    case.run(case.release(&good(OPENS), None, None))
+        .await
+        .unwrap();
+    assert!(
+        next_marfa(&case.bin()).exists(),
+        "the witness: a marfa that checks out is staged"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn no_update_starts_while_another_holds_or_has_not_settled_the_programs() {
+    let case = Case::new("claimed");
+    let job = case.release(&good(OPENS), None, None);
+    let held = apply::claim(&job).unwrap();
+    let refused = case
+        .run(case.release(&good(OPENS), None, None))
+        .await
+        .unwrap_err();
+    assert!(refused.contains("under way"), "{refused}");
+    drop(held);
+
+    case.record()
+        .keep_pending(&Pending {
+            from: "0.0.73".into(),
+            to: "0.0.74".into(),
+            schema: Some(1),
+            starts: 1,
+            programs: case.bin(),
+            attempt: None,
+            limit_ended: None,
+        })
+        .unwrap();
+    let refused = case
+        .run(case.release(&good(OPENS), None, None))
+        .await
+        .unwrap_err();
+    assert!(refused.contains("0.0.74 has not settled"), "{refused}");
+    case.record().clear_pending().unwrap();
+
+    fs::write(next_marfa(&case.bin()), "another server's swap").unwrap();
+    let refused = case
+        .run(case.release(&good(OPENS), None, None))
+        .await
+        .unwrap_err();
+    assert!(refused.contains(".marfa.next"), "{refused}");
+    fs::remove_file(next_marfa(&case.bin())).unwrap();
+
+    case.run(job).await.unwrap();
+    assert_eq!(
+        case.text(SERVER),
+        new_program(SERVER),
+        "the witness: with nothing in the way the same update runs"
+    );
 }
