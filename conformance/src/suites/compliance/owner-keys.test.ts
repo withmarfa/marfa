@@ -7,6 +7,13 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import {
+  callTool,
+  connectMcp,
+  toolError,
+  toolResult,
+  type McpConnection,
+} from "../../utils/mcp.js";
 import { itemsStatus } from "../../utils/signed-in.js";
 
 /**
@@ -830,5 +837,110 @@ describe("claims granted through keys.manage", () => {
     expect(await labels()).not.toContain("reserved-claim");
     expect(await labels()).not.toContain("reserved-source");
     expect((await listed(target.id))?.sources ?? []).toEqual([]);
+  });
+});
+
+describe("keys made through the MCP tool marfa_manage_key", () => {
+  const connections: McpConnection[] = [];
+
+  afterAll(async () => {
+    await Promise.all(connections.map((connection) => connection.close()));
+  });
+
+  async function adminOf(app: App): Promise<McpConnection> {
+    const connection = await connectMcp(
+      server.apiUrl,
+      app.token,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    connections.push(connection);
+    return connection;
+  }
+
+  function make(
+    connection: McpConnection,
+    label: string,
+    body: Record<string, unknown> = {},
+  ) {
+    return callTool(connection, "marfa_manage_key", {
+      action: "make",
+      ...named(label),
+      type_permissions: { "core.note": "read" },
+      ...body,
+    });
+  }
+
+  it("makes an owner's key through an app that holds keys.mint and keys.manage, and an app's key without owner_key", async () => {
+    const connection = await adminOf(manageAndMint);
+    const apps = toolResult(await make(connection, "mcp-apps-key"));
+    const owners = toolResult(
+      await make(connection, "mcp-owners-key", { owner_key: true }),
+    );
+    // The witness: without the field, the same call makes an app's key.
+    const appKey = apps.key as Key;
+    const ownerKey = owners.key as Key;
+    expect(appKey.oauth_client_id).toBe(manageAndMint.clientId);
+    expect(ownerKey).not.toHaveProperty("oauth_client_id");
+    expect(await listed(ownerKey.id)).not.toHaveProperty("oauth_client_id");
+    expect((await listed(appKey.id))?.oauth_client_id).toBe(
+      manageAndMint.clientId,
+    );
+    expect(await itemsStatus(server, owners.secret as string)).toBe(200);
+  });
+
+  it("refuses owner_key through an app that does not hold keys.manage, and both fields where a key is narrowed", async () => {
+    // The app is answered with the scope it lacks, which a client asks the
+    // person for (`keys-and-oauth/mcp-challenge-scope`).
+    await expect(
+      make(await adminOf(mintOnly), "mcp-owner-refused", { owner_key: true }),
+    ).rejects.toThrow('required "keys.manage"');
+    expect(await labels()).not.toContain("mcp-owner-refused");
+
+    const target = await localKey("mcp-narrow-target", {
+      type_permissions: { "core.note": "read" },
+    });
+    const connection = await adminOf(manageAndMint);
+    for (const field of [{ owner_key: true }, { sources: ["elsewhere"] }]) {
+      const answer = toolError(
+        await callTool(connection, "marfa_manage_key", {
+          action: "narrow",
+          id: target.id,
+          label: "narrowed",
+          ...field,
+        }),
+      );
+      expect(answer.code, JSON.stringify(field)).toBe("validation_error");
+    }
+    // The witness: the same call without them narrows the key.
+    const narrowed = toolResult(
+      await callTool(connection, "marfa_manage_key", {
+        action: "narrow",
+        id: target.id,
+        label: "narrowed",
+      }),
+    );
+    expect((narrowed.key as Key).label).toBe("narrowed");
+  });
+
+  it("grants a claim through an app that holds keys.manage, and refuses it to one that does not", async () => {
+    const elsewhere = `mcp-elsewhere-${randomUUID()}`;
+    const refused = toolError(
+      await make(await adminOf(mintOnly), "mcp-claim-refused", {
+        sources: [elsewhere],
+      }),
+    );
+    expect(refused.code).toBe("forbidden");
+    expect(await labels()).not.toContain("mcp-claim-refused");
+
+    const granted = toolResult(
+      await make(await adminOf(manageAndMint), "mcp-claim-granted", {
+        sources: [elsewhere],
+      }),
+    );
+    expect((granted.key as Key).sources).toEqual([elsewhere]);
+    expect((await listed((granted.key as Key).id))?.sources).toEqual([
+      elsewhere,
+    ]);
   });
 });

@@ -281,7 +281,7 @@ When an app's access token, or a key that carries `oauth_client_id`, holds `keys
 
 **Reason:** An owner signed in through an app reaches every key, and a key that person makes for a connector or a script must outlast that app's sign-in, as a key the local command makes does.
 
-**Tests:** `compliance/owner-keys.test.ts › mints an owner's key from an app that holds keys.manage, and an app's key without owner_key`, `› mints an owner's key from a key an app made that holds keys.manage`.
+**Tests:** `compliance/owner-keys.test.ts › mints an owner's key from an app that holds keys.manage, and an app's key without owner_key`, `› mints an owner's key from a key an app made that holds keys.manage`, `› makes an owner's key through an app that holds keys.mint and keys.manage, and an app's key without owner_key`.
 
 ### `keys-and-oauth/owner-key-manage`
 
@@ -621,11 +621,19 @@ If a key that has an `expires_at` sends `POST /keys` naming an `expires_at` late
 
 ### `keys-and-oauth/expiry-update-ceiling`
 
-If a key that has an `expires_at` sends `PATCH /keys/{id}` naming an `expires_at` later than its own, or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
+If a key that has an `expires_at` and does not hold `keys.manage` sends `PATCH /keys/{id}` naming an `expires_at` later than its own, or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
 
-**Reason:** A key that could move its own expiry, or the expiry of a key it made, would hold the bound only until it chose not to. A caller holding `keys.manage` without `keys.mint` is also held to the expiry of the key it changes (`keys-and-oauth/expiry-manage-narrows`).
+**Reason:** A key that could move its own expiry, or the expiry of a key it made, would hold the bound only until it chose not to. A caller holding `keys.manage` narrows any key, so it is held to the expiry of the key it changes instead (`keys-and-oauth/expiry-manage-narrows`), and to its own only when it also holds `keys.mint` (`keys-and-oauth/expiry-manage-mint-ceiling`).
 
-**Tests:** `compliance/key-expiry.test.ts › neither lengthens nor clears the expiry of a key, its own included, and leaves the key as it was`, `compliance/owner-keys.test.ts › holds a widening by keys.mint and keys.manage to the caller's own expiry`.
+**Tests:** `compliance/key-expiry.test.ts › neither lengthens nor clears the expiry of a key, its own included, and leaves the key as it was`.
+
+### `keys-and-oauth/expiry-manage-mint-ceiling`
+
+If a key that has an `expires_at` and holds both `keys.mint` and `keys.manage` sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than both its own and that key's, or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
+
+**Reason:** `keys.manage` narrows any key, including to an expiry past the caller's own. A caller that also holds `keys.mint` can lengthen a key, and what it gives a key ends when its own life does.
+
+**Tests:** `compliance/owner-keys.test.ts › holds a widening by keys.mint and keys.manage to the caller's own expiry`.
 
 ### `keys-and-oauth/expiry-widen-ceiling`
 
@@ -853,7 +861,7 @@ When a mint names a claim with spaces around it, the server MUST store the claim
 
 If a working key or an app that does not hold `keys.manage` mints or updates a key to claim a source other than the caller's own `source` and its own claims, then the server MUST answer `403 forbidden` with `details.source` naming the first such source.
 
-**Tests:** `compliance/claimed-sources.test.ts › refuses a mint or an update claiming a source its caller does not hold`, `compliance/owner-keys.test.ts › grants any source as a claim through keys.manage, on a mint and on an update`.
+**Tests:** `compliance/claimed-sources.test.ts › refuses a mint or an update claiming a source its caller does not hold`, `compliance/owner-keys.test.ts › grants any source as a claim through keys.manage, on a mint and on an update`, `› grants a claim through an app that holds keys.manage, and refuses it to one that does not`.
 
 ### `keys-and-oauth/claims-manage`
 
@@ -861,7 +869,7 @@ When a working key or an app holding `keys.manage` and `keys.mint` mints a key, 
 
 **Reason:** `keys.manage` reaches every key and every source's name and mark, so it decides which keys share a source, as local authority does.
 
-**Tests:** `compliance/owner-keys.test.ts › grants any source as a claim through keys.manage, on a mint and on an update`, `› grants any source as a claim through an app that holds keys.manage`.
+**Tests:** `compliance/owner-keys.test.ts › grants any source as a claim through keys.manage, on a mint and on an update`, `› grants any source as a claim through an app that holds keys.manage`, `› grants a claim through an app that holds keys.manage, and refuses it to one that does not`.
 
 ### `keys-and-oauth/claims-direct`
 
