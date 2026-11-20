@@ -54,7 +54,7 @@ If `POST /owner` carries a top-level body key the operation does not declare, th
 
 **Reason:** a misspelled `password` or `name` would otherwise be dropped, and the one owner of the instance would be created from a request the caller did not make.
 
-**Tests:** `compliance/owner.test.ts › refuses a key the claim does not declare without consuming valid setup proof`.
+**Tests:** `compliance/owner.test.ts › refuses a key the claim does not declare without consuming valid setup proof`, `compliance/claim-from-app.test.ts › refuses return_to on POST /owner without consuming the setup code`.
 
 ### `instance-claim/setup-undeclared-key`
 
@@ -118,7 +118,7 @@ When a valid claim that carries the instance's own origin in its `Origin` header
 
 **Reason:** A browser at the instance's own origin is the owner's browser, and the person has just chosen the password, so asking them to type it again at sign-in adds a step and proves nothing new. The session is a fresh sign-in so that adding a passkey, which needs authentication within fifteen minutes, works without asking again.
 
-**Tests:** `compliance/owner.test.ts › signs the owner in when a claim comes from the instance's own origin and refuses a session to a claim that fails`, `› signs the owner in when the setup page claims through its setup session`.
+**Tests:** `compliance/owner.test.ts › signs the owner in when a claim comes from the instance's own origin and refuses a session to a claim that fails`, `› signs the owner in when the setup page claims through its setup session`, `compliance/claim-from-app.test.ts › takes an authorization-code client from 401 through setup to consent and a token listed every admin tool`, `› takes a device-code client from 401 through setup to consent and a token listed every admin tool`.
 
 ### `instance-claim/claim-sign-in-failure`
 
@@ -299,6 +299,120 @@ When a setup exchange has no origin or an origin different from the instance's o
 When the server logs setup exchange requests, the server MUST omit submitted setup codes, handoff tickets and passwords from those request logs.
 
 **Tests:** `compliance/owner.test.ts › limits code guesses per address without an instance-wide cap and accepts handoffs past the limit`.
+
+## Claiming in the sign-in page an app opens
+
+An app that reaches an instance with no owner opens its sign-in page, and the person claims the instance there. `return_to` is where the browser goes once setup is done, such as the app's authorization request or a device code's approval page. Only the setup code form and the owner-details form carry it, and `POST /owner` does not take it (`instance-claim/owner-undeclared-key`).
+
+### `instance-claim/sign-in-is-setup`
+
+While an instance has no owner, when a browser opens `GET /auth/sign-in`, the server MUST answer the setup code page.
+
+**Reason:** No account can sign in before the claim makes one, so the page an app opens for sign-in is where the person claims the instance.
+
+**Tests:** `compliance/claim-from-app.test.ts › takes an authorization-code client from 401 through setup to consent and a token listed every admin tool`, `› takes a device-code client from 401 through setup to consent and a token listed every admin tool`.
+
+### `instance-claim/setup-page-code-place`
+
+When the server answers the setup code page while an instance has no owner, the server MUST say on it that the setup code is shown where the server runs, in its terminal or in its host's log.
+
+**Reason:** A person who came from an app has not seen the server start and does not know where to look.
+
+**Tests:** `compliance/claim-from-app.test.ts › takes an authorization-code client from 401 through setup to consent and a token listed every admin tool`, `› takes a device-code client from 401 through setup to consent and a token listed every admin tool`.
+
+### `instance-claim/setup-page-app-host`
+
+When an authorization the instance signed, whose window is open and whose redirect URI is not on the loopback, sends a person to the setup code page, the server MUST name the app on it together with the host of that redirect URI.
+
+**Reason:** The name is whatever the app registered under. The host is where the approval will go, which the person can check before they make the account the app will ask to use.
+
+**Tests:** `compliance/claim-from-app.test.ts › names an app beside the host it sends the person back to, with the caution, and names no app that sends them to the loopback`.
+
+### `instance-claim/setup-page-app-loopback`
+
+When an authorization whose redirect URI is on the loopback sends a person to the setup code page, the server MUST NOT name the app on it.
+
+**Reason:** A loopback host names no place the person can check, so the app's name would stand on the page alone.
+
+**Tests:** `compliance/claim-from-app.test.ts › names an app beside the host it sends the person back to, with the caution, and names no app that sends them to the loopback`.
+
+### `instance-claim/setup-page-app-caution`
+
+When the setup code page names an app, the server MUST show the unverified-app caution beside it.
+
+**Tests:** `compliance/claim-from-app.test.ts › names an app beside the host it sends the person back to, with the caution, and names no app that sends them to the loopback`.
+
+### `instance-claim/setup-page-approval-after`
+
+When the setup code page or the owner-details page carries a `return_to` whose path is `/oauth/authorize` or `/auth/device/consent`, the server MUST say on it that the person chooses what the app can access, or turns it down, after the account is made.
+
+**Reason:** Claiming the instance does not approve the app, and a person must not think it does.
+
+**Tests:** `compliance/claim-from-app.test.ts › takes an authorization-code client from 401 through setup to consent and a token listed every admin tool`, `› takes a device-code client from 401 through setup to consent and a token listed every admin tool`, `› names an app beside the host it sends the person back to, with the caution, and names no app that sends them to the loopback`.
+
+### `instance-claim/setup-return-to-pages`
+
+While an instance has no owner, when `GET /auth/sign-in` or `GET /setup` carries a `return_to` that resolves to a path on the instance, the server MUST carry it in the `return_to` field of the setup code form or the owner-details form it answers.
+
+**Tests:** `compliance/claim-from-app.test.ts › takes an authorization-code client from 401 through setup to consent and a token listed every admin tool`, `› takes a device-code client from 401 through setup to consent and a token listed every admin tool`, `› reads a return_to that leaves the instance as the default page at every step of setup`.
+
+### `instance-claim/setup-return-to-exchange`
+
+When a form post to `POST /setup/exchange` that carries a `return_to` other than `/` exchanges valid setup proof, the server MUST redirect `303` to `/setup` with that `return_to` in its query.
+
+**Tests:** `compliance/claim-from-app.test.ts › takes an authorization-code client from 401 through setup to consent and a token listed every admin tool`, `› takes a device-code client from 401 through setup to consent and a token listed every admin tool`.
+
+### `instance-claim/setup-return-to-refused`
+
+If the server answers a refused form post to `POST /setup/exchange` or `POST /setup/claim` that carries a `return_to` with a page, then the server MUST carry that `return_to` in the form on that page.
+
+**Reason:** A wrong code, a code a restart replaced or a setup session that ended is put right on the next try, and the try still has to reach the app.
+
+**Tests:** `compliance/claim-from-app.test.ts › keeps return_to on the refusal pages for a wrong code, a replaced code and an ended setup session, and answers a wrong and a replaced code alike`.
+
+### `instance-claim/setup-return-to-claim`
+
+When a form post to `POST /setup/claim` from the instance's own origin that carries a `return_to` other than `/` creates the owner and the password sign-in that follows it succeeds, the server MUST redirect `303` to that `return_to`.
+
+**Reason:** The authorization the app started continues signed in, and the claim's session counts as a recent sign-in (`instance-claim/claim-signs-in`), so the person approves the app without signing in again.
+
+**Tests:** `compliance/claim-from-app.test.ts › takes an authorization-code client from 401 through setup to consent and a token listed every admin tool`, `› takes a device-code client from 401 through setup to consent and a token listed every admin tool`, `› answers a second tab's setup forms with the claimed notice, whose sign-in continues to return_to, and spends no recovery attempt`.
+
+### `instance-claim/setup-return-to-no-session`
+
+If a form post to `POST /setup/claim` that carries a `return_to` other than `/` creates the owner and the password sign-in that follows it is refused or fails, then the server MUST redirect `303` to `/auth/sign-in` with that `return_to`.
+
+**Tests:** `compliance/claim-from-app.test.ts › sends a claim whose sign-in is refused to the sign-in page that continues to return_to`.
+
+### `instance-claim/setup-return-to-elsewhere`
+
+When `GET /setup`, `POST /setup/exchange` or `POST /setup/claim` receives a `return_to` that a browser would resolve to another origin, or to a path a browser reads as another host, the server MUST use `/` in its place.
+
+**Tests:** `compliance/claim-from-app.test.ts › reads a return_to that leaves the instance as the default page at every step of setup`.
+
+### `instance-claim/setup-code-replaced-alike`
+
+If a form post to `POST /setup/exchange` on an instance with no owner carries a setup code that is wrong or one a newer setup code has replaced, then the server MUST answer both with the same `401` page, which says the code is not right or has been replaced.
+
+**Reason:** A person whose server restarted typed a code that was right when it was shown, and needs to know to look for the newest one. Telling the two apart would tell a guesser which codes were once real.
+
+**Tests:** `compliance/claim-from-app.test.ts › keeps return_to on the refusal pages for a wrong code, a replaced code and an ended setup session, and answers a wrong and a replaced code alike`.
+
+### `instance-claim/setup-form-claimed`
+
+While an instance has an owner, when a browser that asks for a page sends a form post to `POST /setup/exchange` or `POST /setup/claim` that carries a `return_to`, or opens `GET /setup` with one, the server MUST answer the notice that the instance has an owner, with a sign-in link that carries that `return_to`.
+
+**Reason:** A second tab, or a setup page left open while another finished the claim, continues to the app through sign-in.
+
+**Tests:** `compliance/claim-from-app.test.ts › answers a second tab's setup forms with the claimed notice, whose sign-in continues to return_to, and spends no recovery attempt`.
+
+### `instance-claim/setup-form-no-recovery`
+
+Where owner recovery is on, while an instance has an owner, the server MUST NOT take a code posted to `POST /setup/exchange` with a `return_to` as a recovery code or count it as a code attempt.
+
+**Reason:** The setup code form carries `return_to` and the recovery code form does not. A setup page left open must not spend the address's recovery attempts.
+
+**Tests:** `compliance/claim-from-app.test.ts › answers a second tab's setup forms with the claimed notice, whose sign-in continues to return_to, and spends no recovery attempt`.
 
 ## Ownership and recovery
 

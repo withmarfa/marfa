@@ -3169,11 +3169,11 @@ When `GET /auth/device` carries `error=invalid_code`, the server MUST answer a p
 
 ### `keys-and-oauth/device-code-expired`
 
-When `GET /auth/device` carries `error=expired_code`, the server MUST answer a page saying the code has expired and to start again on the device for a new one.
+When `GET /auth/device` carries `error=expired_code`, the server MUST answer a page saying the code has expired and to start connecting again in the app or on the device for a new one.
 
-**Reason:** Checking what was typed cannot put an expired code right, so the page sends the person back to the device and not to the keyboard. The server answers this only while it still holds the expired code.
+**Reason:** Checking what was typed cannot put an expired code right, so the page sends the person back to the device and not to the keyboard. The server answers this only while it still holds the expired code. A code can also end while the person claims a new instance on the way to approving it.
 
-**Tests:** `compliance/sign-in-surface.test.ts › says an unknown code as wrong or expired, and a code the server holds as expired as expired`.
+**Tests:** `compliance/sign-in-surface.test.ts › says an unknown code as wrong or expired, and a code the server holds as expired as expired`, `compliance/claim-from-app.test.ts › says to start connecting again in the app when the device code ended during setup`.
 
 ### `keys-and-oauth/device-code-lifetime`
 
@@ -3363,7 +3363,7 @@ The server MUST NOT carry a typed password in the sign-in form's redirect or sho
 
 ### `keys-and-oauth/sign-in-names-app`
 
-When an authorization the instance signed, whose window is open, sends a person to the sign-in page, the server MUST name the app on it.
+While an instance has an owner, when an authorization the instance signed, whose window is open, sends a person to the sign-in page, the server MUST name the app on it.
 
 **Reason:** A person signing in for an app should be able to see which app it is.
 

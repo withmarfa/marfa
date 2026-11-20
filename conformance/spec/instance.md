@@ -1694,6 +1694,22 @@ When a request without local authority or `instance.read` sends `GET /health`, t
 
 **Tests:** `compliance/health.test.ts › is given to a key with instance.read and withheld without that permission`.
 
+### `instance/health-claimed`
+
+When `GET /health` is answered and the database answers a read, the server MUST answer `claimed` as `true` if the instance has an owner and `false` if it does not, to every caller, with or without a credential.
+
+**Reason:** an app that finds an instance with no owner can say that it must be claimed before the person signs in, and whether an instance has an owner is not a secret: its sign-in page shows the same thing to anyone.
+
+**Tests:** `compliance/claim-from-app.test.ts › answers claimed false to a caller with no credential, and true once the instance is claimed`, `compliance/health.test.ts › answers claimed true to a caller with no credential, and null while the database refuses a read`.
+
+### `instance/health-claimed-unknown`
+
+If the database refuses the read that `GET /health` makes, then the server MUST answer `claimed` as `null`.
+
+**Reason:** an instance that cannot read its database cannot tell whether it has an owner, and `false` would send an app to claim one that has.
+
+**Tests:** `compliance/health.test.ts › answers claimed true to a caller with no credential, and null while the database refuses a read`.
+
 ### `instance/health-error-key-table`
 
 While the database refuses reads, the server MUST NOT answer an `error` on any component of `GET /health` to a request that bears a bearer credential.

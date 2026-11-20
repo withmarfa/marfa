@@ -48,10 +48,11 @@ const DEVICE_EXPIRED = "Start connecting again in the app or on the device";
 interface Instance {
   url: string;
   origin: string;
-  controlSocket: string;
   /** A new setup code, as `marfa setup code` gives one; the earlier code stops working. */
   code(): Promise<string>;
   advanceClock(ms: number): Promise<void>;
+  /** Stops the server and starts it again on the same state, which replaces its setup code. */
+  restart(): Promise<void>;
 }
 
 /** A fresh unclaimed server for one test, stopped when it ends. */
@@ -60,36 +61,48 @@ async function withInstance(
   run: (instance: Instance) => Promise<void>,
 ): Promise<void> {
   const state = tempFolder("marfa-claim-from-app-");
-  let booted = false;
-  try {
+  let running = false;
+  let controlSocket = "";
+  const boot = async (): Promise<string> => {
     const server = await bootUnclaimedServer({
       state,
       env: { ...PROXIED, ...env },
     });
-    booted = true;
-    const control = async (
-      path: string,
-      body: unknown,
-    ): Promise<Record<string, unknown>> => {
-      const answer = await controlRequest(server.controlSocket, path, {
-        method: "POST",
-        body,
-      });
-      expect(answer.status, path).toBe(200);
-      return answer.body;
-    };
-    await run({
-      url: server.url,
-      origin: new URL(server.url).origin,
-      controlSocket: server.controlSocket,
+    running = true;
+    controlSocket = server.controlSocket;
+    return server.url;
+  };
+  const control = async (
+    path: string,
+    body: unknown,
+  ): Promise<Record<string, unknown>> => {
+    const answer = await controlRequest(controlSocket, path, {
+      method: "POST",
+      body,
+    });
+    expect(answer.status, path).toBe(200);
+    return answer.body;
+  };
+  try {
+    const url = await boot();
+    const instance: Instance = {
+      url,
+      origin: new URL(url).origin,
       code: async () =>
         (await control("/_control/setup/code", {})).code as string,
       advanceClock: async (ms) => {
         await control("/_control/test/clock", { advance_ms: ms });
       },
-    });
+      restart: async () => {
+        await stopServer({ state });
+        running = false;
+        instance.url = await boot();
+        instance.origin = new URL(instance.url).origin;
+      },
+    };
+    await run(instance);
   } finally {
-    if (booted) {
+    if (running) {
       await stopServer({ state });
       keepStatusLog(state);
     }
@@ -631,7 +644,7 @@ describe("return_to through setup", () => {
           };
         };
         const replaced = await instance.code();
-        await instance.code();
+        await instance.restart();
         const wrong = await refusal("WRONG-CODE-0000");
         expect(wrong).toEqual({
           status: 401,
