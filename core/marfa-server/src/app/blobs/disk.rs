@@ -522,12 +522,22 @@ impl Disk {
     /// Whether the files area is reachable, after it takes as its marker the pending marker of
     /// this store, which an adopt recorded and ended before it was made the marker. It blocks.
     pub fn reached(&self) -> bool {
+        self.reach().is_ok()
+    }
+
+    /// Reaches the files area as [`Disk::reached`] does. Fails with why the area could not take
+    /// this store's pending marker where it holds one, and with `None` otherwise. It blocks.
+    pub fn reach(&self) -> Result<(), Option<io::Error>> {
         if self.reachable() {
-            return true;
+            return Ok(());
         }
         let claimed = self.place == Place::BackupFiles
             && fs::read_to_string(self.root.join(PENDING)).is_ok_and(|id| id.trim() == self.id);
-        claimed && self.writable().is_ok() && self.reachable()
+        if !claimed {
+            return Err(None);
+        }
+        self.writable().map_err(Some)?;
+        if self.reachable() { Ok(()) } else { Err(None) }
     }
 
     fn unreachable() -> io::Error {

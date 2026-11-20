@@ -1204,6 +1204,36 @@ async fn an_adopt_recorded_before_a_restart_with_the_disk_away_gives_the_folder_
 }
 
 #[tokio::test]
+async fn a_files_area_whose_waiting_claim_another_server_holds_says_so_and_not_that_it_is_away() {
+    let parent = TempDir::new().unwrap();
+    let (instance, area, file) = adopted_without_its_marker(parent.path()).await;
+    let instance = Arc::into_inner(instance).unwrap();
+    instance.app.close().await;
+    let Instance { data, .. } = instance;
+    let folder = parent.path().join("disk");
+    let away = parent.path().join("away");
+    fs::rename(&folder, &away).unwrap();
+    let again = Instance::start_in(data, &folder).await;
+    fs::rename(&away, &folder).unwrap();
+    // A copy of the instance that started meanwhile took the folder's lock.
+    let held = fs::File::open(&area).unwrap();
+    held.try_lock().unwrap();
+
+    let (status, refused) = again.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
+    let says = refused["error"]["message"].as_str().unwrap();
+    assert!(says.contains("open in another Marfa server"), "{refused}");
+    assert!(!says.contains("is not there"), "{refused}");
+    assert!(area.join(".marfa-store.pending").is_file());
+
+    drop(held);
+    let (status, body) = again.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(area.join(".marfa-store").is_file());
+    assert!(copy_of(&folder, &again.id(), &file).is_file());
+}
+
+#[tokio::test]
 async fn an_adopt_whose_record_outcome_is_unknown_holds_the_folder_until_its_claim_is_settled() {
     let parent = TempDir::new().unwrap();
     let folder = parent.path().join("disk");

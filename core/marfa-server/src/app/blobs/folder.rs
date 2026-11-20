@@ -459,13 +459,14 @@ impl Folder {
     }
 
     fn checked(&self) -> io::Result<()> {
-        if self.reachable() {
-            return Ok(());
-        }
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "the backup folder is not there, or does not hold this instance's files",
-        ))
+        self.files().reach().map_err(|untaken| {
+            untaken.unwrap_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::NotFound,
+                    "the backup folder is not there, or does not hold this instance's files",
+                )
+            })
+        })
     }
 
     fn folder_of(&self, area: Area, instance: &str) -> PathBuf {
