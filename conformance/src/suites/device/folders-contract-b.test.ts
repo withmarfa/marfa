@@ -798,7 +798,11 @@ it("trashes no item whose file moved to a name the folder does not send", async 
   rmSync(join(harness.dir, "Note 1.md"));
   const first = await harness.folder.scan();
   expect(
-    first.ok && [first.value.missing, first.value.carried, first.value.unreached],
+    first.ok && [
+      first.value.missing,
+      first.value.carried,
+      first.value.unreached,
+    ],
     JSON.stringify(first),
   ).toEqual([1, 1, 0]);
   await new Promise((resolve) => setTimeout(resolve, 6_000));
