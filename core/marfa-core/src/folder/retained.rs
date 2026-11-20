@@ -135,14 +135,21 @@ fn settle_retained_row(
     };
     match settled {
         landing::Settled::Kept(kept) => {
-            if kept.writers != row.retained.writers {
+            let looked = landing::Retained {
+                read: landing::Object {
+                    length: kept.read.length,
+                    modified: kept.read.modified,
+                    ..row.retained.read.clone()
+                },
+                changed: kept.changed,
+                writers: kept.writers,
+                ..row.retained.clone()
+            };
+            if looked != row.retained {
                 state::set_retained(
                     conn,
                     &state::Retained {
-                        retained: landing::Retained {
-                            writers: kept.writers,
-                            ..row.retained.clone()
-                        },
+                        retained: looked,
                         ..row.clone()
                     },
                 )?;
@@ -479,6 +486,59 @@ mod tests {
         assert!(reserved_in(&root.join("Notes")).is_empty());
         assert!(folder.kept_files().unwrap().is_empty());
         assert!(holds(&root, "changed elsewhere"));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_kept_file_whose_metadata_alone_changed_stays_kept_and_is_discarded() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, folder) = scanned_folder();
+        let root = dir.path().canonicalize().unwrap();
+        changed_on_the_server(&root, &folder);
+        {
+            let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+            folder.pull().unwrap();
+        }
+        let reserved = reserved_in(&root.join("Notes"));
+        assert_eq!(reserved.len(), 1);
+        let kept_at = root.join("Notes").join(&reserved[0]);
+        // A mode, its times and an extended attribute change; the bytes do not.
+        std::fs::set_permissions(&kept_at, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let file = std::fs::File::options().write(true).open(&kept_at).unwrap();
+        file.set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1))
+            .unwrap();
+        drop(file);
+        #[cfg(target_os = "macos")]
+        xattr::set(&kept_at, "com.apple.metadata:_kMDItemUserTags", b"tag").unwrap();
+
+        {
+            let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+            let report = folder.scan().unwrap();
+            assert_eq!(report.updated, 0, "{report:?}");
+        }
+        assert!(holds(&root, "changed elsewhere"));
+        assert_eq!(reserved_in(&root.join("Notes")), reserved);
+        let conn = folder.core.conn().unwrap();
+        let rows = state::retained(&conn).unwrap();
+        let row = rows[0].as_ref().unwrap();
+        let now = std::fs::metadata(&kept_at).unwrap();
+        assert_eq!(row.retained.read.length, Some(now.len()));
+        assert_eq!(
+            row.retained.read.modified,
+            Some((1, 0)),
+            "the new times are recorded, so the next pass does not hash it again"
+        );
+        drop(conn);
+
+        let done = folder.discard_kept().unwrap();
+        assert_eq!(
+            done.discarded,
+            vec![format!("Notes/{}", reserved[0])],
+            "{done:?}"
+        );
+        assert!(done.put_back.is_empty(), "{done:?}");
+        assert!(holds(&root, "changed elsewhere"));
+        assert!(reserved_in(&root.join("Notes")).is_empty());
     }
 
     #[cfg(debug_assertions)]

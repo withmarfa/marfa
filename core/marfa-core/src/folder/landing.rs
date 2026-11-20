@@ -819,25 +819,34 @@ pub(crate) fn settle_retained(
     let stated = retained.read.length == Some(metadata.len())
         && retained.read.modified == metadata.modified().ok().and_then(modified)
         && retained.changed == changed_at(&metadata);
-    if stated {
+    let proved = Proved {
+        file,
+        bytes: Proof::Hash(retained.read.hash.as_deref().unwrap_or_default()),
+    };
+    // A tag, a mode or new times change the status and leave the bytes. The
+    // status taken before the hash is recorded, so a write after it shows.
+    if stated || proved.unchanged()? {
+        let kept = Retained {
+            read: Object {
+                length: Some(metadata.len()),
+                modified: metadata.modified().ok().and_then(modified),
+                ..retained.read.clone()
+            },
+            changed: changed_at(&metadata),
+            writers: Some(writers),
+            ..retained.clone()
+        };
         let due = match writers {
             Writers::None => true,
             Writers::Unknown => now >= retained.since.saturating_add(RETAINED_FOR),
             Writers::Open => false,
         };
         if !due {
-            return Ok(Settled::Kept(Retained {
-                writers: Some(writers),
-                ..retained.clone()
-            }));
+            return Ok(Settled::Kept(kept));
         }
         // A write that keeps the length on a volume with coarse times shows
         // only in the bytes.
-        let proved = Proved {
-            file,
-            bytes: Proof::Hash(retained.read.hash.as_deref().unwrap_or_default()),
-        };
-        if proved.unchanged()? {
+        if !stated || proved.unchanged()? {
             discard(guard.aside, name)?;
             return Ok(Settled::Discarded);
         }
