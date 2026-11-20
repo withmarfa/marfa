@@ -9,8 +9,8 @@ use super::push::{admission_hold, file_item_draft, new_document};
 use super::scoped::{Guard, Inventory, Looked, Plan, Reading, linked_elsewhere};
 use super::settings::OutsideQuery;
 use super::{
-    BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Duration, EdgeTypes, EdgeWork,
-    Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState, KEPT_LOOK,
+    BTreeMap, BoundFiles, Captured, Carriers, Catalog, ControlFlow, CoreError, Duration, EdgeTypes,
+    EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState, KEPT_LOOK,
     LOCAL_ADMISSION_REFUSAL, Lists, Look, Names, OnceCell, Path, PathBuf, Peers, RENAME_GRACE,
     Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, bytes_of,
     bytes_type, captured_identities, carries_frontmatter, copy_refused, document, embeds,
@@ -1588,7 +1588,8 @@ impl Folder {
     fn sweep(&self, scan: &mut ScanState, peers: &Peers<'_>) -> Result<ControlFlow<()>> {
         let (seen, lists, walked, settings) =
             (&scan.seen, &scan.lists, &scan.walked, &scan.settings);
-        let (incomplete, report) = (scan.incomplete, &mut scan.report);
+        let (mut incomplete, report) = (scan.incomplete, &mut scan.report);
+        let mut carriers: Option<Carriers> = None;
         // Journaled rather than deleted: the first half of a rename looks
         // exactly like a delete.
         let bound = state::bound_paths(&*self.core.conn()?)?;
@@ -1643,7 +1644,28 @@ impl Folder {
             if incomplete {
                 continue;
             }
+            let carriers = match carriers {
+                Some(ref carriers) => carriers,
+                None => match self.carriers(walked, &scan.paths, &scan.skipped_keys)? {
+                    Ok(found) => carriers.insert(found),
+                    // Unread, it may carry this item or any other.
+                    Err(_) => {
+                        incomplete = true;
+                        continue;
+                    }
+                },
+            };
             let conn = self.core.conn()?;
+            if state::bound_at(&conn, &path)?
+                .filter(|row| row.item_id == item_id)
+                .is_some_and(|row| carriers.carrying(&row).is_some())
+            {
+                if held {
+                    state::journal_clear(&conn, &path)?;
+                }
+                report.unreached += 1;
+                continue;
+            }
             state::journal_missing(&conn, &path, &item_id)?;
             report.missing += 1;
         }
@@ -1656,6 +1678,34 @@ impl Folder {
             self.note_kept_look_passed()?;
         }
         Ok(ControlFlow::Continue(()))
+    }
+
+    /// Where the files this pass found but does not read carry an item: the
+    /// walk's files `one_per_name` held, so not among `paths`, and those the
+    /// pass skipped. A skipped file is no document, so only its identity is
+    /// read.
+    fn carriers(
+        &self,
+        walked: &Walked,
+        paths: &[PathBuf],
+        skipped: &[String],
+    ) -> Result<std::io::Result<Carriers>> {
+        let read: HashSet<&PathBuf> = paths.iter().collect();
+        let mut files = Vec::new();
+        for path in walked.files.iter().filter(|path| !read.contains(path)) {
+            files.push((path.clone(), identity::relative(&self.root, path)?, true));
+        }
+        files.extend(
+            skipped
+                .iter()
+                .map(|key| (self.root.join(key), key.clone(), false)),
+        );
+        Ok(Carriers::of(
+            walked,
+            files
+                .iter()
+                .map(|(path, key, read_id)| (path.as_path(), key.as_str(), *read_id)),
+        ))
     }
 
     /// An editor that did not follow a pull's move of a document saves its old
@@ -2896,20 +2946,37 @@ impl Folder {
                     let mut attempts = 0;
                     // A file at a path another item's binding holds is that
                     // item's, and answers nothing for this one.
-                    let put_back = || -> Result<bool> {
-                        if bound.is_none() || !self.is_file(self.root.join(path)) {
-                            return Ok(false);
+                    let put_back = || -> Result<Option<Missing>> {
+                        if bound.is_none() {
+                            return Ok(None);
                         }
-                        // No longer missing, so a scan that moves the file
-                        // elsewhere finds no row to delete the item by.
-                        state::journal_clear_for(&*self.core.conn()?, path, item_id)?;
-                        Ok(true)
+                        match self.file_at(&self.root.join(path)) {
+                            Ok(false) => Ok(None),
+                            Ok(true) => {
+                                // No longer missing, so a scan that moves the
+                                // file elsewhere finds no row to delete the
+                                // item by.
+                                state::journal_clear_for(&*self.core.conn()?, path, item_id)?;
+                                Ok(Some(Missing::Changed))
+                            }
+                            Err(error) => {
+                                let reason = format!("its path cannot be checked ({error})");
+                                let kept = state::Kept::Unsure(reason.clone());
+                                state::journal_keep(
+                                    &*self.core.conn()?,
+                                    path,
+                                    item_id,
+                                    Some(&kept),
+                                )?;
+                                Ok(Some(Missing::Unsure(reason)))
+                            }
+                        }
                     };
                     loop {
                         // Neither a decision made earlier in the sweep nor the
                         // file-item read looks at the disk.
-                        if put_back()? {
-                            return Ok(Missing::Changed);
+                        if let Some(missing) = put_back()? {
+                            return Ok(missing);
                         }
                         let (seen, changed) = match decided.take() {
                             Some(decided) => decided,
@@ -2950,8 +3017,8 @@ impl Folder {
                         crate::fault::hold(|| format!("folder-sweep-decided:{item_id}"));
                         // Restoring a file changes neither its item nor its
                         // edges, so the queued delete would not notice.
-                        if put_back()? {
-                            return Ok(Missing::Changed);
+                        if let Some(missing) = put_back()? {
+                            return Ok(missing);
                         }
                         // Queued only while the item is as the decision read
                         // it, so a change heard meanwhile is decided again

@@ -2337,6 +2337,55 @@ fn one_per_name(
     kept
 }
 
+/// Where each item has a file the pass found but does not read: one
+/// `one_per_name` held, or one the folder does not send. Such a file is still
+/// its item's, so the item is not let go while it is there.
+#[derive(Default)]
+struct Carriers {
+    by_mark: HashMap<String, String>,
+    by_id: HashMap<String, String>,
+}
+
+impl Carriers {
+    /// Each of `files`, a path and its key, with whether to read its id
+    /// line. An error where a file cannot be read, since it may name any item.
+    fn of<'a>(
+        walked: &Walked,
+        files: impl IntoIterator<Item = (&'a Path, &'a str, bool)>,
+    ) -> std::io::Result<Carriers> {
+        let mut carriers = Carriers::default();
+        for (path, key, read_id) in files {
+            let captured = walked.opened.get(path);
+            let mark = captured
+                .and_then(|captured| identity::of(&captured.metadata.borrow()))
+                .or_else(|| walked.unread.get(path).copied());
+            if let Some(mark) = mark {
+                carriers.by_mark.insert(mark.key(), key.to_string());
+            }
+            if read_id && carries_frontmatter(path) {
+                let bytes = captured
+                    .ok_or_else(|| std::io::Error::other("file not opened"))?
+                    .read()?;
+                if let Some(id) = document::id_line_of(&bytes) {
+                    carriers.by_id.insert(id, key.to_string());
+                }
+            }
+        }
+        Ok(carriers)
+    }
+
+    /// The key of the file that carries `bound`'s item, by identity, else by
+    /// id line.
+    fn carrying(&self, bound: &state::Bound) -> Option<&str> {
+        bound
+            .identity
+            .as_deref()
+            .and_then(|mark| self.by_mark.get(mark))
+            .or_else(|| self.by_id.get(&bound.item_id))
+            .map(String::as_str)
+    }
+}
+
 struct Scanned {
     key: String,
     path: PathBuf,

@@ -6,8 +6,9 @@ use serde::Serialize;
 use super::edge_types::EdgeTypes;
 use super::health::Found;
 use super::{
-    Flagged, Folder, ScanReport, captured_identities, carries_frontmatter, document, id_named,
-    identity, is_document, named_by_its_file, near, near_limit, one_per_name, state, text_of,
+    Carriers, Flagged, Folder, ScanReport, captured_identities, carries_frontmatter, document,
+    id_named, identity, is_document, named_by_its_file, near, near_limit, one_per_name, state,
+    text_of,
 };
 use crate::Result;
 use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
@@ -325,8 +326,9 @@ impl Folder {
             .map(|flagged| flagged.reason);
             files.push(entry);
         }
+        let carried = self.name_carriers(&walked, &paths, &snapshot, &seen, &mut files)?;
         for bound in &snapshot {
-            if seen.contains(&bound.path) {
+            if seen.contains(&bound.path) || carried.contains(&bound.path) {
                 continue;
             }
             let at = Some(bound.item_id.as_str());
@@ -512,6 +514,56 @@ impl Folder {
             "in_step"
         };
         Ok(FileStatus { status, ..entry })
+    }
+
+    /// Names the item of each missing bound file on the file that carries
+    /// it, one held for its name or left alone by the query, where the scan
+    /// keeps that item for it. Answers the paths of the bound files it named.
+    fn name_carriers(
+        &self,
+        walked: &super::Walked,
+        paths: &[std::path::PathBuf],
+        snapshot: &[state::Bound],
+        seen: &HashSet<String>,
+        files: &mut [FileStatus],
+    ) -> Result<HashSet<String>> {
+        let mut named = HashSet::new();
+        if snapshot.iter().all(|bound| seen.contains(&bound.path)) {
+            return Ok(named);
+        }
+        let read: HashSet<&std::path::PathBuf> = paths.iter().collect();
+        let mut carried = Vec::new();
+        for path in walked.files.iter().filter(|path| !read.contains(path)) {
+            carried.push((path.clone(), identity::relative(&self.root, path)?, true));
+        }
+        for file in files.iter() {
+            if file.item_id.is_none() && file.status == "outside" && file.flag == Some("query") {
+                carried.push((self.root.join(&file.path), file.path.clone(), false));
+            }
+        }
+        if carried.is_empty() {
+            return Ok(named);
+        }
+        // Unread, a file says nothing of whose it is.
+        let Ok(carriers) = Carriers::of(
+            walked,
+            carried
+                .iter()
+                .map(|(path, key, read_id)| (path.as_path(), key.as_str(), *read_id)),
+        ) else {
+            return Ok(named);
+        };
+        for bound in snapshot.iter().filter(|bound| !seen.contains(&bound.path)) {
+            if let Some(key) = carriers.carrying(bound)
+                && let Some(file) = files
+                    .iter_mut()
+                    .find(|file| file.path == key && file.item_id.is_none())
+            {
+                file.item_id = Some(bound.item_id.clone());
+                named.insert(bound.path.clone());
+            }
+        }
+        Ok(named)
     }
 
     fn unbound_status(
