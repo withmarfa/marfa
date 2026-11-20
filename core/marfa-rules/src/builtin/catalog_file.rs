@@ -319,7 +319,7 @@ pub(super) fn register_edges(edges: &[Source]) -> Result<Vec<Obj>, Vec<String>> 
                 .and_then(Value::as_array)
                 .is_some_and(Vec::is_empty)
             {
-                problems.push(format!("{side} is empty, so no item could be an end"));
+                problems.push(format!("{side} is empty. Use [\"*\"] to allow every type."));
             }
         }
         let taken = |name: &str| {

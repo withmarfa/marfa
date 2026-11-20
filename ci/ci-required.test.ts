@@ -1767,8 +1767,7 @@ describe("what a job reads reaches it", () => {
         path.startsWith("core/.cargo/") ||
         path.startsWith(".github/actions/native-build-image/") ||
         path === ".github/workflows/ci.yml" ||
-        path === "openapi.json" ||
-        /^packages\/types\/generated\/icon-set-[\w-]+\.json$/.test(path),
+        path === "openapi.json",
     );
     expect(read.length).toBeGreaterThan(0);
     expect(read.filter((path) => !hashes(globs, path))).toEqual([]);

@@ -1,6 +1,6 @@
 # Shipped types
 
-The type and edge type definitions Marfa ships. Each is a JSON file, and the rules crate (`core/marfa-rules`) is the only code that reads them: it registers every file with the rules a server applies to a type a person registers, and writes what the core is built from. The contract for a type is `conformance/spec/types.md`, for its tables `conformance/spec/tables.md` and for an edge type `conformance/spec/edges.md`.
+The rules crate reads these JSON definitions and writes the shipped catalog. The contract describes [types](../../../conformance/spec/types.md), [tables](../../../conformance/spec/tables.md), and [edge types](../../../conformance/spec/edges.md).
 
 ## Layout
 
@@ -11,7 +11,7 @@ The type and edge type definitions Marfa ships. Each is a JSON file, and the rul
 - `../icons/icon-set-lucide.json`, `../icons/icon-set-simple-icons.json`: the icon sets a type's `display_hints.icon` is checked against, written by `scripts/icon-sets.sh`
 - `../src/builtin_catalog.json`: the catalog the core and the Rust server are built with, written by the rules crate
 
-The writer reads only these folders: a folder it does not name, or a file that is not a JSON object, stops it.
+The writer checks for unexpected folders directly under `types/` and requires every `.json` file it reads to contain an object.
 
 ## Type definition
 
@@ -27,7 +27,7 @@ A type file is a JSON object. A key the rules do not read is refused, with the k
 - **`required`**: optional, an array of field names, which each must be a declared or inherited field. A field may instead say `"required": true`
 - **`tables`**: optional, the tables an item of the type holds, as `conformance/spec/tables.md` describes
 - **`roles`**: optional, `["container"]`, the one role there is
-- **`display_hints`**: optional, `title_field` and `body_field` (each a text field the type declares or inherits, never a thumbnail), `name_from_body` (`true` or `false`) and `icon`, an Iconify ID such as `lucide:calendar-days` from the icon sets above. A bare name is refused, and the refusal says which ID to send
+- **`display_hints`**: optional. `title_field` and `body_field` name a field the type declares or inherits, excluding thumbnails. `name_from_body` takes `true` or `false`. `icon` takes an ID from the pinned sets, such as `lucide:calendar-days`
 - **`link_field`**: optional, the name of a `string` field that holds the vendor's own id
 - **`merge_policy`**: optional, `default` and `fields` (field name to strategy), each strategy `last_writer_wins` or `keep_both_copies`
 - **`version_policy`**: optional, `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days` (whole days from 0 to 36500, each at least the longest window before it) and `max_versions` (a whole number from 1 to 1000000)
@@ -41,7 +41,7 @@ A type declares no `states`, `default_state` or `transitions`, and no field name
 - **`type`**: one of `string`, `number`, `integer`, `boolean`, `url`, `email`, `datetime`, `date`, `enum`, `status`, `array`, `object` and `thumbnail`
 - **`description`**, **`label`**: optional. A label is at most 100 characters, and a field that names none is shown by one made from its name (`due_at` reads as `Due At`)
 - **`required`**: optional, `true` to require the field
-- **`format`**: optional. The formats `url`, `email`, `date` and `thumbnail` collapse into `type`; `bcp47`, `iso3166`, `currency` and `phone` annotate a `string` and stay as `format`. A write is checked only against `currency`, which takes three capital letters such as `GBP`. `datetime` is a type and never a format
+- **`format`**: optional. The formats `url`, `email`, `date`, and `thumbnail` collapse into `type`. The formats `bcp47`, `iso3166`, `currency`, and `phone` annotate a `string` and stay as `format`. Of those annotations, only `currency` is checked on write. It takes three capital letters, such as `GBP`. Declare `datetime` with `type`
 - **`enum_values`**: required for an `enum`, a non-empty array of strings, and refused on any other type but an array of enums
 - **`status_values`**: required for a `status` field, except on a subtype that declares an inherited status field again: the words, each `{ "value": "in_review", "group": "in_progress" }`, with the word a lowercase API name used once and the group one of `not_started`, `in_progress`, `completed` and `canceled`. A type carries at most one `status` field, and a subtype adds words after the inherited ones and never repeats one
 - **`items_type`**: required for an `array`, and never `status` or `thumbnail`
@@ -57,7 +57,16 @@ A subtype declares only the fields it adds. It may declare an inherited field ag
 
 ## Edge type definition
 
-An edge type file names its `id` (the file is `<id>.json`), `cardinality` (`one-to-one`, `one-to-many`, `many-to-one` or `many-to-many`), `label` and `reverse_label`, and may name `description`, `from_type_constraints` and `to_type_constraints` (each `["*"]` where it names none: type identifiers or `role:container`), `cascade_on_delete` (`cascade`, `orphan`, `block` or `with-hosts`, `orphan` where it names none), `property_schema` (property name to a field definition that takes `type`, `description`, `required`, `enum_values`, `items_type` and `format`), `reverse_name` and `written_from` (`from`, `to` or `none`, `from` where it names none). A shipped edge type is a lowercase kebab word with no empty constraint list, and no `id` or `reverse_name` is held by two shipped edge types.
+Name each edge type file `<id>.json` and give it a lowercase kebab-case `id`, a `label`, a `reverse_label`, and a `cardinality` of `one-to-one`, `one-to-many`, `many-to-one`, or `many-to-many`. An `id` or `reverse_name` must be unique across shipped edge types.
+
+The optional keys are:
+
+- `description`
+- `from_type_constraints` and `to_type_constraints`. Use a non-empty list of type IDs or `role:container`. Use `["*"]` or omit the key to allow every type.
+- `cascade_on_delete`. Accepts `cascade`, `orphan`, `block`, or `with-hosts`. The default is `orphan`.
+- `property_schema`. Maps property names to definitions that accept `type`, `description`, `required`, `enum_values`, `items_type`, and `format`.
+- `reverse_name`
+- `written_from`. Accepts `from`, `to`, or `none`. The default is `from`. Use `reverse_name` with `to`.
 
 ## Checking and writing
 
@@ -74,7 +83,7 @@ MARFA_WRITE_CATALOG=1 cargo nextest run -p marfa-rules builtin::catalog_file
 ../scripts/icon-sets.sh
 ```
 
-Without `MARFA_WRITE_CATALOG`, the same tests fail when `builtin_catalog.json` or `shipped-shapes.sha256` differs from what the definitions write. CI's `Types codegen freshness` and `Generated clients are fresh` jobs run the writers and refuse any difference. The digest holds each type's and edge type's shape and leaves out prose (`label`, `plural`, `reverse_label`, `description` and `id`), so a change to a shape moves it and a change of wording does not.
+Without `MARFA_WRITE_CATALOG`, the same tests fail when `builtin_catalog.json` or `shipped-shapes.sha256` differs from what the definitions write. CI's `Types codegen freshness` and `Generated clients are fresh` jobs run the writers and refuse any difference. The digest includes each type's and edge type's identifier and shape. It omits labels, plurals, and descriptions.
 
 ## Adding a type
 
