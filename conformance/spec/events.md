@@ -23,7 +23,7 @@ Every event and stream frame the server sends is a row of the table below, which
 | `edge.created`       | Streams and webhooks | An edge is created.                                                                                                                                        | `edges/create-announced`, `events/edge-bulk-announced`, `events/edge-inline-announced`, `versions/copy-edges-announced`                                                   |
 | `edge.updated`       | Streams and webhooks | An edge is written: its properties, or one of its ends moving to another item.                                                                             | `edges/update-announced`, `edges/move-announced`, `events/edge-bulk-announced`                                                                                            |
 | `edge.deleted`       | Streams and webhooks | An edge is deleted.                                                                                                                                        | `edges/delete-announced`, `events/edge-inline-announced`, `items/purge-edges`, `events/sweep-purge-edges`                                                                 |
-| `attention.raised`   | Streams and webhooks | A check of what needs the owner's attention first finds an entry.                                                                                          | `events/attention-raised`                                                                                                                                                 |
+| `attention.raised`   | Streams and webhooks | A check of what needs the owner's attention first finds an entry, or the server first meets a fault.                                                       | `events/attention-raised`, `events/attention-fault-at-once`                                                                                                               |
 | `stream_cursor`      | Streams              | First, when the stream read the log as it opened: where the log stood then.                                                                                | None                                                                                                                                                                      |
 | `stream_live`        | Streams              | Once the catch-up is over: everything up to its cursor has been sent or withheld, and what follows is live.                                                | None                                                                                                                                                                      |
 | `stream_incomplete`  | Streams              | Last, when the stream can no longer deliver what it opened with.                                                                                           | None                                                                                                                                                                      |
@@ -703,7 +703,7 @@ When a purge has taken an edge's from item, the server MUST withhold the edge's 
 
 ## What needs the owner's attention
 
-A check of what needs the owner's attention (`GET /attention`, and the `attention-check` housekeeping job) announces each entry it finds that no earlier check announced.
+A check of what needs the owner's attention (`GET /attention`, and the `attention-check` housekeeping job) announces each entry it finds that no earlier check announced, and a fault's entry is announced as the fault happens.
 
 ### `events/attention-raised`
 
@@ -764,6 +764,98 @@ The server MUST NOT send an `attention.raised` event on a stream that names a `t
 When a webhook subscribed to `attention.raised`, whose maker holds `instance.read`, is active as an entry is announced, the server MUST deliver the event to it, whatever its `type_filter`.
 
 **Tests:** `compliance/attention-events.test.ts › delivers a new attention entry to a webhook subscribed to attention.raised`.
+
+### `events/attention-fault-at-once`
+
+When the server reports an unhandled fault and lists a new entry of kind `fault` for it (`instance/attention-fault`), the server MUST announce the entry's `attention.raised` without waiting for a check of what needs the owner's attention.
+
+**Reason:** a fault is met as it happens, and an owner who follows `attention.raised` hears of it then.
+
+**Tests:** `compliance/attention-faults.test.ts › lists a fault once for where it happened, with a fixed description, counting each time it happens`.
+
+### `events/attention-connector-report`
+
+Where exception reports are on (`instance/telemetry-exception-report`), when the server announces a new entry of kind `connector` for a connector whose last run failed, the server MUST send one exception report of type `ConnectorRunFailed` with the value `A connector reported that its last run failed.`
+
+**Reason:** a connector that cannot report to Marfa's owner as it fails still shows in error tracking, with nothing that names it or its data.
+
+**Tests:** `compliance/connector-fault-reports.test.ts › sends one ConnectorRunFailed report for a connector's failed run, naming nothing of it, and none for problems or silence`.
+
+### `events/attention-connector-report-bare`
+
+The server MUST NOT carry a connector's id, name or error, a request id or a path in a `ConnectorRunFailed` exception report.
+
+**Tests:** `compliance/connector-fault-reports.test.ts › sends one ConnectorRunFailed report for a connector's failed run, naming nothing of it, and none for problems or silence`.
+
+### `events/attention-connector-report-quiet`
+
+The server MUST NOT send a `ConnectorRunFailed` exception report for an entry of kind `connector` whose connector reports problems or has gone quiet but whose last run did not fail.
+
+**Tests:** `compliance/connector-fault-reports.test.ts › sends one ConnectorRunFailed report for a connector's failed run, naming nothing of it, and none for problems or silence`.
+
+## A new entry while the database fails
+
+When the write that announces a new entry in what needs the owner's attention fails in the database, the server sends the entry's `attention.raised` from memory, straight to the webhooks that may hear it. This covers a fault's entry and every entry a check finds, such as the health entry for a full volume. The event is in no log, so it carries no `event_id`, an open stream does not receive it and `Last-Event-ID` cannot replay it. The delivery is not recorded, so no delivery list shows it and nothing redelivers it. The subscriptions the server sends to are the ones its last committed state gave, so a server that starts while its database cannot be read has none. An entry no webhook could hear, or one past too many waiting, waits for the log. The `attention-check` housekeeping job is claimed by a write, so while every write fails, only a fault or a read of `GET /attention` finds a new entry. While reads fail too, the server cannot tell which entries are new, so only a fault's entry goes from memory, and `GET /attention` answers only through the private local listener, since a credential cannot be read.
+
+### `events/attention-memory`
+
+When the write that announces a new entry in what needs the owner's attention fails because the database refuses it or fails its commit, the server MUST deliver the entry's `attention.raised` to each active webhook subscribed to it whose maker holds `webhooks.manage` and `instance.read`.
+
+**Reason:** the database failing is the fault an owner most needs to hear of, and a connector reading Marfa cannot tell them, so only the server can. A full volume and a disk that fails both fail a write at its commit.
+
+**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`, `› sends a fault from memory when the commit of its announcement fails, and not again once writes land`, `› sends the health entry from memory while the database volume is full, and lists no fault for the refused write`.
+
+### `events/attention-memory-reader`
+
+The server MUST send an `attention.raised` from memory only to a subscription that, in the last state the server committed, is active and subscribed to `attention.raised`, and whose maker stands with `webhooks.manage` and `instance.read` and, where its key expires, has not expired at the attempt.
+
+**Reason:** a delivery from memory decides who may hear it by the rules a delivery from the log follows (`events/attention-reader`). A revocation the database could not commit is unknown to the server, which then sends at most one notice, naming no data, to its maker.
+
+**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`.
+
+### `events/attention-memory-private`
+
+Where the instance does not allow private addresses, the server MUST NOT send an `attention.raised` from memory to a receiver whose address, at the attempt, is not public.
+
+**Tests:** `compliance/attention-faults.test.ts › sends nothing from memory to a receiver whose address is not public`.
+
+### `events/attention-memory-body`
+
+When the server sends an `attention.raised` from memory, the server MUST sign it as `events/delivery-signature` says and carry in its body `event_type`, `attention`, `delivery_id` and `delivered_at`, with no `event_id`.
+
+**Reason:** no log holds the event, so it has no id there.
+
+**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`.
+
+### `events/attention-memory-unlisted`
+
+The server MUST NOT list a delivery it sent from memory in `GET /webhooks/{id}/deliveries`.
+
+**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`.
+
+### `events/attention-memory-once`
+
+While the server has not restarted since it sent an entry's `attention.raised` from memory, when writes land again and the failed write that announces the entry did not commit, the server MUST NOT announce that entry again while it is listed.
+
+**Reason:** the owner was told once, and a second delivery would read as a second fault. What the server sent from memory is not kept across a restart, so after each restart the entry can be sent once more: from the log if writes land, or from memory if they still fail. The notice names no data, so one more is accepted over a record that a failing database cannot keep.
+
+**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`, `› sends a fault from memory when the commit of its announcement fails, and not again once writes land`, `› sends the health entry from memory while the database volume is full, and lists no fault for the refused write`.
+
+### `events/attention-memory-landed`
+
+If the commit of the write that announces a new entry fails but lands, then the server MUST NOT deliver that entry's `attention.raised` to a webhook more than twice, once from memory and once from the log.
+
+**Reason:** the server cannot tell at the time whether a failed commit landed, and the notice names no data, so one repeated notice is accepted over silence.
+
+**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory and once more from the log when the commit of its announcement fails but lands`.
+
+### `events/attention-memory-logged`
+
+When the server has finished sending an entry's `attention.raised` from memory, the server MUST write a log line with the message `An attention entry was sent from memory`, the entry's `reference`, and the counts `delivered` and `undelivered` of the subscriptions it tried.
+
+**Reason:** nothing records a delivery from memory, so the log is where an operator sees whether the notice left.
+
+**Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`, `› sends nothing from memory to a receiver whose address is not public`.
 
 ## A stream and the source filter
 
@@ -917,7 +1009,7 @@ If the server's read of the log fails when a stream opens or while it replays, o
 
 ## Registering a subscription
 
-An outbound webhook is a subscription: a `url`, the `events` it wants and, optionally, a `type_filter`. The events a subscription may name are `item.created`, `item.updated`, `item.trashed`, `item.restored`, `item.purged`, `item.state_changed`, `metadata.changed`, `rows.changed`, `edge.created`, `edge.updated` and `edge.deleted`.
+An outbound webhook is a subscription: a `url`, the `events` it wants and, optionally, a `type_filter`. The events a subscription may name are `item.created`, `item.updated`, `item.trashed`, `item.restored`, `item.purged`, `item.state_changed`, `metadata.changed`, `rows.changed`, `edge.created`, `edge.updated`, `edge.deleted` and `attention.raised`, which only a subscription whose credential holds `instance.read` receives (`events/attention-webhook`).
 
 ### `events/webhook-create`
 
@@ -1241,7 +1333,7 @@ The server MUST carry `event_type`, the event's name, in a delivery's body and i
 
 ### `events/delivery-event-id`
 
-The server MUST carry `event_id` in a delivery's body, as the id of the event in the log written as a canonical decimal string, equal to the `id:` the stream gave it.
+Where a delivery carries an event from the log, which every delivery but one sent from memory does (`events/attention-memory-body`), the server MUST carry `event_id` in its body, as the id of the event in the log written as a canonical decimal string, equal to the `id:` the stream gave it.
 
 **Tests:** `compliance/webhooks.test.ts › delivers a matching event to the URL with a verifiable signature`.
 
@@ -1255,7 +1347,7 @@ When the server writes one event after another, the server MUST give the later e
 
 ### `events/delivery-id`
 
-The server MUST carry `delivery_id` in a delivery's body, equal to the `id` of the delivery's entry in `GET /webhooks/{id}/deliveries` and the same on every attempt.
+The server MUST carry `delivery_id` in a delivery's body, the same on every attempt and, except in a delivery sent from memory (`events/attention-memory-unlisted`), equal to the `id` of the delivery's entry in `GET /webhooks/{id}/deliveries`.
 
 **Tests:** `compliance/webhooks.test.ts › delivers a matching event to the URL with a verifiable signature`, `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`.
 
@@ -1811,7 +1903,7 @@ When a subscription is registered, the server MUST NOT deliver an event written 
 
 If the server cannot account for which events it has already queued webhook deliveries for, because that point is ahead of the event log, missing, behind the oldest event the log retains, or crosses an event the log lacks, then the server MUST report an unhandled fault and queue no delivery for any event written after that point.
 
-**Reason:** a gap the server cannot account for would otherwise skip events that fan out without saying so. A report of an unhandled fault is its log line `Unhandled error`, its error webhook notification and its exception in error tracking, as `errors/client-closed-request` describes for a request. Once the position can be accounted for, the server queues what lies past it.
+**Reason:** a gap the server cannot account for would otherwise skip events that fan out without saying so. A report of an unhandled fault is its log line `Unhandled error`, its entry in what needs the owner's attention (`instance/attention-fault`) and its exception in error tracking, as `errors/client-closed-request` describes for a request. Once the position can be accounted for, the server queues what lies past it.
 
 **Tests:** `compliance/webhook-schedule-gap.test.ts › reports a place the log cannot account for as an unhandled fault, and queues nothing past it`.
 

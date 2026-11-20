@@ -234,14 +234,9 @@ impl Instance {
     }
 }
 
-/// An error webhook and an OTLP collector at `host`, which a fault reaches with no PostHog
-/// setting.
+/// An OTLP collector at `host`, which a fault reaches with no PostHog setting.
 fn settings(host: &str, other: &[(&'static str, String)]) -> Vec<(String, String)> {
     let mut pairs = vec![
-        (
-            "MARFA_ERROR_WEBHOOK_URL".to_string(),
-            format!("{host}/errors"),
-        ),
         ("OTEL_EXPORTER_OTLP_ENDPOINT".to_string(), host.to_string()),
         ("MARFA_OTEL_SAMPLE_RATIO".to_string(), "0".to_string()),
         // The receiver listens on loopback.
@@ -292,10 +287,6 @@ async fn a_fault_after_the_posthog_settings_are_written_is_one_exception_sent_as
     );
     guard.stop(Duration::from_secs(5));
 
-    // The witness: the fault before the settings was reported, to the webhook alone, which
-    // holds back the same fault again for a minute.
-    let notices = posted(&received, "/errors");
-    assert_eq!(ids(&notices, "request_id"), ["before"]);
     let events = exceptions(&received);
     assert_eq!(ids(&events, "request_id"), ["the-fault"], "{events:?}");
 
@@ -420,10 +411,6 @@ async fn the_preference_is_read_for_each_fault() {
     instance.write_note("while-on").await;
     guard.stop(Duration::from_secs(5));
 
-    assert_eq!(
-        ids(&posted(&received, "/errors"), "request_id"),
-        ["while-on"]
-    );
     assert_eq!(ids(&exceptions(&received), "request_id"), ["while-on"]);
 }
 

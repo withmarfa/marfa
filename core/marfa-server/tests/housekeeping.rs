@@ -432,7 +432,8 @@ async fn a_retention_that_does_not_read_ends_the_run_in_error_and_deletes_nothin
             "SELECT count(*) FROM items WHERE state = 'trashed'",
             "SELECT count(*) FROM item_versions",
             "SELECT count(*) FROM audit_log",
-            "SELECT count(*) FROM event_log",
+            // The failed runs are faults, whose attention entries are new events.
+            "SELECT count(*) FROM event_log WHERE event_type != 'attention.raised'",
             "SELECT count(*) FROM idempotency_records",
             "SELECT count(*) FROM webhook_deliveries",
         ]

@@ -52,7 +52,7 @@ function received(): number {
     sinks.traces.length +
     sinks.logRecords.length +
     sinks.trackedErrors.length +
-    sinks.notifications.length
+    sinks.elsewhere.length
   );
 }
 

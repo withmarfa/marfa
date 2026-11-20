@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { createServer, get, type RequestOptions } from "node:http";
+import { get, type RequestOptions } from "node:http";
 import { describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { beatReceiver } from "../../utils/beat-receiver.js";
@@ -25,8 +25,8 @@ import {
 } from "../../utils/fault-sinks.js";
 
 /**
- * While `allow_private_addresses` is off, the heartbeat, the error webhook,
- * the PostHog host and the object store reach only public addresses, as webhooks do, and only
+ * While `allow_private_addresses` is off, the heartbeat, the PostHog host
+ * and the object store reach only public addresses, as webhooks do, and only
  * an owner, or an app whose owner signed in just now, turns it on. Every receiver here, and the run's
  * object store, listens on loopback; a receiver named `localhost` is a name
  * that leads there, which only a lookup can judge.
@@ -126,17 +126,12 @@ describe("where the server may send", () => {
   );
 
   it(
-    "refuses a heartbeat_url, error_webhook_url, posthog_host or object_store_endpoint written as a private address while the switch is off",
+    "refuses a heartbeat_url, posthog_host or object_store_endpoint written as a private address while the switch is off",
     async () => {
       const server = await bootFreshServer("switch-literals", PUBLIC_ONLY);
       try {
         const socket = socketOf(server);
-        const keys = [
-          "heartbeat_url",
-          "error_webhook_url",
-          "posthog_host",
-          "object_store_endpoint",
-        ];
+        const keys = ["heartbeat_url", "posthog_host", "object_store_endpoint"];
         // The PostHog host is https and set with its token, so the switch is
         // the one rule it can break.
         const scheme = (key: string) =>
@@ -210,61 +205,6 @@ describe("where the server may send", () => {
       } finally {
         await server.stop();
         await beats.close();
-      }
-    },
-    FRESH_SERVER_TIMEOUT_MS,
-  );
-
-  it(
-    "sends no error notice to a name that leads to a private address until the switch is on",
-    async () => {
-      const notices: Record<string, unknown>[] = [];
-      const receiver = createServer((request, response) => {
-        let body = "";
-        request.on("data", (chunk: Buffer) => (body += chunk.toString()));
-        request.on("end", () => {
-          notices.push(JSON.parse(body) as Record<string, unknown>);
-          response.writeHead(204).end();
-        });
-      });
-      await new Promise<void>((resolve) =>
-        receiver.listen(0, "127.0.0.1", resolve),
-      );
-      const address = receiver.address();
-      if (typeof address !== "object" || address === null) {
-        throw new Error("the receiver did not bind to a port");
-      }
-      const server = await bootFreshServer("switch-error-webhook", PUBLIC_ONLY);
-      try {
-        const { operator, working } = clientsFor(server);
-        const fail = async () => {
-          await server.setFault("fail:audit=item.create");
-          const failed = await working.createItem({
-            type: "core.note",
-            properties: { body: `fails ${randomUUID()}` },
-          });
-          await server.clearFault();
-          expect(failed.status).toBe(500);
-          return failed.headers.get("x-request-id");
-        };
-        await setFrom(operator, {
-          error_webhook_url: `http://localhost:${String(address.port)}/errors`,
-        });
-        const unsent = await fail();
-
-        // The witness: the notices go out in order, so the one sent once the
-        // switch is on arrives after the first would have.
-        await setFrom(socketOf(server), { [SWITCH]: true });
-        const sent = await fail();
-        await waitFor("the notice sent once the switch is on", async () =>
-          notices.find((notice) => notice.request_id === sent),
-        );
-        expect(notices.map((notice) => notice.request_id)).toEqual([sent]);
-        expect(unsent).not.toBe(sent);
-      } finally {
-        await server.stop();
-        receiver.closeAllConnections();
-        await new Promise<void>((resolve) => receiver.close(() => resolve()));
       }
     },
     FRESH_SERVER_TIMEOUT_MS,

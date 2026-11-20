@@ -11,7 +11,9 @@ use tokio::sync::{mpsc, oneshot, watch};
 
 use super::Write;
 use super::hold::Hold;
-use crate::app::faults::{FAIL_AUDIT, FAIL_COMMIT, FAIL_COMMIT_ACK, FAIL_COMMIT_FULL, Faults};
+use crate::app::faults::{
+    FAIL_AUDIT, FAIL_COMMIT, FAIL_COMMIT_ACK, FAIL_COMMIT_FULL, FAIL_COMMIT_LANDED, Faults,
+};
 use crate::app::refusal::{Code, Refusal, Result};
 
 const QUEUE_DEPTH: usize = 1024;
@@ -159,6 +161,9 @@ fn finish<T>(
     settle(tx.commit(), commits)?;
     if action.is_some() && faults.fail(FAIL_COMMIT_ACK, action) {
         tracing::error!(sqlite_code = "SQLITE_IOERR", "Database operation failed");
+    }
+    if action.is_some() && faults.fail(FAIL_COMMIT_LANDED, action) {
+        return Err(commit_refused(sqlite_failure(ffi::SQLITE_IOERR)));
     }
     Ok(value)
 }

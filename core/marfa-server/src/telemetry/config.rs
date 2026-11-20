@@ -26,7 +26,7 @@ pub struct Export {
 #[derive(Clone)]
 pub struct Config {
     /// `OTEL_SDK_DISABLED` is `true`: no trace, log record or exception report.
-    /// Where exception reports go, and the error webhook, are stored settings.
+    /// Where exception reports go is a stored setting.
     pub off: bool,
     pub service: String,
     /// `OTEL_RESOURCE_ATTRIBUTES`, less `service.name`.
@@ -34,9 +34,6 @@ pub struct Config {
     pub traces: Option<Export>,
     pub logs: Option<Export>,
     pub ratio: f64,
-    /// What an error notice names: `deployment.environment.name`, then
-    /// `deployment.environment`, where the resource attributes name one.
-    pub environment: Option<String>,
 }
 
 impl Config {
@@ -98,16 +95,6 @@ impl Config {
             }),
         };
 
-        let environment_name = ["deployment.environment.name", "deployment.environment"]
-            .iter()
-            .find_map(|key| {
-                identity
-                    .resource
-                    .iter()
-                    .find(|(name, _)| name == key)
-                    .map(|(_, value)| value.clone())
-            });
-
         let off = disabled(&get);
 
         Config {
@@ -117,7 +104,6 @@ impl Config {
             traces: traces.filter(|_| !off),
             logs: logs.filter(|_| !off),
             ratio,
-            environment: environment_name,
         }
     }
 }
@@ -180,7 +166,6 @@ mod tests {
         assert!(problems.is_empty());
         assert!(config.traces.is_none() && config.logs.is_none());
         assert_eq!(config.service, "marfa-server");
-        assert_eq!(config.environment, None);
         assert_eq!(config.ratio, 0.05);
     }
 
@@ -213,19 +198,6 @@ mod tests {
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318"),
         ]);
         assert!(config.traces.is_some());
-    }
-
-    #[test]
-    fn the_environment_comes_from_the_name_before_the_older_attribute() {
-        let (config, _) = read(&[(
-            "OTEL_RESOURCE_ATTRIBUTES",
-            "deployment.environment=old,deployment.environment.name=named",
-        )]);
-        assert_eq!(config.environment.as_deref(), Some("named"));
-        let (config, _) = read(&[("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=old")]);
-        assert_eq!(config.environment.as_deref(), Some("old"));
-        let (config, _) = read(&[("OTEL_RESOURCE_ATTRIBUTES", "team=a")]);
-        assert_eq!(config.environment, None);
     }
 
     #[test]

@@ -1142,7 +1142,7 @@ describe("the schema and admin endpoints", () => {
       "/mcp/schema",
     );
     // A file fetched from a web address, a webhook, a backup to an object
-    // store, the heartbeat and an error webhook each reach outside.
+    // store, the heartbeat and error tracking each reach outside.
     const outward = [
       "marfa_change_settings",
       "marfa_create",

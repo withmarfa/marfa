@@ -5908,11 +5908,11 @@ export interface components {
          */
         AttentionConcern: {
             /**
-             * @description health: degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expiring; backup: none kept, off or failing; setting: a secret to set again; clock: ahead or behind; unavailable: no answer.
+             * @description health: degraded or down; job: last run failed; connector: failed, problems or quiet; folder: sync problems; key: expiring; backup: none, off or failing; setting: secret to set again; clock: ahead or behind; fault: met lately; unavailable: no answer.
              * @enum {string}
              */
-            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "setting" | "clock" | "unavailable";
-            /** @description The component, job, connector, folder, or key ID, the check that couldn't answer, a backup concern such as `no_backup_destination`, `run` or `store`, a secret setting's key, or a clock concern `clock_ahead` or `clock_behind`. */
+            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "setting" | "clock" | "fault" | "unavailable";
+            /** @description The component, job, connector, folder or key ID, the check that couldn't answer, a backup concern such as `store`, a secret setting's key, `clock_ahead` or `clock_behind`, or a fault's kind and place, such as `database:POST /items/{id}`, or `other`. */
             reference: string;
             /** @description A short name for the concern. */
             title: string;
@@ -6397,7 +6397,7 @@ export interface components {
              */
             enrichment_ocr_enabled: boolean;
             /**
-             * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url`, or both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.
+             * @description `true` if exception reports are sent. Enabling requires both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.
              * @default true
              */
             error_reporting_enabled: boolean;
@@ -6481,7 +6481,7 @@ export interface components {
              */
             object_store_access_key_id?: string;
             /**
-             * @description `true` if Marfa may send webhooks, the heartbeat, error notices, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
+             * @description `true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
              * @default false
              */
             allow_private_addresses: boolean;
@@ -8220,7 +8220,7 @@ export interface components {
              */
             url: string;
         };
-        /** @description A new entry in what needs the owner's attention, sent once when a check first finds it. You receive it only with `instance.read`, and only on a stream that names no `type` and isn't a copy stream. */
+        /** @description A new entry in what needs the owner's attention, sent once when a check first finds it or Marfa first meets a fault. You receive it only with `instance.read`, and only on a stream that names no `type` and isn't a copy stream. */
         AttentionEventFrame: {
             /**
              * @description The event, which is also the frame's `event:`.
@@ -8235,7 +8235,7 @@ export interface components {
              * @description The entry's `kind`, as `GET /attention` lists it.
              * @enum {string}
              */
-            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "clock" | "unavailable";
+            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "setting" | "clock" | "fault" | "unavailable";
             /** @description The entry's `reference`, as `GET /attention` lists it. */
             reference: string;
             /**
@@ -8245,7 +8245,23 @@ export interface components {
             description: string;
         };
         /** @description The body of a webhook delivery of a new attention entry. */
-        WebhookAttentionEvent: components["schemas"]["AttentionEventFrame"] & components["schemas"]["WebhookDeliveryAttempt"];
+        WebhookAttentionEvent: components["schemas"]["AttentionEventFrame"] & {
+            /**
+             * @description The event's ID in the log, the same as its `id:` on `GET /events`. Absent from a delivery of a fault sent while the database fails, which no log holds, no delivery list shows and nothing can redeliver.
+             * @example 1042
+             */
+            event_id?: string;
+            /**
+             * @description The ID of the delivery, the same on every attempt. Use it to recognize a repeat.
+             * @example 01a1011f-f893-7259-9825-8ff347398fef
+             */
+            delivery_id: string;
+            /**
+             * @description When Marfa sent this attempt, in UTC.
+             * @example 2026-10-05T14:12:08.000Z
+             */
+            delivered_at: string;
+        };
         /** @description The newest published release Marfa found. */
         UpdateLatest: {
             /**
@@ -34899,7 +34915,7 @@ export interface operations {
                      */
                     enrichment_ocr_enabled?: boolean;
                     /**
-                     * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url`, or both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.
+                     * @description `true` if exception reports are sent. Enabling requires both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.
                      * @default true
                      */
                     error_reporting_enabled?: boolean;
@@ -34987,7 +35003,7 @@ export interface operations {
                      */
                     object_store_access_key_id?: string;
                     /**
-                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
+                     * @description `true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`.
                      * @default false
                      */
                     allow_private_addresses?: boolean;
@@ -34998,11 +35014,6 @@ export interface operations {
                      * @description The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
                      */
                     heartbeat_url?: string;
-                    /**
-                     * Format: uri
-                     * @description The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
-                     */
-                    error_webhook_url?: string;
                     /**
                      * Format: uri
                      * @description The PostHog host Marfa sends a report of each of its own faults to, for PostHog's error tracking. It must be an `https` URL, or an `http` URL on this machine, with no user name or password, and it needs `posthog_project_token` set too. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
@@ -35389,7 +35400,7 @@ export interface operations {
                      */
                     enrichment_ocr_enabled?: boolean | null;
                     /**
-                     * @description `true` if error alerts and exception reports are sent. Enabling requires `error_webhook_url`, or both `posthog_host` and `posthog_project_token`. Absent: the environment default applies. `null` removes it, so the server's default applies.
+                     * @description `true` if exception reports are sent. Enabling requires both `posthog_host` and `posthog_project_token`. Absent: the environment default applies. `null` removes it, so the server's default applies.
                      * @default true
                      */
                     error_reporting_enabled?: boolean | null;
@@ -35482,7 +35493,7 @@ export interface operations {
                      */
                     object_store_access_key_id?: string | null;
                     /**
-                     * @description `true` if Marfa may send webhooks, the heartbeat, error notices, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.
+                     * @description `true` if Marfa may send webhooks, the heartbeat, exception reports and object store requests to loopback, private and other addresses that aren't public. Changing it needs a sign-in from the last five minutes. Absent: `false`. `null` removes it, so the server's default applies.
                      * @default false
                      */
                     allow_private_addresses?: boolean | null;
@@ -35493,11 +35504,6 @@ export interface operations {
                      * @description The `http` or `https` URL Marfa requests on a schedule, so that something else can notice when the requests stop. Marfa never returns it. `null` or an empty string removes it.
                      */
                     heartbeat_url?: string | null;
-                    /**
-                     * Format: uri
-                     * @description The `http` or `https` URL Marfa posts a notice to when a request fails with a 500 error. Marfa never returns it. `null` or an empty string removes it.
-                     */
-                    error_webhook_url?: string | null;
                     /**
                      * Format: uri
                      * @description The PostHog host Marfa sends a report of each of its own faults to, for PostHog's error tracking. It must be an `https` URL, or an `http` URL on this machine, with no user name or password, and it needs `posthog_project_token` set too. Marfa never returns it. `null` or an empty string removes it.
@@ -35888,7 +35894,7 @@ export interface operations {
                      *         },
                      *         {
                      *           "name": "reporting_needs_a_receiver",
-                     *           "description": "Error reporting and the heartbeat can be turned from off to on only where a receiver is set: error_webhook_url, or posthog_host with posthog_project_token, and heartbeat_url.",
+                     *           "description": "Error reporting and the heartbeat can be turned from off to on only where a receiver is set: posthog_host with posthog_project_token, and heartbeat_url.",
                      *           "keys": [
                      *             "error_reporting_enabled",
                      *             "heartbeat_enabled"

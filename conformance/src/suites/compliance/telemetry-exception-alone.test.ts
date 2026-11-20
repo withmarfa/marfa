@@ -159,21 +159,6 @@ describe("the server's exception reports", () => {
   );
 
   it(
-    "still post an error notification when OTEL_SDK_DISABLED is true in any case",
-    async () => {
-      await faultAndStop(
-        await boot((receiver) => ({
-          OTEL_SDK_DISABLED: "TRUE",
-          MARFA_ERROR_WEBHOOK_URL: receiver.MARFA_ERROR_WEBHOOK_URL!,
-        })),
-      );
-      expect(sinks!.sentExceptions()).toEqual([]);
-      expect(sinks!.notifications.length).toBeGreaterThan(0);
-    },
-    BUDGET,
-  );
-
-  it(
     "are not sent when MARFA_ERROR_REPORTING_ENABLED is false",
     async () => {
       await faultAndStop(

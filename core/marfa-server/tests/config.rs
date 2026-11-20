@@ -766,13 +766,13 @@ async fn audit_rows(instance: &Instance) -> i64 {
 #[tokio::test]
 async fn the_settings_list_never_prints_a_secret_and_shows_a_row_that_no_longer_reads() {
     let secret = "salt-that-must-not-print";
-    let hook = "https://hooks.example/token-that-must-not-print";
+    let hook = "https://heartbeat.example/token-that-must-not-print";
     let instance = Instance::start(&[("MARFA_KEY_SALT", secret)]).await;
     let set = instance
         .call(
             Method::PATCH,
             "/config",
-            Some(json!({ "error_webhook_url": hook })),
+            Some(json!({ "heartbeat_url": hook })),
         )
         .await;
     assert_eq!(set.status, StatusCode::OK, "{}", set.text);
@@ -807,11 +807,11 @@ async fn the_settings_list_never_prints_a_secret_and_shows_a_row_that_no_longer_
             .cloned()
             .unwrap()
     };
-    let hook_line = stored("error_webhook_url");
+    let hook_line = stored("heartbeat_url");
     assert_eq!(hook_line["secret"], true);
     assert_eq!(hook_line["set"], true);
     assert_eq!(hook_line["value"], Value::Null);
-    assert_eq!(stored("heartbeat_url")["set"], false);
+    assert_eq!(stored("posthog_host")["set"], false);
 
     let line = listed.body["data"]
         .as_array()

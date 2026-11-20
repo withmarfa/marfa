@@ -1,5 +1,6 @@
 import { connect } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { controlRequest } from "../../utils/control-request.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -18,13 +19,13 @@ import {
  * leaves nobody to answer, and the server did nothing wrong: it logs the
  * request, and reports no fault.
  *
- * **A server of its own, with the reports pointed at the fixture.** The
- * error webhook and error tracking name a receiver the fixture runs.
+ * **A server of its own, with the reports pointed at the fixture.** Error
+ * tracking names a receiver the fixture runs.
  *
  * **The witness.** An absence is only worth asserting where the thing is
  * producible. After the drop, the fixture makes a real fault on the same
- * server, as `internal-error.test.ts` does, and waits for the webhook and
- * error tracking to carry it; the drop's report, had there been one, was sent
+ * server, as `internal-error.test.ts` does, and waits for attention and
+ * error tracking to carry it; the drop's report, had there been one, was made
  * before that.
  */
 let server: FreshServer | undefined;
@@ -118,7 +119,7 @@ function create(requestId: string): Promise<Response> {
 
 describe("a request whose client closed the connection before the server answered", () => {
   it(
-    "is not logged as an unhandled fault, sent to the error webhook or reported to error tracking",
+    "is not logged as an unhandled fault, listed in attention or reported to error tracking",
     async () => {
       const attempts = await dropUntilLogged("client-closed-request-dropped");
       const dropped = new Set(attempts);
@@ -140,9 +141,15 @@ describe("a request whose client closed the connection before the server answere
             entry.message === "Unhandled error" && entry.request_id === faulted,
         ),
       );
-      await until("the fault's webhook notification", () =>
-        sinks!.notifications.find((entry) => entry.request_id === faulted),
-      );
+      // The drops went to the same route, so had one been reported, the
+      // fault's entry would count more than this one fault.
+      const listed = await controlRequest(server!.controlSocket, "/attention");
+      expect(listed.status).toBe(200);
+      const faults = (
+        listed.body as { data: { kind: string; title: string }[] }
+      ).data.filter((entry) => entry.kind === "fault");
+      expect(faults).toHaveLength(1);
+      expect(faults[0]!.title).toMatch(/, once$/);
       await until(
         "the fault's exception in error tracking",
         () =>
@@ -157,11 +164,6 @@ describe("a request whose client closed the connection before the server answere
           (entry) =>
             entry.message === "Unhandled error" &&
             dropped.has(entry.request_id as string),
-        ),
-      ).toEqual([]);
-      expect(
-        sinks!.notifications.filter((entry) =>
-          dropped.has(entry.request_id as string),
         ),
       ).toEqual([]);
       expect(
