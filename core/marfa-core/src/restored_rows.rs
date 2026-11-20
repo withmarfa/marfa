@@ -203,8 +203,9 @@ pub(crate) fn fold(
 
 /// Whether `write` is a row write not yet sent to a table whose rows are set
 /// aside, which waits until they are compared, so the kept writes go ahead
-/// of it (`device/restored-rows-first`). A table no fill reaches holds back
-/// nothing.
+/// of it (`device/restored-rows-held`). Until a fill lists the item's tables
+/// again the copy has no record of the table, and the next fill lets go of
+/// one it no longer holds (`let_go_unheld`).
 pub(crate) fn holds_back(conn: &Connection, write: &QueuedWrite) -> Result<bool> {
     if !write.kind.rows() {
         return Ok(false);
@@ -215,10 +216,11 @@ pub(crate) fn holds_back(conn: &Connection, write: &QueuedWrite) -> Result<bool>
     let held = conn
         .query_row_cached(
             "SELECT 1 FROM held_tables h
-               JOIN item_tables t ON t.item_id = h.item_id AND t.name = h.name
                JOIN items i ON i.id = h.item_id
-              WHERE h.item_id = ?1 AND h.name = ?2 AND t.state <> 'online'
-                AND i.state <> 'trashed'",
+              WHERE h.item_id = ?1 AND h.name = ?2 AND i.state <> 'trashed'
+                AND NOT EXISTS (
+                  SELECT 1 FROM item_tables t
+                   WHERE t.item_id = h.item_id AND t.name = h.name AND t.state = 'online')",
             params![item, table],
             |_| Ok(()),
         )
@@ -1451,5 +1453,56 @@ mod tests {
         let written = kept(&conn);
         assert_eq!(written[0].3.as_array().unwrap().len(), most);
         assert_eq!(written[1].2.as_deref(), Some(ids[0].as_str()));
+    }
+
+    #[test]
+    fn kept_rows_take_the_places_in_the_queue_of_the_unsent_row_writes_to_their_table() {
+        let conn = copy();
+        waiting(&conn, "first", 1, None, "a");
+        waiting(&conn, "second", 2, Some("first"), "a");
+        let ids =
+            row_writes::keep(&conn, "item", "steps", &[Op::Delete { id: "b".into() }]).unwrap();
+        let order: Vec<(String, Option<String>)> = conn
+            .prepare("SELECT id, follows FROM queue ORDER BY seq")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            order,
+            vec![
+                (ids[0].clone(), None),
+                ("first".into(), Some(ids[0].clone())),
+                ("second".into(), Some("first".into())),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unsent_row_write_waits_while_its_table_is_set_aside_and_not_yet_compared() {
+        let conn = copy();
+        waiting(&conn, "w", 1, None, "a");
+        let holds = |conn: &Connection| {
+            let write = store::queued_write(conn, "w").unwrap().unwrap();
+            holds_back(conn, &write).unwrap()
+        };
+        assert!(!holds(&conn), "a table not set aside holds nothing back");
+        mark(&conn, "item", "steps").unwrap();
+        assert!(holds(&conn));
+        // After a hydration clears the copy, before a fill lists the table.
+        conn.execute("DELETE FROM item_tables", []).unwrap();
+        assert!(holds(&conn));
+        conn.execute(
+            "INSERT INTO item_tables (item_id, name, state) VALUES ('item', 'steps', 'online')",
+            [],
+        )
+        .unwrap();
+        assert!(!holds(&conn), "a table held past its cap is never compared");
+        conn.execute("UPDATE item_tables SET state = 'filling'", [])
+            .unwrap();
+        assert!(holds(&conn));
+        conn.execute("UPDATE queue SET sent = 1", []).unwrap();
+        assert!(!holds(&conn), "a sent write is laid on the rows instead");
     }
 }

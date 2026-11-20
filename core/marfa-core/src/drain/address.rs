@@ -5,7 +5,7 @@ use std::fs::File;
 
 use crate::error::CoreError;
 use crate::http::{Answer, Call, CallBody, Http, Method, Outgoing};
-use crate::model::{QueuedWrite, Verdict, WriteKind};
+use crate::model::{BlockedReason, QueuedWrite, Verdict, WriteKind};
 use crate::store;
 use crate::wire::WireErrorEnvelope;
 use crate::{Core, Result};
@@ -91,7 +91,7 @@ pub(super) enum Readiness {
 /// Whether the write waits on something the copy has yet to learn: an edge
 /// a create was shown with, whose id the copy made and no edge the server
 /// holds carries (`device/edge-write-waits-projected`), or table rows set
-/// aside to compare (`device/restored-rows-first`).
+/// aside to compare (`device/restored-rows-held`).
 pub(super) fn held_back(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<bool> {
     Ok(super::create_edges::waits(conn, row)? || crate::restored_rows::holds_back(conn, row)?)
 }
@@ -110,6 +110,18 @@ pub(super) fn readiness(
         .follows
         .as_deref()
         .is_some_and(|ahead| waiting.contains(ahead))
+    {
+        return Readiness::Held;
+    }
+    // Rows a restore lost go back before the row writes behind them
+    // (`device/restored-rows-first`).
+    if row.kind.rows()
+        && row.follows.as_deref().is_some_and(|ahead| {
+            verdicts.get(ahead) == Some(&Some(Verdict::Blocked))
+                && rows.get(ahead).is_some_and(|ahead| {
+                    ahead.blocked_reason() == Some(BlockedReason::ServerRestored)
+                })
+        })
     {
         return Readiness::Held;
     }

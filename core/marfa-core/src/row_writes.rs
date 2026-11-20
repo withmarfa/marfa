@@ -801,6 +801,13 @@ pub(crate) fn keep(conn: &Connection, item: &str, table: &str, ops: &[Op]) -> Re
         let rows = query.query_map(params![item, table], |row| row.get(0))?;
         rows.collect::<rusqlite::Result<_>>()?
     };
+    let behind: Vec<String> = {
+        let mut query = conn.prepare_cached(&format!(
+            "SELECT id FROM queue WHERE {waiting} AND sent = 0 ORDER BY seq"
+        ))?;
+        let rows = query.query_map(params![item, table], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
     let lowest: Option<i64> = conn.query_row_cached(
         "SELECT MIN(seq) FROM rows_laid WHERE item_id = ?1 AND name = ?2",
         params![item, table],
@@ -858,7 +865,35 @@ pub(crate) fn keep(conn: &Connection, item: &str, table: &str, ops: &[Op]) -> Re
             params![head, ahead],
         )?;
     }
+    put_ahead(conn, &kept, &behind)?;
     Ok(kept)
+}
+
+/// Gives the kept writes the places in the queue of the unsent row writes to
+/// their table, which move behind them: a drain walks the queue in `seq`
+/// order and sends the row writes behind one it sends in the same request.
+fn put_ahead(conn: &Connection, kept: &[String], behind: &[String]) -> Result<()> {
+    if behind.is_empty() {
+        return Ok(());
+    }
+    let order: Vec<&String> = kept.iter().chain(behind).collect();
+    let mut places = Vec::with_capacity(order.len());
+    for id in &order {
+        let seq: i64 =
+            conn.query_row_cached("SELECT seq FROM queue WHERE id = ?1", [id], |row| {
+                row.get(0)
+            })?;
+        places.push(seq);
+    }
+    places.sort_unstable();
+    // Out of the way first, as `seq` is the key and every place is taken.
+    for id in &order {
+        conn.execute_cached("UPDATE queue SET seq = -seq WHERE id = ?1", [id])?;
+    }
+    for (id, seq) in order.iter().zip(places) {
+        conn.execute_cached("UPDATE queue SET seq = ?2 WHERE id = ?1", params![id, seq])?;
+    }
+    Ok(())
 }
 
 /// In a writer's transaction, after a row write's verdict changed.
