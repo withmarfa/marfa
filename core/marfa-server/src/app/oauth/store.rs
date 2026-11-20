@@ -278,9 +278,7 @@ pub fn ask_login_after(
 
 /// The time a browser session must have begun at or after to authorize the app, if any.
 pub fn login_after(tx: &Connection, client_id: &str, owner_id: &str) -> Result<Option<Stamp>> {
-    Ok(consent(tx, client_id, owner_id)?
-        .filter(Consent::stands)
-        .and_then(|consent| consent.login_after))
+    Ok(consent(tx, client_id, owner_id)?.and_then(|consent| consent.login_after))
 }
 
 pub fn consent(tx: &Connection, client_id: &str, owner_id: &str) -> Result<Option<Consent>> {
@@ -469,7 +467,7 @@ pub fn withdraw_consent(
     now: Stamp,
 ) -> Result<()> {
     tx.execute(
-        "UPDATE oauth_consents SET withdrawn_at = ?3, updated_at = ?3 \
+        "UPDATE oauth_consents SET withdrawn_at = ?3, updated_at = ?3, login_after = NULL \
          WHERE client_id = ?1 AND owner_id = ?2",
         params![client_id, owner_id, now],
     )?;

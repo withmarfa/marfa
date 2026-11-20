@@ -501,6 +501,36 @@ describe("renewing the sign-in the settings tool asked for", () => {
     );
   });
 
+  it("forgets the renewal when the person removes the app, so the app approved again from the older browser refreshes", async () => {
+    const app = await registerApp(server, SCOPE);
+    const first = await connectTokens(app, await signIn());
+    await server.advanceClock(PAST_RECENT);
+    // Recent enough to approve the app, but begun before the refusal.
+    const older = await signIn();
+    await server.advanceClock(1000);
+    expectRenewalAsked(await settingsCall(first.access, { [SWITCH]: true }));
+    // The witness: while the app stays, the older browser is asked to sign in.
+    expectSignInAsked((await authorizing(app, older)).landed, "before removal");
+
+    const listed = await call(server.managementKey, "GET", "/grants");
+    expect(listed.status).toBe(200);
+    const grant = (
+      listed.body.data as { id: string; client_id: string }[]
+    ).find((each) => each.client_id === app.clientId);
+    expect(grant, JSON.stringify(listed.body)).toBeTruthy();
+    const removed = await call(
+      server.managementKey,
+      "DELETE",
+      `/grants/${grant!.id}`,
+    );
+    expect(removed.status, JSON.stringify(removed.body)).toBe(200);
+
+    const again = await connectTokens(app, older);
+    const refreshed = await refresh(app, again.refresh);
+    expect(refreshed.status, JSON.stringify(refreshed.body)).toBe(200);
+    expect(refreshed.body.refresh_token).toBeTruthy();
+  });
+
   it("keeps the renewal where it was when a token from the older sign-in is refused again after the person signed in again", async () => {
     const clientId = await registerDeviceApp();
     const stale = await signIn();

@@ -198,9 +198,9 @@ If an API key calls `marfa_change_settings` to change `allow_private_addresses`,
 
 ### `mcp/settings-step-up-renewal`
 
-When `marfa_change_settings` refuses with `insufficient_user_authentication` an app's access token whose browser session began at or after the time the app's consent already asks a browser session to begin after, or an app whose consent asks for no such time, the server MUST send to sign in again, before it issues a code or approves a device code for that app, any browser session that began before the refusal.
+When `marfa_change_settings` refuses with `insufficient_user_authentication` an app's access token whose browser session began at or after the time the app's consent already asks a browser session to begin after, or an app whose consent asks for no such time, the server MUST send to sign in again, before it issues a code or approves a device code for that app while the app's grant has not ended since the refusal, any browser session that began before the refusal.
 
-**Reason:** an MCP client cannot send the person through the authorization endpoint with `max_age`, so the app's own next authorization asks for the new sign-in instead, and the token that follows passes. Nothing clears the mark: a browser session begun after the refusal satisfies it at every endpoint. The check is made when the code is issued, so a consent page opened before the refusal also asks.
+**Reason:** an MCP client cannot send the person through the authorization endpoint with `max_age`, so the app's own next authorization asks for the new sign-in instead, and the token that follows passes. Only the end of the app's grant clears the mark (`mcp/settings-step-up-renewal-ended`): a browser session begun after the refusal satisfies it at every endpoint. The check is made when the code is issued, so a consent page opened before the refusal also asks.
 
 **Tests:** `compliance/mcp-step-up.test.ts › sends the browser to sign in again when the refused app reconnects, and the token it then gets changes the setting`, `› sends the browser to sign in again before it approves a device code for the refused app, and the token the code then issues changes the setting`, `› sends the browser to sign in again when a consent page opened before the refusal is approved, and issues the code after a new sign-in`.
 
@@ -219,6 +219,14 @@ While an app's consent asks a browser session to begin after a time (`mcp/settin
 **Reason:** a client's reconnect refreshes the stored sign-in rather than asking for a new one, so the refusal sends it to a full authorization, which asks the person to sign in. The refusal covers every refresh token of the app, whatever resource it names; one from a sign-in at or after that time refreshes as before.
 
 **Tests:** `compliance/mcp-step-up.test.ts › refuses with invalid_grant a refresh of a sign-in older than the refusal, and refreshes a token from a new sign-in`.
+
+### `mcp/settings-step-up-renewal-ended`
+
+When the person approves again an app whose grant ended after `marfa_change_settings` refused it with `insufficient_user_authentication`, the server MUST NOT refuse under `mcp/settings-step-up-refresh` the refresh of a token that approval issued, whenever the browser session that approved it began.
+
+**Reason:** ending the grant ends every token chain the refusal's time exists to stop, and a token whose browser session is not recent is still refused the settings that need one (`mcp/settings-step-up-refused`).
+
+**Tests:** `compliance/mcp-step-up.test.ts › forgets the renewal when the person removes the app, so the app approved again from the older browser refreshes`.
 
 ### `mcp/settings-step-up-renewal-own`
 
