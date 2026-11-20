@@ -82,7 +82,7 @@ When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mc
 
 ### `mcp/tools-for-admin`
 
-When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_end_sign_in` while it holds `sign_ins.manage` or `grants.manage`, `marfa_backups` and `marfa_take_backup` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors`, `marfa_make_endpoint`, `marfa_delete_connector` and `marfa_retire_endpoint` while it holds `connectors.manage`, `marfa_files` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
+When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_end_sign_in` while it holds `sign_ins.manage` or `grants.manage`, `marfa_backups` and `marfa_take_backup` while it holds `backups.manage`, `marfa_maintain` and `marfa_update_server` while it holds `instance.maintain`, `marfa_connectors`, `marfa_make_endpoint`, `marfa_delete_connector` and `marfa_retire_endpoint` while it holds `connectors.manage`, `marfa_files` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
 
 **Reason:** a credential that holds a permission can do the owner task it opens through the API, so an agent holding it does the same from MCP, except for the tasks `mcp/tools-withheld` names.
 
@@ -144,11 +144,19 @@ If the rows of a page that `marfa_trash` or `marfa_connectors` answers do not al
 
 ### `mcp/tools-withheld`
 
-The server MUST NOT list at any MCP endpoint a tool that removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
+The server MUST NOT list at any MCP endpoint a tool that claims the instance, recovers a lost password, chooses or changes the owner's password, adds a passkey, exports the instance, restores a backup or an archive, removes a copy of a file or adopts the backup folder.
 
-**Reason:** an agent's confirmation of a change that cannot be undone must bind the change to the state the owner saw, and the confirmations for removing a copy of a file and adopting the backup folder do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
+**Reason:** claiming happens in the sign-in page an MCP client opens, and recovering a lost password starts where the server runs. A password chosen through a tool would pass through the model, so the owner chooses it on the server's page that `marfa_sign_ins` names, or with `marfa owner password`, which asks for it with no echo. Adding a passkey needs the browser's passkey sheet, on that same page. An export archive does not fit in a tool's answer: `marfa_take_backup` makes a copy from MCP, and `marfa export` and `GET /export` stream one. A restore replaces the calling app's grant and the confirmations already spent, so a retried call could not say what was done, and no confirmation binds it yet. The confirmations for removing a copy of a file and adopting the backup folder do not yet bind the change to the state the owner saw.
 
-**Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`, `compliance/owner-tasks.test.ts › runs the trash's retention through the maintenance tool, removing only what the retention makes eligible and no chosen item`.
+**Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`.
+
+### `mcp/sign-ins-owner-page`
+
+When `marfa_sign_ins` answers, the server MUST answer as `owner_page` the address, at the sign-in address, of the page where the owner adds a passkey and changes the password.
+
+**Reason:** neither act is a tool (`mcp/tools-withheld`), so the agent gives the person the page instead.
+
+**Tests:** `compliance/mcp.test.ts › names the page where the owner adds a passkey or changes the password in the sign-ins tool, and that page answers`.
 
 ### `mcp/settings-step-up-withheld`
 
@@ -206,11 +214,63 @@ When `marfa_change_settings` refuses an app with `insufficient_user_authenticati
 
 ### `mcp/open-world-hint`
 
-When the server lists its tools, the server MUST annotate `marfa_create`, `marfa_manage_webhook`, `marfa_take_backup`, `marfa_maintain` and `marfa_change_settings` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
+When the server lists its tools, the server MUST annotate `marfa_create`, `marfa_manage_webhook`, `marfa_take_backup`, `marfa_maintain`, `marfa_change_settings` and `marfa_update_server` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
 
-**Reason:** `marfa_create` fetches a file from a web address the agent gives it, `marfa_manage_webhook` has the instance send events to one, `marfa_take_backup` can upload a backup to an object store, `marfa_maintain` can send the heartbeat, and `marfa_change_settings` can set where errors are sent; a client asks the person differently before a tool that reaches outside the instance.
+**Reason:** `marfa_create` fetches a file from a web address the agent gives it, `marfa_manage_webhook` has the instance send events to one, `marfa_take_backup` can upload a backup to an object store, `marfa_maintain` can send the heartbeat, `marfa_change_settings` can set where errors are sent, and `marfa_update_server` downloads a release; a client asks the person differently before a tool that reaches outside the instance.
 
 **Tests:** `compliance/mcp.test.ts › marks marfa_create as reaching outside the instance and no other tool`, `› marks each tool that can send something outside the instance as reaching outside it, and no other tool`.
+
+### `mcp/hints-four`
+
+When the server lists a tool, the server MUST annotate it with `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint`, each `true` or `false`.
+
+**Reason:** a client that finds a hint missing assumes the cautious default for it, which for a tool that only reads asks the person before every read.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/hints-read-only`
+
+When the server lists `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_read_rows`, `marfa_search_docs`, `marfa_sources`, `marfa_health`, `marfa_audit`, `marfa_keys`, `marfa_webhooks`, `marfa_settings`, `marfa_trash`, `marfa_apps`, `marfa_backups`, `marfa_connectors`, `marfa_files` or `marfa_sign_ins`, the server MUST annotate it with `readOnlyHint` `true`, `destructiveHint` `false` and `idempotentHint` `true`.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/hints-destructive`
+
+When the server lists `marfa_delete`, `marfa_update`, `marfa_write_rows`, `marfa_save_type`, `marfa_save_view`, `marfa_bulk_save`, `marfa_move_items`, `marfa_manage_key`, `marfa_revoke_key`, `marfa_manage_webhook`, `marfa_purge`, `marfa_narrow_app`, `marfa_end_sign_in`, `marfa_maintain`, `marfa_update_server`, `marfa_delete_connector` or `marfa_retire_endpoint`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `true` and `idempotentHint` `false`.
+
+**Reason:** each can remove, end, replace or overwrite what exists, so a client asks the person first.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/hints-additive`
+
+When the server lists `marfa_create`, `marfa_take_backup` or `marfa_make_endpoint`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `false` and `idempotentHint` `false`.
+
+**Reason:** each adds something and changes nothing that exists, and a second call adds another.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/hints-idempotent`
+
+When the server lists `marfa_change_settings`, `marfa_name_source` or `marfa_rename_sign_in`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `false` and `idempotentHint` `true`.
+
+**Reason:** each sets a value, so the same call again changes nothing more.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/instructions-per-endpoint`
+
+When a client starts a session at `/mcp`, `/mcp/schema` or `/mcp/admin`, the server MUST answer `instructions` of at most 512 characters that name only tools that endpoint serves.
+
+**Reason:** a client may cut longer instructions, and a tool named that the endpoint never lists sends the agent to call what does not exist there.
+
+**Tests:** `compliance/mcp.test.ts › gives each endpoint instructions of at most 512 characters that name only tools it lists`.
+
+### `mcp/instructions-admin-confirm`
+
+When a client starts a session at `/mcp/admin`, the server MUST answer `instructions` that say the tools that remove, end, replace or restart something preview first and act only once the person agrees.
+
+**Tests:** `compliance/mcp.test.ts › gives each endpoint instructions of at most 512 characters that name only tools it lists`.
 
 ## Calling a tool
 

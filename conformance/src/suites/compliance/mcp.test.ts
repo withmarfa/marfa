@@ -1150,6 +1150,7 @@ describe("the schema and admin endpoints", () => {
       "marfa_maintain",
       "marfa_manage_webhook",
       "marfa_take_backup",
+      "marfa_update_server",
     ];
     try {
       const seen = new Set<string>();
@@ -1170,6 +1171,173 @@ describe("the schema and admin endpoints", () => {
       await admin.close();
       await everyAdmin.close();
       await schema.close();
+    }
+  });
+});
+
+/** A connection at each endpoint for a credential offered every tool it serves. */
+async function everyEndpoint(
+  label: string,
+): Promise<Record<"/mcp" | "/mcp/schema" | "/mcp/admin", McpConnection>> {
+  const key = await keyWith(
+    label,
+    { "*": "write" },
+    {
+      permissions: [...Object.keys(ADMIN_TOOLS_BY_PERMISSION), "schema.write"],
+      metadata_permissions: { "*": "write" },
+    },
+  );
+  return {
+    "/mcp": await connectMcp(apiUrl, key, "2026-07-28", "/mcp"),
+    "/mcp/schema": await connectMcp(apiUrl, key, "2026-07-28", "/mcp/schema"),
+    "/mcp/admin": await connectMcp(apiUrl, key, "2026-07-28", "/mcp/admin"),
+  };
+}
+
+describe("what a client is told about the tools", () => {
+  const READS = [
+    "marfa_apps",
+    "marfa_audit",
+    "marfa_backups",
+    "marfa_connectors",
+    "marfa_files",
+    "marfa_find",
+    "marfa_get",
+    "marfa_health",
+    "marfa_keys",
+    "marfa_overview",
+    "marfa_read_rows",
+    "marfa_search_docs",
+    "marfa_settings",
+    "marfa_sign_ins",
+    "marfa_sources",
+    "marfa_trash",
+    "marfa_webhooks",
+  ];
+  const DESTRUCTIVE = [
+    "marfa_bulk_save",
+    "marfa_delete",
+    "marfa_delete_connector",
+    "marfa_end_sign_in",
+    "marfa_maintain",
+    "marfa_manage_key",
+    "marfa_manage_webhook",
+    "marfa_move_items",
+    "marfa_narrow_app",
+    "marfa_purge",
+    "marfa_retire_endpoint",
+    "marfa_revoke_key",
+    "marfa_save_type",
+    "marfa_save_view",
+    "marfa_update",
+    "marfa_update_server",
+    "marfa_write_rows",
+  ];
+  const ADDITIVE = ["marfa_create", "marfa_make_endpoint", "marfa_take_backup"];
+  const IDEMPOTENT = [
+    "marfa_change_settings",
+    "marfa_name_source",
+    "marfa_rename_sign_in",
+  ];
+
+  it("annotates every tool with the four hints its kind of tool gives it", async () => {
+    const endpoints = await everyEndpoint("hints");
+    try {
+      const hints = new Map<string, Record<string, unknown>>();
+      for (const connection of Object.values(endpoints)) {
+        const { tools } = await connection.client.listTools();
+        for (const tool of tools) {
+          hints.set(tool.name, { ...tool.annotations });
+        }
+      }
+      // The witness: every tool of every kind was listed, and none of another kind.
+      expect([...hints.keys()].sort()).toEqual(
+        [...READS, ...DESTRUCTIVE, ...ADDITIVE, ...IDEMPOTENT].sort(),
+      );
+      for (const [name, given] of hints) {
+        for (const hint of [
+          "readOnlyHint",
+          "destructiveHint",
+          "idempotentHint",
+          "openWorldHint",
+        ]) {
+          expect(typeof given[hint], `${name} ${hint}`).toBe("boolean");
+        }
+        const [readOnly, destructive, idempotent] = READS.includes(name)
+          ? [true, false, true]
+          : DESTRUCTIVE.includes(name)
+            ? [false, true, false]
+            : ADDITIVE.includes(name)
+              ? [false, false, false]
+              : [false, false, true];
+        expect(
+          [given.readOnlyHint, given.destructiveHint, given.idempotentHint],
+          name,
+        ).toEqual([readOnly, destructive, idempotent]);
+      }
+    } finally {
+      for (const connection of Object.values(endpoints)) {
+        await connection.close();
+      }
+    }
+  });
+
+  it("gives each endpoint instructions of at most 512 characters that name only tools it lists", async () => {
+    const endpoints = await everyEndpoint("instructions");
+    try {
+      const seen = new Set<string>();
+      for (const [path, connection] of Object.entries(endpoints)) {
+        const instructions = connection.client.getInstructions() ?? "";
+        seen.add(instructions);
+        expect(instructions.length, path).toBeGreaterThan(0);
+        expect(instructions.length, path).toBeLessThanOrEqual(512);
+        const listed = await toolNames(connection);
+        const named = instructions.match(/marfa_[a-z_]+/g) ?? [];
+        expect(named.length, path).toBeGreaterThan(0);
+        for (const name of named) {
+          expect(listed, `${path} names ${name}`).toContain(name);
+        }
+        if (path === "/mcp/admin") {
+          expect(instructions).toMatch(/preview first/);
+          expect(instructions).toMatch(/only once they agree/);
+        }
+      }
+      // Each endpoint has its own.
+      expect(seen.size).toBe(3);
+    } finally {
+      for (const connection of Object.values(endpoints)) {
+        await connection.close();
+      }
+    }
+  });
+
+  it("names the page where the owner adds a passkey or changes the password in the sign-ins tool, and that page answers", async () => {
+    const admin = await connectMcp(
+      apiUrl,
+      await keyWith("owner-page", {}, { permissions: ["sign_ins.manage"] }),
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      const listed = toolResult(await callTool(admin, "marfa_sign_ins", {}));
+      const page = new URL(listed.owner_page as string);
+      expect(page.pathname).toBe("/auth/owner/passkeys");
+      expect(String(listed.owner_page_offers)).toContain(
+        "marfa owner password",
+      );
+      const answered = await fetch(new URL(page.pathname, apiUrl), {
+        redirect: "manual",
+      });
+      await answered.body?.cancel();
+      // Signed out, the page sends the browser to sign in, so it exists.
+      expect([200, 302, 303]).toContain(answered.status);
+      const missing = await fetch(new URL("/auth/owner/no-such-page", apiUrl), {
+        redirect: "manual",
+      });
+      await missing.body?.cancel();
+      expect(missing.status).toBe(404);
+    } finally {
+      await admin.close();
     }
   });
 });

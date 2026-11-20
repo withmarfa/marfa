@@ -1379,7 +1379,7 @@ describe("the owner tasks at /mcp/admin", () => {
       const maintain = tools.find((tool) => tool.name === "marfa_maintain");
       expect(
         Object.keys(maintain?.inputSchema.properties ?? {}).sort(),
-      ).toEqual(["action", "id", "name"]);
+      ).toEqual(["action", "confirm", "id", "name"]);
 
       const run = toolResult(
         await callTool(connection, "marfa_maintain", {

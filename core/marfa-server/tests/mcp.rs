@@ -1805,7 +1805,10 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
             &["marfa_apps", "marfa_end_sign_in", "marfa_narrow_app"],
         ),
         ("backups.manage", &["marfa_backups", "marfa_take_backup"]),
-        ("instance.maintain", &["marfa_maintain"]),
+        (
+            "instance.maintain",
+            &["marfa_maintain", "marfa_update_server"],
+        ),
         ("blobs.manage", &["marfa_files"]),
         (
             "sign_ins.manage",
@@ -1887,6 +1890,7 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
             "marfa_retire_endpoint",
             json!({ "id": "0192e6a8-7c6e-7000-8000-000000000000", "endpoint_id": "0192e6a8-7c6e-7000-8000-000000000001" }),
         ),
+        ("marfa_update_server", json!({})),
         ("marfa_files", json!({ "hash": "00" })),
         ("marfa_sign_ins", json!({})),
         (
@@ -2333,8 +2337,6 @@ async fn no_tool_offers_a_withheld_owner_task() {
                 "claim",
                 "recover",
                 "password",
-                "update_server",
-                "clock",
                 "add_passkey",
                 "adopt",
                 "drop",
