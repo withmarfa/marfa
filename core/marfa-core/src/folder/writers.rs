@@ -17,7 +17,7 @@ pub(crate) enum Writers {
     None,
     /// A program holds it open for writing.
     Open,
-    /// The platform or the volume leaves it unknown.
+    /// The platform, the volume or an incomplete look leaves it unknown.
     Unknown,
 }
 
