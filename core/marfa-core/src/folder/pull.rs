@@ -2152,10 +2152,9 @@ impl Folder {
     }
 
     /// A journal row here is a file put back since its scan, so it asks for
-    /// nothing now. Answers `None`, and keeps the file bound, where it
-    /// changed since it was found to be the folder's own: the person's edit
-    /// is theirs. Otherwise answers how many placements it ended with the
-    /// file.
+    /// nothing now. Keeps the file bound where it changed since it was found
+    /// to be the folder's own, since the person's edit is theirs, or where
+    /// the volume cannot remove it safely.
     pub(super) fn take_away(
         &self,
         row: &state::Bound,
