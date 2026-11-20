@@ -562,6 +562,12 @@ mod tests {
             !status.files.iter().any(|file| file.path == "original.md"),
             "{status:?}"
         );
+        // Written back, the item would have two files.
+        let pulled = folder.pull().unwrap();
+        assert!(
+            !paused.dir.path().join("original.md").exists(),
+            "{pulled:?}"
+        );
         // Once the file is gone under every name, its item goes too.
         std::fs::remove_file(paused.dir.path().join("original.bin")).unwrap();
         assert_eq!(folder.scan().unwrap().paused, 1);
