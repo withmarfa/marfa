@@ -126,6 +126,34 @@ When a folder watch hydration receives an answer no retry can change, the CLI MU
 
 **Tests:** `device/folders.test.ts › ends the watch and says so when its hydration meets an answer no retry changes`.
 
+### `folder-sync/watch-instance-changed-stops`
+
+If the server at a watched folder's address answers as another Marfa instance than the one the folder's working copy names, then a device MUST end that folder's watch.
+
+**Reason:** The other instance holds neither the folder nor its key, so no retry can reach the folder, and a watch that went on would ask the server again without end.
+
+**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
+
+### `folder-sync/watch-instance-changed-said`
+
+If a folder's watch ends because its server answers as another Marfa instance, then the CLI MUST report the server's address, that it answers as another Marfa instance, and that the folder is to be added again with a key for that instance.
+
+**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
+
+### `folder-sync/watch-failing-passes-back-off`
+
+While a folder watch's passes keep ending with a problem, such as a server it cannot reach, a device MUST wait before each next pass for a time that starts at one second and doubles after each such pass up to five minutes.
+
+**Reason:** A pass a second sends requests a second to a server that cannot answer them, and a fault that lasts would never let the watch rest.
+
+**Tests:** `device/binding-folders-backoff.test.ts › spaces passes that keep failing by a wait that doubles to five minutes, and runs one soon after a change on disk`.
+
+### `folder-sync/watch-back-off-ends-on-change`
+
+When a folder watch that waits between failing passes hears a change on disk that the folder takes, a device MUST start the next pass without waiting out the rest of that wait.
+
+**Tests:** `device/binding-folders-backoff.test.ts › spaces passes that keep failing by a wait that doubles to five minutes, and runs one soon after a change on disk`.
+
 ## Watching every folder
 
 A watch of every folder is `folders watch` run with no directory.
@@ -195,6 +223,14 @@ When the directory a listed folder was admitted at returns to its path during a 
 If the server refuses one folder’s credential during a watch of every folder, then the CLI MUST end that folder’s watch without ending the command.
 
 **Tests:** `device/folders-watch-every.test.ts › ends only the watch of a folder whose credential the server refuses`.
+
+### `folder-sync/watch-every-instance-changed-held`
+
+While a watch of every folder holds a folder whose watch ended because its server answers as another Marfa instance, the CLI MUST NOT send that server a request for the folder until the folder's credential, its server or its `.marfa/folder.yaml` changes.
+
+**Reason:** Opening the folder again would only meet the other instance again.
+
+**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
 
 ### `folder-sync/watch-every-joins`
 
@@ -267,6 +303,14 @@ When `folders status` runs and no current entry in the record of folder watches 
 **Reason:** a program reading the status tells a watch on this build from one on another without testing whether the key is present.
 
 **Tests:** `device/folders-new-build.test.ts › says in the folder's status that its watch runs another build`.
+
+### `folder-sync/status-watch-instance-changed`
+
+When `folders status` runs while the record of folder watches lists the folder with `reason` `instance_changed` and no current entry lists it as watched, the CLI MUST report that the server at the folder's address answers as another Marfa instance, naming that address.
+
+**Reason:** A person who reads the status of a folder whose watch stopped learns why, rather than that its copy is not whole.
+
+**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
 
 ## Pausing a directory's sync
 

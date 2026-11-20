@@ -857,10 +857,7 @@ describe("a watch of every folder", () => {
       }, WAIT);
       const sent = b.server.requests.length;
       put(a, "Goes on.md", "---\ntitle: Goes on\n---\nthe other folder\n");
-      await vi.waitFor(
-        () => expect(sentTitles(a)).toContain("Goes on"),
-        WAIT,
-      );
+      await vi.waitFor(() => expect(sentTitles(a)).toContain("Goes on"), WAIT);
       // About fifteen retries of the folder pass while this waits.
       await new Promise((resolve) => setTimeout(resolve, 3_000));
       expect(
@@ -881,7 +878,10 @@ describe("a watch of every folder", () => {
         .flatMap((process) => process.folders)
         .filter((folder) => realpathSync(folder.dir) === realpathSync(b.dir));
       expect(recorded).toEqual([
-        expect.objectContaining({ watching: false, reason: "instance_changed" }),
+        expect.objectContaining({
+          watching: false,
+          reason: "instance_changed",
+        }),
       ]);
       const status = await b.folder.status();
       expect(JSON.stringify(status)).toContain("another Marfa instance");

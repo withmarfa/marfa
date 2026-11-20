@@ -82,7 +82,7 @@ it("leaves a folder at rest with no pass but its full pass, and sends a change o
   await seconds(harness, 5);
   const from = await passes(harness);
   await seconds(harness, 590);
-  expect((await passes(harness)) - from).toBeLessThanOrEqual(1);
+  expect((await passes(harness)) - from).toBe(0);
   writeFileSync(
     join(harness.dir, "Sent.md"),
     "---\ntitle: Sent\n---\nwritten while watched\n",
