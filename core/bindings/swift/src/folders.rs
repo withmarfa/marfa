@@ -232,6 +232,9 @@ pub struct FolderPull {
     pub kept: u64,
     /// Files the folder did not write, and would not write over.
     pub unwritten: u64,
+    /// Files left because a program holds them open for writing, which a later
+    /// pull writes or removes once it closes them.
+    pub busy: u64,
     /// Items whose bytes could not be fetched.
     pub absent: u64,
     /// Placements the server refused.
@@ -918,6 +921,7 @@ fn pull_of(pull: marfa_core::PullReport) -> FolderPull {
         purged: pull.purged as u64,
         kept: pull.kept as u64,
         unwritten: pull.unwritten as u64,
+        busy: pull.busy as u64,
         absent: pull.absent as u64,
         unplaced: pull.unplaced as u64,
         unmatched: pull.unmatched as u64,

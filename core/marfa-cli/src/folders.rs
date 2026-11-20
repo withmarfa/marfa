@@ -175,6 +175,31 @@ pub enum FoldersCommand {
         #[arg(long, requires = "remove")]
         yes: bool,
     },
+    /// List the files the directory keeps under a reserved name because a
+    /// program might still write to them, and with `--discard` delete them.
+    /// When a pull replaces or removes a file that a program holds open for
+    /// writing, or one where Marfa cannot tell, it sets the old file aside under
+    /// a name starting `.marfa-kept-`. Marfa deletes it once no program holds it,
+    /// or, where it cannot tell, once it has been unchanged for 7 days. A file
+    /// a program wrote to goes back to its path, and the next push sends what
+    /// the program wrote; `--discard` puts such a file back too, in place of
+    /// deleting it. One whose record Marfa could not read is deleted only
+    /// while it holds the bytes Marfa set aside, and is listed still where it
+    /// holds anything else. With `--discard`, a watch holding the
+    /// directory lets it go while this runs, and this is refused if the process
+    /// holding the directory does not let it go within 10 seconds.
+    Kept {
+        /// The directory.
+        dir: PathBuf,
+        /// Delete the files, after a confirmation, whatever programs hold them.
+        #[arg(long)]
+        discard: bool,
+        /// Confirm the deletion without asking, for scripts. Without it, a
+        /// deletion asks at a terminal, and is refused with `--json` or
+        /// anywhere else.
+        #[arg(long, requires = "discard")]
+        yes: bool,
+    },
     /// Create a folder's settings on the server, as a `system.folder`.
     /// Needs write on `system.folder`.
     Create(folder_settings::CreateArgs),
@@ -674,6 +699,7 @@ pub fn run(
             )
         }
         FoldersCommand::Unmatched { dir, remove, yes } => unmatched(&dir, remove, yes, json),
+        FoldersCommand::Kept { dir, discard, yes } => kept(&dir, discard, yes, json),
         FoldersCommand::Watch {
             dir,
             r#for,
@@ -800,6 +826,101 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
             lines.join("\n")
         },
     )
+}
+
+fn kept(dir: &Path, discard: bool, yes: bool, json: bool) -> Result<(), CliError> {
+    if !discard {
+        let files = Folder::kept_of(dir)?;
+        return output::report(&serde_json::json!({ "kept": files }), json, || {
+            describe_kept(&files)
+        });
+    }
+    let at_terminal =
+        !json && std::io::stdin().is_terminal() && crate::output::stderr_is_terminal();
+    if !yes && !at_terminal {
+        return Err(CliError::Usage(
+            "`folders kept --discard` asks only at a terminal and without --json, and otherwise deletes nothing; pass --yes to confirm it".into(),
+        ));
+    }
+    let folder = working(dir, None)?;
+    let files = folder.kept_files()?;
+    let going: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
+    let agreed = going.is_empty() || yes || asks_to_discard(dir, &going)?;
+    let done = if agreed {
+        folder.discard_kept()?
+    } else {
+        marfa_core::KeptDiscarded {
+            kept: files,
+            ..Default::default()
+        }
+    };
+    output::report(
+        &serde_json::json!({
+            "discarded": done.discarded,
+            "put_back": done.put_back,
+            "kept": done.kept,
+            "declined": !agreed,
+        }),
+        json,
+        || {
+            let mut lines = vec![if !agreed {
+                "nothing was deleted".to_string()
+            } else {
+                format!("{} kept file(s) deleted", done.discarded.len())
+            }];
+            lines.extend(done.put_back.iter().map(|path| {
+                format!(
+                    "{}: a program wrote to the file set aside from it, so Marfa put that file back, and the next push sends it",
+                    printable(path)
+                )
+            }));
+            if agreed {
+                lines.extend(done.kept.iter().map(|file| {
+                    format!(
+                        "{} is still kept: Marfa could not reach it",
+                        printable(&file.path)
+                    )
+                }));
+            }
+            lines.join("\n")
+        },
+    )
+}
+
+fn describe_kept(files: &[marfa_core::KeptFile]) -> String {
+    if files.is_empty() {
+        return "no kept files".into();
+    }
+    let mut lines = vec![format!(
+        "{} kept file(s), which `folders kept --discard` deletes",
+        files.len()
+    )];
+    lines.extend(
+        files
+            .iter()
+            .map(|file| format!("{} {}", printable(&file.path), printable(&file.reason))),
+    );
+    lines.join("\n")
+}
+
+/// Asks at a terminal; the caller has already made sure there is one.
+fn asks_to_discard(dir: &Path, going: &[String]) -> Result<bool, CliError> {
+    use std::io::{BufRead, Write};
+    let mut question = crate::output::stderr();
+    writeln!(
+        question,
+        "{} kept file(s) in {} would be deleted. A file a program wrote to goes back to its path instead, or is kept where Marfa could not read its record:",
+        going.len(),
+        dir.display()
+    )?;
+    for path in going {
+        writeln!(question, "  {}", printable(path))?;
+    }
+    write!(question, "Delete them? [y/N] ")?;
+    question.flush()?;
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    Ok(matches!(answer.trim().to_lowercase().as_str(), "y" | "yes"))
 }
 
 fn kept_lines(kept: &[marfa_core::Unmatched]) -> Vec<String> {
@@ -1133,6 +1254,11 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
                 printable(&file.path),
                 printable(&file.reason)
             ),
+            "busy" => format!(
+                "{} waits: {}",
+                printable(&file.path),
+                printable(&file.reason)
+            ),
             "kept" => format!(
                 "{} is kept: {}",
                 printable(&file.path),
@@ -1244,6 +1370,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         (
             report.unwritten,
             "the directory did not write and would not write over",
+        ),
+        (
+            report.busy,
+            "that a program holds open for writing, which a later pull writes once it closes them",
         ),
         (
             report.outside,

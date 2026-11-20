@@ -32,9 +32,9 @@ When an unbound document has no usable item ID, a device MUST create it under a 
 
 ### `folder-files/id-after-create`
 
-When a document's create lands and its bytes have not changed since scan, a device MUST write the accepted `marfa_id` into the file.
+When a document's create lands, its bytes have not changed since scan and no program holds it open for writing, a device MUST write the accepted `marfa_id` into the file.
 
-**Tests:** `device/folders-identity.test.ts › creates a file under the device's id and writes the id back once it lands`.
+**Tests:** `device/folders-identity.test.ts › creates a file under the device's id and writes the id back once it lands`, `device/folders-open-writer.test.ts › writes the id into a new file once the program writing it closes it`.
 
 ### `folder-files/id-before-create`
 
@@ -1083,6 +1083,120 @@ When a document cannot be rendered safely, a device MUST count it `unwritten`.
 When an existing file is read-only, a device MUST leave it unchanged during a pull.
 
 **Tests:** `device/folders-contract-a.test.ts › keeps a read-only document unchanged when another device changes its item`.
+
+## Files a program holds open for writing
+
+A device looks at which programs hold a file open for writing before it replaces or removes the file. On macOS it sees only the programs of the account it runs under, so a program of the root account or of another account is outside these rules there.
+
+### `folder-files/write-open-writer-kept`
+
+When a device finds that a program holds a file open for writing, a device MUST NOT replace or remove the file, including to change only its `marfa_id` or `marfa_version` line.
+
+**Reason:** a program that holds a file open keeps writing to the file it opened, so a write that moves another file into the path loses everything the program writes after it.
+
+**Tests:** `device/folders-open-writer.test.ts › leaves the file while the program holds it, and sends what the program wrote after the push`, `› writes the id into a new file once the program writing it closes it`.
+
+### `folder-files/write-open-writer-reported`
+
+When a pull leaves a file because a program holds it open for writing, a device MUST count the file in the report's `busy` and report it in `flagged` with the flag `busy`.
+
+**Tests:** `device/folders-open-writer.test.ts › leaves the file while the program holds it, and sends what the program wrote after the push`.
+
+### `folder-files/write-open-writer-retried`
+
+When a pull left a file because a program held it open for writing and the program has since closed it, a device MUST write the file at its next pull.
+
+**Tests:** `device/folders-open-writer.test.ts › leaves the file while the program holds it, and sends what the program wrote after the push`, `› writes the id into a new file once the program writing it closes it`.
+
+### `folder-files/write-open-writer-sent`
+
+When a program writes to a file through a descriptor it held open across a pull, a device MUST send what the program wrote at the next push.
+
+**Tests:** `device/folders-open-writer.test.ts › leaves the file while the program holds it, and sends what the program wrote after the push`, `› writes the id into a new file once the program writing it closes it`.
+
+### `folder-files/write-retained-held`
+
+When a device replaces or removes a file and cannot tell that no program holds it open for writing, a device MUST keep the file it moved out under a name of the form `.marfa-kept-<id>.tmp`.
+
+**Reason:** a device cannot always tell, as on a network volume, inside a sandboxed app or when a program opens the file during the pull.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps a file it set aside where it cannot tell whether a program writes to it, and puts back what the program wrote`, `› keeps a file it set aside while a program holds it open, and deletes it once the program closes it unchanged`.
+
+### `folder-files/write-retained-put-back`
+
+When a program writes to a file a device keeps under a name of the form `.marfa-kept-<id>.tmp`, and the path the file came from holds the file the device wrote there, a device MUST move the kept file back to that path at its next scan or pull.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps a file it set aside where it cannot tell whether a program writes to it, and puts back what the program wrote`.
+
+### `folder-files/write-retained-put-back-version`
+
+When a device sends what a program wrote to a file with a `marfa_version` line that it moved back from a name of the form `.marfa-kept-<id>.tmp`, a device MUST send it as an edit of the version the file showed when the device moved it out: the version its `marfa_version` line named, or the version of the device's own edit where the device moved the file out only to rewrite that line after the edit landed.
+
+**Reason:** what the program wrote is based on the file it held, not on the file the pull wrote, so an edit another machine made since then meets it as any concurrent edit does, and neither is lost.
+
+**Tests:** `device/folders-open-writer.test.ts › sends what a program wrote to a file it set aside as an edit of the version the file held, so another machine's edit meanwhile is kept`, `› keeps a file it set aside where it cannot tell whether a program writes to it, and puts back what the program wrote`.
+
+### `folder-files/write-retained-beside`
+
+If a program writes to a file a device keeps under a name of the form `.marfa-kept-<id>.tmp`, and the path the file came from holds a file other than the one the device wrote, then a device MUST move the kept file to the first free numbered name beside the path, as `folder-files/placement-collision-number` numbers it.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps what a program wrote to a file it set aside beside the path, where a person saved over the path meanwhile`.
+
+### `folder-files/write-retained-discarded`
+
+When a file a device keeps under a name of the form `.marfa-kept-<id>.tmp` is unchanged since the device moved it out and no program holds it open for writing, a device MUST delete it at its next scan or pull.
+
+**Reason:** a change to the file's mode, times or extended attributes alone, as a tag in Finder makes, leaves it unchanged.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps a file it set aside while a program holds it open, and deletes it once the program closes it unchanged`, `› keeps a file it set aside whose mode and times alone changed as unchanged, and deletes it once no program holds it`.
+
+### `folder-files/write-retained-unknown-week`
+
+Where a device cannot tell whether a program holds a file it keeps under a name of the form `.marfa-kept-<id>.tmp` open for writing, a device MUST delete the file at its first scan or pull once seven days have passed since it moved the file out with the file unchanged.
+
+**Reason:** a device that cannot tell would otherwise keep every file it replaces there for ever.
+
+**Tests:** `device/folders-open-writer.test.ts › deletes a file it set aside unchanged a week after it could not tell whether a program writes to it`.
+
+### `folder-files/write-retained-reported`
+
+While a device keeps a file under a name of the form `.marfa-kept-<id>.tmp` because a program may still write to it, a device MUST list the file in the folder's status with the flag `kept` and a reason that says why it is kept.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`.
+
+### `folder-files/write-retained-listed`
+
+The CLI MUST list in `folders kept` each file a folder keeps because a program may still write to it, with the path it came from where its record names it, and whether the last look found a program holding it open, could not tell, or has not looked yet.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`, `› keeps a file it set aside while a program holds it open, and deletes it once the program closes it unchanged`.
+
+### `folder-files/write-retained-discard`
+
+When the owner confirms `folders kept --discard`, the CLI MUST settle each file the folder keeps under a record it can read as `folder-files/write-retained-put-back`, `folder-files/write-retained-beside` and `folder-files/write-retained-discarded` settle it, taking it that no program holds the file open for writing.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`, `› puts back a file it kept that a program wrote to, when the owner discards the files it keeps`.
+
+### `folder-files/write-retained-unread-listed`
+
+The CLI MUST list in `folders kept` each file a folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, with the reason `Marfa could not read its record`.
+
+**Reason:** a device cannot tell whether a program wrote to such a file, so it keeps the file until the owner decides.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps under a record it cannot read, and deletes it when the owner discards it`.
+
+### `folder-files/write-retained-unread-discard`
+
+When the owner confirms `folders kept --discard`, the CLI MUST delete each file the folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, where the file holds the bytes the record says were set aside.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps under a record it cannot read, and deletes it when the owner discards it`.
+
+### `folder-files/write-retained-unread-written-kept`
+
+When the owner confirms `folders kept --discard`, the CLI MUST NOT delete a file the folder keeps under a record it cannot read where the file's bytes differ from the bytes the record says were set aside, or the record holds no hash of them.
+
+**Reason:** a program may have written to the file after it was set aside, and with its record unread the device cannot put the file back, so it keeps the file listed for the owner to look at.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps a file it keeps under a record it cannot read when a program wrote to it, though the owner discards`.
 
 ## Deletion, purges and missing directories
 

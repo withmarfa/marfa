@@ -822,7 +822,7 @@ fn passed(
             "pull": pulled,
         }),
         || {
-            let held = pulled.unwritten + pulled.outside + pulled.unsuited + pulled.absent;
+            let held = pulled.unwritten + pulled.busy + pulled.outside + pulled.unsuited + pulled.absent;
             // A standing refusal of the settings file is said when it changes,
             // and an edit sent, whenever it is.
             let sent = marfa_core::SettingsFileReport {

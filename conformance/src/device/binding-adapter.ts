@@ -934,6 +934,8 @@ export interface BindingFolderPull {
   purged: number;
   kept: number;
   unwritten: number;
+  /** Files a program holds open for writing, left for a later pull. */
+  busy: number;
   absent: number;
   unplaced: number;
   unmatched: number;

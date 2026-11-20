@@ -440,10 +440,13 @@ fn observed_downloads(pull: &PullReport) -> (u64, Vec<Problem>) {
     let mut pending = HashSet::new();
     let mut blocked = HashSet::new();
     for file in &pull.flagged {
-        if matches!(file.flag, "unwritten" | "absent" | "outside" | "unsuited") {
+        if matches!(
+            file.flag,
+            "unwritten" | "absent" | "outside" | "unsuited" | "busy"
+        ) {
             let identity = file.item.as_deref().unwrap_or(&file.path);
             pending.insert(identity);
-            if file.flag != "absent" {
+            if !matches!(file.flag, "absent" | "busy") {
                 blocked.insert(identity);
             }
         }
@@ -1653,6 +1656,8 @@ pub(in crate::folder) mod tests {
             state_dir,
             store_mark,
             unflushed: Default::default(),
+            writers: Default::default(),
+            writer_wait: Default::default(),
         };
         (dir, folder)
     }

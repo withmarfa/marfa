@@ -251,6 +251,17 @@ stays because that thing is what it checks.
   fault `volume-full`, which stands for the volume a device finds full when
   it tries to make a file there. No door or fault makes a store of another
   build's version, and a fixture cannot fill the volume its runner writes to.
+- `device/folders-open-writer.test.ts`, "deletes a file it set aside unchanged
+  a week after it could not tell whether a program writes to it", moves back
+  the time a folder's store records for a file it keeps. The command line has
+  no clock a fixture can move, and the bound is a week.
+- `device/folders-open-writer.test.ts`, "lists a file it keeps under a record
+  it cannot read, and deletes it when the owner discards it", spoils the
+  record a folder's store keeps for a file it keeps. No operation or fault
+  writes a record a later build cannot read.
+- `device/folders-open-writer.test.ts`, "keeps a file it keeps under a record
+  it cannot read when a program wrote to it, though the owner discards",
+  spoils the same record, for the same reason.
 - `compliance/mcp-sign-in-acts.test.ts`, "refuses a confirmation once a new
   approval added a destination since the preview, with a new preview", adds a
   redirect URI to an app's stored registration while the server runs. Only a

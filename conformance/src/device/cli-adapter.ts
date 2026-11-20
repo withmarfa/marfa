@@ -1504,7 +1504,8 @@ export interface StatusReport {
  *  enter is `package` or `unreadable` (`folder-documents/package-scan` and `folder-documents/unreadable-directory`), or `gone`
  *  (`folder-files/walk-directory-gone`). A pull names an item whose file it did not write as
  *  `unwritten`, `outside`, `unsuited` or `absent`, the count it is in
- *  (`folder-sync/pull-flagged-items`), and one it could not let go to another folder as
+ *  (`folder-sync/pull-flagged-items`), one a program holds open for writing as `busy`
+ *  (`folder-files/write-open-writer-kept`), and one it could not let go to another folder as
  *  `retained` (`folder-files/retained-source-reported`). A pull names a document as
  *  `attachment` where its attached file is written in another directory
  *  (`folder-documents/attachment-written-once-report`) or could not be read
@@ -1530,6 +1531,7 @@ export interface FlaggedFile {
     | "absent"
     | "retained"
     | "attachment"
+    | "busy"
     | "kept";
   reason: string;
   /** The item whose file a pull did not write (`folder-sync/pull-flagged-items`), or could
@@ -1544,6 +1546,9 @@ export interface PullReport {
   unchanged: number;
   skipped: number;
   unwritten: number;
+  /** Files a program holds open for writing, left as they are for a later
+   *  pull (`folder-files/write-open-writer-kept`). */
+  busy: number;
   /** Files the person deleted, written back because their item changed
    *  elsewhere before their delete was sent and no other folder on the
    *  machine holds their move (`folder-files/delete-remote-revives`,
@@ -1685,6 +1690,24 @@ export interface UnmatchedFile {
   /** Why the file has no item, where its folder holds it outside the query
    *  (`folder-guards/outside-query-unmatched`). */
   held?: string;
+}
+
+/** A file a directory keeps under a reserved name because a program might
+ *  still write to it (`folder-files/write-retained-listed`). */
+export interface KeptFile {
+  path: string;
+  from: string;
+  writers: "open" | "unknown" | "none";
+  until?: string;
+  reason: string;
+}
+
+/** What `folders kept --discard` did (`folder-files/write-retained-discard`). */
+export interface KeptDiscard {
+  discarded: string[];
+  put_back: string[];
+  kept: KeptFile[];
+  declined: boolean;
 }
 
 /** What `folders unmatched --remove` did (`folder-guards/unmatched-remove-file`). */
@@ -1915,6 +1938,16 @@ export class CliFolder {
       "--remove",
       ...(options.yes === true ? ["--yes"] : []),
     ]);
+  }
+
+  /** The files the folder keeps because a program might still write to them. */
+  async kept(): Promise<Outcome<{ kept: KeptFile[] }>> {
+    return this.run(["folders", "kept", this.dir]);
+  }
+
+  /** Discards them, confirmed. */
+  async discardKept(): Promise<Outcome<KeptDiscard>> {
+    return this.run(["folders", "kept", this.dir, "--discard", "--yes"]);
   }
 
   /** A folder command left running, such as one waiting for a watch to let

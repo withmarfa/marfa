@@ -115,7 +115,7 @@ impl Folder {
         // Left as the old text, the file would read as an edit of the new.
         self.put_settings_back()?;
         Ok(match landed {
-            Err(landing::Unlanded::Failed(error)) => {
+            Err(error @ (landing::Unlanded::Failed(_) | landing::Unlanded::Busy)) => {
                 Wrote::Failed(format!("cannot write {}: {error}", path.display()))
             }
             _ => Wrote::Overtaken,
