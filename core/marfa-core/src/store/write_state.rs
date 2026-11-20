@@ -16,6 +16,25 @@ pub(crate) fn cleared_time_key(create: &str) -> String {
     format!("cleared_time/{create}")
 }
 
+fn made_key(item_id: &str) -> String {
+    format!("made/{item_id}")
+}
+
+/// Records the version the server gave this copy's create of `item_id`. Kept
+/// apart from the queue, which an app empties once it has read the answers,
+/// while an app can still hold the item as read at version 0.
+pub(crate) fn note_made(conn: &Connection, item_id: &str, version: i64) -> Result<(), CoreError> {
+    meta_set(conn, &made_key(item_id), &version.to_string())
+}
+
+pub fn made_version(conn: &Connection, item_id: &str) -> Result<Option<i64>, CoreError> {
+    Ok(meta_get(conn, &made_key(item_id))?.and_then(|version| version.parse().ok()))
+}
+
+pub(crate) fn forget_made(conn: &Connection, item_id: &str) -> Result<(), CoreError> {
+    super::meta::meta_delete(conn, &made_key(item_id))
+}
+
 /// Forgets the clear of `item_id`'s time that the answer of any of its
 /// creates still owes, whether or not that create has been answered.
 pub(crate) fn forget_owed_time_clears(conn: &Connection, item_id: &str) -> Result<(), CoreError> {

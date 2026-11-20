@@ -567,6 +567,14 @@ pub(super) fn settle_success(
             {
                 drop_projected_edges(&tx, row, local, Some(&parsed.item))?;
                 store::adopt_answered_id(&tx, local, &parsed.item.id)?;
+                if row.base_version.is_none_or(|base| base == 0) {
+                    let made = if parsed.acknowledged {
+                        1
+                    } else {
+                        made.unwrap_or(parsed.item.version)
+                    };
+                    store::note_made(&tx, &parsed.item.id, made)?;
+                }
                 store::refollow(&tx, &parsed.item.id, &row.id)?;
                 take_answered_edges(&tx, &parsed.item)?;
                 create_edges::owe(&tx, row, &parsed.item)?;

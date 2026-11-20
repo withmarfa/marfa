@@ -489,6 +489,15 @@ pub(crate) fn queue_update(
             message: format!("{type} is not a type this copy holds, so {id} cannot move to it"),
         });
     }
+    // Version 0 is how this copy showed its own create until the server took
+    // it, so an editor can still hold the item as read there.
+    let base = if based == Based::AsRead && base == 0 && held.version > 0 {
+        store::made_version(tx, id)?
+            .filter(|made| *made > 0 && *made <= held.version)
+            .unwrap_or(base)
+    } else {
+        base
+    };
     let read_earlier = based == Based::AsRead && base > 0 && base <= held.version;
     if base != held.version && !read_earlier {
         return Err(CoreError::Invalid(format!(
@@ -644,7 +653,8 @@ impl Core {
 
     /// The base may be a version earlier than the one held, which the server
     /// merges against, so another device's write that came in since is kept
-    /// rather than overwritten.
+    /// rather than overwritten. A base of 0 on an item this copy created is
+    /// read as the version the server gave that create.
     pub fn update_item_as_read(&self, id: &str, edit: &Edit) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         self.noting_limit_refusal(self.write_update(id, edit, Based::AsRead, Body::Read))
