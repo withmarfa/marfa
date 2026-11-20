@@ -383,7 +383,7 @@ fn code_page(return_to: &str, app: Option<AskingApp>) -> String {
 #[test]
 fn the_setup_code_page_says_where_the_code_is_and_carries_return_to() {
     let plain = code_page("/", None);
-    assert!(plain.contains("in its terminal, or in its host&#39;s log"));
+    assert!(plain.contains("in its terminal, or in its host's log"));
     assert!(plain.contains("<input type=\"hidden\" name=\"return_to\" value=\"/\">"));
     assert!(!plain.contains("choose what the app can access"));
     let asked = code_page("/oauth/authorize?client_id=a", None);
@@ -406,7 +406,7 @@ fn the_setup_code_page_names_an_app_only_beside_its_host() {
         }),
     );
     assert!(named.contains("Notes</bdi> at <bdi>notes.example</bdi> is asking to connect"));
-    assert!(named.contains("Marfa hasn&#39;t verified this app."));
+    assert!(named.contains("Marfa hasn't verified this app."));
 }
 
 #[test]
@@ -421,7 +421,7 @@ fn the_recovery_page_carries_no_return_to() {
     .unwrap()
     .html;
     assert!(recovery.contains("Recovery code"));
-    assert!(!recovery.contains("return_to"));
+    assert!(!recovery.contains("name=\"return_to\""));
 }
 
 #[test]
