@@ -397,7 +397,8 @@ impl Disk {
 
     /// Claims the backup folder's files area `root`, which must exist and hold no other store's
     /// marker, for the store `id`, under its locks: this store's own where it holds the folder.
-    /// The id waits as a pending marker until [`Claim::promote`]. It blocks.
+    /// An area that takes no locks must hold no other claim either. The id waits as a pending
+    /// marker until [`Claim::promote`]. It blocks.
     pub fn claim(&self, root: &Path, id: &str) -> io::Result<Claim> {
         let area = self.hold_at(root)?;
         match read_in(area.dir(), MARKER)? {
@@ -408,6 +409,21 @@ impl Disk {
                 ));
             }
             _ => {}
+        }
+        if area.folder.unlocked_why().is_some()
+            && let Some(found) = read_in(area.dir(), PENDING)?
+            && !found.trim().is_empty()
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "it holds the claim of another adopt, for the store {}, which may be another \
+                     server's, since its file system takes no locks. Stop any other Marfa server \
+                     that uses the folder, then remove {}",
+                    found.trim(),
+                    root.join(PENDING).display()
+                ),
+            ));
         }
         area.tmp()?;
         if let Err(error) = write_in(area.dir(), PENDING, id) {

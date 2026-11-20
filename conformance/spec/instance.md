@@ -880,7 +880,7 @@ If `<backup_path>/files/<instance id>/` did not take the marker of the store an 
 
 Where the file system that holds `<backup_path>/files/<instance id>/` takes no file locks, if that files folder holds the claim of an adopt for a store other than the one the server recorded there, then the server MUST NOT remove that claim.
 
-**Reason:** without a lock the server cannot tell the claim of its own adopt that did not finish from the claim of an adopt another server is running on the same folder. Removing the other server's claim would leave that server's record naming a folder that never takes its marker. The owner learns of the claim under `instance/attention-backup-claim-kept`.
+**Reason:** without a lock the server cannot tell the claim of its own adopt that did not finish from the claim of an adopt another server is running on the same folder. Removing the other server's claim would leave that server's record naming a folder that never takes its marker. So an adopt that recorded nothing keeps its own claim there, and an adopt does not write its claim over another. The owner learns of the claim under `instance/attention-backup-claim-kept`.
 
 **Tests:** waiting on #3116.
 

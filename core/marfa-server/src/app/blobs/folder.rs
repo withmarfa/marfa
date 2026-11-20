@@ -129,28 +129,31 @@ fn settled(claim: disk::Claim, recorded: Option<&str>) -> io::Result<Settled> {
             tracing::info!("The backup folder took the store an earlier adopt recorded");
             Ok(Settled::Promoted(promoted))
         }
-        Some(_) => match claim.unlocked() {
-            Some(why) => {
-                tracing::warn!(
-                    reason = %why,
-                    "The backup folder keeps an adopt's claim the record does not name, since \
-                     it is not locked and the claim may be another server's"
-                );
-                Ok(Settled::Kept(claim.id().to_string()))
-            }
-            None => {
-                claim.undo()?;
-                tracing::info!(
-                    "The backup folder's claim by an adopt that did not finish was undone"
-                );
-                Ok(Settled::Undone)
-            }
-        },
+        Some(_) => Ok(match given_up(claim)? {
+            Some(id) => Settled::Kept(id),
+            None => Settled::Undone,
+        }),
         None => {
             tracing::warn!("The backup folder holds a claim no record names, and it was kept");
             Ok(Settled::Unrecorded)
         }
     }
+}
+
+/// Removes `claim`, which the record does not name, unless its files area takes no locks: the
+/// claim there may since be another server's, so it is kept and its store id answered. It blocks.
+fn given_up(claim: disk::Claim) -> io::Result<Option<String>> {
+    if let Some(why) = claim.unlocked() {
+        tracing::warn!(
+            reason = %why,
+            "The backup folder keeps an adopt's claim the record does not name, since it is not \
+             locked and the claim may be another server's"
+        );
+        return Ok(Some(claim.id().to_string()));
+    }
+    claim.undo()?;
+    tracing::info!("The backup folder's claim by an adopt that did not finish was undone");
+    Ok(None)
 }
 
 /// The store the record names at the files area `area`, where an adopt left its claim there
@@ -366,6 +369,16 @@ impl Folder {
         make_inside(&self.root.join(FILES))?;
         make_inside(&area)?;
         self.files().claim(&area, id)
+    }
+
+    /// Gives up `claim`, an adopt's own claim that recorded nothing, and answers whether it was
+    /// kept, as a claim in a files area that takes no locks is. It blocks.
+    pub fn give_up(&self, claim: disk::Claim) -> io::Result<bool> {
+        let Some(id) = given_up(claim)? else {
+            return Ok(false);
+        };
+        *self.kept.lock().unwrap_or_else(PoisonError::into_inner) = Some(id);
+        Ok(true)
     }
 
     /// Makes `disk` the files area's store, and lets the one it replaces go.
@@ -1228,6 +1241,44 @@ mod tests {
             );
             fs::remove_file(area.join(disk::PENDING)).unwrap();
             assert!(folder.kept_claim().is_none(), "{code}");
+        }
+    }
+
+    #[test]
+    fn an_adopts_own_claim_given_up_in_an_area_without_locks_is_kept_and_blocks_another_adopt() {
+        // The witness: a locked area removes the claim given up and keeps nothing.
+        let dir = TempDir::new().unwrap();
+        let folder = unmounted_at(dir.path());
+        let pending = dir.path().join(FILES).join("instance").join(disk::PENDING);
+        let claim = folder.claim(&Uuid::now_v7().to_string()).unwrap();
+        assert!(!folder.give_up(claim).unwrap());
+        assert!(!pending.exists());
+        assert!(folder.kept_claim().is_none());
+
+        for code in [libc::ENOTSUP, libc::EOPNOTSUPP, libc::ENOLCK] {
+            let dir = TempDir::new().unwrap();
+            let folder = unmounted_at(dir.path());
+            let pending = dir.path().join(FILES).join("instance").join(disk::PENDING);
+            let id = Uuid::now_v7().to_string();
+            let kept = crate::server_lock::without_locks_answering(code, || {
+                let claim = folder.claim(&id)?;
+                folder.give_up(claim)
+            })
+            .unwrap();
+            assert!(kept, "{code}");
+            assert_eq!(fs::read_to_string(&pending).unwrap(), id, "{code}");
+            assert_eq!(folder.kept_claim().as_deref(), Some(id.as_str()), "{code}");
+
+            let refused = crate::server_lock::without_locks_answering(code, || {
+                folder.claim(&Uuid::now_v7().to_string())
+            })
+            .unwrap_err();
+            assert_eq!(refused.kind(), io::ErrorKind::AlreadyExists, "{code}");
+            assert!(
+                refused.to_string().contains(&pending.display().to_string()),
+                "{code}: {refused}"
+            );
+            assert_eq!(fs::read_to_string(&pending).unwrap(), id, "{code}");
         }
     }
 

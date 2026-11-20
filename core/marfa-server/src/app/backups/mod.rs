@@ -24,6 +24,7 @@ use super::App;
 use super::access::{Caller, Permission};
 use super::archive::tar::{BLOCK, END, header, padding};
 use super::archive::{self, MANIFEST, Out, Parted};
+use super::blobs::disk::PENDING;
 use super::blobs::folder::{self as backup_folder, Adoptable, Area, Folder};
 use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
@@ -1410,13 +1411,13 @@ impl App {
         let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
         let deadline = self.blobs.check();
         // The folder is claimed, under its lock, before any record is forgotten.
-        let claiming = id.clone();
+        let (claiming, keeping) = (id.clone(), folder.clone());
         let claimed = folder
             .within(
                 deadline,
                 move |folder| folder.claim(&claiming),
-                |claim| {
-                    if let Err(error) = claim.undo() {
+                move |claim| {
+                    if let Err(error) = keeping.give_up(claim) {
                         tracing::warn!(%error, "A claim on the backup folder that was given up on was not undone");
                     }
                 },
@@ -1487,10 +1488,24 @@ impl App {
             }
             Err(refusal) => {
                 let undone = folder
-                    .within(deadline, move |_| claim.undo(), |()| {})
+                    .within(deadline, move |folder| folder.give_up(claim), |_| {})
                     .await;
                 let why = match undone {
-                    Some(Ok(())) => return Err(refusal),
+                    Some(Ok(false)) => return Err(refusal),
+                    Some(Ok(true)) => {
+                        return Err(Refusal {
+                            message: format!(
+                                "{} Nothing was adopted, but the backup folder {root} keeps this \
+                                 adopt's claim, which may be another server's, since its file \
+                                 system takes no locks. Stop any other Marfa server that uses the \
+                                 folder, then remove {}.",
+                                refusal.message,
+                                folder.files().root().join(PENDING).display()
+                            )
+                            .into(),
+                            ..refusal
+                        });
+                    }
                     Some(Err(error)) => error.to_string(),
                     None => "it did not answer in time".to_string(),
                 };
