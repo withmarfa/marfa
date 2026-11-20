@@ -156,7 +156,7 @@ If an update starts while an earlier update of the same programs has not settled
 
 ## Trying the new release
 
-The service runs `marfa server run`, the CLI of the release that ran before the update, until the new release settles: once the new server has stayed up for 20 seconds, with its health not `down`, it settles the update. Until then the CLI counts each start of the new release, and ends a start that has not settled within 10 minutes.
+The service runs `marfa server run`, the CLI of the release that ran before the update, until the new release settles: once the new server has stayed up for 20 seconds, with its health not `down`, it settles the update. Until then the CLI counts each start of the new release, and ends a start that has not settled within 10 minutes. The time the new server spends upgrading the database is not part of those 10 minutes, and has a limit of 2 hours of its own.
 
 ### `updates/start-counted-before-run`
 
@@ -176,7 +176,7 @@ If the CLI cannot count a start of the new release in the update's record, then 
 
 ### `updates/start-waits-for-last-server`
 
-If a server of the install still holds the lock on its database, its blob folder or its control socket 30 seconds after a start of the new release begins, then the CLI MUST end `marfa server run` with status 75 without counting the start.
+If a server of the install still holds the lock on its database, its blob folder or its control socket 30 seconds after a start of the new release begins, then the CLI MUST end `marfa server run` with status 75, without counting the start or putting the old release back.
 
 **Reason:** on macOS a server can outlive a `marfa server run` that was killed, and a start that fails on that server's locks is not the new release failing. The CLI waits for the lock first, because that server usually ends within seconds.
 
@@ -184,9 +184,39 @@ If a server of the install still holds the lock on its database, its blob folder
 
 ### `updates/start-unsettled-limit`
 
-If a start of the new release has run for 10 minutes and its update has not settled, then the CLI MUST stop that server, keep the start counted, and end `marfa server run` with status 75.
+If a start of the new release is not upgrading the database and its update has not settled within 10 minutes of the start, or of the end of the start's database upgrade, then the CLI MUST stop that server, keep the start counted, and end `marfa server run` with status 75.
 
-**Reason:** a release that hangs, or whose health never rises above `down`, does not end by itself, so the old release would never come back. Ten minutes leaves room for a first start that migrates a large database.
+**Reason:** a release that hangs, or whose health never rises above `down`, does not end by itself, so the old release would never come back.
+
+**Tests:** waiting on #3177.
+
+### `updates/start-upgrade-limit`
+
+If a start of the new release has spent 2 hours upgrading the database and the upgrade has not ended, then the CLI MUST stop that server, keep the start counted, and end `marfa server run` with status 75.
+
+**Reason:** an upgrade rewrites the database in one transaction that a stop undoes, so a large database on a slow disk must not be stopped while its upgrade makes progress, and an upgrade that hangs must still let the old release come back.
+
+**Tests:** waiting on #3177.
+
+### `updates/upgrade-began-marked`
+
+When a start of the new release of an update that has not settled begins to upgrade the database, the server MUST write `began` to the update's `upgrade.json` before it changes the database.
+
+**Reason:** `marfa server run` reads the mark to time the upgrade apart from the start.
+
+**Tests:** waiting on #3177.
+
+### `updates/upgrade-ended-marked`
+
+When a start of the new release of an update that has not settled has committed its upgrade of the database, the server MUST write `ended` to the update's `upgrade.json`.
+
+**Tests:** waiting on #3177.
+
+### `updates/rollback-names-limit`
+
+If a time limit ended a start of the new release and the old release is then put back, then the CLI MUST name that limit in the reason of the `rolled_back` update.
+
+**Reason:** an owner whose release was put back for its time sees why, and is not left to guess at a crash.
 
 **Tests:** waiting on #3177.
 
@@ -272,22 +302,30 @@ When the new release has stayed up for 20 seconds, the server MUST put the new `
 
 ### `updates/settle-half-put-back`
 
-If the new release has stayed up for 20 seconds, a program in its folder does not report the new release, and the database's schema is as it was before the swap, then the server MUST put the old programs back and report the update as `rolled_back`, naming what each program reports.
+If the new release has stayed up for 20 seconds, a program in its folder does not report the new release, and the old server opens the database with the schema it had before the swap, then the server MUST put the old programs back and report the update as `rolled_back`, naming what each program reports.
 
 **Tests:** waiting on #3177.
 
 ### `updates/settle-half-failed`
 
-If the new release has stayed up for 20 seconds, a program in its folder does not report the new release, and the database's schema has changed since the swap, then the server MUST report the update as `failed` with the step to install the new release on the host.
+If the new release has stayed up for 20 seconds, a program in its folder does not report the new release, and the old server will not open the database or the database's schema has changed since the swap, then the server MUST report the update as `failed` with the step to install the new release on the host.
 
-**Reason:** the old release cannot open a database the new one has changed, so the new release keeps running.
+**Reason:** the old release cannot run on a database it does not open, so the new release keeps running.
 
 **Tests:** waiting on #3177.
 
 ### `updates/settle-half-failed-marfa`
 
-If the new release has stayed up for 20 seconds, the database's schema has changed since the swap, and the new `marfa` that was put in place does not report the new release, then the server MUST put the old `marfa` back.
+If the new release has stayed up for 20 seconds, the old release cannot be put back, and the new `marfa` that was put in place does not report the new release, then the server MUST put the old `marfa` back.
 
 **Reason:** the service's `marfa server run` starts the new server again after a restart, which a `marfa` that does not run cannot do.
+
+**Tests:** waiting on #3177.
+
+### `updates/settle-after-ended`
+
+If an update has already ended as `failed` with its record kept, then the server MUST NOT put the old programs back when the new release has stayed up for 20 seconds.
+
+**Reason:** the update ended because the old release could not come back, and a put-back would leave a server that refuses the database.
 
 **Tests:** waiting on #3177.
