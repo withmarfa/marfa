@@ -788,6 +788,14 @@ pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result
     Ok(())
 }
 
+pub fn journal_is_carried(conn: &Connection, path: &str, item_id: &str) -> Result<bool, CoreError> {
+    Ok(conn
+        .prepare_cached(
+            "SELECT 1 FROM folder_journal WHERE path = ?1 AND item_id = ?2 AND kept = 'carried'",
+        )?
+        .exists([path, item_id])?)
+}
+
 /// Records that the file at `carrier` carries the missing file at `path`,
 /// and where given the carrier's `identity` as the binding's. Its grace
 /// starts again once no file carries it (`journal_uncarried`).

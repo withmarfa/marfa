@@ -3072,10 +3072,7 @@ impl Folder {
         // says is an error, not a reason to skip the delete.
         let (held, bound) = {
             let conn = self.core.conn()?;
-            if state::journaled(&conn)?
-                .iter()
-                .any(|row| row.path == path && row.item_id == item_id && row.carried())
-            {
+            if state::journal_is_carried(&conn, path, item_id)? {
                 return Ok(Missing::Carried);
             }
             (
