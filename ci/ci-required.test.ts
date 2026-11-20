@@ -285,7 +285,15 @@ describe("what a change runs", () => {
     [
       "the action that installs the compiler, which every job that builds Rust runs",
       [".github/actions/rust-toolchain/action.yml"],
-      [...RUST, ...ENRICHMENT, "image", "quick-checks", "version-fields"],
+      [
+        ...RUST,
+        ...ENRICHMENT,
+        "image",
+        "quick-checks",
+        "version-fields",
+        "types-freshness",
+        "clients-freshness",
+      ],
     ],
     [
       "the core's compiler version, since a new compiler can break any build of the core",
@@ -334,7 +342,7 @@ describe("what a change runs", () => {
       ["quick-checks", "version-fields", "core-deny", ...RUST, ...ENRICHMENT],
     ],
     [
-      "nextest's budget and the runner that caps a test, which the fault-injection tests run under",
+      "nextest's budget and the runner that caps a test, which the fault-injection tests and both freshness jobs run under",
       ["core/.config/nextest.toml", "core/scripts/test-limits.sh"],
       [
         "quick-checks",
@@ -343,6 +351,8 @@ describe("what a change runs", () => {
         "core-checks-linux",
         "core-fault-injection",
         "core",
+        "types-freshness",
+        "clients-freshness",
       ],
     ],
     [

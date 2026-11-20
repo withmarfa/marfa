@@ -237,10 +237,17 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["core-native", "image", ...RUST_SERVER],
   ],
   // The action every Rust job uses to install the compiler, which runs for
-  // the jobs that read the compiler version.
+  // the jobs that read the compiler version, the freshness jobs among them.
   [
     /^\.github\/actions\/rust-toolchain\//,
-    [...RUST, ...ENRICHMENT, "image", "version-fields"],
+    [
+      ...RUST,
+      ...ENRICHMENT,
+      "image",
+      "version-fields",
+      "types-freshness",
+      "clients-freshness",
+    ],
   ],
   // Read by GitHub alone. Anything else under `.github/`, such as an action
   // a workflow uses, runs everything until a rule names it.
@@ -519,6 +526,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "clients-freshness",
     ],
   ],
+  // The freshness jobs run the rules crate's tests under nextest and the
+  // runner that caps them.
   [
     /^core\/\.config\//,
     [
@@ -527,6 +536,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "core-fault-injection",
       "core",
       "workspace",
+      "types-freshness",
+      "clients-freshness",
     ],
   ],
   // It can hide a file the client generator writes from the freshness
@@ -540,6 +551,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "core-fault-injection",
       "core",
       "workspace",
+      "types-freshness",
+      "clients-freshness",
     ],
   ],
   // Only the live tests boot a server.
