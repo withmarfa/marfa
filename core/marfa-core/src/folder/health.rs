@@ -1503,6 +1503,7 @@ pub(in crate::folder) mod tests {
             },
             directories: Vec::new(),
             first_sync: None,
+            beneath_waiting: None,
         };
         let snapshot = local_snapshot(&status);
         assert_eq!(snapshot.pending_uploads, 1);

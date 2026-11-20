@@ -610,6 +610,9 @@ impl Folder {
         if asking() {
             return Ok(None);
         }
+        // The path of the file the folder narrows beneath becomes its item's
+        // id once the drain has sent the file.
+        self.resolve_beneath()?;
         // The follow's completed refill wakes the pass that writes the files.
         if self.refill_due()? {
             refill.store(true, Ordering::SeqCst);

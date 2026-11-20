@@ -21,7 +21,8 @@ pub struct SettingsArgs {
     #[arg(long)]
     pub title: Option<String>,
     /// Which items the folder holds, as a JSON object: `types`, `tier`,
-    /// `state`, `filter` and `beneath`.
+    /// `state`, `filter` and `beneath`, an item ID or the path of one of the
+    /// folder's own files, which the first sync replaces with its item's ID.
     #[arg(long, value_name = "JSON")]
     pub query: Option<String>,
     /// What a new file takes where it leaves a blank, as a JSON object:

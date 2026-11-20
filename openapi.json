@@ -7903,7 +7903,7 @@
           },
           "beneath": {
             "type": "string",
-            "description": "An item ID. The folder holds that item and everything under it by `parent-of`, at any depth."
+            "description": "An item ID, or the path of one of the folder's own files, relative to its root, with `/`. The folder holds that item and everything beneath it by `parent-of`. A device replaces a path with its file's item ID once it has sent the file."
           }
         },
         "additionalProperties": false,

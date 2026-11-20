@@ -1462,6 +1462,9 @@ export interface ScanReport {
 
 /** Where every file stands (`folder-guards/status-files`). */
 export interface StatusReport {
+  /** The path of the file the folder's query narrows beneath while that file
+   *  has no item, where one does (`folder-setup/beneath-file-waits`). */
+  beneath_waiting?: string;
   /** Directory holds or intentional package exclusions observed by the inventory. */
   directories: FlaggedFile[];
   files: Array<{
@@ -1615,6 +1618,13 @@ export interface PushReport {
   /** The person's edit of the settings file, sent before anything else. */
   settings: SettingsFileReport;
   scan: ScanReport;
+  /** What the sync did to name the item the query narrows beneath, where the
+   *  query named a file's path (`folder-setup/beneath-file-one-pass`). */
+  beneath: {
+    path: string;
+    resolved: string | null;
+    waiting: string | null;
+  } | null;
   /** With the edits the server refused `ancestor_unavailable`, sent again on
    *  the version the copy holds (`folder-documents/version-ancestor-missing`). */
   drain: DrainReport & {

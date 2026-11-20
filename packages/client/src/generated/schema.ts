@@ -5949,7 +5949,7 @@ export interface components {
             state?: ("active" | "archived")[];
             /** @description A filter expression, as on `GET /items`, that narrows what the folder holds. */
             filter?: string;
-            /** @description An item ID. The folder holds that item and everything under it by `parent-of`, at any depth. */
+            /** @description An item ID, or the path of one of the folder's own files, relative to its root, with `/`. The folder holds that item and everything beneath it by `parent-of`. A device replaces a path with its file's item ID once it has sent the file. */
             beneath?: string;
         };
         /** @description What a new file takes where its frontmatter leaves a blank. */

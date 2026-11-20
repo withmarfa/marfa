@@ -526,6 +526,7 @@ pub fn run(
                 rebuilt,
                 catch_up,
                 pull: pulled,
+                beneath,
             } = match folder.sync()? {
                 Synced::Done(report) => *report,
                 Synced::Waiting(plan) => {
@@ -554,6 +555,7 @@ pub fn run(
                     "rebuilt": rebuilt,
                     "catch_up": caught,
                     "pull": pulled,
+                    "beneath": beneath,
                 }),
                 json,
                 || {
@@ -585,6 +587,7 @@ pub fn run(
                     ));
                     lines.extend(rebuilt_line(rebuilt.as_ref()));
                     lines.extend(drain_lines(&folder, &drained));
+                    lines.extend(beneath_line(beneath.as_ref()));
                     if let Some(error) = &failed {
                         lines.push(format!(
                             "could not catch up: {}",
@@ -795,6 +798,22 @@ fn rebuilt_line(rebuilt: Option<&marfa_core::HydrateReport>) -> Option<String> {
             "the server's reach changed, so the copy was hydrated again ({} item(s)) before the waiting writes were sent",
             rebuilt.items
         )
+    })
+}
+
+fn beneath_line(beneath: Option<&marfa_core::folder::BeneathReport>) -> Option<String> {
+    let beneath = beneath?;
+    Some(match (&beneath.resolved, &beneath.waiting) {
+        (Some(item), _) => format!(
+            "the folder now narrows beneath item {item}, which {} became",
+            printable(&beneath.path)
+        ),
+        (None, Some(why)) => format!(
+            "the folder holds nothing from the server until {} has an item: {}",
+            printable(&beneath.path),
+            printable(why)
+        ),
+        (None, None) => return None,
     })
 }
 
@@ -1267,6 +1286,12 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
             printable(path),
             printable(directory.flag),
             printable(&directory.reason)
+        ));
+    }
+    if let Some(path) = &report.beneath_waiting {
+        lines.push(format!(
+            "the folder holds nothing from the server until {} has an item",
+            printable(path)
         ));
     }
     if report.paused.disk + report.paused.pull > 0 {

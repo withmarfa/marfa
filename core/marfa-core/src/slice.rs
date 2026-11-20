@@ -42,6 +42,9 @@ pub struct SliceQuery {
     /// An item id whose `parent-of` descendants, and itself, are the members.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub beneath: Option<String>,
+    /// Whether the slice holds no row and asks the server for none.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub nothing: bool,
 }
 
 /// The keys a server listing narrowed by a query sends.
@@ -154,6 +157,7 @@ impl SliceQuery {
         };
         if filter.is_none()
             && self.beneath.is_none()
+            && !self.nothing
             && member == DEFAULT_STATES.map(ItemState::as_str)
         {
             return Ok(None);
@@ -162,6 +166,7 @@ impl SliceQuery {
             states: Some(member.into_iter().map(str::to_string).collect()),
             filter,
             beneath: self.beneath.clone(),
+            nothing: self.nothing,
         }))
     }
 
@@ -175,6 +180,9 @@ impl SliceQuery {
         values: &mut Vec<Value>,
     ) -> Result<()> {
         push_states(&self.member_states(), clauses, values);
+        if self.nothing {
+            clauses.push(NO_ROW.into());
+        }
         crate::filter::narrow(
             self.filter.as_deref(),
             self.beneath.as_deref(),
@@ -201,6 +209,10 @@ impl SliceQuery {
         values: &mut Vec<Value>,
     ) -> Result<()> {
         push_states(&self.listed_states(), clauses, values);
+        if self.nothing {
+            clauses.push(NO_ROW.into());
+            return Ok(());
+        }
         let mut narrowing = Vec::new();
         crate::filter::narrow(
             self.filter.as_deref(),
@@ -227,6 +239,9 @@ impl SliceQuery {
     /// where it narrows by states alone and holds each state `asked` names,
     /// or where it holds the narrowing a copy of `asked` would.
     pub(crate) fn covers(&self, asked: &SliceQuery) -> Result<bool> {
+        if self.nothing {
+            return Ok(false);
+        }
         if self.filter.is_none() && self.beneath.is_none() {
             let held = self.member_states();
             return Ok(asked
@@ -252,6 +267,9 @@ impl SliceQuery {
         }
     }
 }
+
+/// A clause no row meets.
+const NO_ROW: &str = "0";
 
 fn push_states(states: &[&str], clauses: &mut Vec<String>, values: &mut Vec<Value>) {
     clauses.push(format!(
@@ -359,6 +377,7 @@ mod tests {
             states: states.map(|states| states.iter().map(|s| s.to_string()).collect()),
             filter: filter.map(str::to_string),
             beneath: None,
+            nothing: false,
         }
     }
 

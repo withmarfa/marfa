@@ -364,7 +364,7 @@ fn attempt(
     // holds under it. A resume carries on under the reach its walk was
     // allowed under, so it asks no first page again.
     if reached.is_none()
-        && let Some(query) = query
+        && let Some(query) = query.filter(|query| !query.nothing)
     {
         refuse_unlisted_query(http, types, tier, query)?;
     }
@@ -844,6 +844,9 @@ fn holds_built_slice(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<b
 /// and, under a query that leaves conflicted copies out of it, one more
 /// beside it for them (`device/hydrate-listing-conflicted`).
 fn listings(types: &[String], query: Option<&SliceQuery>) -> Vec<String> {
+    if query.is_some_and(|query| query.nothing) {
+        return Vec::new();
+    }
     let apart = query.is_some_and(SliceQuery::lists_conflicted_apart);
     types
         .iter()
@@ -1371,6 +1374,9 @@ fn counted(
     tier: SliceTier,
     query: Option<&SliceQuery>,
 ) -> Option<HashMap<String, u64>> {
+    if query.is_some_and(|query| query.nothing) {
+        return Some(HashMap::new());
+    }
     let system = types.iter().any(|declared| store::is_system(declared));
     if system && tier != SliceTier::All {
         return None;

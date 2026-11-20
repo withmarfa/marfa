@@ -3503,7 +3503,7 @@ marfa device folders create [OPTIONS]
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`, an item ID or the path of one of the folder's own files, which the first sync replaces with its item's ID. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
@@ -3534,7 +3534,7 @@ marfa device folders update [OPTIONS] --version <VERSION> <ID>
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`, an item ID or the path of one of the folder's own files, which the first sync replaces with its item's ID. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
@@ -4607,7 +4607,7 @@ marfa folders create [OPTIONS]
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`, an item ID or the path of one of the folder's own files, which the first sync replaces with its item's ID. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
@@ -4636,7 +4636,7 @@ marfa folders update [OPTIONS] --version <VERSION> <ID>
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`, an item ID or the path of one of the folder's own files, which the first sync replaces with its item's ID. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
