@@ -352,7 +352,6 @@ pub(super) struct Summary {
     pub changed_at: String,
 }
 
-/// A table an item hosts, as a purge binds it: its key, name, row count and last batch.
 pub(crate) struct Hosted {
     pub key: i64,
     pub name: String,

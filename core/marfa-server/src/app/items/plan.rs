@@ -395,8 +395,7 @@ fn over_cap(message: &'static str) -> Refusal {
     Refusal::new(Code::BulkCapExceeded, message).with_detail("cap", CHOSEN_CAP)
 }
 
-/// Each edge stands with the first row of the walk that touches it. The walk stops, refused,
-/// once it would take more than `cap` rows.
+/// Each edge stands with the first row of the walk that touches it.
 fn purge_walk(gate: &Gate<'_, '_>, named: &[Item], cap: usize) -> Result<Vec<Purging>> {
     let mut going: HashSet<String> = named.iter().map(|row| row.id.clone()).collect();
     let too_many = || {
@@ -459,8 +458,7 @@ fn purged(gate: &Gate<'_, '_>, asked: &[Asked], cap: usize) -> Result<Plan> {
     })
 }
 
-/// One walk from every chosen row at once, so a part two chosen hosts share goes with them,
-/// refused once it would take more than [`CHOSEN_CAP`] rows.
+/// One walk from every chosen row at once, so a part two chosen hosts share goes with them.
 pub(super) fn chosen(gate: &Gate<'_, '_>, ids: &[String]) -> Result<Plan> {
     gate.caller.require(Permission::ItemsPurge)?;
     let mut seen = HashSet::new();
@@ -477,8 +475,8 @@ pub(super) fn chosen(gate: &Gate<'_, '_>, ids: &[String]) -> Result<Plan> {
     purged(gate, &asked, CHOSEN_CAP)
 }
 
-/// How many of the first `ids` one chosen purge can take within [`CHOSEN_CAP`] rows, which is
-/// none when the first alone takes more. The walk only grows as ids are added.
+/// How many of the first `ids` one chosen purge can take, refused when the first alone is over
+/// [`CHOSEN_CAP`]. The search holds because the walk only grows as ids are added.
 pub(super) fn fitting(gate: &Gate<'_, '_>, ids: &[String]) -> Result<usize> {
     let (mut fits, mut over) = (0, ids.len() + 1);
     while over - fits > 1 {
