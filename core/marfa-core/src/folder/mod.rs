@@ -2337,9 +2337,8 @@ fn one_per_name(
     kept
 }
 
-/// Where each item has a file the pass found but does not read: one
-/// `one_per_name` held, or one the folder does not send. Such a file is still
-/// its item's, so the item is not let go while it is there.
+/// The files a pass found but does not read, by what each carries: such a
+/// file keeps its item.
 #[derive(Default)]
 struct Carriers {
     by_mark: HashMap<String, String>,
@@ -2347,8 +2346,7 @@ struct Carriers {
 }
 
 impl Carriers {
-    /// Each of `files`, a path and its key, with whether to read its id
-    /// line. An error where a file cannot be read, since it may name any item.
+    /// An error where a file cannot be read, since it may carry any item.
     fn of<'a>(
         walked: &Walked,
         files: impl IntoIterator<Item = (&'a Path, &'a str, bool)>,
@@ -2374,8 +2372,7 @@ impl Carriers {
         Ok(carriers)
     }
 
-    /// The key of the file that carries `bound`'s item, by identity, else by
-    /// id line.
+    /// By identity, else by id line.
     fn carrying(&self, bound: &state::Bound) -> Option<&str> {
         bound
             .identity

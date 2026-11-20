@@ -1680,10 +1680,8 @@ impl Folder {
         Ok(ControlFlow::Continue(()))
     }
 
-    /// Where the files this pass found but does not read carry an item: the
-    /// walk's files `one_per_name` held, so not among `paths`, and those the
-    /// pass skipped. A skipped file is no document, so only its identity is
-    /// read.
+    /// The files `one_per_name` held and those the pass skipped, which are no
+    /// documents and so carry no id line.
     fn carriers(
         &self,
         walked: &Walked,

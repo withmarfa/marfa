@@ -516,9 +516,8 @@ impl Folder {
         Ok(FileStatus { status, ..entry })
     }
 
-    /// Names the item of each missing bound file on the file that carries
-    /// it, one held for its name or left alone by the query, where the scan
-    /// keeps that item for it. Answers the paths of the bound files it named.
+    /// Names each missing bound file's item on the held or skipped file that
+    /// carries it, and answers the bound paths it named.
     fn name_carriers(
         &self,
         walked: &super::Walked,
