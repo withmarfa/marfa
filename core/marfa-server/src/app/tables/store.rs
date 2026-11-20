@@ -883,8 +883,7 @@ mod tests {
 
     fn logged(batches: &[(i64, i64, i64)]) -> rusqlite::Connection {
         let db = rusqlite::Connection::open_in_memory().unwrap();
-        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
-            .unwrap();
+        crate::db::migrate::make_all(&db).unwrap();
         for &(table, batch, rows) in batches {
             db.execute(
                 "INSERT INTO row_batches (seq, id, table_seq, at, rows) VALUES (?1, ?1, ?2, ?3, ?4)",

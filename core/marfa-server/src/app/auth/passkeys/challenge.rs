@@ -234,8 +234,7 @@ mod tests {
 
     fn database() -> Connection {
         let db = Connection::open_in_memory().unwrap();
-        db.execute_batch(include_str!("../../../db/migrations/0001_baseline.sql"))
-            .unwrap();
+        crate::db::migrate::make_all(&db).unwrap();
         db
     }
 

@@ -2381,7 +2381,6 @@ mod tests {
     use rusqlite::Connection;
 
     use super::*;
-    use crate::db::migrate::MIGRATIONS;
 
     const BUCKET: &str = "bucket";
     const HOUR_MS: i64 = 3_600_000;
@@ -2389,7 +2388,7 @@ mod tests {
 
     fn database() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        crate::db::migrate::make_all(&conn).unwrap();
         conn
     }
 

@@ -1106,7 +1106,6 @@ mod tests {
     use rusqlite::{Connection, StatementStatus};
 
     use super::*;
-    use crate::db::migrate::MIGRATIONS;
 
     fn lent(tx: &Transaction<'_>, hash: &Hash, seq: i64, kind: &str, types: [&str; 3]) {
         tx.execute(
@@ -1121,7 +1120,7 @@ mod tests {
     #[test]
     fn an_open_jobs_hold_keeps_a_blob_off_the_report_and_out_of_the_purge_until_released() {
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        crate::db::migrate::make_all(&conn).unwrap();
         let tx = conn.transaction().unwrap();
         let hash = Hash::parse(&format!("sha256:{}", "c".repeat(64))).unwrap();
         let at = "2026-01-01T00:00:00.000Z";
@@ -1164,7 +1163,7 @@ mod tests {
     #[test]
     fn the_lenders_walk_one_seek_per_distinct_answer_however_many_rows_lend() {
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        crate::db::migrate::make_all(&conn).unwrap();
         let tx = conn.transaction().unwrap();
         let hash = Hash::parse(&format!("sha256:{}", "a".repeat(64))).unwrap();
         let other = Hash::parse(&format!("sha256:{}", "b".repeat(64))).unwrap();

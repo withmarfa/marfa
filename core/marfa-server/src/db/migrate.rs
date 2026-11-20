@@ -9,12 +9,25 @@ use crate::failure::Failure;
 pub struct Migration {
     pub version: u32,
     pub sql: &'static str,
+    /// A query that returns true when an unfinished file already has this migration's changes.
+    pub done: Option<&'static str>,
 }
 
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    sql: include_str!("migrations/0001_baseline.sql"),
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        sql: include_str!("migrations/0001_baseline.sql"),
+        done: None,
+    },
+    Migration {
+        version: 2,
+        sql: include_str!("migrations/0002_consent_login_after.sql"),
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('oauth_consents') \
+             WHERE name = 'login_after')",
+        ),
+    },
+];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \
                            restore the archive there. A restore reads archive versions from 1 \
@@ -31,6 +44,13 @@ pub enum Standing {
     Unfinished,
     /// Written whole by an earlier build, at this version.
     Behind(u32),
+}
+
+#[cfg(test)]
+pub fn make_all(conn: &Connection) -> rusqlite::Result<()> {
+    MIGRATIONS
+        .iter()
+        .try_for_each(|migration| conn.execute_batch(migration.sql))
 }
 
 pub(super) fn latest(migrations: &[Migration]) -> u32 {
@@ -241,12 +261,11 @@ pub fn upgrade(
     let steps = migrations
         .iter()
         .filter(|migration| migration.version > from);
-    apply(conn, steps, latest(migrations))
+    apply(conn, steps, latest(migrations), false)
 }
 
-/// Applies every migration to a new or unfinished file, which holds no rows.
 pub fn complete(conn: &mut Connection, migrations: &[Migration]) -> Result<(), Unapplied> {
-    apply(conn, migrations.iter(), latest(migrations))
+    apply(conn, migrations.iter(), latest(migrations), true)
 }
 
 /// Foreign keys are off outside the transaction, so dropping a rebuilt table neither cascades
@@ -255,9 +274,10 @@ fn apply<'a>(
     conn: &mut Connection,
     steps: impl Iterator<Item = &'a Migration>,
     version: u32,
+    skip_done: bool,
 ) -> Result<(), Unapplied> {
     set_foreign_keys(conn, false)?;
-    let applied = in_one_transaction(conn, steps, version);
+    let applied = in_one_transaction(conn, steps, version, skip_done);
     let restored = set_foreign_keys(conn, true);
     applied?;
     restored.map_err(|cause| Unapplied::Committed(Box::new(cause)))
@@ -267,9 +287,15 @@ fn in_one_transaction<'a>(
     conn: &mut Connection,
     steps: impl Iterator<Item = &'a Migration>,
     version: u32,
+    skip_done: bool,
 ) -> Result<(), Unapplied> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     for migration in steps {
+        if let (true, Some(done)) = (skip_done, migration.done)
+            && tx.query_row(done, [], |row| row.get::<_, bool>(0))?
+        {
+            continue;
+        }
         tx.execute_batch(migration.sql)?;
     }
     let dangling: Vec<(String, String, i64)> = tx

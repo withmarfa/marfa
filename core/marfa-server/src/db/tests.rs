@@ -25,6 +25,7 @@ const BASE: Migration = Migration {
           CREATE TABLE child (
               parent INTEGER REFERENCES notes (id) DEFERRABLE INITIALLY DEFERRED
           ) STRICT;",
+    done: None,
 };
 const ONE: &[Migration] = &[BASE];
 const TWO: &[Migration] = &[
@@ -32,6 +33,7 @@ const TWO: &[Migration] = &[
     Migration {
         version: 2,
         sql: "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;",
+        done: None,
     },
 ];
 const THREE: &[Migration] = &[
@@ -39,16 +41,19 @@ const THREE: &[Migration] = &[
     Migration {
         version: 2,
         sql: "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;",
+        done: None,
     },
     Migration {
         version: 3,
         sql: "CREATE INDEX notes_pinned ON notes (pinned);",
+        done: None,
     },
 ];
 const SETTINGS_BASE: Migration = Migration {
     version: 1,
     sql: "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL) STRICT;
           CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT, WITHOUT ROWID;",
+    done: None,
 };
 const SETTINGS_ONE: &[Migration] = &[SETTINGS_BASE];
 const SETTINGS_TWO: &[Migration] = &[
@@ -56,6 +61,7 @@ const SETTINGS_TWO: &[Migration] = &[
     Migration {
         version: 2,
         sql: "ALTER TABLE notes ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;",
+        done: None,
     },
 ];
 const INDEXED: &[Migration] = &[Migration {
@@ -63,6 +69,7 @@ const INDEXED: &[Migration] = &[Migration {
     sql: "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL) STRICT;
           CREATE INDEX IF NOT EXISTS notes_body ON notes (body);
           CREATE TABLE IF NOT EXISTS child (id INTEGER PRIMARY KEY) STRICT;",
+    done: None,
 }];
 
 const WRITE: Write = Write::caller("key.create");
@@ -1286,6 +1293,7 @@ const KIN_BASE: Migration = Migration {
               store TEXT NOT NULL REFERENCES stores (id),
               hash TEXT NOT NULL
           ) STRICT;",
+    done: None,
 };
 const KIN_ONE: &[Migration] = &[KIN_BASE];
 /// SQLite's steps for changing a table's definition, for a parent of a cascading child and a
@@ -1309,6 +1317,7 @@ const KIN_REBUILT: &[Migration] = &[
               INSERT INTO stores_new (id, kind) SELECT id, kind FROM stores;
               DROP TABLE stores;
               ALTER TABLE stores_new RENAME TO stores;",
+        done: None,
     },
 ];
 /// Moves the old table aside before making the new one, so its children follow the old name.
@@ -1323,6 +1332,7 @@ const KIN_DANGLING: &[Migration] = &[
               ) STRICT;
               INSERT INTO notes (id, body) SELECT id, body FROM notes_old;
               DROP TABLE notes_old;",
+        done: None,
     },
 ];
 /// Fails at its last statement, after the old table has gone and the new one took its name.
@@ -1338,6 +1348,7 @@ const KIN_FAILING: &[Migration] = &[
               DROP TABLE notes;
               ALTER TABLE notes_new RENAME TO notes;
               INSERT INTO copies (store, hash) VALUES ('disk-1', NULL);",
+        done: None,
     },
 ];
 
@@ -1863,4 +1874,104 @@ async fn a_rollback_journal_left_by_a_crash_is_put_back_before_the_file_is_judge
     let mut journal = place.file.as_os_str().to_owned();
     journal.push("-journal");
     assert!(!PathBuf::from(journal).exists());
+}
+
+fn has_login_after(file: &Path) -> bool {
+    Connection::open(file)
+        .unwrap()
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('oauth_consents') \
+             WHERE name = 'login_after')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_database_at_schema_version_1_gains_login_after_and_keeps_its_rows() {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..1]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch("INSERT INTO instance (key, value) VALUES ('kept', 'yes');")
+        .unwrap();
+    assert!(!has_login_after(&place.file));
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    assert!(has_login_after(&place.file));
+    let conn = Connection::open(&place.file).unwrap();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 2);
+    let kept: String = conn
+        .query_row("SELECT value FROM instance WHERE key = 'kept'", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(kept, "yes");
+    assert!(copy_of(&place.file).exists());
+}
+
+#[tokio::test]
+async fn a_new_database_is_made_with_login_after() {
+    let place = folder();
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    assert!(has_login_after(&place.file));
+}
+
+#[tokio::test]
+async fn a_database_named_by_a_uri_that_asks_for_rw_is_upgraded_with_its_copy() {
+    let place = folder();
+    upgraded_by_uri(
+        &place.file,
+        &format!("file:{}?mode=rw", place.file.display()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_database_named_by_a_bare_file_name_uri_is_upgraded_with_its_copy() {
+    let place = folder();
+    std::env::set_current_dir(place.file.parent().unwrap()).unwrap();
+    upgraded_by_uri(&place.file, "file:marfa.db?mode=rw").await;
+}
+
+async fn upgraded_by_uri(file: &Path, uri: &str) {
+    db_open(&options(file, &MIGRATIONS[..1]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    Connection::open(file)
+        .unwrap()
+        .execute_batch("INSERT INTO instance (key, value) VALUES ('kept', 'yes');")
+        .unwrap();
+    let by_uri = Options {
+        path: DatabasePath::Uri(uri.to_string()),
+        ..options(file, MIGRATIONS)
+    };
+
+    db_open(&by_uri, Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    assert!(has_login_after(file));
+    assert!(copy_of(file).exists());
 }

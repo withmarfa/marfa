@@ -474,8 +474,7 @@ mod tests {
 
     fn table() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(crate::db::migrate::MIGRATIONS[0].sql)
-            .unwrap();
+        crate::db::migrate::make_all(&conn).unwrap();
         conn
     }
 
