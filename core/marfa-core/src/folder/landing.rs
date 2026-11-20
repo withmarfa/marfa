@@ -568,7 +568,7 @@ fn changed_at(metadata: &Metadata) -> Option<(u64, u32)> {
     }
 }
 
-fn seconds(time: std::time::SystemTime) -> u64 {
+pub(crate) fn seconds(time: std::time::SystemTime) -> u64 {
     time.duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_secs())
 }
@@ -789,9 +789,9 @@ pub(crate) enum Settled {
     PutBack(Metadata),
     /// Changed after its removal, and back at its empty path.
     Restored,
-    /// Changed, and kept beside its path under the name given, or under its
-    /// reserved name where it cannot go there.
-    Beside(PathBuf),
+    /// Changed, and kept beside its path, or under its reserved name where it
+    /// cannot go there, and reported.
+    Beside,
     /// Unchanged, and kept, with what this look found.
     Kept(Retained),
 }
@@ -877,7 +877,7 @@ pub(crate) fn settle_retained(
             Err(error) => return Err(error),
         }
     }
-    keep_beside(dir, guard, target, name).map(Settled::Beside)
+    keep_beside(dir, guard, target, name).map(|_| Settled::Beside)
 }
 
 fn exchange_at(from_dir: &Directory, from: &Path, to_dir: &Directory, to: &Path) -> io::Result<()> {
@@ -2773,10 +2773,12 @@ mod tests {
         writer.write_all(b"second half\n").unwrap();
         std::fs::write(place.root.join("note.md"), b"saved by the person").unwrap();
         let settled = place.ledger.settle(&place.dir, place.guard(), now());
-        let [Settled::Beside(beside)] = settled.as_slice() else {
-            panic!("{settled:?}");
-        };
-        assert!(!is_reserved(beside), "{beside:?}");
+        assert!(
+            matches!(settled.as_slice(), [Settled::Beside]),
+            "{settled:?}"
+        );
+        let beside = place.ledger.kept.borrow()[0].0.clone();
+        assert!(!is_reserved(&beside), "{beside:?}");
         assert_eq!(
             place.read(&beside.to_string_lossy()),
             b"first half\nsecond half\n"

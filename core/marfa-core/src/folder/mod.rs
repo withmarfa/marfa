@@ -1410,6 +1410,154 @@ fn settle_row(
     Ok(())
 }
 
+/// Why a file set aside at `path` is kept, by what the last look found.
+fn retained_reason(path: &str, retained: &landing::Retained) -> String {
+    let set_aside =
+        format!("Marfa replaced or removed {path} and set the file it held aside under this name");
+    match retained.writers {
+        Some(writers::Writers::Open) => format!(
+            "{set_aside}, because a program still holds it open for writing. If the program writes to it, Marfa puts it back; once the program closes it unchanged, Marfa deletes it"
+        ),
+        Some(writers::Writers::Unknown) => {
+            let until = i64::try_from(retained.since.saturating_add(landing::RETAINED_FOR))
+                .ok()
+                .and_then(|until| jiff::Timestamp::from_second(until).ok())
+                .map(|until| until.strftime("%Y-%m-%d").to_string())
+                .unwrap_or_default();
+            format!(
+                "{set_aside}, because Marfa cannot tell whether a program still writes to it. If it changes, Marfa puts it back; unchanged, Marfa deletes it on {until}"
+            )
+        }
+        Some(writers::Writers::None) | None => {
+            format!("{set_aside} until it looks again at whether a program still writes to it")
+        }
+    }
+}
+
+/// How many kept files one look at the programs writing files covers, which
+/// bounds the files held open at once.
+const SETTLED_AT_ONCE: usize = 128;
+
+/// Settles one file kept because a program may still write to it, opened
+/// from `aside` as `file`, with `writers`, what the look found, at `now`.
+/// Where it changed and went back to its path, the binding there takes it,
+/// keeping the content last agreed with the server, so the next scan sends
+/// what the program wrote. Answers whether it is still kept.
+fn settle_retained_row(
+    conn: &rusqlite::Connection,
+    row: &state::Retained,
+    (dir, aside, file): (&Directory, &Directory, &std::fs::File),
+    (writers, now): (writers::Writers, u64),
+    root_device: Option<u64>,
+    census: &writers::Census,
+) -> Result<RowSettled> {
+    let rows = Rows {
+        conn,
+        dir: row.dir.clone(),
+        dir_at: row.dir_at,
+        aside: row.aside.clone(),
+        aside_at: row.aside_at,
+        follow: None,
+    };
+    let guard = landing::Guard {
+        aside,
+        ledger: &rows,
+        beside: !in_state(&row.dir),
+        writers: census,
+    };
+    let retained = remounted_retained(row, dir, root_device);
+    let settled = match landing::settle_retained(dir, guard, &retained, file, writers, now) {
+        Ok(settled) => settled,
+        Err(error) => {
+            // Tried again at the next pass, and reported until it settles.
+            state::put_kept(
+                conn,
+                &joined(&row.aside, &retained.kept),
+                &format!(
+                    "Marfa set {} aside while a program might still write to it, and could not look at it again: {error}",
+                    joined(&row.dir, &retained.target)
+                ),
+            )?;
+            return Ok(RowSettled::Kept);
+        }
+    };
+    match settled {
+        landing::Settled::Kept(kept) => {
+            if kept.writers != row.retained.writers {
+                state::set_retained(
+                    conn,
+                    &state::Retained {
+                        retained: landing::Retained {
+                            writers: kept.writers,
+                            ..row.retained.clone()
+                        },
+                        ..row.clone()
+                    },
+                )?;
+            }
+            Ok(RowSettled::Kept)
+        }
+        landing::Settled::PutBack(metadata) => {
+            let path = joined(&row.dir, &retained.target);
+            let tx = conn.unchecked_transaction()?;
+            if let Some(bound) = state::bound_at(&tx, &path)? {
+                state::bind(
+                    &tx,
+                    &state::Bound {
+                        identity: identity::of(&metadata).map(|found| found.key()),
+                        ..bound
+                    },
+                )?;
+            }
+            state::forget_stat(&tx, &path)?;
+            state::clear_retained(&tx, &retained.id)?;
+            tx.commit()?;
+            Ok(RowSettled::Back)
+        }
+        landing::Settled::Restored => {
+            state::clear_retained(conn, &retained.id)?;
+            Ok(RowSettled::Back)
+        }
+        landing::Settled::Gone | landing::Settled::Discarded | landing::Settled::Beside => {
+            state::clear_retained(conn, &retained.id)?;
+            Ok(RowSettled::Done)
+        }
+    }
+}
+
+/// What settling one kept file left.
+enum RowSettled {
+    /// Still kept.
+    Kept,
+    /// No longer kept.
+    Done,
+    /// Back at its path.
+    Back,
+}
+
+/// `row`'s file and the new file at its path on `dir`'s device, where the
+/// volume was mounted again since the row was recorded.
+fn remounted_retained(
+    row: &state::Retained,
+    dir: &Directory,
+    root_device: Option<u64>,
+) -> landing::Retained {
+    let mut retained = row.retained.clone();
+    let recorded = row.dir_at.0;
+    if root_device == Some(recorded) {
+        return retained;
+    }
+    let Ok(now) = dir.metadata().map(|found| landing::identity(&found).0) else {
+        return retained;
+    };
+    for object in std::iter::once(&mut retained.read).chain(retained.ours.as_mut()) {
+        if object.device == recorded {
+            object.device = now;
+        }
+    }
+    retained
+}
+
 /// Whether `found`, a directory's device and inode, is the directory
 /// `recorded` names. A volume mounted again has another device number, so
 /// where the root's is not the one recorded, the inode alone decides.
@@ -1660,6 +1808,117 @@ impl Folder {
         Ok(())
     }
 
+    /// Whether a file is kept because a program may still write to it.
+    fn retains(&self) -> Result<bool> {
+        Ok(state::any_retained(&*self.core.conn()?)?)
+    }
+
+    /// Settles each file kept because a program may still write to it, with
+    /// one fresh look at the programs writing files for each batch of them,
+    /// so the cost grows with what is kept, not with the folder. Each file is
+    /// opened before the look, which then sees every program that opened it
+    /// before. A file that went back to its path is one only a walk finds,
+    /// so the next pass walks.
+    fn settle_retained(&self) -> Result<()> {
+        let conn = self.core.conn()?;
+        let rows = state::retained(&conn)?;
+        let mut waiting = false;
+        let mut back = false;
+        if !rows.is_empty() {
+            let root_device = device(&self.root_dir);
+            let now = landing::seconds(crate::clock::system_time());
+            for batch in rows.chunks(SETTLED_AT_ONCE) {
+                let mut opened = Vec::with_capacity(batch.len());
+                for row in batch {
+                    match row {
+                        Ok(row) => {
+                            if let Some(open) = self.retained_open(&conn, row, now)? {
+                                opened.push((row, open));
+                            }
+                        }
+                        // What it kept stays under its reserved name, which
+                        // every scan reports.
+                        Err(id) => state::clear_retained(&conn, id)?,
+                    }
+                }
+                self.writers.fresh();
+                for (row, (dir, aside, file)) in opened {
+                    let writers = self.writers.of(&file);
+                    let settled = settle_retained_row(
+                        &conn,
+                        row,
+                        (&dir, &aside, &file),
+                        (writers, now),
+                        root_device,
+                        &self.writers,
+                    )?;
+                    match settled {
+                        RowSettled::Kept => waiting |= writers == writers::Writers::Open,
+                        RowSettled::Done => {}
+                        RowSettled::Back => back = true,
+                    }
+                }
+            }
+        }
+        self.writer_wait
+            .store(waiting, std::sync::atomic::Ordering::Relaxed);
+        if back {
+            self.forget_inventory();
+        }
+        Ok(())
+    }
+
+    /// `row`'s directory, the directory its reserved name is in, and the file
+    /// there, opened read-only. Ends a row whose file is gone, and one whose
+    /// directory has been away from where it was for as long as a file is
+    /// kept, reporting its file kept wherever the directory went.
+    #[allow(clippy::type_complexity)]
+    fn retained_open(
+        &self,
+        conn: &rusqlite::Connection,
+        row: &state::Retained,
+        now: u64,
+    ) -> Result<Option<(Directory, Directory, std::fs::File)>> {
+        let retained = &row.retained;
+        let places = self
+            .displaced_dir(&row.dir, row.dir_at)
+            .and_then(|dir| Ok((dir, self.displaced_dir(&row.aside, row.aside_at)?)));
+        let (dir, aside) = match places {
+            Ok(places) => places,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if now >= retained.since.saturating_add(landing::RETAINED_FOR) {
+                    let tx = conn.unchecked_transaction()?;
+                    state::put_kept(
+                        &tx,
+                        &joined(&row.aside, &retained.kept),
+                        &format!(
+                            "Marfa set {} aside while a program might still write to it, and its directory is no longer in the folder; the file stays under this name wherever the directory now is",
+                            joined(&row.dir, &retained.target)
+                        ),
+                    )?;
+                    state::clear_retained(&tx, &retained.id)?;
+                    tx.commit()?;
+                }
+                return Ok(None);
+            }
+            // Tried again at the next pass.
+            Err(_) => return Ok(None),
+        };
+        match aside.open_file(Path::new(&retained.kept), OFlags::RDONLY, Mode::empty()) {
+            Ok(file) => Ok(Some((dir, aside, file))),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidInput
+                ) =>
+            {
+                state::clear_retained(conn, &retained.id)?;
+                Ok(None)
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
     /// Settles each row whose reserved name the walk met in a directory
     /// that moved within the folder, there: of the files the walk met under
     /// that name, the one in the row's own directory. Answers whether any
@@ -1768,12 +2027,30 @@ impl Folder {
         &self,
         walked: &'a [(WalkRoute, String)],
     ) -> impl Iterator<Item = Flagged> + 'a {
-        walked.iter().map(|(_, path)| Flagged {
+        let mut retained = self.retained_reasons();
+        walked.iter().map(move |(_, path)| Flagged {
             path: path.clone(),
             flag: "kept",
-            reason: "Marfa moved this file out of its path and could not tell whether it holds a change; check it, and delete it when it is not needed".into(),
+            reason: retained.remove(path).unwrap_or_else(|| "Marfa moved this file out of its path and could not tell whether it holds a change; check it, and delete it when it is not needed".into()),
             item: None,
         })
+    }
+
+    /// Why each file kept for a pass to settle is kept, by its path.
+    fn retained_reasons(&self) -> HashMap<String, String> {
+        let Ok(rows) = self.core.conn().and_then(|conn| state::retained(&conn)) else {
+            return HashMap::new();
+        };
+        rows.into_iter()
+            .flatten()
+            .map(|row| {
+                let retained = &row.retained;
+                (
+                    joined(&row.aside, &retained.kept),
+                    retained_reason(&joined(&row.dir, &retained.target), retained),
+                )
+            })
+            .collect()
     }
 
     /// The files kept since the last report, each once.

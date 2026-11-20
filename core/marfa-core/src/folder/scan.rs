@@ -464,6 +464,7 @@ impl Folder {
         }
         if mode == Files::Write {
             self.settle_displaced()?;
+            self.settle_retained()?;
         }
         self.settle_landings()?;
         // Every pass, so a watch lists its folder again too.
@@ -543,6 +544,7 @@ impl Folder {
             None => {
                 let mut walked = self.walked(&lists);
                 if mode == Files::Write && self.settle_found(&walked.kept)? {
+                    self.settle_retained()?;
                     walked = self.walked(&lists);
                 }
                 (walked, None)

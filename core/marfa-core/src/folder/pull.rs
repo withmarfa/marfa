@@ -150,6 +150,9 @@ pub struct PullReport {
     pub skipped: usize,
     pub absent: usize,
     pub unwritten: usize,
+    /// Files the pull left because a program holds them open for writing,
+    /// which a later pull writes once it closes them.
+    pub busy: usize,
     pub revived: usize,
     /// Items whose path the folder does not write to: left out by its lists,
     /// inside a package or another folder, or not a path inside the folder.
@@ -190,6 +193,7 @@ pub struct PullReport {
 #[derive(Debug, Clone, Copy)]
 enum NotWritten {
     Unwritten,
+    Busy,
     Outside,
     Unsuited,
     Absent,
@@ -214,6 +218,7 @@ impl PullReport {
     fn not_written(&mut self, why: NotWritten, item: &str, path: &str, reason: impl Into<String>) {
         let (count, flag) = match why {
             NotWritten::Unwritten => (&mut self.unwritten, "unwritten"),
+            NotWritten::Busy => (&mut self.busy, "busy"),
             NotWritten::Outside => (&mut self.outside, "outside"),
             NotWritten::Unsuited => (&mut self.unsuited, "unsuited"),
             NotWritten::Absent => (&mut self.absent, "absent"),
@@ -236,6 +241,9 @@ pub(super) enum TakenAway {
     Kept,
     /// The volume cannot remove it safely, so it stays, for this reason.
     Refused(String),
+    /// A program holds it open for writing, so it stays until a later pass,
+    /// for this reason.
+    Busy(String),
 }
 
 /// The name a new file of `item` takes, from its title or else its id.
@@ -377,6 +385,10 @@ impl Folder {
         let flushed = self.flush_landed();
         match (pulled, flushed) {
             (Ok(done), Ok(())) => {
+                // Lets go, at once, of the files this pull set aside that no
+                // program holds open, where that can be told only by a look
+                // taken after they moved.
+                self.settle_retained()?;
                 report.flagged.extend(self.take_kept()?);
                 Ok(done)
             }
@@ -1389,12 +1401,20 @@ impl Folder {
                     Some(before) => rendering.bind(&conn, before)?,
                     None => rendering.unbind(&conn, &want)?,
                 }
-                report.not_written(
-                    NotWritten::Unwritten,
-                    &item.id,
-                    &want,
-                    format!("the file system refused it: {error}"),
-                );
+                match error {
+                    landing::Unlanded::Busy => report.not_written(
+                        NotWritten::Busy,
+                        &item.id,
+                        &want,
+                        "a program has it open for writing, so Marfa writes it once that program closes it",
+                    ),
+                    error => report.not_written(
+                        NotWritten::Unwritten,
+                        &item.id,
+                        &want,
+                        format!("the file system refused it: {error}"),
+                    ),
+                }
                 return Ok(PlacementWrite::Refused);
             }
         };
@@ -1929,6 +1949,15 @@ impl Folder {
             }) {
             Ok(removed) => removed,
             Err(landing::RemoveError::Remove(error)) => {
+                if landing::is_busy(&error) {
+                    report.not_written(
+                        NotWritten::Busy,
+                        item_id,
+                        &bound.path,
+                        "a program has it open for writing, so Marfa lets it go to another folder once that program closes it",
+                    );
+                    return Ok(LetGo::Retained);
+                }
                 report.unwritten += 1;
                 report.flagged.push(Flagged {
                     path: bound.path.clone(),
@@ -2020,6 +2049,12 @@ impl Folder {
                     &row.item_id,
                     &row.path,
                     format!("Marfa left the file rather than remove it: {reason}"),
+                ),
+                TakenAway::Busy(_) => report.not_written(
+                    NotWritten::Busy,
+                    &row.item_id,
+                    &row.path,
+                    "a program has it open for writing, so Marfa removes it once that program closes it",
                 ),
             }
         }
@@ -2176,6 +2211,9 @@ impl Folder {
                     Ok(false) => {}
                     Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
                         return Ok(TakenAway::Refused(error.to_string()));
+                    }
+                    Err(error) if landing::is_busy(&error) => {
+                        return Ok(TakenAway::Busy(error.to_string()));
                     }
                     Err(error) => {
                         return Err(CoreError::Store(format!(

@@ -1094,6 +1094,11 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
                 printable(&file.path),
                 printable(&file.reason)
             ),
+            "busy" => format!(
+                "{} waits: {}",
+                printable(&file.path),
+                printable(&file.reason)
+            ),
             "kept" => format!(
                 "{} is kept: {}",
                 printable(&file.path),
@@ -1205,6 +1210,10 @@ fn describe_pull(report: &marfa_core::PullReport) -> String {
         (
             report.unwritten,
             "the directory did not write and would not write over",
+        ),
+        (
+            report.busy,
+            "that a program holds open for writing, which a later pull writes once it closes them",
         ),
         (
             report.outside,
