@@ -3,8 +3,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use arc_swap::ArcSwapOption;
 use marfa_telemetry::exception::{Event, Exception, batch};
-use marfa_telemetry::host::{CONNECT_LIMIT, may_use_proxy};
+use marfa_telemetry::host::CONNECT_LIMIT;
 use serde_json::Value;
 
 use super::fault::Fault;
@@ -46,72 +47,61 @@ pub struct Report {
     pub timestamp: String,
 }
 
-/// A proxy from the environment is used for an address on another host, not for one on
-/// this machine, which a proxy cannot reach.
-pub fn agent(total: Duration, target: &str) -> ureq::Agent {
-    let tls = ureq::tls::TlsConfig::builder()
-        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
-        .build();
-    let mut config = ureq::Agent::config_builder()
-        .tls_config(tls)
-        .http_status_as_error(false)
-        .max_redirects(0)
-        .max_redirects_will_error(false)
-        .timeout_global(Some(total))
-        .timeout_connect(Some(total.min(CONNECT_LIMIT)))
-        .user_agent(concat!("marfa-server/", env!("CARGO_PKG_VERSION")));
-    if !may_use_proxy(target) {
-        config = config.proxy(None);
-    }
-    config.build().into()
-}
-
-/// A report, with the receiver and `allow_private_addresses` as they stood when it was made.
-pub struct Tracked {
-    pub report: Report,
+/// Where reports go and what they carry, as the settings said when a report was made.
+#[derive(PartialEq)]
+pub struct Route {
     pub receiver: Receiver,
     pub private_allowed: bool,
+    pub attributes: Vec<(String, String)>,
 }
 
-/// PostHog capture v1. A batch goes to each receiver its reports name, judged by its address
-/// as it is sent.
-pub fn exceptions(attributes: Vec<(String, String)>) -> Lane<Tracked> {
+pub struct Tracked {
+    pub report: Report,
+    pub route: Arc<Route>,
+}
+
+/// PostHog capture v1. A report is sent only on the route the settings name as it is sent, so
+/// one queued before a change of route is dropped.
+pub fn exceptions(current: Arc<ArcSwapOption<Route>>) -> Lane<Tracked> {
     Lane::start(
         "exceptions",
         QUEUE,
         WINDOW,
         BATCH,
         move |reports: Vec<Tracked>| {
-            let mut posts: Vec<(Receiver, bool, Vec<Value>)> = Vec::new();
-            for tracked in reports {
-                let event = event(&tracked.report, &attributes);
-                match posts.iter_mut().find(|(receiver, private_allowed, _)| {
-                    *receiver == tracked.receiver && *private_allowed == tracked.private_allowed
-                }) {
-                    Some((_, _, events)) => events.push(event),
-                    None => posts.push((tracked.receiver, tracked.private_allowed, vec![event])),
-                }
+            let Some(route) = current.load_full() else {
+                return;
+            };
+            let events: Vec<Value> = reports
+                .iter()
+                .filter(|tracked| Arc::ptr_eq(&tracked.route, &route))
+                .map(|tracked| event(&tracked.report, &route.attributes))
+                .collect();
+            if events.is_empty() {
+                return;
             }
-            for (receiver, private_allowed, events) in posts {
-                let connect = EXCEPTION_TIMEOUT.min(CONNECT_LIMIT);
-                let Some(agent) =
-                    notice_agent(&receiver.url, EXCEPTION_TIMEOUT, connect, private_allowed)
-                else {
-                    continue;
-                };
-                let sent_at = crate::log::now();
-                let body = batch(&sent_at, events);
-                // PostHog's trouble is not a request's: the answer is never read.
-                let _ = agent
-                    .post(&receiver.url)
-                    .header("Authorization", format!("Bearer {}", receiver.token))
-                    .header("Content-Type", "application/json")
-                    .header("PostHog-Sdk-Info", SDK_INFO)
-                    .header("PostHog-Request-Id", uuid::Uuid::now_v7().to_string())
-                    .header("PostHog-Attempt", "1")
-                    .header("PostHog-Request-Timestamp", &sent_at)
-                    .send(body.to_string().as_bytes());
-            }
+            let receiver = &route.receiver;
+            let connect = EXCEPTION_TIMEOUT.min(CONNECT_LIMIT);
+            let Some(agent) = notice_agent(
+                &receiver.url,
+                EXCEPTION_TIMEOUT,
+                connect,
+                route.private_allowed,
+            ) else {
+                return;
+            };
+            let sent_at = crate::log::now();
+            let body = batch(&sent_at, events);
+            // PostHog's trouble is not a request's: the answer is never read.
+            let _ = agent
+                .post(&receiver.url)
+                .header("Authorization", format!("Bearer {}", receiver.token))
+                .header("Content-Type", "application/json")
+                .header("PostHog-Sdk-Info", SDK_INFO)
+                .header("PostHog-Request-Id", uuid::Uuid::now_v7().to_string())
+                .header("PostHog-Attempt", "1")
+                .header("PostHog-Request-Timestamp", &sent_at)
+                .send(body.to_string().as_bytes());
         },
     )
 }

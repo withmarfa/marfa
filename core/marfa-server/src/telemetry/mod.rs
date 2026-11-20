@@ -8,29 +8,36 @@ mod otel;
 mod sinks;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::sync::{Arc, OnceLock};
+use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::thread;
 use std::time::{Duration, Instant};
 
+use arc_swap::ArcSwapOption;
 use http::HeaderMap;
 use opentelemetry::propagation::TextMapPropagator;
-use opentelemetry::trace::{Span as _, SpanKind, Status, Tracer};
+use opentelemetry::trace::{Span as _, SpanKind, Status, Tracer, TracerProvider as _};
 use opentelemetry::{Context, KeyValue};
 use opentelemetry_http::HeaderExtractor;
-use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider, Span};
 
-pub use config::Config;
 pub use fault::{Fault, Kind, caught, install_panic_hook};
 pub use logs::{Logs, REQUEST_TARGET};
 
+use config::Wanted;
 use lane::Lane;
-use sinks::{Failed, Raised, Report, Tracked};
+use otel::{Leg, Loggers, Relay};
+use sinks::{Failed, Raised, Report, Route, Tracked};
 
-use crate::settings::Snapshot;
-use crate::settings::registry::{ALLOW_PRIVATE_ADDRESSES, ERROR_REPORTING_ENABLED};
+use crate::settings::registry::{
+    ALLOW_PRIVATE_ADDRESSES, ERROR_REPORTING_ENABLED, TELEMETRY_ENABLED,
+};
+use crate::settings::{Settings, Snapshot};
 
 pub const FLUSH_WITHIN: Duration = Duration::from_millis(750);
+/// How long a retired exporter has to stop; its client sends nothing, so this is rarely spent.
+const RETIRE_WITHIN: Duration = Duration::from_secs(3);
 const CONNECTOR_RUN_FAILED: &str = "ConnectorRunFailed";
 const CONNECTOR_RUN_FAILED_VALUE: &str = "A connector reported that its last run failed.";
 
@@ -50,17 +57,42 @@ pub struct Finished<'a> {
     pub timestamp: &'a str,
 }
 
-struct Active {
-    tracer: Option<SdkTracer>,
-    tracers: Option<SdkTracerProvider>,
-    loggers: Option<SdkLoggerProvider>,
-    off: bool,
-    exceptions: Lane<Tracked>,
+/// An exporter taken out of use, its client halted, shut down off the request path.
+enum Retired {
+    Traces(Arc<Leg>),
+    Logs(Loggers),
+    Drained(mpsc::SyncSender<()>),
 }
 
+/// What started once the instance's id was read.
+struct Started {
+    instance_id: String,
+    relay: Relay,
+    tracer: SdkTracer,
+    tracers: SdkTracerProvider,
+    exceptions: Lane<Tracked>,
+    /// Where exception reports go now; `None` while none are sent.
+    route: Arc<ArcSwapOption<Route>>,
+    retire: Sender<Retired>,
+}
+
+#[derive(Default)]
+struct Applied {
+    wanted: Option<Wanted>,
+    loggers: Option<Loggers>,
+    stopped: bool,
+}
+
+#[derive(Default)]
+struct Inner {
+    started: OnceLock<Started>,
+    applied: Mutex<Applied>,
+}
+
+/// Traces, log records and exception reports, rebuilt when their settings change.
 #[derive(Clone, Default)]
 pub struct Telemetry {
-    active: Arc<OnceLock<Active>>,
+    inner: Arc<Inner>,
 }
 
 pub struct RequestSpan(Span);
@@ -73,69 +105,60 @@ pub struct Guard {
 impl Guard {
     pub fn stop(mut self, within: Duration) {
         self.stopped = true;
-        self.telemetry.flush(within);
+        self.telemetry.stop(within);
     }
 }
 
 impl Drop for Guard {
     fn drop(&mut self) {
         if !self.stopped {
-            self.telemetry.flush(FLUSH_WITHIN);
+            self.telemetry.stop(FLUSH_WITHIN);
         }
     }
 }
 
-fn identity(config: &Config, instance_id: &str) -> Vec<(String, String)> {
-    let mut pairs = vec![
-        ("service.name".to_string(), config.service.clone()),
-        ("service.instance.id".to_string(), instance_id.to_string()),
-        (
-            "service.version".to_string(),
-            env!("CARGO_PKG_VERSION").to_string(),
-        ),
-    ];
-    for (key, value) in &config.resource {
-        match pairs.iter_mut().find(|(held, _)| held == key) {
-            Some(held) => held.1 = value.clone(),
-            None => pairs.push((key.clone(), value.clone())),
+/// One thread shuts each retired exporter down, so a request or a write never waits on a
+/// collector.
+fn retirer() -> Sender<Retired> {
+    let (sender, inbox) = mpsc::channel::<Retired>();
+    let work = move || {
+        for retired in inbox {
+            match retired {
+                Retired::Traces(leg) => {
+                    let _ = leg.shutdown_with_timeout(RETIRE_WITHIN);
+                }
+                Retired::Logs(loggers) => {
+                    let _ = loggers.provider.shutdown_with_timeout(RETIRE_WITHIN);
+                }
+                Retired::Drained(done) => {
+                    let _ = done.send(());
+                }
+            }
         }
-    }
-    pairs
+    };
+    // A thread that cannot start leaves each retired exporter to its own drop.
+    let _ = thread::Builder::new()
+        .name("telemetry-retire".to_string())
+        .spawn(work);
+    sender
 }
 
 impl Telemetry {
     /// The instance id is read from the database, which opens after the process starts.
-    pub fn start(&self, config: &Config, instance_id: &str, settings: &Snapshot) -> Guard {
-        let pairs = identity(config, instance_id);
-        let sampler = marfa_telemetry::sampler::Sampler::Ratio(config.ratio);
-        let (mut tracer, mut tracers, mut loggers) = (None, None, None);
-        if let Some(export) = &config.traces {
-            match otel::tracer_provider(export, otel::resource(&pairs), sampler) {
-                Ok(provider) => {
-                    use opentelemetry::trace::TracerProvider;
-                    tracer = Some(provider.tracer("marfa-server"));
-                    tracers = Some(provider);
-                }
-                Err(error) => tracing::error!(%error, "Traces could not be set up"),
-            }
-        }
-        if let Some(export) = &config.logs {
-            match otel::logger_provider(export, otel::resource(&pairs)) {
-                Ok(provider) => {
-                    crate::log::logs().connect(&provider);
-                    loggers = Some(provider);
-                }
-                Err(error) => tracing::error!(%error, "Logs could not be set up"),
-            }
-        }
-        let exceptions = sinks::exceptions(pairs);
-        let _ = self.active.set(Active {
-            tracer,
+    pub fn start(&self, instance_id: &str, settings: &Settings) -> Guard {
+        let relay = Relay::default();
+        let tracers = otel::relay_provider(relay.clone());
+        let route = Arc::new(ArcSwapOption::empty());
+        let started = Started {
+            instance_id: instance_id.to_string(),
+            tracer: tracers.tracer("marfa-server"),
+            relay,
             tracers,
-            loggers,
-            off: config.off,
-            exceptions,
-        });
+            exceptions: sinks::exceptions(route.clone()),
+            route,
+            retire: retirer(),
+        };
+        let _ = self.inner.started.set(started);
         self.follow(settings);
         Guard {
             telemetry: self.clone(),
@@ -143,15 +166,79 @@ impl Telemetry {
         }
     }
 
-    /// A stack is taken at a fault only while the settings name somewhere to report it.
-    pub fn follow(&self, settings: &Snapshot) {
-        if let Some(active) = self.active.get() {
-            fault::capture_stacks(!active.off && settings.exception_receiver().is_some());
+    /// Reads the settings under the lock, so the newest change wins whichever caller is last. A
+    /// replaced exporter is halted before this returns, so nothing queued under the old settings
+    /// is sent.
+    pub fn follow(&self, settings: &Settings) {
+        let Some(started) = self.inner.started.get() else {
+            return;
+        };
+        let mut applied = self
+            .inner
+            .applied
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if applied.stopped {
+            return;
         }
+        let live = settings.live();
+        fault::capture_stacks(live.get(TELEMETRY_ENABLED) && live.exception_receiver().is_some());
+        let wanted = config::wanted(&live, &started.instance_id);
+        let route = live
+            .get(TELEMETRY_ENABLED)
+            .then(|| live.exception_receiver())
+            .flatten()
+            .map(|receiver| Route {
+                receiver,
+                private_allowed: live.get(ALLOW_PRIVATE_ADDRESSES),
+                attributes: wanted.pairs.clone(),
+            });
+        if started.route.load().as_deref() != route.as_ref() {
+            started.route.store(route.map(Arc::new));
+        }
+        if applied.wanted.as_ref() == Some(&wanted) {
+            return;
+        }
+        let before = applied.wanted.take();
+        let traces_same = before.as_ref().is_some_and(|held| {
+            held.traces == wanted.traces && held.pairs == wanted.pairs && held.ratio == wanted.ratio
+        });
+        let logs_same = before
+            .as_ref()
+            .is_some_and(|held| held.logs == wanted.logs && held.pairs == wanted.pairs);
+        if !traces_same {
+            let leg = wanted.traces.as_ref().and_then(|export| {
+                otel::trace_leg(export, &wanted.pairs, wanted.ratio)
+                    .map_err(|error| tracing::error!(%error, "Traces could not be set up"))
+                    .ok()
+            });
+            if let Some(old) = started.relay.0.swap(leg.map(Arc::new)) {
+                old.halt.set();
+                let _ = started.retire.send(Retired::Traces(old));
+            }
+        }
+        if !logs_same {
+            let loggers = wanted.logs.as_ref().and_then(|export| {
+                otel::logger_provider(export, &wanted.pairs)
+                    .map_err(|error| tracing::error!(%error, "Logs could not be set up"))
+                    .ok()
+            });
+            match &loggers {
+                Some(loggers) => crate::log::logs().connect(&loggers.provider),
+                None => crate::log::logs().disconnect(),
+            }
+            if let Some(old) = std::mem::replace(&mut applied.loggers, loggers) {
+                old.halt.set();
+                let _ = started.retire.send(Retired::Logs(old));
+            }
+        }
+        applied.wanted = Some(wanted);
     }
 
     pub fn begin(&self, headers: &HeaderMap, method: &str) -> Option<RequestSpan> {
-        let tracer = self.active.get()?.tracer.as_ref()?;
+        let started = self.inner.started.get()?;
+        started.relay.0.load().as_ref()?;
+        let tracer = &started.tracer;
         catch_unwind(AssertUnwindSafe(|| {
             let parent = TraceContextPropagator::new()
                 .extract_with_context(&Context::new(), &HeaderExtractor(headers));
@@ -213,36 +300,55 @@ impl Telemetry {
         );
     }
 
-    /// Error tracking takes a report only while the settings name a receiver and allow it.
+    /// Error tracking takes a report only while the settings name a receiver and allow it, and
+    /// only on the route telemetry follows now.
     fn offer(&self, settings: &Snapshot, report: Report) {
-        let Some(active) = self.active.get().filter(|active| !active.off) else {
+        let Some(started) = self.inner.started.get() else {
             return;
         };
-        if !settings.get(ERROR_REPORTING_ENABLED) {
+        if !settings.get(TELEMETRY_ENABLED) || !settings.get(ERROR_REPORTING_ENABLED) {
             return;
         }
-        if let Some(receiver) = settings.exception_receiver() {
-            active.exceptions.offer(Tracked {
-                report,
-                receiver,
-                private_allowed: settings.get(ALLOW_PRIVATE_ADDRESSES),
-            });
+        let Some(receiver) = settings.exception_receiver() else {
+            return;
+        };
+        let Some(route) = started.route.load_full() else {
+            return;
+        };
+        if route.receiver == receiver
+            && route.private_allowed == settings.get(ALLOW_PRIVATE_ADDRESSES)
+        {
+            started.exceptions.offer(Tracked { report, route });
         }
     }
 
-    pub fn flush(&self, within: Duration) {
-        let Some(active) = self.active.get() else {
+    /// Sends what the exporters hold, within `within` all told, and builds nothing after.
+    fn stop(&self, within: Duration) {
+        let Some(started) = self.inner.started.get() else {
             return;
+        };
+        let loggers = {
+            let mut applied = self
+                .inner
+                .applied
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            applied.stopped = true;
+            applied.wanted = None;
+            applied.loggers.take()
         };
         let deadline = Instant::now() + within;
         let left = || deadline.saturating_duration_since(Instant::now());
-        if let Some(provider) = &active.tracers {
-            let _ = provider.shutdown_with_timeout(left());
+        let _ = started.tracers.shutdown_with_timeout(left());
+        crate::log::logs().disconnect();
+        if let Some(loggers) = loggers {
+            let _ = loggers.provider.shutdown_with_timeout(left());
         }
-        if let Some(provider) = &active.loggers {
-            let _ = provider.shutdown_with_timeout(left());
+        started.exceptions.flush(left());
+        let (done, drained) = mpsc::sync_channel(1);
+        if started.retire.send(Retired::Drained(done)).is_ok() {
+            let _ = drained.recv_timeout(left());
         }
-        active.exceptions.flush(left());
     }
 }
 
@@ -288,6 +394,74 @@ fn annotate(span: &mut Span, done: &Finished<'_>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::Environment;
+
+    fn settings(dir: &tempfile::TempDir, seeds: &[(&str, &str)]) -> Settings {
+        let database = dir.path().join("marfa.db");
+        let mut pairs = vec![
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_TEST_HOOKS", "true"),
+        ];
+        pairs.extend_from_slice(seeds);
+        Settings::read(Environment::from_pairs(&pairs))
+            .unwrap()
+            .open_secrets()
+            .unwrap()
+    }
+
+    fn leg(telemetry: &Telemetry) -> Option<Arc<Leg>> {
+        telemetry.inner.started.get().unwrap().relay.0.load_full()
+    }
+
+    fn rows(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[test]
+    fn another_setting_rebuilds_nothing_and_the_last_of_many_changes_wins() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let settings = settings(
+            &dir,
+            &[(
+                "MARFA_OTEL_EXPORTER_OTLP_ENDPOINT",
+                "http://collector.example:4318",
+            )],
+        );
+        let telemetry = Telemetry::default();
+        let guard = telemetry.start("id", &settings);
+        let first = leg(&telemetry).expect("a leg for the endpoint");
+
+        settings.apply_stored(&rows(&[("trash_retention_days", "7")]));
+        telemetry.follow(&settings);
+        assert!(Arc::ptr_eq(&first, &leg(&telemetry).unwrap()));
+        assert!(crate::log::logs().is_on());
+
+        for ratio in 1..=50 {
+            settings.apply_stored(&rows(&[("otel_sample_ratio", &format!("0.{ratio:02}"))]));
+            telemetry.follow(&settings);
+        }
+        assert!(!Arc::ptr_eq(&first, &leg(&telemetry).unwrap()));
+        let applied = telemetry.inner.applied.lock().unwrap();
+        assert_eq!(
+            applied.wanted.as_ref().map(|wanted| wanted.ratio),
+            Some(0.5)
+        );
+        drop(applied);
+
+        settings.apply_stored(&rows(&[("telemetry_enabled", "false")]));
+        telemetry.follow(&settings);
+        assert!(leg(&telemetry).is_none());
+        assert!(!crate::log::logs().is_on());
+        guard.stop(Duration::from_secs(1));
+        // Nothing is built once stopped.
+        settings.apply_stored(&[]);
+        telemetry.follow(&settings);
+        assert!(leg(&telemetry).is_none());
+    }
 
     #[test]
     fn a_stack_is_taken_only_while_a_sink_wants_one_and_starts_at_the_fault() {

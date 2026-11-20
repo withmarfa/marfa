@@ -51,32 +51,53 @@ pub enum Endpoint {
 }
 
 pub fn endpoint(get: &impl Fn(&str) -> Option<String>, signal: Signal) -> Endpoint {
-    let (variable, named, appends) = match (
-        text(get, signal.endpoint_variable()),
-        text(get, GENERAL_ENDPOINT),
-    ) {
-        (Some(address), _) => (signal.endpoint_variable(), address, false),
-        (None, Some(base)) => (GENERAL_ENDPOINT, base, true),
-        (None, None) => return Endpoint::Off,
+    let own = text(get, signal.endpoint_variable());
+    let base = text(get, GENERAL_ENDPOINT);
+    match signal_url(own.as_deref(), base.as_deref(), signal) {
+        Ok(None) => Endpoint::Off,
+        Ok(Some(url)) => Endpoint::On(url),
+        Err(Unusable::Own) => Endpoint::Ignored(signal.endpoint_variable()),
+        Err(Unusable::Base) => Endpoint::Ignored(GENERAL_ENDPOINT),
+    }
+}
+
+/// Which of the two addresses [`signal_url`] could not use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unusable {
+    Own,
+    Base,
+}
+
+/// Where a signal is posted: its own address as written, else the base with `v1/<signal>` on
+/// its path, else nowhere.
+pub fn signal_url(
+    own: Option<&str>,
+    base: Option<&str>,
+    signal: Signal,
+) -> Result<Option<String>, Unusable> {
+    let (which, named, appends) = match (own, base) {
+        (Some(address), _) => (Unusable::Own, address, false),
+        (None, Some(base)) => (Unusable::Base, base, true),
+        (None, None) => return Ok(None),
     };
-    let parsed = Url::parse(&named).ok().filter(|url| {
+    let parsed = Url::parse(named).ok().filter(|url| {
         matches!(url.scheme(), "http" | "https")
             && url.host_str().is_some()
             && !url.cannot_be_a_base()
     });
     let Some(mut parsed) = parsed else {
-        return Endpoint::Ignored(variable);
+        return Err(which);
     };
     if appends {
         // On the path, so that a query the base carries stays a query.
         let Ok(mut path) = parsed.path_segments_mut() else {
-            return Endpoint::Ignored(variable);
+            return Err(which);
         };
         path.pop_if_empty().push("v1").push(signal.path());
         drop(path);
         parsed.set_fragment(None);
     }
-    Endpoint::On(parsed.to_string())
+    Ok(Some(parsed.to_string()))
 }
 
 /// The signal's headers override the general variable's by name; also reports whether
@@ -85,13 +106,18 @@ pub fn signal_headers(
     get: &impl Fn(&str) -> Option<String>,
     signal: Signal,
 ) -> (Vec<(String, String)>, bool) {
+    let general = text(get, GENERAL_HEADERS);
+    let own = text(get, signal.headers_variable());
+    merge_headers(general.as_deref(), own.as_deref())
+}
+
+/// The signal's own headers override the general ones by name; also reports whether every
+/// pair of both was readable.
+pub fn merge_headers(general: Option<&str>, own: Option<&str>) -> (Vec<(String, String)>, bool) {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut readable = true;
-    for name in [GENERAL_HEADERS, signal.headers_variable()] {
-        let Some(list) = text(get, name) else {
-            continue;
-        };
-        let (kept, whole) = headers(&list);
+    for list in [general, own].into_iter().flatten() {
+        let (kept, whole) = headers(list);
         readable &= whole;
         for (key, value) in kept {
             out.retain(|(held, _)| !held.eq_ignore_ascii_case(&key));

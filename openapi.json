@@ -8971,6 +8971,29 @@
             "description": "`true` if exception reports are sent. Enabling requires both `posthog_host` and `posthog_project_token`. Absent: the environment default applies.",
             "default": true
           },
+          "telemetry_enabled": {
+            "type": "boolean",
+            "description": "`true` if Marfa sends telemetry about itself: traces and log records to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.",
+            "default": true
+          },
+          "otel_sample_ratio": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "The share of traces Marfa exports, from 0 to 1. A trace that holds an error is exported whatever this says. Absent: `0.05`.",
+            "default": 0.05
+          },
+          "otel_service_name": {
+            "type": "string",
+            "maxLength": 255,
+            "description": "The service name on everything Marfa exports, in place of a `service.name` in `otel_resource_attributes`. Absent: `marfa-server`. An archive doesn't carry it."
+          },
+          "otel_resource_attributes": {
+            "type": "string",
+            "maxLength": 4096,
+            "description": "Attributes Marfa adds to everything it exports, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces Marfa's own of the same name, such as `service.version`. An archive doesn't carry it.",
+            "example": "deployment.environment=staging"
+          },
           "heartbeat_enabled": {
             "type": "boolean",
             "description": "`true` if scheduled heartbeat requests are sent. Enabling requires `heartbeat_url`. Absent: the environment default applies.",
@@ -12671,9 +12694,10 @@
               "addresses",
               "name",
               "logs",
-              "enforcement"
+              "enforcement",
+              "telemetry"
             ],
-            "description": "What the archive doesn't hold. `enforcement` appears only when the instance that wrote the archive couldn't read its enforcement settings."
+            "description": "What the archive doesn't hold. `enforcement` appears only when the archive's instance couldn't read its enforcement settings, and `telemetry` only when `secrets_to_set` names a telemetry setting."
           },
           "message": {
             "type": "string",
@@ -59975,6 +59999,67 @@
                     "description": "The PostHog project token Marfa sends its fault reports with, with no whitespace around it. It needs `posthog_host` set too. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
                     "writeOnly": true
                   },
+                  "telemetry_enabled": {
+                    "type": "boolean",
+                    "description": "`true` if Marfa sends telemetry about itself: traces and log records to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.",
+                    "default": true
+                  },
+                  "otel_exporter_otlp_endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, and log records to, under `v1/logs`, keeping its query. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true,
+                    "example": "https://collector.example:4318"
+                  },
+                  "otel_exporter_otlp_traces_endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The URL Marfa posts traces to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_logs_endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The URL Marfa posts log records to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_headers": {
+                    "type": "string",
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with every OTLP export, as comma-separated `key=value` pairs with percent-encoded values and no whitespace around them. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true,
+                    "example": "authorization=Bearer%20token"
+                  },
+                  "otel_exporter_otlp_traces_headers": {
+                    "type": "string",
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with trace exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_logs_headers": {
+                    "type": "string",
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with log exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_sample_ratio": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "The share of traces Marfa exports, from 0 to 1. A trace that holds an error is exported whatever this says. Absent: `0.05`.",
+                    "default": 0.05
+                  },
+                  "otel_service_name": {
+                    "type": "string",
+                    "maxLength": 255,
+                    "description": "The service name on everything Marfa exports, in place of a `service.name` in `otel_resource_attributes`. Absent: `marfa-server`. An archive doesn't carry it."
+                  },
+                  "otel_resource_attributes": {
+                    "type": "string",
+                    "maxLength": 4096,
+                    "description": "Attributes Marfa adds to everything it exports, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces Marfa's own of the same name, such as `service.version`. An archive doesn't carry it.",
+                    "example": "deployment.environment=staging"
+                  },
                   "secrets_set": {
                     "type": "array",
                     "items": {
@@ -60819,6 +60904,97 @@
                     "maxLength": 256,
                     "description": "The PostHog project token Marfa sends its fault reports with, with no whitespace around it. It needs `posthog_host` set too. Marfa never returns it. `null` or an empty string removes it.",
                     "writeOnly": true
+                  },
+                  "telemetry_enabled": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ],
+                    "description": "`true` if Marfa sends telemetry about itself: traces and log records to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`. `null` removes it, so the server's default applies.",
+                    "default": true
+                  },
+                  "otel_exporter_otlp_endpoint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, and log records to, under `v1/logs`, keeping its query. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true,
+                    "example": "https://collector.example:4318"
+                  },
+                  "otel_exporter_otlp_traces_endpoint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "The URL Marfa posts traces to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_logs_endpoint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "The URL Marfa posts log records to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_headers": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with every OTLP export, as comma-separated `key=value` pairs with percent-encoded values and no whitespace around them. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true,
+                    "example": "authorization=Bearer%20token"
+                  },
+                  "otel_exporter_otlp_traces_headers": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with trace exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_logs_headers": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with log exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_sample_ratio": {
+                    "type": [
+                      "number",
+                      "null"
+                    ],
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "The share of traces Marfa exports, from 0 to 1. A trace that holds an error is exported whatever this says. Absent: `0.05`. `null` removes it, so the server's default applies.",
+                    "default": 0.05
+                  },
+                  "otel_service_name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 255,
+                    "description": "The service name on everything Marfa exports, in place of a `service.name` in `otel_resource_attributes`. Absent: `marfa-server`. An archive doesn't carry it. `null` removes it, so the server's default applies."
+                  },
+                  "otel_resource_attributes": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 4096,
+                    "description": "Attributes Marfa adds to everything it exports, as comma-separated `key=value` pairs with percent-encoded values. One named here replaces Marfa's own of the same name, such as `service.version`. An archive doesn't carry it. `null` removes it, so the server's default applies.",
+                    "example": "deployment.environment=staging"
                   },
                   "secrets_set": {
                     "type": "array",
