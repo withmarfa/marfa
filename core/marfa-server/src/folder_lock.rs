@@ -61,7 +61,19 @@ fn shared_by(found: &rustix::fs::StatFs) -> Option<String> {
     if local_on_linux(kind) {
         return None;
     }
-    Some(format!("type {kind:#x}"))
+    Some(linux_named(kind))
+}
+
+/// The name of a Linux file system of the type `kind`, as the server reports it.
+#[cfg(any(test, not(target_os = "macos")))]
+fn linux_named(kind: u32) -> String {
+    match kind {
+        0x6969 => "nfs".into(),
+        0xFE53_4D42 => "smb2".into(),
+        0xFF53_4D42 => "cifs".into(),
+        0x6573_5546 => "fuse".into(),
+        _ => format!("type {kind:#x}"),
+    }
 }
 
 /// Whether a Linux file system of the type `kind` is local to the kernel that mounts it.
@@ -383,6 +395,19 @@ mod tests {
         for shared in [0x6969, 0xFE53_4D42, 0xFF53_4D42, 0x6573_5546] {
             assert!(!local_on_linux(shared), "{shared:#x}");
         }
+    }
+
+    #[test]
+    fn a_linux_network_file_system_is_named_and_an_unknown_one_keeps_its_number() {
+        for (kind, name) in [
+            (0x6969, "nfs"),
+            (0xFE53_4D42, "smb2"),
+            (0xFF53_4D42, "cifs"),
+            (0x6573_5546, "fuse"),
+        ] {
+            assert_eq!(linux_named(kind), name, "{kind:#x}");
+        }
+        assert_eq!(linux_named(0x1234_5678), "type 0x12345678");
     }
 
     #[test]
