@@ -43,8 +43,7 @@ impl SetupCodeProblem {
     }
 }
 
-/// The app whose request to connect led to setup. Its name is its own claim, so it is
-/// shown only beside the host it sends the person back to.
+/// The app that led to setup, named only beside the host it sends the person back to.
 #[derive(Debug, Clone)]
 pub struct AskingApp {
     pub name: String,
