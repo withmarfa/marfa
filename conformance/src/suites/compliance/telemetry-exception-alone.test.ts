@@ -10,9 +10,9 @@ import { startFaultSinks, type FaultSinks } from "../../utils/fault-sinks.js";
 /**
  * What turns the server's exception reports on and off, and what they are
  * sent as. They are a pipeline of their own: the stored PostHog host and
- * project token alone send them, from the next fault once both are written,
- * and `OTEL_SDK_DISABLED=true` stops them with the traces and logs. A host the
- * token may not travel to, or one setting without the other, is refused.
+ * project token alone send them, from the next fault once both are written.
+ * A host the token may not travel to, or one setting without the other, is
+ * refused. What `telemetry_enabled` does is in `telemetry-settings.test.ts`.
  *
  * **A server of its own for each case, with a receiver the fixture runs.** The
  * receiver is the OTLP collector and the PostHog host at once. A fault is made
@@ -40,9 +40,8 @@ async function boot(
   ) => Record<string, string> = () => ({}),
 ): Promise<FreshServer> {
   sinks = await startFaultSinks();
-  const receiver = sinks.env();
+  const receiver = sinks.serverEnv();
   server = await bootFreshServer("telemetry-exception-alone", {
-    OTEL_SDK_DISABLED: "false",
     MARFA_OTEL_SAMPLE_RATIO: "1",
     MARFA_POSTHOG_HOST: receiver.MARFA_POSTHOG_HOST!,
     MARFA_POSTHOG_PROJECT_TOKEN: receiver.MARFA_POSTHOG_PROJECT_TOKEN!,
@@ -127,43 +126,12 @@ describe("the server's exception reports", () => {
   );
 
   it(
-    "are not sent, nor is anything else, when OTEL_SDK_DISABLED is true",
-    async () => {
-      await faultAndStop(
-        await boot((receiver) => ({
-          OTEL_SDK_DISABLED: "true",
-          OTEL_EXPORTER_OTLP_ENDPOINT: receiver.OTEL_EXPORTER_OTLP_ENDPOINT!,
-        })),
-      );
-      expect(sinks!.sentExceptions()).toEqual([]);
-      expect(sinks!.traces).toEqual([]);
-      expect(sinks!.logRecords).toEqual([]);
-    },
-    BUDGET,
-  );
-
-  it(
-    "are still sent, with traces and logs, when OTEL_SDK_DISABLED is any value but true, 1 included",
-    async () => {
-      await faultAndStop(
-        await boot((receiver) => ({
-          OTEL_SDK_DISABLED: "1",
-          OTEL_EXPORTER_OTLP_ENDPOINT: receiver.OTEL_EXPORTER_OTLP_ENDPOINT!,
-        })),
-      );
-      expect(sinks!.sentExceptions()).toHaveLength(1);
-      expect(sinks!.traces.length).toBeGreaterThan(0);
-      expect(sinks!.logRecords.length).toBeGreaterThan(0);
-    },
-    BUDGET,
-  );
-
-  it(
     "are not sent when MARFA_ERROR_REPORTING_ENABLED is false",
     async () => {
       await faultAndStop(
         await boot((receiver) => ({
-          OTEL_EXPORTER_OTLP_ENDPOINT: receiver.OTEL_EXPORTER_OTLP_ENDPOINT!,
+          MARFA_OTEL_EXPORTER_OTLP_ENDPOINT:
+            receiver.MARFA_OTEL_EXPORTER_OTLP_ENDPOINT!,
           MARFA_ERROR_REPORTING_ENABLED: "false",
         })),
       );
@@ -179,7 +147,8 @@ describe("the server's exception reports", () => {
       const booted = await boot((receiver) => ({
         MARFA_POSTHOG_HOST: "",
         MARFA_POSTHOG_PROJECT_TOKEN: "",
-        OTEL_EXPORTER_OTLP_ENDPOINT: receiver.OTEL_EXPORTER_OTLP_ENDPOINT!,
+        MARFA_OTEL_EXPORTER_OTLP_ENDPOINT:
+          receiver.MARFA_OTEL_EXPORTER_OTLP_ENDPOINT!,
       }));
       const before = `exception-before-${randomUUID()}`;
       await fault(booted, before);
@@ -225,7 +194,8 @@ describe("the server's exception reports", () => {
     async () => {
       await faultAndStop(
         await boot((receiver) => ({
-          OTEL_EXPORTER_OTLP_ENDPOINT: receiver.OTEL_EXPORTER_OTLP_ENDPOINT!,
+          MARFA_OTEL_EXPORTER_OTLP_ENDPOINT:
+            receiver.MARFA_OTEL_EXPORTER_OTLP_ENDPOINT!,
         })),
       );
       const [event] = sinks!.sentExceptions();

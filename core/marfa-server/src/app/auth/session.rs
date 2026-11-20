@@ -416,8 +416,8 @@ mod tests {
             .unwrap();
         let then = at(NOW - 60_000);
         db.execute(
-            "INSERT INTO owner (id, name, email, password, created_at, updated_at) \
-             VALUES ('owner', 'Owner', 'owner@example.test', 'x', ?1, ?1)",
+            "INSERT INTO owner (id, name, username, password, created_at, updated_at) \
+             VALUES ('owner', 'Owner', 'owner', 'x', ?1, ?1)",
             [then],
         )
         .unwrap();

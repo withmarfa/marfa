@@ -15,7 +15,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 
 const ORIGIN: &str = "http://127.0.0.1:8600";
-const EMAIL: &str = "owner@example.test";
+const USERNAME: &str = "owner";
 const PASSWORD: &str = "the first password";
 
 struct Instance {
@@ -94,7 +94,7 @@ fn on_the_passkey_list(cookie: &str) -> Request<Body> {
 }
 
 fn sign_in_body(password: &str) -> Value {
-    json!({ "email": EMAIL, "password": password })
+    json!({ "username": USERNAME, "password": password })
 }
 
 async fn boot(dir: &TempDir) -> Arc<App> {
@@ -143,7 +143,7 @@ impl Instance {
             app,
             dir,
         };
-        let claim = json!({ "email": EMAIL, "password": PASSWORD });
+        let claim = json!({ "username": USERNAME, "password": PASSWORD });
         let reply = send(
             instance.control.clone(),
             post("/_control/setup/claim", &claim),
@@ -295,7 +295,7 @@ async fn a_password_changed_during_a_sign_in_ends_that_sign_in() {
 }
 
 #[tokio::test]
-async fn an_email_changed_during_a_sign_in_ends_that_sign_in() {
+async fn a_username_changed_during_a_sign_in_ends_that_sign_in() {
     let instance = Instance::claimed().await;
     let faults = instance.app.faults.clone();
     faults
@@ -308,7 +308,7 @@ async fn an_email_changed_during_a_sign_in_ends_that_sign_in() {
     while faults.list().iter().all(|fault| fault.waiting == 0) {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
-    let mut change = post("/profile", &json!({ "email": "moved@example.test" }));
+    let mut change = post("/profile", &json!({ "username": "moved" }));
     *change.method_mut() = Method::PATCH;
     let changed = send(instance.control.clone(), change).await;
     assert_eq!(changed.status, StatusCode::OK);
@@ -477,8 +477,7 @@ async fn a_claim_refuses_a_name_that_is_not_text() {
     let router = public(boot(&dir).await);
     for path in ["/setup/claim", "/owner"] {
         let claim = |name: Value| {
-            let body =
-                json!({ "email": EMAIL, "password": PASSWORD, "code": "000000", "name": name });
+            let body = json!({ "username": USERNAME, "password": PASSWORD, "code": "000000", "name": name });
             send(router.clone(), post(path, &body))
         };
         assert_eq!(
@@ -585,7 +584,7 @@ async fn a_claim_through_the_owner_door_ends_the_setup_cookie_it_used() {
     assert_eq!(exchanged.status, StatusCode::OK);
     let setup = exchanged.cookie().unwrap();
     let name = setup.split_once('=').unwrap().0;
-    let claim = json!({ "email": EMAIL, "password": PASSWORD });
+    let claim = json!({ "username": USERNAME, "password": PASSWORD });
     let claimed = send(router, post_signed_in("/owner", &claim, &setup)).await;
     assert_eq!(claimed.status, StatusCode::CREATED);
     let cleared = claimed
@@ -663,7 +662,7 @@ async fn a_form_sign_in_sends_a_browser_only_to_a_path_on_the_instance() {
         ),
     ] {
         let fields = form_urlencoded::Serializer::new(String::new())
-            .append_pair("email", EMAIL)
+            .append_pair("username", USERNAME)
             .append_pair("password", PASSWORD)
             .append_pair("return_to", asked)
             .finish();
@@ -708,7 +707,7 @@ async fn a_json_sign_in_answers_ok_and_sets_the_session_cookie() {
     assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
     assert!(wrong.cookie().is_none());
 
-    let asked = json!({ "email": EMAIL, "password": PASSWORD, "rememberMe": false });
+    let asked = json!({ "username": USERNAME, "password": PASSWORD, "rememberMe": false });
     let refused = send(instance.public.clone(), post("/auth/sign-in", &asked)).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
     assert!(refused.cookie().is_none());

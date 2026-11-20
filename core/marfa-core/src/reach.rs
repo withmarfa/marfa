@@ -165,6 +165,11 @@ impl Context {
         http.for_reach(&self.fence).confirming(&self.confirmation)
     }
 
+    /// Whether the copy was still being filled when this was captured.
+    pub(crate) fn building(&self) -> bool {
+        self.building
+    }
+
     /// Takes `confirmation` where it is for this copy's instance, for a read
     /// that follows a write the same call confirmed.
     pub(crate) fn sharing(mut self, confirmation: Option<&Arc<Confirmation>>) -> Self {
@@ -232,6 +237,11 @@ impl Context {
                 == Some(crate::model::HydrateRestart::HeadAgedOut)
                 && (!self.building || store::refilling(tx)?);
             let cursor = store::meta_get(tx, store::META_EVENT_CURSOR)?;
+            if crate::catch_up::divergence(reason)
+                == Some(crate::model::HydrateRestart::HeadPastLog)
+            {
+                store::restored::hold_copy(tx)?;
+            }
             expire(tx)?;
             if in_place && let Some(cursor) = cursor {
                 store::meta_set(
@@ -308,6 +318,11 @@ impl Before {
             && crate::catch_up::divergence(reason)
                 != Some(crate::model::HydrateRestart::HeadAgedOut)
         {
+            if crate::catch_up::divergence(reason)
+                == Some(crate::model::HydrateRestart::HeadPastLog)
+            {
+                store::restored::hold_copy(&tx)?;
+            }
             expire(&tx)?;
         }
         tx.commit()?;
@@ -316,6 +331,9 @@ impl Before {
 }
 
 pub(crate) fn expire(conn: &Connection) -> Result<()> {
+    if let Some(built) = built_under(conn)? {
+        store::meta_set(conn, BUILT_UNDER, &built)?;
+    }
     advance_generation(conn)?;
     crate::tables::owe_again(conn)?;
     store::meta_delete(conn, store::META_EVENT_CURSOR)?;
@@ -324,7 +342,30 @@ pub(crate) fn expire(conn: &Connection) -> Result<()> {
     store::meta_delete(conn, store::META_ITEMS_LISTED)?;
     store::meta_delete(conn, store::META_HYDRATE_RESUME)?;
     store::meta_delete(conn, store::META_REFILL)?;
+    store::restored::forget_anchor(conn)?;
     store::meta_delete(conn, FENCE)
+}
+
+/// The reach the copy was last built under, which an expiry keeps until a
+/// hydration names its own.
+const BUILT_UNDER: &str = "reach_built_under";
+
+/// The reach the rows the copy holds were read under: the one it holds, the
+/// one a refill under way began under, or the one it held before it expired.
+pub(crate) fn built_under(conn: &Connection) -> Result<Option<String>> {
+    if let Some(fence) = store::meta_get(conn, FENCE)? {
+        return Ok(Some(fence));
+    }
+    if let Some(refill) = store::refill(conn)? {
+        return Ok(Some(refill.reach));
+    }
+    store::meta_get(conn, BUILT_UNDER)
+}
+
+/// Names `fence` as the reach the copy is built under.
+pub(crate) fn build_under(conn: &Connection, fence: &str) -> Result<()> {
+    store::meta_set(conn, FENCE, fence)?;
+    store::meta_delete(conn, BUILT_UNDER)
 }
 
 /// Holds nothing `expire` would drop.

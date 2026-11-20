@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::time::Duration;
 
 use thiserror::Error;
@@ -643,30 +644,57 @@ fn wrong_schema(
     unsent: Option<u64>,
     folder: Option<&FolderStore>,
 ) -> String {
+    if let Some(folder) = folder {
+        return refused_directory(path, reason, unsent, folder);
+    }
     let writes = |count: u64| if count == 1 { "write" } else { "writes" };
-    let holds = match (unsent, folder) {
-        (Some(0), None) => "Every write it holds the server has taken, so a store hydrated in its place loses nothing".to_string(),
-        (Some(0), Some(FolderStore::Replaceable)) => "It holds no write still to be sent and no answer the folder has yet to record, so the folder's next push, pull, scan or watch replaces it with a store of this build's shape that keeps what the folder records of each file, and fills that from the server; the replacement changes none of the folder's files".to_string(),
-        (Some(0), Some(FolderStore::Unnamed)) => "It holds no write still to be sent, but it names no folder, so no push, pull, scan or watch replaces it: add the folder again (`marfa folders add`), which replaces it".to_string(),
-        (Some(0), Some(FolderStore::Uncarried(table))) => format!(
-            "It holds no write still to be sent and no answer the folder has yet to record, but its table {table}, part of what the folder records of its files, holds that record in a shape this build cannot keep, so this build leaves the store and the folder's files as they are: with the build that made the store, remove the folder (`marfa folders remove`, which leaves its files), then add it again with this build"
-        ),
-        (Some(count), None) => format!(
+    let holds = match unsent {
+        Some(0) => "Every write it holds the server has taken, so a store hydrated in its place loses nothing".to_string(),
+        Some(count) => format!(
             "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send: list them (`marfa device unsent`, or `readUnsent` in a binding), and open it with that build to drain or discard them before hydrating a new store",
             writes(count)
         ),
-        (Some(count), Some(FolderStore::Replaceable)) => format!(
-            "It holds {count} {} still to be sent or whose answer the folder has yet to record, which only the build that made it can send or record, so this build leaves the store and the folder's files as they are: with the build that made the store, push the folder (`marfa folders push`, after `marfa folders confirm` where its first sync waits), and once the store holds none, this build replaces it. A write the server refused or gave up on that the push leaves goes only with the folder: with the build that made the store, remove the folder (`marfa folders remove`, which leaves its files), then add it again with this build. The removal drops that write, so a file whose deletion the server never took comes back when the folder is added again, and must be deleted again",
-            writes(count)
-        ),
-        (Some(count), Some(_)) => format!(
-            "It holds {count} {} still to be sent or whose answer the folder has yet to record, which only the build that made it can send or record, so this build leaves the store and the folder's files as they are: with the build that made the store, push the folder (`marfa folders push`) and remove it (`marfa folders remove`, which leaves its files), then add it again with this build",
-            writes(count)
-        ),
-        (None, None) => "Whether it holds writes the server has not taken cannot be read: open it with the build that made it and drain or discard them before hydrating a new store".to_string(),
-        (None, Some(_)) => "Whether it holds writes still to be sent cannot be read, so this build leaves the store and the folder's files as they are: with the build that made the store, push the folder (`marfa folders push`) and remove it (`marfa folders remove`, which leaves its files), then add it again with this build".to_string(),
+        None => "Whether it holds writes the server has not taken cannot be read: open it with the build that made it and drain or discard them before hydrating a new store".to_string(),
     };
     format!("{path} was made by another build of the core: {reason}. {holds}")
+}
+
+/// A directory's saved state that another build made. Never advises deleting
+/// it: only that build can send what it holds.
+fn refused_directory(
+    path: &str,
+    reason: &str,
+    unsent: Option<u64>,
+    folder: &FolderStore,
+) -> String {
+    let state = Path::new(path);
+    let directory = state
+        .parent()
+        .filter(|parent| {
+            parent
+                .file_name()
+                .is_some_and(|name| name == crate::folder::STATE_DIR)
+        })
+        .and_then(Path::parent)
+        .map_or(path.to_string(), |root| root.display().to_string());
+    let changes = |count: u64| if count == 1 { "change" } else { "changes" };
+    let holds = match (unsent, folder) {
+        (Some(0), FolderStore::Replaceable) => "Nothing in it waits to be sent and no answer from the server is yet to be recorded, so the next push, pull, scan or watch replaces it with saved state this build reads, keeps what is recorded of each file, and fills it again from the server; the replacement changes none of the directory's files".to_string(),
+        (Some(0), FolderStore::Unnamed) => "Nothing in it waits to be sent, but it does not say which folder the directory follows, so no push, pull, scan or watch replaces it: add the directory again (`marfa folders add`), which replaces it".to_string(),
+        (Some(0), FolderStore::Uncarried(table)) => format!(
+            "Nothing in it waits to be sent and no answer from the server is yet to be recorded, but its table {table}, part of what is recorded of the directory's files, is in a shape this build cannot keep, so this build leaves it and the directory's files as they are: with the build that made it, stop the directory following its folder (`marfa folders remove`, which leaves its files), then add it again (`marfa folders add`) with this build"
+        ),
+        (Some(count), FolderStore::Replaceable) => format!(
+            "It holds {count} {} still to be sent or whose answer from the server is yet to be recorded, which only the build that made it can send or record, so this build leaves it and the directory's files as they are: with the build that made it, push the folder (`marfa folders push`, after `marfa folders confirm` where its first sync waits), and once nothing waits, this build replaces it. A change the server refused or gave up on that the push leaves goes only when the directory stops following its folder: with the build that made it, run `marfa folders remove` (which leaves its files), then add the directory again (`marfa folders add`) with this build. The removal drops that change, so a file whose deletion the server never took comes back when the directory is added again, and must be deleted again",
+            changes(count)
+        ),
+        (Some(count), _) => format!(
+            "It holds {count} {} still to be sent or whose answer from the server is yet to be recorded, which only the build that made it can send or record, so this build leaves it and the directory's files as they are: with the build that made it, push the folder (`marfa folders push`) and stop the directory following its folder (`marfa folders remove`, which leaves its files), then add the directory again (`marfa folders add`) with this build",
+            changes(count)
+        ),
+        (None, _) => "Whether it holds changes still to be sent cannot be read, so this build leaves it and the directory's files as they are: with the build that made it, push the folder (`marfa folders push`) and stop the directory following its folder (`marfa folders remove`, which leaves its files), then add the directory again (`marfa folders add`) with this build".to_string(),
+    };
+    format!("The saved state of {directory} was made by another build of marfa: {reason}. {holds}")
 }
 
 /// Never advises deleting the store: a set-aside keeps it, and carries what
@@ -823,6 +851,55 @@ mod tests {
             server: None,
         }
         .to_string()
+    }
+
+    fn refused_folder(unsent: Option<u64>, folder: FolderStore) -> String {
+        CoreError::WrongSchema {
+            path: "/notes/.marfa/core.sqlite".into(),
+            reason: "it is at schema version 3, and this build reads schema version 4".into(),
+            unsent,
+            folder: Some(folder),
+        }
+        .to_string()
+    }
+
+    #[test]
+    fn a_refused_folder_names_its_directory_and_what_to_do_in_a_folders_words() {
+        let folders = [
+            refused_folder(Some(0), FolderStore::Replaceable),
+            refused_folder(Some(0), FolderStore::Unnamed),
+            refused_folder(Some(0), FolderStore::Uncarried("folder_journal".into())),
+            refused_folder(Some(1), FolderStore::Replaceable),
+            refused_folder(Some(2), FolderStore::Unnamed),
+            refused_folder(None, FolderStore::Replaceable),
+        ];
+        for said in &folders {
+            assert!(
+                said.starts_with("The saved state of /notes was made"),
+                "{said}"
+            );
+            assert!(said.contains("schema version 3"), "{said}");
+            for word in ["core", "store", "hydrat", "queue", "write"] {
+                assert!(!said.to_lowercase().contains(word), "{word}: {said}");
+            }
+        }
+        assert!(folders[0].contains("next push, pull, scan or watch replaces it"));
+        assert!(folders[1].contains("`marfa folders add`"));
+        assert!(
+            folders[2].contains("folder_journal") && folders[2].contains("`marfa folders remove`")
+        );
+        assert!(folders[3].contains("It holds 1 change still to be sent"));
+        assert!(folders[4].contains("It holds 2 changes still to be sent"));
+        assert!(folders[5].contains("cannot be read"));
+        // The witness: a store that is no folder's keeps the device's words.
+        let device = CoreError::WrongSchema {
+            path: "/notes/.marfa/core.sqlite".into(),
+            reason: "r".into(),
+            unsent: Some(0),
+            folder: None,
+        }
+        .to_string();
+        assert!(device.contains("another build of the core") && device.contains("store"));
     }
 
     #[test]

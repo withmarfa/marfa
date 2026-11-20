@@ -1290,7 +1290,7 @@ fn a_map_clear_conflicts_with_replacement_and_global_clear() {
         (
             "--no-profile-permissions",
             "--profile-permission",
-            "email=read",
+            "username=read",
         ),
     ] {
         let parsed = crate::Cli::try_parse_from(["marfa", "keys", "update", "key-id", clear]);

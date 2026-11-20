@@ -94,7 +94,10 @@ async function signIn(
       "user-agent": userAgent,
       [CLIENT_HEADER]: address,
     },
-    body: JSON.stringify({ email: OWNER.email, password: OWNER.password }),
+    body: JSON.stringify({
+      username: OWNER.username,
+      password: OWNER.password,
+    }),
   });
   expect(response.status).toBe(200);
   const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(

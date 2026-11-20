@@ -513,8 +513,8 @@ mod tests {
         app.db
             .write(Write::own(), move |tx| {
                 tx.execute(
-                    "INSERT INTO owner (id, name, email, password, created_at, updated_at) \
-                     VALUES ('u', 'u', 'u@example.test', 'x', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')",
+                    "INSERT INTO owner (id, name, username, password, created_at, updated_at) \
+                     VALUES ('u', 'u', 'u', 'x', '1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')",
                     [],
                 )?;
                 tx.execute(

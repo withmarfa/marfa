@@ -26,7 +26,7 @@ check_owner() {
     python3 -c 'import json,sys; from urllib.parse import urlparse
 issuer = urlparse(json.load(sys.stdin)["issuer"])
 print(f"{issuer.scheme}://{issuer.netloc}")')"
-  body="$(python3 -c 'import json,os; print(json.dumps({"email":os.environ["MARFA_TEST_OWNER_EMAIL"],"password":os.environ["MARFA_TEST_OWNER_PASSWORD"]}))')"
+  body="$(python3 -c 'import json,os; print(json.dumps({"username":os.environ["MARFA_TEST_OWNER_USERNAME"],"password":os.environ["MARFA_TEST_OWNER_PASSWORD"]}))')"
   curl -fsS --max-time 10 -X POST "${MARFA_TEST_URL}/auth/sign-in" \
     -H 'Content-Type: application/json' \
     -H "Origin: ${origin}" \
@@ -37,7 +37,7 @@ assert json.load(sys.stdin) == {"ok": True}, "the owner did not sign in"'
 
 up() {
   local env_text
-  unset MARFA_TEST_KEY MARFA_TEST_SOCKET MARFA_TEST_OWNER_EMAIL MARFA_TEST_OWNER_PASSWORD
+  unset MARFA_TEST_KEY MARFA_TEST_SOCKET MARFA_TEST_OWNER_USERNAME MARFA_TEST_OWNER_PASSWORD
   env_text="$("${scripts}/server-up.sh")"
   eval "${env_text}"
   : "${MARFA_TEST_KEY:?working key was not exported}"
@@ -48,7 +48,7 @@ import os, stat, sys
 for path in sys.argv[1:]:
     assert stat.S_IMODE(os.stat(path).st_mode) == 0o600, "credential file is not private"
 PY
-  : "${MARFA_TEST_OWNER_EMAIL:?the test owner was not exported}"
+  : "${MARFA_TEST_OWNER_USERNAME:?the test owner was not exported}"
   : "${MARFA_TEST_OWNER_PASSWORD:?the test owner password was not exported}"
   check_key "${MARFA_TEST_KEY}"
   curl -fsS --unix-socket "${MARFA_TEST_SOCKET}" http://localhost/_control/setup/status |
@@ -60,7 +60,7 @@ up
 first_url="${MARFA_TEST_URL}"
 first_working="${MARFA_TEST_KEY}"
 first_socket="${MARFA_TEST_SOCKET}"
-first_owner="${MARFA_TEST_OWNER_EMAIL}:${MARFA_TEST_OWNER_PASSWORD}"
+first_owner="${MARFA_TEST_OWNER_USERNAME}:${MARFA_TEST_OWNER_PASSWORD}"
 "${scripts}/server-down.sh" "${MARFA_SERVER_ENV}"
 chmod 644 "${MARFA_SERVER_KEEP}/boot.env"
 : >"${MARFA_SERVER_ENV}"
@@ -70,7 +70,7 @@ up
 [[ "${MARFA_TEST_KEY}" == "${first_working}" ]]
 [[ "${MARFA_TEST_SOCKET}" != "${first_socket}" ]]
 [[ ! -e "${first_socket}" ]]
-[[ "${MARFA_TEST_OWNER_EMAIL}:${MARFA_TEST_OWNER_PASSWORD}" == "${first_owner}" ]]
+[[ "${MARFA_TEST_OWNER_USERNAME}:${MARFA_TEST_OWNER_PASSWORD}" == "${first_owner}" ]]
 echo "The working key, public URL and test owner survive a kept-server restart."
 
 "${scripts}/server-down.sh" "${MARFA_SERVER_ENV}"
@@ -79,7 +79,7 @@ from pathlib import Path
 import sys
 path = Path(sys.argv[1])
 path.write_text("".join(line for line in path.read_text().splitlines(keepends=True)
-                        if not line.startswith("BOOT_OWNER_EMAIL=")))
+                        if not line.startswith("BOOT_OWNER_USERNAME=")))
 PY
 if "${scripts}/server-up.sh" >"${work}/missing.out" 2>"${work}/missing.err"; then
   echo "server-up accepted kept state with no owner or working key" >&2

@@ -1404,7 +1404,7 @@ export interface ScanReport {
   waiting: number;
   missing: number;
   deleted: number;
-  /** The paths of those, each found in no folder on the machine
+  /** The paths of those, each found in no directory on the machine
    *  (`folder-files/missing-file-trashed`). */
   trashed: string[];
   /** Journaled files held, since the other folders could not all be read
@@ -1412,7 +1412,7 @@ export interface ScanReport {
   unsure: Array<{ path: string; reason: string }>;
   /** Why the registry could not be read, where it could not. */
   registry: string | null;
-  /** Journaled files found in another folder on the machine and let go here,
+  /** Journaled files found in another directory on the machine and let go here,
    *  so nothing was trashed (`folder-files/moved-file-count`). */
   moved_away: number;
   skipped: number;
@@ -1501,7 +1501,9 @@ export interface StatusReport {
  *  `retained` (`folder-files/retained-source-reported`). A pull names a document as
  *  `attachment` where its attached file is written in another directory
  *  (`folder-documents/attachment-written-once-report`) or could not be read
- *  (`folder-documents/attachment-unread-reported`). */
+ *  (`folder-documents/attachment-unread-reported`). A scan or a pull names a person's
+ *  file it moved out of its path and kept beside it or under a reserved name as `kept`
+ *  (`folder-files/write-kept-reported`). */
 export interface FlaggedFile {
   path: string;
   flag:
@@ -1520,7 +1522,8 @@ export interface FlaggedFile {
     | "unsuited"
     | "absent"
     | "retained"
-    | "attachment";
+    | "attachment"
+    | "kept";
   reason: string;
   /** The item whose file a pull did not write (`folder-sync/pull-flagged-items`), or could
    *  not let go to another folder (`folder-files/retained-source-reported`). */
@@ -1565,13 +1568,13 @@ export interface PullReport {
   /** Files left in place whose items left elsewhere in a large removal
    *  (`folder-guards/pull-removal-paused`). */
   paused: number;
-  /** Files another folder on the machine let go of, taken in here
+  /** Files another directory on the machine let go of, taken in here
    *  (`folder-files/take-in-file`). */
   taken: number;
-  /** Items whose file was moved to another folder on the machine, so none
+  /** Items whose file was moved to another directory on the machine, so none
    *  is written here (`folder-files/moved-awaiting-peer`). */
   elsewhere: number;
-  /** Files of items another folder on the machine holds with a file of its
+  /** Files of items another directory on the machine holds with a file of its
    *  own, taken away with nothing trashed (`folder-files/let-go-existing-peer`). */
   let_go: number;
   /** Placements deleted because their file left the folder for good
@@ -1750,6 +1753,7 @@ export class CliFolder {
       unsure: Array<{ path: string; reason: string }>;
       removed: number;
       added: number;
+      refused: Array<{ path: string; reason: string }>;
     }>
   > {
     return this.run(["folders", "confirm", this.dir]);

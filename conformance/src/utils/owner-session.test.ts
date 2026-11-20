@@ -5,7 +5,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const OWNER = { email: "owner@example.test", password: "test-password" };
+const OWNER = { username: "owner", password: "test-password" };
 
 function serving(passkeys: number) {
   return vi.fn(async (url: string) => {

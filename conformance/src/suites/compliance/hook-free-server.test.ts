@@ -80,7 +80,6 @@ function start(
       name.startsWith("MARFA_") && name !== "MARFA_SERVER_RELEASE_BIN";
     if (!own && !name.startsWith("OTEL_")) env[name] = value;
   }
-  env.OTEL_SDK_DISABLED = "true";
   Object.assign(env, {
     MARFA_PORT: "0",
     MARFA_LISTEN_HOST: "127.0.0.1",

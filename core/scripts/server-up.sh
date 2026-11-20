@@ -15,16 +15,14 @@
 # MARFA_PORT: the operating system assigns one by default.
 #
 # A boot also creates an owner, so sign-in and the owner's pages can be tried
-# by hand. Its throwaway email and password come from test-owner.example.env
-# and are printed as MARFA_TEST_OWNER_EMAIL and MARFA_TEST_OWNER_PASSWORD.
+# by hand. Its throwaway username and password come from test-owner.example.env
+# and are printed as MARFA_TEST_OWNER_USERNAME and MARFA_TEST_OWNER_PASSWORD.
 set -euo pipefail
 umask 077
 
 # The server this boots is throwaway, so it reports nothing, whatever the shell sets.
 # shellcheck source=no-telemetry.sh
 source "$(dirname "${BASH_SOURCE[0]}")/no-telemetry.sh"
-# Whatever a test server does send says it came from one.
-export OTEL_RESOURCE_ATTRIBUTES=deployment.environment=test
 
 repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 server_bin="${MARFA_SERVER_BIN:-${CARGO_TARGET_DIR:-${repo}/core/target}/release/marfa-server}"
@@ -59,7 +57,7 @@ env_file="${MARFA_SERVER_ENV:-${state}/env}"
 
 boot="${state}/boot.env"
 kept_key=""
-owner_email=""
+owner_username=""
 owner_password=""
 if [[ -f "${boot}" ]]; then
   chmod 600 "${boot}"
@@ -67,9 +65,9 @@ if [[ -f "${boot}" ]]; then
   source "${boot}"
   MARFA_PORT="${BOOT_PORT}"
   kept_key="${BOOT_KEY}"
-  owner_email="${BOOT_OWNER_EMAIL:-}"
+  owner_username="${BOOT_OWNER_USERNAME:-}"
   owner_password="${BOOT_OWNER_PASSWORD:-}"
-  if [[ -z "${owner_email}" || -z "${owner_password}" || -z "${kept_key}" ]]; then
+  if [[ -z "${owner_username}" || -z "${owner_password}" || -z "${kept_key}" ]]; then
     echo "server-up: kept state has no owner or working key; use a fresh MARFA_SERVER_KEEP directory" >&2
     exit 1
   fi
@@ -92,8 +90,10 @@ control_dir="$(cd "${control_dir}" && pwd -P)"
 export MARFA_CONTROL_SOCKET="${control_dir}/marfa.sock"
 
 # The recorded process owns the listener and both file reservations.
+# The server reads no OTEL_* name, so the switch meant for the command line is not passed to it.
 (
   cd "${state}"
+  unset OTEL_SDK_DISABLED
   exec "${server_bin}"
 ) >"${log}" 2>&1 &
 pid=$!
@@ -106,8 +106,8 @@ write_env() {
     echo "export MARFA_TEST_URL='${url}'"
     echo "export MARFA_TEST_KEY='${1:-}'"
     echo "export MARFA_TEST_SOCKET='${MARFA_CONTROL_SOCKET}'"
-    if [[ -n "${owner_email}" ]]; then
-      echo "export MARFA_TEST_OWNER_EMAIL='${owner_email}'"
+    if [[ -n "${owner_username}" ]]; then
+      echo "export MARFA_TEST_OWNER_USERNAME='${owner_username}'"
       echo "export MARFA_TEST_OWNER_PASSWORD='${owner_password}'"
     fi
     echo "export MARFA_SERVER_ENV='${env_file}'"
@@ -142,6 +142,12 @@ for _ in $(seq 1 120); do
 done
 curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1 || fail "no answer from ${url}/health"
 
+# Whatever a test server does send says it came from one.
+curl -fsS --max-time 15 --unix-socket "${MARFA_CONTROL_SOCKET}" \
+  -X PATCH http://localhost/config -H 'Content-Type: application/json' \
+  --data '{"otel_resource_attributes":"deployment.environment=test"}' >/dev/null ||
+  fail "the server could not be marked as a test server"
+
 if [[ -n "${kept_key}" ]]; then
   write_env "${kept_key}"
   cat "${env_file}"
@@ -151,12 +157,12 @@ fi
 # Provision through the production private authority, with secrets on stdin.
 # shellcheck disable=SC1091
 source "$(dirname "$0")/test-owner.example.env"
-export MARFA_TEST_OWNER_EMAIL MARFA_TEST_OWNER_PASSWORD
-created="$(python3 -c 'import json,os; print(json.dumps({"email":os.environ["MARFA_TEST_OWNER_EMAIL"],"password":os.environ["MARFA_TEST_OWNER_PASSWORD"]}))' |
+export MARFA_TEST_OWNER_USERNAME MARFA_TEST_OWNER_PASSWORD
+created="$(python3 -c 'import json,os; print(json.dumps({"username":os.environ["MARFA_TEST_OWNER_USERNAME"],"password":os.environ["MARFA_TEST_OWNER_PASSWORD"]}))' |
   curl -fsS --max-time 15 --unix-socket "${MARFA_CONTROL_SOCKET}" \
     -X POST http://localhost/_control/setup/claim -H 'Content-Type: application/json' --data-binary @-)" || fail "the owner claim failed"
-[[ "${created}" == *'"email"'* ]] || fail "the claim returned no owner"
-owner_email="${MARFA_TEST_OWNER_EMAIL}"
+[[ "${created}" == *'"username"'* ]] || fail "the claim returned no owner"
+owner_username="${MARFA_TEST_OWNER_USERNAME}"
 owner_password="${MARFA_TEST_OWNER_PASSWORD}"
 working="$(curl -fsS --max-time 15 --unix-socket "${MARFA_CONTROL_SOCKET}" \
   -X POST http://localhost/keys -H 'Content-Type: application/json' --data-binary @- <<'JSON'
@@ -171,7 +177,7 @@ if [[ -n "${keep}" ]]; then
   {
     echo "BOOT_PORT='${port}'"
     echo "BOOT_KEY='${key}'"
-    echo "BOOT_OWNER_EMAIL='${owner_email}'"
+    echo "BOOT_OWNER_USERNAME='${owner_username}'"
     echo "BOOT_OWNER_PASSWORD='${owner_password}'"
   } >"${boot}"
 fi

@@ -30,6 +30,7 @@ import {
   KEY,
   acceptUploads,
   folderHarness,
+  folderItem,
   hashOf,
   requireBinary,
   scriptBlob,
@@ -60,6 +61,7 @@ import { ON_MACOS } from "../../utils/platform.js";
 
 let harness: FolderHarness | undefined;
 let second: FolderHarness | undefined;
+const SAME_FOLDER = Symbol("the same folder");
 
 afterEach(async () => {
   await harness?.stop();
@@ -211,11 +213,12 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
    * own settings, directory and store. The first holds `items`; the item
    * doors and the stream are the shared server's. `attachments` are
    * `attached-to` edges the server holds already, drawn on their sources.
+   * `SAME_FOLDER` makes the second a directory following the first's folder.
    */
   async function onOneMac(
     label: string,
     first: FolderSettings,
-    other: FolderSettings,
+    other: FolderSettings | typeof SAME_FOLDER,
     rows: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>,
     before?: (server: ScriptedServer) => void,
     attachments: WireEdgeOptions[] = [],
@@ -252,7 +255,10 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
       events: [edges.stream()],
     });
     // Before the item doors, whose read would answer for any id.
-    const otherRow = scriptFolderItem(harness.server, other);
+    const otherRow =
+      other === SAME_FOLDER
+        ? harness.settings
+        : scriptFolderItem(harness.server, other);
     before?.(harness.server);
     let door: FolderDoor | undefined;
     scriptFolderWrites(harness, {
@@ -673,7 +679,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const said = await a.folder.pushText();
     expect(said.ok, JSON.stringify(said)).toBe(true);
     expect(said.ok && said.value).toContain(
-      "Also gone.md was found in no folder on this machine, so its item was trashed",
+      "Also gone.md was found in no directory on this machine, so its item was trashed",
     );
     expect(deletesOf(a.server, alsoGone)).toBe(1);
   });
@@ -1327,6 +1333,142 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(deletesOf(a.server, plan.id) + deletesOf(a.server, brief.id)).toBe(
       0,
     );
+  });
+
+  /** Two directories of one folder on the Mac, each with a file of `kept`
+   *  and of `left`, which a narrowing to `vkeep` leaves out. */
+  async function sameFolderTwice(label: string) {
+    const kept = {
+      id: "01a00000-0000-7000-8000-0000000023c1",
+      properties: { title: "VA", body: "Keep me.\n" },
+    };
+    const left = {
+      id: "01a00000-0000-7000-8000-0000000023c2",
+      properties: { title: "VB", body: "Other.\n" },
+    };
+    const held = await onOneMac(
+      label,
+      { query: { types: ["core.note"], filter: 'tags contains "v1"' } },
+      SAME_FOLDER,
+      {
+        "core.note": [
+          { item: kept, tags: ["v1", "vkeep"] },
+          { item: left, tags: ["v1"] },
+        ],
+      },
+    );
+    const { a, b, edges } = held;
+    expect((await a.folder.push()).ok).toBe(true);
+    expect((await b.folder.push()).ok).toBe(true);
+    for (const dir of [a.dir, b.dir]) {
+      expect(existsSync(join(dir, "VA.md"))).toBe(true);
+      expect(existsSync(join(dir, "VB.md"))).toBe(true);
+    }
+    const query = (filter: string) => {
+      a.settings.settings = { query: { types: ["core.note"], filter } };
+      a.settings.version += 1;
+      edges.events.push(
+        copyItemEvent(
+          String(edges.events.length + 2),
+          "item.updated",
+          folderItem(a.settings),
+        ),
+      );
+    };
+    return { ...held, kept, left, query };
+  }
+
+  /** Pushes `folder` and asserts it kept `VB.md` as unmatched. */
+  async function keptUnmatched(folder: FolderHarness, why: string) {
+    const before = read(folder, "VB.md");
+    const pushed = await folder.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.pull?.let_go, why).toBe(0);
+    expect(existsSync(join(folder.dir, "VB.md")), why).toBe(true);
+    expect(read(folder, "VB.md")).toBe(before);
+    expect(pushed.value.pull?.unmatched).toBe(1);
+    const listed = await folder.folder.unmatched();
+    expect(
+      listed.ok && listed.value.unmatched.map((file) => file.path),
+    ).toEqual(["VB.md"]);
+  }
+
+  it("keeps a file as unmatched in both directories of one folder when its query narrows", async () => {
+    const { a, b, left, edges, query } = await sameFolderTwice(
+      "same-folder-narrowed",
+    );
+    query('tags contains "vkeep"');
+    await keptUnmatched(
+      a,
+      "the first directory to push took the file away, as if the other directory of the same folder were another folder taking it",
+    );
+    await keptUnmatched(b, "the second directory took the file away");
+    await keptUnmatched(a, "a later push took the file away");
+    expect(edges.placements(a.settings.id).get(left.id)).toBe("VB.md");
+    expect(deletesOf(a.server, left.id)).toBe(0);
+  });
+
+  it("keeps a file as unmatched when its query narrows while the other directory of the folder cannot be read, and once it can", async () => {
+    const { a, b, left, query } = await sameFolderTwice(
+      "same-folder-unreadable",
+    );
+    query('tags contains "vkeep"');
+    chmodSync(a.dir, 0o000);
+    try {
+      await keptUnmatched(
+        b,
+        "a directory took the file away while the other directory of its folder could not be read",
+      );
+    } finally {
+      chmodSync(a.dir, 0o755);
+    }
+    // Readable again, the other directory has not read the narrowing yet.
+    await keptUnmatched(
+      b,
+      "a directory took the file away once the other directory of its folder, not yet narrowed, could be read",
+    );
+    await keptUnmatched(a, "the other directory took the file away");
+    expect(deletesOf(a.server, left.id)).toBe(0);
+  });
+
+  it("writes its own file, and takes none from the other directory of the folder, when a widened query brings an item back", async () => {
+    const { a, b, left, query } = await sameFolderTwice("same-folder-widened");
+    query('tags contains "vkeep"');
+    // The first directory is shut while the second pushes, so no departure
+    // takes the file and only the take-in below is tested.
+    chmodSync(a.dir, 0o000);
+    try {
+      await keptUnmatched(b, "the directory took the file away");
+    } finally {
+      chmodSync(a.dir, 0o755);
+    }
+    await keptUnmatched(a, "the other directory took the file away");
+    const removed = await a.folder.removeUnmatched({ yes: true });
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    expect(existsSync(join(a.dir, "VB.md"))).toBe(false);
+    const theirs = read(b, "VB.md");
+
+    query('tags contains "v1"');
+    const widened = await a.folder.push();
+    expect(widened.ok, JSON.stringify(widened)).toBe(true);
+    if (!widened.ok) return;
+    expect(
+      widened.value.pull?.taken,
+      "the directory took in the other directory's file of the same folder, as if that folder had let it go",
+    ).toBe(0);
+    expect(widened.value.pull?.written).toBe(1);
+    expect(idIn(a, "VB.md")).toBe(left.id);
+    expect(
+      existsSync(join(b.dir, "VB.md")),
+      "the other directory of the same folder lost its file",
+    ).toBe(true);
+    expect(read(b, "VB.md")).toBe(theirs);
+    const after = await b.folder.push();
+    expect(after.ok, JSON.stringify(after)).toBe(true);
+    expect(after.ok && after.value.pull?.unmatched).toBe(0);
+    expect(idIn(b, "VB.md")).toBe(left.id);
+    expect(sentCreates(a)).toEqual([]);
   });
 
   it("leaves the binding of a file it let go where ending the placement fails, and the scan ends it past the grace", async () => {
@@ -2003,7 +2145,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ]);
     const said = await a.folder.pushText();
     expect(said.ok && said.value).toContain(
-      "this folder stands alone, since the folder registry cannot be read",
+      "this directory stands alone, since the folder registry cannot be read",
     );
 
     // An add writes it afresh, the others list themselves again at their
@@ -4335,36 +4477,46 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect(idIn(b, "Plan.md")).toBe(plan.id);
   });
 
-  it("leaves a file it let go where the person saved it meanwhile", async () => {
-    const brief = {
-      id: "01a00000-0000-7000-8000-00000000fa41",
-      properties: { title: "Brief", body: "the brief\n" },
-    };
-    const { a, b, edges } = await onOneMac(
-      "let-go-last-look",
-      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
-      { "core.note": [{ item: brief, tags: ["a"] }] },
-    );
-    expect((await a.folder.pull()).ok).toBe(true);
-    expect((await b.folder.pull()).ok).toBe(true);
-    edges.events.push(
-      copyItemEvent("2", "metadata.changed", wireItem(brief), { tags: ["b"] }),
-    );
-    const first = await b.folder.push();
-    expect(first.ok && first.value.pull?.written).toBe(1);
-    // The person saves the file in the folder it leaves just as the pull
-    // takes it away.
-    const letGo = await withFault("save-before-last-look", () =>
-      a.folder.push(),
-    );
-    expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
-    if (!letGo.ok) return;
-    expect(
-      [letGo.value.pull?.let_go, read(a, "Brief.md")],
-      "a file let go to another folder was removed with the person's save in it",
-    ).toEqual([0, expect.stringContaining("saved meanwhile")]);
-    // The save landed after the pull chose to let the file go, which
-    // `› takes in a file another folder let go` shows it does unsaved.
-  });
+  it.each([
+    ["before", "save-before-last-look", "saved meanwhile"],
+    ["after", "save-after-last-look", "saved after the last look"],
+  ])(
+    "leaves a file it let go where the person saved it %s its last look",
+    async (_, fault, saved) => {
+      const brief = {
+        id: "01a00000-0000-7000-8000-00000000fa41",
+        properties: { title: "Brief", body: "the brief\n" },
+      };
+      const { a, b, edges } = await onOneMac(
+        "let-go-last-look",
+        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+        { "core.note": [{ item: brief, tags: ["a"] }] },
+      );
+      expect((await a.folder.pull()).ok).toBe(true);
+      expect((await b.folder.pull()).ok).toBe(true);
+      edges.events.push(
+        copyItemEvent("2", "metadata.changed", wireItem(brief), {
+          tags: ["b"],
+        }),
+      );
+      const first = await b.folder.push();
+      expect(first.ok && first.value.pull?.written).toBe(1);
+      // The person saves the file in the folder it leaves just as the pull
+      // takes it away.
+      const letGo = await withFault(fault, () => a.folder.push());
+      expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
+      if (!letGo.ok) return;
+      expect(
+        [letGo.value.pull?.let_go, read(a, "Brief.md")],
+        "a file let go to another folder was removed with the person's save in it",
+      ).toEqual([0, expect.stringContaining(saved)]);
+      expect(
+        readdirSync(a.dir).filter((name) => name.startsWith(".marfa-")),
+        "a file moved out of its path was left under a name Marfa keeps",
+      ).toEqual([]);
+      // The save landed after the pull chose to let the file go, which
+      // `› takes in a file another folder let go` shows it does unsaved.
+    },
+  );
 });

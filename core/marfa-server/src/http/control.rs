@@ -15,7 +15,7 @@ use crate::app::auth::claim::{self, Proof};
 use crate::app::auth::owner::{self, Details};
 use crate::app::refusal::Refusal;
 
-const CLAIM_FIELDS: [&str; 3] = ["email", "password", "name"];
+const CLAIM_FIELDS: [&str; 4] = ["username", "password", "name", "email"];
 const RECOVER_FIELDS: [&str; 1] = ["password"];
 
 pub async fn setup_status(State(app): State<Arc<App>>, _: Caller) -> Answer {
@@ -55,12 +55,11 @@ pub async fn setup_claim(State(app): State<Arc<App>>, caller: Caller, body: Json
     caller.require_local()?;
     let body = body.object(&CLAIM_FIELDS).await?;
     let text = |field: &str| body.get(field).and_then(Value::as_str);
-    let email = text("email").ok_or_else(owner::incomplete_claim)?;
+    let username = text("username").ok_or_else(owner::incomplete_claim)?;
     let password = text("password").ok_or_else(owner::incomplete_claim)?;
-    if body.get("name").is_some_and(|name| !name.is_string()) {
-        return Err(owner::incomplete_claim().into());
-    }
-    let details = Details::new(email, text("name"), password.to_string())?;
+    let name = owner::optional_text(&body, "name")?;
+    let email = owner::optional_text(&body, "email")?;
+    let details = Details::new(username, email, name, password.to_string())?;
     let owner = claim::claim(&app, details, Proof::Local, Visit::default()).await?;
     Ok(json_answer(
         StatusCode::CREATED,

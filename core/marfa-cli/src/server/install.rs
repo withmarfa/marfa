@@ -744,7 +744,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         }
         match &claim.url {
             Some(url) => text.push_str(&format!(
-                "\nOpen this link to choose the owner's email and password. It works once, for five minutes; run this command again for a new one.\n\n  {url}\n"
+                "\nOpen this link to choose the owner's username and password. It works once, for five minutes; run this command again for a new one.\n\n  {url}\n"
             )),
             None => text.push_str(&format!(
                 "\nThis instance has an owner already. Sign in at {shown_address}.\n"

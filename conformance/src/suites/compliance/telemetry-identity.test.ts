@@ -65,16 +65,15 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${String(address.port)}`;
   server = await bootFreshServer("telemetry-identity", {
     ...reporting(),
-    OTEL_SERVICE_NAME: SERVICE,
-    OTEL_RESOURCE_ATTRIBUTES: `deployment.environment=${ENVIRONMENT},team=a%20b`,
+    MARFA_OTEL_SERVICE_NAME: SERVICE,
+    MARFA_OTEL_RESOURCE_ATTRIBUTES: `deployment.environment=${ENVIRONMENT},team=a%20b`,
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 /** Every report pointed at the receiver, and every trace kept. */
 function reporting(): Record<string, string> {
   return {
-    OTEL_SDK_DISABLED: "false",
-    OTEL_EXPORTER_OTLP_ENDPOINT: base,
+    MARFA_OTEL_EXPORTER_OTLP_ENDPOINT: base,
     MARFA_POSTHOG_HOST: base,
     MARFA_POSTHOG_PROJECT_TOKEN: "phc_conformance_fixture",
     // Every trace, so a request that succeeds is exported too.
@@ -301,7 +300,7 @@ describe("what a server's telemetry says of where it came from", () => {
 
       const named = await bootFreshServer("telemetry-identity-version", {
         ...reporting(),
-        OTEL_RESOURCE_ATTRIBUTES: "service.version=9.8.7",
+        MARFA_OTEL_RESOURCE_ATTRIBUTES: "service.version=9.8.7",
       });
       try {
         const namedId = (await described(named)).instance_id;
@@ -340,7 +339,7 @@ describe("what a server's telemetry says of where it came from", () => {
 
       const unnamed = await bootFreshServer("telemetry-identity-unnamed", {
         ...reporting(),
-        OTEL_RESOURCE_ATTRIBUTES: "",
+        MARFA_OTEL_RESOURCE_ATTRIBUTES: "",
       });
       try {
         const id = (await described(unnamed)).instance_id;

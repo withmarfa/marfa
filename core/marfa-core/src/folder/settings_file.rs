@@ -98,6 +98,7 @@ impl Folder {
         }
         let path = self.settings_path();
         let landed = self.land(
+            &*self.core.conn()?,
             &path,
             |file, _| std::io::Write::write_all(file, text.as_bytes()),
             |found| match (over, found) {

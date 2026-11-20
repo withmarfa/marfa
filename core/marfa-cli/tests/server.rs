@@ -1885,7 +1885,7 @@ const CLOUDFLARE_FILE: &str =
 MARFA_AUTH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP
 MARFA_TRUSTED_PROXY_CIDRS=172.30.0.1/32
-OTEL_RESOURCE_ATTRIBUTES=service.instance.id=mine
+MARFA_MAX_CONNECTIONS=512
 ";
 
 const NATIVE_CLOUDFLARE_FILE: &str =
@@ -1893,7 +1893,7 @@ const NATIVE_CLOUDFLARE_FILE: &str =
 MARFA_AUTH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP
 MARFA_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128
-OTEL_RESOURCE_ATTRIBUTES=service.instance.id=mine
+MARFA_MAX_CONNECTIONS=512
 ";
 
 #[test]
@@ -1934,7 +1934,7 @@ fn a_settings_file_managed_elsewhere_is_used_as_it_is() {
     }
 
     // It stays external without the flag, and a new rendering is picked up.
-    let rendered = CLOUDFLARE_FILE.replace("mine", "other");
+    let rendered = CLOUDFLARE_FILE.replace("CONNECTIONS=512", "CONNECTIONS=256");
     fs::write(rig.dir.join("marfa.env"), &rendered).unwrap();
     rig.installed(&[]);
     assert_eq!(rig.file("marfa.env"), rendered);
@@ -2734,7 +2734,7 @@ fn settings_managed_elsewhere_are_applied_by_running_install_again() {
     let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
     fs::write(
         rig.dir.join("marfa.env"),
-        NATIVE_CLOUDFLARE_FILE.replace("mine", "other"),
+        NATIVE_CLOUDFLARE_FILE.replace("CONNECTIONS=512", "CONNECTIONS=256"),
     )
     .unwrap();
     rig.native_installed(&external);
@@ -4698,7 +4698,7 @@ fn the_address_for_setup_is_set_only_through_the_private_socket() {
             "claim",
             "--address",
             "https://marfa.example.com",
-            "--email",
+            "--username",
             "a@example.com",
         ][..],
     ] {

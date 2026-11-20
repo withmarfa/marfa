@@ -720,7 +720,22 @@ fn no_content_key_or_credential_reaches_a_span_or_an_event() {
             ),
         )],
     );
-    at_the_head(&server);
+    // The log carries the create the drain sends, so the copy has no write
+    // to read back once the stream reaches the head.
+    let mut created: serde_json::Value =
+        serde_json::from_str(&scripted::item_payload("item.created", &id, "core.note", 1)).unwrap();
+    created["listed"] = true.into();
+    server.on(
+        "/events",
+        vec![scripted::stream(
+            vec![
+                scripted::copy_marker("stream_cursor", "10"),
+                scripted::event("11", "item.created", &created.to_string()),
+                scripted::copy_marker("stream_live", "11"),
+            ],
+            scripted::Then::End,
+        )],
+    );
     server.on(
         "/items/lookup",
         vec![scripted::json(200, r#"{"data":[],"tombstones":[]}"#)],
@@ -750,7 +765,7 @@ fn no_content_key_or_credential_reaches_a_span_or_an_event() {
     // The witness: each operation ran, took the secrets in, and was
     // recorded, so a log without them is not a log of nothing.
     assert!(drained.answered >= 1, "{drained:?}");
-    assert!(caught_up.is_ok());
+    assert!(caught_up.is_ok(), "{caught_up:?}");
     assert_eq!(refused_drain, CoreError::NoCursor);
     assert_eq!(found.len(), 1);
     assert_eq!(refused_search.code(), "validation");

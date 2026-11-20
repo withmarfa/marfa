@@ -21,18 +21,39 @@ afterAll(async () => {
   await server?.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 it("changes the owner through the private socket and through a credential", async () => {
-  const changed = await local.json<{ email: string; name: string }>([
+  const changed = await local.json<{
+    username: string;
+    email: string | null;
+    name: string;
+  }>([
     "profile",
     "update",
+    "--username",
+    "Updated.Owner",
     "--email",
     "Updated@Example.test",
     "--name",
     "CLI owner",
   ]);
   expect(changed).toMatchObject({
+    username: "updated.owner",
     email: "updated@example.test",
     name: "CLI owner",
   });
+  const cleared = await local.json<{ email: string | null }>([
+    "profile",
+    "update",
+    "--clear-email",
+  ]);
+  expect(cleared.email).toBeNull();
+  const both = await local.refused([
+    "profile",
+    "update",
+    "--email",
+    "again@example.test",
+    "--clear-email",
+  ]);
+  expect(both.code).toBe(2);
   const refused = await delegated
     .as(undefined)
     .refused(["profile", "update", "--name", "No"]);

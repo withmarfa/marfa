@@ -94,7 +94,7 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         &["setup status", "setup code", "setup open", "setup claim"],
     ),
     (
-        "Read and change the owner's email, name and avatar, or clear the avatar",
+        "Read and change the owner's username, email, name and avatar, or clear the email or the avatar",
         &["profile show", "profile update", "profile avatar"],
     ),
     (
@@ -805,8 +805,9 @@ mod tests {
             .flat_map(|source| source.split('"'))
             .filter(|text| {
                 text.starts_with("OTEL_")
-                    // The logs are the server's signal; the binary sends none.
+                    // Logs and metrics are the server's signals; the binary sends neither.
                     && !text.contains("_LOGS_")
+                    && !text.contains("_METRICS_")
                     && text.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')
             })
             .collect();

@@ -117,13 +117,18 @@ pub(crate) fn settled(row: &Bound, root: &crate::directory::Directory) -> Option
     Some(landing.before.as_deref().cloned())
 }
 
-/// Recover landed writes before a scan mistakes them for edits or deletions.
+/// Recover landed writes before a scan mistakes them for edits or deletions,
+/// except at the paths in `waiting`, whose bytes may have landed elsewhere.
 pub(crate) fn settle_landings(
     conn: &Connection,
     root: &crate::directory::Directory,
+    waiting: &std::collections::HashSet<String>,
 ) -> Result<(), CoreError> {
     let rows = every_bound(conn)?;
     for row in &rows {
+        if waiting.contains(&row.path) {
+            continue;
+        }
         match settled(row, root) {
             None => {}
             Some(Some(settled)) => {
@@ -429,6 +434,62 @@ pub fn stale_waits(conn: &Connection) -> Result<HashMap<String, StaleWait>, Core
         .into_iter()
         .filter_map(|(path, value)| Some((path, serde_json::from_str(&value).ok()?)))
         .collect())
+}
+
+const DISPLACED: &str = "folder_displaced:";
+
+/// A file a write or a removal moved out of its path, recorded before the
+/// rename. `dir` is the target's directory and `aside` the directory its
+/// reserved names are in, each relative to the folder's root, or absolute
+/// where outside it, and each with its device and inode, so a directory
+/// that took either's name is never settled against.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Displaced {
+    pub(crate) dir: String,
+    pub(crate) dir_at: (u64, u64),
+    pub(crate) aside: String,
+    pub(crate) aside_at: (u64, u64),
+    pub(crate) displacement: super::landing::Displacement,
+}
+
+pub(crate) fn set_displaced(conn: &Connection, displaced: &Displaced) -> Result<(), CoreError> {
+    let value =
+        serde_json::to_string(displaced).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(
+        conn,
+        &format!("{DISPLACED}{}", displaced.displacement.id),
+        &value,
+    )
+}
+
+pub(crate) fn clear_displaced(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{DISPLACED}{id}"))
+}
+
+/// Every displacement not yet settled. A row that does not read is
+/// answered as its id alone, so it is reported, not lost.
+pub(crate) fn displaced(conn: &Connection) -> Result<Vec<Result<Displaced, String>>, CoreError> {
+    Ok(under(conn, DISPLACED)?
+        .into_iter()
+        .map(|(id, value)| serde_json::from_str(&value).map_err(|_| id))
+        .collect())
+}
+
+const KEPT: &str = "folder_kept:";
+
+/// A person's file a write or a removal kept beside its path, or could not
+/// put back, for the next report to name.
+pub(crate) fn put_kept(conn: &Connection, path: &str, reason: &str) -> Result<(), CoreError> {
+    crate::store::meta_set(conn, &format!("{KEPT}{path}"), reason)
+}
+
+/// The files kept since the last report, each once, by path.
+pub(crate) fn take_kept(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
+    let kept = under(conn, KEPT)?;
+    for (path, _) in &kept {
+        crate::store::meta_delete(conn, &format!("{KEPT}{path}"))?;
+    }
+    Ok(kept)
 }
 
 /// The edge ends lines hold, each with whether the folder made its pin.

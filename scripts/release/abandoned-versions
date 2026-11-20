@@ -1,0 +1,9 @@
+# Versions that were tagged and never released, one per line. "Read the version"
+# in release.yml passes over each as the previous version, so the next release
+# follows the last one that was published. A tag is never moved or deleted, so a
+# version listed here is never released.
+
+# A supervisor lock made the data folder with the process umask (#3323), so under
+# umask 002 the new server refused its own data folder and the Linux user-service
+# install proof failed. Nothing was published.
+0.0.85

@@ -518,11 +518,25 @@ The CLI MUST print its table of operations without sending a request.
 
 ### `cli/claim-stdin`
 
-When `setup claim --stdin` runs, the CLI MUST read the email, password and setup code from a JSON object on standard input.
+When `setup claim --stdin` runs, the CLI MUST read the username, password and setup code, and the email and name where given, from a JSON object on standard input.
 
 **Reason:** passwords and setup codes must not be left in shell history or process arguments.
 
 **Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
+
+### `cli/profile-clear-email`
+
+When `profile update --clear-email` runs, the CLI MUST send `PATCH /profile` with `email` set to `null`.
+
+**Tests:** `cli/profile.test.ts › changes the owner through the private socket and through a credential`.
+
+### `cli/profile-email-or-clear`
+
+If `profile update` is given both `--email` and `--clear-email`, then the CLI MUST refuse with exit code 2 and send no request.
+
+**Reason:** An address to set and an order to remove it contradict each other.
+
+**Tests:** `cli/profile.test.ts › changes the owner through the private socket and through a credential`.
 
 ### `cli/claim-invalid-stdin`
 
@@ -813,6 +827,14 @@ If the server answers the poll of the device code that `login` waits on with `in
 **Reason:** the server removes an unentered device code when 1000 newer ones are held (`keys-and-oauth/device-code-unentered-bound`), and answers one that ran out `expired_token`. A new `login` can succeed where the same code cannot, so the refusal is not one a retry fails to change (exit 1).
 
 **Tests:** `cli/login.test.ts › ends a login whose device code the server removed with exit 3, saying to run marfa login again`, `› ends a login whose device code ran out with exit 3, saying to run marfa login again`.
+
+### `cli/login-username-write`
+
+When `login` asks a server whose discovery names `profile.username:write` for a device code, the CLI MUST ask for `profile.username:write`.
+
+**Reason:** `profile:write` reaches the owner's username at read only (`instance-claim/profile-username-named`), so without it an owner signed in with the command line could change the username only on the private local command, and the command line does every owner task.
+
+**Tests:** `cli/login.test.ts › signs in with a device code approved in a browser session, and the token reaches the data plane`.
 
 ### `cli/login-fresh-sign-in`
 

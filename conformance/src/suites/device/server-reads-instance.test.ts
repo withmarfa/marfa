@@ -563,7 +563,10 @@ const RENEWED: Record<string, Renewed> = {
           copyItemEvent("11", "item.created", wireItem({ id: SECOND })),
           CREDENTIAL_ENDED,
         ]),
+        // Asked from the event before 11, the last the copy took, the
+        // stream carries 11 again (`device/stream-asks-before-last`).
         copyLiveReplay("12", [
+          copyItemEvent("11", "item.created", wireItem({ id: SECOND })),
           copyItemEvent("12", "item.created", wireItem({ id: THIRD })),
         ]),
       ),
@@ -821,8 +824,8 @@ describe("a request repeated after a credential renewal", ON_MACOS, () => {
     expect(ran.result.code, ran.result.stderr).toBe(0);
     expect(
       ran.reached.map((request) => request.headers["last-event-id"]),
-      "the stream was not opened again from the last event taken",
-    ).toEqual(["10", "11"]);
+      "the stream was not opened again from the event before the last one taken",
+    ).toEqual(["10", "10"]);
     const held = value(await harness!.device.list()).map((item) => item.id);
     expect(held.filter((id) => id === SECOND)).toHaveLength(1);
     expect(held.filter((id) => id === THIRD)).toHaveLength(1);

@@ -321,7 +321,8 @@ export interface ApiKeyRequest {
 /** The one account behind the instance's sign-in surface. */
 export interface Owner {
   id: string;
-  email: string;
+  username: string;
+  email: string | null;
   name: string;
   created_at: string;
 }
@@ -358,6 +359,7 @@ export interface BlobStoreRow {
   locator: string;
   attached_at: string;
   detached_at: string | null;
+  error: string | null;
 }
 
 export interface BlobCopyRow {

@@ -3,6 +3,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { createTestContext, cleanup } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { ADMIN_TOOLS_BY_PERMISSION } from "../../utils/mcp.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -143,19 +144,15 @@ describe("OAuth provider", () => {
         "schema.write",
         "system.view:write",
       ],
-      "/mcp/admin": [
-        "audit.read",
-        "connectors.manage",
-        "instance.read",
-        "keys.mint",
-        "webhooks.manage",
-      ],
+      // Every permission that opens an admin tool.
+      "/mcp/admin": Object.keys(ADMIN_TOOLS_BY_PERMISSION),
     };
     const items = await scopesAt("/mcp");
     for (const [path, scopes] of Object.entries(groups)) {
       const advertised = await scopesAt(path);
-      expect(advertised, path).toEqual(expect.arrayContaining(items));
-      expect(advertised, path).toEqual(expect.arrayContaining(scopes));
+      expect([...advertised].sort(), path).toEqual(
+        [...items, ...scopes].sort(),
+      );
       for (const scope of scopes) expect(items, scope).not.toContain(scope);
     }
   });

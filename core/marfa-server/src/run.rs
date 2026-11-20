@@ -22,7 +22,7 @@ use crate::http::listening::{
 use crate::listener::Declaration;
 use crate::open_files;
 use crate::settings::Accepted;
-use crate::telemetry::{Config, FLUSH_WITHIN};
+use crate::telemetry::FLUSH_WITHIN;
 
 /// Leaves room inside the ten seconds a container runtime gives a stop.
 const STOP_WAIT: Duration = Duration::from_secs(7);
@@ -142,7 +142,7 @@ async fn keep_release(database: PathBuf) {
     }
 }
 
-pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
+pub async fn run(accepted: Accepted) -> Result<u8, Failure> {
     let fixed = accepted.fixed();
     let (database, blob_path) = (fixed.database.clone(), fixed.blob_path.clone());
     // Before the claim, so a second server on these files is refused for them, not the socket.
@@ -153,9 +153,7 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     .await?;
     let mut claim = Claim::take(&fixed.control_socket)?;
     let app = App::start_kept(accepted, kept, held).await?;
-    let telemetry = app
-        .telemetry
-        .start(&telemetry, &app.instance_id, &app.settings.live());
+    let telemetry = app.telemetry.start(&app.instance_id, &app.settings);
     let mut signals = Signals::install()?;
 
     let public = if app.settings.start.control_only {

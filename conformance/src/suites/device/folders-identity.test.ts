@@ -1265,7 +1265,7 @@ describe("identity", () => {
     ).toHaveLength(1);
     // Sent 2: the later file's create and its placement.
     expect(later[0]).toMatch(
-      /^1 created, 0 updated, 0 renamed, 0 deleted; the server answered 2 write\(s\), creating 1 item\(s\); \d+ file\(s\) written, 1 bound to an item that is gone$/,
+      /^1 created, 0 updated, 0 renamed, 0 deleted; the server answered 2 change\(s\), creating 1 item\(s\); \d+ file\(s\) written, 1 bound to an item that is gone$/,
     );
   });
 });
@@ -1345,6 +1345,10 @@ describe("what a pull does with a file whose item stops matching", () => {
     ).toBe(1);
     expect(second.value.kept).toBe(0);
     expect(existsSync(join(harness.dir, "going.md"))).toBe(false);
+    expect(
+      readdirSync(harness.dir).filter((name) => name.startsWith(".marfa-")),
+      "the file a pull removed was left under a name Marfa keeps",
+    ).toEqual([]);
     const unpinned = await harness.folder.device().status();
     expect(
       unpinned.ok && unpinned.value.pinned,
@@ -3578,61 +3582,69 @@ describe("what a folder never does to a person's text", () => {
     }
   });
 
-  it("leaves a file it would take away or rewrite where the person saved it meanwhile", async () => {
-    const going = {
-      id: "01a00000-0000-7000-8000-00000000fa91",
-      version: 1,
-      properties: { title: "Going", body: "body\n" },
-    };
-    const kept = "01a00000-0000-7000-8000-00000000fa92";
-    harness = await folderHarness("folder-last-look", {
-      settings: { query: { types: ["core.note"], state: ["active"] } },
-      items: {
-        "core.note": [
-          { item: going },
-          {
-            item: {
-              id: kept,
-              version: 1,
-              properties: { title: "Kept", body: "as it was\n" },
+  it.each([
+    ["before", "save-before-last-look", "saved meanwhile"],
+    ["after", "save-after-last-look", "saved after the last look"],
+  ])(
+    "leaves a file it would take away or rewrite where the person saved it %s its last look",
+    async (_, fault, saved) => {
+      const going = {
+        id: "01a00000-0000-7000-8000-00000000fa91",
+        version: 1,
+        properties: { title: "Going", body: "body\n" },
+      };
+      const kept = "01a00000-0000-7000-8000-00000000fa92";
+      harness = await folderHarness("folder-last-look", {
+        settings: { query: { types: ["core.note"], state: ["active"] } },
+        items: {
+          "core.note": [
+            { item: going },
+            {
+              item: {
+                id: kept,
+                version: 1,
+                properties: { title: "Kept", body: "as it was\n" },
+              },
             },
-          },
+          ],
+        },
+        events: [
+          copyReplay("3", [
+            copyItemEvent(
+              "2",
+              "item.state_changed",
+              wireItem({ ...going, state: "archived" }),
+            ),
+            copyItemEvent(
+              "3",
+              "item.updated",
+              wireItem({
+                id: kept,
+                version: 2,
+                properties: { title: "Kept", body: "changed elsewhere\n" },
+              }),
+            ),
+          ]),
         ],
-      },
-      events: [
-        copyReplay("3", [
-          copyItemEvent(
-            "2",
-            "item.state_changed",
-            wireItem({ ...going, state: "archived" }),
-          ),
-          copyItemEvent(
-            "3",
-            "item.updated",
-            wireItem({
-              id: kept,
-              version: 2,
-              properties: { title: "Kept", body: "changed elsewhere\n" },
-            }),
-          ),
-        ]),
-      ],
-    });
-    scriptFolderWrites(harness);
-    expect((await harness.folder.pull()).ok).toBe(true);
-    const caught = await harness.folder.device().catchUp();
-    expect(caught.ok ? caught.value.applied : 0).toBe(2);
-    const pulled = await withFault("save-before-last-look", () =>
-      harness!.folder.pull(),
-    );
-    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
-    if (!pulled.ok) return;
-    expect(
-      [pulled.value.removed, pulled.value.kept, pulled.value.unwritten],
-      "a pull took away or wrote over a file the person saved after it chose to",
-    ).toEqual([0, 1, 1]);
-    expect(read(harness, "Going.md")).toContain("saved meanwhile");
-    expect(read(harness, "Kept.md")).toContain("saved meanwhile");
-    expect(read(harness, "Kept.md")).not.toContain("changed elsewhere");
-  });
+      });
+      scriptFolderWrites(harness);
+      expect((await harness.folder.pull()).ok).toBe(true);
+      const caught = await harness.folder.device().catchUp();
+      expect(caught.ok ? caught.value.applied : 0).toBe(2);
+      const pulled = await withFault(fault, () => harness!.folder.pull());
+      expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+      if (!pulled.ok) return;
+      expect(
+        [pulled.value.removed, pulled.value.kept, pulled.value.unwritten],
+        "a pull took away or wrote over a file the person saved after it chose to",
+      ).toEqual([0, 1, 1]);
+      expect(read(harness, "Going.md")).toContain(saved);
+      expect(read(harness, "Kept.md")).toContain(saved);
+      expect(read(harness, "Kept.md")).not.toContain("changed elsewhere");
+      expect(
+        readdirSync(harness.dir).filter((name) => name.startsWith(".marfa-")),
+        "a file moved out of its path was left under a name Marfa keeps",
+      ).toEqual([]);
+    },
+  );
 });

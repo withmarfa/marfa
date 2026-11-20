@@ -184,6 +184,18 @@ mod tests {
     }
 
     #[test]
+    fn prints_the_telemetry_note_a_restore_leaves() {
+        let message = "Telemetry settings are not restored: the archive names \
+                       otel_exporter_otlp_endpoint without their values. Traces, log records and \
+                       fault reports that need them stay off until you set them again.";
+        let answer = json!({
+            "secrets_to_set": ["otel_exporter_otlp_endpoint"],
+            "not_restored": [{ "kind": "telemetry", "message": message }],
+        });
+        assert_eq!(notes(&answer), [message]);
+    }
+
+    #[test]
     fn names_each_skipped_line_kind() {
         let answer =
             json!({ "entries_skipped": [], "line_kinds_skipped": ["later_kind", "other"] });

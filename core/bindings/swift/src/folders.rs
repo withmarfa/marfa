@@ -298,6 +298,9 @@ pub struct ConfirmedFolder {
     pub added: u64,
     /// Files not let go, because the other folders could not all be read.
     pub unsure: Vec<UnsureFile>,
+    /// Paused files the volume could not take away safely, which stay
+    /// paused.
+    pub refused: Vec<UnsureFile>,
 }
 
 /// What cancelling a paused removal did.
@@ -539,6 +542,14 @@ guarded! {
                         reason: file.reason,
                     })
                     .collect(),
+                refused: confirmed
+                    .refused
+                    .into_iter()
+                    .map(|file| UnsureFile {
+                        path: file.path,
+                        reason: file.reason,
+                    })
+                    .collect(),
             })
         }
 
@@ -747,9 +758,9 @@ fn ended(error: marfa_core::WatchError<MarfaError>, origin: Option<&str>) -> Mar
         W::CredentialRefused(said) => MarfaError::Unauthorized {
             server: said.answer().map(crate::ServerAnswer::from),
             code: "credential_refused".into(),
-            message: format!(
-                "the server at {} refused this watch's credential ({said}), so the watch stopped; queued writes wait until a working credential is kept",
-                origin.unwrap_or("this folder's server")
+            message: marfa_core::folder::credential_refused_said(
+                origin.unwrap_or("this folder's server"),
+                &said,
             ),
         },
         W::FollowEnded(error) | W::Core(error) => error.into(),

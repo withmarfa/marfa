@@ -10,15 +10,21 @@
 {% if let Some(message) = view.errors.name %}<p class="error" id="name-error">{{ message }}</p>{% endif %}
 </div>
 <div class="field">
-<label for="email">Email</label>
-<input id="email" type="email" name="email" value="{{ view.email }}" autocomplete="username" autocapitalize="none" spellcheck="false" required{% if view.errors.email.is_some() %} aria-invalid="true" aria-describedby="email-error"{% endif %}>
-{% if let Some(message) = view.errors.email %}<p class="error" id="email-error">{{ message }}</p>{% endif %}
+<label for="username">Username</label>
+<input id="username" type="text" name="username" value="{{ view.username }}" autocomplete="username" autocapitalize="none" spellcheck="false" required aria-describedby="username-hint{% if view.errors.username.is_some() %} username-error{% endif %}"{% if view.errors.username.is_some() %} aria-invalid="true"{% endif %}>
+<p class="hint" id="username-hint">Letters a to z, numbers, dots, dashes and underscores. You sign in with it.</p>
+{% if let Some(message) = view.errors.username %}<p class="error" id="username-error">{{ message }}</p>{% endif %}
 </div>
 <div class="field">
 <label for="password">Password</label>
 <input id="password" type="password" name="password" autocomplete="new-password" required aria-describedby="password-hint{% if view.errors.password.is_some() %} password-error{% endif %}"{% if view.errors.password.is_some() %} aria-invalid="true"{% endif %}>
 <p class="hint" id="password-hint">Choose a password you don't use anywhere else.</p>
 {% if let Some(message) = view.errors.password %}<p class="error" id="password-error">{{ message }}</p>{% endif %}
+</div>
+<div class="field">
+<label for="email">Email (optional)</label>
+<input id="email" type="email" name="email" value="{{ view.email }}" autocomplete="email" autocapitalize="none" spellcheck="false"{% if view.errors.email.is_some() %} aria-invalid="true" aria-describedby="email-error"{% endif %}>
+{% if let Some(message) = view.errors.email %}<p class="error" id="email-error">{{ message }}</p>{% endif %}
 </div>
 <button type="submit" class="button primary wide">Create account</button>
 </form>

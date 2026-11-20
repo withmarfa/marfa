@@ -459,6 +459,7 @@ pub(super) fn remove_item(
         changed |= forget_edge(conn, &edge)?;
     }
     let removed = conn.execute_cached("DELETE FROM items WHERE id = ?1", [id])? > 0;
+    super::forget_made(conn, id)?;
     crate::tables::drop_item(conn, id)?;
     attachments_changed(conn, &[id], before)?;
     Ok(removed || changed)

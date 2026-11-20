@@ -282,7 +282,7 @@ If a `source` line of an archive is not an object, holds a `source` code that `k
 
 ### `archive/archive-settings`
 
-When the credential requesting `GET /export?format=archive` holds `config.manage`, the server MUST carry in `instance.ndjson.gz` one `setting` line, holding the setting's `key` and its `value`, for each setting stored on the instance apart from a secret and those that describe this machine: `sign_in_address`, `addresses`, `backup_path`, the `object_store_` settings and `allow_private_addresses`.
+When the credential requesting `GET /export?format=archive` holds `config.manage`, the server MUST carry in `instance.ndjson.gz` one `setting` line, holding the setting's `key` and its `value`, for each setting stored on the instance apart from a secret and those that describe this machine: `sign_in_address`, `addresses`, `backup_path`, the `object_store_` settings, `allow_private_addresses`, `otel_service_name` and `otel_resource_attributes`.
 
 **Reason:** an owner's settings are their own choices, and a restore that reset them would change the instance without saying so. The addresses name where this instance answers and the destination where it keeps copies and backups, which a move changes, and whether the server may send to private addresses depends on the network around the machine. The instance's name is its own to set again, so no `setting` line carries it.
 
@@ -386,7 +386,7 @@ When `POST /restore` reads a `setting` line that names a setting this instance d
 
 ### `archive/restore-setting-machine`
 
-If the `instance.ndjson.gz` of an archive carries a `setting` line for `sign_in_address`, `addresses`, `backup_path`, an `object_store_` setting or `allow_private_addresses`, then the server MUST answer `400 validation_error` naming the key and store nothing of the archive.
+If the `instance.ndjson.gz` of an archive carries a `setting` line for `sign_in_address`, `addresses`, `backup_path`, an `object_store_` setting, `allow_private_addresses`, `otel_service_name` or `otel_resource_attributes`, then the server MUST answer `400 validation_error` naming the key and store nothing of the archive.
 
 **Reason:** these settings describe the destination machine and its network. Marfa omits them when it writes an archive (`archive/archive-settings`).
 
@@ -665,6 +665,14 @@ When `POST /restore` succeeds with an archive whose manifest names `enforcement`
 **Reason:** the archive does not hold the enforcement settings of the instance that wrote it, so the owner sets strict mode and the source lists again, and the answer says so where the owner reads the outcome.
 
 **Tests:** `compliance/restore-says.test.ts › refuses an export while the enforcement settings do not read, and a backup holds the items and names them`.
+
+### `archive/restore-not-restored-telemetry`
+
+When `POST /restore` names in `secrets_to_set` an OTLP endpoint, an OTLP header setting, `posthog_host` or `posthog_project_token`, the server MUST answer in `not_restored`, after the entries `archive/restore-not-restored` names, an entry whose `kind` is `telemetry` and whose `message` names each of them.
+
+**Reason:** an archive names these secrets without their values (`archive/archive-secret-named`), so what they send stays off until the owner sets them again, and the answer says so where the owner reads the outcome.
+
+**Tests:** `compliance/telemetry-settings.test.ts › restore with telemetry off and say so, and send again once the settings are set again, with no restart`.
 
 ### `archive/restore-previous-instance`
 

@@ -52,6 +52,8 @@ pub struct StoreRecord {
     pub locator: String,
     pub attached_at: String,
     pub detached_at: Option<String>,
+    /// Why the store cannot be used while it is in use, from the store itself.
+    pub error: Option<String>,
 }
 
 fn unread(what: &str) -> Refusal {
@@ -368,6 +370,7 @@ pub fn stores(tx: &Transaction<'_>) -> Result<Vec<StoreRecord>> {
             locator: row.get(2)?,
             attached_at: row.get(3)?,
             detached_at: row.get(4)?,
+            error: None,
         })
     })?;
     Ok(rows.collect::<std::result::Result<_, _>>()?)

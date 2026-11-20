@@ -60,14 +60,17 @@ pub enum SetupCommand {
 
 #[derive(Debug, Args)]
 pub struct ClaimArgs {
-    /// The owner's email address. Required when using terminal prompts.
+    /// The username the owner signs in with. Required when using terminal prompts.
+    #[arg(long)]
+    pub username: Option<String>,
+    /// The owner's email address. It plays no part in signing in.
     #[arg(long)]
     pub email: Option<String>,
-    /// The owner's display name.
+    /// The owner's display name. It defaults to the username.
     #[arg(long)]
     pub name: Option<String>,
-    /// Read JSON containing email, password, optional name, and code for a remote claim.
-    #[arg(long, conflicts_with_all=["email","name"])]
+    /// Read JSON containing username, password, optional email and name, and code for a remote claim.
+    #[arg(long, conflicts_with_all=["username","email","name"])]
     pub stdin: bool,
     /// The address devices sign in at, such as `https://marfa.example.com`.
     /// Private socket only. It is set on the server first, before the owner
@@ -228,10 +231,13 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
             }
             let mut body = input(args.stdin)?;
             if !args.stdin {
-                body["email"] = json!(
-                    args.email
-                        .ok_or_else(|| CliError::Usage("provide --email or use --stdin".into()))?
-                );
+                body["username"] =
+                    json!(args.username.ok_or_else(|| CliError::Usage(
+                        "provide --username or use --stdin".into()
+                    ))?);
+                if let Some(email) = args.email {
+                    body["email"] = json!(email);
+                }
                 if let Some(name) = args.name {
                     body["name"] = json!(name);
                 }

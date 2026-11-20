@@ -30,7 +30,7 @@ import { tempFolder } from "../../utils/temp-folder.js";
  */
 
 const WAIT = { timeout: 30_000, interval: 100 };
-const REPLACED = "replaced the store of";
+const REPLACED = "replaced the saved state of";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -354,10 +354,16 @@ it("leaves a folder's store another build made, and the folder's files, while it
     expect(refused.exitCode(), refused.stderr).toBe(4);
     expect(refused.stderr).toContain("wrong_schema");
     expect(refused.stderr).toContain(
-      `It holds ${unsent} ${unsent === 1 ? "write" : "writes"} still to be sent`,
+      `It holds ${unsent} ${unsent === 1 ? "change" : "changes"} still to be sent`,
     );
     expect(refused.stderr).toContain("marfa folders push");
     expect(refused.stderr).not.toContain(REPLACED);
+    expect(refused.stderr).toContain(
+      `The saved state of ${folder.dir} was made by another build of marfa`,
+    );
+    expect(refused.stderr.replace(folder.dir, "the directory")).not.toMatch(
+      /\b(core|store|hydrat\w*|queue\w*)\b/i,
+    );
   }
   expect(filesOf(folder.dir)).toEqual(files);
   expect(storeBytes(folder)).toBe(state);
@@ -414,13 +420,13 @@ it("leaves a folder's store another build made while it holds a delete the serve
   const refused = await exited(folder.hold(["folders", "push", folder.dir]));
   expect(refused.exitCode(), refused.stderr).toBe(4);
   expect(refused.stderr).toContain("wrong_schema");
-  expect(refused.stderr).toContain("It holds 1 write still to be sent");
+  expect(refused.stderr).toContain("It holds 1 change still to be sent");
   expect(refused.stderr).toContain(
-    "gave up on that the push leaves goes only with the folder: with the build that made the store, remove the folder",
+    "gave up on that the push leaves goes only when the directory stops following its folder: with the build that made it, run `marfa folders remove`",
   );
   expect(refused.stderr).toContain("marfa folders remove");
   expect(refused.stderr).toContain(
-    "a file whose deletion the server never took comes back when the folder is added again, and must be deleted again",
+    "a file whose deletion the server never took comes back when the directory is added again, and must be deleted again",
   );
   expect(refused.stderr).not.toContain(REPLACED);
   expect(filesOf(folder.dir)).toEqual(files);
@@ -496,7 +502,7 @@ it("watches every folder: replaces a refused store that holds nothing unsent, an
   const said = watch.stdout
     .split("\n")
     .find((line) => line.startsWith(`${holding.dir}: not watched`))!;
-  expect(said).toContain(`${unsent} ${unsent === 1 ? "write" : "writes"}`);
+  expect(said).toContain(`${unsent} ${unsent === 1 ? "change" : "changes"}`);
 
   rewrite(join(ready.dir, "Every.md"), `every ${ctx.runId}`);
   await vi.waitFor(async () => {

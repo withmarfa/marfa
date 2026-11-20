@@ -354,8 +354,37 @@ fn a_refused_write_keeps_the_row_the_bin_holds() {
     );
 }
 
+/// An accepted delete of `a`, whose read after it is answered `read`, and
+/// the bin's read `bin`.
+fn drained_with_bin(
+    bin: crate::scripted::Answer,
+    read: crate::scripted::Answer,
+) -> (tempfile::TempDir, Core, crate::scripted::Scripted) {
+    let server = crate::scripted::Scripted::start();
+    server.on(
+        "/items/a",
+        vec![crate::scripted::json(200, r#"{"ok":true}"#), read],
+    );
+    server.on("/items", vec![bin]);
+    let (dir, core) = deleting(&server, &["a"]);
+    store::pin(&core.conn().unwrap(), "a").unwrap();
+    // The witness: the copy holds the row until the drain.
+    assert!(store::item_held(&core.conn().unwrap(), "a").unwrap());
+    core.drain().unwrap();
+    (dir, core, server)
+}
+
+fn missing_receipts(conn: &rusqlite::Connection) -> Vec<String> {
+    store::restored::unseen_receipts(conn, i64::MAX)
+        .unwrap()
+        .into_iter()
+        .filter(|receipt| receipt.version.is_none() && !receipt.removal)
+        .map(|receipt| receipt.id)
+        .collect()
+}
+
 #[test]
-fn a_row_neither_the_read_by_id_nor_the_bin_holds_is_forgotten() {
+fn a_row_neither_the_read_by_id_nor_the_bin_holds_after_its_removal_is_forgotten() {
     let bin_answers = [
         crate::scripted::certified(crate::scripted::json(
             200,
@@ -364,26 +393,83 @@ fn a_row_neither_the_read_by_id_nor_the_bin_holds_is_forgotten() {
         crate::scripted::certified(crate::scripted::refusal(403, "forbidden")),
     ];
     for bin in bin_answers {
-        let server = crate::scripted::Scripted::start();
-        server.on(
-            "/items/a",
-            vec![
-                crate::scripted::json(200, r#"{"ok":true}"#),
-                crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
-            ],
+        let (_dir, core, server) = drained_with_bin(
+            bin,
+            crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
         );
-        server.on("/items", vec![bin]);
-        let (_dir, core) = deleting(&server, &["a"]);
-        store::pin(&core.conn().unwrap(), "a").unwrap();
-        // The witness: the copy holds the row until the drain.
-        assert!(store::item_held(&core.conn().unwrap(), "a").unwrap());
-        core.drain().unwrap();
         assert_eq!(server.seen("/items").len(), 1, "the bin was asked");
         let conn = core.conn().unwrap();
         assert!(!store::item_held(&conn, "a").unwrap());
         assert!(!store::pinned(&conn, "a").unwrap());
         assert!(store::owed_read_backs(&conn).unwrap().is_empty());
+        assert!(missing_receipts(&conn).is_empty());
     }
+}
+
+/// A copy holding `a` at version 3 as the server gave it, whose edit of it
+/// is refused `404` and read back as `read`, then the bin as `bin`.
+fn edit_refused(
+    read: crate::scripted::Answer,
+    bin: crate::scripted::Answer,
+) -> (tempfile::TempDir, Core, crate::scripted::Scripted) {
+    let server = crate::scripted::Scripted::start();
+    server.on(
+        "/items/a",
+        vec![crate::scripted::refusal(404, "item_not_found"), read],
+    );
+    server.on("/items", vec![bin]);
+    let (dir, core) = deleting(&server, &[]);
+    {
+        let conn = core.conn().unwrap();
+        let mut item = store::testing::note("a", "held", "", "2026-01-01T00:00:00Z");
+        item.version = 3;
+        store::upsert_item(&conn, &item, None, &Default::default()).unwrap();
+    }
+    let mut properties = serde_json::Map::new();
+    properties.insert("title".into(), "edited".into());
+    core.update_item(
+        "a",
+        &crate::model::Edit {
+            properties,
+            base_version: Some(3),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let report = core.drain().unwrap();
+    assert_eq!(report.verdicts[0].verdict, Some(Verdict::Refused));
+    (dir, core, server)
+}
+
+#[test]
+fn a_row_the_server_gave_that_the_read_by_id_and_the_bin_both_miss_is_kept_for_the_stream() {
+    let (_dir, core, server) = edit_refused(
+        crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
+        crate::scripted::certified(crate::scripted::json(
+            200,
+            r#"{"data":[],"next_cursor":null}"#,
+        )),
+    );
+    assert_eq!(server.seen("/items").len(), 1, "the bin was asked");
+    let conn = core.conn().unwrap();
+    let held = store::item_by_id(&conn, "a").unwrap().unwrap();
+    // As the server gave it, not as the refused edit made it.
+    assert_eq!(held.version, 3);
+    assert_eq!(held.properties["title"], "held");
+    assert!(store::owed_read_backs(&conn).unwrap().is_empty());
+    assert_eq!(missing_receipts(&conn), ["a"]);
+}
+
+#[test]
+fn a_row_the_server_will_not_show_is_forgotten() {
+    let (_dir, core, _server) = edit_refused(
+        crate::scripted::certified(crate::scripted::refusal(404, "item_not_found")),
+        crate::scripted::certified(crate::scripted::refusal(403, "forbidden")),
+    );
+    let conn = core.conn().unwrap();
+    assert!(!store::item_held(&conn, "a").unwrap());
+    assert!(store::owed_read_backs(&conn).unwrap().is_empty());
+    assert!(missing_receipts(&conn).is_empty());
 }
 
 #[test]

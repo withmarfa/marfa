@@ -904,12 +904,15 @@ impl Folder {
             None => text,
         };
         let bytes = text.clone().into_bytes();
+        let conn = self.core.conn().ok()?;
         self.land(
+            &conn,
             &file.path,
             |written, _| std::io::Write::write_all(written, &bytes),
             |found| found.map(state::hash).as_deref() == Some(file.hash.as_str()),
         )
         .ok()?;
+        drop(conn);
         let metadata = self.metadata(&file.path).ok();
         Some(Scanned {
             key: file.key.clone(),

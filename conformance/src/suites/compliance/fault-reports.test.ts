@@ -40,7 +40,7 @@ let sinks: FaultSinks | undefined;
 
 beforeAll(async () => {
   sinks = await startFaultSinks();
-  server = await bootFreshServer("fault-reports", sinks.env());
+  server = await bootFreshServer("fault-reports", sinks.serverEnv());
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {

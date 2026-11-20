@@ -1720,7 +1720,7 @@ impl Instance {
         ];
         pairs.extend_from_slice(more);
         let instance = Instance::start(&pairs).await;
-        let claim = json!({ "email": "owner@example.test", "password": "the first password" });
+        let claim = json!({ "username": "owner", "password": "the first password" });
         let claimed = instance
             .call(Method::POST, "/_control/setup/claim", Some(claim))
             .await;

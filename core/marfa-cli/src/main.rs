@@ -175,7 +175,7 @@ enum Command {
         #[command(subcommand)]
         command: owner::OwnerCommand,
     },
-    /// The owner's email address, name and avatar, with a key or an app's profile permissions.
+    /// The owner's name, username, email address and avatar, with a key or an app's profile permissions.
     Profile {
         #[command(subcommand)]
         command: profile::ProfileCommand,

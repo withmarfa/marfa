@@ -1662,7 +1662,8 @@ export class MarfaClient {
   /** `POST /owner`: one-time machine-issued claim proof. */
   async createOwner(body: {
     code?: string;
-    email: string;
+    username: string;
+    email?: string;
     password: string;
     name?: string;
   }): Promise<ApiResponse<Owner>> {
