@@ -45,7 +45,7 @@ pub enum TypesCommand {
     ///
     /// A replacement without guidance removes the type's guidance, and adding, changing or removing guidance needs `schema.write`. A replacement that leaves it as it is needs nothing more.
     ///
-    /// `metadata.types:write` alone covers adding optional fields that no stored item holds a value under, adding a table or an optional column, and changing the type's label, plural, description, display hints and version, or a field's, table's or column's label and description. Any other change, including removing a field, table or column, needs `schema.write`.
+    /// `metadata.types:write` alone covers adding optional fields that no stored item holds a value under, adding a table or an optional column, and naming an order for a table without one. It also covers changes to the type's label, plural, description, display hints and version, to field, table and column labels and descriptions, and to status word descriptions. Removing a field, table or column needs `schema.write`.
     Replace {
         /// The type id.
         id: String,
