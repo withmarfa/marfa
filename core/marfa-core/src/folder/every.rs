@@ -55,7 +55,8 @@ pub const MISSING: &str = "missing";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unwatched {
     /// The error code, such as `first_sync_waiting`, `reading_handle`,
-    /// `unauthorized` or `signed_out`, `watch` where the watch itself failed,
+    /// `unauthorized`, `signed_out` or `instance_changed`, `watch` where the
+    /// watch itself failed,
     /// or [`MISSING`] where its directory cannot be found.
     pub code: String,
     pub message: String,
@@ -86,6 +87,10 @@ impl Unwatched {
                 message: format!(
                     "the server refused this folder's credential ({error}), so its watch stopped; its changes not yet sent wait until a working credential is kept"
                 ),
+            },
+            WatchError::InstanceChanged { server, .. } => Unwatched {
+                code: crate::http::INSTANCE_CHANGED.into(),
+                message: super::watch::instance_changed_said(&server),
             },
             WatchError::FollowEnded(error) => Unwatched {
                 code: error.code().to_string(),
@@ -232,6 +237,12 @@ pub fn follows(registry: &Registry, origin: &str) -> bool {
     listed.iter().any(|entry| {
         stored_origin(&entry.dir).is_ok_and(|stored| stored.is_none_or(|stored| stored == origin))
     })
+}
+
+/// The server the folder at `dir` was hydrated from, read without claiming
+/// the folder.
+pub fn origin_of(dir: &Path) -> Option<String> {
+    stored_origin(dir).ok().flatten()
 }
 
 fn read(registry: &Registry) -> Listing {

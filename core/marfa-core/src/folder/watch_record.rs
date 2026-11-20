@@ -324,7 +324,8 @@ impl WatchRecord {
 
     /// Keeps the record of one folder's watch, as `folders watch DIR` does,
     /// with [`Folder::watch_handing_over`]: a folder let go to a command is
-    /// recorded as not watched, with the reason `handed_over`.
+    /// recorded as not watched, with the reason `handed_over`, and one whose
+    /// server now answers as another instance with `instance_changed`.
     pub fn watch_folder<E>(
         &self,
         folder: &Folder,
@@ -341,8 +342,12 @@ impl WatchRecord {
                 tell(event)
             })
         });
-        if let Ok(WatchEnd::HandedOver) = watched {
-            self.unwatched(dir, Some(super::HANDED_OVER));
+        match &watched {
+            Ok(WatchEnd::HandedOver) => self.unwatched(dir, Some(super::HANDED_OVER)),
+            Err(WatchError::InstanceChanged { .. }) => {
+                self.unwatched(dir, Some(crate::http::INSTANCE_CHANGED));
+            }
+            _ => {}
         }
         watched
     }

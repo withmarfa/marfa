@@ -110,6 +110,9 @@ struct Opened {
     /// whose credential was refused is opened again only with another.
     bearer: String,
     refused: Option<Unwatched>,
+    /// The folder's settings file as it stood when another instance was found
+    /// at its server, which is tried again only once one of them changes.
+    settings: Option<Vec<u8>>,
     conflicts: folders::Conflicts,
 }
 
@@ -129,10 +132,16 @@ impl Machine {
 
     /// The refusal a folder's credential met, where `bearer` is the credential
     /// it met it with: opening it again would only be refused again.
-    fn still_refused(&self, dir: &Path, bearer: &str) -> Option<Unwatched> {
+    fn still_refused(&self, dir: &Path, server: &str, bearer: &str) -> Option<Unwatched> {
         self.folders()
             .get(dir)
             .filter(|opened| opened.bearer == bearer)
+            .filter(|opened| {
+                opened.refused.as_ref().is_none_or(|refused| {
+                    refused.code != INSTANCE_CHANGED
+                        || (opened.server == server && opened.settings == settings_of(dir))
+                })
+            })
             .and_then(|opened| opened.refused.clone())
     }
 
@@ -154,6 +163,7 @@ impl Machine {
                 server,
                 bearer,
                 refused: None,
+                settings: None,
                 conflicts: folders::Conflicts::default(),
             },
         );
@@ -166,6 +176,16 @@ impl Machine {
 
 /// The codes of a watch that ended with its credential.
 const CREDENTIAL_ENDED: [&str; 2] = ["unauthorized", "signed_out"];
+
+const INSTANCE_CHANGED: &str = "instance_changed";
+
+fn settings_of(dir: &Path) -> Option<Vec<u8>> {
+    std::fs::read(
+        dir.join(marfa_core::folder::STATE_DIR)
+            .join(marfa_core::folder::SETTINGS_FILE),
+    )
+    .ok()
+}
 
 fn unwatched(error: &CliError) -> Unwatched {
     let message = match error {
@@ -190,7 +210,7 @@ impl EveryFolder for Machine {
                 .unwrap_or_else(|| unwatched(&error))
         })?;
         let (server, bearer) = (session.server.url.clone(), session.server.key.clone());
-        if let Some(refused) = self.still_refused(dir, &bearer) {
+        if let Some(refused) = self.still_refused(dir, &server, &bearer) {
             return Err(refused);
         }
         let folder = folders::opened(dir, Some(session)).map_err(|error| unwatched(&error))?;
@@ -199,10 +219,13 @@ impl EveryFolder for Machine {
     }
 
     fn ended(&self, dir: &Path, reason: &Unwatched) {
-        if CREDENTIAL_ENDED.contains(&reason.code.as_str())
+        let lasting = CREDENTIAL_ENDED.contains(&reason.code.as_str());
+        let instance_changed = reason.code == INSTANCE_CHANGED;
+        if (lasting || instance_changed)
             && let Some(opened) = self.folders().get_mut(dir)
         {
             opened.refused = Some(reason.clone());
+            opened.settings = instance_changed.then(|| settings_of(dir)).flatten();
         }
     }
 
@@ -282,6 +305,45 @@ impl EveryFolder for Machine {
     }
 }
 
+/// What a watch said where the record has it stop the folder at `dir`
+/// because another instance answers at its server, and no current watch
+/// holds it since.
+pub fn stopped_for_another_instance(dir: &Path) -> Option<String> {
+    let record = WatchRecord::located()?;
+    let file = crate::autostart::RecordFile::read(record.path())?;
+    let same = |listed: &str| {
+        let listed = Path::new(listed);
+        listed == dir
+            || matches!(
+                (std::fs::canonicalize(listed), std::fs::canonicalize(dir)),
+                (Ok(a), Ok(b)) if a == b
+            )
+    };
+    let now = std::time::SystemTime::now();
+    let entries = file
+        .processes
+        .iter()
+        .flat_map(|process| {
+            process
+                .folders
+                .iter()
+                .filter(|folder| same(&folder.dir))
+                .map(move |folder| (process.current(now), folder))
+        })
+        .collect::<Vec<_>>();
+    let stopped = entries
+        .iter()
+        .any(|(_, folder)| folder.reason.as_deref() == Some(INSTANCE_CHANGED));
+    let held = entries
+        .iter()
+        .any(|(current, folder)| *current && folder.watching);
+    (stopped && !held).then(|| {
+        let server = marfa_core::folder::origin_of(dir)
+            .unwrap_or_else(|| "this folder's server".into());
+        marfa_core::folder::instance_changed_said(&server)
+    })
+}
+
 /// Said once: the watch goes on without the record other programs read.
 fn record_unwritten(json: bool, path: &Path, reason: &str) {
     if json {
@@ -308,6 +370,10 @@ fn not_watched(reason: &Unwatched) -> String {
     if CREDENTIAL_ENDED.contains(&reason.code.as_str()) {
         format!(
             "not watched: {message}; it is watched again once `marfa login` or `marfa keys keep` keeps a new credential"
+        )
+    } else if reason.code == INSTANCE_CHANGED {
+        format!(
+            "not watched: {message}; it is tried again only once its key, its server or its settings change"
         )
     } else {
         format!("not watched: {message}; trying again")
@@ -567,6 +633,9 @@ fn ended(server: &str, error: WatchError<CliError>) -> CliError {
             ),
             error.answer().map(Box::new),
         ),
+        WatchError::InstanceChanged { server, .. } => {
+            CliError::Watch(marfa_core::folder::instance_changed_said(&server), None)
+        }
         WatchError::Unwatchable(reason) => CliError::Watch(reason, None),
         WatchError::Core(error) => error.into(),
         WatchError::Told(error) => error,

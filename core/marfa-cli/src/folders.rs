@@ -396,19 +396,29 @@ pub fn run(
             }
         }
         FoldersCommand::Status { dir } => {
-            let report = Folder::status_of(&dir)?;
+            let stopped = crate::watch::stopped_for_another_instance(&dir);
+            let report = Folder::status_of(&dir).map_err(|error| match &stopped {
+                Some(said) => CliError::Watch(said.clone(), None),
+                None => error.into(),
+            })?;
             let other = new_build::other_build_watching(&dir);
             output::report(
                 &FolderStatus {
                     report: &report,
                     watch_other_build: other.as_ref(),
+                    watch_stopped: stopped.as_deref(),
                 },
                 json,
                 || {
                     let mut text = describe_status(&report);
-                    if let Some(other) = &other {
+                    for line in other
+                        .as_ref()
+                        .map(new_build::OtherBuild::describe)
+                        .into_iter()
+                        .chain(stopped.clone())
+                    {
                         text.push('\n');
-                        text.push_str(&other.describe());
+                        text.push_str(&line);
                     }
                     text
                 },
@@ -1367,6 +1377,9 @@ struct FolderStatus<'a> {
     #[serde(flatten)]
     report: &'a marfa_core::StatusReport,
     watch_other_build: Option<&'a new_build::OtherBuild>,
+    /// Why the watch stopped the folder, where another instance answers at
+    /// its server.
+    watch_stopped: Option<&'a str>,
 }
 
 fn describe_status(report: &marfa_core::StatusReport) -> String {

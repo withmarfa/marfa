@@ -802,7 +802,7 @@ fn ended(error: marfa_core::WatchError<CoreError>, origin: Option<&str>) -> Core
                 &said,
             ),
         },
-        W::FollowEnded(error) | W::Core(error) => error,
+        W::FollowEnded(error) | W::Core(error) | W::InstanceChanged { error, .. } => error,
         W::Unwatchable(message) => CoreError::Io(message),
         W::Told(error) => error,
     }

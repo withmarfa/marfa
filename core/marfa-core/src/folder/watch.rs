@@ -40,6 +40,10 @@ const RETRY_FIRST: Duration = Duration::from_secs(1);
 /// the server names a longer wait.
 pub const RETRY_MOST: Duration = Duration::from_secs(30);
 
+/// The longest a watch waits between passes that keep failing. A change on
+/// disk, a server change or the server answering again ends the wait.
+const PASS_RETRY_MOST: Duration = Duration::from_secs(300);
+
 /// What a watch tells its caller, each when it happens.
 #[derive(Debug, Clone)]
 pub enum WatchEvent {
@@ -138,6 +142,9 @@ pub enum WatchError<E> {
     CredentialRefused(CoreError),
     /// The server's changes stopped reaching the directory.
     FollowEnded(CoreError),
+    /// Another Marfa instance answers at the folder's server, which holds
+    /// neither the folder nor its key, so no retry can reach the folder.
+    InstanceChanged { error: CoreError, server: String },
     /// The directory could not be watched.
     Unwatchable(String),
     /// A pass failed, or a thread of the watch panicked (`CoreError::Fault`).
@@ -164,6 +171,20 @@ pub fn credential_refused_said(server: &str, said: &CoreError) -> String {
         "the server at {server} refused this watch's credential ({said}), so the watch stopped; \
          changes not yet sent wait until a working credential is kept"
     )
+}
+
+/// What a watch says when another instance answers at its folder's server.
+pub fn instance_changed_said(server: &str) -> String {
+    format!(
+        "the server at {server} now answers as another Marfa instance, which does not hold \
+         this folder or its key, so the watch stopped this folder; add the folder again \
+         with `marfa folders add` and a key for that instance"
+    )
+}
+
+/// Whether `error` says another instance answers where the copy's did.
+pub fn is_instance_changed(error: &CoreError) -> bool {
+    matches!(error, CoreError::CopyExpired { reason, .. } if reason == crate::http::INSTANCE_CHANGED)
 }
 
 #[derive(Default)]
@@ -354,6 +375,7 @@ impl Folder {
         // change on disk or from the server.
         let mut stale = false;
         let mut rate = PassRate::default();
+        let mut backoff = Backoff::default();
         self.forget_inventory();
         let mut touched = Touched::untrusted();
         let mut unread: Option<Wake> = None;
@@ -374,7 +396,10 @@ impl Folder {
                     // read first. One write arrives as several events, and
                     // after the last one, passed over, nothing else would wake
                     // the loop for a tick.
-                    let due = changed && send_again_at.is_none_or(|at| now >= at) && gate.due(now);
+                    let due = changed
+                        && send_again_at.is_none_or(|at| now >= at)
+                        && !backoff.waiting(now)
+                        && gate.due(now);
                     let wait = if due {
                         Duration::ZERO
                     } else {
@@ -403,6 +428,7 @@ impl Folder {
                     {
                         touched.hear(dir, &event);
                         changed = true;
+                        backoff.reset();
                         gate.changed(delivered);
                         #[cfg(debug_assertions)]
                         crate::fault::hold(|| "folder-file-changed");
@@ -423,6 +449,7 @@ impl Folder {
                     stale = true;
                     if self.unseen_by_pass(&telling, applied, item.as_deref()) {
                         changed = true;
+                        backoff.reset();
                         telling.health_changed = true;
                     }
                 }
@@ -438,6 +465,9 @@ impl Folder {
                 }
                 Ok(Wake::Reach(lost)) => {
                     changed = true;
+                    if lost.is_none() {
+                        backoff.reset();
+                    }
                     if let Some(event) = telling.reach(lost) {
                         tell(event).map_err(WatchError::Told)?;
                     }
@@ -450,7 +480,7 @@ impl Folder {
                     }
                     tell(WatchEvent::Limited { wait }).map_err(WatchError::Told)?;
                 }
-                Ok(Wake::Ended(error)) => return Err(follow_ended(error)),
+                Ok(Wake::Ended(error)) => return Err(self.follow_ended(error)),
                 Ok(Wake::Asked) => continue,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -465,6 +495,7 @@ impl Folder {
             // sent before it ends is refused again: changes on disk wait
             // unscanned and nothing is pulled.
             if send_again_at.is_some_and(|at| crate::clock::now() < at)
+                || backoff.waiting(crate::clock::now())
                 || !gate.due(crate::clock::now())
             {
                 continue;
@@ -527,8 +558,8 @@ impl Folder {
                     false,
                 );
             }
-            match passed {
-                Err(WatchError::Core(error)) if hydrated_by_the_follow(&error) => {}
+            let failed = match passed {
+                Err(WatchError::Core(error)) if hydrated_by_the_follow(&error) => true,
                 // The next pass reads the copy again.
                 Err(WatchError::Core(error))
                     if super::copy_changed(&error) || matches!(error, CoreError::StoreBusy(_)) =>
@@ -538,8 +569,12 @@ impl Folder {
                     }
                     continue;
                 }
-                other => send_again_at = other?.map(|wait| crate::clock::now() + wait),
-            }
+                other => {
+                    send_again_at = other?.map(|wait| crate::clock::now() + wait);
+                    telling.failing
+                }
+            };
+            backoff.passed(failed, crate::clock::now());
             telling.settled();
             gate.passed(crate::clock::now());
             self.core.release_cache();
@@ -764,6 +799,7 @@ impl Folder {
                 .hydration_failing
                 .then(|| CoreError::Network("unavailable".into()))
         });
+        telling.failing = problem.is_some();
         let complete = full
             && progress.available()
             && progress.generation == generation
@@ -1027,8 +1063,21 @@ fn unwatchable(failures: &[notify::Error]) -> Option<String> {
     })
 }
 
-/// A follow that ended for its credential, refused or signed out, is the
-/// credential's; a panic of the core's is not the server's.
+impl Folder {
+    /// A follow that ended for its credential, refused or signed out, is the
+    /// credential's; a panic of the core's is not the server's.
+    fn follow_ended<E>(&self, error: CoreError) -> WatchError<E> {
+        if is_instance_changed(&error) {
+            let server = self
+                .core
+                .http()
+                .map_or_else(|_| "this folder's server".into(), crate::http::Http::origin);
+            return WatchError::InstanceChanged { error, server };
+        }
+        follow_ended(error)
+    }
+}
+
 fn follow_ended<E>(error: CoreError) -> WatchError<E> {
     match error {
         CoreError::Unauthorized { .. } => WatchError::CredentialRefused(error),
@@ -1136,7 +1185,7 @@ fn follow(
         match followed {
             Ok(_) => break,
             Err(CoreError::Canceled) if ended.load(Ordering::SeqCst) => break,
-            Err(CoreError::CopyExpired { .. }) => {}
+            Err(error @ CoreError::CopyExpired { .. }) if !is_instance_changed(&error) => {}
             Err(error) if error.is_environmental() || matches!(error, CoreError::StoreBusy(_)) => {
                 let (wait, next) = retry_schedule(retry, &error);
                 if said.is_none() || (said == Some(false) && refilling) {
@@ -1335,7 +1384,47 @@ fn retry_schedule(backoff: Duration, error: &CoreError) -> (Duration, Duration) 
     let wait = error
         .retry_after()
         .map_or(backoff, |named| backoff.max(named));
-    (wait, (backoff * 2).min(RETRY_MOST))
+    (wait, doubled(backoff, RETRY_MOST))
+}
+
+fn doubled(wait: Duration, most: Duration) -> Duration {
+    (wait * 2).min(most)
+}
+
+/// The wait before the next pass after passes that failed: one second,
+/// doubling to `PASS_RETRY_MOST`, and none once a pass succeeds or something
+/// changes.
+struct Backoff {
+    next: Duration,
+    until: Option<Instant>,
+}
+
+impl Default for Backoff {
+    fn default() -> Backoff {
+        Backoff {
+            next: RETRY_FIRST,
+            until: None,
+        }
+    }
+}
+
+impl Backoff {
+    fn waiting(&self, now: Instant) -> bool {
+        self.until.is_some_and(|until| now < until)
+    }
+
+    fn passed(&mut self, failed: bool, now: Instant) {
+        if failed {
+            self.until = Some(now + self.next);
+            self.next = doubled(self.next, PASS_RETRY_MOST);
+        } else {
+            self.reset();
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = Backoff::default();
+    }
 }
 
 fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
@@ -1528,6 +1617,9 @@ pub(super) struct Telling {
     unreachable: bool,
     /// Last pass failure reported.
     unsettled: Option<&'static str>,
+    /// The last pass ran to its end with a problem that keeps the folder
+    /// from being in step, such as a server it could not reach.
+    failing: bool,
     health_changed: bool,
     /// The last pass ran to its end and left nothing that time alone would
     /// move on.

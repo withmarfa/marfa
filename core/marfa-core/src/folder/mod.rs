@@ -47,7 +47,8 @@ mod watch;
 mod watch_record;
 mod watched;
 pub use every::{
-    Every, EveryFolder, HANDED_OVER, MISSING, PAUSED, RETRY_HANDED, Unwatched, follows, watch_every,
+    Every, EveryFolder, HANDED_OVER, MISSING, PAUSED, RETRY_HANDED, Unwatched, follows, origin_of,
+    watch_every,
 };
 pub use handover::{HANDOVER_WAIT, held_by_another, not_handed_over};
 pub use status::{FileStatus, FirstSyncStatus, Paused, StatusReport};
@@ -57,7 +58,10 @@ pub use storage::user_home;
 pub use sync::{Removal, SendReport, SyncReport};
 pub use taking_back::TakeBack;
 pub use unmatched::{Unmatched, UnmatchedRemoved};
-pub use watch::{RETRY_MOST, WatchEnd, WatchError, WatchEvent, WatchPass, credential_refused_said};
+pub use watch::{
+    RETRY_MOST, WatchEnd, WatchError, WatchEvent, WatchPass, credential_refused_said,
+    instance_changed_said, is_instance_changed,
+};
 pub use watch_record::WatchRecord;
 pub mod state;
 
