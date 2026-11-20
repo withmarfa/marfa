@@ -209,7 +209,11 @@ pub async fn screen(
             let (Lookup::Pending, Some(code)) = (lookup, found) else {
                 return Ok(Err(Blocked::Code(lookup)));
             };
-            if !reprompt::began_since(&session, code.signed_in_after, now) {
+            let after = reprompt::later(
+                code.signed_in_after,
+                store::login_after(tx, &code.client_id, &owner_id)?,
+            );
+            if !reprompt::began_since(&session, after, now) {
                 return Ok(Err(Blocked::SignInAgain));
             }
             let Some(client) = store::client(tx, &code.client_id)? else {
@@ -273,7 +277,11 @@ pub async fn answer(
             .caller
             .session()
             .ok_or_else(|| Refusal::internal("an approval has no browser session"))?;
-        if !reprompt::began_since(session, code.signed_in_after, now) {
+        let after = reprompt::later(
+            code.signed_in_after,
+            store::login_after(tx, &code.client_id, &session.owner_id)?,
+        );
+        if !reprompt::began_since(session, after, now) {
             return Ok(Answer::SignInAgain);
         }
         let (owner_id, signed_in) = (session.owner_id.clone(), session.created_at);

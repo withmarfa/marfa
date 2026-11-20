@@ -1,4 +1,5 @@
-//! The swap, run for real on folders of its own against a local stand-in for GitHub's downloads.
+//! The swap, run for real on folders of its own against a local stand-in for GitHub's downloads,
+//! and the start of an update on the writer.
 
 use std::collections::HashMap;
 use std::fs;
@@ -745,9 +746,11 @@ async fn work_the_writer_begins_runs_after_the_request_that_asked_for_it_is_gone
         upgrade_marks: None,
     };
     let lock = Lock::take(&options.path).map_err(|f| f.message).unwrap();
-    let db = Db::open(&options, lock, Arc::default())
-        .map_err(|f| f.message)
-        .unwrap();
+    let db = Arc::new(
+        Db::open(&options, lock, Arc::default())
+            .map_err(|f| f.message)
+            .unwrap(),
+    );
 
     let (entered, busy) = std::sync::mpsc::channel();
     let (let_go, held) = std::sync::mpsc::channel::<()>();
@@ -764,11 +767,16 @@ async fn work_the_writer_begins_runs_after_the_request_that_asked_for_it_is_gone
     busy.recv_timeout(Duration::from_secs(5)).unwrap();
 
     let (ran, done) = tokio::sync::oneshot::channel();
-    let mut asking = Box::pin(super::begin_on_writer(&db, move |_| {
-        Ok(Some(async move {
-            let _ = ran.send(());
-        }))
-    }));
+    let mut asking = Box::pin(super::begin_on_writer(
+        db.clone(),
+        |db: &Db| db,
+        |_: &Db| {},
+        move |_, _| {
+            Ok(Ok::<_, ()>(Some(async move {
+                let _ = ran.send(());
+            })))
+        },
+    ));
     assert!(
         tokio::time::timeout(Duration::from_millis(50), &mut asking)
             .await
@@ -783,4 +791,103 @@ async fn work_the_writer_begins_runs_after_the_request_that_asked_for_it_is_gone
         .await
         .expect("the begun work ran")
         .unwrap();
+}
+
+struct Starting {
+    db: crate::db::Db,
+    updates: Updates,
+}
+
+fn starting(
+    migrations: &'static [crate::db::migrate::Migration],
+    faults: Arc<Faults>,
+) -> Arc<Starting> {
+    use crate::db::{Db, Lock, Options};
+    let options = Options {
+        path: DatabasePath::Memory,
+        write_wait: std::time::Duration::from_secs(5),
+        readers: 1,
+        migrations,
+        reserve: 0,
+        upgrade_marks: None,
+    };
+    let lock = Lock::take(&options.path).map_err(|f| f.message).unwrap();
+    let db = Db::open(&options, lock, faults)
+        .map_err(|f| f.message)
+        .unwrap();
+    Arc::new(Starting {
+        db,
+        updates: Updates::new(&DatabasePath::Memory),
+    })
+}
+
+/// Begins the update and records its audit entry in the write, as `start_if` does.
+async fn start_on(
+    owner: &Arc<Starting>,
+) -> crate::app::refusal::Result<std::result::Result<(), ()>> {
+    let inside = owner.clone();
+    super::begin_on_writer(
+        owner.clone(),
+        |owner: &Starting| &owner.db,
+        |owner: &Starting| owner.updates.set(State::Idle),
+        move |tx, begun| {
+            if !inside.updates.begin("9.9.9") {
+                return Ok(Ok(None));
+            }
+            begun.mark();
+            crate::app::audit::record_from(
+                tx,
+                "2026-11-20T00:00:00.000Z",
+                None,
+                None,
+                crate::app::audit::Entry {
+                    action: super::UPDATE_STARTED,
+                    resource_type: "instance",
+                    resource_id: None,
+                    details: None,
+                },
+            )?;
+            Ok(Ok(Some(async {})))
+        },
+    )
+    .await
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_whose_audit_entry_fails_puts_the_update_back_to_idle() {
+    use crate::db::migrate::Migration;
+    /// No `audit_log` table, so the start's audit entry fails.
+    const NO_AUDIT_LOG: &[Migration] = &[Migration {
+        version: 1,
+        sql: "CREATE TABLE unrelated (id INTEGER PRIMARY KEY) STRICT;",
+    }];
+    let owner = starting(NO_AUDIT_LOG, Arc::default());
+
+    assert!(start_on(&owner).await.is_err());
+    assert_eq!(owner.updates.state(), State::Idle);
+    assert!(
+        start_on(&owner).await.is_err(),
+        "a later start begins again rather than joining a start that never ran"
+    );
+    assert_eq!(owner.updates.state(), State::Idle);
+}
+
+#[cfg(feature = "test-hooks")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_whose_commit_fails_puts_the_update_back_to_idle() {
+    let faults = Arc::new(Faults::default());
+    let owner = starting(crate::db::migrate::MIGRATIONS, faults.clone());
+    faults
+        .set("fail:commit", Some(super::UPDATE_STARTED))
+        .unwrap();
+
+    assert!(start_on(&owner).await.is_err());
+    assert_eq!(owner.updates.state(), State::Idle);
+
+    faults.clear(Some("fail:commit"));
+    assert_eq!(start_on(&owner).await.unwrap(), Ok(()));
+    assert!(
+        matches!(owner.updates.state(), State::Fetching { .. }),
+        "a later start begins the update"
+    );
 }

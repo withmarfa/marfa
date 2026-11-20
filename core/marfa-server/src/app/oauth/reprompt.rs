@@ -1,7 +1,9 @@
 //! `prompt=login` and `max_age`: an authorization request only a new session satisfies.
 
-use super::signed_link;
+use rusqlite::Connection;
+
 use super::{CODE_SECONDS, MS_PER_SECOND};
+use super::{signed_link, store};
 use crate::app::App;
 use crate::app::auth::session::Session;
 use crate::app::clock::Stamp;
@@ -49,6 +51,35 @@ pub(super) fn signed_in_too_long_ago(
     let now = app.clock.now_ms();
     session
         .is_none_or(|session| !(0..=limit).contains(&now.saturating_sub(session.created_at.ms())))
+}
+
+/// Whether the app's consent asks for a browser session begun after this one.
+pub(super) async fn began_before_asked(
+    app: &App,
+    client_id: &str,
+    session: Option<&Session>,
+) -> Result<bool> {
+    let Some(session) = session else {
+        return Ok(false);
+    };
+    let (client_id, owner) = (client_id.to_string(), session.clone());
+    app.db
+        .read(move |tx| before_asked(tx, &client_id, &owner))
+        .await
+}
+
+/// Whether the app's consent asks for a browser session begun after `session`.
+pub(super) fn before_asked(tx: &Connection, client_id: &str, session: &Session) -> Result<bool> {
+    Ok(store::login_after(tx, client_id, &session.owner_id)?
+        .is_some_and(|after| session.created_at.ms() < after.ms()))
+}
+
+/// The later of a code's own `max_age` bound and the time the app's consent asks for.
+pub(super) fn later(one: Option<Stamp>, other: Option<Stamp>) -> Option<Stamp> {
+    match (one, other) {
+        (Some(one), Some(other)) => Some(if one.ms() >= other.ms() { one } else { other }),
+        (one, other) => one.or(other),
+    }
 }
 
 /// A session dated after now is not recent.

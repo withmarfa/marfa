@@ -36,7 +36,7 @@ pub fn list_definition() -> Definition {
             },
             "required": ["webhooks"],
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }

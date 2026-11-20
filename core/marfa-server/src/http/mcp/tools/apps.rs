@@ -32,7 +32,7 @@ pub fn list_definition() -> Definition {
             },
             "required": ["apps"],
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }

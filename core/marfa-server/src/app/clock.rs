@@ -34,6 +34,8 @@ struct Guard {
     last: Option<(i64, i64)>,
     /// The running time counted toward a hold's end, while clean-up holds.
     held_ms: Option<i64>,
+    /// The wall reading at the hold's start, its last jump or the server's last start.
+    held_from: Option<i64>,
 }
 
 impl Guard {
@@ -47,12 +49,16 @@ impl Guard {
         let trusted = *self.trusted.get_or_insert(wall);
         if wall - trusted <= AHEAD_MS {
             self.held_ms = None;
+            self.held_from = None;
             self.trusted = Some(trusted.max(wall));
             return false;
         }
         let held = match self.held_ms {
             Some(held) if !jumped => held.saturating_add(passed),
-            _ => 0,
+            _ => {
+                self.held_from = Some(wall);
+                0
+            }
         };
         if held >= STEADY_MS {
             self.confirm(wall);
@@ -65,6 +71,7 @@ impl Guard {
     fn confirm(&mut self, wall: i64) {
         self.trusted = Some(wall);
         self.held_ms = None;
+        self.held_from = None;
     }
 
     fn standing(&mut self, wall: i64, steady: i64) -> Standing {
@@ -198,7 +205,9 @@ impl Clock {
         let mut guard = self.guard();
         guard.trusted = kept.map(|kept| kept.trusted_at.ms());
         guard.held_ms = kept.and_then(|kept| kept.held_ms);
-        guard.last = Some(self.readings());
+        let readings = self.readings();
+        guard.held_from = guard.held_ms.map(|_| readings.0);
+        guard.last = Some(readings);
     }
 
     fn guard(&self) -> std::sync::MutexGuard<'_, Guard> {
@@ -243,6 +252,17 @@ impl Clock {
     pub fn standing(&self) -> Standing {
         let (mut guard, (wall, steady)) = (self.guard(), self.readings());
         guard.standing(wall, steady)
+    }
+
+    /// The hold on clean-up as it stands, with the wall reading at its start, its last jump or
+    /// the server's last start; `None` while nothing is held.
+    pub fn hold(&self) -> Option<(Standing, Stamp)> {
+        let (mut guard, (wall, steady)) = (self.guard(), self.readings());
+        let standing = guard.standing(wall, steady);
+        match (standing, guard.held_from) {
+            (Standing::Ahead { .. }, Some(from)) => Some((standing, Stamp::clamped(from))),
+            _ => None,
+        }
     }
 
     /// Reads the wall clock to take as right.
@@ -642,6 +662,20 @@ mod tests {
         assert!(guard.look(ends - 1, 3 * STEADY_MS / 2 - 1));
         assert!(!guard.look(ends, 3 * STEADY_MS / 2));
         assert_eq!(guard.trusted, Some(ends));
+    }
+
+    #[test]
+    fn a_hold_counts_from_where_it_began_until_a_jump_moves_it() {
+        let mut guard = started_at(T0);
+        let wall = T0 + 31 * DAY_MS;
+        assert!(guard.look(wall, 0));
+        assert_eq!(guard.held_from, Some(wall));
+        assert!(guard.look(wall + 60_000, 60_000));
+        assert_eq!(guard.held_from, Some(wall), "time passing moves nothing");
+        assert!(guard.look(wall + 3_660_000, 120_000));
+        assert_eq!(guard.held_from, Some(wall + 3_660_000), "a jump moves it");
+        assert!(!guard.look(T0 + 1_000, 180_000));
+        assert_eq!(guard.held_from, None);
     }
 
     #[test]

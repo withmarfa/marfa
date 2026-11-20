@@ -82,7 +82,7 @@ When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mc
 
 ### `mcp/tools-for-admin`
 
-When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_end_sign_in` while it holds `sign_ins.manage` or `grants.manage`, `marfa_backups`, `marfa_take_backup` and `marfa_adopt_backup_folder` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors`, `marfa_make_endpoint`, `marfa_delete_connector` and `marfa_retire_endpoint` while it holds `connectors.manage`, `marfa_files` and `marfa_remove_file_copy` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
+When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_end_sign_in` while it holds `sign_ins.manage` or `grants.manage`, `marfa_backups`, `marfa_take_backup` and `marfa_adopt_backup_folder` while it holds `backups.manage`, `marfa_maintain` and `marfa_update_server` while it holds `instance.maintain`, `marfa_connectors`, `marfa_make_endpoint`, `marfa_delete_connector` and `marfa_retire_endpoint` while it holds `connectors.manage`, `marfa_files` and `marfa_remove_file_copy` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
 
 **Reason:** a credential that holds a permission can do the owner task it opens through the API, so an agent holding it does the same from MCP, except for the tasks `mcp/tools-withheld` names.
 
@@ -144,33 +144,165 @@ If the rows of a page that `marfa_trash` or `marfa_connectors` answers do not al
 
 ### `mcp/tools-withheld`
 
-The server MUST NOT list at any MCP endpoint a tool that restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
+The server MUST NOT list at any MCP endpoint a tool that claims the instance, recovers a lost password, chooses or changes the owner's password, adds a passkey, exports the instance or restores a backup or an archive.
 
-**Reason:** claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
+**Reason:** claiming happens in the sign-in page an MCP client opens, and recovering a lost password starts where the server runs. A password chosen through a tool would pass through the model, so the owner chooses it on the server's page that `marfa_sign_ins` names, or with `marfa owner password`, which asks for it with no echo. Adding a passkey needs the browser's passkey sheet, on that same page. An export archive does not fit in a tool's answer: `marfa_take_backup` makes a copy from MCP, and `marfa export` and `GET /export` stream one. A restore replaces the calling app's grant and the confirmations already spent, so a retried call could not say what was done, and no confirmation binds it yet.
 
-**Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`, `compliance/owner-tasks.test.ts › runs the trash's retention through the maintenance tool, removing only what the retention makes eligible and no chosen item`.
+**Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`.
+
+### `mcp/sign-ins-owner-page`
+
+When `marfa_sign_ins` answers, the server MUST answer as `owner_page` the address, at the sign-in address, of the page where the owner adds a passkey and changes the password.
+
+**Reason:** neither act is a tool (`mcp/tools-withheld`), so the agent gives the person the page instead.
+
+**Tests:** `compliance/mcp.test.ts › names the page where the owner adds a passkey or changes the password in the sign-ins tool, and that page answers`.
 
 ### `mcp/settings-step-up-withheld`
 
-If a `marfa_change_settings` call names `sign_in_address`, `allow_private_addresses`, `object_store_bucket`, `object_store_endpoint`, `object_store_region`, `object_store_path_style`, `object_store_prefix` or `backup_path`, then the server MUST answer the call with the tool error code `app_sign_in_required`.
+If a `marfa_change_settings` call names `sign_in_address`, then the server MUST answer the call, whatever the credential, with the tool error code `not_offered_over_mcp` and a message that names `marfa config set sign_in_address`.
 
-**Reason:** the owner changes where people sign in, whether the server reaches private addresses and where it keeps files and backups from the command line or after a recent sign-in, never on a key's say-so. A setting that is not one of these changes through the tool as it does through `PATCH /config`.
+**Reason:** moving the sign-in address ends every browser sign-in and every app's sign-in, the calling agent's own connection included, and a passkey belongs to the address it was made at. The owner moves it from the command line or from an app, then signs in again at the new address. `not_offered_over_mcp` says that no credential or sign-in makes the call pass, so the agent gives the person the command instead of retrying.
 
-**Tests:** `compliance/owner-tasks.test.ts › refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes`.
+**Tests:** `compliance/mcp-step-up.test.ts › refuses sign_in_address to an app whose owner signed in just now with not_offered_over_mcp and the command that moves it, and changes nothing`, `compliance/owner-tasks.test.ts › refuses a key each setting that needs a recent sign-in in the settings tool with app_sign_in_required, as the API does, and changes nothing, where a setting that is not one changes`.
 
 ### `mcp/settings-step-up-unchanged`
 
-If a `marfa_change_settings` call names a setting that `mcp/settings-step-up-withheld` lists, then the server MUST NOT change any setting.
+If a `marfa_change_settings` call names `sign_in_address`, then the server MUST NOT change any setting.
 
-**Tests:** `compliance/owner-tasks.test.ts › refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes`.
+**Tests:** `compliance/mcp-step-up.test.ts › refuses sign_in_address to an app whose owner signed in just now with not_offered_over_mcp and the command that moves it, and changes nothing`.
+
+### `mcp/settings-step-up-recent`
+
+When an app's access token whose browser session began within the recent sign-in window of `keys-and-oauth/step-up-recent` calls `marfa_change_settings` to change `allow_private_addresses`, `backup_path` or an `object_store_` setting that says where files go, the server MUST make the change as `PATCH /config` makes it.
+
+**Reason:** the tool is another door to `PATCH /config`, so the same credential may do through it what it may do there.
+
+**Tests:** `compliance/mcp-step-up.test.ts › changes allow_private_addresses and backup_path for an app whose owner signed in within the recent sign-in window`.
+
+### `mcp/settings-step-up-refused`
+
+If an app's access token whose browser session began more than 900 seconds before the call calls `marfa_change_settings` to change `allow_private_addresses`, `backup_path` or an `object_store_` setting that says where files go, then the server MUST answer the tool error code `insufficient_user_authentication` with `details.max_age` set to `900`, and write nothing but the app's own consent mark of `mcp/settings-step-up-renewal`.
+
+**Reason:** the tool answers inside a successful MCP response, so the refusal is a tool error rather than the `401` challenge of `keys-and-oauth/step-up-challenge`, and the agent asks the person to sign in to this app's connection again (re-authenticate it, not only reconnect, which reuses the stored sign-in).
+
+**Tests:** `compliance/mcp-step-up.test.ts › refuses an app whose owner signed in longer ago than the recent sign-in window with insufficient_user_authentication and max_age, as the API does, and changes nothing`.
+
+### `mcp/settings-step-up-key`
+
+If an API key calls `marfa_change_settings` to change `allow_private_addresses`, `backup_path` or an `object_store_` setting that says where files go, then the server MUST answer the tool error code `app_sign_in_required` and change no setting.
+
+**Reason:** a key has no sign-in to renew (`keys-and-oauth/step-up-key-refused`).
+
+**Tests:** `compliance/owner-tasks.test.ts › refuses a key each setting that needs a recent sign-in in the settings tool with app_sign_in_required, as the API does, and changes nothing, where a setting that is not one changes`.
+
+### `mcp/settings-step-up-renewal`
+
+When `marfa_change_settings` refuses with `insufficient_user_authentication` an app's access token whose browser session began at or after the time the app's consent already asks a browser session to begin after, or an app whose consent asks for no such time, the server MUST send to sign in again, before it issues a code or approves a device code for that app while the app's grant has not ended since the refusal, any browser session that began before the refusal.
+
+**Reason:** an MCP client cannot send the person through the authorization endpoint with `max_age`, so the app's own next authorization asks for the new sign-in instead, and the token that follows passes. Only the end of the app's grant clears the mark (`mcp/settings-step-up-renewal-ended`): a browser session begun after the refusal satisfies it at every endpoint. The check is made when the code is issued, so a consent page opened before the refusal also asks.
+
+**Tests:** `compliance/mcp-step-up.test.ts › sends the browser to sign in again when the refused app reconnects, and the token it then gets changes the setting`, `› sends the browser to sign in again before it approves a device code for the refused app, and the token the code then issues changes the setting`, `› sends the browser to sign in again when a consent page opened before the refusal is approved, and issues the code after a new sign-in`.
+
+### `mcp/settings-step-up-renewal-kept`
+
+If `marfa_change_settings` refuses with `insufficient_user_authentication` an app's access token whose browser session began before the time the app's consent already asks a browser session to begin after, then the server MUST leave that time as it is.
+
+**Reason:** a retry by a token from before the person signed in again would otherwise move the time past the new sign-in, and the new connection would be sent to sign in again without end.
+
+**Tests:** `compliance/mcp-step-up.test.ts › keeps the renewal where it was when a token from the older sign-in is refused again after the person signed in again`.
+
+### `mcp/settings-step-up-refresh`
+
+While an app's consent asks a browser session to begin after a time (`mcp/settings-step-up-renewal`), if the app presents a refresh token whose browser session began before that time, then the server MUST refuse the refresh with `invalid_grant`.
+
+**Reason:** a client's reconnect refreshes the stored sign-in rather than asking for a new one, so the refusal sends it to a full authorization, which asks the person to sign in. The refusal covers every refresh token of the app, whatever resource it names; one from a sign-in at or after that time refreshes as before.
+
+**Tests:** `compliance/mcp-step-up.test.ts › refuses with invalid_grant a refresh of a sign-in older than the refusal, and refreshes a token from a new sign-in`.
+
+### `mcp/settings-step-up-renewal-ended`
+
+When the person approves again an app whose grant ended after `marfa_change_settings` refused it with `insufficient_user_authentication`, the server MUST NOT refuse under `mcp/settings-step-up-refresh` the refresh of a token that approval issued, whenever the browser session that approved it began.
+
+**Reason:** ending the grant ends every token chain the refusal's time exists to stop, and a token whose browser session is not recent is still refused the settings that need one (`mcp/settings-step-up-refused`).
+
+**Tests:** `compliance/mcp-step-up.test.ts › forgets the renewal when the person removes the app, so the app approved again from the older browser refreshes`.
+
+### `mcp/settings-step-up-renewal-own`
+
+When `marfa_change_settings` refuses an app with `insufficient_user_authentication`, the server MUST answer another app's authorization as it would have before the refusal.
+
+**Reason:** the refusal marks only the calling app's own consent.
+
+**Tests:** `compliance/mcp-step-up.test.ts › sends the browser to sign in again when the refused app reconnects, and the token it then gets changes the setting`.
 
 ### `mcp/open-world-hint`
 
-When the server lists its tools, the server MUST annotate `marfa_create`, `marfa_manage_webhook`, `marfa_take_backup`, `marfa_maintain` and `marfa_change_settings` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
+When the server lists its tools, the server MUST annotate `marfa_create`, `marfa_manage_webhook`, `marfa_take_backup`, `marfa_maintain`, `marfa_change_settings`, `marfa_update_server` and `marfa_remove_file_copy` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
 
-**Reason:** `marfa_create` fetches a file from a web address the agent gives it, `marfa_manage_webhook` has the instance send events to one, `marfa_take_backup` can upload a backup to an object store, `marfa_maintain` can send the heartbeat, and `marfa_change_settings` can set where errors are sent; a client asks the person differently before a tool that reaches outside the instance.
+**Reason:** `marfa_create` fetches a file from a web address the agent gives it, `marfa_manage_webhook` has the instance send events to one, `marfa_take_backup` can upload a backup to an object store, `marfa_remove_file_copy` asks the other stores for their copies and can delete one from an object store, `marfa_maintain` can send the heartbeat, `marfa_change_settings` can set where errors are sent, and `marfa_update_server` downloads a release; a client asks the person differently before a tool that reaches outside the instance.
 
 **Tests:** `compliance/mcp.test.ts › marks marfa_create as reaching outside the instance and no other tool`, `› marks each tool that can send something outside the instance as reaching outside it, and no other tool`.
+
+### `mcp/hints-four`
+
+When the server lists a tool, the server MUST annotate it with `readOnlyHint`, `destructiveHint`, `idempotentHint` and `openWorldHint`, each `true` or `false`.
+
+**Reason:** a client that finds a hint missing assumes the cautious default for it, which for a tool that only reads asks the person before every read.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/hints-read-only`
+
+When the server lists `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_read_rows`, `marfa_search_docs`, `marfa_sources`, `marfa_health`, `marfa_audit`, `marfa_keys`, `marfa_webhooks`, `marfa_settings`, `marfa_trash`, `marfa_apps`, `marfa_backups`, `marfa_connectors`, `marfa_files` or `marfa_sign_ins`, the server MUST annotate it with `readOnlyHint` `true`, `destructiveHint` `false` and `idempotentHint` `true`.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/hints-destructive`
+
+When the server lists `marfa_delete`, `marfa_update`, `marfa_write_rows`, `marfa_save_type`, `marfa_save_view`, `marfa_bulk_save`, `marfa_move_items`, `marfa_manage_key`, `marfa_revoke_key`, `marfa_manage_webhook`, `marfa_purge`, `marfa_narrow_app`, `marfa_end_sign_in`, `marfa_maintain`, `marfa_update_server`, `marfa_delete_connector`, `marfa_retire_endpoint`, `marfa_remove_file_copy` or `marfa_adopt_backup_folder`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `true` and `idempotentHint` `false`.
+
+**Reason:** each can remove, end, replace or overwrite what exists, so a client asks the person first.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/hints-additive`
+
+When the server lists `marfa_create`, `marfa_take_backup` or `marfa_make_endpoint`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `false` and `idempotentHint` `false`.
+
+**Reason:** each adds something and changes nothing that exists, and a second call adds another.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/hints-idempotent`
+
+When the server lists `marfa_name_source` or `marfa_rename_sign_in`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `false` and `idempotentHint` `true`.
+
+**Reason:** each sets a name, so the same call again changes nothing more.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/hints-settings`
+
+When the server lists `marfa_change_settings`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `true` and `idempotentHint` `true`.
+
+**Reason:** a setting can make the server remove data or send it elsewhere, such as a shorter `trash_retention_days` that has the next trash job delete items for good, or a new place for backups and files, so a client asks the person first; and the same call again changes nothing more.
+
+**Tests:** `compliance/mcp.test.ts › annotates every tool with the four hints its kind of tool gives it`.
+
+### `mcp/instructions-per-endpoint`
+
+When a client starts a session at `/mcp`, `/mcp/schema` or `/mcp/admin`, the server MUST answer `instructions` of at most 512 characters that name only tools that endpoint serves.
+
+**Reason:** a client may cut longer instructions, and a tool named that the endpoint never lists sends the agent to call what does not exist there.
+
+**Tests:** `compliance/mcp.test.ts › gives each endpoint instructions of at most 512 characters that name only tools it lists`.
+
+### `mcp/instructions-admin-confirm`
+
+When a client starts a session at `/mcp/admin`, the server MUST answer `instructions` that say the tools that remove, end, replace or restart something preview first and act only once the person agrees.
+
+**Tests:** `compliance/mcp.test.ts › gives each endpoint instructions of at most 512 characters that name only tools it lists`.
 
 ## Calling a tool
 
@@ -386,7 +518,7 @@ When the server lists `marfa_purge`, the server MUST annotate it with `destructi
 
 **Reason:** a purge cannot be undone, and a client asks the person differently before a tool that destroys data.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder, the maintenance tool and changing settings as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/purge-preview`
 
@@ -710,7 +842,7 @@ When the server lists `marfa_delete_connector` or `marfa_retire_endpoint`, the s
 
 **Reason:** neither change can be undone, and a client asks the person differently before a tool that destroys data.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder, the maintenance tool and changing settings as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/connector-acts-gone`
 
@@ -769,6 +901,82 @@ When a call carries a `confirm` token that an earlier call by the same credentia
 **Reason:** a client that did not see the first answer, such as one that timed out, learns that the change landed.
 
 **Tests:** `compliance/mcp-connector-acts.test.ts › changes nothing more on a confirmation an earlier call used, and says it already did`.
+
+## Updating the server
+
+`marfa_update_server` updates the server in two calls: a preview that names the release and gives a `confirm` token, and a call with that token, which starts the update `POST /update` starts. A token is refused, as `marfa_delete_connector`'s is, when another credential sends it or five minutes have passed.
+
+### `mcp/update-preview`
+
+When a credential holding `instance.maintain` calls `marfa_update_server` without a `confirm` token, and `POST /update` would start an update, the server MUST answer the release it runs, the release the update would move to and a `confirm` token, and start nothing.
+
+**Reason:** the update restarts the server and drops every connection, so the person agrees to it first.
+
+**Tests:** waiting on #3177.
+
+### `mcp/update-refused`
+
+If `POST /update` would refuse an update, then the server MUST answer `marfa_update_server` with the tool error code that operation would answer, with the same `details.step`.
+
+**Tests:** `compliance/mcp-instance.test.ts › refuses an update with no newer release found, and one on a server that cannot update itself with the step to take on its host, as POST /update does`.
+
+### `mcp/update-release-bound`
+
+If a `marfa_update_server` call carries a `confirm` token whose preview named a release other than the newest release found when the server decides whether the update starts, then the server MUST answer the tool error code `confirmation_stale` with a new preview, and start nothing.
+
+**Reason:** the person agreed to the release the preview named, not to a newer one found since.
+
+**Tests:** waiting on #3177.
+
+### `mcp/update-token-unread`
+
+If a `marfa_update_server` call carries a `confirm` token that is not one a preview gave, then the server MUST answer the tool error code `confirmation_stale` and start nothing.
+
+**Tests:** `compliance/mcp-instance.test.ts › refuses a confirmation that is not one, and starts nothing`.
+
+## Confirming the clock
+
+`marfa_maintain` with `action` `confirm_clock` confirms the server's clock (`housekeeping/clock-confirm`) in two calls: a preview of the hold on clean-up with a `confirm` token, and a call with that token. A token is refused, as `marfa_delete_connector`'s is, when another credential sends it or five minutes have passed.
+
+### `mcp/clock-preview`
+
+While the server's clock is more than 7 days later than the trusted time, when `marfa_maintain` is called with `action` `confirm_clock` and no `confirm` token, the server MUST answer the server's time as `server_time`, the trusted time as `trusted_time`, the seconds between them as `gap_seconds`, the jobs that run once the clock is confirmed as `held_jobs`, the time the hold ends by itself as `hold_ends_at` and a `confirm` token, and confirm nothing.
+
+**Reason:** confirming lets the held jobs remove what is old by the server's time, which cannot be undone, so the agent checks the time with the person first.
+
+**Tests:** `compliance/mcp-instance.test.ts › previews the server time, the trusted time, the gap, the jobs that would run and when the hold ends, and confirms the clock on the confirmation`.
+
+### `mcp/clock-preview-not-held`
+
+While the server's clock is not more than 7 days later than the trusted time, when `marfa_maintain` is called with `action` `confirm_clock` and no `confirm` token, the server MUST answer `held` as `false` with no `confirm` token.
+
+**Tests:** `compliance/mcp-instance.test.ts › previews the server time, the trusted time, the gap, the jobs that would run and when the hold ends, and confirms the clock on the confirmation`.
+
+### `mcp/clock-confirmed`
+
+When a `marfa_maintain` call with `action` `confirm_clock` carries a `confirm` token whose preview showed the hold that stands, the server MUST take the clock's time as the trusted time and answer it as `confirmed_at`.
+
+**Tests:** `compliance/mcp-instance.test.ts › previews the server time, the trusted time, the gap, the jobs that would run and when the hold ends, and confirms the clock on the confirmation`.
+
+### `mcp/clock-jumped`
+
+If the server's clock has jumped since the preview that gave a `confirm_clock` call's unexpired `confirm` token, then the server MUST answer the tool error code `confirmation_stale` with a new preview, and confirm nothing.
+
+**Reason:** the person agreed to the time the preview showed, not to the time the clock reads after a jump.
+
+**Tests:** `compliance/mcp-instance.test.ts › refuses a confirmation once the clock jumped since the preview, answering a new preview and confirming nothing`.
+
+### `mcp/clock-nothing-held`
+
+If nothing is held when a `confirm_clock` call carries a `confirm` token, then the server MUST answer the tool error code `confirmation_stale` and confirm nothing.
+
+**Tests:** `compliance/mcp-instance.test.ts › refuses a confirmation once nothing is held, and confirms nothing`.
+
+### `mcp/clock-repeated`
+
+When a `confirm_clock` call carries a `confirm` token that an earlier call by the same credential used, within five minutes of the preview, the server MUST answer `already_done` as `true` and confirm nothing more.
+
+**Tests:** `compliance/mcp-instance.test.ts › previews the server time, the trusted time, the gap, the jobs that would run and when the hold ends, and confirms the clock on the confirmation`.
 
 ## Removing a copy of a file
 
@@ -976,7 +1184,7 @@ When the server lists `marfa_remove_file_copy` or `marfa_adopt_backup_folder`, t
 
 **Reason:** neither change can be undone.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder, the maintenance tool and changing settings as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/file-acts-other-credential`
 
@@ -1070,7 +1278,7 @@ When the server lists `marfa_end_sign_in`, the server MUST annotate it with `des
 
 **Reason:** none of the three can be undone: a browser and an app must sign in again, and a passkey must be added again from a browser.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder, the maintenance tool and changing settings as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/end-sign-in-preview`
 

@@ -30,7 +30,7 @@ pub fn list_definition() -> Definition {
             },
             "required": ["backups"],
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }
@@ -39,7 +39,7 @@ pub fn take_definition() -> Definition {
     Definition {
         name: TAKE_NAME,
         title: "Take a backup now",
-        description: "Use to take a backup now, where the instance keeps its backups, which can be an object store. Restoring a backup is not offered here.",
+        description: "Use to take a backup now, where the instance keeps its backups, which can be an object store. This is how to copy the whole instance from here: an export archive does not fit in a tool's answer, so it is streamed with marfa export or GET /export instead. Restoring a backup is not offered here.",
         input: json!({
             "type": "object",
             "properties": {},

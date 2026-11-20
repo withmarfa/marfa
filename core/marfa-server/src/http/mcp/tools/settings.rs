@@ -8,30 +8,20 @@ use super::Definition;
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
 use crate::app::config::{self, Mode, Request};
+use crate::app::oauth::store;
+use crate::app::refusal::Code;
+use crate::db::Write;
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list};
-use crate::settings::registry::{
-    ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, ENTRIES, OBJECT_STORE_BUCKET, OBJECT_STORE_ENDPOINT,
-    OBJECT_STORE_PATH_STYLE, OBJECT_STORE_PREFIX, OBJECT_STORE_REGION, SIGN_IN_ADDRESS,
-};
+use crate::settings::registry::{ENTRIES, SIGN_IN_ADDRESS};
 
 pub const READ_NAME: &str = "marfa_settings";
 pub const CHANGE_NAME: &str = "marfa_change_settings";
 
 const ROOM: usize = ANSWER_BUDGET_CHARS - 2_000;
 
-/// The settings an owner changes only with a recent sign-in or from the command line.
-fn withheld() -> [&'static str; 8] {
-    [
-        SIGN_IN_ADDRESS.entry.key,
-        ALLOW_PRIVATE_ADDRESSES.entry.key,
-        OBJECT_STORE_BUCKET.entry.key,
-        OBJECT_STORE_ENDPOINT.entry.key,
-        OBJECT_STORE_REGION.entry.key,
-        OBJECT_STORE_PATH_STYLE.entry.key,
-        OBJECT_STORE_PREFIX.entry.key,
-        BACKUP_PATH.entry.key,
-    ]
-}
+const NOT_OFFERED: &str = "not_offered_over_mcp";
+const SIGN_IN_ADDRESS_WITHHELD: &str = "sign_in_address is not changed from a tool: moving it ends every sign-in, this app's own included, and a passkey belongs to the address it was made at. The owner moves it with `marfa config set sign_in_address <address>` or from an app, then signs in again at the new address. Nothing changed.";
+const SIGN_IN_AGAIN: &str = "Ask the person to sign in to this app's connection again (re-authenticate it, not only reconnect): Marfa asks them to sign in, and the new connection may make this change. Nothing changed.";
 
 pub fn read_definition() -> Definition {
     Definition {
@@ -55,7 +45,7 @@ pub fn read_definition() -> Definition {
             },
             "required": ["instance_id", "settings"],
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }
@@ -64,7 +54,7 @@ pub fn change_definition() -> Definition {
     Definition {
         name: CHANGE_NAME,
         title: "Change the instance's settings",
-        description: "Use to change the instance's name, its enforcement levers or its settings, as PATCH /config does: a value sets it, null returns it to its default. Changing where the instance signs people in, whether it reaches private addresses, where it keeps files or where it backs up is not offered here: the owner does that from the command line or from an app after a recent sign-in.",
+        description: "Use to change the instance's name, its enforcement levers or its settings, as PATCH /config does: a value sets it, null returns it to its default. Changing whether the instance reaches private addresses, where it keeps files or where it backs up needs the person to have signed in to this app recently; if they have not, ask them to sign in to this app's connection again (re-authenticate it, not only reconnect). Moving sign_in_address is not offered here.",
         input: json!({
             "type": "object",
             "properties": {
@@ -86,7 +76,7 @@ pub fn change_definition() -> Definition {
         }),
         annotations: json!({
             "readOnlyHint": false,
-            "destructiveHint": false,
+            "destructiveHint": true,
             "idempotentHint": true,
             "openWorldHint": true,
         }),
@@ -123,16 +113,8 @@ pub async fn change(app: &Arc<App>, caller: &Caller, arguments: Map<String, Valu
         }
     }
     if let Some(Value::Object(settings)) = arguments.get("settings") {
-        if let Some(key) = settings
-            .keys()
-            .find(|key| withheld().contains(&key.as_str()))
-        {
-            return Err(Stop::coded(
-                "app_sign_in_required",
-                format!(
-                    "{key} is not changed from a tool. The owner changes it from the command line, or from an app after a recent sign-in. Nothing changed."
-                ),
-            ));
+        if settings.contains_key(SIGN_IN_ADDRESS.entry.key) {
+            return Err(Stop::coded(NOT_OFFERED, SIGN_IN_ADDRESS_WITHHELD));
         }
         for (key, value) in settings {
             if key == "name" || key == "enforcement" || !ENTRIES.iter().any(|e| e.key == key) {
@@ -151,17 +133,35 @@ pub async fn change(app: &Arc<App>, caller: &Caller, arguments: Map<String, Valu
     let mut allowed = vec!["name", "enforcement"];
     allowed.extend(ENTRIES.iter().map(|entry| entry.key));
     let request = Request::from_body(Mode::Patch, &body, &allowed, app.settings.sealer())?;
-    Ok(config::update(app, caller, request).await?)
+    match config::update(app, caller, request).await {
+        Ok(answer) => Ok(answer),
+        Err(refusal) if refusal.code == Code::InsufficientUserAuthentication => {
+            ask_sign_in_again(app, caller).await;
+            Err(Stop::refused(refusal).with("next", SIGN_IN_AGAIN))
+        }
+        Err(refusal) => Err(refusal.into()),
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn every_withheld_setting_is_a_setting() {
-        for key in withheld() {
-            assert!(ENTRIES.iter().any(|entry| entry.key == key), "{key}");
-        }
+/// An MCP client cannot follow a challenge with `max_age`, so the app's next authorization asks
+/// for a sign-in made after this refusal instead.
+async fn ask_sign_in_again(app: &App, caller: &Caller) {
+    let Caller::App { grant, .. } = caller else {
+        return;
+    };
+    let (client_id, owner_id) = (grant.client_id.clone(), grant.owner_id.clone());
+    let signed_in = grant.authenticated_at;
+    let clock = app.clock.clone();
+    let asked = app
+        .db
+        .write(Write::own(), move |tx| {
+            store::ask_login_after(tx, &client_id, &owner_id, signed_in, clock.instant())
+        })
+        .await;
+    if let Err(refused) = asked {
+        tracing::warn!(
+            code = refused.code.wire(),
+            "The app's sign-in could not be marked for renewal"
+        );
     }
 }

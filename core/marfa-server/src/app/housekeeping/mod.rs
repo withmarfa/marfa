@@ -19,7 +19,7 @@ use tokio::sync::{Notify, watch};
 use super::access::{Caller, Permission};
 use super::clock::{Clock, Confirmation, Stamp, Standing};
 use super::refusal::{Code, Refusal, Result};
-use super::{App, config, provenance, stored};
+use super::{App, audit, config, provenance, stored};
 use crate::db::{Db, Write};
 use crate::settings::registry::Setting;
 
@@ -504,34 +504,105 @@ pub fn held(standing: Standing) -> Value {
     }
 }
 
+pub const CLOCK_CONFIRMED: &str = "instance.clock.confirmed";
+
+/// What a confirmation of the clock did, or why a gate stopped it.
+pub enum ClockConfirmed<T> {
+    Done(Stamp),
+    Stopped(T),
+}
+
+/// The jobs a clock far ahead holds, which run once the clock is confirmed.
+pub fn held_jobs(app: &App) -> Vec<&'static str> {
+    JOBS.iter()
+        .filter(|job| job.deletes && job.runs_here(app))
+        .map(|job| job.name)
+        .collect()
+}
+
 /// Takes the server's clock as right and lets the jobs a clock ahead held run now.
 pub async fn confirm_clock(app: &App, caller: &Caller) -> Result<Stamp> {
-    let confirmed = confirm_on(&app.db, &app.clock, caller.clone()).await?;
-    tracing::info!(at = %confirmed, "The owner confirmed the server's clock");
+    match confirm_clock_if(app, caller, |_, _| Ok(None::<()>)).await? {
+        ClockConfirmed::Done(at) => Ok(at),
+        ClockConfirmed::Stopped(()) => Err(Refusal::internal("an open gate stopped the clock")),
+    }
+}
+
+/// Confirms the clock unless `gate`, judged in the confirming write on the hold as it stands,
+/// stops it; anything the gate writes commits with the confirmation.
+pub async fn confirm_clock_if<T, G>(
+    app: &App,
+    caller: &Caller,
+    gate: G,
+) -> Result<ClockConfirmed<T>>
+where
+    T: Send + 'static,
+    G: FnOnce(&rusqlite::Transaction<'_>, Option<(Standing, Stamp)>) -> Result<Option<T>>
+        + Send
+        + 'static,
+{
+    let origin = provenance::current();
+    let confirmed = confirm_on(&app.db, &app.clock, caller.clone(), origin, gate).await?;
+    if let ClockConfirmed::Done(at) = &confirmed {
+        tracing::info!(at = %at, "The owner confirmed the server's clock");
+    }
     Ok(confirmed)
 }
 
 /// A deleting job reads the guard inside its own write, so the confirmation reaches the guard only
 /// once its write has committed.
-async fn confirm_on(db: &Db, clock: &Arc<Clock>, caller: Caller) -> Result<Stamp> {
+async fn confirm_on<T, G>(
+    db: &Db,
+    clock: &Arc<Clock>,
+    caller: Caller,
+    origin: provenance::Origin,
+    gate: G,
+) -> Result<ClockConfirmed<T>>
+where
+    T: Send + 'static,
+    G: FnOnce(&rusqlite::Transaction<'_>, Option<(Standing, Stamp)>) -> Result<Option<T>>
+        + Send
+        + 'static,
+{
     let inside = clock.clone();
     let written = db
-        .write(Write::own(), move |tx| {
-            caller
-                .current(tx, &inside.stamp())?
-                .require(Permission::InstanceMaintain)?;
-            confirming(tx, &inside)
+        .write(Write::caller(CLOCK_CONFIRMED), move |tx| {
+            let at = inside.stamp();
+            let caller = caller.current(tx, &at)?;
+            caller.require(Permission::InstanceMaintain)?;
+            let hold = inside.hold();
+            if let Some(stopped) = gate(tx, hold)? {
+                return Ok(Err(stopped));
+            }
+            let confirmation = confirming(tx, &inside)?;
+            audit::record_from(
+                tx,
+                &at,
+                Some(&caller),
+                origin.client_ip.as_deref(),
+                audit::Entry {
+                    action: CLOCK_CONFIRMED,
+                    resource_type: "instance",
+                    resource_id: None,
+                    details: origin.mark(Some(json!({
+                        "confirmed_at": confirmation.at(),
+                        "held": hold.is_some(),
+                    }))),
+                },
+            )?;
+            Ok(Ok(confirmation))
         })
         .await;
     let confirmation = match written {
-        Ok(confirmation) => confirmation,
+        Ok(Ok(confirmation)) => confirmation,
+        Ok(Err(stopped)) => return Ok(ClockConfirmed::Stopped(stopped)),
         Err(error) => {
             clock.unstage();
             Err(error)?
         }
     };
     clock.confirmed(confirmation);
-    Ok(confirmation.at())
+    Ok(ClockConfirmed::Done(confirmation.at()))
 }
 
 fn confirming(tx: &rusqlite::Transaction<'_>, clock: &Clock) -> Result<Confirmation> {
@@ -548,6 +619,10 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+
+    fn open(_: &rusqlite::Transaction<'_>, _: Option<(Standing, Stamp)>) -> Result<Option<()>> {
+        Ok(None)
+    }
     use crate::db::Options;
     use crate::db::migrate::Migration;
     use crate::settings::DatabasePath;
@@ -588,7 +663,11 @@ mod tests {
         );
         db.keep_clock(clock.clone());
 
-        assert!(confirm_on(&db, &clock, Caller::Server).await.is_err());
+        assert!(
+            confirm_on(&db, &clock, Caller::Server, Default::default(), open)
+                .await
+                .is_err()
+        );
         assert_eq!(clock.judging(), None);
         assert!(matches!(clock.standing(), Standing::Ahead { .. }));
     }
@@ -626,7 +705,13 @@ mod tests {
             .unwrap();
         assert_eq!(seen, None, "read inside the confirming write");
 
-        let confirmed = confirm_on(&db, &clock, Caller::Server).await.unwrap();
+        let ClockConfirmed::Done(confirmed) =
+            confirm_on(&db, &clock, Caller::Server, Default::default(), open)
+                .await
+                .unwrap()
+        else {
+            panic!("an open gate stopped the confirmation");
+        };
         assert_eq!(clock.judging(), Some(confirmed));
         let kept = db.read(crate::app::clock::kept).await.unwrap().unwrap();
         assert_eq!(kept.trusted_at, confirmed);

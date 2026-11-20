@@ -4,6 +4,7 @@ pub mod confirm;
 pub mod connector;
 pub mod fetch;
 pub mod guard;
+pub mod instance;
 pub mod moving;
 pub mod purge;
 pub mod revoke;

@@ -38,7 +38,7 @@ pub fn list_definition() -> Definition {
             },
             "required": ["keys"],
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }
