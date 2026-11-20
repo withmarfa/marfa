@@ -6,7 +6,7 @@
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io;
-use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 use std::sync::{Mutex, PoisonError};
 
@@ -287,10 +287,8 @@ impl Held {
 
     /// Whether `dir` is the same folder as this one.
     pub fn is(&self, dir: &File) -> bool {
-        match (rustix::fs::fstat(&self.dir), dir.metadata()) {
-            (Ok(own), Ok(other)) => {
-                (own.st_dev as u64, own.st_ino as u64) == (other.dev(), other.ino())
-            }
+        match (rustix::fs::fstat(&self.dir), rustix::fs::fstat(dir)) {
+            (Ok(own), Ok(other)) => (own.st_dev, own.st_ino) == (other.st_dev, other.st_ino),
             _ => false,
         }
     }

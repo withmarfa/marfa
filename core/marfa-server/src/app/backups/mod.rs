@@ -1513,7 +1513,7 @@ impl App {
             .within(
                 deadline,
                 move |folder| {
-                    faults.hold_blocking(&HOLD_FOLDER_MARKER);
+                    faults.hold_blocking(HOLD_FOLDER_MARKER);
                     folder.swap(claim.promote()?);
                     Ok(())
                 },
