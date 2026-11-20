@@ -1801,9 +1801,16 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         ),
         ("items.purge", &["marfa_purge", "marfa_trash"]),
         ("grants.manage", &["marfa_apps", "marfa_narrow_app"]),
-        ("backups.manage", &["marfa_backups", "marfa_take_backup"]),
+        (
+            "backups.manage",
+            &[
+                "marfa_adopt_backup_folder",
+                "marfa_backups",
+                "marfa_take_backup",
+            ],
+        ),
         ("instance.maintain", &["marfa_maintain"]),
-        ("blobs.manage", &["marfa_files"]),
+        ("blobs.manage", &["marfa_files", "marfa_remove_file_copy"]),
         (
             "sign_ins.manage",
             &["marfa_rename_sign_in", "marfa_sign_ins"],
@@ -1881,6 +1888,11 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
             json!({ "id": "0192e6a8-7c6e-7000-8000-000000000000", "endpoint_id": "0192e6a8-7c6e-7000-8000-000000000001" }),
         ),
         ("marfa_files", json!({ "hash": "00" })),
+        (
+            "marfa_remove_file_copy",
+            json!({ "hash": "00", "store_id": "x" }),
+        ),
+        ("marfa_adopt_backup_folder", json!({})),
         ("marfa_sign_ins", json!({})),
         (
             "marfa_rename_sign_in",
@@ -2329,8 +2341,6 @@ async fn no_tool_offers_a_withheld_owner_task() {
                 "update_server",
                 "clock",
                 "add_passkey",
-                "adopt",
-                "drop",
                 "end_sign_in",
                 "remove_passkey",
                 "revoke_app",
