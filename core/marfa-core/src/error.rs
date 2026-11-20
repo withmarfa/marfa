@@ -659,10 +659,8 @@ fn wrong_schema(
     format!("{path} was made by another build of the core: {reason}. {holds}")
 }
 
-/// What a folder command says of a directory whose saved state another build
-/// of marfa made, in the folder's words: the directory the state is in, the
-/// changes it holds, and what a person can do. Never advises deleting it:
-/// only the build that made it can send what it holds.
+/// A directory's saved state that another build made. Never advises deleting
+/// it: only that build can send what it holds.
 fn refused_directory(
     path: &str,
     reason: &str,

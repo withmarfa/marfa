@@ -301,7 +301,7 @@ pub fn run(
                     lines.extend(first_sync_lines(&dir, plan.as_ref(), confirmed));
                     if let Some(error) = &unread {
                         lines.push(format!(
-                            "the first sync waits for confirmation, but the folder could not be read for it now: {}; `folders push` tries again",
+                            "the first sync waits for confirmation, but the directory could not be read for it now: {}; `folders push` tries again",
                             printable(&error.to_string())
                         ));
                     }
@@ -326,7 +326,7 @@ pub fn run(
             };
             output::list_report(&listed, None, json, || {
                 if listed.is_empty() {
-                    return "no folders on this machine".into();
+                    return "no directory on this machine follows a folder".into();
                 }
                 listed
                     .iter()
@@ -820,9 +820,7 @@ fn is_folder_id(text: &str) -> bool {
         })
 }
 
-/// The ID of the folder `value` names. A value that is an ID is the ID, with
-/// no question asked of the server. Any other value is a title, matched
-/// exactly against the folders `listing` returns, and it must match one.
+/// The ID of the folder `value` names: an ID as it is, any other value as an exact title.
 fn folder_id(
     value: &str,
     listing: impl FnOnce() -> Result<serde_json::Value, CliError>,
@@ -1409,7 +1407,7 @@ fn first_sync_lines(dir: &Path, plan: Option<&FirstSync>, confirmed: bool) -> Ve
                 plan_line(plan)
             ),
             format!(
-                "`marfa folders confirm {0}` lets it go; `marfa folders remove {0}` drops the folder and leaves the files",
+                "`marfa folders confirm {0}` lets it go; `marfa folders remove {0}` stops the directory following its folder and leaves the files",
                 dir.display()
             ),
         ],

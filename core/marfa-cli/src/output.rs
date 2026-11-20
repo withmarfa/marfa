@@ -665,9 +665,7 @@ pub fn unclaimed(drain: &DrainReport) -> Vec<String> {
         .collect()
 }
 
-/// What the server answered in a pass of a folder, in a folder's words: a
-/// change is an edit, a new file, a rename or a deletion on its way to the
-/// server, which `marfa device` calls a write.
+/// What the server answered in a pass, with a change where `marfa device` says write.
 pub fn folder_counts(drain: &DrainReport) -> String {
     let created = created_count(drain);
     let mut line = format!("the server answered {} change(s)", drain.answered);
