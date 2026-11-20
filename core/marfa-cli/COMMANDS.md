@@ -2207,7 +2207,7 @@ Preserves item and edge IDs, created_at and updated_at dates, current versions, 
 
 The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It holds no sign-in, keys, apps, webhooks, inbound endpoints, connector keys, addresses, name or logs, so set those up again after a restore; the command prints one line for each. Each setting, enforcement setting, type icon, source name, and connector state comes back only where this instance has none of its own. After a restore of another instance's archive, the command names where the backup destination keeps that instance's backups: delete them only once that instance no longer runs and nothing else restores from them. An archive holds the items in the bin only if its export did: `marfa export` carries them unless `--state` names other states.
 
-A build restores every archive version up to its own and refuses a later one, or one written before Marfa 0.1, naming the build that wrote it. An entry the build does not know, such as one a tar tool adds, is skipped, and the answer names it in `entries_skipped`, which the command also prints.
+A build restores every archive version up to its own and refuses a later one, or one whose `manifest.json` names no format, which only releases before 0.0.72 wrote, naming the build that wrote it. An entry the build does not know, such as one a tar tool adds, is skipped, and the answer names it in `entries_skipped`, which the command also prints.
 
 When the archive lacks blobs it names and this instance does not hold them either, the answer lists them in `blobs_missing`, and the command prints it and exits 1 with `blobs_missing`. Upload their bytes again with `blobs upload` to restore them.
 
@@ -2594,6 +2594,8 @@ marfa update status [OPTIONS]
 ### marfa update start
 
 Have the server update itself to the newest release it found, where it runs as the service `marfa server install` set up. Elsewhere it changes nothing and says the step to take on the host. Requires `instance.maintain`.
+
+Before Marfa 0.1, a newer release may not read an earlier release's database. The server asks the newer release first, and when it cannot read the database, the update ends with nothing changed: the server stays on its release, and `marfa update status` gives the reason in `last`. The way to move is then to export, make a new install of the newer release and restore the archive there. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
 
 ```text
 marfa update start [OPTIONS]
@@ -4828,9 +4830,13 @@ marfa server install [OPTIONS]
 
 ### marfa server upgrade
 
-Move the server to the release now installed.
+Move the server to a newer release that is installed.
 
-Before Marfa 0.1, a release does not promise to open the database of another release, so a newer release needs a new install, and this moves a server only between builds of one release. A native server runs the `marfa-server` installed beside this `marfa`. A Docker install moves to the release you name with `--release`, or to this binary's own. It refuses an older release than the one installed.
+A native server moves to the release of the `marfa-server` installed beside this `marfa`. A Docker install moves to the release you name with `--release`, or to this binary's own. It refuses a release older than the one the install runs.
+
+Before Marfa 0.1, a newer release may not read an earlier release's database. When it cannot, the install stays on its release and the database stays as it was: a native install asks the newer `marfa-server` first and changes nothing, and a Docker install starts its earlier release again. The way to move is then to export, make a new install of the newer release and restore the archive there. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+
+`marfa update start` has the server update itself to a release it found, with the same checks. This command moves an install to a release you have installed yourself.
 
 ```text
 marfa server upgrade [OPTIONS]
@@ -4862,6 +4868,8 @@ marfa server status [OPTIONS]
 
 Start the server, if it is not running.
 
+A native install stays on the release it runs: a `marfa` of another release is refused, and `marfa server upgrade` moves the install. A `marfa` of the same release that has moved is named by its new path.
+
 On a Mac with a Docker install, this starts Docker's engine first if it is down: it is what the login agent runs.
 
 ```text
@@ -4889,7 +4897,7 @@ marfa server stop [OPTIONS]
 
 Stop the server and start it again, so that it reads `marfa.env` anew.
 
-It does what `stop` and then `start` do, and prints what each prints. It exits as `start` does, so a server that did not come back healthy is an error here too.
+It does what `stop` and then `start` do, and prints what each prints. It exits as `start` does, so a server that did not come back healthy is an error here too. A `marfa` that `start` refuses is refused before the server is stopped.
 
 ```text
 marfa server restart [OPTIONS]
