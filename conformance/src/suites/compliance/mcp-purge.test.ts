@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
@@ -80,9 +81,41 @@ async function trash(...ids: string[]): Promise<void> {
 
 /** Every id in the trash, as the owner's key lists it. */
 async function binned(): Promise<Set<string>> {
-  const listed = await owner().listItems({ state: "trashed", limit: 500 });
-  expect(listed.status, JSON.stringify(listed.error)).toBe(200);
-  return new Set(listed.data.data.map((item) => item.id));
+  const ids = new Set<string>();
+  let cursor: string | undefined;
+  do {
+    const listed = await owner().listItems({
+      state: "trashed",
+      limit: 500,
+      ...(cursor && { cursor }),
+    });
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    for (const item of listed.data.data) ids.add(item.id);
+    cursor = listed.data.next_cursor ?? undefined;
+  } while (cursor);
+  return ids;
+}
+
+/** Notes made in one write, each a part of `host` where one is given. */
+async function notes(count: number, host?: string): Promise<string[]> {
+  const made = await owner().bulkItems({
+    atomic: true,
+    items: Array.from({ length: count }, (_, at) => ({
+      type: "core.note",
+      properties: { body: `part ${String(at)} ${randomUUID()}` },
+      ...(host && { edges: { "attached-to": [host] } }),
+    })),
+  });
+  expect(made.ok, JSON.stringify(made.error)).toBe(true);
+  return made.data.results.map((entry) => entry.id as string);
+}
+
+/** A host in the trash with `count` parts that went to the trash with it. */
+async function hostOf(count: number): Promise<string> {
+  const host = await note("host of many parts");
+  await notes(count, host);
+  await trash(host);
+  return host;
 }
 
 /** Whether no state holds the item any more. */
@@ -239,6 +272,28 @@ describe("marfa_purge previews and purges", () => {
     expect(done.purged).toBe(2);
     expect(done.trash_remaining).toBe(1);
     expect([...(await binned())]).toEqual([skipped]);
+  });
+
+  it("names as many items as fit one answer and how many it left out", async () => {
+    // The witness: a preview that fits names every item and leaves out none.
+    const small = await hostOf(2);
+    const fits = await preview({ ids: [small] });
+    expect(fits.items as unknown[]).toHaveLength(3);
+    expect(fits.left_out).toBeUndefined();
+
+    const host = await hostOf(400);
+    try {
+      const shown = await preview({ ids: [host] });
+      expect(shown.total).toBe(401);
+      const named = (shown.items as unknown[]).length;
+      expect(named).toBeGreaterThan(0);
+      expect(shown.left_out).toBeGreaterThan(0);
+      expect(named + (shown.left_out as number)).toBe(401);
+      expect(typeof shown.confirm).toBe("string");
+    } finally {
+      await owner().purgeItem(host);
+      await owner().purgeItem(small);
+    }
   });
 
   it("answers an empty page of the trash with no confirmation", async () => {
@@ -413,6 +468,252 @@ describe("what a marfa_purge confirmation binds", () => {
     const binnedNow = await binned();
     expect(binnedNow.has(id)).toBe(true);
     expect(binnedNow.has(unnamed)).toBe(true);
+  });
+});
+
+describe("what an item holds binds a marfa_purge confirmation", () => {
+  it("refuses a confirmation when a tag, an extension or a table row was added while the item was out of the trash, though its version did not move", async () => {
+    const made = await owner().createItem({
+      type: "core.conversation",
+      properties: { title: `held by a purge ${randomUUID()}` },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const id = made.data.item.id;
+    await trash(id);
+
+    // The witness: out of the trash and back with nothing added, the
+    // confirmation still holds.
+    const control = await note("restored and trashed again unchanged");
+    await trash(control);
+    const unchanged = await preview({ ids: [control] });
+    expect((await owner().restoreItem(control)).status).toBe(200);
+    await trash(control);
+    const kept = toolResult(
+      await callTool(admin, "marfa_purge", {
+        ids: [control],
+        confirm: unchanged.confirm,
+      }),
+    );
+    expect(kept.purged).toBe(1);
+
+    const changes: [string, () => Promise<void>][] = [
+      [
+        "a tag",
+        async () => {
+          const tagged = await owner().addTags(id, [`held-${randomUUID()}`]);
+          expect(tagged.ok, JSON.stringify(tagged.error)).toBe(true);
+        },
+      ],
+      [
+        "an extension",
+        async () => {
+          const set = await owner().setItemExtension(id, "purge.held", {
+            mark: randomUUID(),
+          });
+          expect(set.ok, JSON.stringify(set.error)).toBe(true);
+        },
+      ],
+      [
+        "a table row",
+        async () => {
+          const written = await owner().writeRows(id, "messages", {
+            operations: [
+              {
+                op: "put",
+                values: {
+                  author: "alice",
+                  text: "held by a purge",
+                  sent_at: new Date().toISOString(),
+                },
+              },
+            ],
+          });
+          expect(written.status, JSON.stringify(written.error)).toBe(200);
+        },
+      ],
+    ];
+    let shown = await preview({ ids: [id] });
+    for (const [what, change] of changes) {
+      expect((await owner().restoreItem(id)).status, what).toBe(200);
+      await change();
+      await trash(id);
+      const stale = toolError(
+        await callTool(admin, "marfa_purge", {
+          ids: [id],
+          confirm: shown.confirm,
+        }),
+      );
+      expect(stale.code, what).toBe("confirmation_stale");
+      expect(typeof stale.confirm, what).toBe("string");
+      // The item's version did not move, so only what it holds changed.
+      expect(stale.items, what).toEqual(shown.items);
+      expect((await binned()).has(id), what).toBe(true);
+      shown = stale;
+    }
+    expect(shown.goes_with).toMatchObject({
+      tags: 1,
+      extensions: 1,
+      table_rows: 1,
+    });
+
+    const done = toolResult(
+      await callTool(admin, "marfa_purge", {
+        ids: [id],
+        confirm: shown.confirm,
+      }),
+    );
+    expect(done.purged).toBe(1);
+    expect(await gone(id)).toBe(true);
+  });
+
+  it("refuses a confirmation when a connector wrote an agreement on the item while it was in the trash", async () => {
+    const minted = await owner().createKey({
+      label: "mcp-purge-connector",
+      source: `mcp-purge-connector-${randomUUID()}`,
+      default_tier: "library",
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    const connector = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: minted.data.key,
+    });
+    const registered = await connector.registerConnector({
+      name: `mcp-purge ${randomUUID()}`,
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const registration = registered.data.id;
+    const process = randomUUID();
+    const held = await connector.takeConnectorHold(registration, process);
+    expect(held.status, JSON.stringify(held.error)).toBe(200);
+
+    const id = await note("agreed on in the trash");
+    await trash(id);
+    const shown = await preview({ ids: [id] });
+    expect(
+      (shown.goes_with as Record<string, number>).connector_agreements,
+    ).toBe(0);
+    // The witness that a connector writes an agreement on an item in the trash.
+    const written = await connector.writeConnectorAgreements(registration, {
+      process,
+      set: [{ item_id: id, waiting: false, record: { remote: "r-1" } }],
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    expect(written.data.written).toBe(1);
+
+    const stale = toolError(
+      await callTool(admin, "marfa_purge", {
+        ids: [id],
+        confirm: shown.confirm,
+      }),
+    );
+    expect(stale.code).toBe("confirmation_stale");
+    expect(stale.items).toEqual(shown.items);
+    expect(
+      (stale.goes_with as Record<string, number>).connector_agreements,
+    ).toBe(1);
+    expect((await binned()).has(id)).toBe(true);
+
+    const done = toolResult(
+      await callTool(admin, "marfa_purge", {
+        ids: [id],
+        confirm: stale.confirm,
+      }),
+    );
+    expect(done.purged).toBe(1);
+    const looked = await connector.lookupConnectorAgreements(registration, [
+      id,
+    ]);
+    expect(looked.status, JSON.stringify(looked.error)).toBe(200);
+    expect(looked.data.data).toEqual([]);
+  });
+});
+
+describe("a marfa_purge takes at most 1,000 items", () => {
+  it("refuses to preview ids whose walk takes more than 1,000 items, and previews a walk of 1,000", async () => {
+    const host = await note("host of 1,000 parts");
+    const parts = await notes(1_000, host);
+    await trash(host);
+    try {
+      const over = toolError(
+        await callTool(admin, "marfa_purge", { ids: [host] }),
+      );
+      expect(over.code).toBe("bulk_cap_exceeded");
+      expect(over.message).toContain("Name fewer ids");
+      expect((await binned()).has(host)).toBe(true);
+
+      // The witness: one part fewer and the same host previews.
+      expect((await owner().purgeItem(parts[0]!)).status).toBe(200);
+      const fits = await preview({ ids: [host] });
+      expect(fits.total).toBe(1_000);
+      expect(typeof fits.confirm).toBe("string");
+    } finally {
+      await owner().purgeItem(host);
+    }
+  });
+
+  it("refuses a confirmation whose walk grew past 1,000 items since the preview, and purges nothing", async () => {
+    const host = await hostOf(999);
+    try {
+      const shown = await preview({ ids: [host] });
+      expect(shown.total).toBe(1_000);
+      expect((await owner().restoreItem(host)).status).toBe(200);
+      await attach(await note("one part too many"), host);
+      await trash(host);
+      const stale = toolError(
+        await callTool(admin, "marfa_purge", {
+          ids: [host],
+          confirm: shown.confirm,
+        }),
+      );
+      expect(stale.code).toBe("confirmation_stale");
+      expect(stale.confirm).toBeUndefined();
+      const binnedNow = await binned();
+      expect(binnedNow.has(host)).toBe(true);
+      expect(binnedNow.size).toBeGreaterThanOrEqual(1_001);
+    } finally {
+      await owner().purgeItem(host);
+    }
+  });
+
+  it("previews a smaller page when a page's walk takes more than 1,000 items, and refuses a page whose first item alone does", async () => {
+    await emptied();
+    // The parts are older than their host, so a page lists the host first.
+    const parts = await notes(1_000);
+    const host = await note("host listed before its parts");
+    const linked = await owner().bulkEdges({
+      atomic: true,
+      edges: parts.map((part) => ({
+        from_id: part,
+        to_id: host,
+        edge_type: "attached-to",
+      })),
+    });
+    expect(linked.ok, JSON.stringify(linked.error)).toBe(true);
+    const newest = await note("newest in the trash");
+    await trash(host, newest);
+    try {
+      const page = await preview({ page: {} });
+      expect(page.ids).toEqual([newest]);
+      expect(page.total).toBe(1);
+      expect(typeof page.next_cursor).toBe("string");
+
+      const over = toolError(
+        await callTool(admin, "marfa_purge", {
+          page: { cursor: page.next_cursor },
+        }),
+      );
+      expect(over.code).toBe("bulk_cap_exceeded");
+
+      // The witness: one part fewer and the page from the host takes all 200.
+      expect((await owner().purgeItem(parts[0]!)).status).toBe(200);
+      const fits = await preview({ page: { cursor: page.next_cursor } });
+      expect((fits.ids as string[])[0]).toBe(host);
+      expect(fits.ids as string[]).toHaveLength(200);
+      expect(fits.total).toBe(1_000);
+    } finally {
+      await owner().purgeItem(host);
+      await owner().purgeItem(newest);
+    }
   });
 });
 
