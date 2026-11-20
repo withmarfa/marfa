@@ -2525,7 +2525,8 @@ describe("where a file sits", () => {
     }
 
     /** Pushes, and expects it to send and write nothing more. A placement's
-     *  form alone says how the file is written, not its name or title. */
+     *  form alone says how the file is written, not its name or title, and is
+     *  sent at most once. */
     async function settled(mac: FolderHarness): Promise<void> {
       const files = readdirSync(mac.dir).sort();
       const naming = (request: RecordedRequest): boolean =>
@@ -2538,6 +2539,13 @@ describe("where a file sits", () => {
         "the folder went on writing once its name and title agreed",
       ).toBe(before);
       expect(readdirSync(mac.dir).sort()).toEqual(files);
+      const once = mac.server.requests.filter(isContentWrite).length;
+      const again = await mac.folder.push();
+      expect(again.ok, JSON.stringify(again)).toBe(true);
+      expect(
+        mac.server.requests.filter(isContentWrite).length,
+        "the folder sent a placement's form again",
+      ).toBe(once);
     }
 
     function names(mac: FolderHarness): string[] {

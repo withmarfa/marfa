@@ -157,7 +157,8 @@ async function caughtUp(mac: FolderHarness) {
 }
 
 /** Pushes, and expects it to send and write nothing more. A placement's
- *  form alone says how the file is written, not what its links name. */
+ *  form alone says how the file is written, not what its links name, and is
+ *  sent at most once. */
 async function settled(mac: FolderHarness): Promise<void> {
   const host = read(mac, "Host.md");
   const naming = (request: RecordedRequest): boolean =>
@@ -170,6 +171,13 @@ async function settled(mac: FolderHarness): Promise<void> {
     "the folder went on writing once its links named the item again",
   ).toBe(before);
   expect(read(mac, "Host.md")).toBe(host);
+  const once = mac.server.requests.filter(isContentWrite).length;
+  const again = await mac.folder.push();
+  expect(again.ok, JSON.stringify(again)).toBe(true);
+  expect(
+    mac.server.requests.filter(isContentWrite).length,
+    "the folder sent a placement's form again",
+  ).toBe(once);
 }
 
 describe("a body link to a retitled item", () => {
