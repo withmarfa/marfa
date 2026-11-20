@@ -3366,6 +3366,8 @@ mod answered_tests;
 #[cfg(all(test, unix))]
 mod displaced_tests;
 #[cfg(test)]
+mod form_tests;
+#[cfg(test)]
 mod held_links_tests;
 #[cfg(test)]
 mod quiet_watch_tests;
