@@ -28,7 +28,7 @@ use super::blobs::folder::{self as backup_folder, Adoptable, Area, Folder};
 use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
-use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
+use super::blobs::upkeep::{Replicated, object_store_said, replicate_one, said_by_address};
 use super::blobs::{Attached, Blob, Hash, Kept, Retry, Wanted, folder_shortfall, unsettled};
 use super::clock::Stamp;
 use super::faults::{
@@ -1770,16 +1770,11 @@ pub struct BackupHealth {
     pub run_in_store: bool,
 }
 
-/// What the last run of `blob-replicate` said of the store `destination`, when it refused it. A
-/// refusal by the address rules stands only while the store's own refusal record is set.
-fn refused_by(result: &Value, destination: &str, record_set: bool) -> Option<String> {
-    let by_address = result["address_refused"]
-        .as_array()
-        .is_some_and(|stores| stores.iter().any(|store| store == destination));
-    if by_address && !record_set {
-        return None;
-    }
-    result["refused"][destination].as_str().map(str::to_string)
+/// What the last run of `blob-replicate` said of the store `destination`, when it refused it. What
+/// it said from a refusal by the address rules stands only while the store's own refusal is set.
+fn refused_by(result: &Value, destination: &str, refusal_set: bool) -> Option<String> {
+    let said = result["refused"][destination].as_str()?;
+    (refusal_set || !said_by_address(said)).then(|| said.to_string())
 }
 
 /// Why the destination takes no copies, from a look at the folder (`None` when the destination
@@ -3529,20 +3524,29 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_by_the_address_rules_is_the_runs_only_while_the_store_is_refused() {
-        let said = "The object store did not take a copy: the address is not public.";
+    fn a_refusal_by_the_address_rules_stands_only_while_the_store_is_refused() {
+        use crate::app::blobs::upkeep::refused_by_address;
+        use crate::app::outbound::store::Refused;
+        let by_rules = refused_by_address(Refused::Credentials);
         let result = json!({
             "copied": 0,
             "remaining": 2,
-            "refused": { "bucket": said, "other": "The blob folder did not take a copy: no room." },
-            "address_refused": ["bucket"],
+            "refused": { "bucket": by_rules },
         });
-        assert_eq!(refused_by(&result, "bucket", true).as_deref(), Some(said));
+        assert_eq!(
+            refused_by(&result, "bucket", true).as_deref(),
+            Some(&*by_rules)
+        );
         assert_eq!(refused_by(&result, "bucket", false), None);
         // The witness: a refusal the address rules did not make stands with the record clear.
+        let denied = format!(
+            "The object store did not take a copy: {}",
+            object_store_said(&std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        );
+        let result = json!({ "copied": 0, "remaining": 2, "refused": { "bucket": denied } });
         assert_eq!(
-            refused_by(&result, "other", false).as_deref(),
-            Some("The blob folder did not take a copy: no room.")
+            refused_by(&result, "bucket", false).as_deref(),
+            Some(&*denied)
         );
     }
 }

@@ -400,17 +400,36 @@ fn folder_said(act: Act, error: &io::Error) -> String {
     format!("{meaning} (the system said: {error})")
 }
 
+const OBJECT_STORE: &str = "The object store";
+
 /// How a failure to copy to `store` is told.
 fn refusal_to_copy(store: &Store, why: Option<&str>) -> String {
     let place = match store {
         Store::Disk(_) => "The blob folder",
         Store::Folder(_) => "The backup folder",
-        Store::S3(_) => "The object store",
+        Store::S3(_) => OBJECT_STORE,
     };
+    told_at(place, why)
+}
+
+fn told_at(place: &str, why: Option<&str>) -> String {
     format!(
         "{place} did not take a copy: {}",
         why.unwrap_or("it gave no reason")
     )
+}
+
+/// How a run tells the object store's failure to copy when the address rules refused it.
+pub(crate) fn refused_by_address(refused: Refused) -> String {
+    told_at(OBJECT_STORE, Some(refused.reason()))
+}
+
+/// Whether `said`, a run's word on a store under `refused`, was written from a refusal by the
+/// address rules.
+pub(crate) fn said_by_address(said: &str) -> bool {
+    [Refused::Bucket, Refused::Credentials]
+        .into_iter()
+        .any(|refused| said == refused_by_address(refused))
 }
 
 /// Keep a failed settle visible even when file copying succeeds.
@@ -457,10 +476,7 @@ async fn copy_missing(app: &Arc<App>, run: &Run) -> Result<Report> {
         && let Some(why) = s3.refused()
     {
         unreachable.insert(s3.id().to_string());
-        refused.insert(
-            s3.id().to_string(),
-            refusal_to_copy(&Store::S3(s3.clone()), Some(why.reason())),
-        );
+        refused.insert(s3.id().to_string(), refused_by_address(why));
     }
     for pair in missing {
         if !run.go_on().await {
@@ -498,11 +514,6 @@ async fn copy_missing(app: &Arc<App>, run: &Run) -> Result<Report> {
     if copied == 0 && !refused.is_empty() {
         failure = Some(refused.values().cloned().collect::<Vec<_>>().join(" "));
         result["refused"] = json!(refused);
-        if let Some(s3) = app.blobs.refused()
-            && refused.contains_key(s3.id())
-        {
-            result["address_refused"] = json!([s3.id()]);
-        }
     }
     Ok(Report {
         result,
@@ -856,6 +867,27 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_a_run_writes_from_a_refusal_by_the_address_rules_is_known_as_one() {
+        for refused in [Refused::Bucket, Refused::Credentials] {
+            let wrapped = io::Error::other(object_store::Error::Generic {
+                store: "S3",
+                source: Box::new(refused),
+            });
+            assert!(said_by_address(&told_at(
+                OBJECT_STORE,
+                Some(object_store_said(&wrapped))
+            )));
+        }
+        // The witness: the object store's other refusals are not.
+        let denied = io::Error::from(io::ErrorKind::PermissionDenied);
+        assert!(!said_by_address(&told_at(
+            OBJECT_STORE,
+            Some(object_store_said(&denied))
+        )));
+        assert!(!said_by_address(&told_at(OBJECT_STORE, None)));
+    }
 
     #[test]
     fn a_folder_failure_is_told_with_what_to_do_and_keeps_the_systems_words() {
