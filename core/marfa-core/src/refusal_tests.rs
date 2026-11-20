@@ -608,10 +608,7 @@ fn a_status_field_declared_with_words_the_server_refuses_is_refused() {
             serde_json::json!([{ "value": "open", "group": "todo" }]),
             "not one of",
         ),
-        (
-            serde_json::json!([{ "value": "open" }]),
-            "exactly value and group",
-        ),
+        (serde_json::json!([{ "value": "open" }]), "value and group"),
         (
             serde_json::json!([{ "value": "open", "group": "not_started" }, { "value": "open", "group": "completed" }]),
             "more than once",

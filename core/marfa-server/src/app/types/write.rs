@@ -91,6 +91,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             let id = text_of(&schema, "id")
                 .ok_or_else(|| Refusal::internal("a registered type has no id"))?
                 .to_string();
+            caller.require_guidance(None, text_of(&schema, "guidance"))?;
             require_reach(caller, &schema, None)?;
             if let Some(parent) = text_of(&schema, "parent")
                 && let Some(fault) = parent_chain_fault(&catalog.types, &id, parent, 0)
@@ -132,7 +133,11 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
                 origin: "user",
                 created_by: Some(creator),
             };
-            Ok(presented(schema, Some(&held)))
+            Ok(presented(
+                schema.clone(),
+                Some(&held),
+                &catalog.types.with(schema),
+            ))
         })
         .await?;
     app.publish_catalog().await;
@@ -275,6 +280,7 @@ async fn replacing(
                 }
             };
             definition.remove("provenance");
+            definition.remove("ancestor_guidance");
             definition.insert("id".into(), Value::String(id.clone()));
             let definition = Value::Object(definition);
             let judged = match stored {
@@ -289,6 +295,10 @@ async fn replacing(
                 }
                 None => schema,
             };
+            caller.require_guidance(
+                stored.and_then(|held| text_of(held, "guidance")),
+                text_of(&schema, "guidance"),
+            )?;
             let family = with_subtypes(unit.tx(), &id)?;
             require_evolution(unit.tx(), caller, &family, stored, &schema)?;
             require_reach(caller, &schema, stored)?;
@@ -331,7 +341,7 @@ async fn replacing(
             let shown = next
                 .owned(&id)
                 .ok_or_else(|| Refusal::internal("a replaced type is not in its registry"))?;
-            Ok(presented(shown, catalog.provenance.get(&id)))
+            Ok(presented(shown, catalog.provenance.get(&id), &next))
         })
         .await?;
     app.publish_catalog().await;
@@ -536,7 +546,7 @@ async fn change_icon(
             let resolved = resolve(&registry, &id, false)
                 .map_err(|fault| chain_refusal(&fault))?
                 .ok_or_else(|| not_found(&id))?;
-            Ok(presented(resolved, catalog.provenance.get(&id)))
+            Ok(presented(resolved, catalog.provenance.get(&id), &registry))
         })
         .await?;
     app.publish_catalog().await;

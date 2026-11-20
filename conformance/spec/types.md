@@ -216,6 +216,132 @@ If `POST /types` or `PUT /types/{id}` names a `label` or `plural` for the type, 
 
 **Tests:** `compliance/type-label.test.ts › refuses a label or plural longer than 100 characters or not text`.
 
+## Descriptions and guidance
+
+A type's `description` says in one sentence what it is for. Its `guidance` is optional Markdown that tells an agent or an app builder how to use it. Lengths are counted in Unicode code points.
+
+### `types/description-limit`
+
+If `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names a `description` for the type that is longer than 200 Unicode code points, then the server MUST answer `400 invalid_schema` with `details.errors` naming `description`.
+
+**Reason:** every list of types and every consent screen shows the sentence, so it stays short. Longer text belongs in `guidance`.
+
+**Tests:** `compliance/type-guidance.test.ts › takes a type description at its limit and refuses one over it, counted in code points`.
+
+### `types/field-description-limit`
+
+If `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names a `description` for a field, or for a member of a field's entries, that is longer than 300 Unicode code points, then the server MUST answer `400 invalid_schema` with `details.errors` naming its path.
+
+**Tests:** `compliance/type-guidance.test.ts › takes a field or member description at its limit and refuses one over it, counted in code points`.
+
+### `types/status-word-description`
+
+Where a status word names a `description`, the server MUST keep it with the word and answer it in `status_values` on `GET /types/{id}` and `GET /types`.
+
+**Reason:** a word's name does not always say when to use it, and a child type reads the words it inherits with their descriptions.
+
+**Tests:** `compliance/type-guidance.test.ts › keeps a status word's description and reads it on the type and on a child that inherits the word`.
+
+### `types/status-word-description-limit`
+
+If `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names a `description` for a status word that is not a string or is longer than 120 Unicode code points, then the server MUST answer `400 invalid_schema` with `details.errors` naming its path.
+
+**Tests:** `compliance/type-guidance.test.ts › takes a status word description at its limit and refuses one over it or not text`.
+
+### `types/status-word-description-free`
+
+When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` that changes only the `description` of a status word, the server MUST take the replacement.
+
+**Reason:** a description changes nothing an item holds, as a field's description does not (`types/evolve-free`).
+
+**Tests:** `compliance/type-guidance.test.ts › lets a key with metadata.types:write alone change a status word's description and a guided type's description`.
+
+### `types/guidance`
+
+Where `POST /types` or `PUT /types/{id}` names `guidance` for a type, the server MUST keep it with the type and answer it as `guidance` on `GET /types/{id}` and in `GET /types`.
+
+**Tests:** `compliance/type-guidance.test.ts › keeps a type's guidance and reads it back on the type and in the list`.
+
+### `types/guidance-limit`
+
+If `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names `guidance` that is not a string or is longer than 1,000 Unicode code points, then the server MUST answer `400 invalid_schema` with `details.errors` naming `guidance`.
+
+**Reason:** guidance is read whole by every agent that meets the type, so it stays short.
+
+**Tests:** `compliance/type-guidance.test.ts › takes guidance at its limit and refuses it over the limit, counted in code points, or not text`.
+
+### `types/guidance-app-refused`
+
+If `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names non-empty `guidance` for an `app.*` type, then the server MUST answer `400 invalid_schema` with `details.errors` naming `guidance`.
+
+**Reason:** an `app.*` type is an app's own machinery, and an app's key could otherwise plant instructions that every agent reads.
+
+**Tests:** `compliance/type-guidance.test.ts › refuses guidance on an app type and takes the same guidance on a user type`.
+
+### `types/guidance-empty`
+
+If `POST /types` or `PUT /types/{id}` names `guidance` that is an empty string, then the server MUST keep the type with no guidance.
+
+**Tests:** `compliance/type-guidance.test.ts › treats guidance that is an empty string as none`.
+
+### `types/guidance-register-permission`
+
+If a key without `schema.write` sends `POST /types` naming non-empty `guidance`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` and `details.changes` listing `guidance`, and register nothing.
+
+**Reason:** guidance tells agents how to fill a type, so adding it is a schema change beyond `metadata.types:write`.
+
+**Tests:** `compliance/type-guidance.test.ts › refuses a key with metadata.types:write alone guidance when it registers a type, and registers the same type without it`.
+
+### `types/guidance-replace-permission`
+
+If a key without `schema.write` sends `PUT /types/{id}` that adds, changes or removes the type's `guidance`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` and `details.changes` listing `guidance`, and change nothing.
+
+**Tests:** `compliance/type-guidance.test.ts › refuses a key with metadata.types:write alone a replacement that adds, changes or removes guidance, and lands each with schema.write`.
+
+### `types/guidance-unchanged`
+
+When a key without `schema.write` sends a `PUT /types/{id}` that leaves the type's `guidance` as stored and changes nothing else that needs `schema.write`, the server MUST take the replacement.
+
+**Reason:** a value that is the same is not a change, and a connector that holds no `schema.write` must keep updating the types it registered.
+
+**Tests:** `compliance/type-guidance.test.ts › lets a key with metadata.types:write alone replace a guided type when its guidance stays as it is`.
+
+### `types/guidance-ancestors`
+
+When a credential sends `GET /types/{id}` for a type with ancestors that carry guidance, the server MUST answer `ancestor_guidance`, one `{ type, guidance }` for each ancestor that carries guidance, nearest first, and leave `ancestor_guidance` out where none does.
+
+**Reason:** a weaker model misses the rules of a family when it reads only the type itself.
+
+**Tests:** `compliance/type-guidance.test.ts › reads the guidance of the types above, nearest first, leaving out one that carries none`.
+
+### `types/guidance-ancestors-current`
+
+When the guidance of a type changes after a type below it is registered, the server MUST answer the changed guidance in `ancestor_guidance` on `GET /types/{id}` for the type below.
+
+**Tests:** `compliance/type-guidance.test.ts › reads an ancestor's guidance as it is now, after the child was registered`.
+
+### `types/guidance-write-back`
+
+If `PUT /types/{id}` names `ancestor_guidance`, as a read of the type answers it, then the server MUST take the replacement and store none of it.
+
+**Reason:** a person replaces a type with what they read, as for `provenance`.
+
+**Tests:** `compliance/type-guidance.test.ts › takes a read of a type written back, without storing its ancestors' guidance`.
+
+### `types/limits-replace-stored`
+
+If `PUT /types/{id}` names text over a limit of `types/description-limit`, `types/field-description-limit`, `types/status-word-description-limit` or `types/guidance-limit` that the type already holds, then the server MUST answer `400 invalid_schema` naming it.
+
+**Reason:** a type stored over a limit reads as it is (`archive/restore-type-text-limits`), and the next replacement brings it within.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › reads a type stored over the limits as it is, and refuses a replacement that keeps the text until it is within`.
+
+### `types/shipped-text-limits`
+
+The server MUST ship every type, field and status word with a `description` within the limits a registration is held to.
+
+**Tests:** `compliance/type-guidance.test.ts › ships every type, field and status word within the description limits`.
+
 ## Reading the registry
 
 ### `types/read`

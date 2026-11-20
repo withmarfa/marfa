@@ -379,7 +379,7 @@ pub fn api_name(text: &str) -> bool {
         && chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
 }
 
-/// Refuses a status word list on a field that is not `status`, a list that is not `{ value, group }` pairs naming each word once in one of the four groups, `enum_values` on a status field, and `status` as an array's element type. A status field with no words is judged by [`refuse_wordless_status`].
+/// Refuses a status word list on a field that is not `status`, a list that is not `{ value, group }` pairs, each with an optional text `description`, naming each word once in one of the four groups, `enum_values` on a status field, and `status` as an array's element type. A status field with no words is judged by [`refuse_wordless_status`].
 pub fn status_declaration(kind: &str, definition: &Value) -> Option<String> {
     if definition.get("items_type").and_then(Value::as_str) == Some("status") {
         return Some(
@@ -403,10 +403,16 @@ pub fn status_declaration(kind: &str, definition: &Value) -> Option<String> {
     let mut seen = Vec::new();
     for entry in words {
         let Some(pair) = entry.as_object().filter(|pair| {
-            pair.len() == 2 && pair.contains_key("value") && pair.contains_key("group")
+            pair.contains_key("value")
+                && pair.contains_key("group")
+                && pair.iter().all(|(key, held)| match key.as_str() {
+                    "value" | "group" => true,
+                    "description" => held.is_string(),
+                    _ => false,
+                })
         }) else {
             return Some(format!(
-                "with the status word {entry}, which is not an object of exactly value and group"
+                "with the status word {entry}, which is not an object of value and group, and a description that is text"
             ));
         };
         let Some(word) = pair["value"].as_str().filter(|word| api_name(word)) else {

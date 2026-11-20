@@ -78,7 +78,11 @@ describe("a starting definition for a type", () => {
       "cover",
     ]);
     const bare = await scaffold(["user.recipe"]);
-    expect(JSON.parse(bare.stdout)).toEqual({ id: "user.recipe", fields: {} });
+    expect(JSON.parse(bare.stdout)).toEqual({
+      id: "user.recipe",
+      description: "",
+      fields: {},
+    });
   });
 
   it("needs no server, working copy or key, and sends nothing where a server is named", async () => {

@@ -4685,7 +4685,7 @@
           },
           "description": {
             "type": "string",
-            "description": "What the field holds."
+            "description": "What the field holds, up to 300 characters."
           },
           "required": {
             "type": "boolean",
@@ -4773,13 +4773,17 @@
               "canceled"
             ],
             "description": "The group the word belongs to."
+          },
+          "description": {
+            "type": "string",
+            "description": "What the word means, up to 120 characters."
           }
         },
         "required": [
           "value",
           "group"
         ],
-        "description": "One word a `status` field takes, with its group."
+        "description": "One word a `status` field takes, with its group and, optionally, what it means."
       },
       "EntryMember": {
         "type": "object",
@@ -4809,7 +4813,7 @@
           },
           "description": {
             "type": "string",
-            "description": "What the member holds."
+            "description": "What the member holds, up to 300 characters."
           },
           "required": {
             "type": "boolean",
@@ -4906,7 +4910,11 @@
           },
           "description": {
             "type": "string",
-            "description": "What the type is for."
+            "description": "What the type is for: a sentence of up to 200 characters."
+          },
+          "guidance": {
+            "type": "string",
+            "description": "Markdown that tells an agent or an app builder how to use the type. Present only where the type carries some. `GET /types/{id}` also lists the guidance of its ancestors."
           },
           "parent": {
             "type": "string",
@@ -5018,6 +5026,13 @@
                     "description": "The type's recorded origin and creator."
                   }
                 ]
+              },
+              "ancestor_guidance": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/TypeGuidance"
+                },
+                "description": "The guidance of the types above this one, nearest first. Present only where one of them carries some. The type's own guidance is `guidance`."
               }
             },
             "required": [
@@ -5027,6 +5042,25 @@
           }
         ],
         "description": "A type says which fields the items of that type hold, and what else Marfa does for them."
+      },
+      "TypeGuidance": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "The identifier of the type that carries the guidance.",
+            "example": "core.ticket"
+          },
+          "guidance": {
+            "type": "string",
+            "description": "That type's own guidance."
+          }
+        },
+        "required": [
+          "type",
+          "guidance"
+        ],
+        "description": "One type's guidance, as read for a type below it."
       },
       "TypeNotFoundRefusal": {
         "type": "object",
@@ -5251,7 +5285,11 @@
           },
           "description": {
             "type": "string",
-            "description": "What the type is for."
+            "description": "A sentence saying what the type is for, up to 200 characters."
+          },
+          "guidance": {
+            "type": "string",
+            "description": "Markdown that tells an agent or an app builder how to use the type, up to 1,000 characters. Adding, changing or removing it needs `schema.write`. An `app.*` type takes none. An empty string means none."
           },
           "roles": {
             "type": "array",
@@ -5482,7 +5520,11 @@
           },
           "description": {
             "type": "string",
-            "description": "What the type is for."
+            "description": "A sentence saying what the type is for, up to 200 characters."
+          },
+          "guidance": {
+            "type": "string",
+            "description": "Markdown that tells an agent or an app builder how to use the type, up to 1,000 characters. Adding, changing or removing it needs `schema.write`. An `app.*` type takes none. An empty string means none."
           },
           "roles": {
             "type": "array",
@@ -5570,6 +5612,13 @@
             "type": "string",
             "description": "The type's identifier, as `GET /types/{id}` returns it. The path names the type, so an identifier here changes nothing.",
             "example": "acme.deal"
+          },
+          "ancestor_guidance": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TypeGuidance"
+            },
+            "description": "The guidance of the types above, accepted when replacing a read response. This field changes nothing."
           }
         },
         "required": [
@@ -31930,7 +31979,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).\n- `property_shadows_field`: a field is named like one every item has.\n- `inheritance_violation`: the type reshapes an inherited field.",
+            "description": "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid, or has an unknown key or overlong text (`details.errors` names each path).\n- `property_shadows_field`: a field is named like one every item has.\n- `inheritance_violation`: the type reshapes an inherited field.",
             "content": {
               "application/json": {
                 "schema": {
@@ -31972,7 +32021,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `metadata.types:write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.\n- `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` or `compatible_with` target (`details.grant` names it).",
+            "description": "- `forbidden`: you don't have `metadata.types:write`, the type has `guidance` and you lack `schema.write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.\n- `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` or `compatible_with` target (`details.grant` names it).",
             "content": {
               "application/json": {
                 "schema": {
@@ -32217,7 +32266,7 @@
           "Types"
         ],
         "summary": "Get a type",
-        "description": "Returns a type's schema, with the fields and policies it inherits from its ancestors. Every credential reads any type, whatever its type map reaches.",
+        "description": "Returns a type's schema, with the fields and policies it inherits from its ancestors, and the guidance of its ancestors. Every credential reads any type, whatever its type map reaches.",
         "security": [
           {
             "bearerAuth": []
@@ -32603,7 +32652,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes a bad chain.\n- `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).\n- `property_shadows_field`: a field has the name of one every item has.\n- `inheritance_violation`: a field's shape differs in a parent or subtype.",
+            "description": "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or chains badly.\n- `invalid_schema`: the schema is invalid, or has an unknown key or overlong text (`details.errors` names each path).\n- `property_shadows_field`: a field has the name of one every item has.\n- `inheritance_violation`: a field's shape differs in a parent or subtype.",
             "content": {
               "application/json": {
                 "schema": {
@@ -33757,7 +33806,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).\n- `property_shadows_field`: a field is named like one every item has.\n- `inheritance_violation`: the type reshapes an inherited field.",
+            "description": "- `missing_required_field`: `fields` is missing.\n- `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.\n- `invalid_schema`: the schema is invalid, or has an unknown key or overlong text (`details.errors` names each path).\n- `property_shadows_field`: a field is named like one every item has.\n- `inheritance_violation`: the type reshapes an inherited field.",
             "content": {
               "application/json": {
                 "schema": {

@@ -4,12 +4,13 @@ use serde_json::Value;
 
 use super::{Issue, Obj, REFUSED_TYPE_KEYS, as_obj};
 
-const TYPE_KEYS: [&str; 16] = [
+const TYPE_KEYS: [&str; 17] = [
     "id",
     "parent",
     "label",
     "plural",
     "description",
+    "guidance",
     "version",
     "fields",
     "tables",

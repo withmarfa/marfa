@@ -11,7 +11,10 @@ use write::not_found;
 pub use write::{Merge, change, clear_icon, delete, register, replace, set_icon};
 
 use marfa_rules::grammar;
-use marfa_rules::schema::{ChainFault, Issue, Obj, SchemaVerdict, invalid_id_message, plural_of};
+use marfa_rules::schema::{
+    ChainFault, Issue, Obj, Registry, SchemaVerdict, ancestor_guidance, invalid_id_message,
+    plural_of,
+};
 use serde_json::{Value, json};
 
 use super::access::Caller;
@@ -116,9 +119,19 @@ fn require_reach(caller: &Caller, next: &Obj, stored: Option<&Obj>) -> Result<()
     Ok(())
 }
 
-fn presented(mut schema: Obj, held: Option<&Provenance>) -> Value {
+/// A type as the API answers it: with its plural, its provenance and, where a type above it carries guidance, that guidance nearest first.
+fn presented(mut schema: Obj, held: Option<&Provenance>, registry: &Registry) -> Value {
     let plural = plural_of(&schema);
     schema.insert("plural".into(), Value::String(plural));
+    let id = schema.get("id").and_then(Value::as_str).unwrap_or_default();
+    let above = ancestor_guidance(registry, id).unwrap_or_default();
+    if !above.is_empty() {
+        let above: Vec<Value> = above
+            .into_iter()
+            .map(|(type_id, guidance)| json!({ "type": type_id, "guidance": guidance }))
+            .collect();
+        schema.insert("ancestor_guidance".into(), Value::Array(above));
+    }
     schema.insert("provenance".into(), provenance_json(held));
     Value::Object(schema)
 }

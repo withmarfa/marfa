@@ -7,6 +7,9 @@ use serde_json::Value;
 use super::tables::{OWN_COLUMNS, OWN_TABLE};
 use super::{Obj, as_obj};
 
+/// A change to `guidance` is not judged here: it needs `schema.write` whatever else changes, and the server decides it with the access rules.
+const GUIDANCE: &str = "guidance";
+
 const FREE_MEMBERS: [&str; 8] = [
     "id",
     "label",
@@ -25,6 +28,13 @@ fn shape_of(field: &Value) -> Value {
     let mut shape = field.clone();
     shape.remove("description");
     shape.remove("label");
+    if let Some(Value::Array(words)) = shape.get_mut("status_values") {
+        for word in words {
+            if let Value::Object(word) = word {
+                word.remove("description");
+            }
+        }
+    }
     if let Some(Value::Object(members)) = shape.get_mut("items_fields") {
         for member in members.values_mut() {
             if let Value::Object(member) = member {
@@ -111,7 +121,7 @@ pub fn evolution_of(stored: &Obj, next: &Obj) -> (Vec<String>, Vec<String>) {
     let members: HashSet<&String> = stored.keys().chain(next.keys()).collect();
     let mut members: Vec<&String> = members
         .into_iter()
-        .filter(|m| !FREE_MEMBERS.contains(&m.as_str()))
+        .filter(|m| !FREE_MEMBERS.contains(&m.as_str()) && m.as_str() != GUIDANCE)
         .collect();
     members.sort_unstable();
     for member in members {
@@ -171,6 +181,27 @@ mod tests {
             evolution_of(&stored, &changed).0,
             vec!["fields.x".to_string(), "fields.z".to_string()]
         );
+    }
+    #[test]
+    fn a_status_word_s_description_is_free_and_guidance_is_decided_elsewhere() {
+        let word = |description: &str| {
+            obj(
+                json!({"id": "user.a", "fields": {"s": {"type": "status", "status_values": [
+                {"value": "open", "group": "not_started", "description": description}]}}}),
+            )
+        };
+        assert!(evolution_of(&word("a"), &word("b")).0.is_empty());
+        let renamed = obj(
+            json!({"id": "user.a", "fields": {"s": {"type": "status", "status_values": [
+            {"value": "new", "group": "not_started"}]}}}),
+        );
+        assert_eq!(
+            evolution_of(&word("a"), &renamed).0,
+            vec!["fields.s".to_string()]
+        );
+        let guided = obj(json!({"id": "user.a", "guidance": "Use it.", "fields": {}}));
+        let bare = obj(json!({"id": "user.a", "fields": {}}));
+        assert!(evolution_of(&bare, &guided).0.is_empty());
     }
     #[test]
     fn an_item_s_tables_compare_by_shape_on_both_sides_and_name_where_the_column_now_lives() {

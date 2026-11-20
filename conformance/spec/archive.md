@@ -202,6 +202,14 @@ The server MUST carry in the `instance.ndjson.gz` of an archive a `type` line fo
 
 **Tests:** `compliance/export.test.ts › carries every registered type and edge type in an archive, whatever its selection and credential reach`.
 
+### `archive/archive-type-guidance`
+
+The server MUST carry the `guidance` of a type in the `type` line of an archive.
+
+**Reason:** guidance is part of the type's definition, so a backup that left it out would lose it on a move to a new instance.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › carries a type's guidance and status word descriptions through an export and a restore into a new instance`.
+
 ### `archive/archive-type-icons`
 
 The server MUST carry in the `instance.ndjson.gz` of an archive one `type_icon` line, holding the `type_id` and the `icon`, for each icon the owner has chosen for a type, and count them in the manifest's `type_icon_count`.
@@ -819,6 +827,28 @@ When an otherwise valid archive carries a set of registrations accepted through 
 **Reason:** an exported backup remains restorable when its registrations refer to each other, including mutual compatibility declarations and display hints, links, and merge policies that name inherited fields.
 
 **Tests:** `compliance/restore-compatible-types.test.ts › round-trips accepted registrations into an empty store (reversed: %s)`, `› refuses a target change that breaks a reader and restores the accepted registry`, `compliance/type-tables.test.ts › restores a subtype whose type line restates a table of its parent (reversed: %s)`.
+
+### `archive/restore-type-guidance`
+
+When `POST /restore` reads a `type` line that carries `guidance`, the server MUST register the type with that guidance.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › carries a type's guidance and status word descriptions through an export and a restore into a new instance`.
+
+### `archive/restore-type-guidance-app`
+
+If `POST /restore` reads a `type` line of an `app.*` type that carries non-empty `guidance`, then the server MUST answer `400 invalid_schema` and write nothing.
+
+**Reason:** an `app.*` type never carries guidance (`types/guidance-app-refused`), so an archive that says it does is not one a server wrote.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › refuses an archive that gives an app type guidance, and writes nothing`.
+
+### `archive/restore-type-text-limits`
+
+When `POST /restore` reads a `type` line whose `description`, a field's or member's `description`, a status word's `description` or `guidance` is longer than a registration takes, the server MUST register the type with the text as the archive holds it.
+
+**Reason:** a type stored before the limits existed (`types/description-limit`) stays in a backup and restores, and its next replacement brings it within (`types/limits-replace-stored`).
+
+**Tests:** `compliance/type-guidance-restore.test.ts › reads a type stored over the limits as it is, and refuses a replacement that keeps the text until it is within`.
 
 ### `archive/restore-type-conflict`
 

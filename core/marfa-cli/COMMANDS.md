@@ -1334,7 +1334,7 @@ marfa types list [OPTIONS]
 
 ### marfa types get
 
-One type by id, with its schema.
+One type by id, with its schema, its guidance and the guidance of the types above it.
 
 ```text
 marfa types get [OPTIONS] <ID>
@@ -1385,7 +1385,9 @@ marfa types check [OPTIONS] <FOLDER>
 
 ### marfa types register
 
-Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map.
+Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map, and `schema.write` for a type that carries guidance.
+
+Given `--file PATH.json`, the Markdown file beside it with the same name (`PATH.md`) is sent as the type's `guidance`, with its trailing whitespace removed. A `.md` file that is not UTF-8, or that starts with a byte-order mark, is refused, and so is a definition that also names `guidance`. An empty `.md` file means no guidance. `--body` and `--file -` read no Markdown file.
 
 ```text
 marfa types register [OPTIONS]
@@ -1398,7 +1400,7 @@ marfa types register [OPTIONS]
 
 ### marfa types normalize
 
-Normalize a definition and compare it with the registered type. Any authenticated key can use this command.
+Normalize a definition and compare it with the registered type. Any authenticated key can use this command. A `PATH.md` beside `--file PATH.json` is read as guidance, as `register` reads it.
 
 ```text
 marfa types normalize [OPTIONS]
@@ -1411,7 +1413,9 @@ marfa types normalize [OPTIONS]
 
 ### marfa types replace
 
-Replace a registered type's definition. Needs write on the type in the key's type map and `schema.write` or `metadata.types:write`.
+Replace a registered type's definition. Needs write on the type in the key's type map and `schema.write` or `metadata.types:write`. A `PATH.md` beside `--file PATH.json` is read as guidance, as `register` reads it.
+
+A replacement without guidance removes the type's guidance, and adding, changing or removing guidance needs `schema.write`. A replacement that leaves it as it is needs nothing more.
 
 `metadata.types:write` alone covers adding optional fields that no stored item holds a value under, adding a table or an optional column, and changing the type's label, plural, description, display hints and version, or a field's, table's or column's label and description. Any other change, including removing a field, table or column, needs `schema.write`.
 

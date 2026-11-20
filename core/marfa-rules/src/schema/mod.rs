@@ -38,8 +38,8 @@ pub use order_key::{
 pub use registration::{Early, SchemaVerdict, early_refusal, invalid_id_message};
 pub use registry::Registry;
 pub use resolve::{
-    ChainFault, MAX_RESOLUTION_DEPTH, canonical, chain, label_or_default, labelled, plural_of,
-    read_back_free, resolve, roles_of, with_field_labels,
+    ChainFault, MAX_RESOLUTION_DEPTH, ancestor_guidance, canonical, chain, label_or_default,
+    labelled, plural_of, read_back_free, resolve, roles_of, with_field_labels,
 };
 pub use tables::{
     ADDS_UP, ITEM_KIND, KEYED_KINDS, MAX_COLUMNS_PER_TABLE, MAX_SEARCHABLE_COLUMNS,
@@ -52,11 +52,40 @@ pub use type_def::{
 };
 pub use unread::{unread_edge_keys, unread_keys};
 
+/// Whether a registration's text is held to the length limits: a restore takes what a server stored before they existed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Limits {
+    Enforced,
+    Stored,
+}
+
+/// A string longer than `max` Unicode code points.
+pub(crate) fn length_issue(
+    path: &str,
+    value: Option<&Value>,
+    max: usize,
+    hint: &str,
+) -> Option<Issue> {
+    let length = value?.as_str()?.chars().count();
+    (length > max).then(|| {
+        Issue::new(
+            path,
+            format!("a string of at most {max} characters"),
+            format!("a string of {length} characters"),
+            hint,
+        )
+    })
+}
+
 pub type Obj = Map<String, Value>;
 
 pub const TYPE_ROLES: [&str; 1] = ["container"];
 pub const ROLE_PREFIX: &str = "role:";
 pub const MAX_LABEL_LENGTH: usize = 100;
+pub const MAX_TYPE_DESCRIPTION_LENGTH: usize = 200;
+pub const MAX_FIELD_DESCRIPTION_LENGTH: usize = 300;
+pub const MAX_STATUS_WORD_DESCRIPTION_LENGTH: usize = 120;
+pub const MAX_GUIDANCE_LENGTH: usize = 1_000;
 pub const MAX_FEED_DAYS: i64 = 36_500;
 pub const MAX_POLICY_DAYS: i64 = 36_500;
 pub const MAX_POLICY_VERSIONS: i64 = 1_000_000;

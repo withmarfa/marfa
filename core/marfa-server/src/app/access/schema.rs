@@ -87,6 +87,19 @@ impl Caller {
         }
     }
 
+    /// Guidance is read by agents as how to fill a type, so adding, changing or removing it takes `schema.write`; leaving it as stored takes nothing.
+    pub fn require_guidance(&self, stored: Option<&str>, next: Option<&str>) -> Result<()> {
+        if stored == next || self.holds(Permission::SchemaWrite) {
+            return Ok(());
+        }
+        Err(Refusal::new(
+            Code::Forbidden,
+            "Changing guidance requires schema.write, which a credential holding metadata.types:write alone lacks.",
+        )
+        .with_detail("required_scope", Permission::SchemaWrite.word())
+        .with_detail("changes", vec!["guidance"]))
+    }
+
     pub fn require_type(&self, name: &str, level: Level) -> Result<()> {
         if self.key().is_some() && level == Level::Write && name.split('.').next() == Some("system")
         {

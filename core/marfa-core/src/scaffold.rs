@@ -21,7 +21,7 @@ pub struct ScaffoldField {
     pub status_values: Vec<(String, String)>,
 }
 
-/// A type definition naming `id`, with `fields` in the order given, that a
+/// A type definition naming `id`, with `description` empty where none is given, for its author to fill, and `fields` in the order given, that a
 /// declaration takes unchanged and a key that may register `id` can register.
 /// `parent` is checked only for its grammar: a parent the instance or the
 /// declaration holds cannot be known here.
@@ -147,9 +147,7 @@ pub fn scaffold_type(
     }
     let mut row = Map::new();
     row.insert("id".into(), id.into());
-    if let Some(description) = description {
-        row.insert("description".into(), description.into());
-    }
+    row.insert("description".into(), description.unwrap_or_default().into());
     if let Some(parent) = parent {
         row.insert("parent".into(), parent.into());
     }
@@ -389,7 +387,7 @@ mod tests {
     fn a_bare_id_is_a_definition_with_no_fields() {
         assert_eq!(
             scaffold_type("user.recipe", None, None, &[]).unwrap(),
-            json!({ "id": "user.recipe", "fields": {} })
+            json!({ "id": "user.recipe", "description": "", "fields": {} })
         );
     }
 
