@@ -5420,7 +5420,8 @@ fn an_install_and_a_run_under_an_open_umask_keep_the_folders_on_the_way_private(
 
 /// What `marfa server run` makes with a plain create call is private whatever umask it starts
 /// under: here the folder of the server's log, which an install makes before and a reinstall
-/// leaves.
+/// leaves. Only on a Mac does `run` make that folder; on Linux the log goes to the journal.
+#[cfg(target_os = "macos")]
 #[test]
 fn a_run_under_an_open_umask_makes_what_it_creates_private() {
     let rig = Rig::new("u-umask-run");
