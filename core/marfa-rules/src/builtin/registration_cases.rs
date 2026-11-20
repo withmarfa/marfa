@@ -797,6 +797,45 @@ mod policies {
     }
 
     #[test]
+    fn a_version_policy_refuses_a_bad_number_for_every_window_and_for_max_versions_naming_the_field()
+     {
+        for key in ["recent_days", "daily_snapshot_days", "weekly_snapshot_days"] {
+            for bad in [
+                json!(-1),
+                json!(1.5),
+                json!("7"),
+                json!(null),
+                json!(36_501),
+            ] {
+                let found =
+                    refused_at("version_policy", json!({ key: bad.clone() }), "acme.policy");
+                assert!(
+                    found.contains(&format!("version_policy.{key}")),
+                    "{key} {bad}"
+                );
+            }
+        }
+        for bad in [
+            json!(0),
+            json!(-1),
+            json!(1.5),
+            json!("7"),
+            json!(null),
+            json!(1_000_001),
+        ] {
+            let found = refused_at(
+                "version_policy",
+                json!({"max_versions": bad.clone()}),
+                "acme.policy",
+            );
+            assert!(
+                found.contains(&"version_policy.max_versions".to_string()),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
     fn a_version_policy_refuses_windows_out_of_order_naming_the_one_that_ends_too_soon() {
         let at = |policy: Value| refused_at("version_policy", policy, "acme.policy");
         assert_eq!(
