@@ -191,10 +191,12 @@ CREATE TABLE IF NOT EXISTS held_rows (
   PRIMARY KEY (item_id, name, id)
 ) WITHOUT ROWID;
 
--- The tables to compare once filled whole.
+-- The tables to compare once filled whole. `restored` where a restore was
+-- found, rather than only receipts checked.
 CREATE TABLE IF NOT EXISTS held_tables (
   item_id TEXT NOT NULL,
   name TEXT NOT NULL,
+  restored INTEGER NOT NULL CHECK (restored IN (0, 1)),
   PRIMARY KEY (item_id, name)
 ) WITHOUT ROWID;
 

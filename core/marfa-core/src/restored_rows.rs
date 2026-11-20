@@ -106,16 +106,16 @@ pub(crate) fn seen_by(conn: &Connection, event: &RowsEvent) -> Result<()> {
     Ok(())
 }
 
-/// Whether the table's rows are set aside to be compared.
-fn marked(conn: &Connection, item: &str, table: &str) -> Result<bool> {
+/// Whether the table's rows are set aside to be compared, and if so whether
+/// a found restore set them aside.
+fn marked(conn: &Connection, item: &str, table: &str) -> Result<Option<bool>> {
     Ok(conn
         .query_row_cached(
-            "SELECT 1 FROM held_tables WHERE item_id = ?1 AND name = ?2",
+            "SELECT restored FROM held_tables WHERE item_id = ?1 AND name = ?2",
             params![item, table],
-            |_| Ok(()),
+            |row| row.get(0),
         )
-        .optional()?
-        .is_some())
+        .optional()?)
 }
 
 /// Lays what the server took of `write` on the rows set aside of its table,
@@ -134,7 +134,7 @@ pub(crate) fn fold(
     let (Some(item), Some(table)) = (write.item_id.as_deref(), write.table.as_deref()) else {
         return Ok(());
     };
-    if !marked(conn, item, table)? {
+    if marked(conn, item, table)?.is_none() {
         return Ok(());
     }
     let held = |id: &str| -> Result<Option<row_writes::RowText>> {
@@ -203,9 +203,9 @@ pub(crate) fn fold(
 
 /// Whether `write` is a row write not yet sent to a table whose rows are set
 /// aside, which waits until they are compared, so the kept writes go ahead
-/// of it (`device/restored-rows-held`). Until a fill lists the item's tables
-/// again the copy has no record of the table, and the next fill lets go of
-/// one it no longer holds (`let_go_unheld`).
+/// of it (`device/restored-rows-held`). Until a fill lists the item and its
+/// tables again the copy has no record of either, and the next fill lets go
+/// of a table it no longer holds (`let_go_unheld`).
 pub(crate) fn holds_back(conn: &Connection, write: &QueuedWrite) -> Result<bool> {
     if !write.kind.rows() {
         return Ok(false);
@@ -216,8 +216,9 @@ pub(crate) fn holds_back(conn: &Connection, write: &QueuedWrite) -> Result<bool>
     let held = conn
         .query_row_cached(
             "SELECT 1 FROM held_tables h
-               JOIN items i ON i.id = h.item_id
-              WHERE h.item_id = ?1 AND h.name = ?2 AND i.state <> 'trashed'
+              WHERE h.item_id = ?1 AND h.name = ?2
+                AND NOT EXISTS (
+                  SELECT 1 FROM items i WHERE i.id = h.item_id AND i.state = 'trashed')
                 AND NOT EXISTS (
                   SELECT 1 FROM item_tables t
                    WHERE t.item_id = h.item_id AND t.name = h.name AND t.state = 'online')",
@@ -351,9 +352,12 @@ pub(crate) fn release(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn mark(conn: &Connection, item: &str, table: &str) -> Result<()> {
-    conn.prepare_cached("INSERT OR IGNORE INTO held_tables (item_id, name) VALUES (?1, ?2)")?
-        .execute(params![item, table])?;
+fn mark(conn: &Connection, item: &str, table: &str, restored: bool) -> Result<()> {
+    conn.prepare_cached(
+        "INSERT INTO held_tables (item_id, name, restored) VALUES (?1, ?2, ?3)
+         ON CONFLICT (item_id, name) DO UPDATE SET restored = MAX(restored, excluded.restored)",
+    )?
+    .execute(params![item, table, restored])?;
     Ok(())
 }
 
@@ -408,7 +412,7 @@ pub(crate) fn hold_copy(conn: &Connection) -> Result<()> {
         let Some(rows) = holdable(conn, &item, &table)? else {
             continue;
         };
-        mark(conn, &item, &table)?;
+        mark(conn, &item, &table, true)?;
         if !rows {
             continue;
         }
@@ -448,7 +452,7 @@ pub(crate) fn hold_named(conn: &Connection, only: Option<(&str, &str)>) -> Resul
         let Some(rows) = holdable(conn, &item, &table)? else {
             continue;
         };
-        mark(conn, &item, &table)?;
+        mark(conn, &item, &table, false)?;
         if rows && !removal {
             hold_row(conn, &item, &table, &id)?;
         }
@@ -519,13 +523,16 @@ fn parsed(text: Option<&str>) -> Value {
 /// writes waiting on it are laid over them: queues, blocked, a put of each
 /// row set aside that the server lacks or holds behind it, and a delete of
 /// each row this device removed that the server holds from before the
-/// removal (`device/restored-rows-kept`). A row a write sent with no answer
-/// yet names is judged with that write laid on, by its values alone: the
-/// server may hold the write already, at a time of its own.
+/// removal (`device/restored-rows-kept`). Where a restore was found, a row a
+/// write sent with no answer yet names is judged with that write laid on, by
+/// its values alone: the server may hold the write already, at a time of its
+/// own. Where only receipts were checked, the row set aside is the copy's own
+/// and may lack another writer's change the server holds at the same time,
+/// so each row is judged by its time alone, as `lost` judges it.
 pub(crate) fn keep_lost(conn: &Connection, item: &str, table: &str) -> Result<()> {
-    if !marked(conn, item, table)? {
+    let Some(restored) = marked(conn, item, table)? else {
         return Ok(());
-    }
+    };
     let mut ops = Vec::new();
     let mut set_aside: HashSet<String> = HashSet::new();
     {
@@ -566,7 +573,9 @@ pub(crate) fn keep_lost(conn: &Connection, item: &str, table: &str) -> Result<()
             let withheld = parsed(withheld.as_deref());
             let server_values = parsed(server.as_deref());
             let server_withheld = parsed(server_withheld.as_deref());
-            let lost = match server_at.as_deref().filter(|_| server.is_some()) {
+            let server_at = server_at.as_deref().filter(|_| server.is_some());
+            let lost = match server_at {
+                _ if !restored => server_at.is_none_or(|server_at| earlier(server_at, &at)),
                 Some(_) if in_flight => values != server_values || withheld != server_withheld,
                 server_at => behind(
                     (&values, &withheld, at.as_str()),
@@ -845,6 +854,68 @@ mod tests {
     }
 
     #[test]
+    fn a_row_set_aside_where_no_restore_was_found_is_judged_by_its_time_alone() {
+        // The copy's row is its own patch laid on a row that missed another
+        // writer's change to another column, which the server holds at the
+        // patch's time.
+        let mine = json!({ "count": 2, "note": "mine" });
+        let theirs = json!({ "count": 2, "note": "theirs" });
+        for how in ["an expiry", "a check before a hydration"] {
+            let conn = copy();
+            server_row(&conn, "a", mine.clone(), LATER);
+            receipt(&conn, "a", LATER, false, false);
+            match how {
+                "an expiry" => crate::reach::expire(&conn).unwrap(),
+                _ => hold_unseen(&conn).unwrap(),
+            }
+            conn.execute("DELETE FROM table_rows", []).unwrap();
+            server_row(&conn, "a", theirs.clone(), LATER);
+            keep_lost(&conn, "item", "steps").unwrap();
+            assert_eq!(kept(&conn), Vec::new(), "{how}");
+        }
+
+        // The witness: rows a found restore set aside are judged by their
+        // values too, so the column the restored server lost is kept.
+        let conn = copy();
+        server_row(&conn, "a", mine.clone(), LATER);
+        receipt(&conn, "a", LATER, false, false);
+        hold_copy(&conn).unwrap();
+        crate::reach::expire(&conn).unwrap();
+        conn.execute("DELETE FROM table_rows", []).unwrap();
+        server_row(&conn, "a", theirs, LATER);
+        keep_lost(&conn, "item", "steps").unwrap();
+        assert_eq!(
+            kept(&conn).first().map(|kept| kept.3.clone()),
+            Some(json!([{ "op": "put", "id": "a", "values": mine }]))
+        );
+    }
+
+    #[test]
+    fn a_row_write_stays_held_while_a_hydration_has_cleared_its_item_until_it_is_trashed() {
+        let conn = copy();
+        waiting(&conn, "w", 1, None, "a");
+        let holds = |conn: &Connection| {
+            let write = store::queued_write(conn, "w").unwrap().unwrap();
+            holds_back(conn, &write).unwrap()
+        };
+        mark(&conn, "item", "steps", false).unwrap();
+        conn.execute_batch("DELETE FROM item_tables; DELETE FROM items;")
+            .unwrap();
+        assert!(holds(&conn), "the copy holds no item");
+        store::upsert_item(
+            &conn,
+            &store::testing::note("item", "T", "", BEFORE),
+            None,
+            &marfa_rules::catalog::Indexing::default(),
+        )
+        .unwrap();
+        assert!(holds(&conn), "the item came back");
+        conn.execute("UPDATE items SET state = 'trashed'", [])
+            .unwrap();
+        assert!(!holds(&conn), "an item in the bin has no rows to compare");
+    }
+
+    #[test]
     fn a_removal_lets_go_of_the_changes_to_its_row_kept_before_it() {
         let conn = copy();
         let made = queued(&conn, "made", 1, json!([put(R, 1)]), true);
@@ -1021,7 +1092,7 @@ mod tests {
                 )
                 .unwrap();
                 if marked {
-                    mark(&conn, "item", "steps").unwrap();
+                    mark(&conn, "item", "steps", false).unwrap();
                 }
                 queued(&conn, "w", 1, json!([put(R, 1)]), false);
             }
@@ -1387,15 +1458,15 @@ mod tests {
         }
     }
 
-    /// With `MARFA_RESTORED_ROWS_BENCH` set to a row count, prints how long
+    /// With `MARFA_TEST_RESTORED_ROWS_BENCH` set to a row count, prints how long
     /// each step takes at that size; run it in a release build:
     ///
     /// ```sh
-    /// MARFA_RESTORED_ROWS_BENCH=100000 cargo nextest run --release -p marfa-core restored_rows_bench --no-capture
+    /// MARFA_TEST_RESTORED_ROWS_BENCH=100000 cargo nextest run --release -p marfa-core restored_rows_bench --no-capture
     /// ```
     #[test]
     fn restored_rows_bench_times_the_comparison() {
-        let rows: usize = std::env::var("MARFA_RESTORED_ROWS_BENCH")
+        let rows: usize = std::env::var("MARFA_TEST_RESTORED_ROWS_BENCH")
             .ok()
             .and_then(|rows| rows.parse().ok())
             .unwrap_or(1_000);
@@ -1488,7 +1559,7 @@ mod tests {
             holds_back(conn, &write).unwrap()
         };
         assert!(!holds(&conn), "a table not set aside holds nothing back");
-        mark(&conn, "item", "steps").unwrap();
+        mark(&conn, "item", "steps", false).unwrap();
         assert!(holds(&conn));
         // After a hydration clears the copy, before a fill lists the table.
         conn.execute("DELETE FROM item_tables", []).unwrap();
