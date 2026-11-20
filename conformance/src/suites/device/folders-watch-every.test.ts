@@ -854,6 +854,7 @@ describe("a watch of every folder", () => {
         expect(stopped[0].code).toBe("instance_changed");
         expect(stopped[0].reason).toContain(b.server.url);
         expect(stopped[0].reason).toContain("another Marfa instance");
+        expect(stopped[0].reason).toContain("marfa folders remove");
         expect(stopped[0].reason).toContain("marfa folders add");
       }, WAIT);
       const sent = b.server.requests.length;

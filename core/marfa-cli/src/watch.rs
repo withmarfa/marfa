@@ -380,7 +380,7 @@ pub fn stopped_for_another_instance(dir: &Path) -> Option<String> {
         .any(|(current, folder)| *current && folder.watching);
     (stopped && !held).then(|| {
         let server =
-            marfa_core::folder::origin_of(dir).unwrap_or_else(|| "this folder's server".into());
+            marfa_core::folder::origin_of(dir).unwrap_or_else(|| "this folder's address".into());
         marfa_core::folder::instance_changed_said(&server)
     })
 }

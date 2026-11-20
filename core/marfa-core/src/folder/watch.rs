@@ -177,8 +177,9 @@ pub fn credential_refused_said(server: &str, said: &CoreError) -> String {
 pub fn instance_changed_said(server: &str) -> String {
     format!(
         "the server at {server} now answers as another Marfa instance, which does not hold \
-         this folder or its key, so the watch stopped this folder; add the folder again \
-         with `marfa folders add` and a key for that instance"
+         this folder or its key, so the watch stopped this folder; to follow a folder there, \
+         remove this one with `marfa folders remove` and add one with `marfa folders add` \
+         and a key for that instance"
     )
 }
 
@@ -1083,10 +1084,10 @@ impl Folder {
     /// credential's; a panic of the core's is not the server's.
     fn follow_ended<E>(&self, error: CoreError) -> WatchError<E> {
         if is_instance_changed(&error) {
-            let server = self
-                .core
-                .http()
-                .map_or_else(|_| "this folder's server".into(), crate::http::Http::origin);
+            let server = self.core.http().map_or_else(
+                |_| "this folder's address".into(),
+                crate::http::Http::origin,
+            );
             return WatchError::InstanceChanged { server };
         }
         follow_ended(error)
@@ -3076,6 +3077,7 @@ mod backoff_tests {
         let (stop, ended) = (AtomicBool::new(false), AtomicBool::new(false));
         let mut before_change = 0;
         let mut after_change = 0;
+        let mut ended_early = false;
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 let _ = folder.watch(&stop, |_| Ok::<(), ()>(()));
@@ -3091,10 +3093,11 @@ mod backoff_tests {
                 595 => after_change = passes(),
                 _ => {}
             });
+            ended_early = ended.load(Ordering::SeqCst);
             stop.store(true, Ordering::SeqCst);
         });
         crate::clock::set_manual(false);
-        assert!(!ended.load(Ordering::SeqCst) || stop.load(Ordering::SeqCst));
+        assert!(!ended_early, "the watch ended before it was stopped");
         // The witness: the passes ran and failed.
         assert!(before_change >= 2, "{before_change} passes");
         assert!(
