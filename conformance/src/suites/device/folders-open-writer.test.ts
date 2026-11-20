@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { closeSync, openSync, readdirSync, writeSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  openSync,
+  readdirSync,
+  utimesSync,
+  writeSync,
+} from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { copyLiveReplay } from "../../device/marfa-answers.js";
@@ -291,6 +298,35 @@ describe("a file a program holds open for writing", () => {
     expect(read(harness, "Note.md")).toContain("as read\nfirst half\n");
   });
 
+  it("keeps a file it set aside whose mode and times alone changed as unchanged, and deletes it once no program holds it", async () => {
+    const harness = await noteFolder("folder-open-writer-metadata");
+    holdOpen(harness);
+    write("first half\n");
+    close();
+    await setAsideUnknown(harness);
+    const [name] = keptNames(harness);
+    expect(name).toBeDefined();
+    const kept = join(harness.dir, name!);
+    chmodSync(kept, 0o640);
+    utimesSync(kept, new Date(1000), new Date(1000));
+    const sent = sentUpdates(harness).length;
+
+    await setAsideUnknown(harness);
+    expect(
+      keptNames(harness),
+      "a kept file whose metadata alone changed was put back as a write",
+    ).toEqual([name]);
+    expect(sentUpdates(harness)).toHaveLength(sent);
+    expect(read(harness, "Note.md")).toContain("marfa_version: 2\n");
+
+    await push(harness);
+    expect(keptNames(harness)).toEqual([]);
+    expect(
+      readdirSync(harness.dir).filter((file) => file.endsWith(".md")),
+    ).toEqual(["Note.md"]);
+    expect(read(harness, "Note.md")).toContain("marfa_version: 2\n");
+  });
+
   it("deletes a file it set aside unchanged a week after it could not tell whether a program writes to it", async () => {
     const harness = await noteFolder("folder-open-writer-week");
     holdOpen(harness);
@@ -345,6 +381,48 @@ describe("a file a program holds open for writing", () => {
       ["held", "kept"],
     ]);
     expect(listed[0]?.reason).toContain("cannot tell whether a program");
+
+    const discarded = await harness.folder.discardKept();
+    expect(discarded.ok, JSON.stringify(discarded)).toBe(true);
+    if (!discarded.ok) return;
+    expect(discarded.value.discarded).toEqual([name]);
+    expect(discarded.value.kept).toEqual([]);
+    expect(keptNames(harness)).toEqual([]);
+    expect(read(harness, "Note.md")).toContain("marfa_version: 2\n");
+  });
+
+  it("lists a file it keeps under a record it cannot read, and deletes it when the owner discards it", async () => {
+    const harness = await noteFolder("folder-open-writer-unread");
+    holdOpen(harness);
+    write("first half\n");
+    close();
+    await setAsideUnknown(harness);
+    const [name] = keptNames(harness);
+    expect(name).toBeDefined();
+    const db = new DatabaseSync(harness.folder.store);
+    try {
+      db.prepare(
+        "UPDATE meta SET value = json_set(value, '$.retained.since', 'soon') WHERE key LIKE 'folder_retained:%'",
+      ).run();
+    } finally {
+      db.close();
+    }
+
+    await push(harness);
+    expect(keptNames(harness)).toEqual([name]);
+    const kept = await harness.folder.kept();
+    expect(kept.ok, JSON.stringify(kept)).toBe(true);
+    if (!kept.ok) return;
+    expect(
+      kept.value.kept,
+      "a kept file whose record does not read was not listed",
+    ).toEqual([
+      expect.objectContaining({
+        path: name,
+        from: "Note.md",
+        reason: "Marfa could not read its record",
+      }),
+    ]);
 
     const discarded = await harness.folder.discardKept();
     expect(discarded.ok, JSON.stringify(discarded)).toBe(true);

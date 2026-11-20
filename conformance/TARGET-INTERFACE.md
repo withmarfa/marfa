@@ -228,6 +228,10 @@ stays because that thing is what it checks.
   a week after it could not tell whether a program writes to it", moves back
   the time a folder's store records for a file it keeps. The command line has
   no clock a fixture can move, and the bound is a week.
+- `device/folders-open-writer.test.ts`, "lists a file it keeps under a record
+  it cannot read, and deletes it when the owner discards it", spoils the
+  record a folder's store keeps for a file it keeps. No operation or fault
+  writes a record a later build cannot read.
 - `inbound-faults`, `inbound-logs` and the other fixtures that read the log
   through `serverOutput` check what the server logged. The log is the subject.
 
