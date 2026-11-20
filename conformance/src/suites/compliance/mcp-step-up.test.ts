@@ -43,6 +43,9 @@ let addresses = 0;
 
 beforeAll(async () => {
   server = await bootFreshServer("mcp-step-up", {
+    S3_BUCKET: "",
+    MARFA_OBJECT_STORE_BUCKET: "",
+    MARFA_OBJECT_STORE_ENDPOINT: "",
     MARFA_ALLOW_PRIVATE_ADDRESSES: "false",
     MARFA_BACKUP_PATH: backups,
     MARFA_BACKUP_INTERVAL_SECONDS: "0",
