@@ -6533,7 +6533,7 @@
               "string",
               "null"
             ],
-            "description": "Why the attached object store cannot be used while `allow_private_addresses` refuses the requests to it, the same text as `backups.store_error` in `GET /health`, or `null`.",
+            "description": "Why the attached object store cannot be used while the address rules refuse the requests to it because `allow_private_addresses` is `false`, the same text as `backups.store_error` in `GET /health`, or `null`.",
             "example": "The object store cannot be used: the object store's address is not public, and allow_private_addresses is false. Until it can, no file is copied there, no backup is taken and no file is purged."
           }
         },

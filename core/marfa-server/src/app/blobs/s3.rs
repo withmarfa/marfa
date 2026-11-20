@@ -432,7 +432,7 @@ impl S3 {
         S3 { id, ..self }
     }
 
-    /// The request the address rules refused when it was last made, while they still refuse it.
+    /// The kind of request the address rules refused the last time it was made.
     pub fn refused(&self) -> Option<Refused> {
         self.guarded.refused()
     }
