@@ -1697,23 +1697,6 @@ mod edges {
     }
 
     #[test]
-    fn every_shipped_edge_type_has_both_labels() {
-        let (_, edges) = shipped_sources(&definitions()).unwrap();
-        assert!(!edges.is_empty());
-        for (file, definition) in edges {
-            for key in ["label", "reverse_label"] {
-                assert!(
-                    definition
-                        .get(key)
-                        .and_then(Value::as_str)
-                        .is_some_and(|text| !text.is_empty()),
-                    "{file}: {key}"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn an_edge_type_that_lacks_its_id_or_cardinality_is_refused_naming_it() {
         assert!(request_shape(&Obj::new()).is_err());
         assert_eq!(
@@ -1913,7 +1896,8 @@ mod folder {
     }
 
     #[test]
-    fn a_shipped_edge_file_is_refused_for_no_label_or_a_reverse_name_that_is_not_a_kebab_word() {
+    fn a_shipped_edge_file_is_refused_for_no_label_no_reverse_label_or_a_reverse_name_that_is_not_a_kebab_word()
+     {
         let file = |extra: Value| {
             let mut definition = json!({"id": "reviews", "label": "Reviews", "reverse_label": "R", "cardinality": "many-to-many"});
             if let (Some(definition), Some(extra)) = (definition.as_object_mut(), extra.as_object())
@@ -1942,6 +1926,19 @@ mod folder {
             refused.iter().any(|line| line.contains("label")),
             "{refused:?}"
         );
+        let mut without = file(json!({}));
+        without.1.remove("reverse_label");
+        for edge in [
+            without,
+            file(json!({"reverse_label": ""})),
+            file(json!({"reverse_label": "  "})),
+        ] {
+            let refused = register_edges(&[edge]).unwrap_err();
+            assert!(
+                refused.iter().any(|line| line.contains("reverse_label")),
+                "{refused:?}"
+            );
+        }
     }
 
     #[test]
@@ -1949,7 +1946,9 @@ mod folder {
         let both = |id: &str| {
             (
                 format!("{id}.json"),
-                row(json!({"id": id, "label": "L", "cardinality": "many-to-many"})),
+                row(
+                    json!({"id": id, "label": "L", "reverse_label": "R", "cardinality": "many-to-many"}),
+                ),
             )
         };
         let bad = register_edges(&[

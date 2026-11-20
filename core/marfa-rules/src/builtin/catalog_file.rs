@@ -313,12 +313,14 @@ pub(super) fn register_edges(edges: &[Source]) -> Result<Vec<Obj>, Vec<String>> 
         } else if !is_kebab_word(&id) {
             problems.push("a shipped edge type is one lowercase kebab word".into());
         }
-        if !row
-            .get("label")
-            .and_then(Value::as_str)
-            .is_some_and(|label| !label.trim().is_empty())
-        {
-            problems.push("label: a shipped edge type names its label".into());
+        for key in ["label", "reverse_label"] {
+            if !row
+                .get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty())
+            {
+                problems.push(format!("{key}: a shipped edge type names its {key}"));
+            }
         }
         if let Some(reverse) = row.get("reverse_name").and_then(Value::as_str)
             && !is_kebab_word(reverse)
