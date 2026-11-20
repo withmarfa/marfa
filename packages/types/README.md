@@ -55,6 +55,8 @@ pnpm typecheck
 
 These run in this folder, or from the root with `pnpm --filter @withmarfa/types <script>`. CI's `Types codegen freshness` job runs `validate`, empties `generated/`, regenerates it, and refuses any difference, a file the generator did not write included. `Generated clients are fresh` does the same for `core/marfa-rules/src/builtin_catalog.json`, which the root `pnpm generate:core` writes from this package.
 
+For the Rust commands that generate the catalog, digest, and icon sets, see [The shipped catalog](../../core/AGENTS.md#the-shipped-catalog).
+
 ## Adding a new type
 
 1. Create `core/<name>.json` following the schema format above

@@ -237,10 +237,17 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["core-native", "image", ...RUST_SERVER],
   ],
   // The action every Rust job uses to install the compiler, which runs for
-  // the jobs that read the compiler version.
+  // the jobs that read the compiler version, the freshness jobs among them.
   [
     /^\.github\/actions\/rust-toolchain\//,
-    [...RUST, ...ENRICHMENT, "image", "version-fields"],
+    [
+      ...RUST,
+      ...ENRICHMENT,
+      "image",
+      "version-fields",
+      "types-freshness",
+      "clients-freshness",
+    ],
   ],
   // Read by GitHub alone. Anything else under `.github/`, such as an action
   // a workflow uses, runs everything until a rule names it.
@@ -469,19 +476,58 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-rules\/src\/(builtin_catalog\.json|contract\.rs)$/,
     [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
-  [/^core\/Cargo\.toml$/, [...RUST, ...ENRICHMENT, "image", "workspace"]],
+  // The freshness jobs build the rules crate to write the catalog, the
+  // shapes' digest and the icon sets, so what it is built with reaches them.
+  [
+    /^core\/Cargo\.toml$/,
+    [
+      ...RUST,
+      ...ENRICHMENT,
+      "image",
+      "workspace",
+      "types-freshness",
+      "clients-freshness",
+    ],
+  ],
   // The lockfile and the compiler version: a new dependency or a new compiler
   // can break an Apple build. `version-fields` installs the compiler too.
   [
     /^core\/rust-toolchain\.toml$/,
-    [...RUST, ...ENRICHMENT, "image", "version-fields"],
+    [
+      ...RUST,
+      ...ENRICHMENT,
+      "image",
+      "version-fields",
+      "types-freshness",
+      "clients-freshness",
+    ],
   ],
   // `ci/jiff-tzdb-pin.test.ts` reads this lockfile and the Swift crate's.
   [
     /^core\/Cargo\.lock$/,
-    [...RUST, ...ENRICHMENT, "image", "version-fields", "workspace"],
+    [
+      ...RUST,
+      ...ENRICHMENT,
+      "image",
+      "version-fields",
+      "workspace",
+      "types-freshness",
+      "clients-freshness",
+    ],
   ],
-  [/^core\/\.cargo\//, [...RUST, ...ENRICHMENT, "image", "workspace"]],
+  [
+    /^core\/\.cargo\//,
+    [
+      ...RUST,
+      ...ENRICHMENT,
+      "image",
+      "workspace",
+      "types-freshness",
+      "clients-freshness",
+    ],
+  ],
+  // The freshness jobs run the rules crate's tests under nextest and the
+  // runner that caps them.
   [
     /^core\/\.config\//,
     [
@@ -490,6 +536,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "core-fault-injection",
       "core",
       "workspace",
+      "types-freshness",
+      "clients-freshness",
     ],
   ],
   // It can hide a file the client generator writes from the freshness
@@ -503,6 +551,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "core-fault-injection",
       "core",
       "workspace",
+      "types-freshness",
+      "clients-freshness",
     ],
   ],
   // Only the live tests boot a server.
@@ -612,6 +662,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // side (a keychain, a watched folder) that nothing here names, so a Mac
   // runs them too.
   [/^core\/[^/]+\/tests\//, ["core-checks", "core-checks-linux", "core"]],
+  // The rules crate writes the catalog, the shapes' digest and the icon sets
+  // the freshness jobs check, and its example writes the icon sets.
+  [
+    /^core\/marfa-rules\/(examples\/|Cargo\.toml$)/,
+    [...RUST, "types-freshness", "clients-freshness"],
+  ],
   // Every crate's manifest: a dependency bump or a macOS-only dependency
   // (`core-foundation`, `xattr`) can break an Apple build.
   [/^core\/[^/]+\/Cargo\.toml$/, RUST],
@@ -638,7 +694,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/marfa-core\/src\//, [...DEVICE_LINUX, "core"]],
   // The core and the command line are built from the rules crate, so it
   // reaches what they do.
-  [/^core\/marfa-rules\/src\//, [...RUST_LINUX, "core"]],
+  // Its rules judge each shipped definition the freshness jobs write the
+  // catalog and the digest from.
+  [
+    /^core\/marfa-rules\/src\//,
+    [...RUST_LINUX, "core", "types-freshness", "clients-freshness"],
+  ],
   // Any other crate can be one the binary is built from, and Linux builds,
   // lints and tests the rest of the core's Rust, but not the live tests.
   [/^core\//, RUST_LINUX],
@@ -669,6 +730,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^scripts\/generate-core-(contract|catalog)\.ts$/,
     ["workspace", "clients-freshness"],
   ],
+  // The icon sets' writer and the pins it checks each download against.
+  [/^scripts\/icon-sets(\.test)?\.(sh|txt)$/, ["workspace", "types-freshness"]],
   [/^scripts\//, ["workspace"]],
 
   [

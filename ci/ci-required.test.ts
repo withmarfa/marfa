@@ -278,12 +278,22 @@ describe("what a change runs", () => {
         "quick-checks",
         "version-fields",
         "workspace",
+        "types-freshness",
+        "clients-freshness",
       ],
     ],
     [
       "the action that installs the compiler, which every job that builds Rust runs",
       [".github/actions/rust-toolchain/action.yml"],
-      [...RUST, ...ENRICHMENT, "image", "quick-checks", "version-fields"],
+      [
+        ...RUST,
+        ...ENRICHMENT,
+        "image",
+        "quick-checks",
+        "version-fields",
+        "types-freshness",
+        "clients-freshness",
+      ],
     ],
     [
       "the core's compiler version, since a new compiler can break any build of the core",
@@ -295,6 +305,8 @@ describe("what a change runs", () => {
         "image",
         "quick-checks",
         "version-fields",
+        "types-freshness",
+        "clients-freshness",
       ],
     ],
     [
@@ -330,7 +342,7 @@ describe("what a change runs", () => {
       ["quick-checks", "version-fields", "core-deny", ...RUST, ...ENRICHMENT],
     ],
     [
-      "nextest's budget and the runner that caps a test, which the fault-injection tests run under",
+      "nextest's budget and the runner that caps a test, which the fault-injection tests and both freshness jobs run under",
       ["core/.config/nextest.toml", "core/scripts/test-limits.sh"],
       [
         "quick-checks",
@@ -339,6 +351,8 @@ describe("what a change runs", () => {
         "core-checks-linux",
         "core-fault-injection",
         "core",
+        "types-freshness",
+        "clients-freshness",
       ],
     ],
     [
@@ -738,6 +752,38 @@ describe("what a change runs", () => {
         ...RUST_SERVER,
         "version-fields",
       ],
+    ],
+    [
+      "the rules crate's source, which writes the catalog and the shapes' digest from the shipped definitions",
+      ["core/marfa-rules/src/builtin/catalog_file.rs"],
+      [
+        ...RUST_LINUX,
+        "core",
+        "types-freshness",
+        "clients-freshness",
+        "quick-checks",
+      ],
+    ],
+    [
+      "the example that writes the icon sets, and the rules crate's manifest",
+      ["core/marfa-rules/examples/icon_set.rs", "core/marfa-rules/Cargo.toml"],
+      [
+        ...RUST,
+        "core-deny",
+        "types-freshness",
+        "clients-freshness",
+        "quick-checks",
+        "version-fields",
+      ],
+    ],
+    [
+      "the icon sets' pins, writer and test, which the types freshness job runs",
+      [
+        "scripts/icon-sets.txt",
+        "scripts/icon-sets.sh",
+        "scripts/icon-sets.test.sh",
+      ],
+      ["quick-checks", "workspace", "types-freshness"],
     ],
     [
       "an icon set the rules crate embeds",

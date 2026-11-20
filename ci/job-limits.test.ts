@@ -72,9 +72,11 @@ const LIMITS: Record<string, number> = {
   // The native build again, and the image after it: a cold native rebuild took
   // up to 41.7 minutes.
   "ci.yml:image": 60,
-  "ci.yml:types-freshness": 5,
+  // Allow for a cold build of the rules crate and its tests.
+  "ci.yml:types-freshness": 15,
   "ci.yml:version-fields": 5,
-  "ci.yml:clients-freshness": 5,
+  // The same cold build of the rules crate.
+  "ci.yml:clients-freshness": 15,
   "ci.yml:gate": 3,
   "ci.yml:report-failure": 5,
   // A cold cache on a Mac: the run that hit 45 minutes was one.

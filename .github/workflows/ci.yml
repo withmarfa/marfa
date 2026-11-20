@@ -1499,7 +1499,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.types-freshness != 'false') }}
     name: Types codegen freshness
-    timeout-minutes: 5
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1521,6 +1521,41 @@ jobs:
             echo "Generated type registry is out of date, or holds a file the generator did not write. Run 'pnpm --filter @withmarfa/types generate' and commit."
             exit 1
           fi
+      # Keep the existing icon sets for compilation because the rules crate embeds them.
+      - uses: ./.github/actions/rust-toolchain
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+        with:
+          tool: nextest@0.9
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: The icon sets' writer refuses what it should
+        run: scripts/icon-sets.test.sh
+      - name: Write the digest and the icon sets with Rust and check for drift
+        run: |
+          rm packages/types/shipped-shapes.sha256
+          (cd core && MARFA_WRITE_CATALOG=1 cargo nextest run --locked -p marfa-rules the_committed_digest_is)
+          if [ -n "$(git status --porcelain packages/types/shipped-shapes.sha256)" ]; then
+            git status --porcelain packages/types/shipped-shapes.sha256
+            echo "The shapes' digest differs from what the Rust writer produces. Run 'MARFA_WRITE_CATALOG=1 cargo nextest run -p marfa-rules builtin::catalog_file' in core and commit."
+            exit 1
+          fi
+          # A fresh folder, so a set already in the tree cannot stand in for one the Rust writer did not write.
+          sets="icon-set-lucide.json icon-set-simple-icons.json"
+          fresh="${RUNNER_TEMP}/icon-sets"
+          rm -rf "${fresh}"
+          scripts/icon-sets.sh "${fresh}"
+          if [ "$(ls -A "${fresh}")" != "$(printf '%s\n' ${sets})" ]; then
+            echo "The Rust icon writer wrote: $(ls -A "${fresh}")"
+            exit 1
+          fi
+          for set in ${sets}; do
+            git show "HEAD:packages/types/generated/${set}" | cmp - "${fresh}/${set}" || {
+              echo "${set} differs from what the Rust icon writer produces. Run 'scripts/icon-sets.sh' and commit."
+              exit 1
+            }
+          done
 
   version-fields:
     needs: changes
@@ -1563,7 +1598,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.clients-freshness != 'false') }}
     name: Generated clients are fresh
-    timeout-minutes: 5
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1592,6 +1627,22 @@ jobs:
           if [ -n "$(git status --porcelain $generated)" ]; then
             git status --porcelain $generated
             echo "What the core is built from is out of date with openapi.json or the shipped types, or was edited by hand. Run 'pnpm generate' and commit."
+            exit 1
+          fi
+      - uses: ./.github/actions/rust-toolchain
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+        with:
+          tool: nextest@0.9
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: core
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Write the catalog with Rust and check for drift
+        run: |
+          (cd core && MARFA_WRITE_CATALOG=1 cargo nextest run --locked -p marfa-rules the_committed_catalog_is)
+          if [ -n "$(git status --porcelain core/marfa-rules/src/builtin_catalog.json)" ]; then
+            git status --porcelain core/marfa-rules/src/builtin_catalog.json
+            echo "The core's catalog differs from what the rules crate writes from the shipped types. Run 'MARFA_WRITE_CATALOG=1 cargo nextest run -p marfa-rules builtin::catalog_file' in core and commit."
             exit 1
           fi
 
