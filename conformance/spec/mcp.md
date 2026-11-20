@@ -426,7 +426,7 @@ When `marfa_purge` previews, the server MUST answer under `goes_with` how many e
 
 ### `mcp/purge-changed`
 
-If an item or edge the preview's walk took, or one the walk takes now, is not at the version the preview read, or an item the walk takes does not hold what the preview read, and every item the call names is still in the trash, then the server MUST refuse the `marfa_purge` call with the tool error code `confirmation_stale` and a new preview of the same IDs with a `confirm` token of its own.
+If an item or edge the preview's walk took, or one the walk takes now, is not at the version the preview read, or an item the walk takes does not hold what the preview read, and every item the call names is still in the trash and the walk from them takes at most 1,000 items, then the server MUST refuse the `marfa_purge` call with the tool error code `confirmation_stale` and a new preview of the same IDs with a `confirm` token of its own.
 
 **Reason:** the person agreed to what the preview showed, not to what the purge would take now.
 
@@ -434,7 +434,7 @@ If an item or edge the preview's walk took, or one the walk takes now, is not at
 
 ### `mcp/purge-binds-held`
 
-If an item the walk of a `marfa_purge` call takes changed its tags or their order, an extension's namespace or data, a table's identity, row count or last batch, or a connector agreement's source, `waiting` or `record` since the preview that gave the call's `confirm` token, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+If the tags or their order, the extensions, the tables or the connector agreements of an item the walk of a `marfa_purge` call takes differ, other than in a time, from what the preview that gave the call's `confirm` token read, then the server MUST refuse the call with the tool error code `confirmation_stale`.
 
 **Reason:** a purge deletes what an item holds, and each of these can change without moving the item's version, such as while the item is out of the trash between the calls, or when a connector writes an agreement on an item in the trash. Only content is bound, never a time, so a time a running system rewrites does not make the token stale.
 
@@ -541,6 +541,14 @@ The server MUST NOT purge more than 1,000 items in one `marfa_purge` call.
 **Reason:** one purge takes its whole walk in one write, which holds other writes until it commits, and no request holds up the others for long.
 
 **Tests:** `compliance/mcp-purge.test.ts › refuses to preview ids whose walk takes more than 1,000 items, and previews a walk of 1,000`, `› refuses a confirmation whose walk grew past 1,000 items since the preview, and purges nothing`.
+
+### `mcp/purge-cap-grew`
+
+If the walk of a `marfa_purge` call with `confirm` takes more than 1,000 items, then the server MUST refuse the call with the tool error code `confirmation_stale` and no `confirm` token.
+
+**Reason:** the walk grew past what one call can take since the preview, so no new preview of the same IDs can be confirmed.
+
+**Tests:** `compliance/mcp-purge.test.ts › refuses a confirmation whose walk grew past 1,000 items since the preview, and purges nothing`.
 
 ### `mcp/purge-cap-preview`
 

@@ -389,7 +389,7 @@ fn goes_with_hosts(gate: &Gate<'_, '_>, part: &Item, going: &HashSet<String>) ->
 }
 
 /// The most items one purge of chosen rows takes, since it takes them all in one write.
-pub(crate) const CHOSEN_CAP: usize = 1_000;
+const CHOSEN_CAP: usize = 1_000;
 
 fn over_cap(message: &'static str) -> Refusal {
     Refusal::new(Code::BulkCapExceeded, message).with_detail("cap", CHOSEN_CAP)
@@ -475,10 +475,11 @@ pub(super) fn chosen(gate: &Gate<'_, '_>, ids: &[String]) -> Result<Plan> {
     purged(gate, &asked, CHOSEN_CAP)
 }
 
-/// How many of the first `ids` one chosen purge can take, refused when the first alone is over
-/// [`CHOSEN_CAP`]. The search holds because the walk only grows as ids are added.
+/// How many of the first `ids`, which together are over [`CHOSEN_CAP`], one chosen purge can
+/// take, refused when the first alone is over it. The search holds because the walk only grows
+/// as ids are added.
 pub(super) fn fitting(gate: &Gate<'_, '_>, ids: &[String]) -> Result<usize> {
-    let (mut fits, mut over) = (0, ids.len() + 1);
+    let (mut fits, mut over) = (0, ids.len());
     while over - fits > 1 {
         let tried = usize::midpoint(fits, over);
         match chosen(gate, &ids[..tried]) {
