@@ -366,7 +366,10 @@ impl Folder {
         // before a pull reports them, whether it ends well or part way.
         let flushed = self.flush_landed();
         match (pulled, flushed) {
-            (Ok(done), Ok(())) => Ok(done),
+            (Ok(done), Ok(())) => {
+                report.flagged.extend(self.take_kept()?);
+                Ok(done)
+            }
             (Err(error), _) => Err(error),
             (Ok(_), Err(error)) => Err(CoreError::Io(error.to_string())),
         }
@@ -383,6 +386,7 @@ impl Folder {
             return Ok(true);
         }
         let context = crate::reach::Context::capture(&*self.core.conn()?)?;
+        self.settle_displaced()?;
         state::settle_landings(&*self.core.conn()?, &self.root_dir)?;
         let mut pick = match &selection {
             Some(selection) => Some(selection.begin(self)?),
@@ -1351,6 +1355,7 @@ impl Folder {
         let conn = self.core.conn()?;
         rendering.context.borrow().check(&conn)?;
         let written = self.land_ordered(
+            &conn,
             &path,
             |file, _| {
                 std::io::Write::write_all(file, &bytes)?;
@@ -1416,7 +1421,7 @@ impl Folder {
             let conn = self.core.conn()?;
             rendering.context.borrow().check(&conn)?;
             if plainly_inside(&self.root_dir, &bound.path) {
-                let _ = self.remove_file(&self.root.join(&bound.path), |found| {
+                let _ = self.remove_file(&conn, &self.root.join(&bound.path), |found| {
                     state::hash(found) == bound.content_hash
                 });
             }
@@ -1684,6 +1689,7 @@ impl Folder {
                     return Err(error);
                 }
                 self.land(
+                    &conn,
                     &path,
                     |file, _| source.fill(file),
                     |found| found.is_none() && source.check().is_ok(),
@@ -1692,9 +1698,20 @@ impl Folder {
                 .map(|_| {
                     landing::crash_if_named(&path, "crash-after-copy-publish");
                     if source.check().is_ok() {
-                        let _ = landing::remove_at(&from.directory, &from.name, |found| {
-                            source.check().is_ok() && state::hash(found) == theirs.content_hash
-                        });
+                        let dir = from
+                            .label
+                            .parent()
+                            .map(|parent| parent.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let place = self.guarded_at(&conn, from, dir);
+                        let _ = landing::remove_at(
+                            &place.directory,
+                            place.guard(),
+                            &from.name,
+                            |found| {
+                                source.check().is_ok() && state::hash(found) == theirs.content_hash
+                            },
+                        );
                     }
                 })
             })
@@ -1885,10 +1902,20 @@ impl Folder {
         // Checked again as it goes, so an edit saved meanwhile stays.
         let conn = self.core.conn()?;
         context.same_copy(&conn)?;
-        let removed = match landing::remove_checked_at(&entry.directory, &entry.name, |found| {
-            source.check().is_ok()
-                && bound.written_hash.as_deref() == Some(state::hash(found).as_str())
-        }) {
+        let dir = Path::new(&bound.path)
+            .parent()
+            .map(|parent| parent.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let place = self.guarded_at(&conn, &entry, dir);
+        let removed = match landing::remove_checked_at(
+            &place.directory,
+            place.guard(),
+            &entry.name,
+            |found| {
+                source.check().is_ok()
+                    && bound.written_hash.as_deref() == Some(state::hash(found).as_str())
+            },
+        ) {
             Ok(removed) => removed,
             Err(landing::RemoveError::Remove(error)) => {
                 report.unwritten += 1;
@@ -2126,7 +2153,7 @@ impl Folder {
             let still =
                 |found: &[u8]| row.written_hash.as_deref() == Some(state::hash(found).as_str());
             if self.exists(&path)
-                && !self.remove_file(&path, still).map_err(|error| {
+                && !self.remove_file(&conn, &path, still).map_err(|error| {
                     CoreError::Store(format!("cannot remove {}: {error}", path.display()))
                 })?
                 && self.exists(&path)

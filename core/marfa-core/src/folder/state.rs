@@ -431,6 +431,59 @@ pub fn stale_waits(conn: &Connection) -> Result<HashMap<String, StaleWait>, Core
         .collect())
 }
 
+const DISPLACED: &str = "folder_displaced:";
+
+/// A file a write or a removal moved out of its path, recorded before the
+/// rename. `dir` is the target's directory and `aside` the directory its
+/// reserved names are in, each relative to the folder's root, or absolute
+/// where outside it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Displaced {
+    pub(crate) dir: String,
+    pub(crate) aside: String,
+    pub(crate) displacement: super::landing::Displacement,
+}
+
+pub(crate) fn set_displaced(conn: &Connection, displaced: &Displaced) -> Result<(), CoreError> {
+    let value =
+        serde_json::to_string(displaced).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(
+        conn,
+        &format!("{DISPLACED}{}", displaced.displacement.id),
+        &value,
+    )
+}
+
+pub(crate) fn clear_displaced(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{DISPLACED}{id}"))
+}
+
+/// Every displacement not yet settled. A row that does not read is
+/// answered as its id alone, so it is reported, not lost.
+pub(crate) fn displaced(conn: &Connection) -> Result<Vec<Result<Displaced, String>>, CoreError> {
+    Ok(under(conn, DISPLACED)?
+        .into_iter()
+        .map(|(id, value)| serde_json::from_str(&value).map_err(|_| id))
+        .collect())
+}
+
+const KEPT: &str = "folder_kept:";
+
+/// A person's file a write or a removal kept beside its path, or could not
+/// put back, for the next report to name.
+pub(crate) fn put_kept(conn: &Connection, path: &str, reason: &str) -> Result<(), CoreError> {
+    crate::store::meta_set(conn, &format!("{KEPT}{path}"), reason)
+}
+
+/// The files kept since the last report, each once, by path.
+pub(crate) fn take_kept(conn: &Connection) -> Result<Vec<(String, String)>, CoreError> {
+    let kept = under(conn, KEPT)?;
+    for (path, _) in &kept {
+        crate::store::meta_delete(conn, &format!("{KEPT}{path}"))?;
+    }
+    Ok(kept)
+}
+
 /// The edge ends lines hold, each with whether the folder made its pin.
 pub fn edge_ends(conn: &Connection) -> Result<Vec<(String, bool)>, CoreError> {
     Ok(under(conn, EDGE_END)?

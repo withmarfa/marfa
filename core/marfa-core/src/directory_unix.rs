@@ -383,6 +383,40 @@ impl Directory {
         fs::renameat(from_dir.file(), &from, to_dir.file(), &to).map_err(Into::into)
     }
 
+    /// Swaps the entries at `from` and `to` in one step. Both must exist. A
+    /// file system or kernel that cannot swap answers `Unsupported`.
+    pub(crate) fn exchange(&self, from: &Path, to_dir: &Self, to: &Path) -> io::Result<()> {
+        let (from_dir, from) = self.parent(from, false)?;
+        let (to_dir, to) = to_dir.parent(to, false)?;
+        #[cfg(any(target_vendor = "apple", target_os = "linux", target_os = "android"))]
+        return fs::renameat_with(
+            from_dir.file(),
+            &from,
+            to_dir.file(),
+            &to,
+            fs::RenameFlags::EXCHANGE,
+        )
+        .map_err(|errno| {
+            if errno == Errno::NOTSUP
+                || errno == Errno::OPNOTSUPP
+                || errno == Errno::INVAL
+                || errno == Errno::NOSYS
+            {
+                io::Error::new(io::ErrorKind::Unsupported, "an atomic swap is unavailable")
+            } else {
+                errno.into()
+            }
+        });
+        #[cfg(not(any(target_vendor = "apple", target_os = "linux", target_os = "android")))]
+        {
+            let _ = (from_dir, from, to_dir, to);
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "an atomic swap is unavailable",
+            ))
+        }
+    }
+
     pub(crate) fn sync(&self) -> io::Result<()> {
         self.file.sync_all()
     }

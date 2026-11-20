@@ -3309,23 +3309,27 @@ describe("where a file sits", () => {
       expect(held.get(NOTE)?.properties.body).toBe("Plan\n");
     });
 
-    it("keeps a save made to the moved file while an old buffer is taken over it", async () => {
-      await notePlaced("title-old-buffer-race");
+    it.each([
+      ["before", "save-before-last-look", "saved meanwhile"],
+      ["after", "save-after-last-look=Roadmap.md", "saved after the last look"],
+    ])("keeps a save made to the moved file %s the last look while an old buffer is taken over it", async (moment, fault, saved) => {
+      await notePlaced(`title-old-buffer-race-${moment}`);
       const buffer = read(harness!, "Plan.md");
       await retitle(harness!, "Roadmap");
       expect((await harness!.folder.push()).ok).toBe(true);
       put(harness!, "Plan.md", buffer.replace(/\nPlan\n$/, "\nsaved late\n"));
       // The person saves the moved file after the scan has looked at it.
-      const scanned = await withFault("save-before-last-look", () =>
-        harness!.folder.scan(),
-      );
+      const scanned = await withFault(fault, () => harness!.folder.scan());
       expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
       expect(sentCreates(harness!)).toEqual([]);
       expect(
         read(harness!, "Roadmap.md"),
         "a save made to the moved file was replaced by the old buffer",
-      ).toContain("saved meanwhile");
+      ).toContain(saved);
       expect(read(harness!, "Plan.md")).toContain("saved late\n");
+      expect(
+        readdirSync(harness!.dir).filter((name) => name.startsWith(".marfa-")),
+      ).toEqual([]);
     });
 
     it("makes an old buffer saved at the old name a new item once the moved file was edited", async () => {
@@ -3428,7 +3432,7 @@ describe("where a file sits", () => {
       // The person saves the moved file after the scan has looked at it, and
       // another file takes its path before it can go back.
       const scanned = await withFault(
-        "save-before-last-look,create-before-put-back=Roadmap.md",
+        "save-after-last-look=Roadmap.md,create-before-put-back=Roadmap.md",
         () => harness!.folder.scan(),
       );
       expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
@@ -3437,17 +3441,17 @@ describe("where a file sits", () => {
         readdirSync(harness!.dir).filter((name) => name.endsWith(".tmp")),
         "the person's save was left under a name the next process removes",
       ).toEqual([]);
-      expect(read(harness!, "Roadmap (2).md")).toContain("saved meanwhile");
+      expect(read(harness!, "Roadmap (2).md")).toContain("saved after the last look");
       expect(
         scanned.value.flagged.find((file) => file.path === "Plan.md")?.reason,
       ).toContain("Roadmap (2).md");
       // A later push keeps it as the note's file, holding the person's save,
       // and the file that took the path meanwhile becomes an item of its own.
       expect((await harness!.folder.push()).ok).toBe(true);
-      expect(read(harness!, "Roadmap (2).md")).toContain("saved meanwhile");
+      expect(read(harness!, "Roadmap (2).md")).toContain("saved after the last look");
       expect(idIn(harness!, "Roadmap (2).md")).toBe(NOTE);
       expect(String(held.get(NOTE)?.properties.body)).toContain(
-        "saved meanwhile",
+        "saved after the last look",
       );
       const [appeared] = sentCreates(harness!);
       expect(appeared?.id).not.toBe(NOTE);
@@ -3494,7 +3498,9 @@ describe("where a file sits", () => {
       expect((await harness!.folder.push()).ok).toBe(true);
       put(harness!, "Plan.md", buffer.replace(/\nPlan\n$/, "\nsaved late\n"));
       await expect(
-        withFault("crash-after-aside=Roadmap.md", () => harness!.folder.scan()),
+        withFault("crash-after-withdraw=Roadmap.md", () =>
+          harness!.folder.scan(),
+        ),
       ).rejects.toThrow(/could not be run/);
       expect(existsSync(join(harness!.dir, "Roadmap.md"))).toBe(false);
       const pushed = await harness!.folder.push();

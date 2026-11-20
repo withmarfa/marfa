@@ -1358,7 +1358,7 @@ When a file appears at the path a pull last moved an item's file away from, carr
 
 If an item's file is saved while a device puts an old buffer in its place, then a device MUST keep that save in the item's file and hold the old buffer, flagged `waiting`.
 
-**Tests:** `device/folders-placement.test.ts › keeps a save made to the moved file while an old buffer is taken over it`.
+**Tests:** `device/folders-placement.test.ts › keeps a save made to the moved file %s the last look while an old buffer is taken over it`.
 
 ### `folder-documents/moved-save-kept-beside`
 

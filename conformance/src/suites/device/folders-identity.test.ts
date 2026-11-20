@@ -3578,7 +3578,10 @@ describe("what a folder never does to a person's text", () => {
     }
   });
 
-  it("leaves a file it would take away or rewrite where the person saved it meanwhile", async () => {
+  it.each([
+    ["before", "save-before-last-look", "saved meanwhile"],
+    ["after", "save-after-last-look", "saved after the last look"],
+  ])("leaves a file it would take away or rewrite where the person saved it %s its last look", async (_, fault, saved) => {
     const going = {
       id: "01a00000-0000-7000-8000-00000000fa91",
       version: 1,
@@ -3622,17 +3625,19 @@ describe("what a folder never does to a person's text", () => {
     expect((await harness.folder.pull()).ok).toBe(true);
     const caught = await harness.folder.device().catchUp();
     expect(caught.ok ? caught.value.applied : 0).toBe(2);
-    const pulled = await withFault("save-before-last-look", () =>
-      harness!.folder.pull(),
-    );
+    const pulled = await withFault(fault, () => harness!.folder.pull());
     expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
     if (!pulled.ok) return;
     expect(
       [pulled.value.removed, pulled.value.kept, pulled.value.unwritten],
       "a pull took away or wrote over a file the person saved after it chose to",
     ).toEqual([0, 1, 1]);
-    expect(read(harness, "Going.md")).toContain("saved meanwhile");
-    expect(read(harness, "Kept.md")).toContain("saved meanwhile");
+    expect(read(harness, "Going.md")).toContain(saved);
+    expect(read(harness, "Kept.md")).toContain(saved);
     expect(read(harness, "Kept.md")).not.toContain("changed elsewhere");
+    expect(
+      readdirSync(harness.dir).filter((name) => name.startsWith(".marfa-")),
+      "a file moved out of its path was left under a name Marfa keeps",
+    ).toEqual([]);
   });
 });

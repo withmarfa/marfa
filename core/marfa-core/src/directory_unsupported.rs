@@ -126,6 +126,9 @@ impl Directory {
     pub(crate) fn rename(&self, _: &Path, _: &Self, _: &Path, _: bool) -> io::Result<()> {
         unsupported()
     }
+    pub(crate) fn exchange(&self, _: &Path, _: &Self, _: &Path) -> io::Result<()> {
+        unsupported()
+    }
     pub(crate) fn sync(&self) -> io::Result<()> {
         unsupported()
     }

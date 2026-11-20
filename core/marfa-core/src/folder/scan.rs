@@ -9,14 +9,14 @@ use super::push::{admission_hold, file_item_draft, new_document};
 use super::scoped::{Guard, Inventory, Looked, Plan, Reading, linked_elsewhere};
 use super::settings::OutsideQuery;
 use super::{
-    BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Directory, Duration,
-    EdgeTypes, EdgeWork, Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState, KEPT_LOOK,
+    BTreeMap, BoundFiles, Captured, Catalog, ControlFlow, CoreError, Duration, EdgeTypes, EdgeWork,
+    Flagged, Folder, HashMap, HashSet, ID_FIELD, Item, ItemState, KEPT_LOOK,
     LOCAL_ADMISSION_REFUSAL, Lists, Look, Names, OnceCell, Path, PathBuf, Peers, RENAME_GRACE,
-    Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, beside,
-    bytes_of, bytes_type, captured_identities, carries_frontmatter, copy_refused, document, embeds,
+    Resolver, Result, ScanReport, Scanned, Settings, Unsure, Value, Waiting, Walked, bytes_of,
+    bytes_type, captured_identities, carries_frontmatter, copy_refused, document, embeds,
     executable, fields, id_named, identity, is_document, landing, line_of, lines,
-    local_admission_refusal, local_properties_refusal, name_of, named_by_its_file, near_limit,
-    one_per_name, placement, stat_metadata, state, suited, swap_root, text_of, typed_title,
+    local_admission_refusal, local_properties_refusal, named_by_its_file, near_limit, one_per_name,
+    placement, stat_metadata, state, suited, swap_root, text_of, typed_title,
 };
 
 /// The text the scan keeps of a file. A document whose bytes are not UTF-8
@@ -292,7 +292,7 @@ impl Folder {
         journal: Journal,
     ) -> Result<ScanReport> {
         self.read_limit_if_holding();
-        let start = match self.scan_root()? {
+        let start = match self.scan_root(mode)? {
             ControlFlow::Break(report) => return Ok(report),
             ControlFlow::Continue(start) => start,
         };
@@ -443,12 +443,15 @@ impl Folder {
 
     /// The pass's first phase: that the folder's root is there, then what
     /// the pass reads from the copy.
-    fn scan_root(&self) -> Result<ControlFlow<ScanReport, ScanStart>> {
+    fn scan_root(&self, mode: Files) -> Result<ControlFlow<ScanReport, ScanStart>> {
         if let Some(gone) = self.root_gone() {
             return Ok(ControlFlow::Break(ScanReport {
                 root_gone: Some(gone),
                 ..ScanReport::default()
             }));
+        }
+        if mode == Files::Write {
+            self.settle_displaced()?;
         }
         state::settle_landings(&*self.core.conn()?, &self.root_dir)?;
         // Every pass, so a watch lists its folder again too.
@@ -550,6 +553,19 @@ impl Folder {
         for left in state_left {
             let _ = self.state_dir.unlink(&left);
         }
+        let kept = self.take_kept()?;
+        for path in &walked.kept {
+            if kept.iter().any(|kept| kept.path == *path) {
+                continue;
+            }
+            report.flagged.push(Flagged {
+                path: path.clone(),
+                flag: "kept",
+                reason: "Marfa moved this file out of its path and could not tell whether it holds a change; check it, and delete it when it is not needed".into(),
+                item: None,
+            });
+        }
+        report.flagged.extend(kept);
         report.directories = walked.directories.clone();
         report.secrets = walked.secrets.clone();
         let unanswered = crate::store::items_awaiting_their_write(&*self.core.conn()?)?;
@@ -1782,9 +1798,9 @@ impl Folder {
     }
 
     /// Moves `file` to `bound`'s path, every step a rename that replaces
-    /// nothing: the bound file aside, checked to hold the bytes it is bound
-    /// to, the save in its place, and only then the bound file removed. Answers
-    /// why not, where it did not.
+    /// nothing: the bound file aside, checked to be the file read with the
+    /// bytes it is bound to, the save in its place, and only then the bound
+    /// file removed. Answers why not, where it did not.
     fn take_stale_save(
         &self,
         file: &Scanned,
@@ -1800,87 +1816,50 @@ impl Folder {
         let target = self.root.join(&bound.path);
         let edited = || own("which holds an edit of its own; keep one of the two");
         let failed = |error: std::io::Error| own(&format!("which could not be replaced: {error}"));
-        let (to_dir, to_name) = match self
-            .inside(target.parent())
-            .and_then(|()| self.location(&target, true))
-        {
-            Ok(found) => found,
-            Err(error) => return Ok(failed(error)),
-        };
         let (from_dir, from_name) = match self.location(&file.path, false) {
             Ok(found) => found,
             Err(error) => return Ok(failed(error)),
         };
-        let to_name = Path::new(&to_name);
-        let aside = match to_dir.read(to_name) {
-            Ok(found) if state::hash(&found) != bound.content_hash => return Ok(edited()),
-            Ok(_) => {
-                landing::save_meanwhile(&to_dir, to_name);
-                match landing::set_aside(&to_dir, to_name) {
-                    Ok(aside) => {
-                        landing::crash_if_named(to_name, "crash-after-aside");
-                        Some(aside)
-                    }
-                    Err(error) => return Ok(failed(error)),
-                }
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        let conn = self.core.conn()?;
+        let place = match self
+            .inside(target.parent())
+            .and_then(|()| self.guarded(&conn, &target, true))
+        {
+            Ok(place) => place,
             Err(error) => return Ok(failed(error)),
         };
-        if let Some(aside) = &aside
-            && !to_dir
-                .read(aside)
-                .is_ok_and(|found| state::hash(&found) == bound.content_hash)
-        {
-            // Saved between the look and the rename: put back, or where
-            // another file took the path meanwhile, left aside, whole.
-            landing::appear_at(&to_dir, to_name, "create-before-put-back")
-                .map_err(|error| CoreError::Io(error.to_string()))?;
-            return Ok(
-                match landing::rename_new_at(&to_dir, aside, &to_dir, to_name) {
-                    Ok(()) => edited(),
-                    Err(_) => match self.keep_beside(&to_dir, aside, &bound.path) {
-                        Ok(kept) => own(&format!(
-                            "which was saved meanwhile while another file took its name; that save is kept as {kept}"
-                        )),
-                        Err(error) => own(&format!(
-                            "which was saved meanwhile and is kept as {}: {error}",
-                            aside.display()
-                        )),
-                    },
-                },
-            );
-        }
-        let placed = landing::rename_new_at(&from_dir, Path::new(&from_name), &to_dir, to_name);
-        if let Some(aside) = &aside {
-            // Bytes the device read and sent, or the pull wrote.
-            let back = placed
-                .is_err()
-                .then(|| landing::rename_new_at(&to_dir, aside, &to_dir, to_name));
-            if !back.as_ref().is_some_and(std::result::Result::is_ok) {
-                let _ = landing::remove_at(&to_dir, aside, |found| {
-                    state::hash(found) == bound.content_hash
-                });
+        let to_name = Path::new(&place.name);
+        let place_save =
+            || landing::rename_new_at(&from_dir, Path::new(&from_name), &place.directory, to_name);
+        let withdrawn = landing::withdraw_at(
+            &place.directory,
+            place.guard(),
+            to_name,
+            |found| state::hash(found) == bound.content_hash,
+            place_save,
+        );
+        Ok(match withdrawn {
+            Ok(landing::Withdrawal::Absent) => match place_save() {
+                Ok(()) => Ok(()),
+                Err(error) => failed(error),
+            },
+            Ok(landing::Withdrawal::Removed) => Ok(()),
+            Ok(landing::Withdrawal::Kept(None)) => edited(),
+            Ok(landing::Withdrawal::Kept(Some(kept))) => own(&format!(
+                "which was saved meanwhile while another file took its name; that save is kept as {}",
+                super::joined(
+                    &Path::new(&bound.path)
+                        .parent()
+                        .map(|parent| parent.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    &kept.to_string_lossy()
+                )
+            )),
+            Ok(landing::Withdrawal::Undone(error)) => failed(error),
+            Err(landing::RemoveError::Read(error) | landing::RemoveError::Remove(error)) => {
+                failed(error)
             }
-        }
-        Ok(match placed {
-            Ok(()) => Ok(()),
-            Err(error) => failed(error),
         })
-    }
-
-    /// Moves a person's save left aside to the first free numbered name beside
-    /// `path`, where it is a file of theirs the folder takes as any other.
-    /// Answers that path.
-    fn keep_beside(&self, dir: &Directory, aside: &Path, path: &str) -> std::io::Result<String> {
-        loop {
-            let kept = beside(path, |candidate| self.exists(self.root.join(candidate)));
-            match landing::rename_new_at(dir, aside, dir, Path::new(name_of(&kept))) {
-                Ok(()) => return Ok(kept),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(error),
-            }
-        }
     }
 
     /// Held ids decide first; then the binding by identity across every file

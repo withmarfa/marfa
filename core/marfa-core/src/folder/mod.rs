@@ -1179,12 +1179,79 @@ fn in_nested_folder(root: &Directory, relative: &str) -> bool {
     false
 }
 
+/// A path's directory and name, with where a guarded write or removal there
+/// keeps a file it moves out of the path, and the rows that record it.
+struct Guarded<'a> {
+    directory: Directory,
+    name: std::ffi::OsString,
+    aside: Directory,
+    rows: Rows<'a>,
+}
+
+impl Guarded<'_> {
+    fn guard(&self) -> landing::Guard<'_> {
+        landing::Guard {
+            aside: &self.aside,
+            ledger: &self.rows,
+        }
+    }
+}
+
+/// Records displacements in the folder's state, and the files kept for the
+/// folder's next report.
+struct Rows<'a> {
+    conn: &'a rusqlite::Connection,
+    dir: String,
+    aside: String,
+}
+
+impl landing::Ledger for Rows<'_> {
+    fn record(&self, displacement: &landing::Displacement) -> std::io::Result<()> {
+        state::set_displaced(
+            self.conn,
+            &state::Displaced {
+                dir: self.dir.clone(),
+                aside: self.aside.clone(),
+                displacement: displacement.clone(),
+            },
+        )
+        .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+
+    fn clear(&self, displacement: &landing::Displacement) {
+        // A row left is settled again at the next pass, and finds nothing.
+        let _ = state::clear_displaced(self.conn, &displacement.id);
+    }
+
+    fn kept(&self, name: &Path, aside: bool, reason: String) {
+        // The file is kept whether or not the report can name it.
+        let _ = state::put_kept(
+            self.conn,
+            &joined(
+                if aside { &self.aside } else { &self.dir },
+                &name.to_string_lossy(),
+            ),
+            &reason,
+        );
+    }
+}
+
+fn joined(dir: &str, name: &str) -> String {
+    if dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{dir}/{name}")
+    }
+}
+
 impl Folder {
     /// Writes a file into the folder, through `inside`, which every write
     /// and every rename into the folder passes: refused where the folder's
-    /// directory is gone, so a pull never makes it anew.
+    /// directory is gone, so a pull never makes it anew. A file it replaces
+    /// is recorded in `conn` while it is out of its path.
     fn land(
         &self,
+        conn: &rusqlite::Connection,
         path: &Path,
         fill: impl FnOnce(&mut std::fs::File, &Path) -> std::io::Result<()>,
         still: impl FnOnce(Option<&[u8]>) -> bool,
@@ -1192,9 +1259,15 @@ impl Folder {
         if let Some(gone) = self.root_gone() {
             return Err(std::io::Error::new(std::io::ErrorKind::NotFound, gone).into());
         }
-        let (directory, name) = self.location(path, true)?;
+        let place = self.guarded(conn, path, true)?;
         swap_root(&self.root, "replace-root-before-publication");
-        landing::land_at(&directory, Path::new(&name), fill, still)
+        landing::land_at(
+            &place.directory,
+            place.guard(),
+            Path::new(&place.name),
+            fill,
+            still,
+        )
     }
 
     /// `land`, for a pull's bulk of files: each only ordered before what is
@@ -1203,6 +1276,7 @@ impl Folder {
     /// store that records it share a volume; elsewhere it lands in full.
     fn land_ordered(
         &self,
+        conn: &rusqlite::Connection,
         path: &Path,
         fill: impl FnOnce(&mut std::fs::File, &Path) -> std::io::Result<()>,
         still: impl FnOnce(Option<&[u8]>) -> bool,
@@ -1210,13 +1284,164 @@ impl Folder {
         if let Some(gone) = self.root_gone() {
             return Err(std::io::Error::new(std::io::ErrorKind::NotFound, gone).into());
         }
-        let (directory, name) = self.location(path, true)?;
+        let place = self.guarded(conn, path, true)?;
         swap_root(&self.root, "replace-root-before-publication");
-        if self.on_one_volume(&directory) {
-            landing::land_ordered_at(&directory, &self.unflushed, Path::new(&name), fill, still)
+        let name = Path::new(&place.name);
+        if self.on_one_volume(&place.directory) {
+            landing::land_ordered_at(
+                &place.directory,
+                place.guard(),
+                &self.unflushed,
+                name,
+                fill,
+                still,
+            )
         } else {
-            landing::land_at(&directory, Path::new(&name), fill, still)
+            landing::land_at(&place.directory, place.guard(), name, fill, still)
         }
+    }
+
+    /// Where `path` is, with what a guarded write or removal there keeps a
+    /// file it moves out of the path by: a file in the folder's state is
+    /// kept in the root, which the state's clearing never reaches.
+    fn guarded<'a>(
+        &'a self,
+        conn: &'a rusqlite::Connection,
+        path: &Path,
+        create: bool,
+    ) -> std::io::Result<Guarded<'a>> {
+        let relative = path
+            .strip_prefix(&self.root)
+            .map_err(|_| std::io::Error::other("path outside folder"))?;
+        let (directory, name) = self.location(path, create)?;
+        let dir = relative
+            .parent()
+            .map(|parent| parent.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let (aside, aside_place) = if relative.starts_with(STATE_DIR) {
+            (self.root_dir.clone(), String::new())
+        } else {
+            (directory.clone(), dir.clone())
+        };
+        Ok(Guarded {
+            directory,
+            name,
+            aside,
+            rows: Rows {
+                conn,
+                dir,
+                aside: aside_place,
+            },
+        })
+    }
+
+    /// [`Folder::guarded`] for an entry already open, whose directory the
+    /// row names as `dir`: relative to the root, or absolute for another
+    /// folder's.
+    fn guarded_at<'a>(
+        &'a self,
+        conn: &'a rusqlite::Connection,
+        entry: &transfer::Entry,
+        dir: String,
+    ) -> Guarded<'a> {
+        Guarded {
+            directory: entry.directory.clone(),
+            name: entry.name.clone().into_os_string(),
+            aside: entry.directory.clone(),
+            rows: Rows {
+                conn,
+                dir: dir.clone(),
+                aside: dir,
+            },
+        }
+    }
+
+    /// The directory a displacement row names: relative to the root, in the
+    /// folder's state, or absolute.
+    fn displaced_dir(&self, place: &str) -> std::io::Result<Directory> {
+        let place = Path::new(place);
+        if place.is_absolute() {
+            Directory::open(place)
+        } else if place.as_os_str().is_empty() {
+            Ok(self.root_dir.clone())
+        } else if let Ok(below) = place.strip_prefix(STATE_DIR) {
+            if below.as_os_str().is_empty() {
+                Ok(self.state_dir.clone())
+            } else {
+                self.state_dir.child(below, false)
+            }
+        } else {
+            self.root_dir.child(place, false)
+        }
+    }
+
+    /// Settles every file a write or a removal moved out of its path and a
+    /// run that stopped did not settle, before anything sweeps or binds.
+    fn settle_displaced(&self) -> Result<()> {
+        let conn = self.core.conn()?;
+        for row in state::displaced(&conn)? {
+            let row = match row {
+                Ok(row) => row,
+                // What it moved stays under its reserved name, which every
+                // scan reports.
+                Err(id) => {
+                    state::clear_displaced(&conn, &id)?;
+                    continue;
+                }
+            };
+            let id = row.displacement.id.clone();
+            let (dir, aside) = match self
+                .displaced_dir(&row.dir)
+                .and_then(|dir| Ok((dir, self.displaced_dir(&row.aside)?)))
+            {
+                Ok(found) => found,
+                // Its directory went, and what was moved aside with it.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    state::clear_displaced(&conn, &id)?;
+                    continue;
+                }
+                Err(error) => {
+                    state::put_kept(
+                        &conn,
+                        &joined(&row.aside, &row.displacement.kept),
+                        &format!(
+                            "Marfa moved it aside and cannot reach it to put it back: {error}"
+                        ),
+                    )?;
+                    continue;
+                }
+            };
+            let rows = Rows {
+                conn: &conn,
+                dir: row.dir.clone(),
+                aside: row.aside.clone(),
+            };
+            let guard = landing::Guard {
+                aside: &aside,
+                ledger: &rows,
+            };
+            if let Err(error) = landing::settle(&dir, guard, &row.displacement) {
+                state::put_kept(
+                    &conn,
+                    &joined(&row.aside, &row.displacement.kept),
+                    &format!("Marfa moved it aside and could not put it back: {error}"),
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The files kept since the last report, each once.
+    fn take_kept(&self) -> Result<Vec<Flagged>> {
+        Ok(state::take_kept(&*self.core.conn()?)?
+            .into_iter()
+            .map(|(path, reason)| Flagged {
+                path,
+                flag: "kept",
+                reason,
+                item: None,
+            })
+            .collect())
     }
 
     /// Whether `directory`, the folder's root, which the closing flush
@@ -1303,9 +1528,19 @@ impl Folder {
         }
     }
 
-    fn remove_file(&self, path: &Path, still: impl FnOnce(&[u8]) -> bool) -> std::io::Result<bool> {
-        let (directory, name) = self.location(path, false)?;
-        landing::remove_at(&directory, Path::new(&name), still)
+    fn remove_file(
+        &self,
+        conn: &rusqlite::Connection,
+        path: &Path,
+        still: impl FnOnce(&[u8]) -> bool,
+    ) -> std::io::Result<bool> {
+        let place = self.guarded(conn, path, false)?;
+        landing::remove_at(
+            &place.directory,
+            place.guard(),
+            Path::new(&place.name),
+            still,
+        )
     }
 
     fn inside(&self, dir: Option<&Path>) -> std::io::Result<()> {
@@ -1431,6 +1666,9 @@ struct Walked {
     secrets: Vec<String>,
     /// Files a crashed write left beside their target.
     left: Vec<(WalkRoute, PathBuf)>,
+    /// Files a write or a removal moved out of their path and left at a
+    /// reserved name, which nothing removes, by path.
+    kept: Vec<String>,
     /// The volume of the directory the walk began at.
     volume: Option<u64>,
     /// Whether the walk entered a directory on another volume, where a
@@ -1708,6 +1946,8 @@ fn take_file(
     let entry = Path::new(name);
     if landing::left_behind(&path) {
         walked.left.push((route.clone(), PathBuf::from(name)));
+    } else if landing::is_reserved(&path) {
+        walked.kept.push(relative);
     } else if lists.takes(&relative) {
         #[cfg(test)]
         tests::FILES_CAPTURED.with(|count| count.set(count.get() + 1));
@@ -2771,6 +3011,8 @@ fn typed_title(
 
 #[cfg(test)]
 mod answered_tests;
+#[cfg(all(test, unix))]
+mod displaced_tests;
 #[cfg(test)]
 mod held_links_tests;
 #[cfg(test)]
@@ -8091,6 +8333,7 @@ mod tests {
         assert_eq!(fails(&folder), (0, 0));
         folder
             .land_ordered(
+                &folder.core.conn().unwrap(),
                 &folder.root.join("b.md"),
                 |file, _| std::io::Write::write_all(file, b"text"),
                 |_| true,
@@ -8114,6 +8357,7 @@ mod tests {
             landing::COUNTS.with(|counts| counts.set((0, 0)));
             folder
                 .land_ordered(
+                    &folder.core.conn().unwrap(),
                     &folder.root.join(path),
                     |file, _| std::io::Write::write_all(file, b"text"),
                     |_| true,
