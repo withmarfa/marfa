@@ -1328,13 +1328,14 @@ fn record_columns(record: &Value) -> Cols {
     }
     if record.get("locator").is_some() && record.get("attached_at").is_some() {
         return Cols::new(
-            &["id", "kind", "where", "attached", "detached"],
+            &["id", "kind", "where", "attached", "detached", "error"],
             vec![
                 owned("id"),
                 owned("kind"),
                 owned("locator"),
                 owned("attached_at"),
                 owned("detached_at"),
+                owned("error"),
             ],
         );
     }
@@ -2225,6 +2226,20 @@ pub(crate) mod tests {
         assert_eq!(
             stores,
             "id  kind  where        attached\ns1  disk  /data/blobs  2026-01-01T00:00:00.000Z"
+        );
+        let refused = describe(&json!({"data": [
+            {"id": "s1", "kind": "disk", "locator": "/data/blobs",
+             "attached_at": "2026-01-01T00:00:00.000Z", "detached_at": null, "error": null},
+            {"id": "s2", "kind": "s3", "locator": "s3://marfa/files",
+             "attached_at": "2026-01-02T00:00:00.000Z", "detached_at": null,
+             "error": "The object store cannot be used."},
+        ], "next_cursor": null, "min_copies": 1}))
+        .unwrap();
+        assert_eq!(
+            refused,
+            "id  kind  where             attached                  error\n\
+             s1  disk  /data/blobs       2026-01-01T00:00:00.000Z\n\
+             s2  s3    s3://marfa/files  2026-01-02T00:00:00.000Z  The object store cannot be used."
         );
         let batches = describe(&json!({"data": [
             {"id": "b2", "at": "2026-01-02T00:00:00.000Z", "rows": 2, "undoes": "b1"},

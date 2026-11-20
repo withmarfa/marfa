@@ -3284,7 +3284,7 @@ export interface components {
                  */
                 status: "ok" | "incomplete" | "failing" | "off";
                 /**
-                 * @description Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0, also given beside `failing`.
+                 * @description Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0. `destination_unusable` wins if both apply.
                  * @enum {string}
                  */
                 reason?: "no_backup_destination" | "turned_off" | "destination_unusable";
@@ -5348,6 +5348,11 @@ export interface components {
              * @example 2026-10-03T09:30:00.000Z
              */
             detached_at: string | null;
+            /**
+             * @description Why the attached object store cannot be used while the address rules refuse the requests to it because `allow_private_addresses` is `false`, the same text as `backups.store_error` in `GET /health`, or `null`.
+             * @example The object store cannot be used: the object store's address is not public, and allow_private_addresses is false. Until it can, no file is copied there, no backup is taken and no file is purged.
+             */
+            error: string | null;
         };
         /** @description An error response. */
         BlobNotFoundRefusal: {
@@ -5510,7 +5515,9 @@ export interface components {
         HousekeepingOutcome: "succeeded" | "failed" | "held";
         /** @description What a run reports, under names its job chooses, such as `deleted`, `copied` or, for `trash-purge`, `passed_over`: the items it could not purge and left for the next run. */
         HousekeepingReport: {
-            [key: string]: number | boolean | string | null;
+            [key: string]: number | boolean | string | null | {
+                [key: string]: string;
+            };
         };
         /** @description One run of a housekeeping job. */
         HousekeepingRun: {
@@ -22102,7 +22109,8 @@ export interface operations {
                      *           "kind": "disk",
                      *           "locator": "/var/lib/marfa/blobs",
                      *           "attached_at": "2026-10-03T09:34:00.198Z",
-                     *           "detached_at": null
+                     *           "detached_at": null,
+                     *           "error": null
                      *         }
                      *       ],
                      *       "next_cursor": null,

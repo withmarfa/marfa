@@ -359,6 +359,7 @@ export interface BlobStoreRow {
   locator: string;
   attached_at: string;
   detached_at: string | null;
+  error: string | null;
 }
 
 export interface BlobCopyRow {

@@ -187,6 +187,7 @@ async fn storage(app: &Arc<App>, caller: &Caller) -> Result<Value, Refusal> {
                 "locator": store.locator,
                 "attached_at": store.attached_at,
                 "detached_at": store.detached_at,
+                "error": store.error,
             })
         })
         .collect();

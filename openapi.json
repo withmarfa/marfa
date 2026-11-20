@@ -1595,7 +1595,7 @@
                   "turned_off",
                   "destination_unusable"
                 ],
-                "description": "Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0, also given beside `failing`."
+                "description": "Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0. `destination_unusable` wins if both apply."
               },
               "destination": {
                 "type": "string",
@@ -6542,6 +6542,14 @@
             ],
             "description": "When the instance's configuration stopped naming the store, in UTC, or `null` while it names it.",
             "example": "2026-10-03T09:30:00.000Z"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the attached object store cannot be used while the address rules refuse the requests to it because `allow_private_addresses` is `false`, the same text as `backups.store_error` in `GET /health`, or `null`.",
+            "example": "The object store cannot be used: the object store's address is not public, and allow_private_addresses is false. Until it can, no file is copied there, no backup is taken and no file is purged."
           }
         },
         "required": [
@@ -6549,7 +6557,8 @@
           "kind",
           "locator",
           "attached_at",
-          "detached_at"
+          "detached_at",
+          "error"
         ],
         "description": "A store is a place a blob's bytes live: the disk beside the server, or an S3-compatible bucket."
       },
@@ -6927,6 +6936,13 @@
             },
             {
               "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Text by name, such as `refused` for `blob-replicate`: the ID of each store that took no copy, and why."
             }
           ]
         },
@@ -37394,7 +37410,8 @@
                       "kind": "disk",
                       "locator": "/var/lib/marfa/blobs",
                       "attached_at": "2026-10-03T09:34:00.198Z",
-                      "detached_at": null
+                      "detached_at": null,
+                      "error": null
                     }
                   ],
                   "next_cursor": null,

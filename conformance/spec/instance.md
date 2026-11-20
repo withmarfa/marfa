@@ -52,7 +52,7 @@ Where a destination is set and `backup_interval_seconds` is 0, when `GET /attent
 
 **Reason:** an interval of 0 is a choice, and it is told differently from having nowhere to put a backup.
 
-**Tests:** `compliance/backups.test.ts › says in attention that no backups are kept and how to set one, and says an interval of 0 differently`.
+**Tests:** `compliance/backups.test.ts › says in attention that no backups are kept and how to set one, and says an interval of 0 differently`, `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
 
 ### `instance/attention-backup-destination-set`
 
@@ -1142,11 +1142,11 @@ Where neither `object_store_bucket` nor `backup_path` is set, the server MUST an
 
 ### `instance/backup-health-turned-off`
 
-Where a destination is set and `backup_interval_seconds` is 0, the server MUST answer `GET /health` with `backups.reason` `turned_off`.
+Where a destination is set and `backup_interval_seconds` is 0, while a backup folder or an object store is in use as the destination and `instance/object-store-refused-unusable` does not hold, the server MUST answer `GET /health` with `backups.reason` `turned_off`.
 
-**Reason:** the reason stays while a failure or a damaged part makes `backups.status` `failing`, so an owner reads both.
+**Reason:** the reason stays while a failure or a damaged part makes `backups.status` `failing`, so an owner reads both. While no destination is in use, or the address rules refuse the one in use, the reason is `destination_unusable` wherever the server can say why (`instance/backup-health-unusable`, `instance/backup-folder-missing-unusable`, `instance/object-store-private-unusable`, `instance/object-store-refused-unusable`), since that is what the owner must fix first.
 
-**Tests:** `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/backup-folder.test.ts › says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put`, `› says a backup folder that takes no copies as failing in health while scheduled backups are turned off, and off once it takes them`.
+**Tests:** `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/backup-folder.test.ts › says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put`, `› says a backup folder that takes no copies as failing in health while scheduled backups are turned off, and off once it takes them`, `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
 
 ### `instance/backup-health-turned-off-status`
 
@@ -3567,13 +3567,13 @@ If the destination settings change while a backup runs, then the server MUST fin
 
 While the backup folder or the object store the settings name cannot be used, the server MUST answer `GET /health` with `backups.status` `failing`, `backups.reason` `destination_unusable` and `backups.store_error` saying why.
 
-**Tests:** `compliance/destination-settings.test.ts › reports an object store that refuses its secret as unusable, keeps serving files from the disk, and takes the store once the secret is right`.
+**Tests:** `compliance/destination-settings.test.ts › reports an object store that refuses its secret as unusable, keeps serving files from the disk, and takes the store once the secret is right`, `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
 
 ### `instance/attention-backup-unusable`
 
 While the backup folder or the object store the settings name cannot be used, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `store` and the title `The backup destination cannot be used`.
 
-**Tests:** `compliance/destination-settings.test.ts › reports an object store that refuses its secret as unusable, keeps serving files from the disk, and takes the store once the secret is right`.
+**Tests:** `compliance/destination-settings.test.ts › reports an object store that refuses its secret as unusable, keeps serving files from the disk, and takes the store once the secret is right`, `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
 
 ### `instance/object-store-endpoint-bare`
 
@@ -3597,13 +3597,13 @@ When a write to `/config` sets `heartbeat_url`, the server MUST list the `heartb
 
 ## Where the server may send
 
-The server sends to the destinations its settings name: webhooks, `heartbeat_url`, `posthog_host`, the three OTLP endpoints and `object_store_endpoint`. While `allow_private_addresses` is `false`, the default, each is held to the rule webhooks are held to: an address is public only where `events/address-private`, `events/address-ipv6-global` and `events/address-mapped` judge it so. A credential that may change the configuration must not reach the network the server runs on unless a person just confirmed it, so the switch changes only as `keys-and-oauth/step-up-recent` and `keys-and-oauth/step-up-socket` allow.
+The server sends to the destinations its settings name: webhooks, `heartbeat_url`, `posthog_host`, the three OTLP endpoints and `object_store_endpoint`. While `allow_private_addresses` is `false`, the default, each is held to the rule webhooks are held to: an address is public only where `events/address-private`, `events/address-ipv6-global` and `events/address-mapped` judge it so. A credential that may change the configuration must not reach the network the server runs on unless a person just confirmed it, so the switch changes only as `keys-and-oauth/step-up-recent` and `keys-and-oauth/step-up-socket` allow. The address rules refuse the server's requests to an attached object store when the switch is off and the host the store is addressed at is a name whose lookup finds an address that is not public, or the store has no `object_store_access_key_id` and the address its credentials are fetched from is not public.
 
 ### `instance/private-addresses-allowed`
 
 When a write sets `allow_private_addresses` to `true` through `/config`, the server MUST send to destinations at addresses that are not public from then on, without a restart.
 
-**Tests:** `compliance/destination-addresses.test.ts › sends no heartbeat to a name that leads to a private address until the switch is on`, `› takes an object store on a private address once a write to /config turns the switch on, and not before`.
+**Tests:** `compliance/destination-addresses.test.ts › sends no heartbeat to a name that leads to a private address until the switch is on`, `› takes an object store on a private address once a write to /config turns the switch on, and not before`, `compliance/store-address-refused.test.ts › uses an object store the address rules refused again under its own id once a write to /config turns allow_private_addresses on, with no restart`.
 
 ### `instance/destination-private-refused`
 
@@ -3756,6 +3756,50 @@ Where `allow_private_addresses` is `false` and the server has never attached an 
 **Reason:** the object store is never reached, so it cannot be used, and the owner sees why where every other unusable destination is reported (`instance/backup-health-unusable`). The attempt runs after a write to `/config` has been answered, so until it finishes `GET /health` can still answer for the destination the server had before. A store already attached there under a recorded id keeps that attachment.
 
 **Tests:** `compliance/destination-addresses.test.ts › takes an object store on a private address once a write to /config turns the switch on, and not before`, `› reaches an object store by virtual host at the bucket before the endpoint's host, and not while that host leads to a private address`.
+
+### `instance/object-store-refused-unusable`
+
+While the address rules refuse the server's requests to an attached object store, the server MUST answer `GET /health` with `backups.status` `failing`, `backups.reason` `destination_unusable` and a `backups.store_error` that names `allow_private_addresses`, whether or not `backup_interval_seconds` is 0.
+
+**Reason:** a refused store takes no copy and no backup, and only the switch or the store's address can change that, so the owner reads which one decides it where every other unusable destination is reported (`instance/backup-health-unusable`).
+
+**Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`, `› names the credentials fetch, not the store's address, when the address rules refuse it for an object store with no access key, and keeps that store attached`.
+
+### `instance/object-store-refused-ends`
+
+When the address rules let through a request to an attached object store after refusing one, the server MUST NOT answer `GET /health` with a `backups.store_error` that names `allow_private_addresses` until they refuse a request to that store again, whether or not a run of `blob-replicate` has ended since.
+
+**Reason:** the last copy run's refusal says what the store did then, so health that kept repeating it would name an address rule that no longer refuses. A later run of `blob-replicate` that fails for another reason still gives its own error in `backups.store_error`.
+
+**Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
+
+### `instance/object-store-refused-credentials`
+
+If the address rules refuse the request that fetches an attached object store's credentials, then the server MUST answer `GET /health` with a `backups.store_error` that names the credentials fetch and does not name the object store's address.
+
+**Reason:** the store's own address can be public, so an error that blamed it would send the owner to change the wrong setting.
+
+**Tests:** `compliance/store-address-refused.test.ts › names the credentials fetch, not the store's address, when the address rules refuse it for an object store with no access key, and keeps that store attached`.
+
+### `instance/object-store-refused-no-purge`
+
+While the address rules refuse the server's requests to an attached object store, the server MUST NOT purge a blob.
+
+**Reason:** the server decides what to purge from what every store it names holds and what their backups name, and a store it cannot reach was not surveyed.
+
+**Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
+
+### `instance/object-store-refused-returns`
+
+When `blob-replicate` or `blob-orphans` runs after the host an attached object store is addressed at leads only to public addresses again, the server MUST use that store again under its own id, without a restart or a write to `/config`.
+
+**Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
+
+### `instance/object-store-refused-switch-on`
+
+When a write to `/config` sets `allow_private_addresses` to `true` while the address rules refuse the server's requests to an attached object store, the server MUST use that store again under its own id, without a restart.
+
+**Tests:** `compliance/store-address-refused.test.ts › uses an object store the address rules refused again under its own id once a write to /config turns allow_private_addresses on, with no restart`.
 
 ## Start-only settings
 

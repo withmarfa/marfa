@@ -124,24 +124,26 @@ fn backing(health: &BackupHealth) -> Vec<Concern> {
         description,
     };
     let mut found = Vec::new();
-    match text("reason") {
-        Some("no_backup_destination") => found.push(concern(
+    if text("reason") == Some("no_backup_destination") {
+        found.push(concern(
             "no_backup_destination",
             "No backups are kept",
             "This instance has nowhere to put them. Set backup_path to a folder on another disk, \
              or object_store_bucket and its access key and secret to an object store, through \
              `PATCH /config`."
                 .to_string(),
-        )),
-        Some("turned_off") => found.push(concern(
+        ));
+    }
+    // Told whatever else the destination is doing, so a refused store does not hide it.
+    if health.turned_off {
+        found.push(concern(
             "turned_off",
             "Scheduled backups are turned off",
             "backup_interval_seconds is 0, so the server takes no backup unless asked. `marfa \
              backups run` takes one now. Set backup_interval_seconds above 0 to take them on a \
              schedule."
                 .to_string(),
-        )),
-        _ => {}
+        ));
     }
     let mut folded = false;
     if let (Some(error), Some(fault)) = (text("store_error"), health.fault) {

@@ -28,7 +28,7 @@ use super::blobs::folder::{self as backup_folder, Adoptable, Area, Folder};
 use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
-use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
+use super::blobs::upkeep::{Replicated, object_store_said, replicate_one, said_by_address};
 use super::blobs::{Attached, Blob, Hash, Kept, Retry, Wanted, folder_shortfall, unsettled};
 use super::clock::Stamp;
 use super::faults::{
@@ -1502,7 +1502,9 @@ impl App {
         let mut health = serde_json::Map::new();
         // While a follow is still running, the store in use is reported until it ends.
         let named = self.named_destination().ok();
-        if let Some(kind) = named.as_ref().and_then(Wanted::destination_kind) {
+        let kind = named.as_ref().and_then(Wanted::destination_kind);
+        let named_destination = kind.is_some();
+        if let Some(kind) = kind {
             health.insert("destination".into(), kind.into());
         }
         let attachment = named
@@ -1562,12 +1564,17 @@ impl App {
             .and_then(|run| run.result.as_ref())
             .and_then(|result| result["remaining"].as_u64())
             .unwrap_or(0);
+        // The store the destination holds is the one the store list reads its refusal from.
+        let refusal = match &destination {
+            Some(Destination::Bucket(s3)) => s3.refusal(),
+            _ => None,
+        };
         let trouble = destination.as_ref().and_then(|destination| {
             let refused = replication
                 .as_ref()
                 .filter(|run| run.failure.is_some())
                 .and_then(|run| run.result.as_ref())
-                .and_then(|result| refused_by(result, &destination.id()));
+                .and_then(|result| refused_by(result, &destination.id(), refusal.is_some()));
             store_trouble(destination, looked, refused)
         });
         let unusable = match (&destination, &attachment) {
@@ -1575,7 +1582,11 @@ impl App {
             (None, Some(Err(unsettled))) => Some(unsettled.to_string()),
             _ => None,
         };
-        let trouble = trouble.or(unusable.map(|error| (StoreFault::Unusable, error)));
+        let refused = refusal.is_some();
+        let trouble = refusal
+            .or(unusable)
+            .map(|error| (StoreFault::Unusable, error))
+            .or(trouble);
         let fault = trouble.as_ref().map(|(fault, _)| *fault);
         let store_error = trouble.map(|(_, error)| error);
         let run_in_store = state
@@ -1585,7 +1596,9 @@ impl App {
         let failing = state.as_ref().is_none_or(|state| state.failures > 0);
         let incomplete = files_waiting.is_some_and(|waiting| waiting > 0);
         let damage = damaged.is_some_and(|damaged| damaged > 0);
-        if destination.is_some() && turned_off {
+        if refused {
+            health.insert("reason".into(), "destination_unusable".into());
+        } else if destination.is_some() && turned_off {
             health.insert("reason".into(), "turned_off".into());
         }
         let status = match (&destination, turned_off, failing, &store_error) {
@@ -1622,6 +1635,7 @@ impl App {
         BackupHealth {
             report: Value::Object(health),
             fault,
+            turned_off: named_destination && turned_off,
             run_in_store,
         }
     }
@@ -1750,13 +1764,17 @@ pub enum StoreFault {
 pub struct BackupHealth {
     pub report: Value,
     pub fault: Option<StoreFault>,
+    /// A destination is set and `backup_interval_seconds` is 0, whatever else it is doing.
+    pub turned_off: bool,
     /// The last backup run failed because the destination did not answer.
     pub run_in_store: bool,
 }
 
-/// What the last run of `blob-replicate` said of the store `destination`, when it refused it.
-fn refused_by(result: &Value, destination: &str) -> Option<String> {
-    result["refused"][destination].as_str().map(str::to_string)
+/// What the last run of `blob-replicate` said of the store `destination`, when it refused it. What
+/// it said from a refusal by the address rules stands only while the store's own refusal is set.
+fn refused_by(result: &Value, destination: &str, refusal_set: bool) -> Option<String> {
+    let said = result["refused"][destination].as_str()?;
+    (refusal_set || !said_by_address(said)).then(|| said.to_string())
 }
 
 /// Why the destination takes no copies, from a look at the folder (`None` when the destination
@@ -3497,11 +3515,38 @@ mod tests {
             "remaining": 2,
             "refused": { "blob-folder": "The blob folder did not take a copy: no room." },
         });
-        assert_eq!(refused_by(&result, "bucket"), None);
+        assert_eq!(refused_by(&result, "bucket", false), None);
         assert_eq!(
-            refused_by(&result, "blob-folder").as_deref(),
+            refused_by(&result, "blob-folder", false).as_deref(),
             Some("The blob folder did not take a copy: no room.")
         );
-        assert_eq!(refused_by(&json!({ "copied": 1 }), "bucket"), None);
+        assert_eq!(refused_by(&json!({ "copied": 1 }), "bucket", false), None);
+    }
+
+    #[test]
+    fn a_refusal_by_the_address_rules_stands_only_while_the_store_is_refused() {
+        use crate::app::blobs::upkeep::refused_by_address;
+        use crate::app::outbound::store::Refused;
+        let by_rules = refused_by_address(Refused::Credentials);
+        let result = json!({
+            "copied": 0,
+            "remaining": 2,
+            "refused": { "bucket": by_rules },
+        });
+        assert_eq!(
+            refused_by(&result, "bucket", true).as_deref(),
+            Some(&*by_rules)
+        );
+        assert_eq!(refused_by(&result, "bucket", false), None);
+        // The witness: a refusal the address rules did not make stands with the record clear.
+        let denied = format!(
+            "The object store did not take a copy: {}",
+            object_store_said(&std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        );
+        let result = json!({ "copied": 0, "remaining": 2, "refused": { "bucket": denied } });
+        assert_eq!(
+            refused_by(&result, "bucket", false).as_deref(),
+            Some(&*denied)
+        );
     }
 }
