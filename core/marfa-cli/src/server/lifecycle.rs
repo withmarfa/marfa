@@ -100,7 +100,6 @@ fn upgrade_native(
         steps.say(&format!(
             "If {target} has a newer database schema, the server copies the database beside it, when it holds data, and then updates it in place."
         ));
-        dotenv.remove("MARFA_RELEASE");
         folder.forget_applied(dotenv, files::kept_for(state.manager).dotenv)?;
     }
     let mark = service.mark();
@@ -121,6 +120,10 @@ fn upgrade_native(
         if !out.json {
             started.say_unconfirmed(state.port);
         }
+        // Earlier releases' `marfa` reads the release here, and cannot run the service without
+        // it, so it is written only once the target runs: an owner who puts the earlier release
+        // back after a refusal finds the line as that release left it.
+        dotenv.set("MARFA_RELEASE", &target)?;
         let kept = files::kept_for(state.manager).dotenv;
         if started.confirmed() {
             folder.keep_applied(dotenv, &folder.applied(state.port, &target)?, kept)?;

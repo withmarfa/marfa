@@ -480,10 +480,9 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         .map(|(_, dotenv)| dotenv.clone())
         .unwrap_or_else(|| EnvFile::parse(files::DOTENV_HEADER));
     dotenv.set("MARFA_NAME", &name)?;
-    match runtime {
-        Runtime::Docker => dotenv.set("MARFA_RELEASE", &release)?,
-        Runtime::Native => dotenv.remove("MARFA_RELEASE"),
-    }
+    // A native install's release is read from the program its service runs, but earlier
+    // releases' `marfa` reads it here and cannot run the service without it.
+    dotenv.set("MARFA_RELEASE", &release)?;
     dotenv.set("MARFA_PORT", &port.to_string())?;
     dotenv.set("MARFA_ACCESS", &access.name())?;
     dotenv.set("MARFA_RUNTIME", runtime.name())?;

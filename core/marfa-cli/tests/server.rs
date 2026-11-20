@@ -3093,6 +3093,8 @@ fn a_native_server_stops_starts_and_upgrades_with_its_service() {
     let (_, status, _) = rig.marfa(&["--json", "status"]);
     assert!(status.contains("\"running\": false"), "{status}");
     assert!(rig.file(".env").contains("MARFA_RUNTIME=native"));
+    // Earlier releases' `marfa` cannot run the service without the release named here.
+    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.0\n"));
     let (code, stdout, _) = rig.marfa(&["stop"]);
     assert_eq!(code, 0);
     assert!(stdout.contains("was not running"), "{stdout}");
@@ -3222,14 +3224,7 @@ fn an_update_that_failed_after_one_that_succeeded_leaves_the_release_its_service
     let rig = Rig::new("u-recorded");
     rig.native_installed(&["--access", "local"]);
     // A release written in `.env` is not what the service runs.
-    let mut dotenv: String = rig
-        .file(".env")
-        .lines()
-        .filter(|line| !line.starts_with("MARFA_RELEASE="))
-        .map(|line| format!("{line}\n"))
-        .collect();
-    dotenv.push_str("MARFA_RELEASE=0.0.0-before\n");
-    fs::write(rig.dir.join(".env"), dotenv).unwrap();
+    rig.recorded_release("0.0.0-before");
     let record = Folder::beside(&rig.dir.join("data/marfa.db"));
     record
         .end(
@@ -3520,7 +3515,7 @@ fn a_native_upgrade_to_a_release_that_will_not_open_the_database_changes_nothing
         stdout.contains("Upgraded from 0.0.0-before to 0.0.0"),
         "{stdout}"
     );
-    assert!(!rig.file(".env").contains("MARFA_RELEASE"));
+    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.0\n"));
 }
 
 impl Rig {
@@ -3529,6 +3524,19 @@ impl Rig {
     /// upgrade moves it.
     fn on_an_earlier_release(&self) {
         self.running("0.0.0-before");
+        self.recorded_release("0.0.0-before");
+    }
+
+    /// The release `.env` names, which earlier releases' `marfa` reads.
+    fn recorded_release(&self, release: &str) {
+        let mut dotenv: String = self
+            .file(".env")
+            .lines()
+            .filter(|line| !line.starts_with("MARFA_RELEASE="))
+            .map(|line| format!("{line}\n"))
+            .collect();
+        dotenv.push_str(&format!("MARFA_RELEASE={release}\n"));
+        fs::write(self.dir.join(".env"), dotenv).unwrap();
     }
 
     /// The release the server answering on the install's port says it is.
@@ -3645,6 +3653,12 @@ fn a_native_upgrade_the_server_declines_says_why_and_that_the_service_keeps_tryi
     );
     assert!(stderr.contains("marfa server stop --dir"), "{stderr}");
     assert!(stderr.contains("still reads it"), "{stderr}");
+    // The earlier release's `marfa`, put back, reads its own release where it left it.
+    assert!(
+        rig.file(".env").contains("MARFA_RELEASE=0.0.0-before\n"),
+        "{}",
+        rig.file(".env")
+    );
 
     // The unreadable-settings refusal is told apart from a copy that could not be made.
     let why = "was not upgraded, because its stored setting disk_reserve_bytes does not read as a number. Nothing was changed.";
