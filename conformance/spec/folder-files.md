@@ -1866,7 +1866,7 @@ When two folder queries both hold an item and each directory has its own bound f
 
 ### `folder-files/missing-file-trashed`
 
-When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
+When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or carries its identity and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
 
 **Reason:** the files of one sweep are decided before any of them is trashed, so files deleted together are all trashed, whichever the sweep reaches first and whether they link one another. A link line in a file shows the note it names by title, and a note already trashed by the same sweep would otherwise read as a change made elsewhere.
 
@@ -1874,9 +1874,17 @@ When a missing file’s deletion grace expires, no other directory holds the mov
 
 ### `folder-files/missing-file-trashed-path-reported`
 
-When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
+When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or carries its identity and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
 
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
+
+### `folder-files/missing-file-carried`
+
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, carries a missing file's identity or the ID of its item, a device MUST NOT queue deletion of the missing file's item.
+
+**Reason:** a file the scan does not read is still in the folder, and its item's history and links would otherwise point at the bin. The device follows the file once it can read it, and lets the item go once no file carries it.
+
+**Tests:** `device/folders-contract-b.test.ts › trashes no item whose file moved to a name the folder does not send`, `› keeps the item of a paused removal's file that returned under a name another file holds`.
 
 ### `folder-files/missing-file-changed-revives`
 

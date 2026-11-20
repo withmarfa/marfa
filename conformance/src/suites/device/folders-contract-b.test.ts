@@ -46,7 +46,12 @@ import {
   type FolderHarness,
 } from "./harness.js";
 
-import { EdgeDoor, idIn, scriptFolderWrites } from "./folders.shared.js";
+import {
+  EdgeDoor,
+  idIn,
+  onCaseSensitiveVolume,
+  scriptFolderWrites,
+} from "./folders.shared.js";
 
 let harness: FolderHarness | undefined;
 let second: FolderHarness | undefined;
@@ -709,6 +714,103 @@ it("keeps the item of a paused removal's file that returned under another name",
   expect(
     status.ok && status.value.files.find((f) => f.path === "moved.md")?.item_id,
   ).toBe(row(0).item.id);
+});
+
+it("keeps the item of a paused removal's file that returned under a name another file holds", async () => {
+  harness = await folderHarness("contract-b-confirm-held", {
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: tight,
+  });
+  await onCaseSensitiveVolume(harness);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  // Beside the folder, on its volume, so the moves keep each file's identity.
+  const away = join(harness.dir, "..", "away");
+  mkdirSync(away);
+  for (const n of [0, 1, 2])
+    renameSync(
+      join(harness.dir, `Note ${String(n)}.md`),
+      join(away, `Note ${String(n)}.md`),
+    );
+  const paused = await harness.folder.scan();
+  expect(paused.ok && paused.value.paused).toBe(3);
+  // `Note 3.md` holds the name, so the returned file is held, not read.
+  renameSync(join(away, "Note 0.md"), join(harness.dir, "note 3.md"));
+  const confirmed = await harness.folder.confirm();
+  // The two files gone under every name are the witness.
+  expect(confirmed.ok && confirmed.value.deleted).toBe(2);
+  const queued = await harness.folder.device().queue();
+  expect(
+    queued.ok &&
+      queued.value
+        .filter((r) => r.kind === "delete_item")
+        .map((r) => r.item_id)
+        .sort(),
+  ).toEqual([row(1).item.id, row(2).item.id]);
+  const status = await harness.folder.status();
+  const held = status.ok
+    ? status.value.files.find((f) => f.path === "note 3.md")
+    : undefined;
+  expect([held?.flag, held?.item_id]).toEqual(["name", row(0).item.id]);
+});
+
+it("keeps the item of a paused removal's file that returned under a name the folder does not send", async () => {
+  harness = await folderHarness("contract-b-confirm-skipped", {
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: tight,
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  const away = tempFolder("contract-b-confirm-skipped-away");
+  for (const n of [0, 1, 2])
+    renameSync(
+      join(harness.dir, `Note ${String(n)}.md`),
+      join(away, `Note ${String(n)}.md`),
+    );
+  const paused = await harness.folder.scan();
+  expect(paused.ok && paused.value.paused).toBe(3);
+  renameSync(join(away, "Note 0.md"), join(harness.dir, "Note 0.bin"));
+  const confirmed = await harness.folder.confirm();
+  expect(confirmed.ok && confirmed.value.deleted).toBe(2);
+  const queued = await harness.folder.device().queue();
+  expect(
+    queued.ok &&
+      queued.value
+        .filter((r) => r.kind === "delete_item")
+        .map((r) => r.item_id)
+        .sort(),
+  ).toEqual([row(1).item.id, row(2).item.id]);
+  const status = await harness.folder.status();
+  const skipped = status.ok
+    ? status.value.files.find((f) => f.path === "Note 0.bin")
+    : undefined;
+  expect([skipped?.flag, skipped?.item_id]).toEqual(["query", row(0).item.id]);
+});
+
+it("trashes no item whose file moved to a name the folder does not send", async () => {
+  harness = await folderHarness("contract-b-sweep-skipped", {
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: {
+      query: { types: ["core.note"] },
+      removal_threshold: { files: 100, fraction: 1 },
+    },
+  });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  renameSync(join(harness.dir, "Note 0.md"), join(harness.dir, "Note 0.bin"));
+  rmSync(join(harness.dir, "Note 1.md"));
+  const first = await harness.folder.scan();
+  expect(first.ok && first.value.missing, JSON.stringify(first)).toBe(1);
+  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  const swept = await harness.folder.scan();
+  // The witness: the file gone under every name is trashed in the same sweep.
+  expect(swept.ok && swept.value.trashed, JSON.stringify(swept)).toEqual([
+    "Note 1.md",
+  ]);
+  const queued = await harness.folder.device().queue();
+  expect(
+    queued.ok &&
+      queued.value
+        .filter((r) => r.kind === "delete_item")
+        .map((r) => r.item_id),
+  ).toEqual([row(1).item.id]);
 });
 
 it("keeps a paused removal unsure while part of the folder cannot be read", async () => {

@@ -196,6 +196,14 @@ When a missing file returns to its directory under another name before its pause
 
 **Tests:** `device/folders-contract-b.test.ts › keeps the item of a paused removal's file that returned under another name`.
 
+### `folder-guards/confirm-carried-file`
+
+When a missing file returns to its folder before its paused removal is confirmed, under a name the folder holds for a clash with another file's name or under a name the folder does not send, a device MUST leave the file's item undeleted.
+
+**Reason:** a confirmation lets go only of what no file in the folder carries, so a returned file the scan does not read keeps its item, its history and its links.
+
+**Tests:** `device/folders-contract-b.test.ts › keeps the item of a paused removal's file that returned under a name another file holds`, `› keeps the item of a paused removal's file that returned under a name the folder does not send`.
+
 ### `folder-guards/confirm-unread-folder`
 
 If a paused disk removal is confirmed while part of the directory cannot be read, then a device MUST leave each missing file's item undeleted.
