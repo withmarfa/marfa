@@ -6,6 +6,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::http::{Method, Request, StatusCode, header};
+use marfa_rules::schema::{TypeFile, check_type_files, shipped_registry};
 use marfa_server::app::App;
 use marfa_server::http::{control, public};
 use marfa_server::settings::{Environment, Settings};
@@ -206,6 +207,244 @@ async fn a_parent_that_is_missing_or_would_close_a_cycle_is_refused() {
         "{}",
         held.body
     );
+}
+
+fn answered(reply: &Reply) -> (String, Vec<String>) {
+    let said = reply.body["error"]["details"]["errors"]
+        .as_array()
+        .filter(|errors| !errors.is_empty())
+        .map(|errors| {
+            errors
+                .iter()
+                .map(|error| error["message"].as_str().unwrap_or("").to_string())
+                .collect()
+        })
+        .unwrap_or_else(|| vec![reply.body["error"]["message"].as_str().unwrap().to_string()]);
+    (reply.code().to_string(), said)
+}
+
+fn holder(id: &str, target: &str) -> Value {
+    json!({ "id": id, "fields": { "note": { "type": "string" } }, "tables": { "rows": { "columns": {
+        "who": { "type": "item", "type_constraints": [target] }
+    } } } })
+}
+
+fn claimant(id: &str, target: &str, fields: Value) -> Value {
+    json!({ "id": id, "compatible_with": target, "fields": fields })
+}
+
+fn references_between_types() -> Vec<Value> {
+    let shape = json!({ "x": { "type": "string", "required": true } });
+    let bad_enum = json!({ "x": { "type": "enum" } });
+    vec![
+        simple("acme.zz-person"),
+        holder("acme.aa-holder", "acme.zz-person"),
+        simple("acme.bb-person"),
+        holder("acme.cc-holder", "acme.bb-person"),
+        holder("acme.dangling", "acme.nowhere"),
+        holder("acme.tree", "acme.tree"),
+        holder("acme.col-a", "acme.col-b"),
+        holder("acme.col-b", "acme.col-a"),
+        json!({ "id": "acme.zz-shape", "fields": shape }),
+        claimant(
+            "acme.aa-claims",
+            "acme.zz-shape",
+            json!({ "x": { "type": "string", "required": true }, "y": { "type": "string" } }),
+        ),
+        claimant(
+            "acme.aa-short",
+            "acme.zz-shape",
+            json!({ "y": { "type": "string" } }),
+        ),
+        claimant("acme.aa-nowhere", "acme.absent", shape.clone()),
+        claimant("acme.loop-a", "acme.loop-b", shape.clone()),
+        claimant("acme.loop-b", "acme.loop-a", shape),
+        json!({ "id": "core.unshipped", "parent": "core.unshipped", "fields": { "x": { "type": "string" } } }),
+        child(
+            "acme.self",
+            "acme.self",
+            json!({ "x": { "type": "string" } }),
+        ),
+        child(
+            "acme.cyc-a",
+            "acme.cyc-b",
+            json!({ "x": { "type": "string" } }),
+        ),
+        child(
+            "acme.cyc-b",
+            "acme.cyc-a",
+            json!({ "x": { "type": "string" } }),
+        ),
+        child(
+            "acme.cyc-kid",
+            "acme.cyc-a",
+            json!({ "y": { "type": "string" } }),
+        ),
+        child("acme.orphan-enum", "acme.nothing", bad_enum.clone()),
+        json!({ "id": "acme.bad-parent", "fields": { "x": { "type": "colour" } } }),
+        child(
+            "acme.kid",
+            "acme.bad-parent",
+            json!({ "y": { "type": "string" } }),
+        ),
+        child("acme.kid-enum", "acme.bad-parent", bad_enum),
+        json!({ "id": "acme.false-a", "compatible_with": ["acme.false-b", 1], "fields": { "x": { "type": "string" } } }),
+        child(
+            "acme.false-b",
+            "acme.false-a",
+            json!({ "x": { "type": "string" } }),
+        ),
+    ]
+}
+
+#[tokio::test]
+async fn the_folder_check_gives_each_definition_the_answer_a_registration_gets() {
+    let instance = Instance::start().await;
+    let status = |group: &str| json!({ "stage": { "type": "status", "status_values": [{ "value": "open", "group": group }] } });
+    let mut cases = vec![
+        simple("acme.base"),
+        child(
+            "acme.sub",
+            "acme.base",
+            json!({ "extra": { "type": "integer" } }),
+        ),
+        child(
+            "acme.shadow",
+            "acme.base",
+            json!({ "note": { "type": "integer" } }),
+        ),
+        json!({ "id": "acme.good-status", "fields": status("not_started") }),
+        json!({ "id": "acme.bad-status", "fields": status("underway") }),
+        json!({ "id": "acme.thumbs", "fields": { "a": { "type": "thumbnail" }, "b": { "type": "thumbnail" } } }),
+        json!({ "id": "acme.enum", "fields": { "x": { "type": "enum" } } }),
+        json!({ "id": "acme.unknown", "colour": "red", "fields": { "x": { "type": "string" } } }),
+        json!({ "id": "acme.kind", "fields": { "x": { "type": "colour" } } }),
+        json!({ "id": "acme.version", "version": -1, "fields": { "x": { "type": "string" } } }),
+        json!({ "id": "acme.shadows-item", "fields": { "created_at": { "type": "string" } } }),
+        child("acme.orphan", "acme.nothing", json!({})),
+        json!({ "id": "core.mine", "fields": { "x": { "type": "string" } } }),
+        json!({ "id": "audit.mine", "fields": { "x": { "type": "string" } } }),
+        json!({ "id": "acme.bare" }),
+        json!({ "id": "acme.floor", "fields": { "n": { "type": "integer", "minimum": 5 } } }),
+        child(
+            "acme.lower",
+            "acme.floor",
+            json!({ "n": { "type": "integer", "minimum": 1 } }),
+        ),
+        child(
+            "acme.higher",
+            "acme.floor",
+            json!({ "n": { "type": "integer", "minimum": 9 } }),
+        ),
+        child(
+            "acme.under-task",
+            "core.task",
+            json!({ "sprint": { "type": "integer" } }),
+        ),
+        child(
+            "acme.retitled",
+            "core.task",
+            json!({ "title": { "type": "integer", "required": true } }),
+        ),
+    ];
+    cases.extend(references_between_types());
+    let files: Vec<TypeFile> = cases
+        .iter()
+        .map(|case| TypeFile {
+            name: format!("{}.json", case["id"].as_str().unwrap()),
+            content: Ok(case.to_string().into_bytes()),
+        })
+        .collect();
+    let verdict = check_type_files(&files, &shipped_registry().unwrap()).unwrap();
+
+    let mut accepted = 0;
+    let mut refused = 0;
+    for case in cases {
+        let id = case["id"].as_str().unwrap().to_string();
+        let checked = verdict
+            .files
+            .iter()
+            .find(|file| file.file == format!("{id}.json"))
+            .unwrap();
+        let reply = instance.register(case).await;
+        if reply.status == StatusCode::CREATED {
+            assert!(checked.problems.is_empty(), "{id}: {:?}", checked.problems);
+            accepted += 1;
+            continue;
+        }
+        refused += 1;
+        let (code, mut said) = answered(&reply);
+        assert!(
+            !checked.problems.is_empty(),
+            "{id}: the server refused {code}"
+        );
+        assert!(
+            checked.problems.iter().all(|problem| problem.code == code),
+            "{id}: server {code}, checker {:?}",
+            checked.problems
+        );
+        let mut heard: Vec<String> = checked
+            .problems
+            .iter()
+            .map(|problem| problem.message.clone())
+            .collect();
+        said.sort();
+        heard.sort();
+        assert_eq!(heard, said, "{id}");
+    }
+    assert_eq!((accepted, refused), (13, 32));
+}
+
+#[tokio::test]
+async fn a_type_under_a_file_the_folder_refused_gets_the_answer_a_registration_gets_without_it() {
+    let parent = json!({ "id": "acme.parent", "fields": { "x": { "type": "string" } } });
+    let kid = child(
+        "acme.kid",
+        "acme.parent",
+        json!({ "y": { "type": "string" } }),
+    );
+    let with_parent = Instance::start().await;
+    assert_eq!(
+        with_parent.register(parent.clone()).await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        with_parent.register(kid.clone()).await.status,
+        StatusCode::CREATED
+    );
+
+    let without_parent = Instance::start().await;
+    let reply = without_parent.register(kid.clone()).await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.body);
+    let (code, said) = answered(&reply);
+
+    let files = [
+        TypeFile {
+            name: "Wrong.json".into(),
+            content: Ok(parent.to_string().into_bytes()),
+        },
+        TypeFile {
+            name: "acme.kid.json".into(),
+            content: Ok(kid.to_string().into_bytes()),
+        },
+    ];
+    let verdict = check_type_files(&files, &shipped_registry().unwrap()).unwrap();
+    let checked = verdict
+        .files
+        .iter()
+        .find(|file| file.file == "acme.kid.json")
+        .unwrap();
+    assert!(
+        checked.problems.iter().all(|problem| problem.code == code),
+        "server {code}, checker {:?}",
+        checked.problems
+    );
+    let heard: Vec<String> = checked
+        .problems
+        .iter()
+        .map(|problem| problem.message.clone())
+        .collect();
+    assert_eq!(heard, said);
 }
 
 #[tokio::test]

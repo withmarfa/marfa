@@ -1470,6 +1470,92 @@ The CLI MUST print, for `marfa types scaffold`, a definition that `marfa types r
 
 **Tests:** `device/types-scaffold-live.test.ts › is registered unchanged by a key that may register its id, and by no other`.
 
+## Checking a folder of type definitions
+
+`marfa types check` judges the item type definitions in a folder as a server judges each at registration. It names no server or key and sends nothing, so a repository that keeps type files can run it in its own checks. It reads each `*.json` file directly in the folder, named `<id>.json`, and leaves every other file, every subfolder and every file whose name starts with a dot alone. It does not read edge types. It makes the rules of registration that need no instance, and leaves to a server the rules that need one: whether the type already exists, what a key may register and how large a body an instance takes.
+
+### `cli/types-check-judges`
+
+When `marfa types check` is given a folder, the CLI MUST report, for each `*.json` file directly in it, every problem the server's registration of the type in that file would refuse it for, each with the file, the path in the definition and the code and message the server gives, judging the type against the types the server ships and the types of the folder that passed before it, taking each type after the types of the folder that it names as its `parent`, in a `compatible_with` list of strings or in a table column's `type_constraints`, except a type in a loop of such names and a type that names itself.
+
+**Reason:** a repository that keeps type files must learn at its own checks what a server would refuse, and learn all of it at once, not one refusal at a time. The files of a folder have no order, so a type is judged after the types it needs, as a person would register them. A server looks a name up only where it is a string in a well-formed list, so a name in a malformed `compatible_with` list orders nothing.
+
+**Tests:** `device/types-check.test.ts › refuses each definition a registration refuses, naming the file, the path, the code and the message`, `› refuses a loosened minimum and a reserved root`, `› passes a folder whose types name a shipped parent and each other`.
+
+### `cli/types-check-passes`
+
+When every file in the folder passes the folder's own checks and a server would register every definition in it, the CLI MUST exit 0 from `marfa types check`.
+
+**Reason:** a file whose name differs from its id is refused although a server would register it, so it keeps the exit from being 0.
+
+**Tests:** `device/types-check.test.ts › passes a folder whose types name a shipped parent and each other`.
+
+### `cli/types-check-refused`
+
+If `marfa types check` refuses a file in the folder, then the CLI MUST exit 1 with `invalid`, after it has reported every file.
+
+**Tests:** `device/types-check.test.ts › refuses each definition a registration refuses, naming the file, the path, the code and the message`.
+
+### `cli/types-check-parent-reason`
+
+If a type in the folder names a type that is neither shipped nor accepted in the folder because it is missing, was refused or is in a loop with the type, then the CLI MUST give the type in `marfa types check` the answer a server gives with the named type absent and explain the absence beside that answer.
+
+**Reason:** types that name one another in a loop cannot be registered in any order, so a server refuses each of them with the other absent whichever it is given first. Another fault the server finds in the type, such as an `enum` with no `enum_values`, is shown with it, and the reason the type is absent only adds to it.
+
+**Tests:** `device/types-check.test.ts › gives a type that names an absent type the server's answer and says why beside it`.
+
+### `cli/types-check-refused-supplies-nothing`
+
+If `marfa types check` refuses a file in the folder, for the folder's own checks or for the server's answer, then the CLI MUST judge each type of the folder that names that file's type as the server judges it with the named type absent, and say beside the answer that the named type was refused in the folder.
+
+**Reason:** a refused definition is never registered, so no later type can stand on it, however well the definition would otherwise hold.
+
+**Tests:** `device/types-check.test.ts › gives a type that names an absent type the server's answer and says why beside it`.
+
+### `cli/types-check-file-name`
+
+If a file's definition has an `id` that is a string, the empty string included, and the file's name is not that `id` followed by `.json`, then the CLI MUST refuse the file in `marfa types check` with `file_name_mismatch`, in whatever case the name differs, before any answer of the server for the type and whatever else the type holds.
+
+**Reason:** a plugins repository finds a type by its file name, so a name that differs from the id names another type. A definition with no `id`, or one that is not a string, has no name to compare, so the server's answer for it stands alone.
+
+**Tests:** `device/types-check.test.ts › refuses a file name that differs from the id, including by case`.
+
+### `cli/types-check-bad-files`
+
+If a file in the folder cannot be read, is not valid UTF-8, is not valid JSON or is not a JSON object, then the CLI MUST refuse that file in `marfa types check` with the reason and check the other files.
+
+**Tests:** `device/types-check.test.ts › reports unreadable and malformed files and still checks the others`.
+
+### `cli/types-check-folder-refused`
+
+If the path `marfa types check` is given is not a folder, then the CLI MUST exit 2 with `usage`.
+
+**Tests:** `device/types-check.test.ts › refuses a folder that does not exist, is a file or holds no json files`.
+
+### `cli/types-check-none-found`
+
+If the folder `marfa types check` is given holds no `*.json` file, then the CLI MUST exit 1 with `invalid`, saying none were found.
+
+**Reason:** a folder that was meant to hold type files and holds none would otherwise pass every check by checking nothing.
+
+**Tests:** `device/types-check.test.ts › refuses a folder that does not exist, is a file or holds no json files`.
+
+### `cli/types-check-offline`
+
+When `marfa types check` runs, the CLI MUST send no request, whatever `MARFA_API_URL` and `MARFA_API_KEY` hold and whether it passes or refuses.
+
+**Reason:** a folder is judged on this machine, so naming a server must not make the command contact it.
+
+**Tests:** `device/types-check.test.ts › needs no server, key or keychain, and sends nothing where a server is named`.
+
+### `cli/types-check-no-server-options`
+
+If `marfa types check` is given `--url`, `--key`, `--profile` or `--socket`, then the CLI MUST exit 2 with `usage`.
+
+**Reason:** the command uses none of them, so a person who gave one would believe it was used.
+
+**Tests:** `device/types-check.test.ts › refuses --url, --key, --profile and --socket with usage, sending nothing`.
+
 ## Normalizing a type definition
 
 ### `cli/normalize-cli`

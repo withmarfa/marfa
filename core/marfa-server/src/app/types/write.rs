@@ -1,15 +1,15 @@
 use marfa_rules::grammar;
 use marfa_rules::schema::{
-    Issue, OWN_TABLE_TYPE, Obj, Registry, broken_compatible_dependents, descendant_depth,
-    evolution_of, icon_issue, labelled, parent_chain_fault, read_back_free, resolve,
+    Early, Issue, OWN_TABLE_TYPE, Obj, Registry, broken_compatible_dependents, descendant_depth,
+    early_refusal, evolution_of, icon_issue, labelled, parent_chain_fault, read_back_free, resolve,
     validate_replacing_type, validate_restored_type, validate_type, with_set_stored,
 };
 use rusqlite::{Transaction, params};
 use serde_json::{Value, json};
 
 use super::{
-    chain_refusal, check_id, dependents_refusal, missing_field, presented, require_reach,
-    schema_refusal,
+    chain_refusal, check_id, dependents_refusal, invalid_id, missing_field, presented,
+    require_reach, schema_refusal,
 };
 use crate::app::App;
 use crate::app::access::{Axis, Caller, Door, Level, Permission, SchemaKind};
@@ -56,22 +56,18 @@ fn store(tx: &Transaction<'_>, id: &str, schema: &Obj, at: &str) -> Result<()> {
 }
 
 pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
-    if !body.contains_key("fields") {
-        return Err(missing_field("fields"));
+    let early = early_refusal(&body)
+        .map_err(|error| Refusal::internal(&format!("the type grammar did not read: {error}")))?;
+    if let Some(early) = early {
+        return Err(match early {
+            Early::NoFields => missing_field("fields"),
+            Early::InvalidId => invalid_id("id"),
+            Early::Reserved(root) => {
+                Refusal::new(Code::Forbidden, early.message()).with_detail("namespace", root)
+            }
+        });
     }
     let named = text_of(&body, "id").map(str::to_string);
-    if let Some(id) = &named {
-        check_id(id, "id")?;
-        if let Some(root) = grammar::platform_root(id) {
-            return Err(Refusal::new(
-                Code::Forbidden,
-                format!(
-                    "Reserved namespace: {root}.* types are platform-shipped and cannot be registered at runtime"
-                ),
-            )
-            .with_detail("namespace", root));
-        }
-    }
     let cache = app.catalog_handle();
     let created = app
         .write(caller, "type.register", move |unit| {

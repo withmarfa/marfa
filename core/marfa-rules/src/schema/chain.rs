@@ -7,6 +7,8 @@ use super::{Issue, Registry, text, validate_type};
 /// The most ancestors a type may have, counting the subtype levels below it that would move with it.
 pub const MAX_REGISTRATION_CHAIN_DEPTH: usize = 10;
 
+pub const CIRCULAR_INHERITANCE: &str = "Circular inheritance detected";
+
 pub fn parent_chain_fault(
     registry: &Registry,
     type_id: &str,
@@ -27,7 +29,7 @@ pub fn parent_chain_fault(
             });
         }
         if current == type_id {
-            return Some("Circular inheritance detected".into());
+            return Some(CIRCULAR_INHERITANCE.into());
         }
         let Some(held) = registry.get(current) else {
             return Some(if current == parent {

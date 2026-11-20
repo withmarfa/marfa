@@ -11,7 +11,7 @@ use write::not_found;
 pub use write::{Merge, change, clear_icon, delete, register, replace, set_icon};
 
 use marfa_rules::grammar;
-use marfa_rules::schema::{ChainFault, Issue, Obj, plural_of};
+use marfa_rules::schema::{ChainFault, Issue, Obj, SchemaVerdict, invalid_id_message, plural_of};
 use serde_json::{Value, json};
 
 use super::access::Caller;
@@ -23,26 +23,14 @@ pub(super) fn issues_json(issues: &[Issue]) -> Vec<Value> {
 }
 
 fn schema_refusal(issues: Vec<Issue>) -> Refusal {
-    let has = |code: &str| issues.iter().any(|issue| issue.code == Some(code));
-    let (code, message) = if has("property_shadows_field") {
-        (
-            Code::PropertyShadowsField,
-            "Type schema declares a property whose name shadows a first-class Item field",
-        )
-    } else if has("inheritance_violation") {
-        (
-            Code::InheritanceViolation,
-            "Type gives a field a shape another type in its chain declares differently",
-        )
-    } else if has("compatible_with_violation") {
-        (
-            Code::CompatibleWithViolation,
-            "Type does not satisfy the structural-superset of its compatible_with target",
-        )
-    } else {
-        (Code::InvalidSchema, "Invalid type schema")
+    let verdict = SchemaVerdict::of(&issues);
+    let code = match verdict {
+        SchemaVerdict::PropertyShadowsField => Code::PropertyShadowsField,
+        SchemaVerdict::InheritanceViolation => Code::InheritanceViolation,
+        SchemaVerdict::CompatibleWithViolation => Code::CompatibleWithViolation,
+        SchemaVerdict::InvalidSchema => Code::InvalidSchema,
     };
-    Refusal::new(code, message).with_detail("errors", issues_json(&issues))
+    Refusal::new(code, verdict.message()).with_detail("errors", issues_json(&issues))
 }
 
 fn dependents_refusal(broken: Vec<(String, Vec<Issue>)>) -> Refusal {
@@ -74,10 +62,14 @@ pub fn check_id(id: &str, field: &str) -> Result<()> {
     if taken {
         return Ok(());
     }
-    let message = format!("Invalid type identifier: {}.", grammar::GRAMMAR);
-    Err(Refusal::validation(message.clone())
+    Err(invalid_id(field))
+}
+
+fn invalid_id(field: &str) -> Refusal {
+    let message = invalid_id_message();
+    Refusal::validation(message.clone())
         .with_detail("field", field)
-        .with_detail("errors", json!([{ "path": field, "message": message }])))
+        .with_detail("errors", json!([{ "path": field, "message": message }]))
 }
 
 fn unreadable_refusal(type_id: &str) -> Refusal {
