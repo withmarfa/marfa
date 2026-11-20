@@ -720,6 +720,11 @@ impl Blobs {
         rows::copies_in(tx, store)
     }
 
+    /// The attached folder store the record names.
+    pub fn attached_folder(tx: &rusqlite::Transaction<'_>) -> Result<Option<String>> {
+        rows::attached_folder(tx)
+    }
+
     pub fn check_adoptable(
         tx: &rusqlite::Transaction<'_>,
         app: &App,

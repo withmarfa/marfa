@@ -74,7 +74,7 @@ pub enum Adopting {
 #[derive(Debug)]
 pub struct FolderNow {
     pub store_id: String,
-    /// `None` where the folder did not answer in time.
+    /// `None` where the folder did not answer in time or could not be read.
     pub marked: Option<bool>,
 }
 
@@ -259,23 +259,24 @@ impl App {
         })
     }
 
-    /// The backup folder's store now, and whether its files area holds that store's marker.
-    pub async fn backup_folder_now(&self) -> Option<FolderNow> {
+    /// The folder store the record names now, and whether the files area holds its marker.
+    pub async fn backup_folder_now(&self) -> Result<Option<FolderNow>> {
         let Some(Destination::Folder(folder)) = Destination::of(&self.blobs.attachment()) else {
-            return None;
+            return Ok(None);
         };
-        let looked = folder.clone();
+        let Some(store_id) = self.db.read(Blobs::attached_folder).await? else {
+            return Ok(None);
+        };
+        let wanted = store_id.clone();
         let marked = tokio::time::timeout(
             self.blobs.check(),
-            tokio::task::spawn_blocking(move || looked.reachable()),
+            tokio::task::spawn_blocking(move || folder.holds_marker(&wanted)),
         )
         .await
         .ok()
-        .and_then(|joined| joined.ok());
-        Some(FolderNow {
-            store_id: folder.files().id().to_string(),
-            marked,
-        })
+        .and_then(|joined| joined.ok())
+        .flatten();
+        Ok(Some(FolderNow { store_id, marked }))
     }
 
     /// Judges an adopt's confirmation alone, before the folder is looked at.
@@ -421,7 +422,7 @@ impl App {
         self.faults.hold(HOLD_STORES_SWAP, None).await;
         let locked = holding.fingerprint.clone();
         let (marker, folder_changed) = match folder
-            .claim_held(holding, id.clone(), self.blobs.check())
+            .claim_held(holding, id.clone(), self.blobs.check(), self.faults.clone())
             .await
         {
             Some(claimed) => {

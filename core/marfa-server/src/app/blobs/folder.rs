@@ -18,7 +18,7 @@ use super::disk::{self, AreaLock, Disk, Place};
 use super::hash::Hash;
 use super::rows;
 use super::store::ByteStream;
-use crate::app::faults::{FAIL_BACKUP_FOLDER_WRITE, Faults};
+use crate::app::faults::{FAIL_BACKUP_FOLDER_WRITE, Faults, HOLD_BACKUP_FOLDER_CLAIM};
 use crate::app::fingerprint::Fingerprint;
 use crate::db::Db;
 use crate::failure::Failure;
@@ -300,6 +300,14 @@ impl Folder {
         self.files().reachable()
     }
 
+    /// Whether the files area holds the marker of the store `id`; `None` where it cannot be read.
+    /// It blocks.
+    pub fn holds_marker(&self, id: &str) -> Option<bool> {
+        Disk::marked(&self.area())
+            .ok()
+            .map(|found| found.as_deref() == Some(id))
+    }
+
     /// This instance's files area.
     pub fn area(&self) -> PathBuf {
         self.root.join(FILES).join(&self.instance)
@@ -411,6 +419,7 @@ impl Folder {
         holding: Holding,
         id: String,
         deadline: Duration,
+        faults: Arc<Faults>,
     ) -> Option<Claimed> {
         let folder = self.clone();
         let claimed = tokio::task::spawn_blocking(move || {
@@ -420,6 +429,7 @@ impl Folder {
                 ..
             } = holding;
             let _claiming = claiming;
+            faults.hold_blocking(HOLD_BACKUP_FOLDER_CLAIM);
             let written = folder.claim_locked(&id, lock.ok_or_else(not_there));
             Claimed {
                 written,
@@ -1182,7 +1192,12 @@ mod tests {
         assert!(Disk::lock_area(&area).is_err(), "the area is not locked");
 
         let claimed = folder
-            .claim_held(holding, "adopted".into(), Duration::from_secs(2))
+            .claim_held(
+                holding,
+                "adopted".into(),
+                Duration::from_secs(2),
+                Arc::new(Faults::default()),
+            )
             .await
             .unwrap();
         claimed.written.unwrap();

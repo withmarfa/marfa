@@ -142,7 +142,7 @@ async fn halted(app: &Arc<App>, caller: &Caller, halt: Halt) -> Outcome {
             let mut answer = Map::new();
             answer.insert("adopted".into(), true.into());
             answer.insert("already_done".into(), true.into());
-            if let Some(now) = app.backup_folder_now().await {
+            if let Some(now) = app.backup_folder_now().await? {
                 answer.insert("store_id".into(), now.store_id.into());
                 answer.insert("marked".into(), now.marked.into());
             }
