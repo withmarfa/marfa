@@ -796,11 +796,11 @@ While a folder's query names `beneath` as a path whose file has no item the serv
 
 ### `folder-setup/beneath-path-holds-only-its-file`
 
-While a folder's query names `beneath` as a path, a device MUST NOT write a file for an item other than the item of the file the path names.
+While a folder's query names `beneath` as a path, a device MUST NOT write a file for an item other than the item of the file the path names, an item beneath that item, or an item that a document of one of those items embeds or has attached.
 
-**Reason:** a device's copy holds items the query does not, such as the ends of a file's edge lines, and a path narrows the folder to nothing but its own file until the device writes the file's item id into the folder, which a key that cannot write `system.folder` never does.
+**Reason:** a device's copy holds items the query does not, such as the ends of a file's edge lines. Until the device writes the file's item id into the folder, which a key that cannot write `system.folder` never does, the folder holds what the query would hold with that id in the path's place: what it sends of a new file is judged the same way.
 
-**Tests:** `device/folders-beneath-file.test.ts › writes no item another folder on the computer holds while its key cannot name the project, and says why the path waits`, `› holds nothing from the server while the change is not sent after %s, and finishes at the next pass`.
+**Tests:** `device/folders-beneath-file.test.ts › writes nothing from outside the project while its key cannot name it, keeps what lies beneath it in step, and says why the path waits`, `› holds nothing from the server while the change is not sent after %s, and finishes at the next pass`.
 
 ### `folder-setup/beneath-file-asks-nothing`
 
@@ -898,7 +898,7 @@ If the folder door refuses a device's change of `query.beneath` with `403`, then
 
 **Reason:** the path then waits until the folder is changed with a key that can write `system.folder`, which only the person can do.
 
-**Tests:** `device/folders-beneath-file.test.ts › writes no item another folder on the computer holds while its key cannot name the project, and says why the path waits`.
+**Tests:** `device/folders-beneath-file.test.ts › writes nothing from outside the project while its key cannot name it, keeps what lies beneath it in step, and says why the path waits`.
 
 ### `folder-setup/beneath-file-resumed`
 
@@ -918,7 +918,7 @@ While a folder's query names `beneath` as a path whose file has no item, the CLI
 
 While a folder's query names `beneath` as a path, the CLI MUST report in the folder's status, as `beneath_waiting_reason`, why the last sync that tried to replace the path with the file's item id could not.
 
-**Tests:** `device/folders-beneath-file.test.ts › writes no item another folder on the computer holds while its key cannot name the project, and says why the path waits`.
+**Tests:** `device/folders-beneath-file.test.ts › writes nothing from outside the project while its key cannot name it, keeps what lies beneath it in step, and says why the path waits`.
 
 ### `folder-setup/search-default-types`
 

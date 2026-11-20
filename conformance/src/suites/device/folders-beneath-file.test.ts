@@ -58,6 +58,7 @@ const parentOf = (n: number, from: number, to: number) => ({
 });
 
 const PATH = "Projects/project.md";
+const CHILD = "Notes/child.md";
 
 /** An id a device once narrowed a copy beneath while the query named a path;
  *  an item may have it, as the server takes any id a client chooses. */
@@ -256,7 +257,7 @@ describe("a folder narrowed beneath a file it holds", () => {
     },
   );
 
-  it("writes no item another folder on the computer holds while its key cannot name the project, and says why the path waits", async () => {
+  it("writes nothing from outside the project while its key cannot name it, keeps what lies beneath it in step, and says why the path waits", async () => {
     // Another folder on the computer holds every note: an umbrella and the
     // projects under it.
     elsewhere = await folderHarness("beneath-file-elsewhere", {
@@ -333,6 +334,26 @@ describe("a folder narrowed beneath a file it holds", () => {
       [PATH, "in_step"],
     ]);
 
+    // A note put beneath the project while the key still cannot name it is
+    // sent as beneath the project's item, and the pull holds it the same way.
+    mkdirSync(join(harness.dir, "Notes"));
+    writeFileSync(
+      join(harness.dir, CHILD),
+      '---\ntitle: Child\nchild-of: "[[project]]"\n---\nChild\n',
+    );
+    const beneath = value(await harness.folder.push());
+    expect(sent).toHaveLength(3);
+    expect(beneath.beneath?.waiting).toContain("cannot change the folder");
+    expect(idIn(harness, CHILD)).toBeDefined();
+    expect(written(harness).sort()).toEqual(["Notes", "Projects"]);
+    expect(readdirSync(join(harness.dir, "Notes"))).toEqual(["child.md"]);
+    const held = value(await harness.folder.status());
+    expect(held.beneath_waiting).toBe(PATH);
+    expect(held.files.map((file) => [file.path, file.status]).sort()).toEqual([
+      [CHILD, "in_step"],
+      [PATH, "in_step"],
+    ]);
+
     // With a key that can write the folder, the path names the project, and
     // the umbrella above it stays out.
     writable = true;
@@ -343,7 +364,7 @@ describe("a folder narrowed beneath a file it holds", () => {
       types: ["core.note"],
       beneath: project,
     });
-    expect(written(harness)).toEqual(["Projects"]);
+    expect(written(harness).sort()).toEqual(["Notes", "Projects"]);
     const after = value(await harness.folder.status());
     expect(after.beneath_waiting).toBeUndefined();
     expect(after.beneath_waiting_reason).toBeUndefined();

@@ -3061,22 +3061,14 @@ impl Folder {
     }
 
     /// The pass includes pinned members that the credential's source filter
-    /// hides from listings. Beneath a path with no item named yet, the only
-    /// member is the item of the file the path names.
+    /// hides from listings.
     fn members(&self, settings: &Settings) -> Result<HashSet<String>> {
-        match self.pending_beneath_of(settings)? {
-            beneath::PendingBeneath::No => Ok(self
-                .core
-                .held_by(settings)?
-                .into_iter()
-                .map(|item| item.id)
-                .collect()),
-            beneath::PendingBeneath::Unbound(_) => Ok(HashSet::new()),
-            beneath::PendingBeneath::Bound(named) => {
-                let ids: Vec<String> = named.query.beneath.iter().cloned().collect();
-                self.core.held_among(&named, &ids)
-            }
-        }
+        Ok(self
+            .core
+            .held_by(&*self.holds_by(settings)?)?
+            .into_iter()
+            .map(|item| item.id)
+            .collect())
     }
 
     fn render(
@@ -3126,7 +3118,8 @@ impl Folder {
         shown.extend(embeds.iter().filter(|id| !links.contains(id)).cloned());
         let mut outside = embeds.clone();
         if !outside.is_empty() {
-            let held = self.core.held_among(&self.settings()?, &outside)?;
+            let settings = self.settings()?;
+            let held = self.core.held_among(&*self.holds_by(&settings)?, &outside)?;
             outside.retain(|id| !held.contains(id));
         }
         let (names, typed, recorded) = lines;
@@ -5900,6 +5893,32 @@ mod tests {
         );
         settle_selecting(&folder, &mut selection);
         assert_a_full_pull_changes_nothing(dir.path(), &folder);
+    }
+
+    #[test]
+    fn a_path_whose_file_has_an_item_holds_that_item_and_what_is_beneath_it() {
+        let (_dir, folder, _server, _) = watched_notes(&["umbrella.md", "project.md", "child.md"]);
+        let [umbrella, project, child] =
+            ["umbrella.md", "project.md", "child.md"].map(|p| id_at(&folder, p));
+        for (n, (from, to)) in [(&umbrella, &project), (&project, &child)]
+            .into_iter()
+            .enumerate()
+        {
+            let edge =
+                crate::store::testing::wire_edge(&format!("parent-{n}"), from, to, "parent-of");
+            crate::store::put_server_edge(&folder.core.conn().unwrap(), &edge).unwrap();
+        }
+        let members = |beneath: &str| {
+            folder.core.conn().unwrap().execute("UPDATE items SET properties = json_set(properties, '$.query.beneath', ?2) WHERE id = ?1", [&folder.folder, beneath]).unwrap();
+            let settings = folder.settings().unwrap();
+            assert!(settings.pending_beneath().is_some());
+            folder.members(&settings).unwrap()
+        };
+        assert_eq!(
+            members("project.md"),
+            HashSet::from([project.clone(), child.clone()])
+        );
+        assert!(members("missing.md").is_empty());
     }
 
     #[test]

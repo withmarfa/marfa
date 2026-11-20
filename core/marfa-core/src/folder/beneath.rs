@@ -1,6 +1,7 @@
 //! A folder whose query narrows beneath the path of one of its own files,
 //! until that file has an item whose id can take the path's place.
 
+use std::borrow::Cow;
 use std::path::Path;
 
 use marfa_rules::names;
@@ -85,6 +86,19 @@ impl Folder {
         Ok(match self.bound_beneath(path)? {
             Some(bound) => PendingBeneath::Bound(Box::new(settings.beneath_item(&bound.item_id))),
             None => PendingBeneath::Unbound(self.file_named(path)),
+        })
+    }
+
+    /// The settings the folder holds items by, as a scan judges a new file:
+    /// beneath a path whose file has an item the query does not name yet,
+    /// the query naming that item; beneath one with no item, nothing.
+    pub(super) fn holds_by<'a>(&self, settings: &'a Settings) -> Result<Cow<'a, Settings>> {
+        let Some(path) = settings.pending_beneath() else {
+            return Ok(Cow::Borrowed(settings));
+        };
+        Ok(match self.bound_beneath(path)? {
+            Some(bound) => Cow::Owned(settings.beneath_item(&bound.item_id)),
+            None => Cow::Borrowed(settings),
         })
     }
 
