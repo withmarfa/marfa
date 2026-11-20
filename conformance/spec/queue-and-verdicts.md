@@ -816,7 +816,7 @@ While the write a write follows has no verdict, or is `blocked` with the reason 
 
 ### `queue-and-verdicts/answer-frees-follower`
 
-When the write a write follows is answered `accepted`, `merged`, `conflicted` or `refused`, is `blocked` for a reason other than `awaiting_dependency` or `credential_refused`, or is `dead`, a device MUST NOT hold the later write for it.
+When the write a write follows is answered `accepted`, `merged`, `conflicted` or `refused`, is `blocked` for a reason other than `awaiting_dependency` or `credential_refused`, or is `dead`, a device MUST NOT hold the later write for it, other than a row write behind one queued under `device/restored-rows-kept` (`device/restored-rows-first`).
 
 **Reason:** `follows` orders writes and decides nothing else: an edit behind a refused or blocked edit of the same edge still goes, and the server judges it.
 
