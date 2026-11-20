@@ -3,6 +3,7 @@ import { existsSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { refusal } from "../../device/marfa-answers.js";
 import type { FolderDoor } from "../../device/folder-door.js";
+import type { RecordedRequest } from "../../device/scripted-server.js";
 import type { DoorItem } from "../../device/folder-door.js";
 import {
   KEY,
@@ -19,6 +20,7 @@ import {
   heldEdges,
   idIn,
   isContentWrite,
+  isFormOnly,
   put,
   read,
   scriptFolderWrites,
@@ -154,17 +156,28 @@ async function caughtUp(mac: FolderHarness) {
   return mac.folder.pull();
 }
 
-/** Pushes, and expects it to send and write nothing more. */
+/** Pushes, and expects it to send and write nothing more. A placement's
+ *  form alone says how the file is written, not what its links name, and is
+ *  sent at most once. */
 async function settled(mac: FolderHarness): Promise<void> {
   const host = read(mac, "Host.md");
-  const before = mac.server.requests.filter(isContentWrite).length;
+  const naming = (request: RecordedRequest): boolean =>
+    isContentWrite(request) && !isFormOnly(request);
+  const before = mac.server.requests.filter(naming).length;
   const pushed = await mac.folder.push();
   expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
   expect(
-    mac.server.requests.filter(isContentWrite).length,
+    mac.server.requests.filter(naming).length,
     "the folder went on writing once its links named the item again",
   ).toBe(before);
   expect(read(mac, "Host.md")).toBe(host);
+  const once = mac.server.requests.filter(isContentWrite).length;
+  const again = await mac.folder.push();
+  expect(again.ok, JSON.stringify(again)).toBe(true);
+  expect(
+    mac.server.requests.filter(isContentWrite).length,
+    "the folder sent a placement's form again",
+  ).toBe(once);
 }
 
 describe("a body link to a retitled item", () => {

@@ -43,6 +43,11 @@ impl Document {
                 .as_ref()
                 .is_some_and(|source| super::preserve::holds_unread_text(&source.yaml))
     }
+
+    /// The frontmatter's YAML as the file holds it, where it has any.
+    pub(super) fn frontmatter_text(&self) -> Option<&str> {
+        self.source.as_ref().map(|source| source.yaml.as_str())
+    }
 }
 
 impl Presentation {

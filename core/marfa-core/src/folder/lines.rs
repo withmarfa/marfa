@@ -551,7 +551,8 @@ impl Folder {
             if removals.is_some() || new.is_empty() {
                 Vec::new()
             } else {
-                let held = self.core.held_among(&self.settings()?, &new)?;
+                let settings = self.settings()?;
+                let held = self.core.held_among(&*self.holds_by(&settings)?, &new)?;
                 new.into_iter().filter(|id| !held.contains(id)).collect()
             }
         };

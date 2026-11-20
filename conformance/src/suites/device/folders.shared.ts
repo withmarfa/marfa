@@ -62,6 +62,18 @@ export function isContentWrite(request: RecordedRequest): boolean {
   );
 }
 
+/** An edge update that changes only a placement's form. */
+export function isFormOnly(request: RecordedRequest): boolean {
+  if (request.method !== "PATCH" || !request.pathname.startsWith("/edges/")) {
+    return false;
+  }
+  const body = JSON.parse(request.body || "{}") as {
+    properties?: Record<string, unknown>;
+  };
+  const changed = Object.keys(body.properties ?? {});
+  return changed.length === 1 && changed[0] === "form";
+}
+
 /** The status report a folder last sent, with its problems in the order of
  *  their codes: the order a device lists them in is not a rule. */
 export function lastReport(harness: FolderHarness): {

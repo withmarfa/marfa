@@ -9,6 +9,7 @@ mod every;
 mod executable;
 pub mod fields;
 mod first;
+mod form;
 mod handover;
 pub mod identity;
 mod landing;
@@ -3127,11 +3128,12 @@ impl Folder {
             .get_or_init(|| executable::kept(&self.state_dir))
     }
 
-    /// The pass includes pinned members that the credential's source filter hides from listings.
+    /// The pass includes pinned members that the credential's source filter
+    /// hides from listings.
     fn members(&self, settings: &Settings) -> Result<HashSet<String>> {
         Ok(self
             .core
-            .held_by(settings)?
+            .held_by(&*self.holds_by(settings)?)?
             .into_iter()
             .map(|item| item.id)
             .collect())
@@ -3152,6 +3154,44 @@ impl Folder {
         tests::RENDERED_ITEMS.with(|rendered| rendered.borrow_mut().insert(item.id.clone()));
         #[cfg(debug_assertions)]
         crate::fault::hold(|| "folder-render");
+        let rendered = self.render_with(item, path, line, catalog, edge_types, lines)?;
+        let (names, typed, recorded) = lines;
+        // A file this directory never had is written in the form its
+        // placement holds, through the same rewrite as a file it had.
+        if typed.is_none()
+            && carries_frontmatter(Path::new(path))
+            && let Ok(text) = &rendered.text
+            && let Some(form) = self.placement(&item.id)?.and_then(|edge| {
+                edge.properties
+                    .get(form::FORM_PROPERTY)
+                    .and_then(form::Form::read)
+            })
+            && let Some(stand_in) = form.stand_in(&document::read(text).front, &item.occurred_at)
+        {
+            let shaped = self.render_with(
+                item,
+                path,
+                line,
+                catalog,
+                edge_types,
+                (names, Some(&stand_in), recorded),
+            )?;
+            if shaped.text.is_ok() {
+                return Ok(shaped);
+            }
+        }
+        Ok(rendered)
+    }
+
+    fn render_with(
+        &self,
+        item: &Item,
+        path: &str,
+        line: Option<i64>,
+        catalog: &Catalog,
+        edge_types: &EdgeTypes,
+        lines: LinesBy<'_>,
+    ) -> Result<Rendered> {
         let body_field = fields::body_field(catalog, &item.r#type);
         let body = item
             .properties
@@ -3184,7 +3224,10 @@ impl Folder {
         shown.extend(embeds.iter().filter(|id| !links.contains(id)).cloned());
         let mut outside = embeds.clone();
         if !outside.is_empty() {
-            let held = self.core.held_among(&self.settings()?, &outside)?;
+            let settings = self.settings()?;
+            let held = self
+                .core
+                .held_among(&*self.holds_by(&settings)?, &outside)?;
             outside.retain(|id| !held.contains(id));
         }
         let (names, typed, recorded) = lines;
@@ -3413,6 +3456,8 @@ fn typed_title(
 mod answered_tests;
 #[cfg(all(test, unix))]
 mod displaced_tests;
+#[cfg(test)]
+mod form_tests;
 #[cfg(test)]
 mod held_links_tests;
 #[cfg(test)]
@@ -5958,6 +6003,32 @@ mod tests {
         );
         settle_selecting(&folder, &mut selection);
         assert_a_full_pull_changes_nothing(dir.path(), &folder);
+    }
+
+    #[test]
+    fn a_path_whose_file_has_an_item_holds_that_item_and_what_is_beneath_it() {
+        let (_dir, folder, _server, _) = watched_notes(&["umbrella.md", "project.md", "child.md"]);
+        let [umbrella, project, child] =
+            ["umbrella.md", "project.md", "child.md"].map(|p| id_at(&folder, p));
+        for (n, (from, to)) in [(&umbrella, &project), (&project, &child)]
+            .into_iter()
+            .enumerate()
+        {
+            let edge =
+                crate::store::testing::wire_edge(&format!("parent-{n}"), from, to, "parent-of");
+            crate::store::put_server_edge(&folder.core.conn().unwrap(), &edge).unwrap();
+        }
+        let members = |beneath: &str| {
+            folder.core.conn().unwrap().execute("UPDATE items SET properties = json_set(properties, '$.query.beneath', ?2) WHERE id = ?1", [&folder.folder, beneath]).unwrap();
+            let settings = folder.settings().unwrap();
+            assert!(settings.pending_beneath().is_some());
+            folder.members(&settings).unwrap()
+        };
+        assert_eq!(
+            members("project.md"),
+            HashSet::from([project.clone(), child.clone()])
+        );
+        assert!(members("missing.md").is_empty());
     }
 
     #[test]
@@ -10051,7 +10122,9 @@ mod tests {
             .queue()
             .unwrap()
             .into_iter()
-            .find(|row| row.kind == WriteKind::UpdateEdge)
+            .find(|row| {
+                row.kind == WriteKind::UpdateEdge && row.edge_id.as_deref() == Some("threaded")
+            })
             .expect("the move is queued");
         // Another machine deleted the edge before the move reached it, and
         // the item the line names went to the bin since.

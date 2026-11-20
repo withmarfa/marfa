@@ -18,7 +18,7 @@ use marfa_rules::catalog::Catalog;
 /// in a file.
 pub const PLACEMENT_EDGE: &str = "in-folder";
 
-const PATH_PROPERTY: &str = "path";
+pub(super) const PATH_PROPERTY: &str = "path";
 
 pub(crate) const META_REFUSED: &str = "folder_placements_refused";
 
@@ -116,6 +116,17 @@ impl Folder {
     /// Records that the item's file sits at `path`, as an edge create or an
     /// update of its `path` alone. Answers whether anything was queued.
     pub(super) fn place(&self, item_id: &str, path: &str, withheld: &Withheld) -> Result<bool> {
+        self.place_with(item_id, path, None, withheld)
+    }
+
+    /// `place`, keeping `form` on the placement it creates or moves.
+    pub(super) fn place_with(
+        &self,
+        item_id: &str,
+        path: &str,
+        form: Option<Value>,
+        withheld: &Withheld,
+    ) -> Result<bool> {
         if withheld
             .get(item_id)
             .is_some_and(|refused| refused.path == path)
@@ -125,7 +136,7 @@ impl Folder {
         if crate::fault::named("purge-before-placement").as_deref() == Some(item_id) {
             store::purge_item(&*self.core.conn()?, item_id)?;
         }
-        let placed = self.queue_placement(item_id, path);
+        let placed = self.queue_placement(item_id, path, form);
         // A row purged since the pass read it can no longer be placed, and
         // its file is the next pull's to take away.
         match placed {
@@ -167,9 +178,12 @@ impl Folder {
         Ok(ended)
     }
 
-    fn queue_placement(&self, item_id: &str, path: &str) -> Result<bool> {
+    fn queue_placement(&self, item_id: &str, path: &str, form: Option<Value>) -> Result<bool> {
         let mut properties = Map::new();
         properties.insert(PATH_PROPERTY.into(), Value::String(path.into()));
+        if let Some(form) = form {
+            properties.insert(super::form::FORM_PROPERTY.into(), form);
+        }
         match self.placement(item_id)? {
             // A path differing only in case or form is the same place, so each
             // machine keeps its file's own name.

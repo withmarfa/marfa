@@ -49,7 +49,11 @@ import {
 } from "../../device/folder-door.js";
 import type { FolderHarness } from "./harness.js";
 import { writeSteadily } from "../../device/steady-writer.js";
-import type { Answer, Responder } from "../../device/scripted-server.js";
+import type {
+  Answer,
+  RecordedRequest,
+  Responder,
+} from "../../device/scripted-server.js";
 import type {
   WireEdgeOptions,
   WireItemOptions,
@@ -57,6 +61,7 @@ import type {
 import {
   EdgeDoor,
   isContentWrite,
+  isFormOnly,
   onCaseSensitiveVolume,
   idIn,
   itemVerdicts,
@@ -2519,17 +2524,28 @@ describe("where a file sits", () => {
       expect(queued.ok, JSON.stringify(queued)).toBe(true);
     }
 
-    /** Pushes, and expects it to send and write nothing more. */
+    /** Pushes, and expects it to send and write nothing more. A placement's
+     *  form alone says how the file is written, not its name or title, and is
+     *  sent at most once. */
     async function settled(mac: FolderHarness): Promise<void> {
       const files = readdirSync(mac.dir).sort();
-      const before = mac.server.requests.filter(isContentWrite).length;
+      const naming = (request: RecordedRequest): boolean =>
+        isContentWrite(request) && !isFormOnly(request);
+      const before = mac.server.requests.filter(naming).length;
       const pushed = await mac.folder.push();
       expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
       expect(
-        mac.server.requests.filter(isContentWrite).length,
+        mac.server.requests.filter(naming).length,
         "the folder went on writing once its name and title agreed",
       ).toBe(before);
       expect(readdirSync(mac.dir).sort()).toEqual(files);
+      const once = mac.server.requests.filter(isContentWrite).length;
+      const again = await mac.folder.push();
+      expect(again.ok, JSON.stringify(again)).toBe(true);
+      expect(
+        mac.server.requests.filter(isContentWrite).length,
+        "the folder sent a placement's form again",
+      ).toBe(once);
     }
 
     function names(mac: FolderHarness): string[] {
