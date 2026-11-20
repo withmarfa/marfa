@@ -233,7 +233,6 @@ fn claimant(id: &str, target: &str, fields: Value) -> Value {
     json!({ "id": id, "compatible_with": target, "fields": fields })
 }
 
-/// Definitions that name one another, in an order a server can register: a target before the type that names it.
 fn references_between_types() -> Vec<Value> {
     let shape = json!({ "x": { "type": "string", "required": true } });
     let bad_enum = json!({ "x": { "type": "enum" } });

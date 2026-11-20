@@ -32,7 +32,7 @@ pub struct FileVerdict {
     pub file: String,
     pub id: Option<String>,
     pub problems: Vec<Problem>,
-    /// What the folder adds beside a server's answer for the type, such as a parent that is not there.
+    /// Folder context for the server's answer.
     pub context: Option<String>,
 }
 
@@ -109,7 +109,6 @@ fn read(bytes: &[u8]) -> Result<Obj, Problem> {
     }
 }
 
-/// How a type names another, each of which the server looks up in the registry when it judges the type.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Link {
     Parent,
@@ -125,7 +124,7 @@ fn compat_targets(body: &Obj) -> Vec<&str> {
     }
 }
 
-/// The types an item column of a table may name; a column naming its own type needs no other.
+/// An item column may name its own type before registration.
 fn column_targets<'a>(body: &'a Obj, own: &str) -> Vec<&'a str> {
     let mut found: Vec<&str> = Vec::new();
     let tables = body.get("tables").and_then(Value::as_object);
@@ -146,7 +145,6 @@ fn column_targets<'a>(body: &'a Obj, own: &str) -> Vec<&'a str> {
     found
 }
 
-/// Every type the server looks up in the registry to judge this one.
 fn references<'a>(body: &'a Obj, own: &str) -> Vec<(Link, &'a str)> {
     let parent = body
         .get("parent")
@@ -334,7 +332,6 @@ pub fn check_type_files(
     Ok(FolderVerdict { files: verdicts })
 }
 
-/// What the folder adds to a server's answer: the types the type names that are not there, and the loop it is in.
 fn context_of(
     entry: &Entry,
     working: &Registry,
@@ -781,7 +778,7 @@ mod tests {
     }
 
     #[test]
-    fn a_compatible_with_claim_that_the_target_does_not_satisfy_is_refused() {
+    fn a_compatibility_claim_missing_a_required_field_is_refused() {
         let target = definition(
             "user.z-target",
             json!({ "fields": { "x": { "type": "string", "required": true } } }),

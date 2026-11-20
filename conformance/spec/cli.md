@@ -1496,7 +1496,7 @@ If `marfa types check` refuses a file in the folder, then the CLI MUST exit 1 wi
 
 ### `cli/types-check-parent-reason`
 
-If a type in the folder names a type that is neither shipped nor accepted in the folder, because it is missing, was refused or is in a loop with the type, then the CLI MUST give the type in `marfa types check` the answer a server gives with the named type absent, and say beside that answer why the type is absent.
+If a type in the folder names a type that is neither shipped nor accepted in the folder because it is missing, was refused or is in a loop with the type, then the CLI MUST give the type in `marfa types check` the answer a server gives with the named type absent and explain the absence beside that answer.
 
 **Reason:** types that name one another in a loop cannot be registered in any order, so a server refuses each of them with the other absent whichever it is given first. Another fault the server finds in the type, such as an `enum` with no `enum_values`, is shown with it, and the reason the type is absent only adds to it.
 
