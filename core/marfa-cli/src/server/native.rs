@@ -110,19 +110,26 @@ pub fn refuse_folder_settings(settings: &EnvFile, file: &Path) -> Result<(), Cli
     )))
 }
 
-/// Services use Homebrew's stable bin/marfa across Cellar upgrades.
-pub fn stable_binary(real: &Path, invoked: PathBuf) -> PathBuf {
+/// Homebrew's prefix, for a program Homebrew installed: `<prefix>/Cellar/<formula>/<version>/bin/marfa`.
+fn homebrew_prefix(real: &Path) -> Option<PathBuf> {
     let parts: Vec<Component> = real.components().collect();
     let cellar = parts
         .iter()
-        .position(|part| part.as_os_str() == OsStr::new("Cellar"));
-    match cellar {
-        // <prefix>/Cellar/<formula>/<version>/bin/marfa
-        Some(at) if at > 0 && parts.len() > at + 3 => {
-            let prefix: PathBuf = parts[..at].iter().collect();
-            prefix.join("bin").join("marfa")
-        }
-        _ => invoked,
+        .position(|part| part.as_os_str() == OsStr::new("Cellar"))?;
+    (cellar > 0 && parts.len() > cellar + 3).then(|| parts[..cellar].iter().collect())
+}
+
+/// Whether Homebrew installed the program at the real path `real`. Homebrew keeps only its
+/// newest release, so an earlier one is installed another way.
+pub fn from_homebrew(real: &Path) -> bool {
+    homebrew_prefix(real).is_some()
+}
+
+/// Services use Homebrew's stable bin/marfa across Cellar upgrades.
+pub fn stable_binary(real: &Path, invoked: PathBuf) -> PathBuf {
+    match homebrew_prefix(real) {
+        Some(prefix) => prefix.join("bin").join("marfa"),
+        None => invoked,
     }
 }
 

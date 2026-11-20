@@ -2,6 +2,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -306,6 +307,35 @@ fn a_release_asked_whether_it_can_open_a_database_judges_the_servers_settings_to
     let output = asked("soon");
     assert_eq!(output.status.code(), Some(78));
     assert!(String::from_utf8_lossy(&output.stderr).contains("MARFA_PORT"));
+}
+
+#[test]
+fn a_server_names_its_release_beside_the_database_only_once_it_serves() {
+    let dir = TempDir::new().unwrap();
+    let record = dir.path().join("marfa.db.release");
+    std::fs::write(&record, "0.0.74\n").unwrap();
+    let refused = program(dir.path())
+        .env("MARFA_PORT", "soon")
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(1));
+    let asked = program(dir.path())
+        .arg("--can-open")
+        .arg(dir.path().join("marfa.db"))
+        .output()
+        .unwrap();
+    assert_eq!(asked.status.code(), Some(0));
+    assert_eq!(std::fs::read_to_string(&record).unwrap(), "0.0.74\n");
+
+    let _server = Server::start(dir.path());
+    let named = format!("{}\n", env!("CARGO_PKG_VERSION"));
+    let limit = Instant::now() + Duration::from_secs(10);
+    while std::fs::read_to_string(&record).unwrap() != named {
+        assert!(Instant::now() < limit, "the release was not named");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let mode = std::fs::metadata(&record).unwrap().permissions().mode();
+    assert_eq!(mode & 0o077, 0, "{mode:o}");
 }
 
 /// A file half an upload left in the first server's staging folder.

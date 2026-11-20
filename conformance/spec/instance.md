@@ -3981,11 +3981,27 @@ When the server starts and its own account owns its database, one of the databas
 
 ### `instance/files-folder-kept`
 
-When the server starts and the folder that holds its database already exists, the server MUST NOT change the mode or the access control list of that folder or of any file in it other than the database, the database's log files, the copies of the database the server makes before an upgrade, the server's secrets file and the file `<database file>.server-lock` the server keeps beside the database.
+When the server starts and the folder that holds its database already exists, the server MUST NOT change the mode or the access control list of that folder or of any file in it other than the database, the database's log files, the copies of the database the server makes before an upgrade, the server's secrets file, the file `<database file>.server-lock` the server keeps beside the database and the file `<database file>.release` the server writes there (`instance/files-release-named`).
 
 **Reason:** an operator may keep the database in a folder that holds other things, and only the server's own files are the server's to change.
 
 **Tests:** `compliance/hook-free-server.test.ts › leaves a shared folder that holds its database, and the other files there, as they were`.
+
+### `instance/files-release-named`
+
+When the server serves requests from a database file, the server MUST replace the file `<database file>.release` with one line holding its own release, written whole or not at all and readable and writable only by the server's account.
+
+**Reason:** the command line reads from this file which release last served the database while no server runs, and the file is as private as the database it names.
+
+**Tests:** `compliance/hook-free-server.test.ts › names its release beside its database once it serves, and not before`.
+
+### `instance/files-release-unnamed`
+
+If the server refuses to start or has not yet served requests from a database file, then the server MUST NOT change the file `<database file>.release`.
+
+**Reason:** the file names the release that last served the database, and a refused start did not serve it.
+
+**Tests:** `compliance/hook-free-server.test.ts › names its release beside its database once it serves, and not before`.
 
 ### `instance/files-link-refused`
 
