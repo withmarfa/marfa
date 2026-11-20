@@ -34,7 +34,7 @@ mod webhooks;
 use std::sync::Arc;
 
 use marfa_rules::validation;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::results::{Outcome, Stop, check};
 use crate::app::App;
@@ -57,6 +57,21 @@ impl Group {
             Group::Admin => "/mcp/admin",
         }
     }
+
+    /// What a client is told about the endpoint in its first message, at most 512 characters.
+    pub const fn instructions(self) -> &'static str {
+        match self {
+            Group::Items => {
+                "Marfa is the person's own data store. Call marfa_overview first. Find and read with marfa_find and marfa_get, save with marfa_create (text, or a file by web address), change with marfa_update and delete with marfa_delete. Read table rows with marfa_read_rows and change them with marfa_write_rows. Read an item before changing it and send the version you read. marfa_delete only previews first: show the person what would go and ask before you confirm."
+            }
+            Group::Schema => {
+                "Marfa is the person's own data store. Call marfa_overview first. Here you also shape it: marfa_save_type and marfa_save_view define types and views, marfa_bulk_save writes many items, marfa_move_items moves items to another type, and marfa_sources and marfa_name_source list and name sources. Ask marfa_search_docs how Marfa works. marfa_delete and marfa_move_items only preview first: show the person what would change and ask before you confirm."
+            }
+            Group::Admin => {
+                "Marfa is the person's own data store, and here you run it. Call marfa_health first. Tools that remove, end, replace or restart something preview first, such as marfa_purge and marfa_update_server: show the person exactly what would happen, and confirm only once they agree. A change marfa_change_settings refuses for want of a recent sign-in needs the person to reconnect this app."
+            }
+        }
+    }
 }
 
 /// What a client is told about one tool.
@@ -68,6 +83,16 @@ struct Definition {
     output: Value,
     annotations: Value,
     meta: Option<Value>,
+}
+
+/// The annotations of a tool that only reads.
+fn reads() -> Value {
+    json!({
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false,
+    })
 }
 
 /// Where a tool lives: an admin tool names the task whose permissions open it.
@@ -327,6 +352,55 @@ fn parsed(text: &str) -> Result<Value, Stop> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const GROUPS: [Group; 3] = [Group::Items, Group::Schema, Group::Admin];
+
+    #[test]
+    fn each_endpoint_s_instructions_fit_the_limit_a_client_may_hold_them_to() {
+        for group in GROUPS {
+            let length = group.instructions().chars().count();
+            assert!(length <= 512, "{}: {length}", group.path());
+        }
+    }
+
+    #[test]
+    fn each_endpoint_s_instructions_name_only_tools_it_serves() {
+        for group in GROUPS {
+            let served: Vec<&str> = definitions()
+                .iter()
+                .filter(|(home, _)| served(group, *home))
+                .map(|(_, tool)| tool.name)
+                .collect();
+            let named: Vec<&str> = group
+                .instructions()
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .filter(|word| word.starts_with("marfa_"))
+                .collect();
+            assert!(!named.is_empty(), "{}", group.path());
+            for name in named {
+                assert!(served.contains(&name), "{} names {name}", group.path());
+            }
+        }
+    }
+
+    #[test]
+    fn every_tool_carries_the_four_hints_and_a_read_neither_destroys_nor_differs_on_repeat() {
+        for (_, tool) in definitions() {
+            let hints = tool.annotations.as_object().unwrap();
+            let hint = |name: &str| {
+                hints
+                    .get(name)
+                    .and_then(Value::as_bool)
+                    .unwrap_or_else(|| panic!("{} has no {name}", tool.name))
+            };
+            assert_eq!(hints.len(), 4, "{}", tool.name);
+            if hint("readOnlyHint") {
+                assert!(!hint("destructiveHint"), "{}", tool.name);
+                assert!(hint("idempotentHint"), "{}", tool.name);
+            }
+            hint("openWorldHint");
+        }
+    }
 
     #[test]
     fn every_admin_task_has_a_tool_at_admin() {

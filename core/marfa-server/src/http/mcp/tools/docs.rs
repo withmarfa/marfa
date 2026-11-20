@@ -37,7 +37,7 @@ pub fn definition() -> Definition {
             },
             "required": ["query", "search_url", "docs_mcp", "llms_txt", "next"],
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }

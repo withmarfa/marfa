@@ -62,7 +62,7 @@ pub fn definition() -> Definition {
             },
             "required": ["health"],
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }

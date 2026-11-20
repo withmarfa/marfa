@@ -39,7 +39,7 @@ pub fn definition() -> Definition {
                 "type": { "type": "object" },
             },
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }

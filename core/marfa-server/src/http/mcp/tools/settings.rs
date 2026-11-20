@@ -44,7 +44,7 @@ pub fn read_definition() -> Definition {
             },
             "required": ["instance_id", "settings"],
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }

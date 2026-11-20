@@ -30,9 +30,6 @@ use rpc::{Call, Entry, Era, Reply};
 
 use tools::Group;
 
-/// What a client is told about the server in its first message, at most 512 characters.
-const INSTRUCTIONS: &str = "Marfa is the person's own data store. Call marfa_overview first. Find and read with marfa_find and marfa_get, save with marfa_create (text, or a file by web address), change with marfa_update, and delete with marfa_delete. An item's table rows are read with marfa_read_rows and changed with marfa_write_rows. Read an item before changing it and send the version you read. marfa_delete, marfa_move_items and marfa_revoke_key only preview first: show the person what would change and ask before you confirm.";
-
 const SERVER_NAME: &str = "marfa";
 const SERVER_TITLE: &str = "Marfa";
 const SERVER_INFO_KEY: &str = "io.modelcontextprotocol/serverInfo";
@@ -121,7 +118,7 @@ fn initialize(caller: &Caller, group: Group, call: &Call) -> Value {
         "protocolVersion": version,
         "capabilities": capabilities(caller, group),
         "serverInfo": server_info(),
-        "instructions": INSTRUCTIONS,
+        "instructions": group.instructions(),
     })
 }
 
@@ -129,7 +126,7 @@ fn discover(caller: &Caller, group: Group) -> Value {
     let mut result = Map::new();
     result.insert("supportedVersions".into(), json!([rpc::MODERN]));
     result.insert("capabilities".into(), capabilities(caller, group));
-    result.insert("instructions".into(), INSTRUCTIONS.into());
+    result.insert("instructions".into(), group.instructions().into());
     result.insert("ttlMs".into(), 0.into());
     result.insert("cacheScope".into(), "private".into());
     result.insert("_meta".into(), json!({ SERVER_INFO_KEY: server_info() }));
@@ -380,18 +377,4 @@ pub fn doors() -> super::Routes {
             post_to(post_admin).get(only_post).delete(only_post),
         )
         .refusing(axum::http::Method::DELETE, Group::Admin.path())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_instructions_fit_the_limit_a_client_may_hold_them_to() {
-        assert!(
-            INSTRUCTIONS.chars().count() <= 512,
-            "{}",
-            INSTRUCTIONS.chars().count()
-        );
-    }
 }

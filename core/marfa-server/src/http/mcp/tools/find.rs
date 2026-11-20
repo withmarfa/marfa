@@ -88,7 +88,7 @@ pub fn definition() -> Definition {
             },
             "required": ["items", "next_cursor"],
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }

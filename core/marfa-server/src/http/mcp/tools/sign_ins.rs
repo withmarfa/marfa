@@ -13,11 +13,14 @@ use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, fit_list};
 pub const LIST_NAME: &str = "marfa_sign_ins";
 pub const RENAME_NAME: &str = "marfa_rename_sign_in";
 
+const OWNER_PAGE: &str = "/auth/owner/passkeys";
+const OWNER_PAGE_OFFERS: &str = "The owner adds a passkey or changes the password on this page, signed in in a browser, since a passkey needs the browser and a password must not pass through a tool. The command line changes the password too: marfa owner password, which asks for it with no echo.";
+
 pub fn list_definition() -> Definition {
     Definition {
         name: LIST_NAME,
         title: "List sign-ins and passkeys",
-        description: "Use to see where the owner is signed in, with browsers, apps and keys each named, and the owner's passkeys.",
+        description: "Use to see where the owner is signed in, with browsers, apps and keys each named, and the owner's passkeys. It also gives the server's page where the owner adds a passkey or changes the password, neither of which a tool does.",
         input: json!({
             "type": "object",
             "properties": {},
@@ -29,10 +32,12 @@ pub fn list_definition() -> Definition {
                 "sign_ins": { "type": "array", "items": { "type": "object" } },
                 "passkeys": { "type": "array", "items": { "type": "object" } },
                 "left_out": { "type": "integer" },
+                "owner_page": { "type": "string" },
+                "owner_page_offers": { "type": "string" },
             },
-            "required": ["sign_ins", "passkeys"],
+            "required": ["sign_ins", "passkeys", "owner_page"],
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }
@@ -91,6 +96,11 @@ pub async fn list(app: &Arc<App>, caller: &Caller) -> Outcome {
     if sign_ins_left + keys_left > 0 {
         answer.insert("left_out".into(), (sign_ins_left + keys_left).into());
     }
+    answer.insert(
+        "owner_page".into(),
+        format!("{}{OWNER_PAGE}", app.addresses().sign_in().origin()).into(),
+    );
+    answer.insert("owner_page_offers".into(), OWNER_PAGE_OFFERS.into());
     Ok(Value::Object(answer))
 }
 
