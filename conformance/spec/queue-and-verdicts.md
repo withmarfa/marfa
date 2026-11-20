@@ -2332,7 +2332,7 @@ When a caller queues an update said to be read at a version above 0 and earlier 
 
 ### `queue-and-verdicts/as-read-bounds`
 
-If a caller queues an update said to be read at version 0 while the copy holds a later version, or at a version later than the one the copy holds, then a device MUST refuse it `invalid`, queueing nothing, but where `queue-and-verdicts/as-read-own-create` sends it on another.
+If a caller queues an update said to be read at version 0 while the copy holds a later version, or at a version later than the one the copy holds, then a device MUST refuse it `invalid`, queueing nothing, but where `queue-and-verdicts/as-read-own-create` sends it on the version its create made.
 
 **Reason:** no server mints 0 (`versions/create-claim-none`), and a version the copy has not reached was not read.
 
@@ -2342,7 +2342,7 @@ If a caller queues an update said to be read at version 0 while the copy holds a
 
 When a caller queues an update said to be read at version 0 of an item whose create this device made and the server has answered, a device MUST send it on the version that create made.
 
-**Reason:** the copy shows its own create at version 0 until the server answers it, so an editor that read the item before then read the version that create made; the server then merges the edit against that version (`versions/merge-stale`) wherever another device has written since.
+**Reason:** the copy shows its own create at version 0 until the server answers it, so an editor that read the item then read at least what that create made, and the copy cannot tell what more; on that version the server merges the edit (`versions/merge-stale`), or conflicts on it, against anything written since, this device's own later edits included.
 
 **Tests:** `device/queue.test.ts › sends an edit read at version 0 of its own create on the version that create made`, `› keeps both where another device changed the property an edit read at version 0 of its own create changed`.
 
