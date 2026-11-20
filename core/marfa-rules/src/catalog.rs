@@ -1331,6 +1331,16 @@ impl Catalog {
         )
     }
 
+    /// The name `display` gives, where the preview is not wanted.
+    pub fn display_name(&self, type_id: &str, properties: &Map<String, Value>) -> Option<String> {
+        crate::display::display_name(
+            properties,
+            self.title_field(type_id),
+            self.body_field(type_id),
+            self.name_from_body(type_id),
+        )
+    }
+
     pub fn display(&self, type_id: &str, properties: &Map<String, Value>) -> ItemDisplay {
         crate::display::display(
             properties,
