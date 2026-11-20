@@ -1465,6 +1465,9 @@ export interface StatusReport {
   /** The path of the file the folder's query narrows beneath while that file
    *  has no item, where one does (`folder-setup/beneath-file-waits`). */
   beneath_waiting?: string;
+  /** Why the path still names no item, from the last sync that tried to name
+   *  it (`folder-setup/beneath-file-waits-why`). */
+  beneath_waiting_reason?: string;
   /** Directory holds or intentional package exclusions observed by the inventory. */
   directories: FlaggedFile[];
   files: Array<{
