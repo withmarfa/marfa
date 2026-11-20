@@ -463,15 +463,15 @@ impl App {
                     "has not answered an earlier adopt, so nothing was adopted",
                 ));
             }
-            // The claim goes on, and what the folder keeps of it is settled once it answers.
+            // The claim goes on: it is given up once it answers, or held for the next follow.
             Err(Unanswered::Late) => {
                 self.blobs.doubt_record();
                 return Ok(Adopting::ClaimKept(Refusal::new(
                     Code::BlobStoreUnavailable,
                     format!(
                         "Nothing was adopted, but the backup folder {root} did not answer in time \
-                         and may keep this adopt's claim until it answers. Check that its disk is \
-                         mounted and answering, then try again."
+                         and may keep this adopt's claim. Check that its disk is mounted and \
+                         answering, then try again."
                     ),
                 )));
             }
