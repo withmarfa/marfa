@@ -9,6 +9,7 @@ mod create;
 mod delete;
 mod delete_connector;
 mod docs;
+mod end_sign_in;
 mod files;
 mod find;
 mod get;
@@ -38,6 +39,7 @@ use serde_json::{Map, Value};
 use super::results::{Outcome, Stop, check};
 use crate::app::App;
 use crate::app::access::{AdminTask, Caller};
+use crate::app::auth::Visit;
 use crate::app::refusal::Refusal;
 
 /// An MCP endpoint; each serves the items tools as well as its own.
@@ -124,6 +126,7 @@ fn definitions() -> Vec<(Home, Definition)> {
         (Home::Admin(Task::Files), files::definition()),
         (Home::Admin(Task::SignIns), sign_ins::list_definition()),
         (Home::Admin(Task::SignIns), sign_ins::rename_definition()),
+        (Home::Admin(Task::EndSignIn), end_sign_in::definition()),
     ]
 }
 
@@ -210,6 +213,7 @@ pub async fn call(
     name: &str,
     arguments: Map<String, Value>,
     exact: Result<(), Refusal>,
+    visit: &Visit,
 ) -> Option<Outcome> {
     let (_, tool) = definitions().into_iter().find(|(home, tool)| {
         tool.name == name && served(group, *home) && offered(caller, *home, tool.name)
@@ -221,7 +225,7 @@ pub async fn call(
     let Value::Object(arguments) = arguments else {
         return None;
     };
-    Some(run(app, caller, tool.name, arguments, exact).await)
+    Some(run(app, caller, tool.name, arguments, exact, visit).await)
 }
 
 async fn run(
@@ -230,6 +234,7 @@ async fn run(
     name: &str,
     arguments: Map<String, Value>,
     exact: Result<(), Refusal>,
+    visit: &Visit,
 ) -> Outcome {
     if works_on_items(name) {
         caller.require_reach()?;
@@ -282,6 +287,7 @@ async fn run(
         files::NAME => files::run(app, caller, arguments).await,
         sign_ins::LIST_NAME => sign_ins::list(app, caller).await,
         sign_ins::RENAME_NAME => sign_ins::rename(app, caller, arguments).await,
+        end_sign_in::NAME => end_sign_in::run(app, caller, arguments, visit.clone()).await,
         _ => Err(Stop::invalid("No tool has this name.")),
     }
 }

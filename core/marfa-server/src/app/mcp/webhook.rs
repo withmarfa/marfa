@@ -124,6 +124,19 @@ impl Plan {
     }
 }
 
+/// The digest a confirmation binds a webhook by, as it stands.
+pub fn held_digest(held: &Subscription) -> String {
+    Plan {
+        id: Some(held.id.clone()),
+        url: held.url.clone(),
+        host: String::new(),
+        events: held.events.clone(),
+        type_filter: held.type_filter.clone(),
+        active: held.active,
+    }
+    .digest()
+}
+
 /// The plan and the ids it covers, on the state `tx` sees.
 fn planned(
     tx: &rusqlite::Transaction<'_>,

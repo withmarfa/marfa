@@ -29,8 +29,11 @@ pub struct Stood {
 }
 
 fn version_of(unit: &Unit<'_, '_>, id: &str) -> Result<Option<i64>> {
-    Ok(unit
-        .tx()
+    item_version(unit.tx(), id)
+}
+
+pub(super) fn item_version(tx: &Connection, id: &str) -> Result<Option<i64>> {
+    Ok(tx
         .query_row("SELECT version FROM items WHERE id = ?1", [id], |row| {
             row.get(0)
         })

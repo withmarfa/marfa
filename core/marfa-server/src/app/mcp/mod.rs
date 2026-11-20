@@ -6,6 +6,7 @@ pub mod fetch;
 pub mod moving;
 pub mod purge;
 pub mod revoke;
+pub mod sign_in;
 pub mod trash;
 pub mod webhook;
 

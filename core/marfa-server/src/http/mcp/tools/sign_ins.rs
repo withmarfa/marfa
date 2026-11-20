@@ -41,7 +41,7 @@ pub fn rename_definition() -> Definition {
     Definition {
         name: RENAME_NAME,
         title: "Rename a sign-in or a passkey",
-        description: "Use to give a sign-in or a passkey, as marfa_sign_ins lists them, a new name. Ending a sign-in, removing a passkey and adding one are not offered here.",
+        description: "Use to give a sign-in or a passkey, as marfa_sign_ins lists them, a new name. To end a sign-in or remove a passkey, use marfa_end_sign_in. Adding a passkey is not offered here.",
         input: json!({
             "type": "object",
             "properties": {
