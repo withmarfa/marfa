@@ -710,3 +710,77 @@ async fn no_update_starts_while_another_holds_or_has_not_settled_the_programs() 
         "the witness: with nothing in the way the same update runs"
     );
 }
+
+#[test]
+fn clearing_staging_keeps_the_staged_marfa_and_the_updates_lock() {
+    let case = Case::new("clear-keeps");
+    fs::write(next_marfa(&case.bin()), "the staged marfa").unwrap();
+    fs::write(case.bin().join(pending::LOCK), "").unwrap();
+    let left = case.bin().join(".marfa-update-0.0.73");
+    fs::create_dir(&left).unwrap();
+
+    apply::clear_staging(&case.bin()).unwrap();
+    assert!(
+        !left.exists(),
+        "the witness: a leftover staging folder goes"
+    );
+    assert_eq!(
+        fs::read_to_string(next_marfa(&case.bin())).unwrap(),
+        "the staged marfa"
+    );
+    assert!(case.bin().join(pending::LOCK).is_file());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn work_the_writer_begins_runs_after_the_request_that_asked_for_it_is_gone() {
+    use crate::db::{Db, Lock, Options, Write, migrate::MIGRATIONS};
+    use std::time::Duration;
+
+    let options = Options {
+        path: DatabasePath::Memory,
+        write_wait: Duration::from_secs(5),
+        readers: 1,
+        migrations: MIGRATIONS,
+        reserve: 0,
+        upgrade_marks: None,
+    };
+    let lock = Lock::take(&options.path).map_err(|f| f.message).unwrap();
+    let db = Db::open(&options, lock, Arc::default())
+        .map_err(|f| f.message)
+        .unwrap();
+
+    let (entered, busy) = std::sync::mpsc::channel();
+    let (let_go, held) = std::sync::mpsc::channel::<()>();
+    let mut long = Box::pin(db.write(Write::own(), move |_| {
+        entered.send(()).unwrap();
+        held.recv().unwrap();
+        Ok(())
+    }));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut long)
+            .await
+            .is_err()
+    );
+    busy.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    let (ran, done) = tokio::sync::oneshot::channel();
+    let mut asking = Box::pin(super::begin_on_writer(&db, move |_| {
+        Ok(Some(async move {
+            let _ = ran.send(());
+        }))
+    }));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut asking)
+            .await
+            .is_err(),
+        "the start waits behind the long write"
+    );
+    drop(asking);
+    let_go.send(()).unwrap();
+    long.await.unwrap();
+
+    tokio::time::timeout(Duration::from_secs(5), done)
+        .await
+        .expect("the begun work ran")
+        .unwrap();
+}

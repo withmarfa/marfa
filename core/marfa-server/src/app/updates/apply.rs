@@ -292,7 +292,7 @@ pub(super) fn claim(job: &Job) -> Result<File, String> {
 
 /// Removes the folders earlier updates left beside the programs, whatever release each was for.
 /// A link or a file under such a name is left alone.
-fn clear_staging(programs: &Path) -> Result<(), String> {
+pub(super) fn clear_staging(programs: &Path) -> Result<(), String> {
     let unreadable = |error: std::io::Error| {
         format!("The folder holding the programs could not be read: {error}.")
     };
