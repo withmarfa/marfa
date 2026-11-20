@@ -93,6 +93,32 @@ describe("a log that holds another event where the copy's last one was", () => {
   });
 });
 
+describe("a stream that carries an event at the cursor of a copy that took none", () => {
+  it("applies no event at or before the cursor of a copy filled since it last took one", async () => {
+    harness = await startHarness("restored-no-anchor");
+    const h = harness;
+    scriptHydration(h.server, { head: "10" });
+    h.server.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("11", [
+        copyItemEvent("10", "item.created", wireItem({ id: "n0" })),
+        copyItemEvent("11", "item.created", wireItem({ id: "n1" })),
+      ]),
+    );
+    expect((await h.device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await h.device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    // The witness: the event after the cursor is applied.
+    expect((await h.device.get("n1")).ok).toBe(true);
+    expect(
+      caught.ok && caught.value.applied,
+      "an event at the cursor was applied",
+    ).toBe(1);
+    expect((await h.device.get("n0")).ok).toBe(false);
+  });
+});
+
 describe("a write the server answered and no longer holds", () => {
   /** A read of the item at the version the server answered its create with. */
   function held(id: string): Answer {
@@ -165,4 +191,39 @@ describe("a write the server answered and no longer holds", () => {
       "a server that no longer holds an item it accepted was taken as holding it",
     ).toBe("copy_expired");
   });
+
+  const unreadable = [
+    [
+      "200 with a body that is no item",
+      (): Answer => ({ kind: "json", status: 200, body: { item: "no item" } }),
+    ],
+    [
+      "400 invalid_id",
+      (): Answer => refusal(400, "invalid_id", "the id is not a UUIDv7"),
+    ],
+  ] as const;
+  it.each(unreadable)(
+    "sets aside a write whose item the server answers %s, and reads it no more",
+    async (_answer, read) => {
+      const h = await drainedCreate("restored-receipt-unreadable", read);
+      const reads = (): number =>
+        h.server.requests.filter((request) =>
+          /^\/items\/[^/]+$/.test(request.pathname),
+        ).length;
+      const before = reads();
+      const caught = await h.device.catchUp();
+      expect(
+        caught.ok ? "caught up" : caught.refusal.code,
+        "an answer about one item stopped the catch-up",
+      ).toBe("caught up");
+      // The witness: the check read the item.
+      expect(reads()).toBeGreaterThan(before);
+      const checked = reads();
+      const again = await h.device.catchUp();
+      expect(again.ok, JSON.stringify(again)).toBe(true);
+      expect(reads(), "the device read again an item it had set aside").toBe(
+        checked,
+      );
+    },
+  );
 });

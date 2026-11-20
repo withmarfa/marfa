@@ -1122,11 +1122,11 @@ If the read after a refusal meets an environmental failure, then a device MUST k
 
 ### `queue-and-verdicts/refused-item-absent`
 
-When the read after a refusal is answered `403` or `400 invalid_id`, or `404` for an edge or for an item the server's bin does not answer either, a device MUST let go of the item or edge, where nothing wrote it in the copy while the read was out.
+When the read after a refusal is answered `403` or `400 invalid_id`, or `404` for an edge or for an item the server's bin does not answer either, a device MUST let go of the item or edge, where nothing wrote it in the copy while the read was out and `device/read-back-missing-kept` does not keep it.
 
-**Reason:** the server holds no such item, as a create the server refused leaves it. An item the bin answers is held (`device/read-back-trashed-held`).
+**Reason:** the server holds no such item, as a create the server refused leaves it. An item the bin answers is held (`device/read-back-trashed-held`), and one the server gave the copy is kept until the stream says why it is gone (`device/read-back-missing-kept`).
 
-**Tests:** `device/verdicts.test.ts › refused: takes a read-back answered 400 invalid_id as the server holding no such item`, `› refused: lets the item go where the read-back is answered %s`, `device/bin-live.test.ts › lets go of an item neither a read by id nor the bin holds after its refused edit`.
+**Tests:** `device/verdicts.test.ts › refused: takes a read-back answered 400 invalid_id as the server holding no such item`, `› refused: lets the item go where the read-back is answered %s`, `device/bin-live.test.ts › keeps an item neither a read by id nor the bin holds after its refused edit until the stream shows its purge`.
 
 ### `queue-and-verdicts/absent-read-keeps-written`
 

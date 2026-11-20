@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { readFileSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { afterAll, describe, expect, it } from "vitest";
@@ -69,6 +70,7 @@ interface World {
 async function world(
   label: string,
   env: Record<string, string> = {},
+  types: string[] = ["core.note"],
 ): Promise<World> {
   const original = await bootFreshServer(label, env);
   servers.push(original);
@@ -84,7 +86,13 @@ async function world(
       for (const [name, held] of Object.entries(request.headers)) {
         if (
           held !== undefined &&
-          !["host", "connection", "content-length"].includes(name)
+          ![
+            "host",
+            "connection",
+            "content-length",
+            "transfer-encoding",
+            "expect",
+          ].includes(name)
         )
           headers.set(name, Array.isArray(held) ? held.join(", ") : held);
       }
@@ -128,7 +136,7 @@ async function world(
     url: `http://127.0.0.1:${String(port)}`,
     key: original.workingKey,
   });
-  value(await device.hydrate(["core.note"], "library"));
+  value(await device.hydrate(types, "library"));
   return {
     original,
     device,
@@ -396,6 +404,236 @@ describe("a server restored behind work this device sent it", () => {
       value(await w.device.release({ reason: "server_restored" }));
       value(await w.device.drain());
       expect((await w.client().getEdge(edgeId)).status).toBe(404);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "keeps an item made since the backup, with an edit the restored server refused before the copy expired waiting on its create",
+    async () => {
+      const w = await world("restored-refused-edit");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const id = await made(w.device, "made since the backup");
+      await sent(w.device);
+
+      await w.restore(image);
+      const version = value(await w.device.get(id)).version;
+      value(
+        await w.device.update(id, {
+          properties: { title: "edited after the restore" },
+          version,
+        }),
+      );
+      const refused = value(await w.device.drain());
+      expect(refused.verdicts.map((verdict) => verdict.verdict)).toEqual([
+        "refused",
+      ]);
+      // A refused edit is not shown, and the item it was refused for stays.
+      expect(
+        value(await w.device.get(id)).properties.title,
+        "the read after the refusal let go of an item the server gave the copy",
+      ).toBe("made since the backup");
+
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note"], "library"));
+      expect(await keptBlocked(w.device)).toEqual([
+        ["create_item", id],
+        ["update_item", id],
+      ]);
+      const queued = await queue(w.device);
+      const create = queued.find((write) => write.kind === "create_item");
+      const edit = queued.find((write) => write.kind === "update_item");
+      expect(
+        edit?.depends_on,
+        "the refused edit was not made to wait on the create that puts its item back",
+      ).toContain(create?.id);
+
+      expect(value(await w.device.release({ reason: "server_restored" }))).toBe(
+        2,
+      );
+      // The edit was queued before its create, so it waits a drain for it.
+      value(await w.device.drain());
+      value(await w.device.drain());
+      expect(await title(w.client(), id)).toBe("edited after the restore");
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "puts back the tags the restored server lost from an item it still holds",
+    async () => {
+      const w = await world("restored-tags");
+      const held = await note(w.client(), "tagged after the backup");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      value(await w.device.replaceTags(held.id, ["kept"]));
+      await sent(w.device);
+      // A tag write keeps no receipt, so only the log shows what it lost.
+      value(await w.device.catchUp());
+
+      await w.restore(image);
+      const before = await w.client().getItem(held.id);
+      expect(before.ok && before.data.metadata.tags).toEqual([]);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note"], "library"));
+
+      expect(await keptBlocked(w.device)).toEqual([["replace_tags", held.id]]);
+      expect(value(await w.device.get(held.id)).tags).toEqual(["kept"]);
+
+      value(await w.device.release({ reason: "server_restored" }));
+      value(await w.device.drain());
+      const after = await w.client().getItem(held.id);
+      expect(after.ok && after.data.metadata.tags).toEqual(["kept"]);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "puts back in the bin an item the restored server holds out of it after this device trashed it",
+    async () => {
+      const w = await world("restored-bin");
+      const held = await note(w.client(), "trashed after the backup");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      value(await w.device.deleteItem(held.id));
+      expect((await sent(w.device)).answered).toBe(1);
+
+      await w.restore(image);
+      expect((await w.client().getItem(held.id)).status).toBe(200);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note"], "library"));
+
+      expect(await keptBlocked(w.device)).toEqual([["delete_item", held.id]]);
+
+      value(await w.device.release({ reason: "server_restored" }));
+      value(await w.device.drain());
+      expect((await w.client().getItem(held.id)).status).toBe(404);
+      const binned = await w.client().getItem(held.id, "trashed");
+      expect(binned.ok && binned.data.item.state).toBe("trashed");
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "keeps a file attached since the backup, with an upload of the bytes the restored server lacks",
+    async () => {
+      const w = await world("restored-upload", {}, ["core.note", "core.file"]);
+      const host = await note(w.client(), "holds the attachment");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const folder = tempFolder("marfa-restored-upload-");
+      const path = join(folder, "attached.bin");
+      writeFileSync(path, `attached ${randomUUID()}`);
+      const attached = value(await w.device.attach(host.id, path));
+      const fileId = attached.item.item_id ?? "";
+      const edgeId = attached.edge.edge_id ?? "";
+      const report = await sent(w.device);
+      expect(report.answered, JSON.stringify(report)).toBe(3);
+      const hash = String(
+        value(await w.device.get(fileId)).properties.blob_ref,
+      );
+      expect((await w.client().downloadBlob(hash)).status).toBe(200);
+
+      await w.restore(image);
+      expect(
+        (await w.client().downloadBlob(hash)).status,
+        "the restored server still holds the bytes, so it lost nothing",
+      ).toBe(404);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note", "core.file"], "library"));
+
+      expect(await keptBlocked(w.device)).toEqual([
+        ["create_edge", edgeId],
+        ["create_item", fileId],
+        ["upload_blob", ""],
+      ]);
+
+      value(await w.device.release({ reason: "server_restored" }));
+      value(await w.device.drain());
+      expect((await w.client().downloadBlob(hash)).status).toBe(200);
+      expect(await title(w.client(), fileId)).toBe("attached.bin");
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "keeps an item made since the backup through a hydration of another slice before any catch-up",
+    async () => {
+      const w = await world("restored-other-slice");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const id = await made(w.device, "made since the backup");
+      await sent(w.device);
+
+      await w.restore(image);
+      // A slice of other types clears the copy rather than fill it again.
+      value(await w.device.hydrate(["core.note", "core.task"], "library"));
+
+      expect(await keptBlocked(w.device)).toEqual([["create_item", id]]);
+      value(await w.device.release({ reason: "server_restored" }));
+      value(await w.device.drain());
+      expect(await title(w.client(), id)).toBe("made since the backup");
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "keeps nothing of a change another client made at the version the copy held",
+    async () => {
+      const w = await world("restored-moved-on");
+      const held = await note(w.client(), "tagged elsewhere");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const id = await made(w.device, "made since the backup");
+      await sent(w.device);
+
+      await w.restore(image);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      // After the copy expired, so it holds the item as it was before.
+      const tagged = await w.client().addTags(held.id, ["elsewhere"]);
+      expect(tagged.ok, JSON.stringify(tagged.error)).toBe(true);
+      const now = await w.client().getItem(held.id);
+      expect(
+        now.ok && now.data.item.version,
+        "the tags moved the item to another version",
+      ).toBe(held.version);
+      value(await w.device.hydrate(["core.note"], "library"));
+
+      expect(
+        await keptBlocked(w.device),
+        "a change the restored server made after the copy held the item was put back over",
+      ).toEqual([["create_item", id]]);
+      expect(value(await w.device.get(held.id)).tags).toEqual(["elsewhere"]);
+    },
+    TIMEOUT,
+  );
+});
+
+describe("a server that was not restored", () => {
+  it(
+    "reads no item again after this device trashed it and another client took it out of the bin",
+    async () => {
+      const w = await world("not-restored-trash");
+      const held = await note(w.client(), "trashed here, restored there");
+      value(await w.device.catchUp());
+      value(await w.device.deleteItem(held.id));
+      await sent(w.device);
+      const restored = await w.client().restoreItem(held.id);
+      expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+      // The witness: the log of requests holds the device's reads of the item.
+      expect(w.sent).toContain(`GET /items/${held.id}`);
+
+      const before = w.sent.length;
+      expect(
+        expired(await w.device.catchUp()),
+        "a trash undone elsewhere was taken as a removal the server lost",
+      ).toBe("caught up");
+      expect(value(await w.device.get(held.id)).state).toBe("active");
+      expect(
+        w.sent.slice(before).filter((line) => line.startsWith("GET /items/")),
+        "the stream showed the trash, yet the device read the item again",
+      ).toEqual([]);
     },
     TIMEOUT,
   );

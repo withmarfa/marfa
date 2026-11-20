@@ -310,7 +310,7 @@ it("keeps an item it trashed itself, held only by its pin, at the server's versi
   expect((await findInBin(copy, [note.id])).found.has(note.id)).toBe(false);
 });
 
-it("lets go of an item neither a read by id nor the bin holds after its refused edit", async () => {
+it("keeps an item neither a read by id nor the bin holds after its refused edit until the stream shows its purge", async () => {
   const note = await heldNote("edited here, purged there");
   const copy = await device("purged", "library");
   value(
@@ -332,9 +332,19 @@ it("lets go of an item neither a read by id nor the bin holds after its refused 
   expect(report.verdicts.map((verdict) => verdict.verdict)).toEqual([
     "refused",
   ]);
+  // A server restored to before the item answers the same reads.
+  expect(
+    value(
+      await copy.list({ allStates: true, filter: `id eq "${note.id}"` }),
+    ).map((row) => row.id),
+    "the copy let go of an item the server gave it on a read alone",
+  ).toEqual([note.id]);
+
+  const caught = await copy.catchUp();
+  expect(caught.ok, JSON.stringify(caught)).toBe(true);
   expect(
     value(await copy.list({ allStates: true, filter: `id eq "${note.id}"` })),
-    "the copy kept an item the server holds nowhere",
+    "the copy kept an item the stream showed purged",
   ).toEqual([]);
 });
 

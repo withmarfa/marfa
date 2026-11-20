@@ -1556,31 +1556,65 @@ When a device opens the event stream for a catch-up or a held stream after takin
 
 When a stream carries an event at or before the device's cursor, a device MUST NOT apply it.
 
-**Tests:** `device/server-restored.test.ts › asks the stream from the event before the last one it took, and takes that one only to compare`.
+**Reason:** this holds also for a copy that has taken no event since it was last filled, which asks the stream from its cursor.
+
+**Tests:** `device/server-restored.test.ts › asks the stream from the event before the last one it took, and takes that one only to compare`, `› applies no event at or before the cursor of a copy filled since it last took one`.
 
 ### `device/expire-last-event-other`
 
 If the event a stream carries at the id of the last event the copy took names another event type, item, edge, version or time than the one the copy took there, then a device MUST end the catch-up or the held stream `copy_expired`.
 
-**Reason:** a restored server that has taken new writes since holds a log level with or past the copy's cursor (`device/expire-log-behind` does not hold), but the events after the point it was restored to are not the ones the copy took.
+**Reason:** a restored server that has taken new writes since holds a log level with or past the copy's cursor (`device/expire-log-behind` does not hold), but the events after the point it was restored to are not the ones the copy took. The event compared is the last one the stream sent the copy. Where the server withheld the events after it from the copy's key, the copy's cursor is past it, and a server restored to a point between the two that then writes past the cursor is not found by its log.
 
 **Tests:** `device/server-restored.test.ts › ends the catch-up where the log holds another event at the last one it took`, `device/server-restored-live.test.ts › keeps an item made since the backup where the restored server has written past the copy's cursor`.
 
 ### `device/expire-write-lost`
 
-If a catch-up or a held stream reaches the head, and the server no longer holds the item or edge an item create, item edit, edge create or edge edit from this device was answered with in the last 30 days at that version or later, or holds again an item or edge such a delete removed, and no event the device took since showed that change, then a device MUST end the catch-up or the held stream `copy_expired`.
+If a catch-up or a held stream reaches the head, and in the last 30 days the server answered a write from this device that it no longer shows, and no event the device took since showed that write, then a device MUST end the catch-up or the held stream `copy_expired`.
 
-**Reason:** a server restored to the point the copy's cursor holds gives a log level with the cursor, so the stream itself shows nothing the server lost. The device reads each such write once for each stream, after the replay. A tag write alone keeps no record to read, so a restore that lost only tags is found only by the log.
+**Reason:** a server restored to the point the copy's cursor holds gives a log level with the cursor, so the stream itself shows nothing the server lost. The device reads the item or edge of each such write once for each stream, after the replay. A create, edit, restore, transition or edge write is lost where the server lacks the item or edge, or holds it at an earlier version, or at the same version with an earlier time. An item delete is lost where the server holds the item out of the bin at a version and time no later than the delete's, and an edge delete where the server holds the edge. An event shows a create or an edit at its version and time or later, and a delete only by its own `item.trashed`, `item.purged` or `edge.deleted`, since a trash and a restore keep the version. A read under `device/read-back-missing-kept` counts as a write the server answered. A tag write alone keeps no record to read, so a restore that lost only tags is found only by the log. A server that withholds a purge's event from the key reads as one that lost the item.
 
-**Tests:** `device/server-restored.test.ts › ends the catch-up where the server no longer holds an item it accepted from this device`, `device/server-restored-live.test.ts › keeps an item made since the backup, blocked until released, where the copy had not caught up past it`, `› puts back an edit the restored server lost to an item it still holds`, `› removes again an edge the restored server holds after this device deleted it`.
+**Tests:** `device/server-restored.test.ts › ends the catch-up where the server no longer holds an item it accepted from this device`, `device/server-restored-live.test.ts › keeps an item made since the backup, blocked until released, where the copy had not caught up past it`, `› puts back an edit the restored server lost to an item it still holds`, `› removes again an edge the restored server holds after this device deleted it`, `› puts back in the bin an item the restored server holds out of it after this device trashed it`, `› keeps an item made since the backup, with an edit the restored server refused before the copy expired waiting on its create`, `› reads no item again after this device trashed it and another client took it out of the bin`.
+
+### `device/expire-write-unreadable`
+
+If the read of an item or edge under `device/expire-write-lost` is answered with a body that does not read as the item or edge, or refused with a `4xx` status other than `401`, `404`, `408`, `425` or `429`, then a device MUST take the write as one the server holds.
+
+**Reason:** such an answer is about that one read, and a later read would answer the same, so a write the device cannot check does not end every catch-up for 30 days. The device reads it no more, and does not put it back after a restore.
+
+**Tests:** `device/server-restored.test.ts › sets aside a write whose item the server answers %s, and reads it no more`.
+
+### `device/read-back-missing-kept`
+
+When the read after an answer or a refusal finds no item or edge, the server's bin does not hold the item, the copy holds the item or edge at a version the server gave it, no create of it waits, and the queue holds no removal of it after its last move out of the bin or create, a device MUST keep the item or edge until an event shows it purged or deleted.
+
+**Reason:** a purge and a server restored to before the item or edge answer the same reads, and only the stream tells them apart. The check under `device/expire-write-lost` finds a restore. An item or edge this device removed, or one the server never held, is let go (`queue-and-verdicts/refused-item-absent`).
+
+**Tests:** `device/bin-live.test.ts › keeps an item neither a read by id nor the bin holds after its refused edit until the stream shows its purge`, `device/server-restored-live.test.ts › keeps an item made since the backup, with an edit the restored server refused before the copy expired waiting on its create`.
 
 ### `device/restored-kept`
 
 When a device hydrates a copy it expired under `device/expire-log-behind`, `device/expire-last-event-other` or `device/expire-write-lost`, or that a refill clears under `device/refill-restart-clears` or `device/refill-restored-clears`, a device MUST queue a write for each item, item's tags, edge and removal the copy held that the server now lacks or holds at an earlier point, and an upload for each file such a write names whose bytes the cache holds.
 
-**Reason:** the work a person did after the point the server was restored to is in the copy and nowhere else. The device keeps only what it held: an item the copy held in the bin or revoked is not created again, a purge is not put back, a removal is put back only where this device made it, and a copy built again from another instance keeps nothing.
+**Reason:** the work a person did after the point the server was restored to is in the copy and nowhere else. The device keeps only what it held: an item the copy held in the bin or revoked is not created again, a purge is not put back, a removal is put back only where this device made it, and a copy built again from another instance keeps nothing. An item or edge the server holds at a later time than the copy did, at a later version, or at the same version with the same fields, was moved on by another writer, and nothing of it is kept.
 
-**Tests:** `device/server-restored-live.test.ts › keeps an item made since the backup, blocked until released, where the copy had not caught up past it`, `› keeps an item made since the backup where the server's log ends behind the copy's cursor`, `› keeps an item made since the backup where the restored server has written past the copy's cursor`, `› puts back an edit the restored server lost to an item it still holds`, `› removes again an edge the restored server holds after this device deleted it`, `device/refill.test.ts › clears rather than fill again where the log ends before the head its refill started from`, `› clears rather than fill again where the server was restored before its refill began`.
+**Tests:** `device/server-restored-live.test.ts › keeps an item made since the backup, blocked until released, where the copy had not caught up past it`, `› keeps an item made since the backup where the server's log ends behind the copy's cursor`, `› keeps an item made since the backup where the restored server has written past the copy's cursor`, `› puts back an edit the restored server lost to an item it still holds`, `› removes again an edge the restored server holds after this device deleted it`, `› puts back the tags the restored server lost from an item it still holds`, `› puts back in the bin an item the restored server holds out of it after this device trashed it`, `› keeps a file attached since the backup, with an upload of the bytes the restored server lacks`, `› keeps nothing of a change another client made at the version the copy held`, `device/refill.test.ts › clears rather than fill again where the log ends before the head its refill started from`, `› clears rather than fill again where the server was restored before its refill began`.
+
+### `device/restored-checked-before-clear`
+
+When a device hydrates a copy of the same instance that it clears or fills again for any reason other than those `device/restored-kept` names, a device MUST queue under `device/restored-kept` a write for each item and edge the server has lost of a write from this device that no event has shown (`device/expire-write-lost`).
+
+**Reason:** a hydration that clears the copy for another reason, such as a changed slice or reach, would otherwise drop work a restored server lacks before any stream found the restore.
+
+**Tests:** `device/server-restored-live.test.ts › keeps an item made since the backup through a hydration of another slice before any catch-up`.
+
+### `device/restored-kept-refused`
+
+When a device queues a create under `device/restored-kept`, a device MUST queue again, under `device/restored-kept-blocked`, each write to that item or edge the server refused `item_not_found` or `edge_not_found`.
+
+**Reason:** a write sent to a restored server before the device found the restore is refused because the server lost the item or edge, so it is the person's work and waits on the create that puts the item or edge back (`device/restored-kept-first`). A row write is not queued again.
+
+**Tests:** `device/server-restored-live.test.ts › keeps an item made since the backup, with an edit the restored server refused before the copy expired waiting on its create`.
 
 ### `device/restored-kept-blocked`
 
