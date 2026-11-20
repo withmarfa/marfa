@@ -367,8 +367,7 @@ impl App {
         };
         self.look_to_adopt(&folder, followed).await?;
         let root = folder.root().display().to_string();
-        // Holding the folder makes folders in it, which a confirmation that no longer holds
-        // must not leave behind.
+        // A claim makes folders, which a stale confirmation must not leave behind.
         if let Some(guard) = &guard {
             let fingerprint = self.fingerprint_of(&folder).await?;
             let (guard, now) = (guard.clone(), self.clock.instant());
