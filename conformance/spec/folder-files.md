@@ -1900,7 +1900,7 @@ While a file in the directory that the scan holds for a clash with another file'
 
 **Reason:** sent as a new item, the new file would take the path, and the carried item would lose its binding, its identity and what the device last agreed with the server, so the device could no longer follow the carrying file or tell a change made elsewhere. Sent as an edit, it would replace the carried item's words.
 
-**Tests:** `device/folders-contract-b.test.ts › holds a new file at the path of a file the folder does not send, and sends it once that file has a name the folder sends`, `› holds a new file at the path of a file the folder does not send while that file is renamed again, and trashes nothing`, `› holds a new file a watch finds at the path of a file the folder does not send, and sends it as that file's edit once the other file is deleted`.
+**Tests:** `device/folders-contract-b.test.ts › holds a new file at the path of a file the folder does not send, and sends it once that file has a name the folder sends`, `› holds a new file at the path of a file the folder does not send while that file is renamed again, and trashes nothing`, `› holds a new file a watch finds at the path of a file the folder does not send, and sends it as that file's edit once the other file is deleted`, `› holds a new file written in the same scan as its path's file moved to a name the folder does not send`, `› holds a new file at the path of a file the folder does not send while that file is saved by a rename over it`.
 
 ### `folder-files/carried-path-new-file-flagged`
 
@@ -1908,7 +1908,7 @@ While a file in the directory that the scan holds for a clash with another file'
 
 **Reason:** the person sees why the file is not sent and what to change: give the carrying file a name the folder sends, or delete it.
 
-**Tests:** `device/folders-contract-b.test.ts › holds a new file at the path of a file the folder does not send, and sends it once that file has a name the folder sends`, `› holds a new file at the path of a file the folder does not send while that file is renamed again, and trashes nothing`.
+**Tests:** `device/folders-contract-b.test.ts › holds a new file at the path of a file the folder does not send, and sends it once that file has a name the folder sends`, `› holds a new file at the path of a file the folder does not send while that file is renamed again, and trashes nothing`, `› holds a new file written in the same scan as its path's file moved to a name the folder does not send`.
 
 ### `folder-files/carried-path-carrier-named`
 
@@ -1920,11 +1920,11 @@ When a file that carries a missing file's identity or the ID of its item takes a
 
 ### `folder-files/carried-path-carrier-gone`
 
-When no file in the directory carries a missing file's identity or the ID of its item any longer, a device MUST treat the changed content of a new file at the missing file's path as an edit of the missing file's item.
+When no file in the directory carries a missing file's identity or the ID of its item any longer, and no file that the scan holds for a clash with another file's name, or does not send, stands at the path where the device last found the item carried, a device MUST treat the changed content of a new file at the missing file's path as an edit of the missing file's item.
 
-**Reason:** with no other file left for the item, a file at its path is the item's file saved anew, as `folder-files/atomic-editor-save` says. With no file at the path, the item's grace starts again, and `folder-files/missing-file-changed-revives` still writes a changed item back.
+**Reason:** with no other file left for the item, a file at its path is the item's file saved anew, as `folder-files/atomic-editor-save` says. A save that replaces the carrying file gives it a new identity, so a file still at the path the device last found carrying the item carries it until it moves or goes. With no file at the path, the item's grace starts again, and `folder-files/missing-file-changed-revives` still writes a changed item back.
 
-**Tests:** `device/folders-contract-b.test.ts › takes a new file at the path of a file the folder does not send as that file's edit once the other file is gone too`, `› holds a new file a watch finds at the path of a file the folder does not send, and sends it as that file's edit once the other file is deleted`.
+**Tests:** `device/folders-contract-b.test.ts › takes a new file at the path of a file the folder does not send as that file's edit once the other file is gone too`, `› holds a new file a watch finds at the path of a file the folder does not send, and sends it as that file's edit once the other file is deleted`, `› holds a new file at the path of a file the folder does not send while that file is saved by a rename over it`.
 
 ### `folder-files/missing-file-changed-revives`
 

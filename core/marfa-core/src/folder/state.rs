@@ -788,14 +788,22 @@ pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result
     Ok(())
 }
 
-/// Records that the file at `carrier` carries the missing file at `path`.
-/// Its grace starts again once no file carries it (`journal_uncarried`).
+/// Records that the file at `carrier` carries the missing file at `path`,
+/// and where given the carrier's `identity` as the binding's. Its grace
+/// starts again once no file carries it (`journal_uncarried`).
 pub fn journal_carried(
     conn: &Connection,
     path: &str,
     item_id: &str,
     carrier: &str,
+    identity: Option<&str>,
 ) -> Result<(), CoreError> {
+    if let Some(identity) = identity {
+        conn.execute_cached(
+            "UPDATE folder_files SET identity = ?3 WHERE path = ?1 AND item_id = ?2",
+            params![path, item_id, identity],
+        )?;
+    }
     conn.execute_cached(
         "INSERT INTO folder_journal (path, item_id, missing_since, kept, reason)
          VALUES (?1, ?2, ?3, 'carried', ?4)

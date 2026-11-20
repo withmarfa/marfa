@@ -848,6 +848,108 @@ mod tests {
     }
 
     #[test]
+    fn a_new_file_at_a_path_whose_file_moved_to_a_name_the_folder_does_not_send_in_the_same_scan_waits()
+     {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder) = folder_with(
+            "01a00000-0000-7000-8000-00000000c61d",
+            serde_json::json!({ "query": { "types": ["core.note"] } }),
+            None,
+        );
+        std::fs::write(dir.path().join("note.md"), "the original words\n").unwrap();
+        std::fs::write(dir.path().join("other.md"), "other words\n").unwrap();
+        assert_eq!(folder.scan().unwrap().created, 2);
+        let item = landed(&folder, "note.md");
+        let other = landed(&folder, "other.md");
+        folder.pull().unwrap();
+        std::fs::rename(dir.path().join("note.md"), dir.path().join("note.bin")).unwrap();
+        std::fs::write(dir.path().join("note.md"), "a different note altogether\n").unwrap();
+        // The witness: a file saved anew at a path whose file went is its edit.
+        std::fs::remove_file(dir.path().join("other.md")).unwrap();
+        std::fs::write(dir.path().join("other.md"), "other words, edited\n").unwrap();
+        let scanned = folder.scan().unwrap();
+        assert_eq!((scanned.created, scanned.updated), (0, 1), "{scanned:?}");
+        assert_eq!(updates_queued(&folder, &other), 1);
+        assert_eq!(
+            updates_queued(&folder, &item),
+            0,
+            "the carried item's words were replaced"
+        );
+        assert!(waits_for(&scanned, "note.md", "note.bin"), "{scanned:?}");
+        assert_eq!(
+            super::super::tests::kept(&folder, "note.md"),
+            Some(state::Kept::Carried("note.bin".into()))
+        );
+        assert_eq!(bound_item(&folder, "note.md"), Some(item.clone()));
+        let again = folder.scan().unwrap();
+        assert_eq!((again.created, again.updated, again.missing), (0, 0, 0));
+        assert!(waits_for(&again, "note.md", "note.bin"), "{again:?}");
+        assert!(items_deleted(&folder).is_empty());
+    }
+
+    /// Saves `name` as an editor that writes a temporary file and renames it
+    /// over the original does, which gives the file a new identity.
+    fn saved_atomically(dir: &std::path::Path, name: &str, bytes: &str) {
+        let temporary = dir.join(format!("{name}.tmp"));
+        std::fs::write(&temporary, bytes).unwrap();
+        std::fs::rename(temporary, dir.join(name)).unwrap();
+    }
+
+    #[test]
+    fn a_new_file_at_a_carried_path_waits_while_its_carrier_is_saved_atomically() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder, item) = held_at_carried_path("01a00000-0000-7000-8000-00000000c61e");
+        let before = folder
+            .core
+            .conn()
+            .map(|conn| state::bound_at(&conn, "note.md").unwrap().unwrap().identity)
+            .unwrap();
+        saved_atomically(dir.path(), "note.bin", "the original words, saved again\n");
+        let scanned = folder.scan().unwrap();
+        assert_eq!((scanned.created, scanned.updated), (0, 0), "{scanned:?}");
+        assert_eq!(
+            updates_queued(&folder, &item),
+            0,
+            "the carried item's words were replaced"
+        );
+        assert!(waits_for(&scanned, "note.md", "note.bin"), "{scanned:?}");
+        let after = folder
+            .core
+            .conn()
+            .map(|conn| state::bound_at(&conn, "note.md").unwrap().unwrap().identity)
+            .unwrap();
+        assert_ne!(before, after, "the binding kept the old carrier's identity");
+        // Followed by its new identity once renamed again.
+        std::fs::rename(dir.path().join("note.bin"), dir.path().join("note.dat")).unwrap();
+        let renamed = folder.scan().unwrap();
+        assert_eq!((renamed.updated, renamed.missing), (0, 0), "{renamed:?}");
+        assert!(waits_for(&renamed, "note.md", "note.dat"), "{renamed:?}");
+        assert_eq!(bound_item(&folder, "note.md"), Some(item));
+        assert!(items_deleted(&folder).is_empty());
+    }
+
+    #[test]
+    fn a_carried_item_is_kept_while_its_carrier_is_saved_atomically() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder, item) = carried_note("01a00000-0000-7000-8000-00000000c61f");
+        saved_atomically(dir.path(), "note.bin", "the original words, saved again\n");
+        let scanned = folder.scan().unwrap();
+        assert_eq!(scanned.missing, 0, "{scanned:?}");
+        assert_eq!(
+            super::super::tests::kept(&folder, "note.md"),
+            Some(state::Kept::Carried("note.bin".into()))
+        );
+        past_the_grace(&folder, "note.md");
+        let swept = folder.scan().unwrap();
+        assert_eq!((swept.missing, swept.deleted), (0, 0), "{swept:?}");
+        assert!(
+            items_deleted(&folder).is_empty(),
+            "the carried item was trashed"
+        );
+        assert_eq!(bound_item(&folder, "note.md"), Some(item));
+    }
+
+    #[test]
     fn a_carried_item_follows_its_carrier_renamed_again_while_a_new_file_waits_at_its_path() {
         let (_, _registry) = registry::tests::own_registry();
         let (dir, folder, item) = held_at_carried_path("01a00000-0000-7000-8000-00000000c619");

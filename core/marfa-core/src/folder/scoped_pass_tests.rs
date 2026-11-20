@@ -782,6 +782,71 @@ fn past_every_grace(folder: &Folder) {
 }
 
 #[test]
+fn a_quick_pass_holds_a_new_file_at_the_path_of_a_file_it_heard_moved_to_a_name_the_folder_does_not_send()
+ {
+    let all = names(12);
+    let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+    let (dir, folder, server, mut passes) = watched_notes_in(
+        serde_json::json!({ "query": { "types": ["core.note"] } }),
+        &refs,
+    );
+    for name in &all {
+        let id = state::bound_at(&folder.core.conn().unwrap(), name)
+            .unwrap()
+            .unwrap()
+            .item_id;
+        server.on(
+            &format!("/items/{id}"),
+            (0..8).map(|_| refusal(429, "rate_limited")).collect(),
+        );
+        aged(&dir.path().join(name));
+    }
+    passes.run(&folder, true).unwrap();
+    settle(&folder, &mut passes);
+    let item = state::bound_at(&folder.core.conn().unwrap(), "n001.md")
+        .unwrap()
+        .unwrap()
+        .item_id;
+    std::fs::rename(dir.path().join("n001.md"), dir.path().join("n001.bin")).unwrap();
+    std::fs::write(dir.path().join("n001.md"), "a different note altogether\n").unwrap();
+    // The witness: a file saved anew at a path whose file went is its edit.
+    std::fs::remove_file(dir.path().join("n002.md")).unwrap();
+    std::fs::write(dir.path().join("n002.md"), "words saved anew\n").unwrap();
+    let created = |path: PathBuf| {
+        notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::File))
+            .add_path(path)
+    };
+    counted();
+    passes
+        .hearing(
+            &folder,
+            &[
+                renamed(dir.path().join("n001.md"), dir.path().join("n001.bin")),
+                created(dir.path().join("n001.md")),
+                created(dir.path().join("n002.md")),
+            ],
+        )
+        .unwrap();
+    let (captured, _) = counted();
+    // A walk takes all twelve and more.
+    assert!(captured < 10, "took the metadata of {captured} files");
+    assert_eq!(queued(&folder, "n002.md"), 1);
+    assert_eq!(queued(&folder, "n001.md"), 0, "the carried item was edited");
+    let bound = state::bound_at(&folder.core.conn().unwrap(), "n001.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(bound.item_id, item);
+    assert_eq!(
+        super::tests::kept(&folder, "n001.md"),
+        Some(state::Kept::Carried("n001.bin".into()))
+    );
+    // A walk afterwards holds it too.
+    passes.run(&folder, true).unwrap();
+    assert_eq!(queued(&folder, "n001.md"), 0, "the carried item was edited");
+    assert!(deletes_queued(&folder).is_empty());
+}
+
+#[test]
 fn a_quick_pass_keeps_the_item_of_a_file_moved_to_a_name_the_folder_does_not_send() {
     let (dir, folder, server, mut passes) = watched_notes_in(
         serde_json::json!({ "query": { "types": ["core.note"] } }),

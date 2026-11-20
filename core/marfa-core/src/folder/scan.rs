@@ -130,8 +130,16 @@ struct ScanState {
     /// Why each stale save waits, by path.
     stale: HashMap<String, String>,
     /// Each path whose file waits while another file carries the item bound
-    /// there, with that item and the carrier.
-    held_carried: HashMap<String, (String, String)>,
+    /// there.
+    held_carried: HashMap<String, HeldCarried>,
+}
+
+/// The item bound at a path whose file waits, and the file that carries it.
+struct HeldCarried {
+    item_id: String,
+    carrier: String,
+    /// The carrier's identity, where only its path named it.
+    identity: Option<String>,
 }
 
 /// What a pass that looked only at named paths keeps for its end.
@@ -1082,59 +1090,79 @@ impl Folder {
         // Not the carried item's file, so its record stands.
         scan.held_carried = carried
             .into_iter()
-            .filter(|(path, (item_id, _))| {
+            .filter(|(path, held)| {
                 files.iter().zip(&claims).any(|(file, claim)| {
                     file.key == *path
-                        && claim.as_ref().is_none_or(|claim| claim.item_id != *item_id)
+                        && claim
+                            .as_ref()
+                            .is_none_or(|claim| claim.item_id != held.item_id)
                 })
             })
             .collect();
         Ok((claims, waiting))
     }
 
-    /// Each binding the journal records another file carrying, whose path a
-    /// read file stands at, by path, with its item and the file that carries
-    /// it now. A walk looks for that file; a quick pass, which walks when it
-    /// touches a carrier, keeps the record's. Where a file that may carry it
-    /// cannot be read, the record's too.
-    fn still_carried(&self, scan: &ScanState) -> Result<HashMap<String, (String, String)>> {
-        let rows: Vec<state::Journaled> = state::journaled(&*self.core.conn()?)?
+    /// Each binding whose path a read file with another identity stands at,
+    /// or that the journal records another file carrying, while a file the
+    /// pass holds or skips carries it, by path. A quick pass, which walks
+    /// when it touches a recorded carrier, keeps the record's where it did
+    /// not look at the carrier; so does a walk that could not read every file
+    /// that may carry it.
+    fn still_carried(&self, scan: &ScanState) -> Result<HashMap<String, HeldCarried>> {
+        let recorded: HashMap<String, (String, String)> = state::journaled(&*self.core.conn()?)?
             .into_iter()
-            .filter(|row| {
-                row.carried()
-                    && scan.files.iter().any(|file| file.key == row.path)
-                    && scan
-                        .snapshot
-                        .iter()
-                        .any(|bound| bound.path == row.path && bound.item_id == row.item_id)
+            .filter_map(|row| match row.kept {
+                Some(state::Kept::Carried(carrier)) => Some((row.path, (row.item_id, carrier))),
+                _ => None,
+            })
+            .collect();
+        let read: HashMap<&str, &Scanned> = scan
+            .files
+            .iter()
+            .map(|file| (file.key.as_str(), file))
+            .collect();
+        let recorded_for = |bound: &state::Bound| {
+            recorded
+                .get(&bound.path)
+                .filter(|(item_id, _)| *item_id == bound.item_id)
+                .map(|(_, carrier)| carrier.as_str())
+        };
+        let candidates: Vec<&state::Bound> = scan
+            .snapshot
+            .iter()
+            .filter(|bound| {
+                read.get(bound.path.as_str()).is_some_and(|file| {
+                    file.mark != bound.identity || recorded_for(bound).is_some()
+                })
             })
             .collect();
         let mut carried = HashMap::new();
-        if rows.is_empty() {
+        if candidates.is_empty() {
             return Ok(carried);
         }
-        let carriers = if scan.scope.is_some() {
-            None
-        } else {
-            self.carriers(&scan.walked, &scan.paths, &scan.skipped_keys)?
-                .ok()
-        };
-        for row in rows {
-            let Some(state::Kept::Carried(recorded)) = row.kept else {
-                continue;
+        let carriers = self
+            .carriers(&scan.walked, &scan.paths, &scan.skipped_keys)?
+            .ok();
+        let unsure = scan.scope.is_some() || carriers.is_none();
+        for bound in candidates {
+            let recorded = recorded_for(bound);
+            let held = match carriers
+                .as_ref()
+                .and_then(|carriers| carriers.carrying(bound, recorded))
+            {
+                Some(found) => HeldCarried {
+                    item_id: bound.item_id.clone(),
+                    carrier: found.key.to_string(),
+                    identity: found.identity.map(str::to_string),
+                },
+                None if unsure && let Some(carrier) = recorded => HeldCarried {
+                    item_id: bound.item_id.clone(),
+                    carrier: carrier.to_string(),
+                    identity: None,
+                },
+                None => continue,
             };
-            let carrier = match &carriers {
-                Some(carriers) => scan
-                    .snapshot
-                    .iter()
-                    .find(|bound| bound.path == row.path)
-                    .and_then(|bound| carriers.carrying(bound))
-                    .map(str::to_string),
-                None => Some(recorded),
-            };
-            if let Some(carrier) = carrier {
-                carried.insert(row.path, (row.item_id, carrier));
-            }
+            carried.insert(bound.path.clone(), held);
         }
         Ok(carried)
     }
@@ -1700,7 +1728,7 @@ impl Folder {
             let held = row.is_some();
             let was_carried = matches!(row, Some(Some(state::Kept::Carried(_))));
             let stands = seen.contains(&path);
-            if stands && !held {
+            if stands && !held && !scan.held_carried.contains_key(&path) {
                 continue;
             }
             if let Some(gone) = self.root_gone() {
@@ -1709,8 +1737,9 @@ impl Folder {
             }
             if stands {
                 let conn = self.core.conn()?;
-                if let Some((_, carrier)) = scan.held_carried.get(&path) {
-                    state::journal_carried(&conn, &path, &item_id, carrier)?;
+                if let Some(carried) = scan.held_carried.get(&path) {
+                    let identity = carried.identity.as_deref();
+                    state::journal_carried(&conn, &path, &item_id, &carried.carrier, identity)?;
                     report.unreached += 1;
                     continue;
                 }
@@ -1760,11 +1789,19 @@ impl Folder {
                 },
             };
             let conn = self.core.conn()?;
+            let recorded = match row {
+                Some(Some(state::Kept::Carried(carrier))) => Some(carrier.as_str()),
+                _ => None,
+            };
             let carrier = state::bound_at(&conn, &path)?
                 .filter(|row| row.item_id == item_id)
-                .and_then(|row| carriers.carrying(&row).map(str::to_string));
-            if let Some(carrier) = carrier {
-                state::journal_carried(&conn, &path, &item_id, &carrier)?;
+                .and_then(|row| {
+                    carriers
+                        .carrying(&row, recorded)
+                        .map(|found| (found.key.to_string(), found.identity.map(str::to_string)))
+                });
+            if let Some((carrier, identity)) = carrier {
+                state::journal_carried(&conn, &path, &item_id, &carrier, identity.as_deref())?;
                 report.unreached += 1;
                 continue;
             }
@@ -2049,7 +2086,7 @@ impl Folder {
         &self,
         scan: &ScanState,
         peers: &Peers<'_>,
-        carried: &HashMap<String, (String, String)>,
+        carried: &HashMap<String, HeldCarried>,
     ) -> Result<(Vec<Option<Claim>>, Waiting)> {
         let (files, snapshot, shown) = (&scan.files, &scan.snapshot, &scan.shown);
         let (settings, catalog) = (&scan.settings, &scan.catalog);
@@ -2201,8 +2238,8 @@ impl Folder {
             if claims[at].is_some() || waiting.contains_key(&at) {
                 continue;
             }
-            if let Some((_, carrier)) = carried.get(&file.key) {
-                waiting.insert(at, carried_path_waits(carrier));
+            if let Some(held) = carried.get(&file.key) {
+                waiting.insert(at, carried_path_waits(&held.carrier));
             }
         }
         // A file that carries no id and that no record here names, the

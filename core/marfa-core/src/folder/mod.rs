@@ -2353,6 +2353,15 @@ fn one_per_name(
 struct Carriers {
     by_mark: HashMap<String, String>,
     by_id: HashMap<String, String>,
+    /// Each such file's identity and id line, by path.
+    at: HashMap<String, (Option<String>, Option<String>)>,
+}
+
+/// The file that carries a binding, and the identity to record for it where
+/// only its path named it.
+struct Carrying<'a> {
+    key: &'a str,
+    identity: Option<&'a str>,
 }
 
 impl Carriers {
@@ -2368,30 +2377,52 @@ impl Carriers {
             let captured = walked.opened.get(path);
             let mark = captured
                 .and_then(|captured| identity::of(&captured.metadata.borrow()))
-                .or_else(|| walked.unread.get(path).copied());
-            if let Some(mark) = mark {
-                carriers.by_mark.insert(mark.key(), key.to_string());
+                .or_else(|| walked.unread.get(path).copied())
+                .map(|mark| mark.key());
+            if let Some(mark) = &mark {
+                carriers.by_mark.insert(mark.clone(), key.to_string());
             }
+            let mut id = None;
             if read_id && carries_frontmatter(path) {
                 let bytes = captured
                     .ok_or_else(|| std::io::Error::other("the walk could not open it"))
                     .and_then(Captured::read)
                     .map_err(|error| (key.to_string(), error))?;
-                if let Some(id) = document::id_line_of(&bytes) {
-                    carriers.by_id.insert(id, key.to_string());
+                id = document::id_line_of(&bytes);
+                if let Some(id) = &id {
+                    carriers.by_id.insert(id.clone(), key.to_string());
                 }
             }
+            carriers.at.insert(key.to_string(), (mark, id));
         }
         Ok(carriers)
     }
 
-    fn carrying(&self, bound: &state::Bound) -> Option<&str> {
-        bound
+    /// By identity, then the item's id line, then a file still at the path
+    /// last `recorded` as carrying it that names no other item, since a save
+    /// that replaces a file gives it a new identity.
+    fn carrying(&self, bound: &state::Bound, recorded: Option<&str>) -> Option<Carrying<'_>> {
+        let found = bound
             .identity
             .as_deref()
             .and_then(|mark| self.by_mark.get(mark))
-            .or_else(|| self.by_id.get(&bound.item_id))
-            .map(String::as_str)
+            .or_else(|| self.by_id.get(&bound.item_id));
+        if let Some(key) = found {
+            return Some(Carrying {
+                key,
+                identity: None,
+            });
+        }
+        let (key, (mark, id)) = self.at.get_key_value(recorded?)?;
+        if id.as_ref().is_some_and(|id| *id != bound.item_id) {
+            return None;
+        }
+        Some(Carrying {
+            key,
+            identity: mark
+                .as_deref()
+                .filter(|mark| bound.identity.as_deref() != Some(*mark)),
+        })
     }
 }
 
