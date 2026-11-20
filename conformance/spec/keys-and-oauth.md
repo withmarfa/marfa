@@ -2951,7 +2951,7 @@ If the sign-in form's attempt is refused by a sign-in limit, then the server MUS
 
 ### `keys-and-oauth/sign-in-lockout-page`
 
-When `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after_seconds` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up, and says that a passkey signs in during the lock.
+While an instance has an owner, when `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after_seconds` of whole seconds from 1 to 86400, the server MUST answer a page that states the wait in whole minutes, rounded up, and says that a passkey signs in during the lock.
 
 **Reason:** A fixed number of minutes would be wrong for one of the two limits, and the passkey is the way in that a password lock does not close (`authentication/passkey-password-lock`).
 
@@ -3343,13 +3343,13 @@ When the device approval page offers access to a web client, the server MUST nam
 
 ### `keys-and-oauth/sign-in-username-kept`
 
-When a sign-in through the form fails, the server MUST redirect the browser to the sign-in page carrying the typed username.
+While an instance has an owner, when a sign-in through the form fails, the server MUST redirect the browser to the sign-in page carrying the typed username.
 
 **Tests:** `compliance/sign-in-surface.test.ts › returns the typed username after a wrong password, and never the password`.
 
 ### `keys-and-oauth/sign-in-username-shown`
 
-When the sign-in page is opened carrying a username, the server MUST show that username in the username field.
+While an instance has an owner, when the sign-in page is opened carrying a username, the server MUST show that username in the username field.
 
 **Tests:** `compliance/sign-in-surface.test.ts › returns the typed username after a wrong password, and never the password`.
 
