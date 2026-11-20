@@ -143,6 +143,7 @@ impl Folder {
             }
         }
         state::set_unmatched(&*self.core.conn()?, &unmatched)?;
+        self.settle_retained()?;
         Ok(done)
     }
 

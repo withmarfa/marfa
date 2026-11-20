@@ -6774,6 +6774,14 @@ mod tests {
         assert!(confirmed.refused.is_empty(), "{confirmed:?}");
         assert!(paused().is_empty());
         assert!(!dir.path().join("a.md").exists());
+        assert!(
+            std::fs::read_dir(dir.path())
+                .unwrap()
+                .all(|entry| !super::landing::is_reserved(std::path::Path::new(
+                    &entry.unwrap().file_name()
+                ))),
+            "a confirmed removal left what it removed under a reserved name"
+        );
     }
 
     #[test]

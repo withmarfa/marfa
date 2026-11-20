@@ -113,6 +113,7 @@ impl Folder {
             state::set_paused(&conn, state::Removal::Disk, &[])?;
             state::set_paused(&conn, state::Removal::Pull, &refused)?;
         }
+        self.settle_retained()?;
         Ok(confirmed)
     }
 
