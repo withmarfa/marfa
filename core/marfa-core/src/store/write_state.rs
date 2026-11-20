@@ -16,8 +16,11 @@ pub(crate) fn cleared_time_key(create: &str) -> String {
     format!("cleared_time/{create}")
 }
 
+/// Each key goes with its row, whichever way the row leaves the copy.
+pub(super) const MADE: &str = "made/";
+
 fn made_key(item_id: &str) -> String {
-    format!("made/{item_id}")
+    format!("{MADE}{item_id}")
 }
 
 /// Records the version the server gave this copy's create of `item_id`. Kept

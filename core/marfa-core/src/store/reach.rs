@@ -114,6 +114,7 @@ fn forget_marks_of_the_walk(conn: &Connection) -> Result<(), CoreError> {
         crate::reach::UNLISTED_BEFORE,
         "item_early/",
         EDGE_BROUGHT,
+        super::write_state::MADE,
     ] {
         meta_delete_under(conn, prefix)?;
     }

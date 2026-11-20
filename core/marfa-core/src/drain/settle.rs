@@ -561,20 +561,25 @@ pub(super) fn settle_success(
         same_attempt(&tx, row)?;
         check_read_back(&tx, &read)?;
         restore_settled_overlay(&tx, row, &read)?;
+        // Only a row this copy minted and has held since it showed it at 0:
+        // an answer naming another id landed on a row made elsewhere.
+        let mut made_here = None;
         if let Some(parsed) = &item {
             if row.kind == WriteKind::CreateItem
                 && let Some(local) = row.item_id.as_deref()
             {
-                drop_projected_edges(&tx, row, local, Some(&parsed.item))?;
-                store::adopt_answered_id(&tx, local, &parsed.item.id)?;
-                if row.base_version.is_none_or(|base| base == 0) {
-                    let made = if parsed.acknowledged {
+                if local == parsed.item.id
+                    && row.base_version.is_none_or(|base| base == 0)
+                    && store::held_version(&tx, local)?.is_some()
+                {
+                    made_here = Some(if parsed.acknowledged {
                         1
                     } else {
                         made.unwrap_or(parsed.item.version)
-                    };
-                    store::note_made(&tx, &parsed.item.id, made)?;
+                    });
                 }
+                drop_projected_edges(&tx, row, local, Some(&parsed.item))?;
+                store::adopt_answered_id(&tx, local, &parsed.item.id)?;
                 store::refollow(&tx, &parsed.item.id, &row.id)?;
                 take_answered_edges(&tx, &parsed.item)?;
                 create_edges::owe(&tx, row, &parsed.item)?;
@@ -619,6 +624,11 @@ pub(super) fn settle_success(
         // against the exact pre-adoption pin set while this transaction held
         // the writer.
         apply_read_back_unchecked(&tx, &read)?;
+        if let (Some(version), Some(parsed)) = (made_here, &item)
+            && store::held_version(&tx, &parsed.item.id)?.is_some()
+        {
+            store::note_made(&tx, &parsed.item.id, version)?;
+        }
         let follows = match &item {
             Some(parsed) if row.kind == WriteKind::CreateItem => {
                 queue_owed_time_clear(&tx, row, &parsed.item, verdict)?
