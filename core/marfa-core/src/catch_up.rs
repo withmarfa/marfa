@@ -477,6 +477,7 @@ fn take(
         reach::cursor(id).ok_or_else(reach::invalid)?;
         if let Some(rows) = &payload.rows {
             let applied = crate::tables::apply(&tx, rows, read_rows.as_ref())?;
+            store::restored::receipts_seen(&tx, kind, payload)?;
             let behind = leave_skipped && applied == crate::tables::Applied::Nothing;
             if !behind {
                 store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;

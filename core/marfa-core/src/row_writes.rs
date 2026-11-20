@@ -652,6 +652,166 @@ pub(crate) fn lay_table(conn: &Connection, item: &str, table: &str) -> Result<()
     Ok(())
 }
 
+/// Where any write is laid over the row: the ids `answered` reads one by one.
+pub(crate) fn laid_or_beneath(conn: &Connection, item: &str, table: &str) -> Result<Vec<String>> {
+    let mut query = conn.prepare_cached(
+        "SELECT id FROM rows_laid WHERE item_id = ?1 AND name = ?2
+         UNION SELECT id FROM rows_beneath WHERE item_id = ?1 AND name = ?2",
+    )?;
+    let rows = query.query_map(params![item, table], |row| row.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// The row as the server last answered it, as `(body, withheld, updated_at)`:
+/// beneath the writes laid over it, with each the server took laid back on at
+/// its batch's time. `None` where the server holds none.
+pub(crate) fn answered(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+    id: &str,
+) -> Result<Option<(String, Option<String>, String)>> {
+    let under = match beneath(conn, item, table, id)? {
+        Some(under) => under,
+        None => held_row(conn, item, table, id)?,
+    };
+    let mut query = conn.prepare_cached(
+        "SELECT ops, at FROM rows_laid
+          WHERE item_id = ?1 AND name = ?2 AND id = ?3 AND batch IS NOT NULL
+          ORDER BY seq",
+    )?;
+    let taken = query
+        .query_map(params![item, table, id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut row = under;
+    for (ops, at) in taken {
+        let ops = queued_ops(&json!({ "operations": serde_json::from_str::<Value>(&ops)? }))?;
+        row = apply(row, &ops, id, &at);
+    }
+    let (body, withheld, updated_at) = stored(row.as_ref())?;
+    Ok(body.map(|body| (body, withheld, updated_at.unwrap_or_default())))
+}
+
+/// The most a kept write carries, so the drain can join it to no other and
+/// still send it whole.
+const KEPT_BYTES: usize = crate::http::REQUEST_LIMIT / 2;
+
+/// Queues `ops` on the table as writes blocked `server_restored`
+/// (`device/restored-rows-kept`): sent before every row write to the table
+/// not yet sent, and laid beneath them. A write that follows one only orders
+/// behind it, so withdrawing a kept write refuses none of them.
+pub(crate) fn keep(conn: &Connection, item: &str, table: &str, ops: &[Op]) -> Result<Vec<String>> {
+    if ops.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut chunks: Vec<Vec<Op>> = Vec::new();
+    let mut bytes = 0;
+    for op in ops {
+        let size = op.printed().to_string().len();
+        match chunks.last_mut() {
+            Some(chunk) if chunk.len() < rows::MAX_OPERATIONS && bytes + size <= KEPT_BYTES => {
+                chunk.push(op.clone());
+                bytes += size;
+            }
+            _ => {
+                chunks.push(vec![op.clone()]);
+                bytes = size;
+            }
+        }
+    }
+    let waiting = format!(
+        "kind IN ('{}', '{}') AND item_id = ?1 AND row_table = ?2
+         AND (verdict IS NULL OR verdict IN ('{}', '{}'))",
+        WriteKind::WriteRows.as_str(),
+        WriteKind::UndoRows.as_str(),
+        Verdict::Blocked.as_str(),
+        Verdict::Dead.as_str(),
+    );
+    // A write already sent cannot be held back, so the kept ones follow it.
+    let mut ahead: Option<String> = conn
+        .query_row_cached(
+            &format!("SELECT id FROM queue WHERE {waiting} AND sent = 1 ORDER BY seq DESC LIMIT 1"),
+            params![item, table],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let heads: Vec<String> = {
+        let mut query = conn.prepare_cached(&format!(
+            "SELECT id FROM queue AS w WHERE {waiting} AND sent = 0
+               AND NOT EXISTS (SELECT 1 FROM queue AS a
+                                WHERE a.id = w.follows AND a.sent = 0 AND a.item_id = w.item_id
+                                  AND a.row_table = w.row_table AND a.kind IN ('{}', '{}')
+                                  AND (a.verdict IS NULL OR a.verdict IN ('{}', '{}')))",
+            WriteKind::WriteRows.as_str(),
+            WriteKind::UndoRows.as_str(),
+            Verdict::Blocked.as_str(),
+            Verdict::Dead.as_str(),
+        ))?;
+        let rows = query.query_map(params![item, table], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let lowest: Option<i64> = conn.query_row_cached(
+        "SELECT MIN(seq) FROM rows_laid WHERE item_id = ?1 AND name = ?2",
+        params![item, table],
+        |row| row.get(0),
+    )?;
+    let depends_on = store::untaken_creates_for_item(conn, item)?;
+    let count = chunks.len() as i64;
+    let mut kept = Vec::with_capacity(chunks.len());
+    for (at, chunk) in (0_i64..).zip(&chunks) {
+        let payload = json!({ "operations": chunk.iter().map(Op::printed).collect::<Vec<_>>() });
+        let queued = store::enqueue(
+            conn,
+            &store::NewWrite {
+                kind: WriteKind::WriteRows,
+                item_id: Some(item),
+                to_id: None,
+                edge_id: None,
+                namespace: None,
+                tag: None,
+                blob: None,
+                base_version: None,
+                payload: &payload.to_string(),
+                depends_on: &depends_on,
+            },
+        )?;
+        conn.execute_cached(
+            "UPDATE queue SET row_table = ?2, follows = ?3 WHERE id = ?1",
+            params![queued.id, table, ahead],
+        )?;
+        let seq = match lowest {
+            Some(lowest) => lowest - count + at,
+            None => conn.query_row_cached(
+                "SELECT seq FROM queue WHERE id = ?1",
+                [&queued.id],
+                |row| row.get(0),
+            )?,
+        };
+        record_laid(conn, &queued.id, seq, item, table, chunk, &queued.queued_at)?;
+        store::record_verdict(
+            conn,
+            &queued.id,
+            &store::Answered {
+                verdict: Verdict::Blocked,
+                reason: Some(crate::model::BlockedReason::ServerRestored.as_str()),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+        ahead = Some(queued.id.clone());
+        kept.push(queued.id);
+    }
+    for head in heads {
+        conn.execute_cached(
+            "UPDATE queue SET follows = ?2 WHERE id = ?1",
+            params![head, ahead],
+        )?;
+    }
+    Ok(kept)
+}
+
 /// In a writer's transaction, after a row write's verdict changed.
 pub(crate) fn flush(conn: &Connection) -> Result<()> {
     let dirty: Vec<(String, String, String)> = {

@@ -432,7 +432,21 @@ fn taken(
             .zip(&shares)
             .map(|(write, results)| Taken { write, results })
             .collect();
+        let seen = match batch {
+            Some(batch) => crate::restored_rows::batch_seen(&tx, batch)?,
+            None => false,
+        };
         let conflicts = row_writes::taken(&tx, item, table, batch, &takens)?;
+        if let (Some(batch), Some(at)) = (
+            batch,
+            read.as_ref()
+                .and_then(|read| read.last_activity_at.as_ref())
+                .and_then(Value::as_str),
+        ) {
+            for (write, results) in writes.iter().zip(&shares) {
+                crate::restored_rows::keep_receipts(&tx, write, batch, at, results, seen)?;
+            }
+        }
         let mut verdicts = Vec::with_capacity(writes.len());
         for ((write, results), conflicts) in writes.iter().zip(&shares).zip(conflicts) {
             if let Some(error) = store_fault(write) {

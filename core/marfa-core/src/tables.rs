@@ -195,7 +195,7 @@ fn drop_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
     Ok(())
 }
 
-fn owe_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
+pub(crate) fn owe_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
     empty_rows(conn, item, table)?;
     set_state(conn, item, table, OWED, None)
 }
@@ -592,6 +592,7 @@ pub(crate) fn past_cap(conn: &Connection, item: &str, table: &str) -> Result<boo
 fn become_whole(conn: &Connection, item: &str, table: &str) -> Result<()> {
     set_state(conn, item, table, WHOLE, None)?;
     crate::row_writes::unjudge(conn, item, table, None)?;
+    crate::restored_rows::keep_lost(conn, item, table)?;
     crate::row_writes::lay_table(conn, item, table)?;
     past_cap(conn, item, table)?;
     Ok(())
@@ -896,7 +897,10 @@ fn advance(
 // The caller holds the stream, excluding events between a page's read and write.
 pub(crate) fn fill(core: &Core, context: &Context, stop: &AtomicBool) -> Result<FillReport> {
     let filled = || -> Result<FillReport> {
-        crate::busy::transaction(core, context, stop, reconcile_all)?;
+        crate::busy::transaction(core, context, stop, |tx| {
+            reconcile_all(tx)?;
+            crate::restored_rows::let_go_unheld(tx)
+        })?;
         let mut pass = Pass::default();
         loop {
             crate::catch_up::refuse_if_stopped(stop)?;
@@ -971,7 +975,7 @@ fn filter_of(read: &Read) -> Result<String> {
 
 /// Hands `found` each asked row the server holds; false where the server
 /// certifies the item or the table gone.
-fn read_named(
+pub(crate) fn read_named(
     core: &Core,
     http: &Http,
     item: &str,
