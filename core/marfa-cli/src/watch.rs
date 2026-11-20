@@ -1089,14 +1089,14 @@ mod tests {
         };
         machine.opened_with(dir, "https://one.test".into(), "first".into());
         machine.ended(dir, &refused);
-        assert_eq!(machine.still_refused(dir, "first"), Some(refused.clone()));
+        assert_eq!(machine.still_refused(dir, "https://one.test", "first"), Some(refused.clone()));
         // The witness: another credential is tried.
-        assert_eq!(machine.still_refused(dir, "second"), None);
+        assert_eq!(machine.still_refused(dir, "https://one.test", "second"), None);
         // Refused the same way, so nothing is said of it: kept all the same.
         machine.opened_with(dir, "https://one.test".into(), "second".into());
         machine.ended(dir, &refused);
         assert_eq!(
-            machine.still_refused(dir, "second"),
+            machine.still_refused(dir, "https://one.test", "second"),
             Some(refused.clone()),
             "a second refused credential would be sent again at every try"
         );
@@ -1107,7 +1107,41 @@ mod tests {
         };
         machine.opened_with(dir, "https://one.test".into(), "third".into());
         machine.ended(dir, &ended);
-        assert_eq!(machine.still_refused(dir, "third"), None);
+        assert_eq!(machine.still_refused(dir, "https://one.test", "third"), None);
+    }
+
+    #[test]
+    fn a_folder_another_instance_answers_for_is_tried_again_only_once_its_key_server_or_settings_change()
+     {
+        let machine = Machine {
+            named: Named::default(),
+            json: false,
+            registry: PathBuf::from("folders.json"),
+            folders: Mutex::default(),
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path();
+        let settings = dir
+            .join(marfa_core::folder::STATE_DIR)
+            .join(marfa_core::folder::SETTINGS_FILE);
+        std::fs::create_dir_all(settings.parent().unwrap()).unwrap();
+        std::fs::write(&settings, "folder: one\n").unwrap();
+        let changed = Unwatched {
+            code: INSTANCE_CHANGED.into(),
+            message: marfa_core::folder::instance_changed_said("https://one.test"),
+        };
+        machine.opened_with(dir, "https://one.test".into(), "first".into());
+        machine.ended(dir, &changed);
+        assert_eq!(
+            machine.still_refused(dir, "https://one.test", "first"),
+            Some(changed.clone())
+        );
+        // The witness: each change is tried.
+        assert_eq!(machine.still_refused(dir, "https://one.test", "second"), None);
+        assert_eq!(machine.still_refused(dir, "https://two.test", "first"), None);
+        std::fs::write(&settings, "folder: two\n").unwrap();
+        assert_eq!(machine.still_refused(dir, "https://one.test", "first"), None);
+        assert!(not_watched(&changed).contains("tried again only once"));
     }
 
     #[test]
@@ -1125,9 +1159,9 @@ mod tests {
         };
         machine.opened_with(dir, "https://one.test".into(), "first".into());
         machine.ended(dir, &out);
-        assert_eq!(machine.still_refused(dir, "first"), Some(out));
+        assert_eq!(machine.still_refused(dir, "https://one.test", "first"), Some(out));
         // The witness: a credential kept since is tried.
-        assert_eq!(machine.still_refused(dir, "second"), None);
+        assert_eq!(machine.still_refused(dir, "https://one.test", "second"), None);
     }
 
     #[test]
