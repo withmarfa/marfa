@@ -3279,7 +3279,7 @@ export interface components {
                  */
                 status: "ok" | "incomplete" | "failing" | "off";
                 /**
-                 * @description Why backups are `off` or `failing`: `no_backup_destination` when none is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0. `destination_unusable` comes before `turned_off`.
+                 * @description Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0. If both of the last two apply, the reason is `destination_unusable`.
                  * @enum {string}
                  */
                 reason?: "no_backup_destination" | "turned_off" | "destination_unusable";
