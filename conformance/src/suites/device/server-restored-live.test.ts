@@ -76,7 +76,15 @@ interface World {
   sent: string[];
   /** Stops the original and puts the server booted from `image` in its place. */
   restore(image: string): Promise<void>;
+  /** From now on, answers in the server's place each request `answer` returns an answer for. */
+  answerInstead(answer: Instead): void;
 }
+
+/** An answer the proxy gives in the server's place, by method and path. */
+type Instead = (
+  method: string,
+  path: string,
+) => { status: number; body: unknown } | undefined;
 
 async function world(
   label: string,
@@ -86,13 +94,24 @@ async function world(
   const original = await bootFreshServer(label, env);
   servers.push(original);
   let upstream = original.apiUrl;
+  let instead: Instead = () => undefined;
   const sent: string[] = [];
   const listener = createServer((request, response) => {
     void (async () => {
-      sent.push(`${request.method ?? ""} ${(request.url ?? "").split("?")[0]}`);
+      const method = request.method ?? "";
+      const path = (request.url ?? "").split("?")[0] ?? "";
+      sent.push(`${method} ${path}`);
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = Buffer.concat(chunks);
+      const given = instead(method, path);
+      if (given !== undefined) {
+        response.writeHead(given.status, {
+          "content-type": "application/json",
+        });
+        response.end(JSON.stringify(given.body));
+        return;
+      }
       const headers = new Headers();
       for (const [name, held] of Object.entries(request.headers)) {
         if (
@@ -166,6 +185,9 @@ async function world(
       ).MARFA_API_URL;
       if (!restored) throw new Error("the restored boot wrote no address");
       upstream = restored;
+    },
+    answerInstead(answer) {
+      instead = answer;
     },
   };
 }
@@ -933,6 +955,123 @@ describe("table rows a server restored behind lost", () => {
         count: 1,
         note: "later",
       });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "holds a row write queued before the restore until the rows set aside are compared, so the values the restored server lost in the row's other columns are kept",
+    async () => {
+      const w = await world("restored-rows-held-back");
+      const row = uuidv7();
+      const { type, items } = await steps(
+        w.client(),
+        "restored-rows-held-back",
+        [[put(row, 1)]],
+      );
+      const item = items[0] ?? "";
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.holdTable(type, "steps"));
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      value(await w.device.writeRows(item, "steps", [put(row, 2)]));
+      await sent(w.device);
+      const later = value(
+        await w.device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { note: "later" } },
+        ]),
+      );
+
+      await w.restore(image);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate([type], "library"));
+      const before = w.sent.length;
+      value(await w.device.drain());
+      expect(
+        w.sent
+          .slice(before)
+          .filter((line) => line === `POST /items/${item}/tables/steps/rows`),
+        "a row write was sent before the rows set aside were compared",
+      ).toEqual([]);
+      value(await w.device.fillTables());
+
+      const [kept] = (await queue(w.device)).filter(
+        (write) => write.reason === "server_restored",
+      );
+      expect(kept, "no row write was kept").toBeDefined();
+      expect(
+        (await queue(w.device)).find((write) => write.id === later.id)?.follows,
+      ).toBe(kept?.id);
+      value(await w.device.drain());
+      expect(
+        (await serverSteps(w.client(), item))[row],
+        "the later write went ahead of the kept one",
+      ).toBe(1);
+
+      expect(value(await w.device.release({ reason: "server_restored" }))).toBe(
+        1,
+      );
+      value(await w.device.drain());
+      const read = await w.client().rawRequest<{
+        data: { id: string; values: Record<string, unknown> }[];
+      }>(`/items/${item}/tables/steps/rows?limit=1000`);
+      expect(read.data.data.find((one) => one.id === row)?.values).toEqual({
+        count: 2,
+        note: "later",
+      });
+      expect(
+        (await queue(w.device)).find((write) => write.id === later.id),
+      ).toMatchObject({ verdict: "accepted" });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "sets aside a row write whose rows the restored server answers 400 validation_failed, and reads them no more",
+    async () => {
+      const w = await world("restored-rows-unreadable");
+      const row = uuidv7();
+      const { type, items } = await steps(
+        w.client(),
+        "restored-rows-unreadable",
+        [[put(row, 1)]],
+      );
+      const item = items[0] ?? "";
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.holdTable(type, "steps"));
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      value(await w.device.writeRows(item, "steps", [put(row, 2)]));
+      await sent(w.device);
+
+      await w.restore(image);
+      const read = `GET /items/${item}/tables/steps/rows`;
+      const reads = (): number => w.sent.filter((line) => line === read).length;
+      w.answerInstead((method, path) =>
+        `${method} ${path}` === read
+          ? {
+              status: 400,
+              body: {
+                error: {
+                  code: "validation_failed",
+                  message: "the request does not read",
+                },
+              },
+            }
+          : undefined,
+      );
+      const before = reads();
+      expect(
+        expired(await w.device.catchUp()),
+        "an answer about one table's rows ended the catch-up",
+      ).toBe("caught up");
+      // The witness: the check read the rows the write changed.
+      expect(reads()).toBeGreaterThan(before);
+      const checked = reads();
+      expect(expired(await w.device.catchUp())).toBe("caught up");
+      expect(reads(), "the device read again rows it had set aside").toBe(
+        checked,
+      );
     },
     TIMEOUT,
   );
