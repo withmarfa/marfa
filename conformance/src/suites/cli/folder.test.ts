@@ -1143,17 +1143,14 @@ describe("a folder round trip", () => {
     expect(
       pushed.stdout
         .split("\n")
-        .filter((line) => line.startsWith("conflicted ")),
+        .filter((line) => line.includes("changed in two places")),
     ).toEqual([
-      expect.stringMatching(
-        new RegExp(
-          `^conflicted update_item ${title}\\.md conflicted copy ${title} \\(2\\)\\.md`,
-        ),
-      ),
+      `${title}.md changed in two places; the other edit is in ${title} (2).md`,
     ]);
+    expect(pushed.stdout).not.toContain("update_item");
     // Said once: the next push sends nothing and has nothing to say of it.
     const next = await c.cli.run(["folders", "push", dir]);
-    expect(next.stdout).not.toContain("conflicted");
+    expect(next.stdout).not.toContain("changed in two places");
   });
 
   it("says a conflicted edit while watching, and where its text went", async () => {
@@ -1208,10 +1205,9 @@ describe("a folder round trip", () => {
     trackItem(c.ctx, /marfa_id: (\S+)/.exec(readFileSync(copy, "utf8"))![1]!);
     const said = watched.stdout
       .split("\n")
-      .filter((line) => line.includes("conflicted"));
-    expect(said[0]).toMatch(
-      new RegExp(`^conflicted update_item ${title}\\.md conflicted copy `),
-    );
+      .filter((line) => line.includes(`${title}.md changed in two places`));
+    expect(said[0]).toContain(`${title}.md changed in two places`);
+    expect(watched.stdout).not.toContain("update_item");
     // The copy reaches the watch with a change after the answer, so its file
     // is named in that line or, once it is a file, in one of its own.
     expect(said.join("\n")).toContain(`${title} (2).md`);
@@ -1957,5 +1953,123 @@ describe("a folder round trip", () => {
         "the folder whose query leaves the note out by its state gave the file up",
       ).toBe(true);
     });
+  });
+});
+
+describe("adding a directory to follow a folder named by its title", () => {
+  async function makeFolder(title: string): Promise<string> {
+    const made = await c.cli.json<ItemEnvelope>([
+      "folders",
+      "create",
+      "--title",
+      title,
+      "--query",
+      JSON.stringify({ types: ["core.note"] }),
+    ]);
+    trackFolder(c.ctx, made.item.id);
+    return made.item.id;
+  }
+
+  it("adds a directory to follow the one folder that has the title given", async () => {
+    const title = `Packing ${unique("list")}`;
+    const id = await makeFolder(title);
+    const near = join(dir, "near");
+    const before = await listed();
+
+    // The witness: a title that differs in case is not the title.
+    const wrongCase = await c.cli.refused([
+      "folders",
+      "add",
+      near,
+      "--folder",
+      title.toUpperCase(),
+      "--yes",
+    ]);
+    expect(wrongCase.envelope.error.code).toBe("invalid");
+    expect(await listed()).toEqual(before);
+
+    const added = await c.cli.json<{ dir: string; folder: string }>([
+      "folders",
+      "add",
+      near,
+      "--folder",
+      title,
+      "--yes",
+    ]);
+    expect(added.folder).toBe(id);
+    expect(await listed()).toEqual([...before, added.dir]);
+
+    // The title is matched as the server lists it: inner whitespace collapsed.
+    const suffix = unique("wide");
+    const spaced = await makeFolder(`Wide  gap ${suffix}`);
+    const raw = await c.cli.refused([
+      "folders",
+      "add",
+      join(dir, "spaced-raw"),
+      "--folder",
+      `Wide  gap ${suffix}`,
+      "--yes",
+    ]);
+    expect(raw.envelope.error.code).toBe("invalid");
+    const collapsed = await c.cli.json<{ folder: string }>([
+      "folders",
+      "add",
+      join(dir, "spaced"),
+      "--folder",
+      `Wide gap ${suffix}`,
+      "--yes",
+    ]);
+    expect(collapsed.folder).toBe(spaced);
+  });
+
+  it("refuses a title no folder has, naming the title, and adds nothing", async () => {
+    const title = unique("no-folder-has-this");
+    const before = await listed();
+    const refused = await c.cli.refused([
+      "folders",
+      "add",
+      join(dir, "none"),
+      "--folder",
+      title,
+      "--yes",
+    ]);
+    expect(refused.envelope.error.code).toBe("invalid");
+    expect(refused.envelope.error.message).toContain(`"${title}"`);
+    expect(await listed()).toEqual(before);
+    expect(existsSync(join(dir, "none"))).toBe(false);
+  });
+
+  it("refuses a title two folders have, listing each ID, and adds nothing", async () => {
+    const title = unique("twice");
+    const first = await makeFolder(title);
+    const second = await makeFolder(title);
+    const before = await listed();
+    const refused = await c.cli.refused([
+      "folders",
+      "add",
+      join(dir, "twice"),
+      "--folder",
+      title,
+      "--yes",
+    ]);
+    expect(refused.envelope.error.code).toBe("invalid");
+    expect(refused.envelope.error.message).toContain(first);
+    expect(refused.envelope.error.message).toContain(second);
+    expect(await listed()).toEqual(before);
+    expect(existsSync(join(dir, "twice"))).toBe(false);
+  });
+
+  it("takes a value that is a folder ID as the ID, even where another folder has it as its title", async () => {
+    const real = await makeFolder(unique("real"));
+    await makeFolder(real);
+    const added = await c.cli.json<{ folder: string }>([
+      "folders",
+      "add",
+      join(dir, "by-id"),
+      "--folder",
+      real,
+      "--yes",
+    ]);
+    expect(added.folder).toBe(real);
   });
 });

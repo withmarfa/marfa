@@ -21,7 +21,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **natural key**: An item's `source` and `source_id` together. A write that names one that a live item of its type holds updates that item, whichever key sends it, so a connector's item stays one item. Not the item's `id`, which a natural key decides before, and not its link. A conflicted copy gets neither it nor a link, and a tombstone keeps it.
 - **conversation**: One item of `core.conversation`, whose messages are the rows of its `messages` table. A message is never an item, so it has no version, tags or edges. A message people view on its own, such as an email, is a `core.message` item.
 - **occurrence**: One time an event happens, computed from a series when `GET /occurrences` reads a window and never stored. A series is one `core.event` item that carries rule lines in `recurrence`. An event that takes the place of one occurrence is an item of its own, joined to the series by `parent-of`; it is a moved occurrence, not a second series. Not a task, which carries `recurrence` but is never unfolded.
-- **view**: A saved list of items, held as a `system.view` that every app shares: its query says which items it lists, and its sort and group say in what order and how they group. How an app shows them is the app's own. It is written through `/views` (`items/system-types`). Not a folder, which holds items as files on a machine, and not a collection.
+- **view**: A saved list of items, held as a `system.view` that every app shares: its query says which items it lists, and its sort and group say in what order and how they group. How an app shows them is the app's own. It is written through `/views` (`items/system-types`). Not a folder, which a directory on a machine follows, and not a collection.
 
 ### Properties, metadata and edges
 
@@ -39,7 +39,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **extension**: A namespaced JSON object of metadata attached to an item by something other than the key that wrote the item, read and written per namespace. Not a blob and not a property.
 - **edge**: A directed relationship from one item to another, named by its **edge type**. `from_id` names its **from item**, the item it points from, and `to_id` its **to item**, the item it points to; together they are its two **ends**. An edge has properties and a version of its own. Never "source" or "target" for an end: a source is what wrote an item.
 - **reverse name**: The name an edge type may declare for its edges read from the to item, such as `child-of` for `parent-of`, used as a frontmatter key. Never "inverse". Not a reverse label.
-- **written from**: The end of an edge type whose file writes its edges in a folder, `from` or `to`, or `none` where no file does (`written_from`).
+- **written from**: The end of an edge type whose file writes its edges in a directory, `from` or `to`, or `none` where no file does (`written_from`).
 - **label**: The heading a type, a field or an edge type shows for itself. An edge type's label heads the from end of its edges, such as `Children` on `parent-of`. Not the `id` and not a reverse name.
 - **plural**: The name of a list of a type's items, such as `People` for `core.entity.person`.
 - **reverse label**: The heading an edge type shows for the to end of its edges, such as `Parent` on `parent-of`. Not a reverse name, which is a frontmatter key.
@@ -59,7 +59,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 ### Files
 
 - **blob**: Bytes stored by content hash, with a size in `size_bytes` and a MIME type. An item refers to a blob; it never contains one.
-- **file**: An item whose type inherits from `core.file` and refers to the blob that holds its bytes. In a folder, a file on disk, which is one item.
+- **file**: An item whose type inherits from `core.file` and refers to the blob that holds its bytes. In a directory, a file on disk, which is one item.
 - **store**: A place a blob's bytes live: the disk beside the server, or an S3-compatible bucket. A store answers four verbs on a hash, put, get, has and delete, and carries its identity in a marker it holds. The **copy record** says which stores hold which blob. Never "backend".
 - **copy record**: The server's record of which stores hold which blob, and since when, read at `GET /blobs/{hash}/copies`.
 - **replicate**: To copy into a store what it lacks from a store that has it, as the `blob-replicate` housekeeping job does. Never "mirror".
@@ -146,7 +146,7 @@ Access is read the same way wherever a person sees it: on the pages where they a
 
 ### Devices and folders
 
-- **device**: Something that keeps a working copy of a slice and a queue of writes, through the core: an app built on the Swift SDK, or the CLI. A folder is a device whose face is a directory.
+- **device**: Something that keeps a working copy of a slice and a queue of writes, through the core: an app built on the Swift SDK, or the CLI. A directory that follows a folder is a device whose face is a file system.
 - **core**: The Rust engine every native client embeds, through UniFFI to Swift and a native module to Node.
 - **working copy**: A device's local copy of its slice. A copy, not a peer: the server is the truth.
 - **hydration**: A device's read of its whole slice from the server: the head of the log first, then the item listing of each type the slice names, in every state, the edge types held whole and each pin. It runs when a copy is new or has expired, and a refused listing ends it before the copy loses anything. Not the edges an item answer carries, which `edges.md` calls hydrated.
@@ -157,16 +157,17 @@ Access is read the same way wherever a person sees it: on the pages where they a
 - **verdict**: What a device gives a queued write once the server answers it, or once it cannot be sent: `accepted`, `merged` (applied with changes), `conflicted` (written to a conflicted copy), `refused` (with a reason), `blocked` (held, with a reason) or `dead` (given up after retries).
 - **drain**: To send a device's queued writes to the server and record each answer as the write's verdict. Also the noun: one such pass over the queue, as `marfa device drain` runs it. Not catch-up, which brings the server's changes into the working copy.
 - **forget**: To clear a device's answered writes from its queue: `marfa device forget`, and `forgetAnswered()` in the Swift SDK and the Node module. The contract says "clear" for the same act (`queue-and-verdicts/clear-answered`). `marfa keys forget` keeps the ordinary sense: it removes the credential kept for a server.
-- **file cache**: The folder beside a device's store that holds, by hash, the bytes of the files the device fetched and of its queued uploads.
+- **file cache**: The directory beside a device's store that holds, by hash, the bytes of the files the device fetched and of its queued uploads.
 - **file budget**: The most bytes a device's file cache is to hold, other than the bytes of attachments.
 - **attachment**: A part by an `attached-to` edge: any item, most often a file. A file attachment's bytes stay in the file cache outside the file budget.
-- **folder**: A directory on a machine bound to a `system.folder`, whose settings every machine bound to it shares and writes out as one editable file, `.marfa/folder.yaml`: a query that decides what the folder holds, the defaults a new file takes, and include and ignore lists. A device whose face is a file system: a file in it is an item on the server, and an item its query matches is a file in it. Not a view and not a collection.
-- **folder status**: The last observations reported for one folder copy under a sign-in that still stands, read at `GET /folders/{id}/status`. A report's age is not a claim that a machine is online.
-- **placement**: Where an item's file sits in a folder: its `in-folder` edge to the folder's `system.folder`, whose `path` names the file from the folder's root. It never decides what a folder holds, and it is never written in a file.
-- **registry**: The folder registry: one file on a machine that lists its folders, each by its directory and the `system.folder` it follows. Never a folder's store. The type registry is the server's catalog of types (`types.md`), another thing.
+- **folder**: A `system.folder` item on the instance: the settings every directory that follows it shares, which it writes out as one editable file, `.marfa/folder.yaml`: a query that decides what the folder holds, the defaults a new file takes, and include and ignore lists, and its ID. The instance holds it, so it has no place on any machine; a folder is named by its ID or its title. Not a directory, which is where a machine keeps a folder's files, and not a view or a collection.
+- **directory**: A place on a machine's disk that follows a folder, added with `marfa folders add`. It holds a working copy and a queue, and a device whose face is a file system: a file in it is an item on the server, and an item its folder's query matches is a file in it. The `folders` commands, such as pull, scan, push and watch, act on a directory. A folder is not on disk; the directory is. Not a folder.
+- **folder status**: The last observations reported for one directory of a folder under a sign-in that still stands, read at `GET /folders/{id}/status`. A report's age is not a claim that a machine is online.
+- **placement**: Where an item's file sits in a directory: its `in-folder` edge to the folder's `system.folder`, whose `path` names the file from the directory's root. It never decides what a folder holds, and it is never written in a file. The edge keeps its name, `in-folder`.
+- **registry**: The folder registry: one file on a machine that lists its directories, each with the `system.folder` it follows. It keeps the name folder registry, as `MARFA_FOLDER_REGISTRY` and `folders.json` do. Never a directory's store. The type registry is the server's catalog of types (`types.md`), another thing.
 - **embed**: A file an item's body shows inside it, `![](path)` or `![[file]]`: the item's `references` edge to that file item. Showing a file is not owning it: the file is part of the item only through its `attached-to` edge. An embed that names no file, `![[A note]]` say, is an embed of a note: text in the body, neither a link nor an edge.
 - **collection**: A container and its members: an item whose type plays the `container` role, such as `core.collection`, an album or a series, and the items joined to it by an `in-collection` edge, each with an optional `position`. Flat: a container is never a member, and `parent-of` is what hierarchy is for. Not a folder and not a view.
-- **frontmatter**: The block of `key: value` lines between `---` fences that a Markdown file in a folder opens with. Never "header".
+- **frontmatter**: The block of `key: value` lines between `---` fences that a Markdown file in a directory opens with. Never "header".
 
 ### Connectors
 

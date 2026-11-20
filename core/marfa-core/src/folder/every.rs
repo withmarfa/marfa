@@ -81,12 +81,12 @@ impl Unwatched {
             WatchError::CredentialRefused(error) => Unwatched {
                 code: error.code().to_string(),
                 message: format!(
-                    "the server refused this folder's credential ({error}), so its watch stopped; its writes wait until a working credential is kept"
+                    "the server refused this folder's credential ({error}), so its watch stopped; its changes not yet sent wait until a working credential is kept"
                 ),
             },
             WatchError::FollowEnded(error) => Unwatched {
                 code: error.code().to_string(),
-                message: format!("the server's changes stopped reaching this folder: {error}"),
+                message: format!("the server's changes stopped reaching this directory: {error}"),
             },
             WatchError::Unwatchable(message) => Unwatched {
                 code: "watch".into(),

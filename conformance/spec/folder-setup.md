@@ -1,6 +1,6 @@
 # Setting up a folder
 
-A folder is a directory bound to a `system.folder` item, with a working copy and a queue. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
+A folder is a `system.folder` item on the instance, with its settings, query and ID. A directory is a place on a machine's disk that follows a folder, with a working copy and a queue. A statement about what a device does on disk says directory; one about what the instance holds says folder. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
 
 This chapter holds how a folder is bound, set up, listed, handed to a command and synced from login. `device.md` lists the answers the scripted server gives that the real server cannot be made to give, and why; `device/fidelity.test.ts` checks every answer the real server can produce against the scripted server's.
 
@@ -8,7 +8,7 @@ This chapter holds how a folder is bound, set up, listed, handed to a command an
 
 ### `folder-setup/bind-folder`
 
-When a directory is added as a folder, a device MUST bind it to the named `system.folder` using the settings read from that item.
+When a directory is added to follow a folder, a device MUST bind it to the named `system.folder` using the settings read from that item.
 
 **Tests:** `device/folders.test.ts › reads its settings from the system.folder it is bound to`.
 
@@ -18,9 +18,51 @@ If the named item is not a live `system.folder`, then the CLI MUST refuse `folde
 
 **Tests:** `device/folders.test.ts › refuses to follow an item that is not a live folder`.
 
+### `folder-setup/bind-by-title`
+
+When `folders add --folder` is given a value that is not a folder ID and exactly one `system.folder` that the credential can read has that title, the CLI MUST bind the directory to that folder.
+
+**Tests:** `cli/folder.test.ts › adds a directory to follow the one folder that has the title given`.
+
+### `folder-setup/bind-title-exact`
+
+When `folders add --folder` is given a title, the CLI MUST match it character for character against each folder's title as the server lists it, which is trimmed, with each run of inner whitespace collapsed to one space, and `Untitled folder` for a folder with no title, so that a title differing only in case, in whitespace or in a missing character names no folder.
+
+**Tests:** `cli/folder.test.ts › adds a directory to follow the one folder that has the title given`.
+
+### `folder-setup/bind-title-missing`
+
+If no `system.folder` that the credential can read has the title given to `folders add --folder`, then the CLI MUST refuse the command with `invalid`, naming the title.
+
+**Tests:** `cli/folder.test.ts › refuses a title no folder has, naming the title, and adds nothing`.
+
+### `folder-setup/bind-title-ambiguous`
+
+If more than one `system.folder` that the credential can read has the title given to `folders add --folder`, then the CLI MUST refuse the command with `invalid`, listing the ID of each folder that has the title.
+
+**Tests:** `cli/folder.test.ts › refuses a title two folders have, listing each ID, and adds nothing`.
+
+### `folder-setup/bind-title-nothing-added`
+
+If the CLI refuses `folders add --folder` because the title given names no folder or more than one, then the CLI MUST leave the machine's folder registry as it was.
+
+**Tests:** `cli/folder.test.ts › refuses a title no folder has, naming the title, and adds nothing`, `cli/folder.test.ts › refuses a title two folders have, listing each ID, and adds nothing`.
+
+### `folder-setup/bind-id-first`
+
+When `folders add --folder` is given a value that is a folder ID, the CLI MUST take it as that ID, even where another folder's title is the same text.
+
+**Tests:** `cli/folder.test.ts › takes a value that is a folder ID as the ID, even where another folder has it as its title`.
+
+### `folder-setup/inventory-title`
+
+When `folders inventory` prints plain output, the CLI MUST print each folder's title beside its ID.
+
+**Tests:** `cli/folder-inventory.test.ts › prints each folder's title beside its ID in plain output`.
+
 ### `folder-setup/settings-file`
 
-When a directory is added as a folder, a device MUST write its settings as a YAML map in `.marfa/folder.yaml`, with `folder` naming the item and `version` naming the version read.
+When a directory is added to follow a folder, a device MUST write its settings as a YAML map in `.marfa/folder.yaml`, with `folder` naming the item and `version` naming the version read.
 
 **Tests:** `device/folders.test.ts › writes its settings out as one file in .marfa/`.
 
@@ -404,11 +446,11 @@ When machines follow the same `system.folder`, a device MUST keep each machine�
 
 ## A store another build made
 
-A folder's store holds a copy of the server's items, the writes still to be sent, and the folder's record of its files: which file is which item, what the folder last read and wrote there, which files went missing, which writes and placements the server refused, and which items were purged. An answer the folder has yet to record is an answer a file's state still waits on, a write the server gave up on, or a write the server refused, unless it is the delete of an edge already gone, or an edit, a tag, a state change or an edge of an item a file in the folder is bound to, which the folder records against the file or its placements, or no longer needs once a later save is taken. Where the store holds no write still to be sent and no answer the folder has yet to record, a hydration brings the copy back and the record carried into the new store keeps each file where it was (`folder-setup/refused-store-record-kept`), so this build can replace a store that another build of the core made (`device/wrong-schema`) without losing anything.
+A directory's store holds a copy of the server's items, the writes still to be sent, and the folder's record of its files: which file is which item, what the folder last read and wrote there, which files went missing, which writes and placements the server refused, and which items were purged. An answer the folder has yet to record is an answer a file's state still waits on, a write the server gave up on, or a write the server refused, unless it is the delete of an edge already gone, or an edit, a tag, a state change or an edge of an item a file in the folder is bound to, which the folder records against the file or its placements, or no longer needs once a later save is taken. Where the store holds no write still to be sent and no answer the folder has yet to record, a hydration brings the copy back and the record carried into the new store keeps each file where it was (`folder-setup/refused-store-record-kept`), so this build can replace a store that another build of the core made (`device/wrong-schema`) without losing anything.
 
 ### `folder-setup/refused-store-replaced`
 
-While a device holds a folder's writer role, when it refuses the folder's store `wrong_schema` and the store names the folder, holds no write still to be sent, holds no answer the folder has yet to record, and holds a record of the folder's files that this build can read, a device MUST replace the store with one of this build's shape and go on with the command.
+While a device holds a folder's writer role, when it refuses the directory's store `wrong_schema` and the store names the folder, holds no write still to be sent, holds no answer the folder has yet to record, and holds a record of the folder's files that this build can read, a device MUST replace the store with one of this build's shape and go on with the command.
 
 **Reason:** a release that changes the store's shape would otherwise leave every folder unusable until the person removed it and added it again.
 
@@ -416,13 +458,13 @@ While a device holds a folder's writer role, when it refuses the folder's store 
 
 ### `folder-setup/refused-store-kept`
 
-When a device replaces a folder's store, a device MUST keep the folder following the `system.folder` that the replaced store named.
+When a device replaces a directory's store, a device MUST keep the folder following the `system.folder` that the replaced store named.
 
 **Tests:** `device/folders-refused-store-live.test.ts › replaces a folder's store another build made that holds nothing unsent, and sends what was edited while it was refused`.
 
 ### `folder-setup/refused-store-origin-kept`
 
-When a device replaces a folder's store, a device MUST report in the new store the server origin that the replaced store reported.
+When a device replaces a directory's store, a device MUST report in the new store the server origin that the replaced store reported.
 
 **Reason:** a store that records its origin refuses another server (`device/origin-refused`), and the replaced store keeps that protection.
 
@@ -442,7 +484,7 @@ When a device replaces the store of a folder whose first sync was confirmed, a d
 
 ### `folder-setup/refused-store-files-kept`
 
-When a device replaces a folder's store, a device MUST NOT change any file in the folder outside its state directory.
+When a device replaces a directory's store, a device MUST NOT change any file in the directory outside its state directory.
 
 **Tests:** `device/folders-refused-store-live.test.ts › replaces a folder's store another build made that holds nothing unsent, and sends what was edited while it was refused`.
 
@@ -454,7 +496,7 @@ When a device syncs a folder whose store it replaced, a device MUST send each fi
 
 ### `folder-setup/refused-store-edits-sent`
 
-When a device syncs a folder whose store it replaced, a device MUST send each change made to the folder's files while the store was refused.
+When a device syncs a folder whose store it replaced, a device MUST send each change made to the directory's files while the store was refused.
 
 **Tests:** `device/folders-refused-store-live.test.ts › replaces a folder's store another build made that holds nothing unsent, and sends what was edited while it was refused`, `› replaces a folder's refused store for a watch of the folder, and sends an edit`, `› watches every folder: replaces a refused store that holds nothing unsent, and leaves one that does`, `› replaces a refused store a running watch hands to a push, and the watch takes the new store back and sends an edit`, `› sends an edit of a text file made while its store was refused to the item the file is`.
 
@@ -486,13 +528,13 @@ When a device syncs a folder whose store it replaced, a device MUST report as wa
 
 ### `folder-setup/refused-store-replaced-told`
 
-When the CLI replaces a folder's store, the CLI MUST say on standard error which folder's store it replaced and why it refused the store.
+When the CLI replaces a directory's store, the CLI MUST say on standard error which directory's store it replaced and why it refused the store.
 
 **Tests:** `device/folders-refused-store-live.test.ts › replaces a folder's store another build made that holds nothing unsent, and sends what was edited while it was refused`, `› replaces a folder's refused store for a watch of the folder, and sends an edit`, `› watches every folder: replaces a refused store that holds nothing unsent, and leaves one that does`.
 
 ### `folder-setup/refused-store-replace-advice`
 
-When a device refuses a folder's store `wrong_schema` without replacing it while `folder-setup/refused-store-replaced` would replace it for the folder's writer, a device MUST say that the folder's next push, pull, scan or watch replaces it.
+When a device refuses a directory's store `wrong_schema` without replacing it while `folder-setup/refused-store-replaced` would replace it for the folder's writer, a device MUST say that the folder's next push, pull, scan or watch replaces it.
 
 **Reason:** `folders status` only reads, so it never replaces a store.
 
@@ -512,7 +554,7 @@ When a device adds a folder whose store it refuses `wrong_schema`, and the store
 
 ### `folder-setup/refused-store-unsent`
 
-If a device refuses a folder's store `wrong_schema` and the store holds a write still to be sent or an answer the folder has yet to record, or its writes cannot be counted, then a device MUST refuse the command `wrong_schema` rather than replace the store.
+If a device refuses a directory's store `wrong_schema` and the store holds a write still to be sent or an answer the folder has yet to record, or its writes cannot be counted, then a device MUST refuse the command `wrong_schema` rather than replace the store.
 
 **Reason:** only the build that made the store can send those writes or record those answers (`device/wrong-schema-no-delete`).
 
@@ -520,7 +562,7 @@ If a device refuses a folder's store `wrong_schema` and the store holds a write 
 
 ### `folder-setup/refused-store-uncarried`
 
-If a device refuses a folder's store `wrong_schema` and the store holds a record of the folder's files that this build cannot read, then a device MUST refuse the command `wrong_schema` rather than replace the store.
+If a device refuses a directory's store `wrong_schema` and the store holds a record of the folder's files that this build cannot read, then a device MUST refuse the command `wrong_schema` rather than replace the store.
 
 **Reason:** a replacement that left the record behind would write back files deleted while the store was refused and send files of items put in the bin as new items.
 
@@ -528,19 +570,19 @@ If a device refuses a folder's store `wrong_schema` and the store holds a record
 
 ### `folder-setup/refused-store-unsent-kept`
 
-When a device refuses a folder's store `wrong_schema` without replacing it, a device MUST leave the store's file and every file in the folder unchanged.
+When a device refuses a directory's store `wrong_schema` without replacing it, a device MUST leave the store's file and every file in the directory unchanged.
 
 **Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`, `› leaves a folder's store another build made while it holds a delete the server gave up on that no file records, and the folder's files`, `› leaves a folder's store another build made whose unsent writes cannot be counted`, `› watches every folder: replaces a refused store that holds nothing unsent, and leaves one that does`, `› leaves a refused store that names no folder until the folder is added again, which replaces it`, `› leaves a refused store whose record of its files is of another shape, and says to remove the folder with the build that made it`.
 
 ### `folder-setup/refused-store-unsent-advice`
 
-When a device refuses a folder's store `wrong_schema` because it holds a write still to be sent or an answer the folder has yet to record, a device MUST say to push the folder with the build that made the store.
+When a device refuses a directory's store `wrong_schema` because it holds a write still to be sent or an answer the folder has yet to record, a device MUST say to push the folder with the build that made the store.
 
 **Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`, `› leaves a folder's store another build made while it holds a delete the server gave up on that no file records, and the folder's files`.
 
 ### `folder-setup/refused-store-unrecorded-advice`
 
-When a device refuses a folder's store `wrong_schema` because it holds a write still to be sent or an answer the folder has yet to record, a device MUST say that a write the server refused or gave up on that a push leaves goes only when the folder is removed with the build that made the store and added again, and that a file whose deletion the server never took then comes back and must be deleted again.
+When a device refuses a directory's store `wrong_schema` because it holds a write still to be sent or an answer the folder has yet to record, a device MUST say that a write the server refused or gave up on that a push leaves goes only when the folder is removed with the build that made the store and added again, and that a file whose deletion the server never took then comes back and must be deleted again.
 
 **Reason:** a push sends no write the server refused or gave up on again, so the store goes on holding it, and this build cannot open the store to remove the folder.
 
@@ -548,19 +590,19 @@ When a device refuses a folder's store `wrong_schema` because it holds a write s
 
 ### `folder-setup/refused-store-uncounted-advice`
 
-When a device refuses a folder's store `wrong_schema` because its writes cannot be counted, a device MUST say to push the folder and remove it with the build that made the store, then add it again.
+When a device refuses a directory's store `wrong_schema` because its writes cannot be counted, a device MUST say to push the folder and remove it with the build that made the store, then add it again.
 
 **Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made whose unsent writes cannot be counted`.
 
 ### `folder-setup/refused-store-uncarried-advice`
 
-When a device refuses a folder's store `wrong_schema` because it holds a record of the folder's files that this build cannot read, a device MUST say to remove the folder with the build that made the store, then add it again.
+When a device refuses a directory's store `wrong_schema` because it holds a record of the folder's files that this build cannot read, a device MUST say to remove the folder with the build that made the store, then add it again.
 
 **Tests:** `device/folders-refused-store-live.test.ts › leaves a refused store whose record of its files is of another shape, and says to remove the folder with the build that made it`.
 
 ### `folder-setup/refused-store-watch-every`
 
-When a watch of every folder refuses a folder's store `wrong_schema` without replacing it, a device MUST report that folder not watched, with the refusal, and go on watching the other folders.
+When a watch of every folder refuses a directory's store `wrong_schema` without replacing it, a device MUST report that folder not watched, with the refusal, and go on watching the other folders.
 
 **Tests:** `device/folders-refused-store-live.test.ts › watches every folder: replaces a refused store that holds nothing unsent, and leaves one that does`.
 
@@ -690,7 +732,7 @@ When a device hydrates a folder's copy again, a device MUST keep every queued wr
 
 ### `folder-setup/copy-shrink-files-unchanged`
 
-When a device hydrates a folder's copy again, a device MUST NOT change, add or remove a file of the folder during the hydration.
+When a device hydrates a folder's copy again, a device MUST NOT change, add or remove a file of the directory during the hydration.
 
 **Tests:** `device/folders-copy-shrink.test.ts › keeps every unsent write and changes no file when a changed query %s shrinks the copy`, `› keeps every unsent write when a shrink stopped midway is resumed`.
 
@@ -940,13 +982,13 @@ When a registered folder performs a pass after its registry entry disappears or 
 
 ### `folder-setup/nested-folder-refused`
 
-When adding a folder would enclose or fall inside another listed folder, a device MUST refuse the add.
+When adding a directory would enclose or fall inside another listed directory, a device MUST refuse the add.
 
 **Tests:** `device/folders-one-mac.test.ts › refuses a folder inside another, and walks past a folder inside it`.
 
 ### `folder-setup/nested-folder-refused-any-spelling`
 
-When adding a folder would enclose or fall inside another listed folder, a device MUST refuse the add however either folder's path is spelled, including in another letter case on a case-insensitive volume.
+When adding a directory would enclose or fall inside another listed directory, a device MUST refuse the add however either directory's path is spelled, including in another letter case on a case-insensitive volume.
 
 **Reason:** More than one spelling can reach one directory, so only the directories themselves show whether two folders would hold one another's files.
 
@@ -1006,19 +1048,19 @@ If a folder is removed by the path at which the machine’s folder registry list
 
 If a folder is removed by a path that passes through a symbolic link and is not the path at which the machine’s folder registry lists a folder, then a device MUST refuse the removal with `invalid`.
 
-**Reason:** A link above a folder can come to lead into another folder after the folder was listed, and only the listed path binds a removal to the folder the registry lists.
+**Reason:** A link above a directory can come to lead into another directory after the directory was listed, and only the listed path binds a removal to the directory the registry lists.
 
 **Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`, `cli/folder.test.ts › removes a listed folder whose directory became a link by its listing alone, and leaves the folder the link leads to`.
 
 ### `folder-setup/remove-link-refusal-names-listed`
 
-If a removal is refused because its path passes through a symbolic link in a directory above the folder that no later `..` climbs back out of, and the path reaches a folder that the machine’s folder registry lists, then a device MUST name that folder's listed path in the refusal's message.
+If a removal is refused because its path passes through a symbolic link in a directory above the directory that no later `..` climbs back out of, and the path reaches a directory that the machine’s folder registry lists, then a device MUST name that directory's listed path in the refusal's message.
 
 **Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `cli/folder.test.ts › refuses every other spelling of a listed folder whose directory became a link, and removes nothing it leads to`.
 
 ### `folder-setup/remove-drops-store-entries`
 
-When a folder's state is removed, a device MUST take every entry that lists that folder's store off the machine’s folder registry.
+When a directory's state is removed, a device MUST take every entry that lists that directory's store off the machine’s folder registry.
 
 **Tests:** `cli/folder.test.ts › takes a moved folder's old entry off the list when it is removed at its new place`.
 
@@ -1090,7 +1132,7 @@ A watch process keeps a record of its folders in `folder-watch.json`, beside the
 
 While `folders watch` runs, with or without a directory, the CLI MUST keep a JSON file named `folder-watch.json` in the directory that holds the machine’s folder registry.
 
-**Reason:** A program on the machine reads what a watch is doing without opening a folder’s store, calling the server or running a command for each folder.
+**Reason:** A program on the machine reads what a watch is doing without opening a directory’s store, calling the server or running a command for each folder.
 
 **Tests:** `device/folder-watch-record.test.ts › lists each folder a watch holds with what a report to the server says of it, and nothing from inside the folder`, `device/folder-watch-record.test.ts › keeps the record of a watch of one folder, and marks the folder not watched when it is stopped`.
 
@@ -1196,7 +1238,7 @@ When a device writes the record, a device MUST replace the whole file in one ste
 
 ### `folder-setup/watch-record-no-content`
 
-A device MUST NOT write into the record a credential, the name of a file inside a folder, or an item’s content.
+A device MUST NOT write into the record a credential, the name of a file inside a directory, or an item’s content.
 
 **Tests:** `device/folder-watch-record.test.ts › lists each folder a watch holds with what a report to the server says of it, and nothing from inside the folder`.
 
@@ -1564,7 +1606,7 @@ Where `folders autostart on` is given `--key-file` naming a file, the CLI MUST m
 
 If the file named by `folders autostart on --key-file` or `folders watch --key-file` does not exist, is not a regular file, is a symbolic link, has more than one name, belongs to another user, can be read by its group or by others, lacks a `MARFA_API_URL` line or a `MARFA_API_KEY` line, holds an address that is not a server address, or lies inside a folder the folder registry lists, then the CLI MUST exit 1 with `invalid`, naming the file and the reason and printing no value from it.
 
-**Reason:** A key readable by others is no safer than one on a command line, and a key file inside a folder, under any of its names, would be sent to the server as one of its files. Refusing in `on` finds the fault now and not at the next login.
+**Reason:** A key readable by others is no safer than one on a command line, and a key file inside a directory, under any of its names, would be sent to the server as one of its files. Refusing in `on` finds the fault now and not at the next login.
 
 **Tests:** `device/folders-autostart.test.ts › refuses a key file that others can read, a link, one that lacks a name and one inside a folder, naming the reason and writing nothing`.
 
@@ -1586,7 +1628,7 @@ While `folders watch` runs with `--key-file`, the CLI MUST use the address and k
 
 While `folders watch` runs with `--key-file` over every folder, the CLI MUST read the file again each time it opens a folder.
 
-**Reason:** A key that is rotated in the file is the one used at the next open, and a file that has become unsafe, or lies inside a folder added since, stops being used.
+**Reason:** A key that is rotated in the file is the one used at the next open, and a file that has become unsafe, or lies inside a directory added since, stops being used.
 
 **Tests:** `device/folders-autostart.test.ts › reads the key file again when it opens a folder, and holds a folder back while the file is unsafe`.
 

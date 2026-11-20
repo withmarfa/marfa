@@ -679,7 +679,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     const said = await a.folder.pushText();
     expect(said.ok, JSON.stringify(said)).toBe(true);
     expect(said.ok && said.value).toContain(
-      "Also gone.md was found in no folder on this machine, so its item was trashed",
+      "Also gone.md was found in no directory on this machine, so its item was trashed",
     );
     expect(deletesOf(a.server, alsoGone)).toBe(1);
   });
@@ -2145,7 +2145,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     ]);
     const said = await a.folder.pushText();
     expect(said.ok && said.value).toContain(
-      "this folder stands alone, since the folder registry cannot be read",
+      "this directory stands alone, since the folder registry cannot be read",
     );
 
     // An add writes it afresh, the others list themselves again at their

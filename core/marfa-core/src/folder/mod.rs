@@ -55,7 +55,7 @@ pub use storage::user_home;
 pub use sync::{Removal, SendReport, SyncReport};
 pub use taking_back::TakeBack;
 pub use unmatched::{Unmatched, UnmatchedRemoved};
-pub use watch::{RETRY_MOST, WatchEnd, WatchError, WatchEvent, WatchPass};
+pub use watch::{RETRY_MOST, WatchEnd, WatchError, WatchEvent, WatchPass, credential_refused_said};
 pub use watch_record::WatchRecord;
 pub mod state;
 
