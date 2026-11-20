@@ -18,7 +18,7 @@ pub enum BackupsCommand {
     /// server reads it itself, files included, so nothing is downloaded here. It
     /// restores as `restore` does an archive, and holds no sign-in, keys, apps,
     /// webhooks or inbound endpoints. Needs `backups.manage` and a sign-in from
-    /// the last five minutes, or the private local command (`--socket`).
+    /// the last fifteen minutes, or the private local command (`--socket`).
     Restore {
         /// The id of the instance that took the backup, as `backups list` shows it.
         instance_id: String,

@@ -25,6 +25,8 @@ const HOST: &str = "localhost";
 const EMAIL: &str = "owner@example.test";
 const PASSWORD: &str = "the first password";
 const MINUTE_MS: u64 = 60_000;
+/// Long enough that a sign-in made before it is no longer recent.
+const PAST_RECENT_MS: u64 = 16 * MINUTE_MS;
 const VERIFIED: u8 = 0x05;
 const PRESENT_ONLY: u8 = 0x01;
 const ATTESTED: u8 = 0x40;
@@ -897,7 +899,7 @@ async fn a_registration_rechecks_the_recent_sign_in_when_it_finishes() {
     let instance = Instance::claimed().await;
     let device = Device::new();
     let asked = instance.asked_to_add().await;
-    instance.app.clock.advance(6 * MINUTE_MS).unwrap();
+    instance.app.clock.advance(PAST_RECENT_MS).unwrap();
     let response = device.registration(&asked.challenge, &instance.saying());
     let refused = instance.verify_registration(&asked.cookie, response).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN);
@@ -911,7 +913,7 @@ async fn a_refused_confirmation_leaves_the_session_and_a_good_one_replaces_it() 
     let device = Device::new();
     instance.add(&device).await;
     let stale = instance.owner.clone();
-    instance.app.clock.advance(6 * MINUTE_MS).unwrap();
+    instance.app.clock.advance(PAST_RECENT_MS).unwrap();
 
     let asked = instance
         .asked("/auth/passkeys/sign-in/options", &stale)

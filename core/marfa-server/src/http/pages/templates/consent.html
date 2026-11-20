@@ -54,7 +54,7 @@
 </section>
 {% endif %}</div>
 <p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
-{% if view.offer.confirm %}<p class="hint">Changes like this need a sign-in from the last 5 minutes.</p>
+{% if view.offer.confirm %}<p class="hint">Changes like this need a sign-in from the last 15 minutes.</p>
 {% endif %}{% if let Some(code) = device_code %}<section class="device-check" aria-labelledby="device-check-title">
 <h2 id="device-check-title">Check the code</h2>
 <p class="user-code code">{{ code }}</p>

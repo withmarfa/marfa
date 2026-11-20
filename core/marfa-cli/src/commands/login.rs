@@ -43,7 +43,7 @@ pub struct LoginArgs {
     #[arg(long, value_name = "NAME", conflicts_with = "client_id")]
     pub name: Option<String>,
     /// Ask the owner to sign in again in the browser before approving, so
-    /// the sign-in counts as recent for five minutes: restoring an archive
+    /// the sign-in counts as recent for fifteen minutes: restoring an archive
     /// or a backup, moving the sign-in address and changing
     /// `allow_private_addresses` ask for one.
     #[arg(long)]

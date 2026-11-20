@@ -298,11 +298,11 @@ fn a_refusal_no_key_can_mend_names_the_local_command_to_run() {
     // An app's sign-in too old for the act is told to sign in again.
     let door = Door::open(vec![Answer::json(
         "401 Unauthorized",
-        r#"{"error":{"code":"insufficient_user_authentication","message":"Sign in again.","details":{"max_age":300}}}"#,
+        r#"{"error":{"code":"insufficient_user_authentication","message":"Sign in again.","details":{"max_age":900}}}"#,
     )]);
     let ran = run(&home, &door.url, &["backups", "list"]);
     assert!(
-        ran.stderr.contains("sign-in from the last five minutes")
+        ran.stderr.contains("sign-in from the last fifteen minutes")
             && ran.stderr.contains("marfa login --fresh-sign-in")
             && ran.stderr.contains("--socket"),
         "{}",

@@ -510,7 +510,7 @@ mod consent_pages {
         ));
         assert!(html.find("keys.mint").unwrap() < html.find("items.purge").unwrap());
         assert!(html.contains("Can't be undone: delete items in the trash for good"));
-        assert!(html.contains("Changes like this need a sign-in from the last 5 minutes."));
+        assert!(html.contains("Changes like this need a sign-in from the last 15 minutes."));
     }
 
     #[test]
@@ -523,7 +523,7 @@ mod consent_pages {
         assert!(!html.contains("name=\"access\""));
         assert!(!html.contains("Choose access"));
         assert!(!html.contains("Confirm it's you"));
-        assert!(!html.contains("5 minutes"));
+        assert!(!html.contains("15 minutes"));
     }
 
     #[test]

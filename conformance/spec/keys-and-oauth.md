@@ -1719,39 +1719,39 @@ When a signed-in person's authorization request naming `prompt=none` names only 
 
 ### `keys-and-oauth/consent-older-reads`
 
-When a browser session that signed in more than five minutes ago accepts on the consent screen with only scopes that read (`<type>:read` for an item type or a pattern of types, `edge.<type>:read` for an edge type or a pattern of edge types, `metadata:read`, `metadata.<sub-resource>:read`, `content:read`, `profile:read`, `profile.<row>:read` and `offline_access`), the server MUST send the browser to the redirect URI with a code.
+When a browser session that signed in more than fifteen minutes ago accepts on the consent screen with only scopes that read (`<type>:read` for an item type or a pattern of types, `edge.<type>:read` for an edge type or a pattern of edge types, `metadata:read`, `metadata.<sub-resource>:read`, `content:read`, `profile:read`, `profile.<row>:read` and `offline_access`), the server MUST send the browser to the redirect URI with a code.
 
 **Reason:** Reading what the person already keeps is not a power over the instance, so a browser left signed in is trusted with it. Every write and every permission is left out, and so is any scope this build cannot read.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and the scopes left off`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than fifteen minutes ago the scopes that only read, and the scopes left off`.
 
 ### `keys-and-oauth/consent-recent-needed`
 
-If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer the refusal `authentication/recent-refusal` states, whatever the request's `Accept`, and issue no code.
+If a browser session that signed in more than fifteen minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer the refusal `authentication/recent-refusal` states, whatever the request's `Accept`, and issue no code.
 
 **Reason:** A browser left signed in, or a copied cookie, cannot hand an app a write or a power over the instance without the password. The page recognises the refusal and asks the person to confirm it's them (`authentication/confirm-replaces`), then sends the approval once more.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission or a write, and a fresh session approves the same request`, `› refuses a browser that approves a request for a permission or a write on a screen left open past five minutes 403, whatever it asks for, and issues no code`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than fifteen minutes ago 403 for a permission or a write, and a fresh session approves the same request`, `› refuses a browser that approves a request for a permission or a write on a screen left open past fifteen minutes 403, whatever it asks for, and issues no code`.
 
 ### `keys-and-oauth/consent-recent-held`
 
-When a browser session that signed in more than five minutes ago accepts on the consent screen with only scopes the app's standing consent covers, the server MUST send the browser to the redirect URI with a code.
+When a browser session that signed in more than fifteen minutes ago accepts on the consent screen with only scopes the app's standing consent covers, the server MUST send the browser to the redirect URI with a code.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago a permission the app was approved for before, and refuses a second one`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than fifteen minutes ago a permission the app was approved for before, and refuses a second one`.
 
 ### `keys-and-oauth/consent-page-confirm`
 
 When a signed-in owner opens `/auth/consent` for a request that names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, the server MUST answer `200` with the consent screen holding the "Confirm it's you" dialog, whatever the age of the session.
 
-**Reason:** The screen is shown to a session older than five minutes, which confirms it's the owner when Approve is pressed, and to a fresh one, because a screen left open can pass its five minutes before the person decides.
+**Reason:** The screen is shown to a session older than fifteen minutes, which confirms it's the owner when Approve is pressed, and to a fresh one, because a screen left open can pass its fifteen minutes before the person decides.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than five minutes ago the request for a permission or a write, with the way to confirm it's them`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than fifteen minutes ago the request for a permission or a write, with the way to confirm it's them`.
 
 ### `keys-and-oauth/consent-page-reads`
 
-When a browser session that signed in more than five minutes ago opens `/auth/consent` for a request whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the consent screen holding no "Confirm it's you" dialog.
+When a browser session that signed in more than fifteen minutes ago opens `/auth/consent` for a request whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the consent screen holding no "Confirm it's you" dialog.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than five minutes ago a request that only reads, with no question`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than fifteen minutes ago a request that only reads, with no question`.
 
 ## What the approval pages offer
 
@@ -2737,35 +2737,35 @@ When a signed-in person approves a device code, the server MUST add to the clien
 
 ### `keys-and-oauth/device-older-reads`
 
-When a browser session that signed in more than five minutes ago approves a device code with only scopes that `keys-and-oauth/consent-older-reads` lists, the server MUST approve the code.
+When a browser session that signed in more than fifteen minutes ago approves a device code with only scopes that `keys-and-oauth/consent-older-reads` lists, the server MUST approve the code.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago the scopes that only read, and not the ones left off`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than fifteen minutes ago the scopes that only read, and not the ones left off`.
 
 ### `keys-and-oauth/device-recent-needed`
 
-If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer the refusal `authentication/recent-refusal` states, whatever the request's `Accept`, and leave the code pending.
+If a browser session that signed in more than fifteen minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer the refusal `authentication/recent-refusal` states, whatever the request's `Accept`, and leave the code pending.
 
 **Reason:** As on the authorization screen, a browser left signed in cannot hand a device a write or a power over the instance.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than five minutes ago 403 for a permission, and a fresh session approves the same code`, `› refuses a session that signed in more than five minutes ago 403 for a write, and a fresh session approves the same code`, `› refuses a browser that approves a device code for a permission or a write on a screen left open past five minutes 403, whatever it asks for, and leaves the code pending`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › refuses a session that signed in more than fifteen minutes ago 403 for a permission, and a fresh session approves the same code`, `› refuses a session that signed in more than fifteen minutes ago 403 for a write, and a fresh session approves the same code`, `› refuses a browser that approves a device code for a permission or a write on a screen left open past fifteen minutes 403, whatever it asks for, and leaves the code pending`.
 
 ### `keys-and-oauth/device-recent-held`
 
-When a browser session that signed in more than five minutes ago approves a device code requested without `max_age` with only scopes the app's standing consent covers, the server MUST approve the code.
+When a browser session that signed in more than fifteen minutes ago approves a device code requested without `max_age` with only scopes the app's standing consent covers, the server MUST approve the code.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than five minutes ago a permission the app was approved for before`, `compliance/step-up.test.ts › sends a browser that signed in longer ago than max_age to sign in again before it approves the code, and the token the code then issues passes the step-up check`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › approves from a session that signed in more than fifteen minutes ago a permission the app was approved for before`, `compliance/step-up.test.ts › sends a browser that signed in longer ago than max_age to sign in again before it approves the code, and the token the code then issues passes the step-up check`.
 
 ### `keys-and-oauth/device-page-confirm`
 
 When a signed-in owner opens `/auth/device/consent` for a code requested without `max_age` whose request names a scope `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, the server MUST answer `200` with the approval screen holding the "Confirm it's you" dialog, whatever the age of the session.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than five minutes ago the request for a permission or a write, with the way to confirm it's them`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than fifteen minutes ago the request for a permission or a write, with the way to confirm it's them`.
 
 ### `keys-and-oauth/device-page-reads`
 
-When a browser session that signed in more than five minutes ago opens `/auth/device/consent` for a code requested without `max_age` whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the approval screen holding no "Confirm it's you" dialog.
+When a browser session that signed in more than fifteen minutes ago opens `/auth/device/consent` for a code requested without `max_age` whose scopes `keys-and-oauth/consent-older-reads` lists, or the app's standing consent covers, the server MUST answer `200` with the approval screen holding no "Confirm it's you" dialog.
 
-**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than five minutes ago a request that only reads, with no question`.
+**Tests:** `compliance/recent-sign-in-consent.test.ts › shows a session that signed in more than fifteen minutes ago a request that only reads, with no question`.
 
 ### `keys-and-oauth/device-client-gone`
 
@@ -3739,35 +3739,35 @@ If the audit record of a browser session's end cannot be committed, then the ser
 
 ## Acts that need a recent sign-in
 
-These acts restore a whole archive or backup, move where people sign in, change whether the server may reach private addresses or change where files and backups go, so they ask that a person signed in within the last five minutes, as RFC 9470 describes: `POST /restore` and `POST /backups/{instance_id}/{name}/restore`, which take `backups.manage`, and a `PUT /config` or `PATCH /config` that moves `sign_in_address`, changes `allow_private_addresses` or changes any of `backup_path`, `object_store_bucket`, `object_store_endpoint`, `object_store_region`, `object_store_path_style` and `object_store_prefix`, which take `config.manage`. A write changes one of these six destination settings when the value stored for it after the write, in its plain spelling, differs from the one stored before, or only one of the two exists: `null`, an empty value and a `PUT /config` that leaves out a stored setting each change it, and the value already stored does not (`instance/destination-unchanged`). An app's access token is dated by the browser session that approved the authorization or device code it came from: a session begins when the owner signs in by password or passkey, or confirms it is them (`authentication/recent-refusal`).
+These acts restore a whole archive or backup, move where people sign in, change whether the server may reach private addresses or change where files and backups go, so they ask that a person signed in within the last fifteen minutes, as RFC 9470 describes: `POST /restore` and `POST /backups/{instance_id}/{name}/restore`, which take `backups.manage`, and a `PUT /config` or `PATCH /config` that moves `sign_in_address`, changes `allow_private_addresses` or changes any of `backup_path`, `object_store_bucket`, `object_store_endpoint`, `object_store_region`, `object_store_path_style` and `object_store_prefix`, which take `config.manage`. A write changes one of these six destination settings when the value stored for it after the write, in its plain spelling, differs from the one stored before, or only one of the two exists: `null`, an empty value and a `PUT /config` that leaves out a stored setting each change it, and the value already stored does not (`instance/destination-unchanged`). An app's access token is dated by the browser session that approved the authorization or device code it came from: a session begins when the owner signs in by password or passkey, or confirms it is them (`authentication/recent-refusal`).
 
 ### `keys-and-oauth/step-up-recent`
 
-When an app's access token that holds the permission an act in this section takes, and whose browser session began at most 300 seconds before the request, sends that act, the server MUST accept the token's sign-in as recent for that act.
+When an app's access token that holds the permission an act in this section takes, and whose browser session began at most 900 seconds before the request, sends that act, the server MUST accept the token's sign-in as recent for that act.
 
 **Reason:** the act's other conditions still apply. A restore that would add a setting also needs `config.manage` (`archive/restore-settings-permission`), which the private local command always holds.
 
-**Tests:** `compliance/step-up.test.ts › restores an archive and a backup, and changes allow_private_addresses, when its owner signed in within five minutes`, `› is judged by its own sign-in when the same app holds a token from an older sign-in and one from a newer`, `› is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within five minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
+**Tests:** `compliance/step-up.test.ts › restores an archive and a backup, and changes allow_private_addresses, when its owner signed in within fifteen minutes`, `› acts at exactly fifteen minutes after its owner signed in and is challenged one millisecond later`, `› is judged by its own sign-in when the same app holds a token from an older sign-in and one from a newer`, `› is checked beforehand as it is done: an app whose owner signed in just now moves it, every browser session and app sign-in ends after the answer, keys keep working, and the answer names the next steps`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within fifteen minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
 
 ### `keys-and-oauth/step-up-challenge`
 
-If an app's access token that holds the permission an act in this section takes, and whose browser session began more than 300 seconds before the request or after it, sends that act, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `300`.
+If an app's access token that holds the permission an act in this section takes, and whose browser session began more than 900 seconds before the request or after it, sends that act, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `900`.
 
 **Reason:** RFC 9470 section 3: the app sends the person through the authorization endpoint with `max_age`, or asks for a device code with `max_age` (`keys-and-oauth/device-max-age-sign-in`), and asks again with the new token. A session dated after the request is one the server's clock cannot place, so it is not taken as recent.
 
-**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within five minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
+**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than fifteen minutes ago, and changes nothing`, `› acts at exactly fifteen minutes after its owner signed in and is challenged one millisecond later`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within fifteen minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
 
 ### `keys-and-oauth/step-up-challenge-header`
 
-When the server answers `401 insufficient_user_authentication`, the server MUST carry `WWW-Authenticate: Bearer error="insufficient_user_authentication", max_age="300"`.
+When the server answers `401 insufficient_user_authentication`, the server MUST carry `WWW-Authenticate: Bearer error="insufficient_user_authentication", max_age="900"`.
 
-**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within five minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
+**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than fifteen minutes ago, and changes nothing`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within fifteen minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
 
 ### `keys-and-oauth/step-up-writes-nothing`
 
 When the server answers an act in this section `401 insufficient_user_authentication`, the server MUST NOT store any part of the act.
 
-**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing`, `› writes no item at a challenged archive restore or a challenged backup restore, though the same restores by a token whose owner signed in just now write it`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within five minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
+**Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than fifteen minutes ago, and changes nothing`, `› writes no item at a challenged archive restore or a challenged backup restore, though the same restores by a token whose owner signed in just now write it`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within fifteen minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
 
 ### `keys-and-oauth/step-up-permission-first`
 
@@ -3783,7 +3783,7 @@ When the server issues an access token in exchange for a refresh token, the serv
 
 **Reason:** a refresh proves the app still holds its grant, not that a person is present.
 
-**Tests:** `compliance/step-up.test.ts › keeps its owner's sign-in time through a refresh, so the refreshed token is challenged five minutes after the sign-in`.
+**Tests:** `compliance/step-up.test.ts › keeps its owner's sign-in time through a refresh, so the refreshed token is challenged fifteen minutes after the sign-in`.
 
 ### `keys-and-oauth/step-up-own-session`
 

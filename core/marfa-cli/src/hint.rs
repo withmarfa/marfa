@@ -46,7 +46,7 @@ pub fn for_error(error: &CliError, aim: &Aim) -> Option<String> {
         CliError::Refused {
             status: 401, code, ..
         } if code == "insufficient_user_authentication" => Some(
-            "This needs a sign-in from the last five minutes. Run `marfa login --fresh-sign-in`, sign in again in the browser, then repeat the command within five minutes; or run it on the server's private local command (`--socket`)."
+            "This needs a sign-in from the last fifteen minutes. Run `marfa login --fresh-sign-in`, sign in again in the browser, then repeat the command within fifteen minutes; or run it on the server's private local command (`--socket`)."
                 .into(),
         ),
         CliError::Refused {
@@ -96,7 +96,7 @@ fn needs_person(aim: &Aim) -> String {
         .ok()
         .and_then(|origin| crate::server::serving(&origin));
     let private = install.as_ref().and_then(crate::server::Serving::private);
-    let cannot = "A key cannot do this: a person does it from an app they signed in to within the last five minutes, or on the server's private local command";
+    let cannot = "A key cannot do this: a person does it from an app they signed in to within the last fifteen minutes, or on the server's private local command";
     if let Some(prefix) = private.as_ref().and_then(PrivateCommand::prefix) {
         let mut text = format!(
             "{cannot}, which this machine can run:\n  {prefix} {}",

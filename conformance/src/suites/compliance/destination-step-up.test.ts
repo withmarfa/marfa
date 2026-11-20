@@ -18,7 +18,7 @@ const folder = tempFolder("marfa-destination-step-up-");
 const MINUTE = 60 * 1000;
 const SECRET = "object_store_secret_access_key";
 const CHALLENGE =
-  'Bearer error="insufficient_user_authentication", max_age="300"';
+  'Bearer error="insufficient_user_authentication", max_age="900"';
 
 /** Each setting that says where files and backups go, with a value it can take. */
 const DESTINATION: readonly (readonly [string, string | boolean])[] = [
@@ -113,7 +113,7 @@ function expectChallenged(answer: Answer, name: string): void {
   expect(answer.status, `${name} ${JSON.stringify(answer.body)}`).toBe(401);
   expect(answer.challenge, name).toBe(CHALLENGE);
   expect(answer.body.error.code, name).toBe("insufficient_user_authentication");
-  expect(answer.body.error.details, name).toEqual({ max_age: 300 });
+  expect(answer.body.error.details, name).toEqual({ max_age: 900 });
 }
 
 async function secretSet(): Promise<boolean> {
@@ -182,7 +182,7 @@ describe("a key holding config.manage", () => {
 });
 
 describe("an app's token holding config.manage", () => {
-  it("changes where files and backups go when its owner signed in within five minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing", async () => {
+  it("changes where files and backups go when its owner signed in within fifteen minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing", async () => {
     const token = await approvedAppToken(server, ["config.manage"]);
     for (const [name, value] of DESTINATION) {
       await setLocally({ [name]: null });
@@ -195,7 +195,7 @@ describe("an app's token holding config.manage", () => {
       );
     }
 
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(16 * MINUTE);
     const before = await stored();
     for (const [name, value] of DESTINATION) {
       const answer = await call(token, "PATCH", "/config", { [name]: value });
@@ -213,7 +213,7 @@ describe("an app's token holding config.manage", () => {
 
 describe("the private socket", () => {
   it("changes where files and backups go with no sign-in", async () => {
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(16 * MINUTE);
     for (const [name, value] of DESTINATION) {
       await setLocally({ [name]: value });
       expect((await stored())[name], name).toEqual(value);

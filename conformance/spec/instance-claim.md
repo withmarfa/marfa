@@ -78,9 +78,9 @@ When valid setup proof claims an unclaimed instance with valid owner details, th
 
 ### `instance-claim/claim-signs-in`
 
-When a valid claim that carries the instance's own origin in its `Origin` header creates the owner and the password sign-in that follows it succeeds, the server MUST set in the same answer the owner session cookie that password sign-in sets, so that `GET /owner/passkeys` with it answers `200` and the session counts as a sign-in within the last five minutes.
+When a valid claim that carries the instance's own origin in its `Origin` header creates the owner and the password sign-in that follows it succeeds, the server MUST set in the same answer the owner session cookie that password sign-in sets, so that `GET /owner/passkeys` with it answers `200` and the session counts as a sign-in within the last fifteen minutes.
 
-**Reason:** A browser at the instance's own origin is the owner's browser, and the person has just chosen the password, so asking them to type it again at sign-in adds a step and proves nothing new. The session is a fresh sign-in so that adding a passkey, which needs authentication within five minutes, works without asking again.
+**Reason:** A browser at the instance's own origin is the owner's browser, and the person has just chosen the password, so asking them to type it again at sign-in adds a step and proves nothing new. The session is a fresh sign-in so that adding a passkey, which needs authentication within fifteen minutes, works without asking again.
 
 **Tests:** `compliance/owner.test.ts › signs the owner in when a claim comes from the instance's own origin and refuses a session to a claim that fails`, `› signs the owner in when the setup page claims through its setup session`.
 

@@ -32,6 +32,8 @@ let origin: string;
 const backups = tempFolder("marfa-step-up-");
 const CLIENT_HEADER = "x-conformance-client";
 const MINUTE = 60 * 1000;
+/** Long enough that a sign-in made before it is no longer recent. */
+const PAST_RECENT = 16 * MINUTE;
 const SCOPE = "backups.manage config.manage offline_access";
 const SWITCH = "allow_private_addresses";
 let addresses = 0;
@@ -412,23 +414,23 @@ function acts(): readonly {
 }
 
 const CHALLENGE =
-  'Bearer error="insufficient_user_authentication", max_age="300"';
+  'Bearer error="insufficient_user_authentication", max_age="900"';
 
 function expectChallenged(answer: Answer, name: string): void {
   expect(answer.status, `${name} ${JSON.stringify(answer.body)}`).toBe(401);
   expect(answer.challenge, name).toBe(CHALLENGE);
   expect(answer.body.error.code, name).toBe("insufficient_user_authentication");
-  expect(answer.body.error.details, name).toEqual({ max_age: 300 });
+  expect(answer.body.error.details, name).toEqual({ max_age: 900 });
 }
 
 describe("an app's token", () => {
-  it("is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than five minutes ago, and changes nothing", async () => {
+  it("is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than fifteen minutes ago, and changes nothing", async () => {
     const app = await registerApp(server, SCOPE);
     const { access } = await connect(app, await signIn());
     // The witness: the same token holds the permissions the acts take.
     const read = await call(access, "GET", "/backups");
     expect(read.status, JSON.stringify(read.body)).toBe(200);
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const before = await call(server.managementKey, "GET", "/config");
     for (const act of acts()) {
       const answer = await act.send(access);
@@ -468,7 +470,7 @@ describe("an app's token", () => {
 
     const app = await registerApp(server, SCOPE);
     const stale = await connect(app, await signIn());
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     expectChallenged(
       await call(stale.access, "POST", "/restore", holding),
       "archive",
@@ -489,7 +491,7 @@ describe("an app's token", () => {
     expect(await itemStatus(id)).toBe(200);
   });
 
-  it("restores an archive and a backup, and changes allow_private_addresses, when its owner signed in within five minutes", async () => {
+  it("restores an archive and a backup, and changes allow_private_addresses, when its owner signed in within fifteen minutes", async () => {
     const app = await registerApp(server, SCOPE);
     const { access } = await connect(app, await signIn());
     const restored = await call(access, "POST", "/restore", archive);
@@ -508,12 +510,12 @@ describe("an app's token", () => {
     expect(await switchState()).toBe(false);
   });
 
-  it("keeps its owner's sign-in time through a refresh, so the refreshed token is challenged five minutes after the sign-in", async () => {
+  it("keeps its owner's sign-in time through a refresh, so the refreshed token is challenged fifteen minutes after the sign-in", async () => {
     const app = await registerApp(server, SCOPE);
     const first = await connect(app, await signIn());
-    await server.advanceClock(4 * MINUTE);
+    await server.advanceClock(14 * MINUTE);
     const second = await refreshed(app, first.refresh);
-    // The witness: within five minutes of the sign-in the refreshed token acts.
+    // The witness: within fifteen minutes of the sign-in the refreshed token acts.
     const on = await call(second.access, "PATCH", "/config", {
       [SWITCH]: true,
     });
@@ -534,10 +536,34 @@ describe("an app's token", () => {
     ).toBe(200);
   });
 
+  it("acts at exactly fifteen minutes after its owner signed in and is challenged one millisecond later", async () => {
+    const app = await registerApp(server, SCOPE);
+    await server.pauseClock(true);
+    try {
+      const { access } = await connect(app, await signIn());
+      await server.advanceClock(15 * MINUTE);
+      const atEdge = await call(access, "PATCH", "/config", { [SWITCH]: true });
+      expect(atEdge.status, JSON.stringify(atEdge.body)).toBe(200);
+      await server.advanceClock(1);
+      expectChallenged(
+        await call(access, "PATCH", "/config", { [SWITCH]: false }),
+        "one millisecond past the edge",
+      );
+    } finally {
+      await server.pauseClock(false);
+    }
+    expect(await switchState()).toBe(true);
+    const fresh = await connect(app, await signIn());
+    expect(
+      (await call(fresh.access, "PATCH", "/config", { [SWITCH]: false }))
+        .status,
+    ).toBe(200);
+  });
+
   it("is judged by its own sign-in when the same app holds a token from an older sign-in and one from a newer", async () => {
     const app = await registerApp(server, SCOPE);
     const old = await connect(app, await signIn());
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const fresh = await connect(app, await signIn());
     expectChallenged(
       await call(old.access, "PATCH", "/config", { [SWITCH]: true }),
@@ -561,7 +587,7 @@ describe("max_age at the authorization endpoint", () => {
     const app = await registerApp(server, SCOPE);
     const stale = await signIn();
     await connect(app, stale);
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     // The witness: without max_age the standing consent answers at once.
     const plain = await sentTo(
       server,
@@ -578,7 +604,7 @@ describe("max_age at the authorization endpoint", () => {
       server,
       await authorize(
         server,
-        authorizeQuery(app.clientId, SCOPE, proof, { max_age: "300" }),
+        authorizeQuery(app.clientId, SCOPE, proof, { max_age: "900" }),
         stale,
       ),
     );
@@ -615,7 +641,7 @@ describe("max_age at the authorization endpoint", () => {
       server,
       await authorize(
         server,
-        authorizeQuery(app.clientId, SCOPE, pkce(), { max_age: "300" }),
+        authorizeQuery(app.clientId, SCOPE, pkce(), { max_age: "900" }),
         cookie,
       ),
     );
@@ -641,7 +667,7 @@ describe("max_age at the authorization endpoint", () => {
     const app = await registerApp(server, SCOPE);
     const cookie = await signIn();
     await connect(app, cookie);
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     // The witness: without max_age, prompt=none answers the standing consent with a code.
     const silent = await sentTo(
       server,
@@ -658,7 +684,7 @@ describe("max_age at the authorization endpoint", () => {
         server,
         authorizeQuery(app.clientId, SCOPE, pkce(), {
           prompt: "none",
-          max_age: "300",
+          max_age: "900",
         }),
         cookie,
       ),
@@ -746,7 +772,7 @@ describe("max_age at the device authorization endpoint", () => {
     expect(first.status, JSON.stringify(first.body)).toBe(200);
     await approveDevice(first.body.user_code, await signIn());
     const stale = await signIn();
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
 
     // The witness: without max_age the older browser approves at once, and
     // the token carries its older sign-in.
@@ -761,7 +787,7 @@ describe("max_age at the device authorization endpoint", () => {
       "without max_age",
     );
 
-    const asked = await deviceCode(clientId, { max_age: "300" });
+    const asked = await deviceCode(clientId, { max_age: "900" });
     expect(asked.status, JSON.stringify(asked.body)).toBe(200);
     const userCode = asked.body.user_code as string;
     expectSignInAgain(await devicePage(userCode, stale), userCode);
@@ -875,7 +901,7 @@ describe("a key and the private socket", () => {
       landed!.searchParams.get("code")!,
       proof.verifier,
     );
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const answer = await call(access, "POST", "/backups/x/y/restore");
     expect(answer.status, JSON.stringify(answer.body)).toBe(403);
     expect(answer.body.error.details).toEqual({
@@ -885,7 +911,7 @@ describe("a key and the private socket", () => {
   });
 
   it("keeps the four acts on the private socket with no challenge", async () => {
-    await server.advanceClock(6 * MINUTE);
+    await server.advanceClock(PAST_RECENT);
     const restored = await controlRequest(server.controlSocket, "/restore", {
       method: "POST",
       body: archive,
@@ -1018,10 +1044,10 @@ describe("the check that the new sign-in address answers as this instance", () =
       expect(asked).toBe(1);
 
       const key = await mint(["config.manage"]);
-      await server.advanceClock(6 * MINUTE);
+      await server.advanceClock(PAST_RECENT);
       for (const [name, credential] of [
         ["key", key],
-        ["app signed in six minutes ago", access],
+        ["app signed in sixteen minutes ago", access],
       ] as const) {
         const unasked = await check(credential);
         expect(unasked.status, `${name} ${JSON.stringify(unasked.body)}`).toBe(
