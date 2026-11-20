@@ -1537,6 +1537,86 @@ async fn a_database_another_server_has_open_is_refused_however_its_path_is_writt
     assert!(copy_of(&place.file).exists());
 }
 
+const HELD_DATABASE: &str = "MARFA_TEST_HELD_DATABASE";
+
+/// Another process that has `file` open as a server does, until it is killed.
+struct Holder(std::process::Child);
+
+impl Holder {
+    fn start(file: &Path) -> Holder {
+        use std::io::BufRead as _;
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "db::tests::holds_a_database_open_for_another_test",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(HELD_DATABASE, file)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let out = child.stdout.take().unwrap();
+        let held = std::io::BufReader::new(out)
+            .lines()
+            .any(|line| line.is_ok_and(|line| line.contains("database held")));
+        assert!(held, "the other process did not open the database");
+        Holder(child)
+    }
+}
+
+impl Drop for Holder {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+#[ignore = "run in a process of its own by the tests that need another holder"]
+fn holds_a_database_open_for_another_test() {
+    let Some(file) = std::env::var_os(HELD_DATABASE) else {
+        return;
+    };
+    let path = DatabasePath::File(PathBuf::from(file));
+    let _lock = Lock::take(&path).unwrap();
+    let conn = Connection::open(path.file().unwrap()).unwrap();
+    conn.pragma_update(None, "journal_mode", "WAL").unwrap();
+    conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))
+        .unwrap();
+    println!("database held");
+    let mut rest = String::new();
+    let _ = std::io::Read::read_to_string(&mut std::io::stdin(), &mut rest);
+}
+
+#[test]
+fn a_database_whose_lock_file_was_removed_or_replaced_while_another_process_has_it_is_refused() {
+    for replaced in [false, true] {
+        let place = folder();
+        drop(open(&place.file));
+        let holder = Holder::start(&place.file);
+        let sidecar = place._dir.path().join("marfa.db.server-lock");
+        std::fs::remove_file(&sidecar).unwrap();
+        if replaced {
+            std::fs::write(&sidecar, b"").unwrap();
+        }
+        let failure = Lock::take(&DatabasePath::File(place.file.clone())).unwrap_err();
+        assert!(
+            failure
+                .message
+                .contains(&format!("(process {})", holder.0.id())),
+            "{}",
+            failure.message
+        );
+        assert_eq!(sidecar.exists(), replaced);
+        // The witness: once the other process ends, the database opens.
+        drop(holder);
+        drop(Lock::take(&DatabasePath::File(place.file.clone())).unwrap());
+    }
+}
+
 #[tokio::test]
 async fn a_database_is_let_go_when_its_server_drops_it_without_closing() {
     let place = folder();

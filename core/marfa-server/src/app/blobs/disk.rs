@@ -725,6 +725,92 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_folder_whose_lock_file_was_removed_or_replaced_is_still_refused_and_keeps_its_tmp() {
+        for place in [Place::Blobs, Place::BackupFiles] {
+            for replaced in [false, true] {
+                let dir = TempDir::new().unwrap();
+                let root = dir.path().join("area");
+                let first = Disk::open(&root, place, None).unwrap();
+                let half = half_written(&root);
+                fs::remove_file(root.join(LOCK)).unwrap();
+                if replaced {
+                    let other = dir.path().join("other");
+                    fs::write(&other, b"").unwrap();
+                    fs::rename(&other, root.join(LOCK)).unwrap();
+                }
+                let refused = Disk::open(&root, place, None).unwrap_err();
+                assert!(
+                    refused.message.contains("is open in another Marfa server"),
+                    "{place:?} {replaced}: {}",
+                    refused.message
+                );
+                assert_eq!(fs::read(&half).unwrap(), b"left", "{place:?} {replaced}");
+                // The witness: once the first lets go, a second open empties `tmp`.
+                drop(first);
+                Disk::open(&root, place, None).unwrap();
+                assert!(!half.exists(), "{place:?} {replaced}");
+            }
+        }
+    }
+
+    /// Each entry under `root` with its mode, so a test can tell that nothing changed.
+    fn entries(root: &Path) -> Vec<(PathBuf, u32)> {
+        use std::os::unix::fs::MetadataExt as _;
+        let mut found = Vec::new();
+        let mut walking = vec![root.to_path_buf()];
+        while let Some(folder) = walking.pop() {
+            for entry in fs::read_dir(&folder).unwrap() {
+                let path = entry.unwrap().path();
+                let meta = fs::symlink_metadata(&path).unwrap();
+                if meta.is_dir() {
+                    walking.push(path.clone());
+                }
+                found.push((path, meta.mode()));
+            }
+        }
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn a_refused_open_changes_nothing_in_the_folder() {
+        use std::os::unix::fs::PermissionsExt as _;
+        for place in [Place::Blobs, Place::BackupFiles] {
+            let dir = TempDir::new().unwrap();
+            let root = dir.path().join("area");
+            let _first = Disk::open(&root, place, None).unwrap();
+            half_written(&root);
+            fs::set_permissions(root.join(LOCK), fs::Permissions::from_mode(0o660)).unwrap();
+            let before = entries(&root);
+            assert!(Disk::open(&root, place, None).is_err());
+            assert_eq!(entries(&root), before, "{place:?}");
+        }
+    }
+
+    #[test]
+    fn a_folder_renamed_and_replaced_by_a_copy_takes_no_write() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("blobs");
+        let disk = Disk::open(&root, Place::Blobs, None).unwrap();
+        let mut early = disk.stage().unwrap();
+        early.append(b"staged before the move").unwrap();
+        let moved = dir.path().join("moved");
+        fs::rename(&root, &moved).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::copy(moved.join(MARKER), root.join(MARKER)).unwrap();
+        let copy = entries(&root);
+        assert!(disk.stage().is_err());
+        assert!(disk.scratch().is_err());
+        let hash = early.seal().unwrap();
+        assert!(disk.publish(&mut early, &hash).is_err());
+        assert!(disk.delete(&hash).is_err());
+        assert!(disk.clear_tmp_before(std::time::SystemTime::now()).is_err());
+        assert_eq!(entries(&root), copy, "the copy at the path was written");
+        drop(early);
+        assert!(fs::read_dir(moved.join(TMP)).unwrap().next().is_none());
+    }
+
     /// A folder holding an upload in progress in `tmp`.
     fn half_written(root: &Path) -> PathBuf {
         let half = root.join(TMP).join("half");
@@ -768,6 +854,18 @@ mod tests {
             "{}",
             refused.message
         );
+    }
+
+    #[test]
+    fn a_backup_files_area_without_locks_removes_nothing_it_did_not_make() {
+        let dir = TempDir::new().unwrap();
+        let area = dir.path().join("area");
+        let half = half_written(&area);
+        let disk = without_locks(|| Disk::open(&area, Place::BackupFiles, None)).unwrap();
+        assert!(disk.unlocked().is_some());
+        assert_eq!(fs::read(&half).unwrap(), b"left");
+        assert_eq!(disk.clear_tmp_before(std::time::SystemTime::now()).ok(), Some(0));
+        assert_eq!(fs::read(&half).unwrap(), b"left");
     }
 
     #[test]

@@ -758,6 +758,22 @@ mod tests {
     }
 
     #[test]
+    fn an_area_without_locks_clears_no_leftover_it_did_not_make() {
+        let dir = TempDir::new().unwrap();
+        let folder = crate::server_lock::without_locks(|| opened(dir.path()));
+        assert!(folder.files().unlocked().is_some());
+        let own = dir.path().join(BACKUPS).join("instance");
+        fs::create_dir_all(&own).unwrap();
+        let partial = own.join(".x.json.0190.partial");
+        fs::write(&partial, b"half").unwrap();
+        let half = dir.path().join(FILES).join("instance").join("tmp").join("half");
+        fs::write(&half, b"half").unwrap();
+        assert_eq!(folder.clear_leftovers().unwrap(), 0);
+        assert!(partial.exists());
+        assert!(half.exists());
+    }
+
+    #[test]
     fn a_folder_that_went_away_answers_nothing_and_nothing_is_made() {
         let dir = TempDir::new().unwrap();
         let root = dir.path().join("disk");

@@ -202,6 +202,16 @@ mod tests {
     }
 
     #[test]
+    fn a_lock_another_holder_has_is_refused_without_its_mode_changing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".server-lock");
+        let _first = take(&path).unwrap();
+        std::fs::set_permissions(&path, Permissions::from_mode(0o660)).unwrap();
+        assert!(matches!(take(&path), Err(Untaken::Held)));
+        assert_eq!(std::fs::metadata(&path).unwrap().mode() & 0o777, 0o660);
+    }
+
+    #[test]
     fn a_lock_on_a_file_system_without_locks_is_unsupported() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".server-lock");
