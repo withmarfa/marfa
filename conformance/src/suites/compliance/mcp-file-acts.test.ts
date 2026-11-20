@@ -1078,6 +1078,50 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
     expect(adopted).toMatchObject({ adopted: true, marked: true });
   });
 
+  it("answers that the folder may keep the claim, not a stale confirmation, when the claim does not answer in time, and so does the adopt door", async () => {
+    await marked();
+    const old = await folderStore();
+    await loseTheDisk();
+    const pending = join(area(), ".marfa-store.pending");
+    const claimHeld = async (): Promise<void> => {
+      await folder.setFault("store-check-deadline=2000");
+      await folder.setFault("hold:folder-claim");
+    };
+    const claimGone = async (): Promise<Answer> => {
+      await folder.clearFault();
+      return waitFor("a preview once the claim is given up", async () => {
+        const looked = await callTool(backupsAdmin, ADOPT, {});
+        return looked.isError ? undefined : toolResult(looked);
+      });
+    };
+
+    const shown = await call(backupsAdmin, ADOPT, {});
+    await claimHeld();
+    const refused = toolError(
+      await callTool(backupsAdmin, ADOPT, { confirm: shown.confirm }),
+    );
+    expect(refused.code).not.toBe("confirmation_stale");
+    expect(String(refused.message)).toContain("this adopt's claim");
+    expect(existsSync(pending)).toBe(true);
+    expect((await folderStore()).id).toBe(old.id);
+    await claimGone();
+    expect(existsSync(pending)).toBe(false);
+
+    await claimHeld();
+    const door = await backupsRest.adoptBackupFolder();
+    expect(door.status, JSON.stringify(door.error)).toBe(503);
+    expect(door.error?.error.code).toBe("blob_store_unavailable");
+    expect(door.error?.error.message).toContain("this adopt's claim");
+    expect(existsSync(pending)).toBe(true);
+    expect((await folderStore()).id).toBe(old.id);
+
+    // The witness: once the folder answers, the claim is given up and a new preview adopts.
+    const again = await claimGone();
+    expect(existsSync(pending)).toBe(false);
+    const adopted = await call(backupsAdmin, ADOPT, { confirm: again.confirm });
+    expect(adopted).toMatchObject({ adopted: true, marked: true });
+  });
+
   it("answers already done to a call with a confirmation that another call spent while it waited", async () => {
     await marked();
     await loseTheDisk();

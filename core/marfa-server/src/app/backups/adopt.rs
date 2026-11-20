@@ -11,11 +11,11 @@ use super::{Destination, REPLICATION, blocking, counted, forget_backups, found, 
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
 use crate::app::blobs::disk::{Claim, PENDING};
-use crate::app::blobs::folder::{Adoptable, Folder};
+use crate::app::blobs::folder::{Adoptable, Folder, Unanswered};
 use crate::app::blobs::{Attached, Blobs, unsettled};
 use crate::app::faults::{
-    FAIL_STORES_RECORD, FAIL_STORES_RECORD_LOST, HOLD_FOLDER_MARKER, HOLD_STORES_RECORD,
-    HOLD_STORES_SWAP,
+    FAIL_STORES_RECORD, FAIL_STORES_RECORD_LOST, HOLD_FOLDER_CLAIM, HOLD_FOLDER_MARKER,
+    HOLD_STORES_RECORD, HOLD_STORES_SWAP,
 };
 use crate::app::fingerprint::Fingerprint;
 use crate::app::housekeeping;
@@ -196,6 +196,17 @@ fn not_adoptable(folder: &Folder, found: Adoptable) -> Result<()> {
                 "The files folder {} holds the marker of another store, {id}, so it was left as \
                  it is. Remove that marker to adopt the folder afresh.",
                 folder.area().display()
+            ),
+        )),
+        Adoptable::Claimed(id) => Err(Refusal::new(
+            Code::Conflict,
+            format!(
+                "The files folder {} holds the claim of another adopt, for the store {id}, which \
+                 may be another server's, since its file system takes no locks, so nothing was \
+                 adopted. Stop any other Marfa server that uses the folder, then remove {} to \
+                 adopt the folder.",
+                folder.area().display(),
+                folder.area().join(PENDING).display()
             ),
         )),
     }
@@ -403,29 +414,31 @@ impl App {
         let old = folder.files();
         let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
         // The folder is claimed, under its lock, and read again before any record is forgotten.
-        let (claiming, keeping) = (id.clone(), folder.clone());
+        let (claiming, keeping, faults) = (id.clone(), folder.clone(), self.faults.clone());
         let claimed = folder
             .within(
                 self.blobs.check(),
                 move |folder| {
                     let claim = folder.claim(&claiming)?;
+                    faults.hold_blocking(HOLD_FOLDER_CLAIM);
                     let fingerprint = folder.fingerprint();
                     Ok((claim, fingerprint))
                 },
                 move |(claim, _)| {
                     if let Err(error) = keeping.give_up(&claim) {
                         tracing::warn!(%error, "A claim on the backup folder that was given up on was not undone");
+                        keeping.hold_unsettled(claim);
                     }
                 },
             )
             .await;
         let (claim, fingerprint) = match claimed {
-            Some(Ok((claim, Ok(fingerprint)))) => (claim, fingerprint),
-            Some(Ok((claim, Err(error)))) => {
+            Ok(Ok((claim, Ok(fingerprint)))) => (claim, fingerprint),
+            Ok(Ok((claim, Err(error)))) => {
                 let kept = self.give_up_claim(&folder, claim).await;
                 return with_claim(looked_at_failed(&root, &error), kept);
             }
-            Some(Err(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Ok(Err(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 return Err(Refusal::new(
                     Code::Conflict,
                     format!(
@@ -434,7 +447,7 @@ impl App {
                     ),
                 ));
             }
-            Some(Err(error)) => {
+            Ok(Err(error)) => {
                 return Err(Refusal::new(
                     Code::BlobStoreUnavailable,
                     format!(
@@ -444,11 +457,23 @@ impl App {
                     ),
                 ));
             }
-            None => {
+            Err(Unanswered::Busy) => {
                 return Err(unanswered(
                     &root,
-                    "did not answer in time, so nothing was adopted",
+                    "has not answered an earlier adopt, so nothing was adopted",
                 ));
+            }
+            // The claim goes on, and what the folder keeps of it is settled once it answers.
+            Err(Unanswered::Late) => {
+                self.blobs.doubt_record();
+                return Ok(Adopting::ClaimKept(Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!(
+                        "Nothing was adopted, but the backup folder {root} did not answer in time \
+                         and may keep this adopt's claim until it answers. Check that its disk is \
+                         mounted and answering, then try again."
+                    ),
+                )));
             }
         };
         let locator = old.root().display().to_string();
@@ -537,7 +562,7 @@ impl App {
             )
             .await;
         let (marker, folder_changed) = match promoted {
-            Some(Ok((written, after))) => {
+            Ok(Ok((written, after))) => {
                 let changed = after.as_ref().ok() != Some(&fingerprint);
                 if changed {
                     tracing::warn!("The backup folder changed while it was adopted");
@@ -550,11 +575,11 @@ impl App {
                     }
                 }
             }
-            Some(Err(error)) => {
+            Ok(Err(error)) => {
                 self.blobs.doubt_record();
                 (Marker::Failed(error.to_string()), Some(true))
             }
-            None => {
+            Err(_) => {
                 self.blobs.doubt_record();
                 (Marker::Unanswered, None)
             }
@@ -590,8 +615,8 @@ impl App {
             )
             .await;
         let why = match undone {
-            Some(Ok(false)) => return None,
-            Some(Ok(true)) => {
+            Ok(Ok(false)) => return None,
+            Ok(Ok(true)) => {
                 return Some(format!(
                     "Nothing was adopted, but the backup folder {root} keeps this adopt's claim, \
                      which may be another server's, since its file system takes no locks. Stop \
@@ -599,8 +624,8 @@ impl App {
                     folder.files().root().join(PENDING).display()
                 ));
             }
-            Some(Err(error)) => error.to_string(),
-            None => "it did not answer in time".to_string(),
+            Ok(Err(error)) => error.to_string(),
+            Err(_) => "it did not answer in time".to_string(),
         };
         tracing::warn!(reason = %why, "The claim of an adopt that recorded nothing was not undone");
         self.blobs.doubt_record();

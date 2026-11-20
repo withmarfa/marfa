@@ -62,6 +62,7 @@ macro_rules! point_list {
         HOLD_BLOB_PURGE = Hold "blob-orphans:purge" None;
         HOLD_STORES_RECORD = Hold "stores-record" None;
         HOLD_STORES_SWAP = Hold "stores-swap" None;
+        HOLD_FOLDER_CLAIM = Hold "folder-claim" None;
         HOLD_FOLDER_MARKER = Hold "folder-marker" None;
         HOLD_FOLDER_SETTLE = Hold "folder-settle" None;
         HOLD_ADOPT_CONFIRMED = Hold "adopt-confirmed" None;

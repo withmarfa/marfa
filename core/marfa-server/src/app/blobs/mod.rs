@@ -1408,10 +1408,10 @@ impl App {
             .within(deadline, move |folder| folder.settle(recorded), |()| {})
             .await
         {
-            None => Err(late()),
-            Some(Ok(())) => Ok(()),
+            Err(_) => Err(late()),
+            Ok(Ok(())) => Ok(()),
             // The record stays in doubt, so the next follow tries again.
-            Some(Err(error)) => {
+            Ok(Err(error)) => {
                 tracing::warn!(%error, "The backup folder's claim by an adopt could not be settled");
                 Err(Refusal::new(
                     Code::BlobStoreUnavailable,

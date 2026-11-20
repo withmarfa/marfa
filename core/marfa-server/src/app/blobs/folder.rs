@@ -78,6 +78,15 @@ impl Drop for Claiming {
     }
 }
 
+/// Why work on the files area through [`Folder::within`] gave no answer.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Unanswered {
+    /// Other work on the area has not ended, so this work never started.
+    Busy,
+    /// The work did not answer in time; it goes on, and what it answers goes to its `abandon`.
+    Late,
+}
+
 /// What the folder holds when the owner asks to adopt it.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Adoptable {
@@ -87,6 +96,9 @@ pub enum Adoptable {
     Missing,
     /// Its files area holds the marker of the store with this id.
     Foreign(String),
+    /// Its files area takes no locks and holds the claim of another adopt, for the store with
+    /// this id.
+    Claimed(String),
     /// Its files area holds no marker.
     Unmarked,
 }
@@ -462,11 +474,16 @@ impl Folder {
         if !self.root.is_dir() {
             return Ok(Adoptable::Missing);
         }
-        match Disk::marked(&self.area()) {
-            Ok(Some(id)) => Ok(Adoptable::Foreign(id)),
-            Ok(None) => Ok(Adoptable::Unmarked),
-            Err(failure) => Err(io::Error::other(failure.message)),
+        let area = self.area();
+        match Disk::marked(&area) {
+            Ok(Some(id)) => return Ok(Adoptable::Foreign(id)),
+            Ok(None) => {}
+            Err(failure) => return Err(io::Error::other(failure.message)),
         }
+        Ok(match Disk::claimed_unlocked(&area)? {
+            Some(id) => Adoptable::Claimed(id),
+            None => Adoptable::Unmarked,
+        })
     }
 
     /// Whether work on the files area started through [`Folder::within`] has not ended.
@@ -476,16 +493,15 @@ impl Folder {
 
     /// Runs `work` on the files area off the runtime, one piece of work per area at a time, and
     /// answers it within `deadline`. A timeout does not cancel the work: what it answers after
-    /// the caller stopped waiting goes to `abandon`, while the area is still held. `None` where
-    /// the work did not answer in time, or other work on the area has not ended.
+    /// the caller stopped waiting goes to `abandon`, while the area is still held.
     pub async fn within<T: Send + 'static>(
         self: &Arc<Self>,
         deadline: Duration,
         work: impl FnOnce(&Folder) -> io::Result<T> + Send + 'static,
         abandon: impl FnOnce(T) + Send + 'static,
-    ) -> Option<io::Result<T>> {
+    ) -> Result<io::Result<T>, Unanswered> {
         if !claiming().insert(self.claim_key.clone()) {
-            return None;
+            return Err(Unanswered::Busy);
         }
         let (folder, claiming) = (self.clone(), Claiming(self.claim_key.clone()));
         let (answer, mut answered) = tokio::sync::oneshot::channel();
@@ -497,12 +513,12 @@ impl Folder {
         });
         tokio::select! {
             biased;
-            answer = &mut answered => Some(answer.unwrap_or_else(|_| {
+            answer = &mut answered => Ok(answer.unwrap_or_else(|_| {
                 Err(io::Error::other("work on the backup folder ended without an answer"))
             })),
             () = tokio::time::sleep(deadline) => {
                 answered.close();
-                answered.try_recv().ok()
+                answered.try_recv().map_err(|_| Unanswered::Late)
             }
         }
     }
@@ -1288,6 +1304,7 @@ mod tests {
                 },
             )
             .await
+            .ok()
     }
 
     /// A claim on a folder at `root` is given up on; a folder at `other` then tries to claim.
@@ -1450,6 +1467,10 @@ mod tests {
         assert!(!folder.give_up(&claim).unwrap());
         assert!(!pending.exists());
         assert!(folder.kept_claim().is_none());
+        // A claim left pending in a locked area is one a new claim takes over.
+        fs::write(&pending, Uuid::now_v7().to_string()).unwrap();
+        assert_eq!(folder.adoptable().unwrap(), Adoptable::Unmarked);
+        fs::remove_file(&pending).unwrap();
 
         for code in [libc::ENOTSUP, libc::EOPNOTSUPP, libc::ENOLCK] {
             let dir = TempDir::new().unwrap();
@@ -1464,6 +1485,9 @@ mod tests {
             assert!(kept, "{code}");
             assert_eq!(fs::read_to_string(&pending).unwrap(), id, "{code}");
             assert_eq!(folder.kept_claim().as_deref(), Some(id.as_str()), "{code}");
+            let looked =
+                crate::server_lock::without_locks_answering(code, || folder.adoptable()).unwrap();
+            assert_eq!(looked, Adoptable::Claimed(id.clone()), "{code}");
 
             let refused = crate::server_lock::without_locks_answering(code, || {
                 folder.claim(&Uuid::now_v7().to_string())

@@ -455,6 +455,23 @@ impl Disk {
         })
     }
 
+    /// The store id of another adopt's claim pending in the files area `root`, where its file
+    /// system takes no locks, so [`Disk::claim`] refuses it. Nothing is made. It blocks.
+    pub fn claimed_unlocked(root: &Path) -> io::Result<Option<String>> {
+        let dir = match folder_lock::open_dir(root) {
+            Ok(dir) => dir,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        let Some(found) = read_in(&dir, PENDING)?.filter(|found| !found.trim().is_empty()) else {
+            return Ok(None);
+        };
+        match folder_lock::lock_dir(dir) {
+            Err((Untaken::Unsupported(_), _)) => Ok(Some(found.trim().to_string())),
+            _ => Ok(None),
+        }
+    }
+
     /// The claim an adopt left pending in the files area `root`, where it holds no marker. A
     /// files area that is not there fails as not found, since a claim in it is unread. It
     /// blocks.

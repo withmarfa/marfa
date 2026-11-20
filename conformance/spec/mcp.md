@@ -862,6 +862,14 @@ If the backup folder's files folder holds the marker of the store the server rec
 
 **Tests:** `compliance/mcp-file-acts.test.ts › refuses a preview while the folder holds the store recorded there`.
 
+### `mcp/adopt-preview-claimed`
+
+Where the file system that holds the backup folder's files folder takes no file locks, if that files folder holds the claim of an adopt, then the server MUST refuse the `marfa_adopt_backup_folder` preview with the tool error code `conflict` and a message that names the claim's file.
+
+**Reason:** an adopt does not write its claim over another there (`instance/backup-folder-unlocked-claim-kept`), so a confirmation could never be used. The person stops any other server that uses the folder, then removes the file.
+
+**Tests:** waiting on #3116.
+
 ### `mcp/adopt-preview-deletions`
 
 When `marfa_adopt_backup_folder` previews, the server MUST answer under `forgets` in `pending_deletions` the number of deletions of file bytes it has queued in the store it recorded at the backup folder.
@@ -946,11 +954,11 @@ If a call to `marfa_adopt_backup_folder` carries a `confirm` token that holds an
 
 ### `mcp/adopt-claim-kept`
 
-If a call to `marfa_adopt_backup_folder` that carries a `confirm` token adopts nothing and leaves the claim it made in the backup folder, then the server MUST answer a tool error code other than `confirmation_stale`, with a message that says the folder keeps the claim.
+If a call to `marfa_adopt_backup_folder` that carries a `confirm` token adopts nothing and leaves the claim it made in the backup folder, or the folder did not answer in time once the claim was made, then the server MUST answer a tool error code other than `confirmation_stale`, with a message that says the folder keeps or may keep the claim.
 
-**Reason:** `confirmation_stale` tells the client that the call changed nothing, and a claim left in the folder is a change the person may need to clear.
+**Reason:** `confirmation_stale` tells the client that the call changed nothing, and a claim left in the folder is a change the person may need to clear. A claim the folder has not answered goes on after the server stops waiting.
 
-**Tests:** `compliance/mcp-file-acts.test.ts › answers the refusal, not a stale confirmation, when a confirmation that no longer holds leaves its claim in the folder`.
+**Tests:** `compliance/mcp-file-acts.test.ts › answers the refusal, not a stale confirmation, when a confirmation that no longer holds leaves its claim in the folder`, `› answers that the folder may keep the claim, not a stale confirmation, when the claim does not answer in time, and so does the adopt door`.
 
 ### `mcp/adopt-repeated`
 
