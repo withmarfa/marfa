@@ -423,6 +423,62 @@ pub fn cannot_put_back(
     }
 }
 
+/// The file beside `database` that names the release of the last server to serve on it.
+pub fn release_record(database: &Path) -> PathBuf {
+    let mut path = database.as_os_str().to_owned();
+    path.push(".release");
+    PathBuf::from(path)
+}
+
+/// The release [`release_record`] names, or `None` when no server that keeps it has served on
+/// `database`.
+pub fn served_release(database: &Path) -> io::Result<Option<String>> {
+    let path = release_record(database);
+    let mut text = String::new();
+    match File::open(&path) {
+        Ok(file) => file.take(RELEASE_BYTES + 1).read_to_string(&mut text)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let release = text.trim_end_matches('\n');
+    let plain = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+');
+    if release.is_empty() || text.len() as u64 > RELEASE_BYTES || !release.chars().all(plain) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("{} does not name a release", path.display()),
+        ));
+    }
+    Ok(Some(release.to_string()))
+}
+
+const RELEASE_BYTES: u64 = 64;
+
+/// Names `release` in [`release_record`], whole or not at all.
+pub fn keep_served_release(database: &Path, release: &str) -> io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = release_record(database);
+    let mut temporary = path.as_os_str().to_owned();
+    temporary.push(".partial");
+    let temporary = PathBuf::from(temporary);
+    match fs::remove_file(&temporary) {
+        Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+        _ => {}
+    }
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)?;
+    file.write_all(format!("{release}\n").as_bytes())?;
+    file.sync_all()?;
+    fs::rename(&temporary, &path)?;
+    sync_folder(
+        path.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new(".")),
+    )
+}
+
 /// Drops a `.marfa.next` left by an update that ended without it.
 pub fn drop_next(programs: &Path) -> io::Result<()> {
     match fs::remove_file(next_marfa(programs)) {
@@ -718,6 +774,38 @@ echo '{{"schema":{schema},"standing":"current"}}'"#,
             "{error}"
         );
         assert_eq!(text(bin.join(SERVER)), "new server");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_release_served_is_kept_whole_beside_the_database_and_read_back() {
+        let (dir, _) = scratch("served");
+        let database = dir.join("data/marfa.db");
+        fs::create_dir_all(dir.join("data")).unwrap();
+        assert_eq!(release_record(&database), dir.join("data/marfa.db.release"));
+        assert_eq!(served_release(&database).unwrap(), None);
+        keep_served_release(&database, "0.0.85").unwrap();
+        keep_served_release(&database, "0.0.86").unwrap();
+        assert_eq!(
+            served_release(&database).unwrap().as_deref(),
+            Some("0.0.86")
+        );
+        assert_eq!(text(release_record(&database)), "0.0.86\n");
+        assert!(!dir.join("data/marfa.db.release.partial").exists());
+        // A partial file a crash left is replaced, not appended to.
+        fs::write(dir.join("data/marfa.db.release.partial"), "0.0.8").unwrap();
+        keep_served_release(&database, "0.0.87").unwrap();
+        assert_eq!(
+            served_release(&database).unwrap().as_deref(),
+            Some("0.0.87")
+        );
+        for unreadable in ["", "\n", "0.0.86\n0.0.87\n", "0.0.86 or so\n"] {
+            fs::write(release_record(&database), unreadable).unwrap();
+            let error = served_release(&database).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData, "{unreadable:?}");
+        }
+        fs::write(release_record(&database), "9".repeat(100)).unwrap();
+        assert!(served_release(&database).is_err());
         let _ = fs::remove_dir_all(&dir);
     }
 }
