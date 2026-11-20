@@ -979,9 +979,7 @@ fn keep_update(
     Ok(())
 }
 
-/// `read` are the tags the server held when the copy was compared with it:
-/// the replace is refused if another writer has changed them by the time a
-/// person releases it.
+/// `read` are the tags the server held when the copy was compared with it.
 fn queue_tags(
     tx: &Connection,
     held: &Item,

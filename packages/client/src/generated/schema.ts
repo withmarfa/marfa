@@ -3775,7 +3775,7 @@ export interface components {
                 };
             };
         };
-        /** @description A failed exact version precondition: the error and the item now. */
+        /** @description A failed precondition on the item: the error and the item now. */
         ItemStaleVersion: {
             error: components["schemas"]["VersionConflictError"] & unknown;
             current: components["schemas"]["ConflictSnapshot"] & unknown;
@@ -13918,7 +13918,7 @@ export interface operations {
                      * @default []
                      */
                     tags?: string[];
-                    /** @description The tags you read. If the item's tags now differ, in more or fewer tags and not in order, no tag changes. Leave it out to replace the tags of the item as it is. */
+                    /** @description The tags you read. If the item now has a different set of tags, no tag changes; order and repeats don't count. Leave it out to replace the tags as the item stands. */
                     read_tags?: string[];
                 };
             };

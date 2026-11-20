@@ -1843,8 +1843,7 @@ pub struct TagsWrite {
 }
 
 impl TagsWrite {
-    /// `read` are the tags the copy held when the replace was made, which the
-    /// server refuses the replace on where it now holds others.
+    /// `read` are the tags the copy held when the replace was made.
     pub(crate) fn payload(&self, read: &[String]) -> std::result::Result<String, CoreError> {
         let strings =
             |tags: &[String]| Value::Array(tags.iter().cloned().map(Value::String).collect());

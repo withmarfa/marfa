@@ -616,7 +616,7 @@ When a caller queues a tag replace of an item the copy holds, a device MUST carr
 
 When a caller releases a tag replace blocked `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST send it under a fresh key with no `read_tags`.
 
-**Reason:** the person released it knowing the item's tags had changed, so the replace is to make the tags what the copy holds, as it would with no `read_tags`; sent with them, the server would refuse it again for as long as the tags differ, and nothing could release the block.
+**Reason:** a released write is meant to land, and the tags the replace read may no longer be the item's, so it makes the tags what the copy holds, as it would with no `read_tags`; sent with them, the server would refuse it again for as long as the tags differ, and nothing could release the block.
 
 **Tests:** `device/tags-read-live.test.ts › sends a tag replace naming the tags it read, and blocks it as a conflict once another key has changed them`.
 

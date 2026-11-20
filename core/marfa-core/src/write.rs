@@ -1066,8 +1066,7 @@ impl Core {
 
     /// Only the tags land locally; an extension namespace is not part of the
     /// copy and is its own write. The replace names the tags the copy held,
-    /// this device's own earlier tag writes included, so the server refuses it
-    /// if another writer has changed them since.
+    /// this device's own earlier tag writes included.
     pub fn replace_tags(&self, id: &str, write: &TagsWrite) -> Result<QueuedWrite> {
         self.tag_write(id, WriteKind::ReplaceTags, None, &write.tags, |tx| {
             let read = store::tags_held(tx, id)?;

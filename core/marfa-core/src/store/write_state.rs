@@ -191,9 +191,7 @@ pub(super) fn forget_versions_named(conn: &Connection, id: &str) -> Result<(), C
     super::meta::meta_delete(conn, &format!("{RESENT_AT_VERSION}{id}"))
 }
 
-/// A tag replace released under a fresh key names no tags it read, as the
-/// person released it. The body it was first sent with belongs to the key
-/// that is now spent.
+/// A tag replace released under a fresh key names no tags it read.
 pub(super) fn forget_read_tags(conn: &Connection, id: &str) -> Result<(), CoreError> {
     let payload: String =
         conn.query_row_cached("SELECT payload FROM queue WHERE id = ?1", [id], |row| {

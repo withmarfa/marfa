@@ -799,8 +799,7 @@ pub async fn set_tags(
             .map(tags_of)
             .transpose()?
             .unwrap_or_default();
-        // An item can hold a tag the bound refuses, such as one an archive
-        // restore wrote, so the tags named as read are not held to it.
+        // An archive restore can leave a tag the bound refuses, so `read_tags` is not held to it.
         let read_tags = sent
             .get("read_tags")
             .map(|read| strings_of(read, "read_tags"))
