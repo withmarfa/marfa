@@ -2,7 +2,7 @@
 
 A folder is a `system.folder` item on the instance, with its settings, query and ID. A directory is a place on a machine's disk that follows a folder, with a working copy and a queue. A statement about what a device does on disk says directory; one about what the instance holds says folder. The device and queue rules also apply (`device.md`, `queue-and-verdicts.md`).
 
-This chapter holds what a quick pass and a full pass of a folder watch read and render, how often a full pass runs, and how long a watch waits for a file to settle.
+This chapter holds what a quick pass and a full pass of a folder watch read and render, how often a full pass runs, what a watch does for a part of a directory it cannot watch, and how long a watch waits for a file to settle.
 
 ## What a pass reads and renders
 
@@ -87,6 +87,34 @@ When an hour has passed since a folder watch's pull last rendered every file, a 
 **Reason:** the choice of `folder-speed/watch-pull-renders-reached` follows what a file renders from, and a full render at least once an hour finds and rewrites a file whose source that choice missed.
 
 **Tests:** `device/binding-folders-clock.test.ts › renders only the file an edit changes, and every file once an hour`, `device/binding-folders-clock.test.ts › rewrites at the hourly render a file the choice of files to render left out`.
+
+## Looking at what a watch cannot watch
+
+A watch that cannot register some directories with the system has no event for a change in them, so it looks at their files itself.
+
+### `folder-speed/unwatched-look`
+
+While a watch cannot register some directories beneath a folder's directory, a device MUST look at the files beneath those directories again before the folder's full-pass interval has passed.
+
+**Reason:** A change there is otherwise found only by the full pass, which by default runs every 600 seconds. A device looks every 30 seconds, or every full-pass interval where that is shorter.
+
+**Tests:** `device/folders-unwatched.test.ts › finds a change in a directory it cannot watch at its own interval, reading none of the files it can watch`.
+
+### `folder-speed/unwatched-look-scope`
+
+When a watch looks at the directories it cannot register, a device MUST read only files beneath those directories, and files that events name.
+
+**Reason:** The cost of looking grows with the part that cannot be watched, not with the folder.
+
+**Tests:** `device/folders-unwatched.test.ts › finds a change in a directory it cannot watch at its own interval, reading none of the files it can watch`.
+
+### `folder-speed/unwatched-look-paced`
+
+While a watch cannot register some directories and no event arrives, a device MUST NOT start a pass to look at them before the interval of its look has passed.
+
+**Reason:** A watch with nothing to do uses almost no processor time, so a directory that cannot be watched does not make the watch wake on its own at every tick. A debug build lets a fixture set the interval.
+
+**Tests:** `device/folders-unwatched.test.ts › does not look at a directory it cannot watch before its interval while nothing else changes`.
 
 ## How long a watch waits for a file to settle
 

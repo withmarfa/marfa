@@ -719,7 +719,7 @@ describe("folder sync reports", () => {
     }
     expect((await get(id)).sign_ins[0]!.copies[0]!.sequence).toBe(1);
   });
-  it("takes each of the eight problem codes once, and a sequence and counts at the largest whole number", async () => {
+  it("takes each of the ten problem codes once, and a sequence and counts at the largest whole number", async () => {
     const id = await folder();
     const codes = [
       "conflict",
@@ -730,6 +730,8 @@ describe("folder sync reports", () => {
       "unavailable",
       "root_gone",
       "settings_invalid",
+      "unwatched",
+      "paused",
     ];
     const largest = Number.MAX_SAFE_INTEGER;
     const whole = {
