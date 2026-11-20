@@ -1259,11 +1259,11 @@ The server MUST serve `/.well-known/oauth-protected-resource/mcp`, `/.well-known
 
 ### `keys-and-oauth/protected-resource-mcp-scopes`
 
-When the server serves the protected resource metadata of `/mcp/schema` or `/mcp/admin`, the server MUST name in its `scopes_supported` every scope the metadata of `/mcp` names and the scopes that endpoint's own tools need: `metadata.types:write`, `schema.write` and `system.view:write` for `/mcp/schema`, and `instance.read`, `connectors.manage`, `audit.read`, `keys.mint` and `webhooks.manage` for `/mcp/admin`.
+When the server serves the protected resource metadata of `/mcp/schema` or `/mcp/admin`, the server MUST name in its `scopes_supported` exactly the scopes the metadata of `/mcp` names and the scopes that endpoint's own tools need: `metadata.types:write`, `schema.write` and `system.view:write` for `/mcp/schema`, and for `/mcp/admin` every permission that opens a tool in `mcp/tools-for-admin`, which is `audit.read`, `backups.manage`, `blobs.manage`, `config.manage`, `connectors.manage`, `grants.manage`, `instance.maintain`, `instance.read`, `items.purge`, `keys.manage`, `keys.mint`, `sign_ins.manage` and `webhooks.manage`.
 
-**Reason:** an MCP client asks for the scopes the metadata names, so an endpoint that does not name its tools' scopes is signed into without them.
+**Reason:** an MCP client asks for the scopes the metadata names, and an endpoint lists a tool only to a credential that holds what opens it and answers a call to any other as an unknown tool (`mcp/unlisted-tool`), so a permission the metadata leaves out hides its tools from a client signed in the standard way, with nothing to tell it to ask for more.
 
-**Tests:** `compliance/oauth.test.ts › advertises each MCP tool group's scopes in its endpoint's metadata, and not at /mcp`.
+**Tests:** `compliance/oauth.test.ts › advertises each MCP tool group's scopes in its endpoint's metadata, and not at /mcp`, `compliance/oauth-tokens.test.ts › lists every admin tool at /mcp/admin to an app that asks for exactly the scopes its metadata names and is given full access`.
 
 ### `keys-and-oauth/protected-resource-mcp-default`
 

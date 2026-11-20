@@ -5,15 +5,16 @@ use super::issuer;
 use super::resource::MCP_PATHS;
 use super::scope::{Registries, ScopeSet, data_alone};
 use crate::app::App;
+use crate::app::access::AdminTask;
 
 const SCHEMA_SCOPES: [&str; 3] = ["metadata.types:write", "schema.write", "system.view:write"];
-const ADMIN_SCOPES: [&str; 5] = [
-    "instance.read",
-    "connectors.manage",
-    "audit.read",
-    "keys.mint",
-    "webhooks.manage",
-];
+
+fn admin_scopes() -> Vec<&'static str> {
+    AdminTask::permissions()
+        .into_iter()
+        .map(|permission| permission.word())
+        .collect()
+}
 
 fn published(app: &App) -> ScopeSet {
     Registries::of(&app.catalog_handle().load()).published()
@@ -50,10 +51,10 @@ pub fn protected_resource(app: &App, path: &str) -> Option<Value> {
     if !path.is_empty() && !MCP_PATHS.contains(&path) {
         return None;
     }
-    let endpoint_scopes: &[&str] = match path {
-        "/mcp/schema" => &SCHEMA_SCOPES,
-        "/mcp/admin" => &ADMIN_SCOPES,
-        _ => &[],
+    let endpoint_scopes: Vec<&str> = match path {
+        "/mcp/schema" => SCHEMA_SCOPES.to_vec(),
+        "/mcp/admin" => admin_scopes(),
+        _ => Vec::new(),
     };
     let default = data_alone(true);
     let mut scopes: Vec<&str> = default.literals().iter().map(String::as_str).collect();
