@@ -730,6 +730,107 @@ fn a_row_deleted_to_the_bin_needs_no_mark_since_its_answer_is_later() {
     assert_eq!(state(&core), Some(("active".into(), 1)));
 }
 
+/// A copy that took `binned` at event 11 and deleted it to the bin, the
+/// server answering the read after the delete in the bin at
+/// `2026-01-03T00:00:00Z` and every read after that as `then`.
+fn binned_here(server: &Scripted, dir: &Path, then: Answer) -> Arc<Core> {
+    let core = following(server, dir);
+    server.on(
+        "/events",
+        vec![replay(&[(
+            "11",
+            "item.created",
+            item_event(
+                "item.created",
+                row("binned", 1, "active", "first", "2026-01-01T00:00:00Z"),
+            ),
+        )])],
+    );
+    core.catch_up().unwrap();
+    core.delete_item("binned").unwrap();
+    let trashed = json!({
+        "item": row("binned", 1, "trashed", "first", "2026-01-03T00:00:00Z"),
+        "metadata": {"item_id": "binned", "tags": []}, "listed": true,
+    });
+    server.on(
+        "/items/binned",
+        vec![
+            ok(),
+            certified(scripted::json(200, &trashed.to_string())),
+            then,
+        ],
+    );
+    core.drain().unwrap();
+    core
+}
+
+fn removals(core: &Core) -> Vec<(String, Option<String>)> {
+    store::restored::removal_receipts(&core.conn().unwrap())
+        .unwrap()
+        .into_iter()
+        .map(|receipt| (receipt.id, receipt.updated_at))
+        .collect()
+}
+
+fn another_event(id: &str) -> Answer {
+    replay(&[(
+        id,
+        "item.created",
+        item_event(
+            "item.created",
+            row(
+                &format!("other {id}"),
+                1,
+                "active",
+                "other",
+                "2026-01-04T00:00:00Z",
+            ),
+        ),
+    )])
+}
+
+#[test]
+fn a_removal_keeps_the_time_the_read_after_it_shows() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = binned_here(
+        &server,
+        dir.path(),
+        certified(scripted::refusal(503, "unavailable")),
+    );
+    // So only this device's own move to the bin shows it
+    // (`store::restored::receipts_seen`).
+    assert_eq!(
+        removals(&core),
+        [("binned".into(), Some("2026-01-03T00:00:00Z".into()))]
+    );
+}
+
+#[test]
+fn a_removal_whose_read_says_nothing_is_let_go_and_never_read_again() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = binned_here(
+        &server,
+        dir.path(),
+        certified(scripted::refusal(403, "forbidden")),
+    );
+    // The witness: the removal is kept for a check to read.
+    assert_eq!(removals(&core).len(), 1);
+    let reads = server.seen("/items/binned").len();
+    server.on("/events", vec![another_event("12")]);
+    core.catch_up().unwrap();
+    assert_eq!(
+        server.seen("/items/binned").len(),
+        reads + 1,
+        "the check read the removal"
+    );
+    assert!(
+        removals(&core).is_empty(),
+        "a removal whose read said nothing stayed for a later comparison to read"
+    );
+}
+
 #[test]
 fn marks_do_not_grow_with_removals_whose_events_are_read() {
     let server = Scripted::start();

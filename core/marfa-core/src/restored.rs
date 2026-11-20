@@ -133,7 +133,8 @@ const LOST_WRITE: &str = "the server no longer holds a write it took from this c
 
 /// Reads each receipt the stream did not show the server holds, once a
 /// stream opened after it has reached the head, and ends the copy where the
-/// server has lost one. Asked once for each stream.
+/// server has lost one. Every receipt of a row whose read says nothing of it
+/// (`heard`) is let go. Asked once for each stream.
 pub(crate) fn went_back(
     core: &Core,
     http: &Http,
@@ -144,38 +145,27 @@ pub(crate) fn went_back(
         return Ok(());
     }
     let receipts = store::restored::unseen_receipts(&*core.conn()?, opening.opened)?;
+    let mut set_aside: HashSet<(Subject, String)> = HashSet::new();
     for receipt in receipts {
-        if judged(http, stop, &receipt)? == Some(true) {
-            return Err(CoreError::expired(format!("{LOST_WRITE}, {RESTORED}")));
+        if set_aside.contains(&(receipt.subject, receipt.id.clone())) {
+            continue;
         }
-        store::restored::receipt_confirmed(&*core.conn()?, &receipt)?;
+        match judged(http, stop, &receipt)? {
+            Some(true) => return Err(CoreError::expired(format!("{LOST_WRITE}, {RESTORED}"))),
+            Some(false) => store::restored::receipt_confirmed(&*core.conn()?, &receipt)?,
+            None => {
+                store::restored::set_aside(&*core.conn()?, receipt.subject, &receipt.id)?;
+                set_aside.insert((receipt.subject, receipt.id));
+            }
+        }
     }
     Ok(())
 }
 
-/// The rows the receipts the stream has not yet shown name that the server
-/// has lost, read before a hydration clears or refills a copy for another
-/// reason, so the comparison after the fill still finds them.
-pub(crate) fn lost_unseen(
-    core: &Core,
-    http: &Http,
-    stop: &AtomicBool,
-) -> Result<Vec<(Subject, String)>> {
-    let receipts = store::restored::unseen_receipts(&*core.conn()?, i64::MAX)?;
-    let mut lost = Vec::new();
-    for receipt in receipts {
-        if judged(http, stop, &receipt)? == Some(true) {
-            lost.push((receipt.subject, receipt.id));
-        }
-    }
-    Ok(lost)
-}
-
 /// Whether the server has lost what `receipt` says it took, or `None` where
-/// the read of its row answered about that row but said nothing of it: an
-/// answer that does not read, or a refusal of the read itself.
+/// the read of its row said nothing of it (`heard`).
 fn judged(http: &Http, stop: &AtomicBool, receipt: &Receipt) -> Result<Option<bool>> {
-    let read = match receipt.subject {
+    heard(match receipt.subject {
         Subject::Item => read_item(http, stop, &receipt.id).map(|row| {
             item_lost(
                 receipt,
@@ -200,9 +190,15 @@ fn judged(http: &Http, stop: &AtomicBool, receipt: &Receipt) -> Result<Option<bo
                 }),
             )
         }),
-    };
+    })
+}
+
+/// What a read of one row answered, or `None` where the answer was about
+/// that row alone and said nothing of it: a body that does not read, or a
+/// refusal of the read itself (`device/expire-write-unreadable`).
+fn heard<T>(read: Result<T>) -> Result<Option<T>> {
     match read {
-        Ok(lost) => Ok(Some(lost)),
+        Ok(read) => Ok(Some(read)),
         Err(error) if says_nothing(&error) => {
             crate::telemetry::degraded!(&error);
             Ok(None)
@@ -213,13 +209,12 @@ fn judged(http: &Http, stop: &AtomicBool, receipt: &Receipt) -> Result<Option<bo
 
 /// An answer about the row read rather than about the server, the copy or
 /// the credential, which no later read of the same row would answer
-/// otherwise.
+/// otherwise. A read answers `404` as no row (`Http::read_whole_with`).
 fn says_nothing(error: &CoreError) -> bool {
     match error {
         CoreError::Decoding(_)
         | CoreError::Validation { .. }
         | CoreError::Forbidden { .. }
-        | CoreError::NotFound { .. }
         | CoreError::UnknownType { .. } => true,
         CoreError::Server { .. } => !error.is_environmental(),
         _ => false,
@@ -346,10 +341,13 @@ pub(crate) struct Lost {
 }
 
 /// The server's row the filled copy holds: the one beneath any writes
-/// waiting on it. `None` where only a waiting create holds it, or where the
-/// copy holds no row.
+/// waiting on it. `None` where only a waiting create holds it, where the
+/// copy holds no row, or where a refill in place has not brought the row it
+/// still holds from before.
 fn filled_item(conn: &Connection, id: &str) -> Result<Option<Item>> {
-    if !store::untaken_creates_for_item(conn, id)?.is_empty() {
+    if !store::untaken_creates_for_item(conn, id)?.is_empty()
+        || (store::refilling(conn)? && !crate::reach::answered(conn, id)?)
+    {
         return Ok(None);
     }
     Ok(match store::beneath_item(conn, id)? {
@@ -359,7 +357,9 @@ fn filled_item(conn: &Connection, id: &str) -> Result<Option<Item>> {
 }
 
 fn filled_edge(conn: &Connection, id: &str) -> Result<Option<Edge>> {
-    if !store::untaken_create_for_edge(conn, id)?.is_empty() {
+    if !store::untaken_create_for_edge(conn, id)?.is_empty()
+        || (store::refilling(conn)? && !store::refill_brought_edge(conn, id)?)
+    {
         return Ok(None);
     }
     Ok(match store::beneath_edge(conn, id)? {
@@ -396,20 +396,31 @@ fn server_edge(core: &Core, http: &Http, stop: &AtomicBool, id: &str) -> Result<
 
 /// Compares the rows set aside with the filled copy, reading the server for
 /// a row the copy does not hold, and the removals the receipts keep with the
-/// server. `None` where nothing is set aside.
+/// server: every one after a restore, otherwise those no event has shown.
+/// A row whose read says nothing of it (`heard`) is set aside: nothing of
+/// it is kept, and no later comparison reads it. `None` where no hydration
+/// set rows aside to compare.
 pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Option<Lost>> {
-    let (held_items, held_edges, removals) = {
+    let (held_items, held_edges, removals, restored) = {
         let conn = core.conn()?;
-        if !store::restored::holds_back(&conn)? {
+        if !store::restored::comparing(&conn)? {
             return Ok(None);
         }
         let (items, edges) = store::restored::held_back(&conn)?;
-        (items, edges, store::restored::removal_receipts(&conn)?)
+        (
+            items,
+            edges,
+            store::restored::removal_receipts(&conn)?,
+            store::restored::restore_held(&conn)?,
+        )
     };
     let mut lost = Lost {
         items: Vec::new(),
         edges: Vec::new(),
         uploads: Vec::new(),
+    };
+    let unheard = |subject: Subject, id: &str| -> Result<()> {
+        store::restored::set_aside(&*core.conn()?, subject, id)
     };
     let mut named: HashSet<(Subject, String)> = HashSet::new();
     for held in held_items {
@@ -417,7 +428,10 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
         if !store::untaken_creates_for_item(&*core.conn()?, &held.id)?.is_empty() {
             continue;
         }
-        let server = server_item(core, http, stop, &held.id)?;
+        let Some(server) = heard(server_item(core, http, stop, &held.id))? else {
+            unheard(Subject::Item, &held.id)?;
+            continue;
+        };
         let at = server
             .as_ref()
             .map(|server| (server.version, server.updated_at.as_str()));
@@ -456,7 +470,10 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
         if !store::untaken_create_for_edge(&*core.conn()?, &held.id)?.is_empty() {
             continue;
         }
-        let server = server_edge(core, http, stop, &held.id)?;
+        let Some(server) = heard(server_edge(core, http, stop, &held.id))? else {
+            unheard(Subject::Edge, &held.id)?;
+            continue;
+        };
         let at = server
             .as_ref()
             .map(|server| (server.version, server.updated_at.as_str()));
@@ -475,15 +492,20 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
             }
         }
     }
+    // A row set aside that the server lost shows a restore, so every removal
+    // is read, as after one found by the stream.
+    let went_back = restored || !lost.items.is_empty() || !lost.edges.is_empty();
     for receipt in removals {
-        if !named.insert((receipt.subject, receipt.id.clone())) {
+        if (receipt.seen && !went_back) || !named.insert((receipt.subject, receipt.id.clone())) {
             continue;
         }
         match receipt.subject {
             Subject::Item => {
-                let Some(server) = server_item(core, http, stop, &receipt.id)? else {
+                let Some(server) = heard(server_item(core, http, stop, &receipt.id))? else {
+                    unheard(Subject::Item, &receipt.id)?;
                     continue;
                 };
+                let Some(server) = server else { continue };
                 let at = Stamp {
                     version: server.version,
                     updated_at: server.updated_at.clone(),
@@ -495,9 +517,11 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
                 }
             }
             Subject::Edge => {
-                let Some(server) = server_edge(core, http, stop, &receipt.id)? else {
+                let Some(server) = heard(server_edge(core, http, stop, &receipt.id))? else {
+                    unheard(Subject::Edge, &receipt.id)?;
                     continue;
                 };
+                let Some(server) = server else { continue };
                 if !removal_waits(&*core.conn()?, &server.id, WriteKind::DeleteEdge)? {
                     lost.edges.push(LostEdge::Remove(server));
                 }
@@ -549,7 +573,13 @@ fn removal_waits(conn: &Connection, id: &str, kind: WriteKind) -> Result<bool> {
             .collect(),
         _ => store::waiting_writes_for_item(conn, id)?,
     };
-    Ok(waiting.iter().any(|row| row.kind == kind))
+    Ok(waiting.iter().any(|row| {
+        row.kind == kind
+            || (kind == WriteKind::DeleteItem
+                && row.kind == WriteKind::TransitionItem
+                && row.body.get("state").and_then(serde_json::Value::as_str)
+                    == Some(ItemState::Trashed.as_str()))
+    }))
 }
 
 /// Queues what `lost` names, each write blocked `server_restored`, in the
@@ -968,6 +998,7 @@ mod tests {
             updated_at: at.map(str::to_string),
             removal,
             answered_at: 0,
+            seen: false,
         }
     }
 

@@ -10,7 +10,7 @@ use super::queue::{untaken_create_for_edge, untaken_creates_for_item};
 use super::stamps::{Stamp, beneath_edge, beneath_item, stamp};
 use super::time::now_millis;
 use crate::error::CoreError;
-use crate::model::{Edge, Item, QueuedWrite, Subject, WriteKind};
+use crate::model::{Edge, Item, ItemState, QueuedWrite, Subject, WriteKind};
 use crate::wire::EventPayload;
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -29,6 +29,8 @@ pub(crate) struct Receipt {
     pub(crate) updated_at: Option<String>,
     pub(crate) removal: bool,
     pub(crate) answered_at: i64,
+    /// An event, or a read of the server, has shown the server holds it.
+    pub(crate) seen: bool,
 }
 
 impl Receipt {
@@ -59,9 +61,17 @@ fn subject_named(name: &str) -> Result<Subject, CoreError> {
     }
 }
 
+/// The state a `transition_item` write moves its item to.
+fn moved_to(row: &QueuedWrite) -> Option<&str> {
+    (row.kind == WriteKind::TransitionItem)
+        .then(|| row.body.get("state").and_then(serde_json::Value::as_str))
+        .flatten()
+}
+
 /// Keeps what the server said it holds after taking `row`: the version and
-/// time its answer names, or for a removal the version the removal was made
-/// over. A tag or extension write answers no version, so it keeps none.
+/// time its answer names, or for a delete the version the delete was made
+/// over. A transition into the bin is kept as a removal. A tag or extension
+/// write answers no version, so it keeps none.
 pub(crate) fn keep_receipt(
     conn: &Connection,
     row: &QueuedWrite,
@@ -78,12 +88,13 @@ pub(crate) fn keep_receipt(
                 .map(str::to_string),
         ))
     };
+    let binned = moved_to(row) == Some(ItemState::Trashed.as_str());
     let (subject, id, version, updated_at, removal) = match row.kind {
         WriteKind::CreateItem
         | WriteKind::UpdateItem
         | WriteKind::RestoreItem
         | WriteKind::TransitionItem => match named("item") {
-            Some((id, version, at)) => (Subject::Item, id, Some(version), at, false),
+            Some((id, version, at)) => (Subject::Item, id, Some(version), at, binned),
             None => return Ok(()),
         },
         WriteKind::CreateEdge | WriteKind::UpdateEdge => match named("edge") {
@@ -102,7 +113,7 @@ pub(crate) fn keep_receipt(
     };
     let now = now_millis();
     let_go_of_old(conn, now)?;
-    if row.kind == WriteKind::RestoreItem {
+    if row.kind == WriteKind::RestoreItem || (moved_to(row).is_some() && !binned) {
         // The person took the item back out of the bin, so a removal made
         // before is not put back.
         conn.prepare_cached(
@@ -188,21 +199,40 @@ pub(crate) fn server_gave(
     id: &str,
 ) -> Result<bool, CoreError> {
     let (removal, back, column) = match subject {
-        Subject::Item => (WriteKind::DeleteItem, WriteKind::RestoreItem, "item_id"),
-        Subject::Edge => (WriteKind::DeleteEdge, WriteKind::CreateEdge, "edge_id"),
+        Subject::Item => (
+            "removal.kind = 'delete_item'
+             OR (removal.kind = 'transition_item' AND json_valid(removal.payload)
+                 AND json_extract(removal.payload, '$.state') = 'trashed')",
+            "later.kind = 'restore_item'
+             OR (later.kind = 'transition_item' AND json_valid(later.payload)
+                 AND json_extract(later.payload, '$.state') <> 'trashed')",
+            "item_id",
+        ),
+        Subject::Edge => (
+            "removal.kind = 'delete_edge'",
+            "later.kind = 'create_edge'",
+            "edge_id",
+        ),
     };
-    // Any answer to the removal, or none yet: a removal taken also leaves
-    // nothing for a read to find, and one refused as gone found nothing.
+    // A removal waiting, or taken, which also leaves nothing for a read to
+    // find, or refused as gone, which found nothing. One refused for another
+    // reason removed nothing, and nor did a move back it was undone by.
     let removing = conn
         .prepare_cached(&format!(
             "SELECT 1 FROM queue AS removal
-              WHERE removal.kind = ?1 AND removal.{column} = ?2
+              WHERE ({removal}) AND removal.{column} = ?1
+                AND (removal.verdict IS NULL
+                     OR removal.verdict IN ('accepted', 'merged', 'blocked', 'dead')
+                     OR (removal.verdict = 'refused'
+                         AND removal.reason IN ('item_not_found', 'edge_not_found')))
                 AND NOT EXISTS (
                   SELECT 1 FROM queue AS later
-                   WHERE later.kind = ?3 AND later.{column} = ?2 AND later.seq > removal.seq)
+                   WHERE ({back}) AND later.{column} = ?1 AND later.seq > removal.seq
+                     AND (later.verdict IS NULL
+                          OR later.verdict IN ('accepted', 'merged', 'blocked', 'dead')))
               LIMIT 1"
         ))?
-        .query_row(params![removal.as_str(), id, back.as_str()], |_| Ok(()))
+        .query_row(params![id], |_| Ok(()))
         .optional()?
         .is_some();
     if removing || super::marks::removal_marked(conn, subject, id)? {
@@ -232,8 +262,9 @@ pub(crate) fn server_gave(
 /// What the stream carried settles the receipts it shows the server holds: a
 /// change at a receipt's version and time or later, or any event of a row
 /// found missing. A removal is seen only by its own event, a move to the bin
-/// or a purge, whose time it keeps, and is kept: a restore that undoes it is
-/// found when the comparison reads the server.
+/// or a purge at or after its version and time, whose time it keeps, and is
+/// kept: a restore that undoes it is found when the comparison reads the
+/// server.
 pub(crate) fn receipts_seen(
     conn: &Connection,
     kind: &str,
@@ -263,7 +294,14 @@ pub(crate) fn receipts_seen(
         params![subject_name(subject), id],
     )? {
         if receipt.removal {
-            if removed && receipt.version.is_none_or(|over| version >= over) {
+            // A move to the bin keeps the version, so another client's at the
+            // same version is told from this device's own by its time: the
+            // read after the removal, where one found the row in the bin.
+            let own = receipt.version.is_none_or(|over| version >= over)
+                && receipt
+                    .stamp()
+                    .is_none_or(|removed| !removed.later_than(&event));
+            if removed && own {
                 conn.prepare_cached(
                     "UPDATE answer_receipts SET seen = 1, updated_at = ?2
                       WHERE write_id = ?1 AND seen = 0",
@@ -282,13 +320,32 @@ pub(crate) fn receipts_seen(
     Ok(())
 }
 
+/// Keeps on the receipt of the delete `row` the time of the row the read
+/// after it found in the bin, which is this device's own move to the bin.
+pub(crate) fn removal_read(
+    conn: &Connection,
+    row: &QueuedWrite,
+    item: &crate::wire::WireItem,
+) -> Result<(), CoreError> {
+    if row.kind != WriteKind::DeleteItem || item.state != ItemState::Trashed.as_str() {
+        return Ok(());
+    }
+    conn.prepare_cached(
+        "UPDATE answer_receipts SET updated_at = ?2
+          WHERE write_id = ?1 AND removal = 1 AND seen = 0
+            AND (version IS NULL OR version <= ?3)",
+    )?
+    .execute(params![row.id, item.updated_at, item.version])?;
+    Ok(())
+}
+
 fn receipts_where(
     conn: &Connection,
     clause: &str,
     bound: impl rusqlite::Params,
 ) -> Result<Vec<Receipt>, CoreError> {
     let mut statement = conn.prepare_cached(&format!(
-        "SELECT write_id, subject, id, version, updated_at, removal, answered_at
+        "SELECT write_id, subject, id, version, updated_at, removal, answered_at, seen
            FROM answer_receipts {clause}"
     ))?;
     let rows = statement
@@ -301,12 +358,13 @@ fn receipts_where(
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, bool>(5)?,
                 row.get::<_, i64>(6)?,
+                row.get::<_, bool>(7)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
         .map(
-            |(write_id, subject, id, version, updated_at, removal, answered_at)| {
+            |(write_id, subject, id, version, updated_at, removal, answered_at, seen)| {
                 Ok(Receipt {
                     write_id,
                     subject: subject_named(&subject)?,
@@ -315,6 +373,7 @@ fn receipts_where(
                     updated_at,
                     removal,
                     answered_at,
+                    seen,
                 })
             },
         )
@@ -345,8 +404,16 @@ pub(crate) fn removal_receipts(conn: &Connection) -> Result<Vec<Receipt>, CoreEr
     .collect())
 }
 
-/// A receipt the server was read to hold, or whose read said nothing of it:
-/// a change is let go, and a removal kept as seen.
+/// Lets go of every receipt of `subject` `id`, whose read answered about that
+/// row alone: no later check or comparison reads it, or puts it back.
+pub(crate) fn set_aside(conn: &Connection, subject: Subject, id: &str) -> Result<(), CoreError> {
+    conn.prepare_cached("DELETE FROM answer_receipts WHERE subject = ?1 AND id = ?2")?
+        .execute(params![subject_name(subject), id])?;
+    Ok(())
+}
+
+/// A receipt the server was read to hold: a change is let go, and a removal
+/// kept as seen.
 pub(crate) fn receipt_confirmed(conn: &Connection, receipt: &Receipt) -> Result<(), CoreError> {
     if receipt.removal {
         conn.prepare_cached("UPDATE answer_receipts SET seen = 1 WHERE write_id = ?1")?
@@ -416,6 +483,11 @@ pub(crate) fn forget_anchor(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Set while the rows set aside are only those `hold_unseen` named, for a
+/// hydration that found no restore: the comparison then reads the server
+/// only where the filled copy lacks a row.
+const META_CHECKING: &str = "restore_check";
+
 /// Sets aside what the copy holds as the server last answered it, before the
 /// copy is cleared: the row beneath any writes waiting on it, or the row
 /// itself. A create still waiting is left out, since the queue keeps it, and
@@ -432,11 +504,38 @@ pub(crate) fn hold_copy(conn: &Connection) -> Result<(), CoreError> {
         .prepare("SELECT id, from_id, to_id FROM edges")?
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<Result<_, _>>()?;
-    hold_edges(conn, edges)
+    hold_edges(conn, edges)?;
+    super::meta_delete(conn, META_CHECKING)
 }
 
-/// Sets aside, as `hold_copy` does, only the rows `named` names.
-pub(crate) fn hold_named(conn: &Connection, named: &[(Subject, String)]) -> Result<(), CoreError> {
+/// Sets aside, as `hold_copy` does, the rows the receipts no event has shown
+/// name, before a hydration of the same instance for another reason clears
+/// or fills the copy again, so the comparison after the fill finds what the
+/// server lost of them. Nothing where the whole copy is set aside already.
+pub(crate) fn hold_unseen(conn: &Connection) -> Result<(), CoreError> {
+    if restore_held(conn)? {
+        return Ok(());
+    }
+    let named: Vec<(Subject, String)> = unseen_receipts(conn, i64::MAX)?
+        .into_iter()
+        .map(|receipt| (receipt.subject, receipt.id))
+        .collect();
+    hold_named(conn, &named)?;
+    super::meta_set(conn, META_CHECKING, "true")
+}
+
+/// Whether the whole copy is set aside, after a restore was found.
+pub(crate) fn restore_held(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(holds_back(conn)? && super::meta_get(conn, META_CHECKING)?.is_none())
+}
+
+/// Whether a hydration set aside rows to compare: the whole copy, or what
+/// `hold_unseen` named.
+pub(crate) fn comparing(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(holds_back(conn)? || super::meta_get(conn, META_CHECKING)?.is_some())
+}
+
+fn hold_named(conn: &Connection, named: &[(Subject, String)]) -> Result<(), CoreError> {
     let mut ids = Vec::new();
     let mut edges = Vec::new();
     for (subject, id) in named {
@@ -522,7 +621,7 @@ fn hold(conn: &Connection, subject: Subject, id: &str, row: &str) -> Result<(), 
 }
 
 /// Whether rows are set aside that no comparison has read yet.
-pub(crate) fn holds_back(conn: &Connection) -> Result<bool, CoreError> {
+fn holds_back(conn: &Connection) -> Result<bool, CoreError> {
     Ok(conn
         .prepare_cached("SELECT 1 FROM held_back LIMIT 1")?
         .query_row([], |_| Ok(()))
@@ -578,7 +677,7 @@ pub(crate) fn follow_nothing(conn: &Connection, id: &str) -> Result<(), CoreErro
 
 pub(crate) fn release_held_back(conn: &Connection) -> Result<(), CoreError> {
     conn.execute("DELETE FROM held_back", [])?;
-    Ok(())
+    super::meta_delete(conn, META_CHECKING)
 }
 
 #[cfg(test)]
@@ -587,6 +686,16 @@ mod tests {
     use crate::store::{self, testing};
 
     fn queued(conn: &Connection, kind: WriteKind, id: &str, base: Option<i64>) -> QueuedWrite {
+        queued_with(conn, kind, id, base, "{}")
+    }
+
+    fn queued_with(
+        conn: &Connection,
+        kind: WriteKind,
+        id: &str,
+        base: Option<i64>,
+        payload: &str,
+    ) -> QueuedWrite {
         store::enqueue(
             conn,
             &store::NewWrite {
@@ -598,7 +707,7 @@ mod tests {
                 tag: None,
                 blob: None,
                 base_version: base,
-                payload: "{}",
+                payload,
                 depends_on: &[],
             },
         )
@@ -716,6 +825,139 @@ mod tests {
         .unwrap();
         assert!(removal_receipts(&conn).unwrap().is_empty());
         assert_eq!(unseen(&conn), vec![("a".into(), Some(2), false)]);
+    }
+
+    #[test]
+    fn a_transition_out_of_the_bin_lets_go_of_the_removal_before_it() {
+        let conn = testing::conn();
+        let delete = queued(&conn, WriteKind::DeleteItem, "a", Some(2));
+        keep_receipt(&conn, &delete, None).unwrap();
+        // The witness: a transition into the bin keeps the removal.
+        let binned = queued_with(
+            &conn,
+            WriteKind::TransitionItem,
+            "a",
+            None,
+            r#"{"state":"trashed"}"#,
+        );
+        keep_receipt(
+            &conn,
+            &binned,
+            Some(r#"{"item":{"id":"a","version":2,"updated_at":"2026-11-19T10:01:00.000Z"}}"#),
+        )
+        .unwrap();
+        assert!(!removal_receipts(&conn).unwrap().is_empty());
+        let active = queued_with(
+            &conn,
+            WriteKind::TransitionItem,
+            "a",
+            None,
+            r#"{"state":"active"}"#,
+        );
+        keep_receipt(
+            &conn,
+            &active,
+            Some(r#"{"item":{"id":"a","version":2,"updated_at":"2026-11-19T10:05:00.000Z"}}"#),
+        )
+        .unwrap();
+        assert!(removal_receipts(&conn).unwrap().is_empty());
+    }
+
+    /// A copy holding `a` at version 3 as the server gave it, with a delete of
+    /// it queued.
+    fn deleting(conn: &Connection) -> QueuedWrite {
+        let mut given = testing::note("a", "t", "b", "2026-11-19T10:00:00.000Z");
+        given.version = 3;
+        store::upsert_item(conn, &given, None, &Default::default()).unwrap();
+        queued(conn, WriteKind::DeleteItem, "a", Some(3))
+    }
+
+    fn answered(conn: &Connection, row: &QueuedWrite, verdict: &str, reason: Option<&str>) {
+        conn.execute(
+            "UPDATE queue SET verdict = ?2, reason = ?3 WHERE id = ?1",
+            params![row.id, verdict, reason],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_row_moved_out_of_the_bin_after_its_delete_is_one_the_server_gave() {
+        let conn = testing::conn();
+        let delete = deleting(&conn);
+        answered(&conn, &delete, "accepted", None);
+        // The witness: a delete answers for the row's absence.
+        assert!(!server_gave(&conn, Subject::Item, "a").unwrap());
+        let active = queued_with(
+            &conn,
+            WriteKind::TransitionItem,
+            "a",
+            None,
+            r#"{"state":"active"}"#,
+        );
+        answered(&conn, &active, "accepted", None);
+        assert!(server_gave(&conn, Subject::Item, "a").unwrap());
+        // A transition into the bin answers for it as a delete does.
+        queued_with(
+            &conn,
+            WriteKind::TransitionItem,
+            "a",
+            None,
+            r#"{"state":"trashed"}"#,
+        );
+        assert!(!server_gave(&conn, Subject::Item, "a").unwrap());
+    }
+
+    #[test]
+    fn a_delete_refused_for_another_reason_than_the_row_being_gone_removes_nothing() {
+        for (verdict, reason, removing) in [
+            ("refused", Some("version_conflict"), false),
+            ("conflicted", None, false),
+            ("refused", Some("item_not_found"), true),
+            ("accepted", None, true),
+            ("blocked", Some("server_restored"), true),
+        ] {
+            let conn = testing::conn();
+            let delete = deleting(&conn);
+            answered(&conn, &delete, verdict, reason);
+            assert_eq!(
+                server_gave(&conn, Subject::Item, "a").unwrap(),
+                !removing,
+                "{verdict} {reason:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_removal_is_seen_only_by_a_move_to_the_bin_at_or_after_its_own() {
+        let conn = testing::conn();
+        let delete = queued(&conn, WriteKind::DeleteItem, "b", Some(4));
+        keep_receipt(&conn, &delete, None).unwrap();
+        // The read after the delete found the row in the bin at 11:00.
+        conn.execute(
+            "UPDATE answer_receipts SET updated_at = '2026-11-19T11:00:00.000Z'",
+            [],
+        )
+        .unwrap();
+        // Another client's move to the bin at the same version, before this
+        // device's, whose event comes first.
+        receipts_seen(
+            &conn,
+            "item.trashed",
+            &event_at("b", 4, "2026-11-19T10:00:00.000Z"),
+        )
+        .unwrap();
+        assert_eq!(unseen(&conn), vec![("b".into(), Some(4), true)]);
+        receipts_seen(
+            &conn,
+            "item.trashed",
+            &event_at("b", 4, "2026-11-19T11:00:00.000Z"),
+        )
+        .unwrap();
+        assert_eq!(unseen(&conn), vec![]);
+        assert_eq!(
+            removal_receipts(&conn).unwrap()[0].updated_at.as_deref(),
+            Some("2026-11-19T11:00:00.000Z")
+        );
     }
 
     #[test]

@@ -402,25 +402,6 @@ fn attempt(
                 edge_types,
                 query,
             };
-            // A copy of this instance cleared or filled again for another
-            // reason still keeps what the server has lost of its writes
-            // (`device/restored-checked-before-clear`).
-            let lost = if matches!(restarted, Some(HydrateRestart::HeadPastLog)) {
-                Vec::new()
-            } else {
-                let check = {
-                    let conn = core.conn()?;
-                    store::meta_get(&conn, store::META_INSTANCE_ID)?
-                        .is_some_and(|built| built == instance)
-                        && !store::restored::holds_back(&conn)?
-                        && !(fill == Fill::InPlaceOnly && not_in_place(&conn, &built)?.is_some())
-                };
-                if check {
-                    crate::restored::lost_unseen(core, http, stop)?
-                } else {
-                    Vec::new()
-                }
-            };
             crate::catch_up::refuse_if_stopped(stop)?;
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
@@ -447,19 +428,30 @@ fn attempt(
                 // What the copy held is compared with no other instance.
                 store::restored::release_held_back(&tx)?;
                 store::restored::forget_receipts(&tx)?;
-            } else if not_in_place == Some(HydrateRestart::HeadPastLog.as_str())
-                && !store::restored::holds_back(&tx)?
+            } else if not_in_place == Some(HydrateRestart::HeadPastLog.as_str()) {
+                if !store::restored::restore_held(&tx)? {
+                    store::restored::hold_copy(&tx)?;
+                }
+            } else if store::meta_get(&tx, store::META_INSTANCE_ID)?.as_deref()
+                == Some(instance.as_str())
+                && crate::reach::built_under(&tx)?.as_deref() == Some(fence.as_str())
             {
-                store::restored::hold_copy(&tx)?;
-            } else if !lost.is_empty() && !store::restored::holds_back(&tx)? {
-                store::restored::hold_named(&tx, &lost)?;
+                // A copy of this instance cleared or filled again for another
+                // reason still keeps what the server has lost of its writes
+                // (`device/restored-checked-before-clear`). One built under
+                // another reach is not checked, nor kept checking from an
+                // earlier attempt: a row its key no longer reads answers as
+                // a lost one does.
+                store::restored::hold_unseen(&tx)?;
+            } else if !store::restored::restore_held(&tx)? {
+                store::restored::release_held_back(&tx)?;
             }
             store::restored::forget_anchor(&tx)?;
             crate::reach::advance_generation(&tx)?;
             store::meta_set(&tx, store::META_HYDRATE_STATE, store::HYDRATE_IN_PROGRESS)?;
             store::attachments_start_growing(&tx)?;
             store::meta_set(&tx, store::META_EVENT_CURSOR, &cursor)?;
-            store::meta_set(&tx, crate::reach::FENCE, &fence)?;
+            crate::reach::build_under(&tx, &fence)?;
             store::meta_set(&tx, store::META_INSTANCE_ID, &instance)?;
             store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
             store::meta_set(&tx, store::META_SLICE_TYPES, &serde_json::to_string(types)?)?;
@@ -843,7 +835,7 @@ fn not_in_place(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<Option
             .is_some_and(|held| !held.is_empty() && held != built.instance);
         return Ok(Some(if elsewhere {
             HydrateRestart::InstanceChanged.as_str()
-        } else if store::restored::holds_back(conn)? {
+        } else if store::restored::restore_held(conn)? {
             HydrateRestart::HeadPastLog.as_str()
         } else {
             NOT_STALE
@@ -851,7 +843,7 @@ fn not_in_place(conn: &rusqlite::Connection, built: &Built<'_>) -> Result<Option
     };
     Ok(if refill.instance != built.instance {
         Some(HydrateRestart::InstanceChanged.as_str())
-    } else if store::restored::holds_back(conn)? {
+    } else if store::restored::restore_held(conn)? {
         Some(HydrateRestart::HeadPastLog.as_str())
     } else if refill.reach != built.fence {
         Some(HydrateRestart::ReachChanged.as_str())

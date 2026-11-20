@@ -2,7 +2,7 @@
 
 use super::completeness::{let_go_unless_kept, refilling, slice_query};
 use super::marks::item_held;
-use super::meta::{META_REFILL, meta_delete, meta_delete_under, meta_set};
+use super::meta::{META_REFILL, meta_delete, meta_delete_under, meta_get, meta_set};
 use super::queue::edge_write_waits;
 use super::rows::{WAITING, evict_item, forget_edge, whole_edge_types};
 use crate::error::CoreError;
@@ -107,6 +107,11 @@ pub(super) fn edge_brought(id: &str) -> String {
 }
 
 const EDGE_BROUGHT: &str = "edge_brought/";
+
+/// Whether the refill under way has brought the edge `id` again.
+pub fn refill_brought_edge(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, &edge_brought(id))?.is_some())
+}
 
 fn forget_marks_of_the_walk(conn: &Connection) -> Result<(), CoreError> {
     for prefix in [

@@ -460,6 +460,12 @@ pub(super) fn restore_settled_overlay(
     if matches!(row.kind, WriteKind::CreateItem | WriteKind::CreateEdge) {
         return Ok(());
     }
+    if let ReadBack::Item {
+        held: Some(held), ..
+    } = read
+    {
+        store::restored::removal_read(conn, row, &held.item)?;
+    }
     let kept = match read {
         ReadBack::Item { held: Some(_), .. } | ReadBack::Edge { held: Some(_), .. } => true,
         ReadBack::Item {

@@ -1265,6 +1265,184 @@ fn a_server_restored_before_any_refill_clears_rather_than_fill_over_later_versio
     assert_eq!(kept_blocked(&core), held_lost());
 }
 
+/// A receipt of a write the server answered for the item `id` at `version`
+/// and the time every scripted row carries, which no event has shown unless
+/// `seen`.
+fn receipt(core: &Core, id: &str, version: i64, removal: bool, seen: bool) {
+    core.conn()
+        .unwrap()
+        .execute(
+            "INSERT INTO answer_receipts
+               (write_id, subject, id, version, updated_at, removal, answered_at, seen)
+             VALUES (?1, 'item', ?2, ?3, '2026-01-01T00:00:00Z', ?4, ?5, ?6)",
+            rusqlite::params![
+                format!("w {id}"),
+                id,
+                version,
+                removal,
+                store::now_millis(),
+                seen
+            ],
+        )
+        .unwrap();
+}
+
+fn receipts(core: &Core) -> i64 {
+    core.conn()
+        .unwrap()
+        .query_row("SELECT count(*) FROM answer_receipts", [], |row| row.get(0))
+        .unwrap()
+}
+
+#[test]
+fn a_restore_comparison_sets_aside_a_removal_whose_read_says_nothing() {
+    let server = Scripted::start();
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(core, &[row("kept", 5, &[])]);
+    });
+    // A removal of an item the copy no longer holds, which the server now
+    // refuses to read.
+    receipt(&core, "binned", 1, true, true);
+    server.on(
+        "/items/binned",
+        vec![scripted::certified(scripted::refusal(403, "forbidden"))],
+    );
+    server.on(
+        "/items",
+        vec![page(
+            vec![row("kept", 2, &[]), row("changed", 1, &[])],
+            None,
+        )],
+    );
+    server.on("/items/bulk-get", vec![pinned_row()]);
+    lost_on(&server);
+    server.on("/events", vec![head("2"), replay(vec![], "2")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(!report.in_place);
+    assert_eq!(
+        server.seen("/items/binned").len(),
+        1,
+        "the comparison read the removal"
+    );
+    assert_eq!(kept_blocked(&core), held_lost());
+    assert_eq!(
+        receipts(&core),
+        0,
+        "the unreadable removal stayed to be read"
+    );
+}
+
+#[test]
+fn a_refill_of_the_same_instance_reads_no_row_it_brought_back_as_the_server_answered() {
+    let server = Scripted::start();
+    let core = aged_out(&server);
+    receipt(&core, "kept", 1, false, false);
+    server.on(
+        "/items/kept",
+        vec![scripted::certified(scripted::json(
+            200,
+            &row("kept", 1, &[]).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert!(
+        server.seen("/items/kept").is_empty(),
+        "a row the refill brought at the stamp its receipt names was read again"
+    );
+    assert!(core.queue().unwrap().is_empty());
+    assert_eq!(receipts(&core), 0);
+}
+
+#[test]
+fn a_refill_of_the_same_instance_keeps_a_row_the_server_lost_that_the_walk_left_out() {
+    let server = Scripted::start();
+    let core = aged_out(&server);
+    receipt(&core, "gone", 1, false, false);
+    server.on(
+        "/items/gone",
+        vec![scripted::certified(scripted::refusal(404, "not_found"))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(server.seen("/items/gone").len(), 1);
+    assert_eq!(
+        kept_blocked(&core),
+        [("CreateItem".to_string(), "gone".to_string())],
+        "the row the walk left out was judged by the copy's own stale row"
+    );
+}
+
+#[test]
+fn a_hydration_under_another_reach_keeps_nothing_its_reads_cannot_tell_lost() {
+    let server = Scripted::start();
+    let core = aged_out(&server);
+    receipt(&core, "gone", 1, false, false);
+    let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    server.on(
+        "/types",
+        vec![scripted::certified_under(
+            scripted::types(&[("core.note", None)]),
+            other,
+        )],
+    );
+    server.on(
+        "/edge-types",
+        vec![scripted::certified_under(scripted::edge_types(&[]), other)],
+    );
+    server.on(
+        "/keys/current",
+        vec![scripted::certified_under(
+            scripted::json(200, r#"{"type_permissions":{"core.note":"read"}}"#),
+            other,
+        )],
+    );
+    // A type the key no longer reads answers `404`, as a lost item does.
+    server.on(
+        "/items/gone",
+        vec![scripted::certified_under(
+            scripted::refusal(404, "not_found"),
+            other,
+        )],
+    );
+    server.on(
+        "/items",
+        vec![page_under(vec![row("kept", 1, &[])], None, other)],
+    );
+    server.on("/items/bulk-get", vec![pinned_row_under(other)]);
+    server.on(
+        "/events",
+        vec![
+            head_under("60", other),
+            scripted::stream(
+                vec![
+                    scripted::copy_marker_under("stream_cursor", "60", other),
+                    scripted::copy_marker_under("stream_live", "60", other),
+                ],
+                Then::End,
+            ),
+        ],
+    );
+    let report = hydrate(&core).unwrap();
+
+    assert!(!report.in_place);
+    assert!(
+        server.seen("/items/gone").is_empty(),
+        "a hydration under another reach read a receipt"
+    );
+    assert!(
+        core.queue().unwrap().is_empty(),
+        "a row the new reach cannot read was kept as lost"
+    );
+}
+
 #[test]
 fn a_refill_from_a_head_level_with_the_cursor_it_held_fills_in_place() {
     let server = Scripted::start();
