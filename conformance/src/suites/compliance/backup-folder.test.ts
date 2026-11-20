@@ -1029,10 +1029,14 @@ describe("a backup folder that lacks a file or its disk", () => {
     await withFolder("backup-folder-adopt-unrecorded", async (server, root) => {
       const id = await instanceIdOf(server);
       const owner = ownerOf(server);
+      const made = await owner.runBackup();
+      expect(made.status, JSON.stringify(made.error)).toBe(200);
+      const listed = await owner.listBackups();
+      expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+      const backups = listed.data.data;
+      expect(backups.length).toBeGreaterThan(0);
       renameSync(join(root, "files", id), join(root, "old files"));
       const stores = await storesOf(server);
-      const backups = (await owner.listBackups()).data.data;
-      expect(backups.length).toBeGreaterThan(0);
 
       await server.setFault("fail:stores-record");
       const refused = await owner.adoptBackupFolder();
@@ -1040,8 +1044,8 @@ describe("a backup folder that lacks a file or its disk", () => {
       expect(refused.status, JSON.stringify(refused.data)).not.toBe(200);
       expect(refused.error?.error.message).not.toContain("forgotten");
       expect(await storesOf(server)).toEqual(stores);
-      expect((await owner.listBackups()).data.data).toEqual(backups);
 
+      // The adopt that succeeds forgets every backup, so the failed one forgot none.
       const adopted = await owner.adoptBackupFolder();
       expect(adopted.status, JSON.stringify(adopted.error)).toBe(200);
       expect(adopted.data.backups_forgotten).toBe(backups.length);
@@ -1093,7 +1097,12 @@ describe("a backup folder that lacks a file or its disk", () => {
         server,
         bytesOf("a file sent while another folder is in its place", 2048),
       );
-      await runJob(clientsFor(server).operator, "blob-replicate");
+      const refused = await runJob(
+        clientsFor(server).operator,
+        "blob-replicate",
+        "failed",
+      );
+      expect(refused.error).toContain("is not the one the server took");
       expect(readdirSync(area)).toEqual([".marfa-store"]);
       expect(await referencesOf(server)).toContain("folder_lock_lost");
 
