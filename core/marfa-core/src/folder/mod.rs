@@ -1283,6 +1283,7 @@ fn follow_binding(
     follow: &Follow<'_>,
 ) -> Result<()> {
     let io = |error: std::io::Error| CoreError::Io(error.to_string());
+    let item_id = bound.item_id.clone();
     let file = match follow
         .dir
         .open_file(follow.name, OFlags::RDONLY, Mode::empty())
@@ -1317,7 +1318,7 @@ fn follow_binding(
         ),
         None => {
             state::unbind(conn, &follow.from)?;
-            state::journal_clear(conn, &follow.from)
+            state::journal_clear_for(conn, &follow.from, &item_id)
         }
     }
 }
@@ -2353,6 +2354,7 @@ fn one_per_name(
 struct Carriers {
     by_mark: HashMap<String, String>,
     by_id: HashMap<String, String>,
+    keys: HashSet<String>,
 }
 
 impl Carriers {
@@ -2365,6 +2367,7 @@ impl Carriers {
         #[cfg(debug_assertions)]
         crate::fault::hold(|| "folder-sweep-carriers");
         for (path, key, read_id) in files {
+            carriers.keys.insert(key.to_string());
             let captured = walked.opened.get(path);
             let mark = captured
                 .and_then(|captured| identity::of(&captured.metadata.borrow()))
@@ -2393,6 +2396,16 @@ impl Carriers {
             .and_then(|mark| self.by_mark.get(mark))
             .or_else(|| self.by_id.get(&bound.item_id))
             .map(String::as_str)
+    }
+
+    /// For an item whose binding another file took, so whose identity is
+    /// no longer known: by id line, else the file that carried it, if still
+    /// there.
+    fn carrying_unbound<'a>(&'a self, item_id: &str, carrier: &'a str) -> Option<&'a str> {
+        self.by_id
+            .get(item_id)
+            .map(String::as_str)
+            .or_else(|| self.keys.contains(carrier).then_some(carrier))
     }
 }
 

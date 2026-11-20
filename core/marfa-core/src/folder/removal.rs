@@ -204,7 +204,19 @@ impl Folder {
         for path in &disk {
             let (bound, held) = {
                 let conn = self.core.conn()?;
-                let Some(bound) = state::bound_at(&conn, path)? else {
+                let bound = state::bound_at(&conn, path)?;
+                // Its binding gone, the item is restored as any unwritten one.
+                if let Some(row) = state::journaled(&conn)?
+                    .into_iter()
+                    .find(|row| row.path == *path)
+                    && bound
+                        .as_ref()
+                        .is_none_or(|bound| bound.item_id != row.item_id)
+                {
+                    state::journal_clear_for(&conn, path, &row.item_id)?;
+                    continue;
+                }
+                let Some(bound) = bound else {
                     continue;
                 };
                 // No pull writes back an item the query's states no longer hold, so
@@ -218,7 +230,7 @@ impl Folder {
                 // The file leaves for good, so its placement ends before its binding.
                 self.end_placement(&bound.item_id, path)?;
                 let conn = self.core.conn()?;
-                state::journal_clear(&conn, path)?;
+                state::journal_clear_for(&conn, path, &bound.item_id)?;
                 state::unbind(&conn, path)?;
                 continue;
             }
@@ -229,7 +241,7 @@ impl Folder {
                 continue;
             }
             let conn = self.core.conn()?;
-            state::journal_clear(&conn, path)?;
+            state::journal_clear_for(&conn, path, &bound.item_id)?;
             marked.push((path, bound.item_id.clone()));
             state::bind(
                 &conn,
@@ -749,6 +761,93 @@ mod tests {
         };
         folder.health_observe(true, true, Some(&unwritten), None, false);
         assert_eq!(folder.observed_health().unwrap().pending_downloads, 1);
+    }
+
+    fn items_deleted(folder: &Folder) -> Vec<String> {
+        folder
+            .core
+            .queue()
+            .unwrap()
+            .into_iter()
+            .filter(|write| write.kind == crate::model::WriteKind::DeleteItem)
+            .filter_map(|write| write.item_id)
+            .collect()
+    }
+
+    #[test]
+    fn an_item_whose_path_a_new_file_took_stays_carried_and_goes_once_no_file_carries_it() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder, item) = carried_note("01a00000-0000-7000-8000-00000000c614");
+        std::fs::write(dir.path().join("note.md"), "a different note altogether\n").unwrap();
+        assert_eq!(folder.scan().unwrap().created, 1);
+        let other = landed(&folder, "note.md");
+        assert_ne!(other, item);
+        let pulled = folder.pull().unwrap();
+        assert_eq!(pulled.unwritten, 0, "{pulled:?}");
+        assert!(
+            pulled
+                .flagged
+                .iter()
+                .any(|file| file.item.as_deref() == Some(item.as_str())
+                    && file.flag == "carried"
+                    && file.reason.contains("note.bin")),
+            "{pulled:?}"
+        );
+        folder.health_observe(true, true, Some(&pulled), None, false);
+        let observed = folder.observed_health().unwrap();
+        assert!(observed.problems.is_empty(), "{observed:?}");
+        let status = folder.status().unwrap();
+        assert!(
+            status
+                .files
+                .iter()
+                .any(|file| file.path == "note.bin"
+                    && file.item_id.as_deref() == Some(item.as_str())),
+            "{status:?}"
+        );
+        let again = folder.scan().unwrap();
+        assert_eq!(again.missing, 0, "{again:?}");
+        assert!(items_deleted(&folder).is_empty());
+
+        std::fs::remove_file(dir.path().join("note.bin")).unwrap();
+        assert_eq!(folder.scan().unwrap().missing, 1);
+        past_the_grace(&folder, "note.md");
+        let swept = folder.scan().unwrap();
+        assert_eq!(swept.deleted, 1, "{swept:?}");
+        assert_eq!(items_deleted(&folder), [item]);
+        assert_eq!(bound_item(&folder, "note.md"), Some(other.clone()));
+        let kept = std::fs::read_to_string(dir.path().join("note.md")).unwrap();
+        assert!(
+            kept.contains(&format!("marfa_id: {other}"))
+                && kept.ends_with("a different note altogether\n"),
+            "{kept}"
+        );
+    }
+
+    #[test]
+    fn a_new_file_at_a_carried_path_whose_carrier_went_in_the_same_scan_is_the_items_edit() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder, item) = carried_note("01a00000-0000-7000-8000-00000000c615");
+        std::fs::remove_file(dir.path().join("note.bin")).unwrap();
+        std::fs::write(dir.path().join("note.md"), "the words, saved again\n").unwrap();
+        let scanned = folder.scan().unwrap();
+        assert_eq!((scanned.created, scanned.updated), (0, 1), "{scanned:?}");
+        assert_eq!(updates_queued(&folder, &item), 1);
+        assert_eq!(bound_item(&folder, "note.md"), Some(item.clone()));
+        assert!(
+            state::journaled(&folder.core.conn().unwrap())
+                .unwrap()
+                .is_empty()
+        );
+        let pulled = folder.pull().unwrap();
+        assert!(
+            !pulled
+                .flagged
+                .iter()
+                .any(|file| file.item.as_deref() == Some(item.as_str())),
+            "{pulled:?}"
+        );
+        assert!(items_deleted(&folder).is_empty());
     }
 
     #[test]

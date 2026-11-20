@@ -528,11 +528,16 @@ impl Folder {
             let Some(state::Kept::Carried(carrier)) = &row.kept else {
                 continue;
             };
-            if seen.contains(&row.path)
-                || !snapshot
-                    .iter()
-                    .any(|bound| bound.path == row.path && bound.item_id == row.item_id)
-            {
+            let bound_here = snapshot
+                .iter()
+                .any(|bound| bound.path == row.path && bound.item_id == row.item_id);
+            // Unbound, it is carried only while no file here is bound to it.
+            let stale = if bound_here {
+                seen.contains(&row.path)
+            } else {
+                snapshot.iter().any(|bound| bound.item_id == row.item_id)
+            };
+            if stale {
                 continue;
             }
             if let Some(file) = files
@@ -540,7 +545,9 @@ impl Folder {
                 .find(|file| file.path == *carrier && file.item_id.is_none())
             {
                 file.item_id = Some(row.item_id.clone());
-                named.insert(row.path);
+                if bound_here {
+                    named.insert(row.path);
+                }
             }
         }
         Ok(named)

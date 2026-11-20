@@ -536,7 +536,7 @@ While a file in the directory that the scan holds for a clash with another file'
 
 **Reason:** the pull writes no second file for the item, and a flag such as `unwritten` would count it as a pending download (`folder-sync/report-pending-downloads`) and as a held file.
 
-**Tests:** `device/folders-contract-b.test.ts › flags a pull's item with the file that carries it, as no download`.
+**Tests:** `device/folders-contract-b.test.ts › flags a pull's item with the file that carries it, as no download`, `› keeps the item of a file the folder does not send when a new file takes its path, and trashes it once no file carries it`.
 
 ### `folder-sync/report-distinct-items`
 

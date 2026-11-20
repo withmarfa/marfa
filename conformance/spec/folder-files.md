@@ -82,7 +82,7 @@ When a renamed file leaves its old path to a newly created file in the same scan
 
 When an editor replaces a bound file at the same path, a device MUST treat its changed content as an edit of the same item.
 
-**Tests:** `device/folders-identity.test.ts › keeps an agent's whole-file rewrite the same item`.
+**Tests:** `device/folders-identity.test.ts › keeps an agent's whole-file rewrite the same item`, `device/folders-contract-b.test.ts › takes a new file at the path of a file the folder does not send as that file's edit once the other file is gone too`.
 
 ### `folder-files/atomic-editor-unchanged`
 
@@ -1896,11 +1896,19 @@ While a file in the directory that the scan holds for a clash with another file'
 
 ### `folder-files/carried-path-new-file`
 
-While a file in the directory that the scan holds for a clash with another file's name, or does not send, carries a missing file's identity or the ID of its item, when a new file appears at the missing file's path, a device MUST send the new file as a new item.
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, carries a missing file's identity or the ID of its item, when a new file that carries neither appears at the missing file's path, a device MUST send the new file as a new item.
 
 **Reason:** the carried item's file is elsewhere in the directory, so a new file at its old path is another note. Sent as an edit, it would replace the carried item's words.
 
-**Tests:** `device/folders-contract-b.test.ts › makes a new item of a new file a watch finds at the path of a file the folder does not send`.
+**Tests:** `device/folders-contract-b.test.ts › makes a new item of a new file a watch finds at the path of a file the folder does not send`, `› keeps the item of a file the folder does not send when a new file takes its path, and trashes it once no file carries it`.
+
+### `folder-files/carried-path-taken-let-go`
+
+When the deletion grace of a missing file whose path a new file took while another file carried its item expires, and no file in the directory carries the missing file's identity or the ID of its item, a device MUST queue deletion of the missing file's item.
+
+**Reason:** the new file at the path is its own item and answers nothing for the carried one, which would otherwise be kept with no file and flagged at every pull.
+
+**Tests:** `device/folders-contract-b.test.ts › keeps the item of a file the folder does not send when a new file takes its path, and trashes it once no file carries it`.
 
 ### `folder-files/missing-file-changed-revives`
 
