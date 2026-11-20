@@ -28,7 +28,7 @@ const PASSKEY_NEXT: &str = "Nothing has been removed. Removing this passkey mean
 const OWN: &str = "This is the credential making this call. Ending it ends this connection at /mcp, /mcp/schema and /mcp/admin alike, so no call after the confirming one works until the app is connected again.";
 const KEYS_KEPT: &str =
     "The app's keys keep working. To revoke them with the app, preview again with revoke_keys.";
-const UNBOUND: &str = "Token chains are counted as they stand now. The app refreshes them as it works, so the confirmation does not cover them: ending the app ends every token chain it has when it happens.";
+const UNBOUND: &str = "Token chains are counted as they stand now. The app refreshes them and is issued codes as it works, and events are queued for its webhooks as items change, so the confirmation does not cover them: ending the app ends every token chain and unredeemed code it has, and every delivery queued for its webhooks, when it happens.";
 const KEY: &str = "This ID names a key. Revoke a key with marfa_revoke_key.";
 
 const ENDED_BROWSER: &str = "Ended. That browser is signed out.";

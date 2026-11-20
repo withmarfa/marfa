@@ -55,11 +55,7 @@ impl Kind {
     }
 
     fn target(self, id: &str, revoke_keys: bool) -> String {
-        let named = match self {
-            Kind::Browser => format!("browser {id}"),
-            Kind::App => format!("app {id} {revoke_keys}"),
-            Kind::Passkey => format!("passkey {id}"),
-        };
+        let named = format!("{} {id} {revoke_keys}", self.word());
         confirm::ids_digest(&[named])
     }
 }
