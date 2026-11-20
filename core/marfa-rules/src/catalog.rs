@@ -379,7 +379,7 @@ pub fn api_name(text: &str) -> bool {
         && chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_')
 }
 
-/// Refuses a status word list on a field that is not `status`, a list that is not `{ value, group }` pairs, each with an optional text `description`, naming each word once in one of the four groups, `enum_values` on a status field, and `status` as an array's element type. A status field with no words is judged by [`refuse_wordless_status`].
+/// A declaration can omit inherited words. [`refuse_wordless_status`] checks the full chain.
 pub fn status_declaration(kind: &str, definition: &Value) -> Option<String> {
     if definition.get("items_type").and_then(Value::as_str) == Some("status") {
         return Some(

@@ -4579,7 +4579,7 @@ export interface components {
             type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail" | "status";
             /** @description A name for people to read, up to 100 characters. Leave it out and a type read answers the nearest one a type above names, else one made from the field's name, such as `Due At` for `due_at`. The type list answers only the declared label. */
             label?: string;
-            /** @description What the field holds, up to 300 characters. */
+            /** @description What the field holds. Registration, replacement, and normalization accept up to 300 Unicode code points. */
             description?: string;
             /** @description `true` if an item of the type must have a value for it. */
             required?: boolean;
@@ -4620,7 +4620,7 @@ export interface components {
              * @enum {string}
              */
             group: "not_started" | "in_progress" | "completed" | "canceled";
-            /** @description What the word means, up to 120 characters. */
+            /** @description What the word means. Registration, replacement, and normalization accept up to 120 Unicode code points. */
             description?: string;
         };
         /** @description One member of the entries of an `array` field. */
@@ -4632,7 +4632,7 @@ export interface components {
             type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail" | "status";
             /** @description A name for people to read, up to 100 characters. Leave it out and a type read answers the nearest one a type above names, else one made from the member's name, such as `Due At` for `due_at`. The type list answers only the declared label. */
             label?: string;
-            /** @description What the member holds, up to 300 characters. */
+            /** @description What the member holds. Registration, replacement, and normalization accept up to 300 Unicode code points. */
             description?: string;
             /** @description `true` if every entry must have the member. */
             required?: boolean;
@@ -4676,7 +4676,7 @@ export interface components {
             label?: string;
             /** @description The type's plural name for people to read, such as `People`. Never inherited. Left out of the list of types where the type declares none. */
             plural?: string;
-            /** @description What the type is for: a sentence of up to 200 characters. */
+            /** @description What the type is for. Registration, replacement, and normalization accept up to 200 Unicode code points. */
             description?: string;
             /** @description Markdown that tells an agent or an app builder how to use the type. Present only where the type carries some. `GET /types/{id}` also lists the guidance of its ancestors. */
             guidance?: string;
@@ -4715,7 +4715,7 @@ export interface components {
         TypeGuidance: {
             /**
              * @description The identifier of the type that carries the guidance.
-             * @example core.ticket
+             * @example user.order
              */
             type: string;
             /** @description That type's own guidance. */
@@ -4815,9 +4815,9 @@ export interface components {
             label?: string;
             /** @description The label's plural, up to 100 characters, such as `People`. Leave it out and Marfa adds `s`, `es` or `ies` to the label by the regular English rule. */
             plural?: string;
-            /** @description A sentence saying what the type is for, up to 200 characters. */
+            /** @description A sentence saying what the type is for, up to 200 Unicode code points. */
             description?: string;
-            /** @description Markdown that tells an agent or an app builder how to use the type, up to 1,000 characters. Adding, changing or removing it needs `schema.write`. An `app.*` type takes none. An empty string means none. */
+            /** @description Markdown on how to use the type, up to 1,000 Unicode code points. For registration, non-empty guidance needs `schema.write`. Omit it or send an empty string for no guidance. An `app.*` type takes no guidance. */
             guidance?: string;
             /** @description The structural roles the type plays: `container`. An edge type's `role:<name>` constraint matches types by role. */
             roles?: string[];
@@ -4906,9 +4906,9 @@ export interface components {
             label?: string;
             /** @description The label's plural, up to 100 characters, such as `People`. Leave it out and Marfa adds `s`, `es` or `ies` to the label by the regular English rule. */
             plural?: string;
-            /** @description A sentence saying what the type is for, up to 200 characters. */
+            /** @description A sentence saying what the type is for, up to 200 Unicode code points. */
             description?: string;
-            /** @description Markdown that tells an agent or an app builder how to use the type, up to 1,000 characters. Adding, changing or removing it needs `schema.write`. An `app.*` type takes none. An empty string means none. */
+            /** @description Markdown on how to use the type, up to 1,000 Unicode code points. Omit it or send an empty string to clear it. Adding, changing, or removing it needs `schema.write`. An `app.*` type takes no guidance. */
             guidance?: string;
             /** @description The structural roles the type plays: `container`. An edge type's `role:<name>` constraint matches types by role. */
             roles?: string[];

@@ -838,7 +838,7 @@ When `POST /restore` reads a `type` line that carries `guidance`, the server MUS
 
 If `POST /restore` reads a `type` line of an `app.*` type that carries non-empty `guidance`, then the server MUST answer `400 invalid_schema` and write nothing.
 
-**Reason:** an `app.*` type never carries guidance (`types/guidance-app-refused`), so an archive that says it does is not one a server wrote.
+**Reason:** archives follow the same restriction on guidance as `types/guidance-app-refused`.
 
 **Tests:** `compliance/type-guidance-restore.test.ts › refuses an archive that gives an app type guidance, and writes nothing`.
 

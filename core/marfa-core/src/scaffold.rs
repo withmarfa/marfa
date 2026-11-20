@@ -21,10 +21,7 @@ pub struct ScaffoldField {
     pub status_values: Vec<(String, String)>,
 }
 
-/// A type definition naming `id`, with `description` empty where none is given, for its author to fill, and `fields` in the order given, that a
-/// declaration takes unchanged and a key that may register `id` can register.
-/// `parent` is checked only for its grammar: a parent the instance or the
-/// declaration holds cannot be known here.
+/// A parent registered on the instance cannot be checked offline.
 pub fn scaffold_type(
     id: &str,
     parent: Option<&str>,

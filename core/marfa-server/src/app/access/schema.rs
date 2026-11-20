@@ -87,7 +87,7 @@ impl Caller {
         }
     }
 
-    /// Guidance is read by agents as how to fill a type, so adding, changing or removing it takes `schema.write`; leaving it as stored takes nothing.
+    /// Agents read guidance as instructions.
     pub fn require_guidance(&self, stored: Option<&str>, next: Option<&str>) -> Result<()> {
         if stored == next || self.holds(Permission::SchemaWrite) {
             return Ok(());

@@ -128,7 +128,7 @@ pub fn validate_replacing_type(
     )
 }
 
-/// `validate_type` for an archived type, which may keep a table column's name of a type a forced delete removed, and text longer than a registration now takes.
+/// Archives may contain dangling column targets or text from before the length limits.
 pub fn validate_restored_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issue>> {
     judge_type(input, registry, Naming::Any, Stray::Take, Limits::Stored)
 }
@@ -629,7 +629,6 @@ fn thumbnail_names(fields: Option<&Obj>, ancestry: &Ancestry) -> HashSet<String>
     found
 }
 
-/// The length limits on a type's description, guidance, fields and status words, and guidance on a type an app owns.
 fn validate_text(obj: &Obj, id: Option<&str>, limits: Limits, errors: &mut Vec<Issue>) {
     let enforced = limits == Limits::Enforced;
     if enforced {

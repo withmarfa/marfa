@@ -1558,7 +1558,7 @@ If `marfa types check` is given `--url`, `--key`, `--profile` or `--socket`, the
 
 ## Type guidance
 
-A type's `guidance` is kept in a Markdown file beside the definition: `PATH.md` beside `PATH.json`.
+To keep a type's guidance in a separate Markdown file, name it `PATH.md` and place it beside `PATH.json`.
 
 ### `cli/types-guidance-file`
 

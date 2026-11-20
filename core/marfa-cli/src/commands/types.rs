@@ -274,14 +274,12 @@ pub fn run(
     }
 }
 
-/// The path of the Markdown file beside a `.json` definition, with the same name.
 fn guidance_path(file: &Path) -> Option<std::path::PathBuf> {
     file.extension()
         .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
         .then(|| file.with_extension("md"))
 }
 
-/// The guidance a Markdown file holds, without its trailing whitespace. A file that is missing holds none.
 fn guidance_text(path: &Path) -> Result<Option<String>, CliError> {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
@@ -308,7 +306,6 @@ fn guidance_text(path: &Path) -> Result<Option<String>, CliError> {
     Ok(Some(text.trim_end().to_string()))
 }
 
-/// The definition `body` holds, with the Markdown file beside a `.json` file added as its `guidance`.
 fn definition(body: &BodySource) -> Result<Value, CliError> {
     let mut definition = body.read()?;
     let Some(path) = body.file.as_deref().and_then(guidance_path) else {
@@ -329,7 +326,6 @@ fn definition(body: &BodySource) -> Result<Value, CliError> {
     Ok(definition)
 }
 
-/// A type read for a person: its definition, then its guidance and its ancestors' as text.
 fn guided(answer: &Value, out: &Printer) -> Result<(), CliError> {
     let mut rest = answer.clone();
     let own = rest

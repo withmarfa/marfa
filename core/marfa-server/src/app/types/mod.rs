@@ -119,7 +119,6 @@ fn require_reach(caller: &Caller, next: &Obj, stored: Option<&Obj>) -> Result<()
     Ok(())
 }
 
-/// A type as the API answers it: with its plural, its provenance and, where a type above it carries guidance, that guidance nearest first.
 fn presented(mut schema: Obj, held: Option<&Provenance>, registry: &Registry) -> Value {
     let plural = plural_of(&schema);
     schema.insert("plural".into(), Value::String(plural));

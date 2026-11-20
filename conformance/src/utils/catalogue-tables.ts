@@ -88,7 +88,7 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "sign_ins.manage":
     "Listing, renaming and ending the owner's sign-ins, listing, renaming and removing the owner's passkeys, getting the link that adds one and changing the owner's password.",
   "schema.write":
-    "Removing type and edge type definitions that already exist, and replacing them, only those the credential's type or edge map grants write on.",
+    "Removing or replacing type and edge type definitions, and setting guidance when registering a type, within the credential's type or edge write access.",
   "webhooks.manage":
     "Reading, registering, changing and removing the outbound subscriptions that send an instance's events out, and redelivering what they sent.",
 };

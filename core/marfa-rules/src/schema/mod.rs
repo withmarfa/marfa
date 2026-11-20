@@ -52,14 +52,13 @@ pub use type_def::{
 };
 pub use unread::{unread_edge_keys, unread_keys};
 
-/// Whether a registration's text is held to the length limits: a restore takes what a server stored before they existed.
+/// Restores keep text that predates the length limits.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Limits {
     Enforced,
     Stored,
 }
 
-/// A string longer than `max` Unicode code points.
 pub(crate) fn length_issue(
     path: &str,
     value: Option<&Value>,

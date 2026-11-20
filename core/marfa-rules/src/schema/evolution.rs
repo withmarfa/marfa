@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::tables::{OWN_COLUMNS, OWN_TABLE};
 use super::{Obj, as_obj};
 
-/// A change to `guidance` is not judged here: it needs `schema.write` whatever else changes, and the server decides it with the access rules.
+// Server access rules check guidance changes separately.
 const GUIDANCE: &str = "guidance";
 
 const FREE_MEMBERS: [&str; 8] = [

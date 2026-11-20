@@ -4685,7 +4685,7 @@
           },
           "description": {
             "type": "string",
-            "description": "What the field holds, up to 300 characters."
+            "description": "What the field holds. Registration, replacement, and normalization accept up to 300 Unicode code points."
           },
           "required": {
             "type": "boolean",
@@ -4776,7 +4776,7 @@
           },
           "description": {
             "type": "string",
-            "description": "What the word means, up to 120 characters."
+            "description": "What the word means. Registration, replacement, and normalization accept up to 120 Unicode code points."
           }
         },
         "required": [
@@ -4813,7 +4813,7 @@
           },
           "description": {
             "type": "string",
-            "description": "What the member holds, up to 300 characters."
+            "description": "What the member holds. Registration, replacement, and normalization accept up to 300 Unicode code points."
           },
           "required": {
             "type": "boolean",
@@ -4910,7 +4910,7 @@
           },
           "description": {
             "type": "string",
-            "description": "What the type is for: a sentence of up to 200 characters."
+            "description": "What the type is for. Registration, replacement, and normalization accept up to 200 Unicode code points."
           },
           "guidance": {
             "type": "string",
@@ -5049,7 +5049,7 @@
           "type": {
             "type": "string",
             "description": "The identifier of the type that carries the guidance.",
-            "example": "core.ticket"
+            "example": "user.order"
           },
           "guidance": {
             "type": "string",
@@ -5285,11 +5285,11 @@
           },
           "description": {
             "type": "string",
-            "description": "A sentence saying what the type is for, up to 200 characters."
+            "description": "A sentence saying what the type is for, up to 200 Unicode code points."
           },
           "guidance": {
             "type": "string",
-            "description": "Markdown that tells an agent or an app builder how to use the type, up to 1,000 characters. Adding, changing or removing it needs `schema.write`. An `app.*` type takes none. An empty string means none."
+            "description": "Markdown on how to use the type, up to 1,000 Unicode code points. For registration, non-empty guidance needs `schema.write`. Omit it or send an empty string for no guidance. An `app.*` type takes no guidance."
           },
           "roles": {
             "type": "array",
@@ -5520,11 +5520,11 @@
           },
           "description": {
             "type": "string",
-            "description": "A sentence saying what the type is for, up to 200 characters."
+            "description": "A sentence saying what the type is for, up to 200 Unicode code points."
           },
           "guidance": {
             "type": "string",
-            "description": "Markdown that tells an agent or an app builder how to use the type, up to 1,000 characters. Adding, changing or removing it needs `schema.write`. An `app.*` type takes none. An empty string means none."
+            "description": "Markdown on how to use the type, up to 1,000 Unicode code points. Omit it or send an empty string to clear it. Adding, changing, or removing it needs `schema.write`. An `app.*` type takes no guidance."
           },
           "roles": {
             "type": "array",

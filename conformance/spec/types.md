@@ -310,7 +310,7 @@ When a key without `schema.write` sends a `PUT /types/{id}` that leaves the type
 
 When a credential sends `GET /types/{id}` for a type with ancestors that carry guidance, the server MUST answer `ancestor_guidance`, one `{ type, guidance }` for each ancestor that carries guidance, nearest first, and leave `ancestor_guidance` out where none does.
 
-**Reason:** a weaker model misses the rules of a family when it reads only the type itself.
+**Reason:** guidance from ancestors tells a reader how to use the type within its family.
 
 **Tests:** `compliance/type-guidance.test.ts › reads the guidance of the types above, nearest first, leaving out one that carries none`.
 
