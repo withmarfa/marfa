@@ -17,8 +17,8 @@ use super::systemd::Linger;
 use super::{
     AGENT_HINT, Access, DEFAULT_PORT, Folder, IMAGE, InstallArgs, OPTIONS_HINT, Runtime, State,
     Steps, account, address, checked_release, external_problems, files, free_port, health_url,
-    http_agent, keep_release, launchd, local_address, names, native, own_release, port_is_free,
-    proxy_trust, public_address, refuse_older, tailscale, valid_name,
+    http_agent, launchd, local_address, moved_only_by_upgrade, names, native, own_release,
+    port_is_free, proxy_trust, public_address, shell_word, tailscale, valid_name,
 };
 use crate::error::CliError;
 use crate::output::Printer;
@@ -76,19 +76,25 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     };
 
     let release = match runtime {
-        Runtime::Native => native_release(
-            &args,
-            existing.as_ref().map(|(state, _)| state),
-            &folder.dir,
-        )?,
+        Runtime::Native => native_release(&args)?,
         Runtime::Docker => match (&args.release, &existing) {
             (Some(release), Some((state, _))) => {
                 let release = checked_release(release)?;
-                refuse_older(&state.release, &release)?;
+                if release != state.image() {
+                    return Err(moved_only_by_upgrade(
+                        state.image(),
+                        "--release names",
+                        &release,
+                        &format!(
+                            "marfa server upgrade --release {release} --dir {}",
+                            shell_word(&folder.dir)
+                        ),
+                    ));
+                }
                 release
             }
             (Some(release), None) => checked_release(release)?,
-            (None, Some((state, _))) => state.release.clone(),
+            (None, Some((state, _))) => state.image().to_string(),
             (None, None) => own_release().ok_or_else(|| {
                 CliError::Usage("this build is not a release, so it names no image: pass --release, such as --release 0.0.22".into())
             })?,
@@ -228,6 +234,15 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             CliError::Usage("no free port from 8600: choose one with --port".into())
         })?,
     };
+
+    if let Some(server) = &native_server {
+        on_its_release(
+            &folder,
+            existing.as_ref().map(|(state, _)| state),
+            server,
+            port,
+        )?;
+    }
 
     // How it is reached.
     let access = match (args.access, &existing) {
@@ -465,7 +480,10 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         .map(|(_, dotenv)| dotenv.clone())
         .unwrap_or_else(|| EnvFile::parse(files::DOTENV_HEADER));
     dotenv.set("MARFA_NAME", &name)?;
-    dotenv.set("MARFA_RELEASE", &release)?;
+    match runtime {
+        Runtime::Docker => dotenv.set("MARFA_RELEASE", &release)?,
+        Runtime::Native => dotenv.remove("MARFA_RELEASE"),
+    }
     dotenv.set("MARFA_PORT", &port.to_string())?;
     dotenv.set("MARFA_ACCESS", &access.name())?;
     dotenv.set("MARFA_RUNTIME", runtime.name())?;
@@ -753,23 +771,53 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     Ok(())
 }
 
-/// A native server runs the release installed. Another release than the one
-/// the install runs is moved to with `upgrade`.
-fn native_release(
-    args: &InstallArgs,
-    existing: Option<&State>,
-    dir: &Path,
-) -> Result<String, CliError> {
+/// A native server runs the release installed beside this marfa.
+fn native_release(args: &InstallArgs) -> Result<String, CliError> {
     if args.release.is_some() {
         return Err(CliError::Usage(
             "--release is for --docker: a native server runs the release installed beside this marfa. Install the release you want (with Homebrew, or scripts/install.sh) and run `marfa server upgrade`".into(),
         ));
     }
-    let own = env!("CARGO_PKG_VERSION").to_string();
+    Ok(run::OWN.to_string())
+}
+
+/// An install never moves a native install to another release, which only `upgrade` does. With
+/// no service to say which release the data is on, such as after `uninstall`, this release is
+/// asked whether it opens the database before it is started on it.
+fn on_its_release(
+    folder: &Folder,
+    existing: Option<&State>,
+    server: &Path,
+    port: u16,
+) -> Result<(), CliError> {
     if let Some(state) = existing {
-        keep_release(&state.release, &own, dir)?;
+        let service = Service {
+            manager: state.manager.expect("a native install records its service"),
+            name: &state.name,
+            dir: &folder.dir,
+            trace: false,
+        };
+        if service.exists() {
+            super::lifecycle::keeps_release(folder, &service, state.port)?;
+            return Ok(());
+        }
     }
-    Ok(own)
+    let database = native::Layout::new(&folder.dir).database();
+    if !database.exists() {
+        return Ok(());
+    }
+    let settings = folder.read(files::SETTINGS)?.unwrap_or_default();
+    let environment = native::environment(&folder.dir, port, &settings);
+    match run::will_not_open(server, &database, &environment) {
+        None => Ok(()),
+        Some(said) => Err(CliError::Install(format!(
+            "{} will not run on the database in {}, so nothing was changed. It says: {said}\n\nInstall the release that last ran on it, and run `marfa server install` with that release's marfa. To move to {}, export the data with `marfa export` while that release runs, make a new install of {} in another --dir, and restore the archive there with `marfa restore`.",
+            run::OWN,
+            folder.dir.display(),
+            run::OWN,
+            run::OWN,
+        ))),
+    }
 }
 
 /// The account a root install runs as can run the program the service names;

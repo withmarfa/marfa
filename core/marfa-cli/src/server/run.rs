@@ -35,7 +35,7 @@ use crate::server::{Folder, RunArgs, files, launchd, native, shell_word};
 
 /// What the server's exit status says of its database: 78 is a refusal that
 /// a restart will not change.
-const REFUSED: i32 = 78;
+pub const REFUSED: i32 = 78;
 
 /// What the service says when the server refused its database, which
 /// `install` and `status` look for in the log.
@@ -66,7 +66,7 @@ const LOOK_EVERY: Duration = Duration::from_secs(2);
 
 const POLL: Duration = Duration::from_millis(100);
 
-const OWN: &str = env!("CARGO_PKG_VERSION");
+pub const OWN: &str = env!("CARGO_PKG_VERSION");
 
 static CHILD: AtomicI32 = AtomicI32::new(0);
 static STOP: AtomicBool = AtomicBool::new(false);
@@ -196,16 +196,16 @@ pub fn locate(dir: Option<&Path>) -> Result<PathBuf, CliError> {
     Ok(server)
 }
 
-/// Whether the install in `dir`, which records `recorded`, is trying a new server of an update
-/// between `recorded` and this `marfa`'s release, which the service already names.
-pub fn trying_update(dir: &Path, recorded: &str) -> bool {
+/// Whether the install in `dir`, whose service runs `serviced`, is trying a new server of an
+/// update between `serviced` and this `marfa`'s release, which the service already names.
+pub fn trying_update(dir: &Path, serviced: &str) -> bool {
     record_of(dir)
         .pending()
         .ok()
         .flatten()
         .is_some_and(|pending| {
             let part = |release: &str| release == pending.from || release == pending.to;
-            part(recorded) && part(OWN)
+            part(serviced) && part(OWN)
         })
 }
 
@@ -218,10 +218,12 @@ pub fn will_not_open(
 ) -> Option<String> {
     let mut command = Command::new(server);
     command.arg("--can-open").arg(database);
-    // A setting in this shell is not one the service starts the server with.
-    for (name, _) in std::env::vars_os() {
-        if name.to_string_lossy().starts_with("MARFA_") {
-            command.env_remove(name);
+    // The server reads settings beyond its own, such as `OTEL_*`, and what this shell sets is
+    // not what the service starts it with.
+    command.env_clear();
+    for name in ["PATH", "HOME"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
         }
     }
     command.envs(environment.iter().map(|(name, value)| (name, value)));
