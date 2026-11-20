@@ -157,13 +157,13 @@ impl Form {
             });
             emitted.insert(&key.key);
         }
+        // A key the form does not hold is written as a file with no form
+        // writes it.
         for (name, value) in front {
             if emitted.insert(name) {
-                yaml.push_str(&format!(
-                    "{}: {}\n",
-                    preserve::emitted_key(name),
-                    preserve::json(value)
-                ));
+                let mut one = Map::new();
+                one.insert(name.clone(), value.clone());
+                yaml.push_str(&document::write_map(&one).ok()?);
             }
         }
         let map = document::read_map(&yaml).ok()?;
@@ -773,6 +773,19 @@ mod tests {
             written(&found, &front(json!({"a": 2, "c": 3, "b": 1}))),
             "b: 1\na: 2\nc: 3\n"
         );
+    }
+
+    #[test]
+    fn a_key_the_form_does_not_hold_is_written_as_with_no_form() {
+        let found = form("title: A\n");
+        let values = front(json!({
+            "title": "A",
+            "tags": ["conflicted-copy"],
+            "derived-from": ["[[A]]"],
+        }));
+        let canonical = document::canonical(&values, "").unwrap();
+        assert_eq!(format!("---\n{}---\n", written(&found, &values)), canonical);
+        assert!(canonical.contains("derived-from:\n  - \"[[A]]\"\n"));
     }
 
     #[test]
