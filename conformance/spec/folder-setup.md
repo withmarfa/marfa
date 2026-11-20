@@ -582,25 +582,27 @@ When a device refuses a directory's store `wrong_schema` because it holds a writ
 
 ### `folder-setup/refused-store-names-release`
 
-When a device refuses a directory's store `wrong_schema` and the store records the release that last saved it, a device MUST name that release.
+When a device refuses a directory's store `wrong_schema` and the store records the release that last saved it as three whole numbers separated by dots, a device MUST name that release, or say that a development build saved the store where the release is `0.0.0`.
 
-**Reason:** a store records the release as a device does (`device/store-records-release`).
+**Reason:** a store records the release as a device does (`device/store-records-release`), and `0.0.0` is the release of a build no release stamped.
 
-**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`.
+**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`, `› names a development build, and no release to install, for a folder's store that records 0.0.0`.
 
 ### `folder-setup/refused-store-release-unknown`
 
-When a device refuses a directory's store `wrong_schema` and the store records no release, a device MUST say that the release that last saved it is not known.
+When a device refuses a directory's store `wrong_schema` and the store records no release, or a text that is not three whole numbers separated by dots, a device MUST say that the release that last saved it is not known.
 
-**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made whose unsent writes cannot be counted`.
+**Reason:** the store holds any text, and a refusal puts a release in a command the person is told to run, so a text that is not a release is never repeated.
+
+**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made whose unsent writes cannot be counted`, `› says the release is not known for a folder's store that records text that is not a release`.
 
 ### `folder-setup/refused-store-install-release`
 
-When a device refuses a directory's store `wrong_schema` and tells the person to use the build that made the store, and the store records the release that last saved it, a device MUST say to install that release with `MARFA_VERSION` set to it and the install script.
+When a device refuses a directory's store `wrong_schema` and tells the person to use the build that made the store, and the store records the release that last saved it as a release other than `0.0.0`, a device MUST say to install that release with `MARFA_VERSION` set to it and the install script.
 
-**Reason:** a person who upgraded with Homebrew or the install script no longer has the build that made the store.
+**Reason:** a person who upgraded with Homebrew or the install script no longer has the build that made the store. A development build is no release to install, so a store it saved names none.
 
-**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`.
+**Tests:** `device/folders-refused-store-live.test.ts › leaves a folder's store another build made, and the folder's files, while it holds writes the server has not taken`, `› names a development build, and no release to install, for a folder's store that records 0.0.0`.
 
 ### `folder-setup/refused-store-unrecorded-advice`
 
