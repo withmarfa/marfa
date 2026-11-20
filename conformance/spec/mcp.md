@@ -82,7 +82,7 @@ When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mc
 
 ### `mcp/tools-for-admin`
 
-When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_end_sign_in` while it holds `sign_ins.manage` or `grants.manage`, `marfa_backups` and `marfa_take_backup` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors`, `marfa_make_endpoint`, `marfa_delete_connector` and `marfa_retire_endpoint` while it holds `connectors.manage`, `marfa_files` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
+When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_end_sign_in` while it holds `sign_ins.manage` or `grants.manage`, `marfa_backups`, `marfa_take_backup` and `marfa_adopt_backup_folder` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors`, `marfa_make_endpoint`, `marfa_delete_connector` and `marfa_retire_endpoint` while it holds `connectors.manage`, `marfa_files` and `marfa_remove_file_copy` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
 
 **Reason:** a credential that holds a permission can do the owner task it opens through the API, so an agent holding it does the same from MCP, except for the tasks `mcp/tools-withheld` names.
 
@@ -144,9 +144,9 @@ If the rows of a page that `marfa_trash` or `marfa_connectors` answers do not al
 
 ### `mcp/tools-withheld`
 
-The server MUST NOT list at any MCP endpoint a tool that removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
+The server MUST NOT list at any MCP endpoint a tool that restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
 
-**Reason:** an agent's confirmation of a change that cannot be undone must bind the change to the state the owner saw, and the confirmations for removing a copy of a file and adopting the backup folder do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
+**Reason:** claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
 
 **Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`, `compliance/owner-tasks.test.ts › runs the trash's retention through the maintenance tool, removing only what the retention makes eligible and no chosen item`.
 
@@ -386,7 +386,7 @@ When the server lists `marfa_purge`, the server MUST annotate it with `destructi
 
 **Reason:** a purge cannot be undone, and a client asks the person differently before a tool that destroys data.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/purge-preview`
 
@@ -710,7 +710,7 @@ When the server lists `marfa_delete_connector` or `marfa_retire_endpoint`, the s
 
 **Reason:** neither change can be undone, and a client asks the person differently before a tool that destroys data.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/connector-acts-gone`
 
@@ -770,6 +770,254 @@ When a call carries a `confirm` token that an earlier call by the same credentia
 
 **Tests:** `compliance/mcp-connector-acts.test.ts › changes nothing more on a confirmation an earlier call used, and says it already did`.
 
+## Removing a copy of a file
+
+`marfa_remove_file_copy` removes one store's copy of a file, as `DELETE /blobs/{hash}/copies/{store}` does, in two calls: a preview with a `confirm` token, and a call that sends the same `hash` and `store_id` with that token. The statements under "A confirmation of a removal or an adopt" hold for it too.
+
+### `mcp/copy-remove-preview`
+
+When `marfa_remove_file_copy` is called without `confirm`, the server MUST NOT remove the copy or delete its bytes.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › removes nothing without a confirmation, and previews the copy, the copies that stay and what becomes of its bytes`.
+
+### `mcp/copy-remove-preview-shows`
+
+When `marfa_remove_file_copy` previews, the server MUST answer under `file` the file's `hash` and `size_bytes`, under `copy` the store's copy with its `store_id`, `kind`, `written`, `recorded_at` and `verified_at`, under `other_copies` each other copy the same way, under `min_copies` the number of copies the instance keeps, and under `bytes` `deleted` where the server wrote the copy's bytes or `kept` where it did not.
+
+**Reason:** the person agrees to what the removal does to the store, and a copy the server did not write keeps its bytes (`stores/delete-only-written`).
+
+**Tests:** `compliance/mcp-file-acts.test.ts › removes nothing without a confirmation, and previews the copy, the copies that stay and what becomes of its bytes`, `› removes a copy the server did not write and keeps its bytes in the store`.
+
+### `mcp/copy-remove-preview-refused`
+
+If removing the copy would leave fewer copies than the instance keeps, then the server MUST refuse the `marfa_remove_file_copy` preview with the tool error code `copies_below_minimum`.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a preview that would leave fewer copies than the instance keeps`.
+
+### `mcp/copy-remove-confirmed`
+
+When `marfa_remove_file_copy` is called with the `confirm` token its preview gave, by the same credential, within five minutes, while the store records the copy the preview read, the server MUST remove the copy as `DELETE /blobs/{hash}/copies/{store}` does and answer `removed` as `true`.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › removes the copy and deletes its bytes with the confirmation the preview gave`.
+
+### `mcp/copy-remove-bytes`
+
+When `marfa_remove_file_copy` removes a copy, the server MUST answer under `bytes` `deleted` where it wrote the copy's bytes and has deleted them, `queued` where it wrote them and their deletion waits for a later run, or `kept` where it did not write them.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › removes the copy and deletes its bytes with the confirmation the preview gave`, `› says the bytes are queued when the store cannot delete them yet, and deleted once a later run has`, `› removes a copy the server did not write and keeps its bytes in the store`.
+
+### `mcp/copy-remove-changed`
+
+If the store no longer records the copy the `marfa_remove_file_copy` preview read, records it with another answer for whether the server wrote it, or is an object store that records it in another object, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale`, and with a new preview where the store records a copy of the file that the instance could remove.
+
+**Reason:** whether the server wrote the copy decides whether its bytes are deleted, and an object store keeps each copy the server writes in an object of its own, so the confirmation covers the copy the preview showed and no other.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once the copy was removed since the preview, without a new preview`, `› refuses a confirmation once the object store holds the copy in another object since the preview, with a new preview`, `› refuses a confirmation once the server wrote the copy it did not write at the preview, with a new preview`, `› refuses a confirmation once the copy changed and removing it would leave fewer copies than the instance keeps, without a new preview`.
+
+### `mcp/copy-remove-recorded-again`
+
+When a disk or folder store's copy was removed and then recorded again with the same answer for whether the server wrote it since a `marfa_remove_file_copy` preview, the server MUST remove it on the confirmation.
+
+**Reason:** a disk or folder store keeps a file's copy under the file's hash, so the copy placed again is the one the preview showed.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once the copy was removed since the preview, without a new preview`.
+
+### `mcp/copy-remove-repeated`
+
+When a call to `marfa_remove_file_copy` carries a `confirm` token that an earlier call by the same credential used to remove the copy, within five minutes of the preview, the server MUST answer `removed` and `already_done` as `true`, `recorded` as whether the store records a copy of the file now, and `bytes` as the removed copy's bytes stand now: `kept` where the server did not write them, `queued` while their deletion waits, `deleted` where the store is attached and records no copy of the file and no deletion waits, and no `bytes` otherwise.
+
+**Reason:** a client that did not see the first answer learns what the removal left, read when it asks rather than when the removal ran.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › changes nothing more on a confirmation an earlier call used, and says what the copy is now`, `› says the bytes are queued when the store cannot delete them yet, and deleted once a later run has`, `› removes a copy the server did not write and keeps its bytes in the store`.
+
+### `mcp/copy-remove-stores-unasked`
+
+If a call to `marfa_remove_file_copy` carries a `confirm` token that another credential got, that expired, or that a preview of another file or store gave, then the server MUST answer it without waiting for any store to answer.
+
+**Reason:** the server judges the token before it asks the stores whether they hold the file, so a token that does not hold keeps no store busy.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › answers a confirmation that does not hold while the stores do not answer, and waits on them for one that holds`.
+
+## Adopting the backup folder
+
+`marfa_adopt_backup_folder` adopts the backup folder as a new store, as `POST /backups/folder/adopt` does, in two calls: a preview with a `confirm` token, and a call that sends that token. The statements under "A confirmation of a removal or an adopt" hold for it too.
+
+### `mcp/adopt-preview`
+
+When `marfa_adopt_backup_folder` is called without `confirm`, the server MUST NOT adopt the folder or write a store's marker in it.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts nothing without a confirmation, and previews what adopting forgets and clears`.
+
+### `mcp/adopt-preview-shows`
+
+When `marfa_adopt_backup_folder` previews, the server MUST answer under `folder` the backup folder, under `files_folder` this instance's files folder in it, under `replaces_store_id` the store it recorded there, under `forgets` the names of that store's backups in `backups` and of the backups it found there in `found_backups`, as many of each as fit, with `backups_left_out` and `found_backups_left_out` counting the rest when any are left out, and the number of that store's file copies in `file_copies`, and under `last_backup` the `name` and `at` of the last backup the instance records, or `null` where it records none.
+
+**Reason:** the person agrees to everything the adopt forgets, and the adopt clears the record of the last backup, so the instance shows no backup until the next one.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts nothing without a confirmation, and previews what adopting forgets and clears`.
+
+### `mcp/adopt-preview-refused`
+
+If the backup folder's files folder holds the marker of the store the server recorded there, then the server MUST refuse the `marfa_adopt_backup_folder` preview with the tool error code `conflict`.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a preview while the folder holds the store recorded there`.
+
+### `mcp/adopt-preview-claimed`
+
+Where the file system that holds the backup folder's files folder takes no file locks, if that files folder holds the claim of an adopt, then the server MUST refuse the `marfa_adopt_backup_folder` preview with the tool error code `conflict` and a message that names the claim's file.
+
+**Reason:** an adopt does not write its claim over another there (`instance/backup-folder-unlocked-claim-kept`), so a confirmation could never be used. The person stops any other server that uses the folder, then removes the file.
+
+**Tests:** waiting on #3116.
+
+### `mcp/adopt-preview-deletions`
+
+When `marfa_adopt_backup_folder` previews, the server MUST answer under `forgets` in `pending_deletions` the number of deletions of file bytes it has queued in the store it recorded at the backup folder.
+
+**Reason:** the adopt forgets those deletions, so the bytes they would delete stay on the old disk.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts nothing without a confirmation, and previews what adopting forgets and clears`, `› counts the deletions queued in the replaced store and the files that failed to copy to it, and refuses a confirmation once a deletion ran since the preview`.
+
+### `mcp/adopt-preview-copy-failures`
+
+When `marfa_adopt_backup_folder` previews, the server MUST answer under `forgets` in `copy_failures` the number of files whose copy to the store it recorded at the backup folder failed.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts nothing without a confirmation, and previews what adopting forgets and clears`, `› counts the deletions queued in the replaced store and the files that failed to copy to it, and refuses a confirmation once a deletion ran since the preview`.
+
+### `mcp/adopt-preview-purges`
+
+When `marfa_adopt_backup_folder` previews, the server MUST answer in `files_to_purge` the number of files that a backup it recorded or found in the store at the backup folder names and that nothing else keeps.
+
+**Reason:** the adopt forgets those backups, so the server stops holding the files they name (`instance/backup-folder-adopt-backups`) and purges these as it purges any file nothing names, from every store.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts nothing without a confirmation, and previews what adopting forgets and clears`, `› counts the files only the forgotten backups keep, and refuses a confirmation once another one is left to them since the preview`.
+
+### `mcp/adopt-confirmed`
+
+When `marfa_adopt_backup_folder` is called with the `confirm` token its preview gave, by the same credential, within five minutes, while the folder and what adopting forgets stand as the preview read them, the server MUST adopt the folder as `POST /backups/folder/adopt` does and answer `adopted` as `true`, the new store in `store_id`, the store it replaced in `replaced_store_id`, the numbers of backups and file copies it forgot in `backups_forgotten` and `copies_forgotten`, and `folder` and `files_folder`.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts the folder with the confirmation the preview gave, writes its marker and clears the last backup`.
+
+### `mcp/adopt-marked`
+
+When `marfa_adopt_backup_folder` adopts the folder, the server MUST answer `marked` as `true` where the files folder took the new store's marker, `false` with the error in `marker_error` where writing the marker failed, or `null` where the folder did not answer in time.
+
+**Reason:** the record of the new store commits before the marker is written, so the adopt stands either way, and backups go to the folder only once it holds the marker.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts the folder with the confirmation the preview gave, writes its marker and clears the last backup`, `› says the marker was not written when the files folder refuses it, with the error, and marked once it is writable`, `› says the marker is unknown when the folder does not answer in time, and marked once it has`.
+
+### `mcp/adopt-folder-changed`
+
+When `marfa_adopt_backup_folder` adopts the folder and the folder answered, the server MUST answer `folder_changed` as `true` where the folder read otherwise once the marker was written than when the adopt took it, or could not be read again, and `false` otherwise.
+
+**Reason:** the person learns that the folder that took the marker may not be the one they agreed to adopt.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts the folder with the confirmation the preview gave, writes its marker and clears the last backup`, `› says the folder changed when an entry appeared in it while the marker was written`.
+
+### `mcp/adopt-changed-folder`
+
+If the backup folder was replaced at its path, or an entry was added, removed or replaced in it, in its `files` folder or in this instance's files folder, other than an entry the operating system or the server makes, since a `marfa_adopt_backup_folder` preview, then the server MUST refuse the call that confirms it, making nothing in the folder, with the tool error code `confirmation_stale` and a new preview with a `confirm` token of its own.
+
+**Reason:** the person agreed to adopt the folder the preview read, and a disk mounted or swapped in its place since is another folder, which a refused call leaves as it found it.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once another folder took the backup folder's path since the preview, with a new preview`, `› refuses a confirmation once an entry was added to the folder since the preview`.
+
+### `mcp/adopt-system-entries`
+
+When the only entries added to or removed from the backup folder since a `marfa_adopt_backup_folder` preview are ones the operating system makes, such as `.DS_Store`, `._` files and `.Spotlight-V100`, the server MUST adopt the folder on the confirmation.
+
+**Reason:** a desktop that only opened the folder adds these, and the folder is the same one.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › adopts on a confirmation after the operating system added its own entries to the folder`.
+
+### `mcp/adopt-empty-folders`
+
+When the `files` folder or this instance's files folder was missing at a `marfa_adopt_backup_folder` preview and is an empty folder on the backup folder's own device at the call that confirms it, the server MUST adopt the folder on the confirmation.
+
+**Reason:** the adopt makes these folders empty where they are missing, so an empty one made in between changes nothing the person agreed to, while a link or another volume in its place does.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once another store's marker appeared in the files folder since the preview, without a new preview`.
+
+### `mcp/adopt-changed-copies`
+
+If the number of file copies, of queued deletions or of failed copies the replaced store records, or the number of files to purge, changed since a `marfa_adopt_backup_folder` preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and a new preview.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once a copy the replaced store records was removed since the preview`, `› counts the deletions queued in the replaced store and the files that failed to copy to it, and refuses a confirmation once a deletion ran since the preview`, `› counts the files only the forgotten backups keep, and refuses a confirmation once another one is left to them since the preview`.
+
+### `mcp/adopt-refused-stale`
+
+If a call to `marfa_adopt_backup_folder` carries a `confirm` token that holds and the server refuses the adopt for what the folder or the record holds now, with an outcome it knows and with no claim of the call left in the folder, then the server MUST answer the tool error code `confirmation_stale`, with a new preview where the folder can be previewed.
+
+**Reason:** the stale answer tells the client that this call adopted nothing and that it needs the person to agree to what a new preview shows.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once another store's marker appeared in the files folder since the preview, without a new preview`.
+
+### `mcp/adopt-claim-kept`
+
+If a call to `marfa_adopt_backup_folder` that carries a `confirm` token adopts nothing and leaves the claim it made in the backup folder, or the folder did not answer in time once the claim was made, then the server MUST answer a tool error code other than `confirmation_stale`, with a message that says the folder keeps or may keep the claim.
+
+**Reason:** `confirmation_stale` tells the client that the call changed nothing, and a claim left in the folder is a change the person may need to clear. A claim the folder has not answered goes on after the server stops waiting.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › answers the refusal, not a stale confirmation, when a confirmation that no longer holds leaves its claim in the folder`, `› answers that the folder may keep the claim, not a stale confirmation, when the claim does not answer in time, and so does the adopt door`.
+
+### `mcp/adopt-repeated`
+
+When a call to `marfa_adopt_backup_folder` carries a `confirm` token that an earlier call by the same credential used, within five minutes of the preview, the server MUST answer `adopted` and `already_done` as `true`, the store the server records at the backup folder now in `store_id`, and in `marked` whether the files folder holds that store's marker now, or `null` where the folder does not answer in time or cannot be read.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › changes nothing more on an adopt's confirmation an earlier call used, and reads the folder now`, `› says the marker is unknown when the folder does not answer in time, and marked once it has`, `› answers already done to a call with a confirmation that another call spent while it waited`.
+
+## A confirmation of a removal or an adopt
+
+These statements hold for `marfa_remove_file_copy` and `marfa_adopt_backup_folder`.
+
+### `mcp/file-acts-destructive`
+
+When the server lists `marfa_remove_file_copy` or `marfa_adopt_backup_folder`, the server MUST annotate it with `destructiveHint` `true` and `readOnlyHint` `false`.
+
+**Reason:** neither change can be undone.
+
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+
+### `mcp/file-acts-other-credential`
+
+If a call carries a `confirm` token a preview gave another credential, then the server MUST refuse the call with the tool error code `confirmation_stale` and without a new preview.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation another credential got`.
+
+### `mcp/file-acts-expired`
+
+If a call carries a `confirm` token from a preview more than five minutes earlier, then the server MUST refuse the call with the tool error code `confirmation_stale` and without a new preview.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once five minutes have passed since the preview`.
+
+### `mcp/file-acts-other-target`
+
+If a call to `marfa_remove_file_copy` carries a `confirm` token that a preview of another file or another store gave, or a call carries a token that a preview of the other tool gave, then the server MUST refuse the call with the tool error code `confirmation_stale` and without a new preview.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation sent for another file, store or tool`.
+
+### `mcp/file-acts-atomic`
+
+If a call with a `confirm` token that holds fails after it has begun its change, then the server MUST leave the copy record, the stores, the backups it records and the folder's marker as they were.
+
+**Reason:** a person who agreed to a change must not find part of it done.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › leaves the copy, the folder and the confirmation as they were when the confirmed change fails, and changes them without the fault`.
+
+### `mcp/file-acts-spent-on-commit`
+
+If a call fails before its change commits, then the server MUST make the change on the same `confirm` token when it is sent again within five minutes.
+
+**Reason:** a token is recorded as used in the transaction of the change it allowed, so a change that never happened does not use it up.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › leaves the copy, the folder and the confirmation as they were when the confirmed change fails, and changes them without the fault`.
+
+### `mcp/file-acts-single-use`
+
+If a call carries a `confirm` token that an earlier call already used, then the server MUST NOT change anything on it.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › changes nothing more on a confirmation an earlier call used, and says what the copy is now`, `› changes nothing more on an adopt's confirmation an earlier call used, and reads the folder now`.
+
 ## Moving items to another type
 
 `marfa_move_items` moves every item of one type to another in two calls, as `marfa_delete` trashes: a preview that names the items the move would take, with a `confirm` token, and a call with that token, which starts the move as a job. A token is refused, as `marfa_delete`'s is, when another credential sends it or five minutes have passed.
@@ -822,7 +1070,7 @@ When the server lists `marfa_end_sign_in`, the server MUST annotate it with `des
 
 **Reason:** none of the three can be undone: a browser and an app must sign in again, and a passkey must be added again from a browser.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/end-sign-in-preview`
 

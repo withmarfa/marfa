@@ -3,6 +3,7 @@
 //! `backups/<instance id>/` naming its parts, in the object store under its prefix or in the
 //! backup folder. A part the last backup stored is not stored again.
 
+pub mod adopt;
 mod found;
 mod names;
 pub(crate) mod parts;
@@ -24,21 +25,17 @@ use super::App;
 use super::access::{Caller, Permission};
 use super::archive::tar::{BLOCK, END, header, padding};
 use super::archive::{self, MANIFEST, Out, Parted};
-use super::blobs::disk::PENDING;
-use super::blobs::folder::{self as backup_folder, Adoptable, Area, Folder};
+use super::blobs::folder::{self as backup_folder, Area, Folder};
 use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
 use super::blobs::upkeep::{Replicated, object_store_said, replicate_one, said_by_address};
 use super::blobs::{Attached, Blob, Hash, Kept, Retry, Wanted, folder_shortfall, unsettled};
 use super::clock::Stamp;
-use super::faults::{
-    FAIL_STORES_RECORD, FAIL_STORES_RECORD_LOST, HOLD_BACKUP_PUT, HOLD_BACKUP_READ,
-    HOLD_DISK_PROBE, HOLD_FOLDER_MARKER, HOLD_STORES_RECORD, HOLD_STORES_SWAP,
-};
+use super::faults::{HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE};
 use super::housekeeping::{self, Report, Run};
 use super::refusal::{Code, Refusal, Result};
-use crate::db::{Write, io_refusal};
+use crate::db::Write;
 use crate::settings::registry::BACKUP_INTERVAL_SECONDS;
 
 pub use found::survey_folder;
@@ -835,6 +832,20 @@ pub fn held(tx: &Transaction<'_>, store: &str, hashes: &[Hash]) -> Result<HashSe
     Ok(held)
 }
 
+/// Every file a backup of `store` that this instance keeps or found names.
+pub(super) fn named_in(tx: &Transaction<'_>, store: &str) -> Result<BTreeSet<String>> {
+    let mut named: BTreeSet<String> = tx
+        .prepare_cached(
+            "SELECT f.hash FROM backup_files f WHERE f.store_id = ?1 AND EXISTS \
+             (SELECT 1 FROM backups b WHERE b.store_id = f.store_id AND b.seq >= f.first_seq \
+             AND (f.last_seq IS NULL OR b.seq <= f.last_seq))",
+        )?
+        .query_map([store], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    named.extend(found::files_in(tx, store)?);
+    Ok(named)
+}
+
 fn no_backup_destination() -> Refusal {
     Refusal::new(
         Code::NoBackupDestination,
@@ -1316,275 +1327,6 @@ impl App {
             return Err(archive::restore::files_missing(lacking));
         }
         Ok(reading)
-    }
-
-    /// Takes an unmarked backup folder as a new store, forgetting the old one's copies and backups.
-    pub async fn adopt_backup_folder(self: &Arc<App>, caller: &Caller) -> Result<Value> {
-        caller.require(Permission::BackupsManage)?;
-        let (app, caller) = (self.clone(), caller.clone());
-        tokio::spawn(super::provenance::carried(async move {
-            app.adopting(&caller).await
-        }))
-        .await
-        .map_err(|_| Refusal::internal("an adopt of the backup folder did not finish"))?
-    }
-
-    /// The follow lock covers folder selection through its claim.
-    async fn adopting(self: &Arc<App>, caller: &Caller) -> Result<Value> {
-        let followed = match self.backup_stores().await {
-            Err(refused) if refused.code == Code::NoBackupDestination => return Err(refused),
-            followed => followed,
-        };
-        let _changing = self.blobs.changing().await;
-        let wanted = self.named_destination()?;
-        let attached = self
-            .blobs
-            .stores_in_use(&wanted)
-            .map_err(|unsettled| followed.as_ref().err().cloned().unwrap_or(unsettled))?;
-        let destination = Destination::required(&attached)?;
-        let Destination::Folder(folder) = &destination else {
-            return Err(Refusal::new(
-                Code::Conflict,
-                "This instance backs up to an object store, so it has no backup folder to adopt.",
-            ));
-        };
-        let Ok(_running) = self.backups.running.try_lock() else {
-            return Err(running(self.backups.restoring.load(Ordering::Acquire)));
-        };
-        let root = folder.root().display().to_string();
-        let unanswered = |what: &str| {
-            Refusal::new(
-                Code::BlobStoreUnavailable,
-                format!(
-                    "The backup folder {root} {what}. Check that its disk is mounted and \
-                     answering, then try again."
-                ),
-            )
-        };
-        if folder.claim_unended() {
-            return Err(unanswered(
-                "has not answered an earlier adopt, so nothing was adopted",
-            ));
-        }
-        if !self.blobs.settled() {
-            return Err(followed.err().unwrap_or_else(unsettled));
-        }
-        let looked = folder.clone();
-        let found = tokio::time::timeout(self.blobs.check(), blocking(move || looked.adoptable()))
-            .await
-            .map_err(|_| unanswered("did not answer in time, so nothing was adopted"))?
-            .map_err(|error| {
-                tracing::warn!(%error, "The backup folder could not be looked at to adopt it");
-                Refusal::new(
-                    Code::BlobStoreUnavailable,
-                    format!(
-                        "The backup folder {root} failed while it was looked at, so nothing was \
-                         adopted: {error}"
-                    ),
-                )
-            })?;
-        let old = folder.files();
-        match found {
-            Adoptable::Unmarked => {}
-            Adoptable::Held => {
-                return Err(Refusal::new(
-                    Code::Conflict,
-                    format!(
-                        "The backup folder {root} holds this instance's files, so there is \
-                         nothing to adopt."
-                    ),
-                ));
-            }
-            Adoptable::Missing => {
-                return Err(Refusal::new(
-                    Code::BlobStoreUnavailable,
-                    format!(
-                        "The backup folder {root} is not there, so nothing was adopted. Mount \
-                         the disk it is on, then try again."
-                    ),
-                ));
-            }
-            Adoptable::Foreign(id) => {
-                return Err(Refusal::new(
-                    Code::Conflict,
-                    format!(
-                        "The files folder {} holds the marker of another store, {id}, so it was \
-                         left as it is. Remove that marker to adopt the folder afresh.",
-                        old.root().display()
-                    ),
-                ));
-            }
-        }
-        let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
-        let deadline = self.blobs.check();
-        // The folder is claimed, under its lock, before any record is forgotten.
-        let (claiming, keeping) = (id.clone(), folder.clone());
-        let claimed = folder
-            .within(
-                deadline,
-                move |folder| folder.claim(&claiming),
-                move |claim| {
-                    if let Err(error) = keeping.give_up(&claim) {
-                        tracing::warn!(%error, "A claim on the backup folder that was given up on was not undone");
-                    }
-                },
-            )
-            .await;
-        let claim = match claimed {
-            Some(Ok(claim)) => claim,
-            Some(Err(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                return Err(Refusal::new(
-                    Code::Conflict,
-                    format!(
-                        "The backup folder {root} could not be claimed, so nothing was adopted: \
-                         {error}."
-                    ),
-                ));
-            }
-            Some(Err(error)) => {
-                return Err(Refusal::new(
-                    Code::BlobStoreUnavailable,
-                    format!(
-                        "The backup folder {root} could not be claimed, so nothing was adopted: \
-                         {error}. Check that the folder is writable and its disk has room, then \
-                         try again."
-                    ),
-                ));
-            }
-            None => return Err(unanswered("did not answer in time, so nothing was adopted")),
-        };
-        let (locator, at) = (old.root().display().to_string(), self.clock.stamp());
-        let (forgotten, new_id) = (old_id.clone(), id.clone());
-        let (standing, checking, named) =
-            (caller.clone(), self.clone(), folder.root().to_path_buf());
-        self.faults.hold(HOLD_STORES_RECORD, None).await;
-        let written = self
-            .db
-            .write(Write::own(), move |tx| {
-                standing
-                    .current(tx, &at)?
-                    .require(Permission::BackupsManage)?;
-                super::blobs::Blobs::check_adoptable(tx, &checking, &named, &forgotten)?;
-                let backups = forget_backups(tx, &forgotten)?;
-                let copies = super::blobs::Blobs::replace_folder_store(
-                    tx, &forgotten, &new_id, &locator, &at,
-                )?;
-                housekeeping::bring_forward(tx, REPLICATION, &at)?;
-                if checking.faults.fail(FAIL_STORES_RECORD, None) {
-                    return Err(io_refusal());
-                }
-                Ok((copies, backups))
-            })
-            .await;
-        let written = match written {
-            Ok(_) if self.faults.fail(FAIL_STORES_RECORD_LOST, None) => Err(Refusal {
-                commit_failed: true,
-                ..io_refusal()
-            }),
-            written => written,
-        };
-        let (copies, backups) = match written {
-            Ok(counted) => counted,
-            Err(refusal) if refusal.commit_failed => {
-                // The record may name the new store or the old: the claim is settled against it.
-                self.blobs.doubt_record();
-                if let Err(refused) = self.settle_claim(folder, claim).await {
-                    tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unsettled");
-                }
-                return Err(refusal);
-            }
-            Err(refusal) => {
-                let undone = folder
-                    .within(
-                        deadline,
-                        move |folder| {
-                            let given = folder.give_up(&claim);
-                            if given.is_err() {
-                                folder.hold_unsettled(claim);
-                            }
-                            given
-                        },
-                        |_| {},
-                    )
-                    .await;
-                let why = match undone {
-                    Some(Ok(false)) => return Err(refusal),
-                    Some(Ok(true)) => {
-                        return Err(Refusal {
-                            message: format!(
-                                "{} Nothing was adopted, but the backup folder {root} keeps this \
-                                 adopt's claim, which may be another server's, since its file \
-                                 system takes no locks. Stop any other Marfa server that uses the \
-                                 folder, then remove {}.",
-                                refusal.message,
-                                folder.files().root().join(PENDING).display()
-                            )
-                            .into(),
-                            ..refusal
-                        });
-                    }
-                    Some(Err(error)) => error.to_string(),
-                    None => "it did not answer in time".to_string(),
-                };
-                tracing::warn!(reason = %why, "The claim of an adopt that recorded nothing was not undone");
-                self.blobs.doubt_record();
-                return Err(Refusal {
-                    message: format!(
-                        "{} Nothing was adopted, but the backup folder {root} keeps this adopt's \
-                         claim, which was not undone: {why}. The server removes it once the \
-                         folder answers.",
-                        refusal.message
-                    )
-                    .into(),
-                    ..refusal
-                });
-            }
-        };
-        self.faults.hold(HOLD_STORES_SWAP, None).await;
-        let forgot = format!(
-            "The old store's {} and {} were forgotten.",
-            counted(backups, "backup", "backups"),
-            counted(copies, "file copy", "file copies"),
-        );
-        let faults = self.faults.clone();
-        let promoted = folder
-            .within(
-                deadline,
-                move |folder| {
-                    faults.hold_blocking(HOLD_FOLDER_MARKER);
-                    folder.promote(claim)
-                },
-                |()| {},
-            )
-            .await;
-        match promoted {
-            Some(Ok(())) => {}
-            Some(Err(error)) => {
-                self.blobs.doubt_record();
-                return Err(Refusal::new(
-                    Code::BlobStoreUnavailable,
-                    format!(
-                        "The backup folder {root} could not take the new store's marker: {error}. \
-                         {forgot} Make the folder writable: the server gives it the marker then, \
-                         and backups wait until it does."
-                    ),
-                ));
-            }
-            None => {
-                self.blobs.doubt_record();
-                return Err(unanswered(&format!(
-                    "did not answer in time when it was given the new store's marker. {forgot} \
-                     Backups wait until it answers"
-                )));
-            }
-        }
-        tracing::info!(store = %id, replaced = %old_id, backups, copies, "The backup folder was adopted");
-        Ok(json!({
-            "store_id": id,
-            "replaced_store_id": old_id,
-            "backups_forgotten": backups,
-            "copies_forgotten": copies,
-        }))
     }
 
     /// Whether the folder's disk is there, or `None` when a look at it has not answered.

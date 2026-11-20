@@ -388,7 +388,8 @@ pub async fn drop_copy(
 ) -> Answer {
     caller.require(Permission::BlobsManage)?;
     query::only(&uri, &[])?;
-    app.drop_copy(&caller, &Hash::parse(&hash)?, &store).await?;
+    app.drop_copy(&caller, &Hash::parse(&hash)?, &store, None)
+        .await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }
 
