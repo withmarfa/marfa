@@ -286,7 +286,7 @@ If the server refuses a confirmation, then the server MUST leave the session tha
 
 ### `authentication/confirm-names-no-account`
 
-If a request carrying a live owner browser session sends `POST /auth/confirm` with a body that names an email, holds both a password and a passkey assertion, or holds neither, then the server MUST answer `400 validation_error` without replacing that session.
+If a request carrying a live owner browser session sends `POST /auth/confirm` with a body that names a username, holds both a password and a passkey assertion, or holds neither, then the server MUST answer `400 validation_error` without replacing that session.
 
 **Reason:** The account is the signed-in session's owner. A body cannot name another.
 

@@ -12,7 +12,7 @@
 <div class="field">
 <label for="username">Username</label>
 <input id="username" type="text" name="username" value="{{ view.username }}" autocomplete="username" autocapitalize="none" spellcheck="false" required aria-describedby="username-hint{% if view.errors.username.is_some() %} username-error{% endif %}"{% if view.errors.username.is_some() %} aria-invalid="true"{% endif %}>
-<p class="hint" id="username-hint">Letters, numbers, dots, dashes and underscores. You sign in with it.</p>
+<p class="hint" id="username-hint">Letters a to z, numbers, dots, dashes and underscores. You sign in with it.</p>
 {% if let Some(message) = view.errors.username %}<p class="error" id="username-error">{{ message }}</p>{% endif %}
 </div>
 <div class="field">

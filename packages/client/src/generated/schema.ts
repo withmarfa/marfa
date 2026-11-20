@@ -32407,7 +32407,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The username the owner signs in with: 1 to 64 letters, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. */
+                    /** @description The username the owner signs in with: 1 to 64 letters a to z, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. */
                     username: string;
                     /** @description Password for the new owner. */
                     password: string;
@@ -32697,7 +32697,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The username the owner signs in with: 1 to 64 letters, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. Signing in with the old username stops at once. */
+                    /** @description The username the owner signs in with: 1 to 64 letters a to z, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. Signing in with the old username stops at once. */
                     username?: string;
                     /**
                      * Format: email

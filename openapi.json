@@ -55506,7 +55506,7 @@
                   "username": {
                     "type": "string",
                     "maxLength": 64,
-                    "description": "The username the owner signs in with: 1 to 64 letters, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed."
+                    "description": "The username the owner signs in with: 1 to 64 letters a to z, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed."
                   },
                   "password": {
                     "type": "string",
@@ -56016,7 +56016,7 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 64,
-                    "description": "The username the owner signs in with: 1 to 64 letters, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. Signing in with the old username stops at once."
+                    "description": "The username the owner signs in with: 1 to 64 letters a to z, numbers, dots, dashes and underscores. Marfa stores it in lowercase, with spaces at each end trimmed. Signing in with the old username stops at once."
                   },
                   "email": {
                     "type": [
