@@ -225,7 +225,7 @@ fn remounted_retained(
 impl Folder {
     /// Whether a file is kept because a program may still write to it.
     pub(super) fn retains(&self) -> Result<bool> {
-        Ok(state::any_retained(&*self.core.conn()?)?)
+        state::any_retained(&*self.core.conn()?)
     }
 
     /// The files the directory at `root` keeps because a program might
@@ -389,11 +389,14 @@ impl Folder {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(debug_assertions)]
     use std::io::Write;
     use std::path::Path;
 
+    #[cfg(debug_assertions)]
+    use super::super::state;
     use super::super::tests::{changed_elsewhere, landed, scanned_folder};
-    use super::super::{Folder, landing, state};
+    use super::super::{Folder, landing};
 
     fn reserved_in(dir: &Path) -> Vec<String> {
         std::fs::read_dir(dir)
