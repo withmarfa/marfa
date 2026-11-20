@@ -747,6 +747,85 @@
       },
       "name": "Long references",
       "preview": "😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀😀…"
+    },
+    {
+      "description": "reads the lines of a person's text between two thematic breaks, not as front matter",
+      "type": "core.note",
+      "properties": {
+        "body": "---\nMeeting notes\nA second paragraph.\n---\nFooter"
+      },
+      "name": "Meeting notes",
+      "preview": "A second paragraph. Footer"
+    },
+    {
+      "description": "keeps a block with one line that is not a key, a list item or a comment as text",
+      "type": "core.note",
+      "properties": {
+        "title": "Mixed block",
+        "body": "---\ntitle: x\nPlain words\n---\nAfter"
+      },
+      "name": "Mixed block",
+      "preview": "title: x Plain words After"
+    },
+    {
+      "description": "leaves out front matter with nested values, lists, comments and blank lines",
+      "type": "core.note",
+      "properties": {
+        "title": "Nested",
+        "body": "---\ntitle: Plan\ntags:\n  - a\n  - b\nmeta:\n  owner: someone\n  note: \"a: b\"\n# a comment\n\nlist:\n- one\n- two\nempty:\n---\nThe text."
+      },
+      "name": "Nested",
+      "preview": "The text."
+    },
+    {
+      "description": "keeps double equals signs between words as written",
+      "type": "core.note",
+      "properties": {
+        "title": "Equals",
+        "body": "if x==1 and y==2 then\na==b, c==d"
+      },
+      "name": "Equals",
+      "preview": "if x==1 and y==2 then a==b, c==d"
+    },
+    {
+      "description": "opens a highlight only after a non-word character and closes it only before one",
+      "type": "core.note",
+      "properties": {
+        "title": "Highlight edges",
+        "body": "(==kept==), ==a==. a _==b== and ab==c== and ==d==e f"
+      },
+      "name": "Highlight edges",
+      "preview": "(kept), a. a _==b== and ab==c== and ==d==e f"
+    },
+    {
+      "description": "keeps a footnote reference whose only definition is inside a fence",
+      "type": "core.note",
+      "properties": {
+        "title": "Fenced definition",
+        "body": "x [^1] y\n\n```\n[^1]: in fence\n```"
+      },
+      "name": "Fenced definition",
+      "preview": "x [^1] y [^1]: in fence"
+    },
+    {
+      "description": "keeps a footnote reference whose only definition is inside front matter",
+      "type": "core.note",
+      "properties": {
+        "title": "Front matter definition",
+        "body": "---\n[^1]: a key\n---\nText [^1]"
+      },
+      "name": "Front matter definition",
+      "preview": "Text [^1]"
+    },
+    {
+      "description": "keeps a footnote reference whose only definition is in another definition's continuation",
+      "type": "core.note",
+      "properties": {
+        "title": "Continued definition",
+        "body": "[^1]: first\n    [^2]: inside it\nText [^2] and [^1]"
+      },
+      "name": "Continued definition",
+      "preview": "Text [^2] and"
     }
   ],
   "parts": [

@@ -4908,9 +4908,9 @@ If an item's name is taken from the property its preview is computed from, then 
 
 ### `device/item-preview-frontmatter`
 
-When computing a preview of a text whose first line holds only `---`, whose second line is not empty and of which a later line holds only `---`, a device MUST leave out every line up to and including the first such later line, a leading U+FEFF not counting as part of the first line.
+When computing a preview of a text whose first line holds only `---`, whose second line is not empty and of which a later line holds only `---`, a device MUST leave out every line up to and including the first such later line, a leading U+FEFF not counting as part of the first line, where each line between them that is not blank and does not begin with a space or a tab is a comment (it begins with `#`), a list item (`-` then a space or the line's end) or a key line (a key that is not empty, then a colon, then a space or the line's end).
 
-**Reason:** Front matter holds a note's properties, which a reader does not read as text. An opening `---` followed by an empty line, or one that no later `---` closes, is not front matter, so its lines are read by the rules below.
+**Reason:** Front matter holds a note's properties, which a reader does not read as text. An opening `---` followed by an empty line, one that no later `---` closes, or one whose lines up to the next `---` include a line that reads as no property, as `Meeting notes` between two `---` lines, is a thematic break, so its lines are read by the rules below and a person's text is shown.
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
@@ -4932,7 +4932,7 @@ When computing a preview, a device MUST remove each line outside a fence that is
 
 ### `device/item-preview-footnotes`
 
-When computing a preview, a device MUST remove each footnote definition outside a fence, a line that opens with `[^label]:` and the lines after it that are empty or begin with four spaces or a tab.
+When computing a preview, a device MUST remove each footnote definition outside a fence, a line that opens, after any leading whitespace, with `[^label]:` and the lines after it that are empty or begin with four spaces or a tab, where `label` is the text between `[^` and the next `]` and is not empty and holds no whitespace and no `[`.
 
 **Reason:** A footnote's text is read at the foot of a page, not in the line it is cited from.
 
@@ -4940,7 +4940,7 @@ When computing a preview, a device MUST remove each footnote definition outside 
 
 ### `device/item-preview-tables`
 
-When computing a preview, a device MUST replace a table outside a fence with the text of its cells in reading order, read by these rules again and separated by spaces, where a table is a header row that holds a pipe, a delimiter row of as many cells as the header row, each of dashes with an optional colon at either end, and the rows after it that hold a pipe.
+When computing a preview, a device MUST replace a table outside a fence with the text of its cells in reading order, each cell read by the rules for text within a line, `device/item-preview-escape` through `device/item-preview-unclosed`, and by none of the rules for whole lines, and separated by spaces, where a table is a header row that holds a pipe, a delimiter row of as many cells as the header row, each of dashes with an optional colon at either end, and the rows after it that hold a pipe.
 
 **Reason:** A reader reads a table's cells, not its pipes or its delimiter row. A row's cells are the text between its pipes, with a pipe at either end left out, and a table may omit the pipes at both ends of every row.
 
@@ -5024,9 +5024,9 @@ When computing a preview, a device MUST replace a wiki link with its label (`[[t
 
 ### `device/item-preview-footnote-refs`
 
-When computing a preview, a device MUST remove each footnote reference `[^label]` outside a code span whose label a footnote definition of the same text gives, comparing labels without regard to case.
+When computing a preview, a device MUST remove each footnote reference `[^label]` outside a code span whose label a footnote definition of the same text gives, comparing labels without regard to case, where a line inside a fence or front matter, or one that is part of another footnote definition, is no definition.
 
-**Reason:** A reference no definition gives is text the person wrote, so `[^0-9]` in a pattern stays.
+**Reason:** A reference no definition gives is text the person wrote, so `[^0-9]` in a pattern stays, and so does a reference whose only definition is code in a fence.
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
@@ -5040,9 +5040,9 @@ When computing a preview, a device MUST remove each run of two or more `*`, `_` 
 
 ### `device/item-preview-highlights`
 
-When computing a preview, a device MUST remove the `==` on either side of a highlight and keep its text, read by these rules again, where a highlight opens at a run of exactly two `=` that text not beginning with whitespace follows and closes at the next run of exactly two `=` on the line that whitespace does not precede, a code span between them not closing it.
+When computing a preview, a device MUST remove the `==` on either side of a highlight and keep its text, read by these rules again, where a highlight opens at a run of exactly two `=` that text not beginning with whitespace follows, at the start of the line or after a character that is not a letter, digit or underscore, and closes at the next run of exactly two `=` on the line that whitespace does not precede and that the end of the text or a character that is not a letter, digit or underscore follows, a code span between them not closing it.
 
-**Reason:** A reader sees a highlighted passage as text. A spaced `==`, as in `x == y`, is no highlight.
+**Reason:** A reader sees a highlighted passage as text. An `==` between words, as in `x==1 and y==2`, or spaced, as in `x == y`, is a comparison the person wrote, not a highlight.
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
@@ -5058,7 +5058,7 @@ If inline markup is not closed on its line, then a device MUST keep it in the pr
 
 When computing a preview, a device MUST join the lines with spaces, replace each control character with a space, collapse each run of whitespace to one space and trim the result, limited to 240 Unicode code points with the last point replaced by `…` when shortened.
 
-**Reason:** 240 code points, twice the name's bound, is more than a list row shows, so an app shortens the preview to its own width and never runs short of text, while a device stops reading a long body once the preview is full. The bound and its ellipsis follow `types/item-name-text`.
+**Reason:** 240 code points, twice the name's bound, is more than a list row shows, so an app shortens the preview to its own width and never runs short of text. A device stops reading a long body once the preview is full, except that it reads on to the `---` that closes front matter, and to the end of the text to find the footnote definitions once it meets a footnote reference. The bound and its ellipsis follow `types/item-name-text`.
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 

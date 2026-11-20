@@ -278,7 +278,7 @@ impl Line<'_> {
     }
 }
 
-/// The footnote labels a text defines, case folded, read on the first reference that asks.
+/// The footnote labels a text defines on the lines `Markdown` reads as text, case folded, read on the first reference that asks.
 struct Notes<'a> {
     text: &'a str,
     defined: OnceCell<HashSet<String>>,
@@ -294,14 +294,7 @@ impl<'a> Notes<'a> {
 
     fn defines(&self, label: &str) -> bool {
         self.defined
-            .get_or_init(|| {
-                lines(self.text)
-                    .filter_map(|line| {
-                        footnote_definition(line.trim_start_matches(char::is_whitespace))
-                    })
-                    .map(fold)
-                    .collect()
-            })
+            .get_or_init(|| Markdown::definitions(self.text))
             .contains(&fold(label))
     }
 }
@@ -322,13 +315,40 @@ fn footnote_label(label: &str) -> bool {
     !label.is_empty() && !label.contains(|c: char| c.is_whitespace() || c == '[')
 }
 
-/// The index of the line that closes the front matter `text` opens with.
+/// The index of the line that closes the front matter `text` opens with, where every line between reads as YAML.
 fn front_matter_end(text: &str) -> Option<usize> {
     let mut rest = lines(text.strip_prefix('\u{feff}').unwrap_or(text));
     if rest.next()? != "---" || rest.clone().next()?.is_empty() {
         return None;
     }
-    rest.position(|line| line == "---").map(|at| at + 1)
+    for (at, line) in rest.enumerate() {
+        if line == "---" {
+            return Some(at + 1);
+        }
+        if !yaml_line(line) {
+            return None;
+        }
+    }
+    None
+}
+
+/// A blank or indented line, a comment, a list item or a `key:` line.
+fn yaml_line(line: &str) -> bool {
+    if line.starts_with([' ', '\t', '#']) || line.chars().all(char::is_whitespace) {
+        return true;
+    }
+    if line
+        .strip_prefix('-')
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+    {
+        return true;
+    }
+    line.match_indices(':')
+        .find(|&(at, _)| {
+            let rest = &line[at + 1..];
+            rest.is_empty() || rest.starts_with(' ')
+        })
+        .is_some_and(|(at, _)| at > 0)
 }
 
 struct Markdown<'a> {
@@ -338,6 +358,8 @@ struct Markdown<'a> {
     footnote: bool,
     /// Inside a table, whose rows follow its delimiter row.
     table: bool,
+    /// Where set, the labels of the footnote definitions read.
+    labels: Option<HashSet<String>>,
 }
 
 impl<'a> Markdown<'a> {
@@ -351,7 +373,16 @@ impl<'a> Markdown<'a> {
             fence: None,
             footnote: false,
             table: false,
+            labels: None,
         }
+    }
+
+    /// The case folded labels of the footnote definitions on the lines that are not in a fence, front matter or another definition.
+    fn definitions(text: &'a str) -> HashSet<String> {
+        let mut markdown = Markdown::new(text);
+        markdown.labels = Some(HashSet::new());
+        while markdown.next().is_some() {}
+        markdown.labels.unwrap_or_default()
     }
 }
 
@@ -380,7 +411,10 @@ impl<'a> Iterator for Markdown<'a> {
                 self.fence = Some(opened);
                 continue;
             }
-            if footnote_definition(content).is_some() {
+            if let Some(label) = footnote_definition(content) {
+                if let Some(labels) = &mut self.labels {
+                    labels.insert(fold(label));
+                }
                 self.footnote = true;
                 continue;
             }
@@ -647,6 +681,11 @@ fn word(c: Option<&char>) -> bool {
     c.is_some_and(|c| c.is_alphanumeric())
 }
 
+/// Whether `c` is a letter, digit or underscore, which `==` between does not open or close a highlight.
+fn in_word(c: Option<&char>) -> bool {
+    c.is_some_and(|c| c.is_alphanumeric() || *c == '_')
+}
+
 fn inline(text: &str, out: &mut Plain, notes: &Notes) {
     let chars: Vec<char> = text.chars().collect();
     inline_chars(&chars, out, notes);
@@ -685,7 +724,7 @@ fn highlight_close(chars: &[char], from: usize) -> Option<usize> {
             }
             '=' => {
                 let length = run_at(chars, at, '=');
-                if length == 2 && !chars[at - 1].is_whitespace() {
+                if length == 2 && !chars[at - 1].is_whitespace() && !in_word(chars.get(at + 2)) {
                     return Some(at);
                 }
                 at += length;
@@ -796,7 +835,9 @@ fn inline_chars(chars: &[char], out: &mut Plain, notes: &Notes) {
             },
             '=' => {
                 let length = run_at(chars, at, '=');
-                let opens = length == 2 && chars.get(at + 2).is_some_and(|c| !c.is_whitespace());
+                let opens = length == 2
+                    && chars.get(at + 2).is_some_and(|c| !c.is_whitespace())
+                    && !in_word(at.checked_sub(1).and_then(|before| chars.get(before)));
                 match opens.then(|| highlight_close(chars, at + 2)).flatten() {
                     Some(close) => {
                         inline_chars(&chars[at + 2..close], out, notes);
@@ -936,7 +977,7 @@ mod tests {
         #[rustfmt::skip]
         let pieces = [
             "|", "\\", "`", "=", "==", "&", "#", ";", "[", "]", "^", ">", "-", "---", ":", "\n", "\r\n",
-            "!", "*", "_", "~", "x", "1", " ", "    ", "\t", "[^1]", "[^1]:", "[!n]", "| a |", "|-|",
+            "!", "*", "_", "~", "x", "1", " ", "    ", "\t", "[^1]", "[^1]:", "[!n]", "k: ", "| a |", "|-|",
             "&#x20;", "&amp;", "\u{2028}", "é", "\u{1F600}", "\u{feff}",
         ];
         let mut state = 0x9E37_79B9_7F4A_7C15_u64;
