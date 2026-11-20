@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import { v7 as uuidv7 } from "uuid";
 import { afterAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
@@ -75,7 +76,18 @@ interface World {
   sent: string[];
   /** Stops the original and puts the server booted from `image` in its place. */
   restore(image: string): Promise<void>;
+  /** From now on, answers in the server's place each request `answer` returns an answer for. */
+  answerInstead(answer: Instead): void;
 }
+
+/**
+ * An answer the proxy gives in the server's place, by method and path, naming
+ * the contract the server's own answers name.
+ */
+type Instead = (
+  method: string,
+  path: string,
+) => { status: number; body: unknown } | undefined;
 
 async function world(
   label: string,
@@ -85,13 +97,26 @@ async function world(
   const original = await bootFreshServer(label, env);
   servers.push(original);
   let upstream = original.apiUrl;
+  let instead: Instead = () => undefined;
+  let contract: string | null = null;
   const sent: string[] = [];
   const listener = createServer((request, response) => {
     void (async () => {
-      sent.push(`${request.method ?? ""} ${(request.url ?? "").split("?")[0]}`);
+      const method = request.method ?? "";
+      const path = (request.url ?? "").split("?")[0] ?? "";
+      sent.push(`${method} ${path}`);
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = Buffer.concat(chunks);
+      const given = instead(method, path);
+      if (given !== undefined) {
+        response.writeHead(given.status, {
+          "content-type": "application/json",
+          ...(contract === null ? {} : { "x-marfa-contract": contract }),
+        });
+        response.end(JSON.stringify(given.body));
+        return;
+      }
       const headers = new Headers();
       for (const [name, held] of Object.entries(request.headers)) {
         if (
@@ -115,6 +140,7 @@ async function world(
           redirect: "manual",
         },
       );
+      contract = answer.headers.get("x-marfa-contract") ?? contract;
       const returned: Record<string, string> = {};
       answer.headers.forEach((kept, name) => {
         if (
@@ -165,6 +191,9 @@ async function world(
       ).MARFA_API_URL;
       if (!restored) throw new Error("the restored boot wrote no address");
       upstream = restored;
+    },
+    answerInstead(answer) {
+      instead = answer;
     },
   };
 }
@@ -708,6 +737,353 @@ describe("a server restored behind work this device sent it", () => {
         "a change the restored server made after the copy held the item was put back over",
       ).toEqual([["create_item", id]]);
       expect(value(await w.device.get(held.id)).tags).toEqual(["elsewhere"]);
+    },
+    TIMEOUT,
+  );
+});
+
+type Operation = Record<string, unknown>;
+
+/** A type with a `steps` table, and an item of it with the rows `operations` write. */
+async function steps(
+  client: MarfaClient,
+  label: string,
+  items: Operation[][],
+): Promise<{ type: string; items: string[] }> {
+  const type = `user.${label}`;
+  const registered = await client.registerType({
+    id: type,
+    fields: { title: { type: "string" } },
+    tables: {
+      steps: {
+        columns: { count: { type: "integer" }, note: { type: "string" } },
+      },
+    },
+  } as never);
+  expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+  const made: string[] = [];
+  for (const operations of items) {
+    const item = await client.createItem({
+      type,
+      tier: "library",
+      properties: { title: "Steps" },
+    } as never);
+    expect(item.ok, JSON.stringify(item.error)).toBe(true);
+    const written = await client.writeRows(item.data.item.id, "steps", {
+      operations,
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    made.push(item.data.item.id);
+  }
+  return { type, items: made };
+}
+
+/** The rows of an item's `steps` table the server holds now, as `id: count`. */
+async function serverSteps(
+  client: MarfaClient,
+  item: string,
+): Promise<Record<string, unknown>> {
+  const read = await client.rawRequest<{
+    data: { id: string; values: Record<string, unknown> }[];
+  }>(`/items/${item}/tables/steps/rows?limit=1000`);
+  expect(read.status, JSON.stringify(read.error)).toBe(200);
+  return Object.fromEntries(
+    read.data.data.map((row) => [row.id, row.values.count]),
+  );
+}
+
+/** The rows of an item's `steps` table the copy shows, as `id: count`. */
+async function copySteps(
+  device: CliDevice,
+  item: string,
+): Promise<Record<string, unknown>> {
+  const page = value(
+    await device.tableRead<{
+      data: { id: string; values: Record<string, unknown> }[];
+    }>(["list", item, "steps", "--limit", "1000"]),
+  );
+  expect(page.held, "the copy does not hold the table whole").toBe(true);
+  return Object.fromEntries(page.data.map((row) => [row.id, row.values.count]));
+}
+
+function put(id: string, count: number): Operation {
+  return { op: "put", id, values: { count } };
+}
+
+describe("table rows a server restored behind lost", () => {
+  it(
+    "keeps the rows this device wrote and removed since the backup, blocked until released, where the copy had not caught up past them",
+    async () => {
+      const w = await world("restored-rows-level");
+      const [kept, changed, removed] = [uuidv7(), uuidv7(), uuidv7()];
+      const { type, items } = await steps(w.client(), "restored-rows-level", [
+        [put(kept, 1), put(changed, 2), put(removed, 3)],
+      ]);
+      const item = items[0] ?? "";
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.holdTable(type, "steps"));
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const added = uuidv7();
+      value(
+        await w.device.writeRows(item, "steps", [
+          put(changed, 20),
+          put(added, 4),
+          { op: "delete", id: removed },
+        ]),
+      );
+      expect((await sent(w.device)).answered).toBe(1);
+
+      await w.restore(image);
+      expect(await serverSteps(w.client(), item)).toEqual({
+        [kept]: 1,
+        [changed]: 2,
+        [removed]: 3,
+      });
+      expect(
+        expired(await w.device.catchUp()),
+        "a copy level with the restored server's log took it as holding the rows",
+      ).toBe("copy_expired");
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.fillTables());
+
+      expect(await keptBlocked(w.device)).toEqual([["write_rows", item]]);
+      const written = { [kept]: 1, [changed]: 20, [added]: 4 };
+      expect(await copySteps(w.device, item)).toEqual(written);
+      const before = w.sent.length;
+      value(await w.device.drain());
+      expect(
+        w.sent.slice(before).filter((line) => line.startsWith("POST /items")),
+        "a blocked row write was sent",
+      ).toEqual([]);
+
+      expect(value(await w.device.release({ reason: "server_restored" }))).toBe(
+        1,
+      );
+      value(await w.device.drain());
+      expect(await serverSteps(w.client(), item)).toEqual(written);
+      expect(
+        (await queue(w.device)).filter((write) => write.verdict === "blocked"),
+      ).toEqual([]);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "keeps the rows this device wrote since the backup where the restored server has written past the copy's cursor, and nothing of a table it holds as the copy did",
+    async () => {
+      const w = await world("restored-rows-anchor");
+      const [lost, untouched] = [uuidv7(), uuidv7()];
+      const { type, items } = await steps(w.client(), "restored-rows-anchor", [
+        [put(lost, 1)],
+        [put(untouched, 1)],
+      ]);
+      const [written, whole] = [items[0] ?? "", items[1] ?? ""];
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.holdTable(type, "steps"));
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      value(await w.device.writeRows(written, "steps", [put(lost, 10)]));
+      await sent(w.device);
+      // The stream shows the batch, so no receipt of it is left unseen.
+      value(await w.device.catchUp());
+
+      await w.restore(image);
+      await note(w.client(), "written after the restore");
+      await note(w.client(), "and again");
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.fillTables());
+
+      expect(
+        await keptBlocked(w.device),
+        "the rows the restored server lost were not kept, or a table it holds as the copy did kept a write",
+      ).toEqual([["write_rows", written]]);
+      expect(await copySteps(w.device, written)).toEqual({ [lost]: 10 });
+      expect(await copySteps(w.device, whole)).toEqual({ [untouched]: 1 });
+
+      value(await w.device.release({ reason: "server_restored" }));
+      value(await w.device.drain());
+      expect(await serverSteps(w.client(), written)).toEqual({ [lost]: 10 });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "sends a row write queued before the restore once the kept rows are withdrawn, refusing none of it",
+    async () => {
+      const w = await world("restored-rows-withdrawn");
+      const row = uuidv7();
+      const { type, items } = await steps(
+        w.client(),
+        "restored-rows-withdrawn",
+        [[put(row, 1)]],
+      );
+      const item = items[0] ?? "";
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.holdTable(type, "steps"));
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      value(await w.device.writeRows(item, "steps", [put(row, 2)]));
+      await sent(w.device);
+      const later = value(
+        await w.device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { note: "later" } },
+        ]),
+      );
+
+      await w.restore(image);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.fillTables());
+      const [kept] = (await queue(w.device)).filter(
+        (write) => write.reason === "server_restored",
+      );
+      expect(kept, "no row write was kept").toBeDefined();
+      expect(
+        (await queue(w.device)).find((write) => write.id === later.id),
+      ).toMatchObject({ follows: kept?.id, verdict: null });
+      const held = w.sent.length;
+      value(await w.device.drain());
+      expect(
+        w.sent
+          .slice(held)
+          .filter((line) => line === `POST /items/${item}/tables/steps/rows`),
+        "the later write went ahead of the kept one",
+      ).toEqual([]);
+
+      value(await w.device.withdraw(kept?.id ?? ""));
+      value(await w.device.drain());
+      expect(
+        (await queue(w.device)).find((write) => write.id === later.id),
+      ).toMatchObject({ verdict: "accepted" });
+      const read = await w.client().rawRequest<{
+        data: { id: string; values: Record<string, unknown> }[];
+      }>(`/items/${item}/tables/steps/rows?limit=1000`);
+      expect(read.data.data.find((one) => one.id === row)?.values).toEqual({
+        count: 1,
+        note: "later",
+      });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "holds a row write queued before the restore until the rows set aside are compared, so the values the restored server lost in the row's other columns are kept",
+    async () => {
+      const w = await world("restored-rows-held-back");
+      const row = uuidv7();
+      const { type, items } = await steps(
+        w.client(),
+        "restored-rows-held-back",
+        [[put(row, 1)]],
+      );
+      const item = items[0] ?? "";
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.holdTable(type, "steps"));
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      value(await w.device.writeRows(item, "steps", [put(row, 2)]));
+      await sent(w.device);
+      const later = value(
+        await w.device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { note: "later" } },
+        ]),
+      );
+
+      await w.restore(image);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate([type], "library"));
+      const before = w.sent.length;
+      value(await w.device.drain());
+      expect(
+        w.sent
+          .slice(before)
+          .filter((line) => line === `POST /items/${item}/tables/steps/rows`),
+        "a row write was sent before the rows set aside were compared",
+      ).toEqual([]);
+      value(await w.device.fillTables());
+
+      const [kept] = (await queue(w.device)).filter(
+        (write) => write.reason === "server_restored",
+      );
+      expect(kept, "no row write was kept").toBeDefined();
+      expect(
+        (await queue(w.device)).find((write) => write.id === later.id)?.follows,
+      ).toBe(kept?.id);
+      const held = w.sent.length;
+      value(await w.device.drain());
+      expect(
+        w.sent
+          .slice(held)
+          .filter((line) => line === `POST /items/${item}/tables/steps/rows`),
+        "the later write went ahead of the kept one",
+      ).toEqual([]);
+
+      expect(value(await w.device.release({ reason: "server_restored" }))).toBe(
+        1,
+      );
+      value(await w.device.drain());
+      const read = await w.client().rawRequest<{
+        data: { id: string; values: Record<string, unknown> }[];
+      }>(`/items/${item}/tables/steps/rows?limit=1000`);
+      expect(read.data.data.find((one) => one.id === row)?.values).toEqual({
+        count: 2,
+        note: "later",
+      });
+      expect(
+        (await queue(w.device)).find((write) => write.id === later.id),
+      ).toMatchObject({ verdict: "accepted" });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "sets aside a row write whose rows the restored server answers 400 validation_failed, and reads them no more",
+    async () => {
+      const w = await world("restored-rows-unreadable");
+      const row = uuidv7();
+      const { type, items } = await steps(
+        w.client(),
+        "restored-rows-unreadable",
+        [[put(row, 1)]],
+      );
+      const item = items[0] ?? "";
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.holdTable(type, "steps"));
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      value(await w.device.writeRows(item, "steps", [put(row, 2)]));
+      await sent(w.device);
+
+      await w.restore(image);
+      const read = `GET /items/${item}/tables/steps/rows`;
+      const reads = (): number => w.sent.filter((line) => line === read).length;
+      w.answerInstead((method, path) =>
+        `${method} ${path}` === read
+          ? {
+              status: 400,
+              body: {
+                error: {
+                  code: "validation_failed",
+                  message: "the request does not read",
+                },
+              },
+            }
+          : undefined,
+      );
+      const before = reads();
+      expect(
+        expired(await w.device.catchUp()),
+        "an answer about one table's rows ended the catch-up",
+      ).toBe("caught up");
+      // The witness: the check read the rows the write changed.
+      expect(reads()).toBeGreaterThan(before);
+      const checked = reads();
+      expect(expired(await w.device.catchUp())).toBe("caught up");
+      expect(reads(), "the device read again rows it had set aside").toBe(
+        checked,
+      );
     },
     TIMEOUT,
   );

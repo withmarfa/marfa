@@ -156,6 +156,50 @@ CREATE TABLE IF NOT EXISTS held_back (
   PRIMARY KEY (subject, id)
 ) WITHOUT ROWID;
 
+-- `answer_receipts` for each row a row write changed or removed, at the
+-- server's time on its batch. A change is kept until the batch's event shows
+-- it, and a removal is kept whatever the stream carries, until a later change
+-- to the row from this device lets it go.
+CREATE TABLE IF NOT EXISTS row_receipts (
+  write_id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  id TEXT NOT NULL,
+  batch TEXT NOT NULL,
+  at TEXT NOT NULL,
+  removal INTEGER NOT NULL CHECK (removal IN (0, 1)),
+  -- Milliseconds on the store's clock.
+  answered_at INTEGER NOT NULL,
+  seen INTEGER NOT NULL DEFAULT 0 CHECK (seen IN (0, 1)),
+  PRIMARY KEY (write_id, id)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS row_receipts_batch ON row_receipts (batch);
+CREATE INDEX IF NOT EXISTS row_receipts_row ON row_receipts (item_id, name, id);
+CREATE INDEX IF NOT EXISTS row_receipts_unseen ON row_receipts (seen, answered_at);
+CREATE INDEX IF NOT EXISTS row_receipts_answered ON row_receipts (answered_at);
+
+-- `held_back` for table rows: each row as the server last answered it, kept
+-- until its table is filled whole again and compared with what the server
+-- holds.
+CREATE TABLE IF NOT EXISTS held_rows (
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  withheld TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (item_id, name, id)
+) WITHOUT ROWID;
+
+-- The tables to compare once filled whole. `restored` where a restore was
+-- found, rather than only receipts checked.
+CREATE TABLE IF NOT EXISTS held_tables (
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  restored INTEGER NOT NULL CHECK (restored IN (0, 1)),
+  PRIMARY KEY (item_id, name)
+) WITHOUT ROWID;
+
 -- Not a child of `items`: a hydration clears the copy and keeps the pins.
 CREATE TABLE IF NOT EXISTS pins (
   item_id TEXT PRIMARY KEY

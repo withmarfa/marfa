@@ -445,6 +445,7 @@ fn attempt(
                 store::restored::hold_unseen(&tx)?;
             } else if !store::restored::restore_held(&tx)? {
                 store::restored::release_held_back(&tx)?;
+                crate::restored_rows::release(&tx)?;
             }
             store::restored::forget_anchor(&tx)?;
             crate::reach::advance_generation(&tx)?;

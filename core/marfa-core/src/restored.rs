@@ -159,6 +159,9 @@ pub(crate) fn went_back(
             }
         }
     }
+    if crate::restored_rows::lost(core, http, stop, opening.opened)? {
+        return Err(CoreError::expired(format!("{LOST_WRITE}, {RESTORED}")));
+    }
     Ok(())
 }
 
@@ -196,7 +199,7 @@ fn judged(http: &Http, stop: &AtomicBool, receipt: &Receipt) -> Result<Option<bo
 /// What a read of one row answered, or `None` where the answer was about
 /// that row alone and said nothing of it: a body that does not read, or a
 /// refusal of the read itself (`device/expire-write-unreadable`).
-fn heard<T>(read: Result<T>) -> Result<Option<T>> {
+pub(crate) fn heard<T>(read: Result<T>) -> Result<Option<T>> {
     match read {
         Ok(read) => Ok(Some(read)),
         Err(error) if says_nothing(&error) => {
