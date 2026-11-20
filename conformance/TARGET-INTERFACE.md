@@ -224,6 +224,10 @@ stays because that thing is what it checks.
   fault `volume-full`, which stands for the volume a device finds full when
   it tries to make a file there. No door or fault makes a store of another
   build's version, and a fixture cannot fill the volume its runner writes to.
+- `device/folders-open-writer.test.ts`, "deletes a file it set aside unchanged
+  a week after it could not tell whether a program writes to it", moves back
+  the time a folder's store records for a file it keeps. The command line has
+  no clock a fixture can move, and the bound is a week.
 - `inbound-faults`, `inbound-logs` and the other fixtures that read the log
   through `serverOutput` check what the server logged. The log is the subject.
 
