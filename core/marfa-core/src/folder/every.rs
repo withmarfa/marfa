@@ -55,7 +55,8 @@ pub const MISSING: &str = "missing";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unwatched {
     /// The error code, such as `first_sync_waiting`, `reading_handle`,
-    /// `unauthorized` or `signed_out`, `watch` where the watch itself failed,
+    /// `unauthorized`, `signed_out` or `instance_changed`, `watch` where the
+    /// watch itself failed,
     /// or [`MISSING`] where its directory cannot be found.
     pub code: String,
     pub message: String,
@@ -86,6 +87,10 @@ impl Unwatched {
                 message: format!(
                     "the server refused this folder's credential ({error}), so its watch stopped; its changes not yet sent wait until a working credential is kept"
                 ),
+            },
+            WatchError::InstanceChanged { server, .. } => Unwatched {
+                code: crate::http::INSTANCE_CHANGED.into(),
+                message: super::watch::instance_changed_said(&server),
             },
             WatchError::FollowEnded(error) => Unwatched {
                 code: error.code().to_string(),
@@ -231,6 +236,29 @@ pub fn follows(registry: &Registry, origin: &str) -> bool {
     };
     listed.iter().any(|entry| {
         stored_origin(&entry.dir).is_ok_and(|stored| stored.is_none_or(|stored| stored == origin))
+    })
+}
+
+/// What the store of the folder at `dir` says it follows, read without
+/// claiming the folder.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Followed {
+    /// The server the copy was hydrated from.
+    pub origin: Option<String>,
+    /// The folder's `system.folder` ID.
+    pub folder: Option<String>,
+    /// When a watch's pass last left the folder in step.
+    pub last_success_at: Option<String>,
+}
+
+pub fn followed(dir: &Path) -> Option<Followed> {
+    let (root, state_dir) = state_of(dir).ok()?;
+    let core = Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite")).ok()?;
+    let conn = core.conn().ok()?;
+    Some(Followed {
+        origin: store::meta_get(&conn, store::META_SERVER_ORIGIN).ok()?,
+        folder: store::meta_get(&conn, super::settings_file::META_FOLDER).ok()?,
+        last_success_at: super::health::last_success_at(&conn),
     })
 }
 

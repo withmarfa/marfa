@@ -1234,6 +1234,14 @@ While the directory of a folder that a watch of every folder lists cannot be fou
 
 **Tests:** `device/folders-watch-every.test.ts › says in one line which listed folders cannot be found, keeps them listed, and keeps the others in step`, `device/folders-autostart.test.ts › says whether the watch runs, where it logs, and from the record which folders it has no credential for, with no server or credential of its own`.
 
+### `folder-setup/watch-record-instance-changed`
+
+When a folder's watch ends because its server answers as another Marfa instance, a device MUST list the folder in the record with `watching` set to `false` and `reason` set to `instance_changed`.
+
+**Reason:** A program showing folder syncing tells a folder that no retry can reach from one that is failing for now.
+
+**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
+
 ### `folder-setup/watch-record-health`
 
 While a device has read a folder’s latest report to the server, a device MUST set `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals` for that folder in the record to the values of the folder’s latest report.

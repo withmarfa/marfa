@@ -1285,6 +1285,8 @@ struct RecordView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Watched {
     pub(crate) dir: String,
+    #[serde(default, skip_serializing)]
+    pub(crate) folder: Option<String>,
     pub(crate) watching: bool,
     pub(crate) reason: Option<String>,
 }
@@ -1328,6 +1330,16 @@ impl RecordProcess {
             && now.duration_since(beat).is_ok_and(|age| {
                 age < Duration::from_secs(self.heartbeat_interval_seconds.saturating_mul(3))
             })
+    }
+
+    /// When the process last wrote its entry, in Unix milliseconds.
+    pub(crate) fn written_at(&self) -> Option<i64> {
+        let beat = marfa_rules::time::read(&self.heartbeat_at).ok()?;
+        let ended = self
+            .ended_at
+            .as_deref()
+            .and_then(|ended| marfa_rules::time::read(ended).ok());
+        Some(ended.map_or(beat, |ended| ended.max(beat)))
     }
 }
 

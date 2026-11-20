@@ -126,6 +126,42 @@ When a folder watch hydration receives an answer no retry can change, the CLI MU
 
 **Tests:** `device/folders.test.ts › ends the watch and says so when its hydration meets an answer no retry changes`.
 
+### `folder-sync/watch-instance-changed-stops`
+
+If the server at a watched folder's address answers as another Marfa instance than the one the folder's working copy names, then a device MUST end that folder's watch.
+
+**Reason:** The other instance holds neither the folder nor its key, so no retry can reach the folder, and a watch that went on would ask the server again without end.
+
+**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
+
+### `folder-sync/watch-instance-changed-said`
+
+If a folder's watch ends because its server answers as another Marfa instance, then the CLI MUST report the server's address, that it answers as another Marfa instance, and that the directory is to be removed with `folders remove` and added again with `folders add` and a key for that instance.
+
+**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
+
+### `folder-sync/watch-instance-changed-exit`
+
+If `folders watch` of one directory ends because the folder's server answers as another Marfa instance, then the CLI MUST exit 4 with the code `instance_changed`.
+
+**Reason:** Exit 3 tells a script to try again, and no retry reaches a folder the other instance does not hold.
+
+**Tests:** `device/folders.test.ts › ends a watch of one folder whose server answers as another instance with exit 4 and the code instance_changed, as its status does`.
+
+### `folder-sync/watch-failing-passes-back-off`
+
+While a folder watch's passes keep ending with a problem, such as a server it cannot reach, a device MUST wait before each next pass for a time that starts at one second and doubles after each such pass up to five minutes.
+
+**Reason:** A pass a second sends requests a second to a server that cannot answer them, and a fault that lasts would never let the watch rest.
+
+**Tests:** `device/binding-folders-backoff.test.ts › spaces passes that keep failing by a wait that doubles to five minutes, and runs one soon after a change on disk`.
+
+### `folder-sync/watch-back-off-ends-on-change`
+
+When a folder watch that waits between failing passes hears a change on disk that the folder takes, a device MUST start the next pass without waiting out the rest of that wait.
+
+**Tests:** `device/binding-folders-backoff.test.ts › spaces passes that keep failing by a wait that doubles to five minutes, and runs one soon after a change on disk`.
+
 ## Watching every folder
 
 A watch of every folder is `folders watch` run with no directory.
@@ -195,6 +231,22 @@ When the directory a listed folder was admitted at returns to its path during a 
 If the server refuses one folder’s credential during a watch of every folder, then the CLI MUST end that folder’s watch without ending the command.
 
 **Tests:** `device/folders-watch-every.test.ts › ends only the watch of a folder whose credential the server refuses`.
+
+### `folder-sync/watch-every-instance-changed-held`
+
+While a watch of every folder holds a folder whose watch ended because its server answers as another Marfa instance, and the folder's credential, its server and its `.marfa/folder.yaml` stay as they were, the CLI MUST NOT send that server a request for the folder other than one read of the server's root an hour.
+
+**Reason:** Opening the folder again would only meet the other instance again, and a server that answers as the folder's own instance again, as after a proxy that pointed at the wrong instance is fixed, is found within the hour.
+
+**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`, `› reads only the root of a folder another instance answers for, at each timed look, and watches it again once its own instance answers`.
+
+### `folder-sync/watch-every-instance-back-reopens`
+
+When the hourly read of the root of a folder that a watch of every folder holds for another Marfa instance finds the instance the folder's working copy names, the CLI MUST watch the folder again.
+
+**Reason:** The folder and its key are reachable again, so holding it would leave it out of step with no fault left to fix.
+
+**Tests:** `device/folders-watch-every.test.ts › reads only the root of a folder another instance answers for, at each timed look, and watches it again once its own instance answers`.
 
 ### `folder-sync/watch-every-joins`
 
@@ -267,6 +319,22 @@ When `folders status` runs and no current entry in the record of folder watches 
 **Reason:** a program reading the status tells a watch on this build from one on another without testing whether the key is present.
 
 **Tests:** `device/folders-new-build.test.ts › says in the folder's status that its watch runs another build`.
+
+### `folder-sync/status-watch-instance-changed`
+
+When `folders status` runs while the record of folder watches lists the folder the directory follows with `reason` `instance_changed`, no current entry lists it as watched, and no watch's pass has left that folder in step since the entry was last written, the CLI MUST report that the server at the folder's address answers as another Marfa instance, naming that address.
+
+**Reason:** A person who reads the status of a folder whose watch stopped learns why, rather than that its copy is not whole, and a directory added again or brought back in step is not said to be stopped.
+
+**Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`, `device/folders.test.ts › says a folder's stop for another instance in its status only until a later watch leaves the folder in step`.
+
+### `folder-sync/status-watch-instance-changed-exit`
+
+If `folders status` reports a folder as `folder-sync/status-watch-instance-changed` says and its working copy is refused as expired or not whole, then the CLI MUST exit 4 with the code `instance_changed`.
+
+**Reason:** The copy expired because of the instance change, so its own refusal would only tell the person to wait for a hydration that cannot come.
+
+**Tests:** `device/folders.test.ts › ends a watch of one folder whose server answers as another instance with exit 4 and the code instance_changed, as its status does`, `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
 
 ## Pausing a directory's sync
 

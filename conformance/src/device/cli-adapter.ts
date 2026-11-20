@@ -1494,6 +1494,8 @@ export interface StatusReport {
   sync_paused: boolean;
   /** How many directories the watch could not watch when it last reported (`folder-sync/unwatched-status`). */
   unwatched: number;
+  /** Why a watch stopped the folder, where another instance answers at its server (`folder-sync/status-watch-instance-changed`). */
+  watch_stopped?: string | null;
   /** Present while the first sync waits to be confirmed (`folder-setup/first-sync-status`). */
   first_sync?: {
     plan: { write: number; send: number; beside: number; left: number } | null;

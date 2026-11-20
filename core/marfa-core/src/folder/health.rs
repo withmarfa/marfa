@@ -103,7 +103,14 @@ impl State {
     fn save(&self, conn: &rusqlite::Connection) -> Result<()> {
         store::meta_set(conn, META, &serde_json::to_string(self)?)
     }
+}
 
+/// When a watch's pass last left the folder in step.
+pub(super) fn last_success_at(conn: &rusqlite::Connection) -> Option<String> {
+    State::load(conn).ok()?.last_success_at
+}
+
+impl State {
     fn reserve(&mut self, id: &str, snapshot: Snapshot, refresh: bool) -> Result<()> {
         if !refresh
             && self.observed.as_ref() == Some(&snapshot)

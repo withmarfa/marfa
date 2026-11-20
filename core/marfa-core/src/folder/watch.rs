@@ -39,11 +39,27 @@ const WRITER_LOOK_MOST: Duration = Duration::from_secs(60);
 /// How often a watch looks again at the directories it could not register.
 const UNWATCHED_EVERY: Duration = Duration::from_secs(30);
 
+/// Whether `kind` says a file's bytes may have changed. A read, which Linux
+/// reports and macOS does not, says nothing: a pass's own look at a file it
+/// set aside would otherwise wake the next pass.
+fn wrote(kind: &notify::EventKind) -> bool {
+    use notify::event::{AccessKind, AccessMode};
+    match kind {
+        notify::EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        notify::EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 
 /// The longest a watch waits before trying a failed hydration again, unless
 /// the server names a longer wait.
 pub const RETRY_MOST: Duration = Duration::from_secs(30);
+
+/// The longest a watch waits between passes that keep failing. A change on
+/// disk, a server change or the server answering again ends the wait.
+const PASS_RETRY_MOST: Duration = Duration::from_secs(300);
 
 /// What a watch tells its caller, each when it happens.
 #[derive(Debug, Clone)]
@@ -143,6 +159,9 @@ pub enum WatchError<E> {
     CredentialRefused(CoreError),
     /// The server's changes stopped reaching the directory.
     FollowEnded(CoreError),
+    /// Another Marfa instance answers at the folder's server, `server`, which holds
+    /// neither the folder nor its key, so no retry can reach the folder.
+    InstanceChanged { server: String },
     /// The directory could not be watched.
     Unwatchable(String),
     /// A pass failed, or a thread of the watch panicked (`CoreError::Fault`).
@@ -169,6 +188,35 @@ pub fn credential_refused_said(server: &str, said: &CoreError) -> String {
         "the server at {server} refused this watch's credential ({said}), so the watch stopped; \
          changes not yet sent wait until a working credential is kept"
     )
+}
+
+/// What a watch says when another instance answers at its folder's server.
+pub fn instance_changed_said(server: &str) -> String {
+    format!(
+        "the server at {server} now answers as another Marfa instance, which does not hold \
+         this folder or its key, so the watch stopped this folder; to follow a folder there, \
+         remove this one with `marfa folders remove` and add one with `marfa folders add` \
+         and a key for that instance"
+    )
+}
+
+/// Whether `error` says another instance answers where the copy's did.
+pub fn is_instance_changed(error: &CoreError) -> bool {
+    matches!(error, CoreError::CopyExpired { reason, .. } if reason == crate::http::INSTANCE_CHANGED)
+}
+
+impl Folder {
+    /// Whether the folder's server answers, at its root, as the instance the
+    /// folder's copy names, read with one request. A copy that names no
+    /// instance has nothing to compare.
+    pub fn answers_as_its_instance(&self) -> Result<bool, CoreError> {
+        let held = crate::store::meta_get(&*self.core.conn()?, crate::store::META_INSTANCE_ID)?
+            .filter(|held| !held.is_empty());
+        let Some(held) = held else {
+            return Ok(true);
+        };
+        Ok(self.core.http()?.served()?.instance_id == held)
+    }
 }
 
 #[derive(Default)]
@@ -359,6 +407,7 @@ impl Folder {
         // change on disk or from the server.
         let mut stale = false;
         let mut rate = PassRate::default();
+        let mut backoff = Backoff::default();
         self.forget_inventory();
         let mut touched = Touched::untrusted();
         let mut unread: Option<Wake> = None;
@@ -379,7 +428,10 @@ impl Folder {
                     // read first. One write arrives as several events, and
                     // after the last one, passed over, nothing else would wake
                     // the loop for a tick.
-                    let due = changed && send_again_at.is_none_or(|at| now >= at) && gate.due(now);
+                    let due = changed
+                        && send_again_at.is_none_or(|at| now >= at)
+                        && !backoff.waiting(now)
+                        && gate.due(now);
                     let wait = if due {
                         Duration::ZERO
                     } else {
@@ -408,16 +460,19 @@ impl Folder {
                     {
                         touched.hear(dir, &event);
                         changed = true;
+                        backoff.reset();
                         gate.changed(delivered);
                         #[cfg(debug_assertions)]
                         crate::fault::hold(|| "folder-file-changed");
                         telling.health_changed = true;
                     } else if event.paths.iter().any(|path| landing::is_reserved(path))
+                        && wrote(&event.kind)
                         && self.retains()?
                     {
                         // A program wrote to a file a pull set aside, which
                         // a pass puts back.
                         changed = true;
+                        backoff.reset();
                         gate.changed(delivered);
                     } else if !gate.passed_over_is_due(crate::clock::now()) {
                         continue;
@@ -435,6 +490,7 @@ impl Folder {
                     stale = true;
                     if self.unseen_by_pass(&telling, applied, item.as_deref()) {
                         changed = true;
+                        backoff.reset();
                         telling.health_changed = true;
                     }
                 }
@@ -450,6 +506,9 @@ impl Folder {
                 }
                 Ok(Wake::Reach(lost)) => {
                     changed = true;
+                    if lost.is_none() {
+                        backoff.reset();
+                    }
                     if let Some(event) = telling.reach(lost) {
                         tell(event).map_err(WatchError::Told)?;
                     }
@@ -462,7 +521,7 @@ impl Folder {
                     }
                     tell(WatchEvent::Limited { wait }).map_err(WatchError::Told)?;
                 }
-                Ok(Wake::Ended(error)) => return Err(follow_ended(error)),
+                Ok(Wake::Ended(error)) => return Err(self.follow_ended(error)),
                 Ok(Wake::Asked) => continue,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -477,6 +536,7 @@ impl Folder {
             // sent before it ends is refused again: changes on disk wait
             // unscanned and nothing is pulled.
             if send_again_at.is_some_and(|at| crate::clock::now() < at)
+                || backoff.waiting(crate::clock::now())
                 || !gate.due(crate::clock::now())
             {
                 continue;
@@ -539,8 +599,8 @@ impl Folder {
                     false,
                 );
             }
-            match passed {
-                Err(WatchError::Core(error)) if hydrated_by_the_follow(&error) => {}
+            let failed = match passed {
+                Err(WatchError::Core(error)) if hydrated_by_the_follow(&error) => true,
                 // The next pass reads the copy again.
                 Err(WatchError::Core(error))
                     if super::copy_changed(&error) || matches!(error, CoreError::StoreBusy(_)) =>
@@ -550,8 +610,12 @@ impl Folder {
                     }
                     continue;
                 }
-                other => send_again_at = other?.map(|wait| crate::clock::now() + wait),
-            }
+                other => {
+                    send_again_at = other?.map(|wait| crate::clock::now() + wait);
+                    telling.failing
+                }
+            };
+            backoff.passed(failed, crate::clock::now());
             telling.settled();
             gate.passed(crate::clock::now());
             self.core.release_cache();
@@ -656,6 +720,7 @@ impl Folder {
     ) -> Result<Option<Duration>, WatchError<E>> {
         let asking = || asked.load(Ordering::SeqCst);
         telling.at_rest = false;
+        telling.failing = false;
         let settings = self.send_settings_edit()?;
         if asking() {
             return Ok(None);
@@ -776,6 +841,7 @@ impl Folder {
                 .hydration_failing
                 .then(|| CoreError::Network("unavailable".into()))
         });
+        telling.failing = problem.is_some();
         let complete = full
             && progress.available()
             && progress.generation == generation
@@ -1048,8 +1114,21 @@ fn unwatchable(failures: &[notify::Error]) -> Option<String> {
     })
 }
 
-/// A follow that ended for its credential, refused or signed out, is the
-/// credential's; a panic of the core's is not the server's.
+impl Folder {
+    /// A follow that ended for its credential, refused or signed out, is the
+    /// credential's; a panic of the core's is not the server's.
+    fn follow_ended<E>(&self, error: CoreError) -> WatchError<E> {
+        if is_instance_changed(&error) {
+            let server = self.core.http().map_or_else(
+                |_| "this folder's address".into(),
+                crate::http::Http::origin,
+            );
+            return WatchError::InstanceChanged { server };
+        }
+        follow_ended(error)
+    }
+}
+
 fn follow_ended<E>(error: CoreError) -> WatchError<E> {
     match error {
         CoreError::Unauthorized { .. } => WatchError::CredentialRefused(error),
@@ -1157,7 +1236,7 @@ fn follow(
         match followed {
             Ok(_) => break,
             Err(CoreError::Canceled) if ended.load(Ordering::SeqCst) => break,
-            Err(CoreError::CopyExpired { .. }) => {}
+            Err(error @ CoreError::CopyExpired { .. }) if !is_instance_changed(&error) => {}
             Err(error) if error.is_environmental() || matches!(error, CoreError::StoreBusy(_)) => {
                 let (wait, next) = retry_schedule(retry, &error);
                 if said.is_none() || (said == Some(false) && refilling) {
@@ -1357,7 +1436,47 @@ fn retry_schedule(backoff: Duration, error: &CoreError) -> (Duration, Duration) 
     let wait = error
         .retry_after()
         .map_or(backoff, |named| backoff.max(named));
-    (wait, (backoff * 2).min(RETRY_MOST))
+    (wait, doubled(backoff, RETRY_MOST))
+}
+
+fn doubled(wait: Duration, most: Duration) -> Duration {
+    (wait * 2).min(most)
+}
+
+/// The wait before the next pass after passes that failed: one second,
+/// doubling to `PASS_RETRY_MOST`, and none once a pass succeeds or something
+/// changes.
+struct Backoff {
+    next: Duration,
+    until: Option<Instant>,
+}
+
+impl Default for Backoff {
+    fn default() -> Backoff {
+        Backoff {
+            next: RETRY_FIRST,
+            until: None,
+        }
+    }
+}
+
+impl Backoff {
+    fn waiting(&self, now: Instant) -> bool {
+        self.until.is_some_and(|until| now < until)
+    }
+
+    fn passed(&mut self, failed: bool, now: Instant) {
+        if failed {
+            self.until = Some(now + self.next);
+            self.next = doubled(self.next, PASS_RETRY_MOST);
+        } else {
+            self.reset();
+        }
+    }
+
+    fn reset(&mut self) {
+        *self = Backoff::default();
+    }
 }
 
 fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
@@ -1550,6 +1669,9 @@ pub(super) struct Telling {
     unreachable: bool,
     /// Last pass failure reported.
     unsettled: Option<&'static str>,
+    /// The last pass ran to its end with a problem that keeps the folder
+    /// from being in step, such as a server it could not reach.
+    failing: bool,
     health_changed: bool,
     /// The last pass ran to its end and left nothing that time alone would
     /// move on.
@@ -2905,5 +3027,233 @@ mod tests {
         assert_ne!(before, UTILITY);
         assert_eq!(during, Some(UTILITY));
         assert_eq!(after, before);
+    }
+}
+
+#[cfg(test)]
+mod wrote_tests {
+    use notify::EventKind;
+    use notify::event::{AccessKind, AccessMode, CreateKind, DataChange, ModifyKind};
+
+    #[test]
+    fn a_read_of_a_set_aside_file_is_not_a_write_and_a_closed_write_is() {
+        // A pass reading the file it set aside: Linux reports these, and
+        // they woke a pass every tick.
+        assert!(!super::wrote(&EventKind::Access(AccessKind::Open(
+            AccessMode::Read
+        ))));
+        assert!(!super::wrote(&EventKind::Access(AccessKind::Close(
+            AccessMode::Read
+        ))));
+        assert!(!super::wrote(&EventKind::Access(AccessKind::Any)));
+        // The witness: a program's write still counts.
+        assert!(super::wrote(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
+        assert!(super::wrote(&EventKind::Modify(ModifyKind::Data(
+            DataChange::Any
+        ))));
+        assert!(super::wrote(&EventKind::Create(CreateKind::File)));
+    }
+}
+
+/// A real watch over a scripted server, on the manual clock, so a fixed
+/// simulated time can be counted in passes and requests.
+#[cfg(all(test, debug_assertions))]
+mod backoff_tests {
+    use super::*;
+    use crate::folder::WatchRecord;
+    use crate::folder::held_links_tests::{nothing_found, online_folder};
+    use crate::scripted::root;
+
+    const OTHER_INSTANCE: &str = "11111111-1111-7111-8111-111111111111";
+
+    /// Ten simulated minutes, a second at a time, giving the watch a moment
+    /// of real time at each step for what it sends.
+    fn ten_minutes(ended: &AtomicBool, mut each: impl FnMut(usize)) {
+        for second in 0..600 {
+            if ended.load(Ordering::SeqCst) {
+                return;
+            }
+            each(second);
+            crate::clock::advance(SECOND);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    const SECOND: Duration = Duration::from_secs(1);
+
+    fn passes() -> usize {
+        crate::fault::reached("folder-pass-start")
+    }
+
+    #[test]
+    fn a_folder_whose_server_answers_as_another_instance_stops_and_sends_almost_nothing() {
+        let (dir, folder, server) = online_folder(nothing_found());
+        server.on("/", vec![root(OTHER_INSTANCE)]);
+        let record = WatchRecord::at(dir.path().join("record.json"), 1, Duration::from_secs(5));
+        crate::clock::set_manual(true);
+        crate::fault::observe(true);
+        let (stop, ended) = (AtomicBool::new(false), AtomicBool::new(false));
+        let watched = std::thread::scope(|scope| {
+            let watching = scope.spawn(|| {
+                let watched = record.watch_folder(&folder, &stop, |_| Ok::<(), ()>(()));
+                ended.store(true, Ordering::SeqCst);
+                watched
+            });
+            ten_minutes(&ended, |_| {});
+            stop.store(true, Ordering::SeqCst);
+            watching.join().unwrap()
+        });
+        let roots = server.seen("/").len();
+        crate::clock::set_manual(false);
+        match watched {
+            Err(WatchError::InstanceChanged { server: said, .. }) => {
+                assert_eq!(said, server.url());
+            }
+            other => panic!("the watch did not stop for the other instance: {other:?}"),
+        }
+        assert!(roots <= 3, "{roots} reads of the root");
+        assert!(passes() <= 2, "{} passes", passes());
+        assert_eq!(
+            record.state_of(folder.root()),
+            Some((false, Some(crate::http::INSTANCE_CHANGED.into())))
+        );
+        let said = instance_changed_said(&server.url());
+        assert!(said.contains(&server.url()) && said.contains("marfa folders add"));
+    }
+
+    #[test]
+    fn a_stopped_folder_reads_the_root_once_to_learn_whether_its_instance_is_back() {
+        let (_dir, folder, server) = online_folder(nothing_found());
+        server.on("/", vec![root(OTHER_INSTANCE)]);
+        assert!(!folder.answers_as_its_instance().unwrap());
+        // The witness: the instance the copy names answers again.
+        server.on("/", vec![root(crate::scripted::INSTANCE)]);
+        assert!(folder.answers_as_its_instance().unwrap());
+        assert_eq!(server.seen("/").len(), 2, "one read of the root each");
+    }
+
+    /// Watches `folder` through ten simulated minutes of passes that fail
+    /// against a closed port, makes `change` at the ninth minute and fifty
+    /// seconds, and answers the passes started before it and five seconds
+    /// after it.
+    fn failing_then(folder: &Folder, change: impl FnOnce()) -> (usize, usize) {
+        let (stop, ended) = (AtomicBool::new(false), AtomicBool::new(false));
+        let mut change = Some(change);
+        let (mut before, mut after, mut ended_early) = (0, 0, false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                // A pass keeps a kept file, as where it cannot tell who writes.
+                let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+                let _ = folder.watch(&stop, |_| Ok::<(), ()>(()));
+                ended.store(true, Ordering::SeqCst);
+            });
+            ten_minutes(&ended, |second| match second {
+                590 => {
+                    before = passes();
+                    change.take().unwrap()();
+                    // The watcher's event arrives on the system's time.
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+                595 => after = passes(),
+                _ => {}
+            });
+            ended_early = ended.load(Ordering::SeqCst);
+            stop.store(true, Ordering::SeqCst);
+        });
+        crate::clock::set_manual(false);
+        assert!(!ended_early, "the watch ended before it was stopped");
+        // The witness: the passes ran and failed.
+        assert!(before >= 2, "{before} passes");
+        assert!(
+            before <= 12,
+            "{before} passes in ten minutes of failing ones"
+        );
+        (before, after)
+    }
+
+    /// A folder whose writes the server never takes, as every request meets
+    /// a closed port, on the manual clock.
+    fn unreachable_folder() -> (crate::folder::tests::ScannedDir, Folder) {
+        let (dir, folder, server) = online_folder(nothing_found());
+        std::fs::write(
+            folder.root().join("Waiting.md"),
+            "a write the server never takes\n",
+        )
+        .unwrap();
+        drop(server);
+        crate::clock::set_manual(true);
+        crate::fault::observe(true);
+        (dir, folder)
+    }
+
+    #[test]
+    fn passes_that_keep_failing_back_off_and_a_real_change_ends_the_wait() {
+        let (_dir, folder) = unreachable_folder();
+        let (before, after) = failing_then(&folder, || {
+            std::fs::write(folder.root().join("Changed.md"), "a real change\n").unwrap();
+        });
+        assert!(
+            after > before,
+            "no pass ran within five seconds of a change on disk"
+        );
+    }
+
+    #[test]
+    fn a_write_to_a_kept_file_ends_the_wait_between_failing_passes() {
+        let (_dir, folder) = unreachable_folder();
+        let root = folder.root().to_path_buf();
+        let kept = root.join(landing::reserved("00000000000000000000000000000004"));
+        std::fs::write(&kept, "as set aside\n").unwrap();
+        std::fs::write(root.join("Plan.md"), "as the pull wrote it\n").unwrap();
+        let metadata = std::fs::metadata(&kept).unwrap();
+        let (device, inode) = landing::identity(&metadata);
+        let at = landing::identity(&std::fs::metadata(&root).unwrap());
+        super::super::state::set_retained(
+            &folder.core.conn().unwrap(),
+            &super::super::state::Retained {
+                dir: String::new(),
+                dir_at: at,
+                aside: String::new(),
+                aside_at: at,
+                retained: landing::Retained {
+                    id: "00000000000000000000000000000004".into(),
+                    kind: landing::Displaced::Exchange,
+                    target: "Plan.md".into(),
+                    kept: kept.file_name().unwrap().to_string_lossy().into_owned(),
+                    ours: None,
+                    read: landing::Object {
+                        device,
+                        inode,
+                        length: Some(metadata.len()),
+                        modified: None,
+                        hash: Some(super::super::state::hash(b"as set aside\n")),
+                    },
+                    changed: None,
+                    since: landing::seconds(crate::clock::system_time()),
+                    writers: None,
+                },
+            },
+        )
+        .unwrap();
+
+        let mut kept_when_written = false;
+        let (before, after) = failing_then(&folder, || {
+            kept_when_written = folder.retains().unwrap() && kept.exists();
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&kept)
+                .unwrap();
+            std::io::Write::write_all(&mut file, b"what the program wrote after\n").unwrap();
+        });
+        assert!(
+            kept_when_written,
+            "the kept file was settled before the program wrote to it"
+        );
+        assert!(
+            after > before,
+            "no pass ran within five seconds of a program's write to a kept file"
+        );
     }
 }

@@ -34,6 +34,8 @@ An agent, a script or a test runs `marfa` with no keychain prompt and no person 
 | A listed folder that cannot be opened                                  | Tried again every 5 seconds                                                                                                                          |
 | Listed folders whose directories cannot be found                       | Reported together once the set has stayed the same for 2 seconds; each looked for again after 5 seconds, then at a wait that doubles up to 5 minutes |
 | A folder whose watch ended                                             | Tried again after 60 seconds                                                                                                                         |
+| A folder whose server answers as another Marfa instance                | Not watched; tried again once its key, its server or its `.marfa/folder.yaml` changes, or once an hourly read of the server's root finds the folder's own instance |
+| A watch's passes that keep failing                                     | Spaced by a wait that starts at 1 second and doubles up to 5 minutes; a change on disk, a server change or the server answering again ends the wait  |
 | The watch's log                                                        | Checked for size every 10 seconds                                                                                                                    |
 
 ## Syncing folders from login

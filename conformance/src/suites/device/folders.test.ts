@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
   answers,
@@ -30,6 +30,7 @@ import {
   wireType,
   typeCatalog,
   writeAnswers,
+  SCRIPTED_INSTANCE,
 } from "../../device/marfa-answers.js";
 import {
   KEY,
@@ -42,7 +43,12 @@ import {
   scriptFolderItem,
   scriptHydration,
 } from "./harness.js";
-import { CliFolder, type FolderSettings } from "../../device/cli-adapter.js";
+import {
+  CliFolder,
+  refusalLine,
+  type FolderSettings,
+  type HeldCommand,
+} from "../../device/cli-adapter.js";
 import { BUILT_FOR, ScriptedServer } from "../../device/scripted-server.js";
 import { FolderDoor } from "../../device/folder-door.js";
 import { writeSteadily } from "../../device/steady-writer.js";
@@ -6276,6 +6282,115 @@ describe("a folder that cannot reach the server", () => {
     ).toMatch(/sending stopped: .*refused the credential/);
     // The witness: it was the create that met the refusal.
     expect(sentTitles(harness)).toEqual(["Refused"]);
+  });
+});
+
+describe("a folder whose server answers as another instance", () => {
+  const other = "11111111-1111-7111-8111-111111111111";
+
+  /** The refusal envelope a command printed last on stderr. */
+  function envelopeOf(stderr: string): {
+    error: { code: string; message: string };
+    exit: number;
+  } {
+    return JSON.parse(refusalLine(stderr)) as {
+      error: { code: string; message: string };
+      exit: number;
+    };
+  }
+
+  /** A watch of the one folder, waited on until it ends. */
+  async function watchedToItsEnd(folder: FolderHarness): Promise<HeldCommand> {
+    const watching = folder.folder.watch();
+    try {
+      await vi.waitFor(
+        () =>
+          expect(
+            watching.running(),
+            `a watch went on with another instance at its server: ${watching.stderr}`,
+          ).toBe(false),
+        { timeout: 20_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    return watching;
+  }
+
+  it("ends a watch of one folder whose server answers as another instance with exit 4 and the code instance_changed, as its status does", async () => {
+    harness = await folderHarness("folder-watch-instance-changed");
+    scriptFolderWrites(harness);
+    harness.server.answer("GET", "/", answers.root(Number(BUILT_FOR), other));
+    put(harness, "Waits.md", "---\ntitle: Waits\n---\nfor its own instance\n");
+    const watching = await watchedToItsEnd(harness);
+    expect(watching.exitCode(), watching.stderr).toBe(4);
+    const ended = envelopeOf(watching.stderr);
+    expect(ended.exit).toBe(4);
+    expect(ended.error.code).toBe("instance_changed");
+    expect(ended.error.message).toContain(harness.server.url);
+    expect(ended.error.message).toContain("another Marfa instance");
+
+    const status = await harness.folder.status();
+    expect(status.ok, JSON.stringify(status)).toBe(false);
+    if (status.ok) return;
+    expect(status.refusal.code).toBe("instance_changed");
+    expect(envelopeOf(status.refusal.raw).exit).toBe(4);
+    expect(status.refusal.raw).toContain(harness.server.url);
+  });
+
+  it("says a folder's stop for another instance in its status only until a later watch leaves the folder in step", async () => {
+    // The edges the watch writes read back, so its pass can leave the folder
+    // in step.
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-status-instance-back", {
+      events: [edges.stream()],
+    });
+    scriptFolderWrites(harness, { edges });
+    let instance = other;
+    harness.server.answer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
+    put(harness, "Waits.md", "---\ntitle: Waits\n---\nfor its own instance\n");
+    await watchedToItsEnd(harness);
+    // The witness: the stop is said while no later pass has run.
+    const stopped = await harness.folder.status();
+    expect(JSON.stringify(stopped)).toContain("another Marfa instance");
+
+    instance = SCRIPTED_INSTANCE;
+    const again = harness.folder.watch();
+    const record = join(dirname(harness.registry), "folder-watch.json");
+    try {
+      await vi.waitFor(
+        () => {
+          expect(sentTitles(harness!)).toContain("Waits");
+          const entry = (
+            JSON.parse(readFileSync(record, "utf8")) as {
+              processes: Array<{
+                pid: number;
+                folders: Array<{ last_success_at: string | null }>;
+              }>;
+            }
+          ).processes.find((process) => process.pid === again.pid());
+          expect(
+            entry?.folders[0]?.last_success_at,
+            `${again.stdout}\n${readFileSync(record, "utf8")}`,
+          ).toBeTruthy();
+        },
+        { timeout: 30_000, interval: 100 },
+      );
+      // Ended as a person ends it, so its entry says it ended.
+      again.interrupt();
+      await again.exited();
+    } finally {
+      await again.stop();
+    }
+    const status = await harness.folder.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    if (!status.ok) return;
+    expect(
+      status.value.watch_stopped ?? null,
+      "a status still said the watch stopped the folder after a later watch left it in step",
+    ).toBeNull();
   });
 });
 

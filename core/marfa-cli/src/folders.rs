@@ -421,19 +421,30 @@ pub fn run(
             }
         }
         FoldersCommand::Status { dir } => {
-            let report = Folder::status_of(&dir)?;
+            let stopped = watch::stopped_for_another_instance(&dir);
+            let report =
+                Folder::status_of(&dir).map_err(|error| status_refused(error, stopped.clone()))?;
+            let stopped = stopped
+                .as_deref()
+                .map(marfa_core::folder::instance_changed_said);
             let other = new_build::other_build_watching(&dir);
             output::report(
                 &FolderStatus {
                     report: &report,
                     watch_other_build: other.as_ref(),
+                    watch_stopped: stopped.as_deref(),
                 },
                 json,
                 || {
                     let mut text = describe_status(&report);
-                    if let Some(other) = &other {
+                    for line in other
+                        .as_ref()
+                        .map(new_build::OtherBuild::describe)
+                        .into_iter()
+                        .chain(stopped.clone())
+                    {
                         text.push('\n');
-                        text.push_str(&other.describe());
+                        text.push_str(&line);
                     }
                     text
                 },
@@ -1506,6 +1517,20 @@ struct FolderStatus<'a> {
     #[serde(flatten)]
     report: &'a marfa_core::StatusReport,
     watch_other_build: Option<&'a new_build::OtherBuild>,
+    /// Why the watch stopped the folder, where another instance answers at
+    /// its server.
+    watch_stopped: Option<&'a str>,
+}
+
+/// A copy the instance change expired is said by its cause; every other
+/// refusal stays its own.
+fn status_refused(error: CoreError, stopped: Option<String>) -> CliError {
+    match (error, stopped) {
+        (CoreError::CopyExpired { .. } | CoreError::HydrationIncomplete, Some(server)) => {
+            CliError::InstanceChanged(server)
+        }
+        (error, _) => error.into(),
+    }
 }
 
 fn describe_status(report: &marfa_core::StatusReport) -> String {
@@ -1958,6 +1983,26 @@ mod tests {
     use super::*;
     use marfa_core::{DrainReport, DrainVerdict, Verdict, WriteKind};
     use std::collections::HashMap;
+
+    #[test]
+    fn a_status_says_only_what_the_instance_change_caused_by_it() {
+        let server = || Some("https://one.test".to_owned());
+        let expired = || CoreError::CopyExpired {
+            reason: "instance_changed".into(),
+            server: None,
+        };
+        for error in [expired(), CoreError::HydrationIncomplete] {
+            let said = status_refused(error, server());
+            assert_eq!(said.code(), "instance_changed");
+            assert_eq!(said.exit(), Exit::Local);
+            assert!(said.to_string().contains("https://one.test"), "{said}");
+        }
+        // The witness: with no stop in the record, the copy's own refusal.
+        assert_eq!(status_refused(expired(), None).code(), "copy_expired");
+        let busy = status_refused(CoreError::StoreBusy("held".into()), server());
+        assert_eq!(busy.code(), "store_busy");
+        assert_eq!(busy.exit(), Exit::Environment);
+    }
 
     #[test]
     fn a_message_the_server_or_the_root_check_gives_stays_on_its_own_line() {
