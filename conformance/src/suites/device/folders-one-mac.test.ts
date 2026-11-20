@@ -4338,38 +4338,43 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it.each([
     ["before", "save-before-last-look", "saved meanwhile"],
     ["after", "save-after-last-look", "saved after the last look"],
-  ])("leaves a file it let go where the person saved it %s its last look", async (_, fault, saved) => {
-    const brief = {
-      id: "01a00000-0000-7000-8000-00000000fa41",
-      properties: { title: "Brief", body: "the brief\n" },
-    };
-    const { a, b, edges } = await onOneMac(
-      "let-go-last-look",
-      { query: { types: ["core.note"], filter: 'tags contains "a"' } },
-      { query: { types: ["core.note"], filter: 'tags contains "b"' } },
-      { "core.note": [{ item: brief, tags: ["a"] }] },
-    );
-    expect((await a.folder.pull()).ok).toBe(true);
-    expect((await b.folder.pull()).ok).toBe(true);
-    edges.events.push(
-      copyItemEvent("2", "metadata.changed", wireItem(brief), { tags: ["b"] }),
-    );
-    const first = await b.folder.push();
-    expect(first.ok && first.value.pull?.written).toBe(1);
-    // The person saves the file in the folder it leaves just as the pull
-    // takes it away.
-    const letGo = await withFault(fault, () => a.folder.push());
-    expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
-    if (!letGo.ok) return;
-    expect(
-      [letGo.value.pull?.let_go, read(a, "Brief.md")],
-      "a file let go to another folder was removed with the person's save in it",
-    ).toEqual([0, expect.stringContaining(saved)]);
-    expect(
-      readdirSync(a.dir).filter((name) => name.startsWith(".marfa-")),
-      "a file moved out of its path was left under a name Marfa keeps",
-    ).toEqual([]);
-    // The save landed after the pull chose to let the file go, which
-    // `› takes in a file another folder let go` shows it does unsaved.
-  });
+  ])(
+    "leaves a file it let go where the person saved it %s its last look",
+    async (_, fault, saved) => {
+      const brief = {
+        id: "01a00000-0000-7000-8000-00000000fa41",
+        properties: { title: "Brief", body: "the brief\n" },
+      };
+      const { a, b, edges } = await onOneMac(
+        "let-go-last-look",
+        { query: { types: ["core.note"], filter: 'tags contains "a"' } },
+        { query: { types: ["core.note"], filter: 'tags contains "b"' } },
+        { "core.note": [{ item: brief, tags: ["a"] }] },
+      );
+      expect((await a.folder.pull()).ok).toBe(true);
+      expect((await b.folder.pull()).ok).toBe(true);
+      edges.events.push(
+        copyItemEvent("2", "metadata.changed", wireItem(brief), {
+          tags: ["b"],
+        }),
+      );
+      const first = await b.folder.push();
+      expect(first.ok && first.value.pull?.written).toBe(1);
+      // The person saves the file in the folder it leaves just as the pull
+      // takes it away.
+      const letGo = await withFault(fault, () => a.folder.push());
+      expect(letGo.ok, JSON.stringify(letGo)).toBe(true);
+      if (!letGo.ok) return;
+      expect(
+        [letGo.value.pull?.let_go, read(a, "Brief.md")],
+        "a file let go to another folder was removed with the person's save in it",
+      ).toEqual([0, expect.stringContaining(saved)]);
+      expect(
+        readdirSync(a.dir).filter((name) => name.startsWith(".marfa-")),
+        "a file moved out of its path was left under a name Marfa keeps",
+      ).toEqual([]);
+      // The save landed after the pull chose to let the file go, which
+      // `› takes in a file another folder let go` shows it does unsaved.
+    },
+  );
 });

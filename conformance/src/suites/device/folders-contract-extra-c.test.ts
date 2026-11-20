@@ -12,6 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import {
   answers,
@@ -764,5 +765,117 @@ describe("binary placement identity", () => {
           ?.item_id,
     ).not.toBe(id(1));
     expect(read("Different.bin")).toBe("different bytes\n");
+  });
+});
+
+describe("files moved out of their path", () => {
+  const moved = () =>
+    readdirSync(folder!.dir).filter((name) => name.startsWith(".marfa-"));
+  const changed = (row: WireItemOptions, at: string) =>
+    copyItemEvent(
+      at,
+      "item.updated",
+      wireItem({
+        ...row,
+        version: 2,
+        properties: { ...row.properties, body: "changed elsewhere\n" },
+      }),
+    );
+  async function changedElsewhere(rows: WireItemOptions[]) {
+    const { frames } = await seed(rows);
+    await pull();
+    rows.forEach((row, at) => frames.push(changed(row, String(at + 2))));
+    const caught = await folder!.folder.device().catchUp();
+    expect(caught.ok && caught.value.applied).toBe(rows.length);
+  }
+
+  it("keeps and reports a file under a name kept for a file moved out of its path, while cleaning an abandoned one", async () => {
+    await seed([note(1, "Witness")]);
+    await pull();
+    const kept = ".marfa-kept-0123456789abcdef0123456789abcdef.tmp";
+    const ended = spawnSync("true").pid;
+    const abandoned = `.marfa-${String(ended)}-1.tmp`;
+    put(kept, "a person's save\n");
+    put(abandoned, "abandoned bytes\n");
+    for (let pass = 0; pass < 2; pass += 1) {
+      const report = await scan();
+      expect(report.created).toBe(0);
+      expect(
+        report.flagged.map((file) => [file.path, file.flag]),
+        "a file moved out of its path was not reported for the person to check",
+      ).toEqual([[kept, "kept"]]);
+      expect(read(kept)).toBe("a person's save\n");
+      // The witness: the scan cleans up the abandoned one beside it.
+      expect(existsSync(join(folder!.dir, abandoned))).toBe(false);
+    }
+  });
+
+  it("keeps a second save made as the first goes back beside the file, and reports it", async () => {
+    await changedElsewhere([note(1, "Kept", "as it was\n")]);
+    process.env.MARFA_TEST_FAULT =
+      "save-after-last-look=Kept.md,save-during-put-back=Kept.md";
+    const pulled = await pull();
+    delete process.env.MARFA_TEST_FAULT;
+    expect([pulled.rewritten, pulled.unwritten]).toEqual([0, 1]);
+    expect(read("Kept.md")).toContain("as it was\nsaved after the last look\n");
+    expect(read("Kept (2).md")).toContain("saved again\n");
+    expect(pulled.flagged.map((file) => [file.path, file.flag])).toContainEqual(
+      ["Kept (2).md", "kept"],
+    );
+    expect(moved()).toEqual([]);
+  });
+
+  it("puts a save back when a pull is cut off after moving it out of its path", async () => {
+    await changedElsewhere([note(1, "Kept", "as it was\n")]);
+    process.env.MARFA_TEST_FAULT =
+      "save-after-last-look=Kept.md,crash-after-exchange=Kept.md";
+    await expect(folder!.folder.pull()).rejects.toThrow(/could not be run/);
+    delete process.env.MARFA_TEST_FAULT;
+    expect(
+      moved(),
+      "the cut-off pull moved nothing out of the path, so nothing below is about settling it",
+    ).toHaveLength(1);
+    expect(read("Kept.md")).toContain("changed elsewhere");
+    await scan();
+    expect(
+      read("Kept.md"),
+      "a save moved out of its path by a pull that was cut off was not put back",
+    ).toContain("as it was\nsaved after the last look\n");
+    expect(moved()).toEqual([]);
+  });
+
+  it("leaves a file made at the path while a volume with no exchange has the old file moved aside", async () => {
+    await changedElsewhere([
+      note(1, "Kept", "as it was\n"),
+      note(2, "Witness", "as it was\n"),
+    ]);
+    process.env.MARFA_TEST_FAULT =
+      "rename-exchange-unsupported,create-in-the-gap=Kept.md";
+    const pulled = await pull();
+    delete process.env.MARFA_TEST_FAULT;
+    expect([pulled.rewritten, pulled.unwritten]).toEqual([1, 1]);
+    expect(read("Kept.md")).toBe("appeared meanwhile\n");
+    // The witness: with no exchange, a file nothing appears at is written.
+    expect(read("Witness.md")).toContain("changed elsewhere");
+    expect(moved()).toEqual([]);
+  });
+
+  it("leaves a file unwritten where the volume can neither exchange names nor rename without replacing", async () => {
+    await changedElsewhere([
+      note(1, "Kept", "as it was\n"),
+      note(2, "Witness", "as it was\n"),
+    ]);
+    const before = read("Kept.md");
+    process.env.MARFA_TEST_FAULT =
+      "rename-exchange-unsupported=Kept.md,rename-new-unsupported=Kept.md";
+    const pulled = await pull();
+    delete process.env.MARFA_TEST_FAULT;
+    expect([pulled.rewritten, pulled.unwritten]).toEqual([1, 1]);
+    expect(read("Kept.md")).toBe(before);
+    expect(read("Witness.md")).toContain("changed elsewhere");
+    expect(moved()).toEqual([]);
+    // Once the volume can, the next pull writes it.
+    expect((await pull()).rewritten).toBe(1);
+    expect(read("Kept.md")).toContain("changed elsewhere");
   });
 });

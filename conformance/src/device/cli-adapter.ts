@@ -1501,7 +1501,9 @@ export interface StatusReport {
  *  `retained` (`folder-files/retained-source-reported`). A pull names a document as
  *  `attachment` where its attached file is written in another directory
  *  (`folder-documents/attachment-written-once-report`) or could not be read
- *  (`folder-documents/attachment-unread-reported`). */
+ *  (`folder-documents/attachment-unread-reported`). A scan or a pull names a person's
+ *  file it moved out of its path and kept beside it or under a reserved name as `kept`
+ *  (`folder-files/write-kept-reported`). */
 export interface FlaggedFile {
   path: string;
   flag:
@@ -1520,7 +1522,8 @@ export interface FlaggedFile {
     | "unsuited"
     | "absent"
     | "retained"
-    | "attachment";
+    | "attachment"
+    | "kept";
   reason: string;
   /** The item whose file a pull did not write (`folder-sync/pull-flagged-items`), or could
    *  not let go to another folder (`folder-files/retained-source-reported`). */

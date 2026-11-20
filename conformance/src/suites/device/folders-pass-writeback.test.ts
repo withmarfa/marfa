@@ -281,6 +281,10 @@ describe("a file moved or deleted between a pass's scan and its pull", () => {
     if (!pulled.ok) return;
     // The witness: a file in place takes the change.
     expect(read(harness!, "here.md")).toContain("their edit");
+    expect(
+      readdirSync(harness!.dir).filter((name) => name.startsWith(".marfa-")),
+      "the file a pull replaced was left under a name Marfa keeps",
+    ).toEqual([]);
     expect(existsSync(join(harness!.dir, "gone.md"))).toBe(false);
     expect(pulled.value.unwritten).toBe(1);
 

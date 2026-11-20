@@ -298,6 +298,7 @@ fn land_flushed(
             return Err(Unlanded::Changed);
         }
         save_after_last_look(dir, target);
+        write_after_last_look(dir, target);
         crash_if_asked(target);
         crash_if_named(target, "crash-before-copy-publish");
         appear_at(dir, target, "create-before-rename")?;
@@ -572,7 +573,14 @@ fn discard(aside: &Directory, name: &Path) -> io::Result<()> {
 }
 
 fn exchange_at(from_dir: &Directory, from: &Path, to_dir: &Directory, to: &Path) -> io::Result<()> {
-    if failing_here("rename-exchange-unsupported") || named_for(to, "rename-exchange-unsupported") {
+    if failing_here("rename-exchange-unsupported")
+        || crate::fault::named("rename-exchange-unsupported").is_some_and(|name| {
+            name.is_empty()
+                || to
+                    .file_name()
+                    .is_some_and(|file| file.to_string_lossy() == name)
+        })
+    {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "an atomic swap is unavailable in fixture",
@@ -697,7 +705,15 @@ fn without_exchange(
         guard.ledger.clear(displacement);
         return Err(error.into());
     }
-    if let Err(error) = rename_new_at(dir, target, guard.aside, &aside) {
+    let withdrawn = if named_for(target, "rename-new-unsupported") {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "no-replace rename unavailable in fixture",
+        ))
+    } else {
+        rename_new_at(dir, target, guard.aside, &aside)
+    };
+    if let Err(error) = withdrawn {
         guard.aside.unlink(&waiting)?;
         guard.ledger.clear(displacement);
         return Err(match error.kind() {
@@ -977,6 +993,7 @@ pub(crate) fn withdraw_at(
         return Ok(Withdrawal::Kept(None));
     }
     save_after_last_look(dir, target);
+    write_after_last_look(dir, target);
     let id = uuid::Uuid::now_v7().simple().to_string();
     let aside = reserved(&id);
     let displacement = Displacement {
@@ -1150,8 +1167,18 @@ fn save_during_put_back(dir: &Directory, target: &Path) {
     save_over(dir, target, "save-during-put-back", b"saved again\n");
 }
 
-/// With no file name, the fault saves every document a pass writes or removes.
-fn save_over(dir: &Directory, target: &Path, fault: &str, line: &[u8]) {
+/// A person's write into the file in place, after the folder's last look.
+fn write_after_last_look(dir: &Directory, target: &Path) {
+    if asked_for(dir, target, "write-after-last-look") {
+        let _ = dir
+            .open_file(target, OFlags::WRONLY | OFlags::APPEND, Mode::empty())
+            .and_then(|mut file| file.write_all(b"written after the last look\n"));
+    }
+}
+
+/// Whether a unit test or a fixture asks for `fault` at `target`, an existing
+/// file; with no file name, at every document a pass writes or removes.
+fn asked_for(dir: &Directory, target: &Path, fault: &str) -> bool {
     let asked = failing_here(fault)
         || crate::fault::named(fault).is_some_and(|name| {
             if name.is_empty() {
@@ -1164,7 +1191,11 @@ fn save_over(dir: &Directory, target: &Path, fault: &str, line: &[u8]) {
                     .is_some_and(|file| file.to_string_lossy() == name)
             }
         });
-    if !asked || dir.entry_identity(target).is_err() {
+    asked && dir.entry_identity(target).is_ok()
+}
+
+fn save_over(dir: &Directory, target: &Path, fault: &str, line: &[u8]) {
+    if !asked_for(dir, target, fault) {
         return;
     }
     let mut bytes = dir.read(target).unwrap_or_default();
@@ -1638,6 +1669,7 @@ mod tests {
     }
 
     /// The file as a save after the last look leaves it.
+    #[cfg(debug_assertions)]
     const SAVED: &[u8] = b"as last writtensaved after the last look\n";
 
     struct Place {
@@ -1691,6 +1723,7 @@ mod tests {
         }
 
         /// Settles what the ledger still holds, as the next pass does.
+        #[cfg(debug_assertions)]
         fn settle(&self) {
             let rows = self.ledger.rows.borrow().clone();
             for row in rows {

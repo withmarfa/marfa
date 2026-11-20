@@ -368,7 +368,21 @@ impl Directory {
                 &to,
                 fs::RenameFlags::NOREPLACE,
             )
-            .map_err(Into::into);
+            .map_err(|errno| {
+                // exFAT on macOS answers ENOTSUP; Linux before the flag, EINVAL.
+                let unsupported = errno == Errno::NOTSUP
+                    || errno == Errno::OPNOTSUPP
+                    || errno == Errno::NOSYS
+                    || (cfg!(target_os = "linux") && errno == Errno::INVAL);
+                if unsupported {
+                    io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        "atomic no-replace rename is unavailable",
+                    )
+                } else {
+                    errno.into()
+                }
+            });
             #[cfg(not(any(
                 target_vendor = "apple",
                 target_os = "linux",
