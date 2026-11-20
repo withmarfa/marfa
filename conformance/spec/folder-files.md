@@ -640,9 +640,17 @@ When a person changes a document so that its form differs from the `form` its `i
 
 ### `folder-files/form-filled`
 
-When a device reads a document whose `in-folder` edge holds no `form`, a device MUST send the document's form once.
+When a device reads a document whose `in-folder` edge holds no `form`, and whose form differs from the one a device writes for the item where its edge holds none, a device MUST send the document's form once.
 
 **Reason:** a directory that followed the folder before forms existed fills them in without a change to the files.
+
+**Tests:** `device/folders-form-live.test.ts › fills the form of a placement that holds none once, from a directory where a person wrote the file`.
+
+### `folder-files/form-fill-unformed`
+
+If a document's `in-folder` edge holds no `form` and the document's form is the one a device writes for the item where its edge holds none, then a device MUST NOT send the document's form.
+
+**Reason:** such a file stands for no person's way of writing it, so a directory that only holds files Marfa wrote leaves the form to the directory where a person wrote the file.
 
 **Tests:** `device/folders-form-live.test.ts › fills the form of a placement that holds none once, from a directory where a person wrote the file`.
 
@@ -653,6 +661,14 @@ When a device writes a document its directory does not hold and the item's `in-f
 **Reason:** two directories of one folder then hold the same bytes for the same item.
 
 **Tests:** `device/folders-form-live.test.ts › writes each file new to a second directory as the directory that made it wrote it`.
+
+### `folder-files/form-beyond`
+
+When a device writes a document its directory does not hold and the item's `in-folder` edge holds a `form`, a device MUST write each key the form does not hold after the form's keys, in the style it uses for an item no file has shown.
+
+**Reason:** the form says nothing of such a key, so it is written as every directory writes it.
+
+**Tests:** `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`.
 
 ### `folder-files/form-empty`
 
