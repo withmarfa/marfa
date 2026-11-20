@@ -84,8 +84,10 @@ impl Folder {
             if matches!(
                 self.departing(&row, &members, &settings, &lists)?,
                 Departing::Yes
-            ) && self.take_away(&row, &mut context)?.is_some()
-            {
+            ) && matches!(
+                self.take_away(&row, &mut context)?,
+                super::pull::TakenAway::Ended(_)
+            ) {
                 confirmed.removed += 1;
             }
         }

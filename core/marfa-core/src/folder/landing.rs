@@ -343,10 +343,14 @@ fn land_flushed(
 /// Where a guarded write or removal keeps a file it moves out of its path:
 /// `aside`, a directory on the target's volume and never inside the folder's
 /// state, which the folder clears, and the ledger that records the move.
+/// Where `beside` is false, a save that cannot go back to its path stays
+/// under its reserved name in `aside`, rather than at a numbered name beside
+/// the path.
 #[derive(Clone, Copy)]
 pub(crate) struct Guard<'a> {
     pub(crate) aside: &'a Directory,
     pub(crate) ledger: &'a dyn Ledger,
+    pub(crate) beside: bool,
 }
 
 /// Records each move of a person's file out of its path before the rename,
@@ -363,7 +367,12 @@ pub(crate) trait Ledger {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Displaced {
-    Replace,
+    /// A replace by an exchange of the two names, which leaves the path
+    /// empty at no moment.
+    Exchange,
+    /// A replace where the volume cannot exchange names: the file read moves
+    /// aside first, so the path is empty until the new file lands.
+    Aside,
     Withdraw,
 }
 
@@ -437,14 +446,30 @@ impl Held {
     fn unchanged(&self) -> io::Result<bool> {
         let mut file = &self.file;
         file.seek(io::SeekFrom::Start(0))?;
-        let mut now = Vec::with_capacity(self.bytes.len());
-        file.take(self.bytes.len() as u64 + 1)
-            .read_to_end(&mut now)?;
-        Ok(now == self.bytes)
+        same_bytes(file, &self.bytes)
     }
 }
 
-fn identity(metadata: &Metadata) -> (u64, u64) {
+/// Whether `reader` holds exactly `bytes`, read a chunk at a time, so a
+/// large file is never held twice.
+fn same_bytes(mut reader: impl Read, bytes: &[u8]) -> io::Result<bool> {
+    let mut chunk = vec![0; 1 << 16];
+    let mut at = 0;
+    loop {
+        let read = match reader.read(&mut chunk) {
+            Ok(0) => return Ok(at == bytes.len()),
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if bytes.get(at..at + read) != chunk.get(..read) {
+            return Ok(false);
+        }
+        at += read;
+    }
+}
+
+pub(crate) fn identity(metadata: &Metadata) -> (u64, u64) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
@@ -626,7 +651,7 @@ fn replace(
     let ours = written_object(ours);
     let mut displacement = Displacement {
         id,
-        kind: Displaced::Replace,
+        kind: Displaced::Exchange,
         target: name_of(target)?,
         kept: name_of(&waiting)?,
         ours: Some((name_of(&waiting)?, ours.clone())),
@@ -699,6 +724,7 @@ fn without_exchange(
             .unwrap_or_default(),
     );
     let aside = reserved(&uuid::Uuid::now_v7().simple().to_string());
+    displacement.kind = Displaced::Aside;
     displacement.kept = name_of(&aside)?;
     if let Err(error) = guard.ledger.record(displacement) {
         guard.aside.unlink(&waiting)?;
@@ -755,23 +781,6 @@ fn without_exchange(
     };
     guard.ledger.clear(displacement);
     landed
-}
-
-/// Moves `target` to a reserved name no other program makes, which a
-/// rename that replaces is safe for where one that replaces nothing is
-/// unavailable, as on exFAT.
-fn move_aside(
-    dir: &Directory,
-    target: &Path,
-    aside_dir: &Directory,
-    aside: &Path,
-) -> io::Result<()> {
-    match rename_new_at(dir, target, aside_dir, aside) {
-        Err(error) if error.kind() == io::ErrorKind::Unsupported => {
-            dir.rename(target, aside_dir, aside, false)
-        }
-        result => result,
-    }
 }
 
 /// Puts the file read, proved unchanged, back at `target` where nothing
@@ -837,6 +846,16 @@ pub(crate) fn keep_beside(
     name: &Path,
 ) -> io::Result<PathBuf> {
     let target = name_of(target)?;
+    if !guard.beside {
+        guard.ledger.kept(
+            name,
+            true,
+            format!(
+                "it was saved as {target} while Marfa wrote that file, and another save took that name; Marfa never sends a file under this name, so move it back yourself if it is the one you want"
+            ),
+        );
+        return Ok(name.to_path_buf());
+    }
     loop {
         let kept = super::placement::beside(&target, |candidate| {
             dir.entry_kind(Path::new(candidate)).is_ok()
@@ -893,15 +912,21 @@ pub(crate) fn settle(
         match found(guard.aside, name, known)? {
             Found::Absent => {}
             Found::Ours => guard.aside.unlink(name)?,
-            Found::Read => {
-                if displacement.kind == Displaced::Replace
-                    && found(dir, target, known)? == Found::Absent
-                {
-                    restore(dir, guard, target, name)?;
-                } else {
-                    discard(guard.aside, name)?;
-                }
-            }
+            Found::Read => match (displacement.kind, found(dir, target, known)?) {
+                // The path is empty in the gap only where the volume cannot
+                // exchange names.
+                (Displaced::Aside, Found::Absent) => restore(dir, guard, target, name)?,
+                // After an exchange, an empty path is the person's delete.
+                (Displaced::Exchange, Found::Absent) => guard.ledger.kept(
+                    name,
+                    true,
+                    format!(
+                        "it is {} as Marfa read it before it replaced the file, which was then deleted; it is kept rather than put back over that delete, so delete it when it is not needed",
+                        displacement.target
+                    ),
+                ),
+                _ => discard(guard.aside, name)?,
+            },
             Found::Other => drop(put_back(dir, guard, target, name, known)?),
         }
     }
@@ -975,7 +1000,8 @@ pub(crate) enum Withdrawal {
 /// Moves `target` aside, replacing nothing, where `still` says its bytes are
 /// what the caller decided to remove; then, where what moved is that file
 /// unchanged, runs `then` and discards it. Anything else that moved goes
-/// back to its path, or beside it.
+/// back to its path, or beside it. A volume that cannot rename without
+/// replacing leaves the file in place, as `Unsupported`.
 pub(crate) fn withdraw_at(
     dir: &Directory,
     guard: Guard<'_>,
@@ -1008,10 +1034,19 @@ pub(crate) fn withdraw_at(
         .ledger
         .record(&displacement)
         .map_err(RemoveError::Remove)?;
-    if let Err(error) = move_aside(dir, target, guard.aside, &aside) {
+    let moved = if named_for(target, "rename-new-unsupported") {
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    } else {
+        rename_new_at(dir, target, guard.aside, &aside)
+    };
+    if let Err(error) = moved {
         guard.ledger.clear(&displacement);
         return match error.kind() {
             io::ErrorKind::NotFound => Ok(Withdrawal::Absent),
+            io::ErrorKind::Unsupported => Err(RemoveError::Remove(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the volume cannot rename a file without replacing another, so Marfa leaves it rather than risk a save made as it goes",
+            ))),
             _ => Err(RemoveError::Remove(error)),
         };
     }
@@ -1199,6 +1234,13 @@ fn save_over(dir: &Directory, target: &Path, fault: &str, line: &[u8]) {
         return;
     }
     let mut bytes = dir.read(target).unwrap_or_default();
+    // A settings file stays one that reads.
+    if target
+        .extension()
+        .is_some_and(|extension| extension == "yaml")
+    {
+        bytes.extend_from_slice(b"# ");
+    }
     bytes.extend_from_slice(line);
     let staged = PathBuf::from(format!(".{}.saving", target.display()));
     let _ = dir.unlink(&staged);
@@ -1283,6 +1325,7 @@ pub(crate) fn land(
     let guard = Guard {
         aside: &dir,
         ledger: &ledger,
+        beside: true,
     };
     land_at(
         &dir,
@@ -1311,6 +1354,7 @@ fn remove(target: &Path, still: impl FnOnce(&[u8]) -> bool) -> io::Result<bool> 
     let guard = Guard {
         aside: &dir,
         ledger: &ledger,
+        beside: true,
     };
     remove_at(&dir, guard, Path::new(target.file_name().unwrap()), still)
 }
@@ -1341,6 +1385,7 @@ mod tests {
             Guard {
                 aside: &dir,
                 ledger: &ledger,
+                beside: true,
             },
             unflushed,
             Path::new(name),
@@ -1442,6 +1487,7 @@ mod tests {
             Guard {
                 aside: &handle,
                 ledger: &ledger,
+                beside: true,
             },
             &unflushed,
             Path::new("a.md"),
@@ -1704,6 +1750,7 @@ mod tests {
             Guard {
                 aside: &self.dir,
                 ledger: &self.ledger,
+                beside: true,
             }
         }
 
@@ -1896,23 +1943,90 @@ mod tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn without_a_rename_that_replaces_nothing_a_removal_still_checks_what_it_moved() {
+    fn without_a_rename_that_replaces_nothing_a_removal_leaves_the_file() {
         let place = Place::new(Some(b"as last written"));
-        let _new = crate::fault::fail_on_this_thread("rename-new-unsupported");
+        {
+            let _new = crate::fault::fail_on_this_thread("rename-new-unsupported");
+            let removed = place.remove(b"as last written");
+            assert!(
+                matches!(&removed, Err(error) if error.kind() == io::ErrorKind::Unsupported),
+                "{removed:?}"
+            );
+        }
+        assert_eq!(place.read("note.md"), b"as last written");
+        assert!(reserved_left(&place.root).is_empty());
+        assert!(place.ledger.rows.borrow().is_empty());
+        place.clean();
+        // The witness: where the volume can, the same removal removes it.
         assert!(place.remove(b"as last written").unwrap());
         assert!(!place.root.join("note.md").exists());
         place.clean();
-        std::fs::write(place.root.join("note.md"), b"as last written").unwrap();
-        let _save = crate::fault::fail_on_this_thread("save-after-last-look");
-        assert!(!place.remove(b"as last written").unwrap());
-        // Nothing can go back without replacing, so the save stays where it
-        // went, under a name no sweep removes.
-        assert!(!place.root.join("note.md").exists());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_file_deleted_after_a_stopped_exchange_is_not_brought_back() {
+        let place = Place::new(Some(b"as last written"));
+        let stopped = {
+            let _stop = crate::fault::fail_on_this_thread("crash-after-exchange");
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                place.write(b"as last written")
+            }))
+        };
+        assert!(stopped.is_err());
+        assert_eq!(place.read("note.md"), b"from the server");
+        // The person deletes the file the write left at the path.
+        std::fs::remove_file(place.root.join("note.md")).unwrap();
+        place.settle();
+        assert!(
+            !place.root.join("note.md").exists(),
+            "the person's delete was undone"
+        );
         let left = reserved_left(&place.root);
         assert_eq!(left.len(), 1);
-        assert_eq!(place.read(&left[0]), SAVED);
+        assert_eq!(place.read(&left[0]), b"as last written");
         assert_eq!(place.ledger.kept.borrow()[0].0, Path::new(&left[0]));
-        assert!(place.ledger.rows.borrow().is_empty());
+    }
+
+    /// A reader that notes the largest buffer it is asked to fill.
+    struct Widest<'a> {
+        bytes: &'a [u8],
+        widest: usize,
+    }
+
+    impl Read for Widest<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+            self.widest = self.widest.max(buffer.len());
+            let read = self.bytes.read(buffer)?;
+            Ok(read)
+        }
+    }
+
+    #[test]
+    fn a_large_file_is_compared_a_chunk_at_a_time() {
+        let bytes = vec![7u8; 4 << 20];
+        let mut reader = Widest {
+            bytes: &bytes,
+            widest: 0,
+        };
+        assert!(same_bytes(&mut reader, &bytes).unwrap());
+        assert!(
+            reader.widest <= 1 << 16,
+            "read {} bytes at once",
+            reader.widest
+        );
+        let mut longer = bytes.clone();
+        longer.push(1);
+        for (on_disk, read) in [(&longer[..], &bytes[..]), (&bytes[..], &longer[..])] {
+            let mut reader = Widest {
+                bytes: on_disk,
+                widest: 0,
+            };
+            assert!(!same_bytes(&mut reader, read).unwrap());
+        }
+        let mut changed = bytes.clone();
+        changed[3 << 20] = 8;
+        assert!(!same_bytes(changed.as_slice(), &bytes).unwrap());
     }
 
     #[cfg(unix)]
@@ -2037,6 +2151,7 @@ mod tests {
                 Guard {
                     aside: &directory,
                     ledger: &ledger,
+                    beside: true,
                 },
                 Path::new("note.md"),
                 |file, temporary| {

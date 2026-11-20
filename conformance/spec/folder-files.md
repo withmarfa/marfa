@@ -772,15 +772,23 @@ If a person's save takes a file's path after a device last read the file and bef
 
 ### `folder-files/write-displaced-kept-beside`
 
-If another file takes a file's path while a device puts a person's save back at it, then a device MUST move the save to the first free numbered name beside the path, as `folder-files/placement-collision-number` numbers it.
+If another file takes the path of a file outside the folder's `.marfa` directory while a device puts a person's save back at it, then a device MUST move the save to the first free numbered name beside the path, as `folder-files/placement-collision-number` numbers it.
 
 **Tests:** `device/folders-contract-extra-c.test.ts › keeps a second save made as the first goes back beside the file, and reports it`, `device/folders-placement.test.ts › keeps a save made to the moved file under a numbered name where another file took its path meanwhile`.
+
+### `folder-files/write-displaced-settings-kept`
+
+If another file takes the path of the folder's settings file while a device puts a person's save back at it, then a device MUST keep the save in the folder's root under a name of the form `.marfa-kept-<id>.tmp`.
+
+**Reason:** a device reads no other file in `.marfa` as settings, and clears what else is there.
+
+**Tests:** `device/folders-contract-extra-c.test.ts › keeps a second save of the folder's settings file in the folder's root, and reports it`.
 
 ### `folder-files/write-kept-reported`
 
 When a device keeps a person's file beside its path or under a name of the form `.marfa-kept-<id>.tmp`, a device MUST report that file in `flagged` with the flag `kept`.
 
-**Tests:** `device/folders-contract-extra-c.test.ts › keeps a second save made as the first goes back beside the file, and reports it`, `device/folders-contract-extra-c.test.ts › keeps and reports a file under a name kept for a file moved out of its path, while cleaning an abandoned one`.
+**Tests:** `device/folders-contract-extra-c.test.ts › keeps a second save made as the first goes back beside the file, and reports it`, `device/folders-contract-extra-c.test.ts › keeps and reports a file under a name kept for a file moved out of its path, while cleaning an abandoned one`, `device/folders-contract-extra-c.test.ts › keeps a second save of the folder's settings file in the folder's root, and reports it`, `device/folders-contract-extra-c.test.ts › keeps the file it moved out, and does not bring it back, where the person deleted the file a cut-off pull left`.
 
 ### `folder-files/write-retained-not-swept`
 
@@ -796,6 +804,38 @@ When a device stops after it moved a file out of its path and before it settled 
 
 **Tests:** `device/folders-contract-extra-c.test.ts › puts a save back when a pull is cut off after moving it out of its path`, `device/folders-placement.test.ts › counts nothing missing when it finishes taking an old buffer after a crash`.
 
+### `folder-files/write-crash-delete-kept`
+
+If a person deletes the file a device wrote at a path before the device settles the file it moved out of that path, then a device MUST NOT put the moved file back at the path.
+
+**Reason:** the path is empty only after the person's delete, since a device moves a file out of a path by exchanging it with the new one.
+
+**Tests:** `device/folders-contract-extra-c.test.ts › keeps the file it moved out, and does not bring it back, where the person deleted the file a cut-off pull left`.
+
+### `folder-files/write-crash-displaced-followed`
+
+If a directory moves within the folder after a device moved a file in it out of its path and before the device settled that file, then a device MUST put a person's save it moved back at the file's path in the directory where it now is.
+
+**Tests:** `device/folders-contract-extra-c.test.ts › puts a save back in its directory where that directory moved after a pull was cut off`.
+
+### `folder-files/write-crash-displaced-not-replaced`
+
+If another directory takes the name of a directory in which a device moved a file out of its path before the device settled that file, then a device MUST NOT put back or remove a file in the other directory.
+
+**Tests:** `device/folders-contract-extra-c.test.ts › puts a save back in its directory where that directory moved after a pull was cut off`.
+
+### `folder-files/write-crash-displaced-unfound-reported`
+
+While a device cannot find in the folder the directory of a file it moved out of its path and has not settled, a device MUST report that file in `flagged` with the flag `kept` at each scan and pull.
+
+**Tests:** `device/folders-contract-extra-c.test.ts › reports a save it moved out of its path, while the directory it was in is outside the folder`.
+
+### `folder-files/write-crash-displaced-unfound-status`
+
+While a device cannot find in the folder the directory of a file it moved out of its path and has not settled, a device MUST list that file in the folder's status as `held` with the flag `kept`.
+
+**Tests:** `device/folders-contract-extra-c.test.ts › reports a save it moved out of its path, while the directory it was in is outside the folder`.
+
 ### `folder-files/write-no-exchange`
 
 Where a volume cannot exchange two names in one step, if a file appears at a file's path while a device replaces that file, then a device MUST leave the file that appeared and count the item `unwritten`.
@@ -808,7 +848,15 @@ If a volume can neither exchange two names in one step nor rename a file without
 
 **Reason:** with neither, a device cannot replace a file without risking a save the person makes as it does so.
 
-**Tests:** `device/folders-contract-extra-c.test.ts › leaves a file unwritten where the volume can neither exchange names nor rename without replacing`, `device/folders-contract-b.test.ts › leaves an existing file unwritten on an exFAT volume, and still removes a trashed item's file`.
+**Tests:** `device/folders-contract-extra-c.test.ts › leaves a file unwritten where the volume can neither exchange names nor rename without replacing`, `device/folders-contract-b.test.ts › leaves an existing file unwritten, and a trashed item's file in place, on an exFAT volume`.
+
+### `folder-files/write-no-replace-removal`
+
+If a volume cannot rename a file without replacing, then a device MUST leave a file a pull would remove in place and count its item `unwritten`.
+
+**Reason:** a device removes a file by renaming it out of its path, and a rename that can replace could carry away a save the person makes as it goes.
+
+**Tests:** `device/folders-contract-extra-c.test.ts › leaves a trashed item's file in place where the volume cannot rename without replacing`, `device/folders-contract-b.test.ts › leaves an existing file unwritten, and a trashed item's file in place, on an exFAT volume`.
 
 ### `folder-files/write-new-target-race`
 

@@ -1460,7 +1460,7 @@ describe("exFAT volumes", ON_MACOS, () => {
     });
   });
 
-  it("leaves an existing file unwritten on an exFAT volume, and still removes a trashed item's file", async () => {
+  it("leaves an existing file unwritten, and a trashed item's file in place, on an exFAT volume", async () => {
     const [kept, going] = [row(0), row(1)];
     harness = await folderHarness("contract-b-exfat-replace", {
       items: { "core.note": [kept, going] },
@@ -1497,13 +1497,17 @@ describe("exFAT volumes", ON_MACOS, () => {
       expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
       if (!pulled.ok) return;
       expect(
-        [pulled.value.rewritten, pulled.value.unwritten],
-        "a pull replaced a file on a volume that can neither swap names nor rename without replacing",
-      ).toEqual([0, 1]);
+        [pulled.value.rewritten, pulled.value.removed, pulled.value.unwritten],
+        "a pull replaced or removed a file on a volume that can neither swap names nor rename without replacing",
+      ).toEqual([0, 0, 2]);
       expect(readFileSync(join(dir, "Note 0.md"), "utf8")).toBe(before);
-      // The witness: a removal needs neither, and still takes the file away.
-      expect(pulled.value.removed).toBe(1);
-      expect(existsSync(join(dir, "Note 1.md"))).toBe(false);
+      expect(existsSync(join(dir, "Note 1.md"))).toBe(true);
+      expect(
+        pulled.value.flagged.map((file) => [file.path, file.flag]).sort(),
+      ).toEqual([
+        ["Note 0.md", "unwritten"],
+        ["Note 1.md", "unwritten"],
+      ]);
       expect(
         readdirSync(dir).filter((name) => name.startsWith(".marfa-")),
       ).toEqual([]);

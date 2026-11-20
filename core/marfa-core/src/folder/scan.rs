@@ -528,7 +528,13 @@ impl Folder {
                 let keys = found.into_iter().map(|(_, key)| key).collect();
                 (walked, Some((inventory, vanished, keys, snapshot)))
             }
-            None => (self.walked(&lists), None),
+            None => {
+                let mut walked = self.walked(&lists);
+                if mode == Files::Write && self.settle_found(&walked.kept)? {
+                    walked = self.walked(&lists);
+                }
+                (walked, None)
+            }
         };
         let incomplete = walked.incomplete();
         swap_root(&self.root, "replace-root-before-capture");
@@ -553,19 +559,7 @@ impl Folder {
         for left in state_left {
             let _ = self.state_dir.unlink(&left);
         }
-        let kept = self.take_kept()?;
-        for path in &walked.kept {
-            if kept.iter().any(|kept| kept.path == *path) {
-                continue;
-            }
-            report.flagged.push(Flagged {
-                path: path.clone(),
-                flag: "kept",
-                reason: "Marfa moved this file out of its path and could not tell whether it holds a change; check it, and delete it when it is not needed".into(),
-                item: None,
-            });
-        }
-        report.flagged.extend(kept);
+        report.flagged.extend(self.kept_report(&walked.kept)?);
         report.directories = walked.directories.clone();
         report.secrets = walked.secrets.clone();
         let unanswered = crate::store::items_awaiting_their_write(&*self.core.conn()?)?;

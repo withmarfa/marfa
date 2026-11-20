@@ -228,6 +228,16 @@ impl PullReport {
     }
 }
 
+/// What became of a file a pull or a confirmation took away.
+pub(super) enum TakenAway {
+    /// The file is gone and its binding ended, with this many placements.
+    Ended(usize),
+    /// The file changed as it went, so it stays.
+    Kept,
+    /// The volume cannot remove it safely, so it stays, for this reason.
+    Refused(String),
+}
+
 /// The name a new file of `item` takes, from its title or else its id.
 pub(super) fn new_name(item: &Item, catalog: &Catalog) -> String {
     let title = item
@@ -367,7 +377,7 @@ impl Folder {
         let flushed = self.flush_landed();
         match (pulled, flushed) {
             (Ok(done), Ok(())) => {
-                report.flagged.extend(self.take_kept()?);
+                report.flagged.extend(self.kept_report(&[])?);
                 Ok(done)
             }
             (Err(error), _) => Err(error),
@@ -1703,15 +1713,17 @@ impl Folder {
                             .parent()
                             .map(|parent| parent.to_string_lossy().into_owned())
                             .unwrap_or_default();
-                        let place = self.guarded_at(&conn, from, dir);
-                        let _ = landing::remove_at(
-                            &place.directory,
-                            place.guard(),
-                            &from.name,
-                            |found| {
-                                source.check().is_ok() && state::hash(found) == theirs.content_hash
-                            },
-                        );
+                        if let Ok(place) = self.guarded_at(&conn, from, dir) {
+                            let _ = landing::remove_at(
+                                &place.directory,
+                                place.guard(),
+                                &from.name,
+                                |found| {
+                                    source.check().is_ok()
+                                        && state::hash(found) == theirs.content_hash
+                                },
+                            );
+                        }
                     }
                 })
             })
@@ -1906,16 +1918,15 @@ impl Folder {
             .parent()
             .map(|parent| parent.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let place = self.guarded_at(&conn, &entry, dir);
-        let removed = match landing::remove_checked_at(
-            &place.directory,
-            place.guard(),
-            &entry.name,
-            |found| {
-                source.check().is_ok()
-                    && bound.written_hash.as_deref() == Some(state::hash(found).as_str())
-            },
-        ) {
+        let removed = match self
+            .guarded_at(&conn, &entry, dir)
+            .map_err(landing::RemoveError::Remove)
+            .and_then(|place| {
+                landing::remove_checked_at(&place.directory, place.guard(), &entry.name, |found| {
+                    source.check().is_ok()
+                        && bound.written_hash.as_deref() == Some(state::hash(found).as_str())
+                })
+            }) {
             Ok(removed) => removed,
             Err(landing::RemoveError::Remove(error)) => {
                 report.unwritten += 1;
@@ -1997,12 +2008,19 @@ impl Folder {
         for row in going {
             context.check(&*self.core.conn()?)?;
             let purged = crate::store::purged(&*self.core.conn()?, &row.item_id)?;
-            if let Some(ended) = self.take_away(&row, &mut context)? {
-                report.removed += 1;
-                report.purged += usize::from(purged);
-                report.ended += ended;
-            } else {
-                report.kept += 1;
+            match self.take_away(&row, &mut context)? {
+                TakenAway::Ended(ended) => {
+                    report.removed += 1;
+                    report.purged += usize::from(purged);
+                    report.ended += ended;
+                }
+                TakenAway::Kept => report.kept += 1,
+                TakenAway::Refused(reason) => report.not_written(
+                    NotWritten::Unwritten,
+                    &row.item_id,
+                    &row.path,
+                    format!("Marfa left the file rather than remove it: {reason}"),
+                ),
             }
         }
         Ok(())
@@ -2142,7 +2160,7 @@ impl Folder {
         &self,
         row: &state::Bound,
         context: &mut crate::reach::Context,
-    ) -> Result<Option<usize>> {
+    ) -> Result<TakenAway> {
         // First: a failure leaves the file and its binding, and the next pass
         // finds no placement left to end and takes the file away.
         let ended = self.end_placement(&row.item_id, &row.path)?;
@@ -2152,18 +2170,26 @@ impl Folder {
         if plainly_inside(&self.root_dir, &row.path) {
             let still =
                 |found: &[u8]| row.written_hash.as_deref() == Some(state::hash(found).as_str());
-            if self.exists(&path)
-                && !self.remove_file(&conn, &path, still).map_err(|error| {
-                    CoreError::Store(format!("cannot remove {}: {error}", path.display()))
-                })?
-                && self.exists(&path)
-            {
-                return Ok(None);
+            if self.exists(&path) {
+                match self.remove_file(&conn, &path, still) {
+                    Ok(true) => {}
+                    Ok(false) if self.exists(&path) => return Ok(TakenAway::Kept),
+                    Ok(false) => {}
+                    Err(error) if error.kind() == std::io::ErrorKind::Unsupported => {
+                        return Ok(TakenAway::Refused(error.to_string()));
+                    }
+                    Err(error) => {
+                        return Err(CoreError::Store(format!(
+                            "cannot remove {}: {error}",
+                            path.display()
+                        )));
+                    }
+                }
             }
         }
         context.change_pins(&conn, || state::unbind(&conn, &row.path))?;
         state::journal_clear(&conn, &row.path)?;
-        Ok(Some(ended))
+        Ok(TakenAway::Ended(ended))
     }
 
     /// Whether another device changed a missing file's item in what the file

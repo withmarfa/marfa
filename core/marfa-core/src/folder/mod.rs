@@ -1193,8 +1193,15 @@ impl Guarded<'_> {
         landing::Guard {
             aside: &self.aside,
             ledger: &self.rows,
+            beside: !in_state(&self.rows.dir),
         }
     }
+}
+
+/// Whether `dir`, a row's directory, is in the folder's state, which the
+/// folder clears, so nothing is kept beside a file there.
+fn in_state(dir: &str) -> bool {
+    Path::new(dir).starts_with(STATE_DIR)
 }
 
 /// Records displacements in the folder's state, and the files kept for the
@@ -1202,7 +1209,9 @@ impl Guarded<'_> {
 struct Rows<'a> {
     conn: &'a rusqlite::Connection,
     dir: String,
+    dir_at: (u64, u64),
     aside: String,
+    aside_at: (u64, u64),
 }
 
 impl landing::Ledger for Rows<'_> {
@@ -1211,7 +1220,9 @@ impl landing::Ledger for Rows<'_> {
             self.conn,
             &state::Displaced {
                 dir: self.dir.clone(),
+                dir_at: self.dir_at,
                 aside: self.aside.clone(),
+                aside_at: self.aside_at,
                 displacement: displacement.clone(),
             },
         )
@@ -1242,6 +1253,35 @@ fn joined(dir: &str, name: &str) -> String {
     } else {
         format!("{dir}/{name}")
     }
+}
+
+/// Settles `row` in `dir` and `aside`, each with where it now is.
+fn settle_row(
+    conn: &rusqlite::Connection,
+    row: &state::Displaced,
+    (dir, dir_place): (&Directory, &str),
+    (aside, aside_place): (&Directory, &str),
+) -> Result<()> {
+    let rows = Rows {
+        conn,
+        dir: dir_place.to_string(),
+        dir_at: row.dir_at,
+        aside: aside_place.to_string(),
+        aside_at: row.aside_at,
+    };
+    let guard = landing::Guard {
+        aside,
+        ledger: &rows,
+        beside: !in_state(dir_place),
+    };
+    if let Err(error) = landing::settle(dir, guard, &row.displacement) {
+        state::put_kept(
+            conn,
+            &joined(aside_place, &row.displacement.kept),
+            &format!("Marfa moved it aside and could not put it back: {error}"),
+        )?;
+    }
+    Ok(())
 }
 
 impl Folder {
@@ -1324,14 +1364,16 @@ impl Folder {
             (directory.clone(), dir.clone())
         };
         Ok(Guarded {
-            directory,
-            name,
-            aside,
             rows: Rows {
                 conn,
                 dir,
+                dir_at: landing::identity(&directory.metadata()?),
                 aside: aside_place,
+                aside_at: landing::identity(&aside.metadata()?),
             },
+            directory,
+            name,
+            aside,
         })
     }
 
@@ -1343,40 +1385,52 @@ impl Folder {
         conn: &'a rusqlite::Connection,
         entry: &transfer::Entry,
         dir: String,
-    ) -> Guarded<'a> {
-        Guarded {
+    ) -> std::io::Result<Guarded<'a>> {
+        let at = landing::identity(&entry.directory.metadata()?);
+        Ok(Guarded {
             directory: entry.directory.clone(),
             name: entry.name.clone().into_os_string(),
             aside: entry.directory.clone(),
             rows: Rows {
                 conn,
                 dir: dir.clone(),
+                dir_at: at,
                 aside: dir,
+                aside_at: at,
             },
-        }
+        })
     }
 
-    /// The directory a displacement row names: relative to the root, in the
-    /// folder's state, or absolute.
-    fn displaced_dir(&self, place: &str) -> std::io::Result<Directory> {
+    /// The directory a displacement row names, relative to the root, in the
+    /// folder's state, or absolute, where it is still the directory `at`
+    /// names. Another directory at that path answers as not found.
+    fn displaced_dir(&self, place: &str, at: (u64, u64)) -> std::io::Result<Directory> {
         let place = Path::new(place);
-        if place.is_absolute() {
-            Directory::open(place)
+        let directory = if place.is_absolute() {
+            Directory::open(place)?
         } else if place.as_os_str().is_empty() {
-            Ok(self.root_dir.clone())
+            self.root_dir.clone()
         } else if let Ok(below) = place.strip_prefix(STATE_DIR) {
             if below.as_os_str().is_empty() {
-                Ok(self.state_dir.clone())
+                self.state_dir.clone()
             } else {
-                self.state_dir.child(below, false)
+                self.state_dir.child(below, false)?
             }
         } else {
-            self.root_dir.child(place, false)
+            self.root_dir.child(place, false)?
+        };
+        if landing::identity(&directory.metadata()?) != at {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "another directory has its name",
+            ));
         }
+        Ok(directory)
     }
 
     /// Settles every file a write or a removal moved out of its path and a
-    /// run that stopped did not settle, before anything sweeps or binds.
+    /// run that stopped did not settle, before anything sweeps or binds. A
+    /// row whose directory is not where it was stays, for a walk to find.
     fn settle_displaced(&self) -> Result<()> {
         let conn = self.core.conn()?;
         for row in state::displaced(&conn)? {
@@ -1389,46 +1443,106 @@ impl Folder {
                     continue;
                 }
             };
-            let id = row.displacement.id.clone();
-            let (dir, aside) = match self
-                .displaced_dir(&row.dir)
-                .and_then(|dir| Ok((dir, self.displaced_dir(&row.aside)?)))
+            match self
+                .displaced_dir(&row.dir, row.dir_at)
+                .and_then(|dir| Ok((dir, self.displaced_dir(&row.aside, row.aside_at)?)))
             {
-                Ok(found) => found,
-                // Its directory went, and what was moved aside with it.
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    state::clear_displaced(&conn, &id)?;
-                    continue;
+                Ok((dir, aside)) => {
+                    settle_row(&conn, &row, (&dir, &row.dir), (&aside, &row.aside))?
                 }
-                Err(error) => {
-                    state::put_kept(
-                        &conn,
-                        &joined(&row.aside, &row.displacement.kept),
-                        &format!(
-                            "Marfa moved it aside and cannot reach it to put it back: {error}"
-                        ),
-                    )?;
-                    continue;
-                }
-            };
-            let rows = Rows {
-                conn: &conn,
-                dir: row.dir.clone(),
-                aside: row.aside.clone(),
-            };
-            let guard = landing::Guard {
-                aside: &aside,
-                ledger: &rows,
-            };
-            if let Err(error) = landing::settle(&dir, guard, &row.displacement) {
-                state::put_kept(
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => state::put_kept(
                     &conn,
                     &joined(&row.aside, &row.displacement.kept),
-                    &format!("Marfa moved it aside and could not put it back: {error}"),
-                )?;
+                    &format!("Marfa moved it aside and cannot reach it to put it back: {error}"),
+                )?,
             }
         }
         Ok(())
+    }
+
+    /// Settles each row whose reserved name the walk met in a directory
+    /// that moved within the folder, there. Answers whether any settled.
+    fn settle_found(&self, kept: &[(WalkRoute, String)]) -> Result<bool> {
+        let conn = self.core.conn()?;
+        let mut settled = false;
+        for row in state::displaced(&conn)?.into_iter().flatten() {
+            if row.dir != row.aside || self.displaced_dir(&row.aside, row.aside_at).is_ok() {
+                continue;
+            }
+            let Some((route, path)) = kept.iter().find(|(_, path)| {
+                Path::new(path).file_name() == Some(std::ffi::OsStr::new(&row.displacement.kept))
+            }) else {
+                continue;
+            };
+            let Ok(dir) = route.open() else {
+                continue;
+            };
+            if dir.metadata().map(|found| landing::identity(&found)).ok() != Some(row.aside_at) {
+                continue;
+            }
+            let place = Path::new(path)
+                .parent()
+                .map(|parent| parent.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            settle_row(&conn, &row, (&dir, &place), (&dir, &place))?;
+            settled = true;
+        }
+        Ok(settled)
+    }
+
+    /// Each file a row holds under its reserved name in a directory that is
+    /// not where it was: moved out of the folder, gone or replaced.
+    fn unsettled(&self) -> Result<Vec<Flagged>> {
+        let conn = self.core.conn()?;
+        Ok(state::displaced(&conn)?
+            .into_iter()
+            .flatten()
+            .filter(|row| {
+                self.displaced_dir(&row.dir, row.dir_at)
+                    .and_then(|_| self.displaced_dir(&row.aside, row.aside_at))
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+            })
+            .map(|row| Flagged {
+                path: joined(&row.aside, &row.displacement.kept),
+                flag: "kept",
+                reason: format!(
+                    "Marfa moved {} here while it wrote or removed it, and this directory has since moved out of the folder, gone or been replaced; the file stays under this name until the directory is back in the folder",
+                    joined(&row.dir, &row.displacement.target)
+                ),
+                item: None,
+            })
+            .collect())
+    }
+
+    /// What a pass reports kept: what was kept since the last report, each
+    /// row's file whose directory is not where it was, and each file the
+    /// walk met under a reserved name, each path once.
+    fn kept_report(&self, walked: &[(WalkRoute, String)]) -> Result<Vec<Flagged>> {
+        let mut report = self.take_kept()?;
+        for flagged in self
+            .unsettled()?
+            .into_iter()
+            .chain(self.walked_kept(walked))
+        {
+            if !report.iter().any(|kept| kept.path == flagged.path) {
+                report.push(flagged);
+            }
+        }
+        Ok(report)
+    }
+
+    /// Each file the walk met under a reserved name.
+    fn walked_kept<'a>(
+        &self,
+        walked: &'a [(WalkRoute, String)],
+    ) -> impl Iterator<Item = Flagged> + 'a {
+        walked.iter().map(|(_, path)| Flagged {
+            path: path.clone(),
+            flag: "kept",
+            reason: "Marfa moved this file out of its path and could not tell whether it holds a change; check it, and delete it when it is not needed".into(),
+            item: None,
+        })
     }
 
     /// The files kept since the last report, each once.
@@ -1668,7 +1782,7 @@ struct Walked {
     left: Vec<(WalkRoute, PathBuf)>,
     /// Files a write or a removal moved out of their path and left at a
     /// reserved name, which nothing removes, by path.
-    kept: Vec<String>,
+    kept: Vec<(WalkRoute, String)>,
     /// The volume of the directory the walk began at.
     volume: Option<u64>,
     /// Whether the walk entered a directory on another volume, where a
@@ -1947,7 +2061,7 @@ fn take_file(
     if landing::left_behind(&path) {
         walked.left.push((route.clone(), PathBuf::from(name)));
     } else if landing::is_reserved(&path) {
-        walked.kept.push(relative);
+        walked.kept.push((route.clone(), relative));
     } else if lists.takes(&relative) {
         #[cfg(test)]
         tests::FILES_CAPTURED.with(|count| count.set(count.get() + 1));

@@ -30,8 +30,10 @@ import {
 import type { SseFrame } from "../../device/scripted-server.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
 import { byteDifference } from "../../utils/bytes.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 import {
   folderHarness,
+  folderItem,
   hashOf,
   scriptBlob,
   type FolderHarness,
@@ -781,8 +783,11 @@ describe("files moved out of their path", () => {
         properties: { ...row.properties, body: "changed elsewhere\n" },
       }),
     );
-  async function changedElsewhere(rows: WireItemOptions[]) {
-    const { frames } = await seed(rows);
+  async function changedElsewhere(
+    rows: WireItemOptions[],
+    paths: Record<string, string> = {},
+  ) {
+    const { frames } = await seed(rows, [], undefined, paths);
     await pull();
     rows.forEach((row, at) => frames.push(changed(row, String(at + 2))));
     const caught = await folder!.folder.device().catchUp();
@@ -877,5 +882,158 @@ describe("files moved out of their path", () => {
     // Once the volume can, the next pull writes it.
     expect((await pull()).rewritten).toBe(1);
     expect(read("Kept.md")).toContain("changed elsewhere");
+  });
+
+  /** Names a pull's move out of a path left in `dir`. */
+  const movedIn = (dir: string) =>
+    readdirSync(join(folder!.dir, dir)).filter((name) =>
+      name.startsWith(".marfa-"),
+    );
+  async function cutOffInProjects() {
+    await changedElsewhere([note(1, "Kept", "as it was\n")], {
+      [id(1)]: "Projects/Kept.md",
+    });
+    process.env.MARFA_TEST_FAULT =
+      "save-after-last-look=Kept.md,crash-after-exchange=Kept.md";
+    await expect(folder!.folder.pull()).rejects.toThrow(/could not be run/);
+    delete process.env.MARFA_TEST_FAULT;
+    expect(
+      movedIn("Projects"),
+      "the cut-off pull moved nothing out of the path, so nothing below is about settling it",
+    ).toHaveLength(1);
+  }
+
+  it("puts a save back in its directory where that directory moved after a pull was cut off", async () => {
+    await cutOffInProjects();
+    renameSync(join(folder!.dir, "Projects"), join(folder!.dir, "Plans"));
+    put("Projects/Kept.md", "a new file\n");
+    await scan();
+    expect(
+      read("Plans/Kept.md"),
+      "a save moved out of its path was not put back where its directory went",
+    ).toContain("as it was\nsaved after the last look\n");
+    expect(movedIn("Plans")).toEqual([]);
+    const taken = read("Projects/Kept.md");
+    expect(taken).toContain("a new file\n");
+    expect(
+      taken,
+      "a directory that took the moved one's name was settled against",
+    ).not.toContain("saved after the last look");
+    expect(movedIn("Projects")).toEqual([]);
+  });
+
+  it("reports a save it moved out of its path, while the directory it was in is outside the folder", async () => {
+    await cutOffInProjects();
+    const away = tempFolder("extra-c-moved-away");
+    renameSync(join(folder!.dir, "Projects"), join(away, "Projects"));
+    const isKept = (file: { path: string; flag?: string }) =>
+      file.flag === "kept" && file.path.startsWith("Projects/.marfa-kept-");
+    for (let pass = 0; pass < 2; pass += 1) {
+      const report = await scan();
+      expect(
+        report.flagged.filter(isKept),
+        "a save moved out of its path went unreported once its directory left the folder",
+      ).toHaveLength(1);
+    }
+    const status = await folder!.folder.status();
+    expect(status.ok, JSON.stringify(status)).toBe(true);
+    if (!status.ok) return;
+    expect(
+      status.value.files.filter(
+        (file) => file.status === "held" && isKept(file),
+      ),
+    ).toHaveLength(1);
+    expect((await pull()).flagged.filter(isKept)).toHaveLength(1);
+    // Back inside the folder, it is settled where it is.
+    renameSync(join(away, "Projects"), join(folder!.dir, "Back"));
+    const report = await scan();
+    expect(read("Back/Kept.md")).toContain(
+      "as it was\nsaved after the last look\n",
+    );
+    expect(movedIn("Back")).toEqual([]);
+    expect(report.flagged.filter((file) => file.flag === "kept")).toEqual([]);
+  });
+
+  it("keeps the file it moved out, and does not bring it back, where the person deleted the file a cut-off pull left", async () => {
+    await changedElsewhere([note(1, "Kept", "as it was\n")]);
+    process.env.MARFA_TEST_FAULT = "crash-after-exchange=Kept.md";
+    await expect(folder!.folder.pull()).rejects.toThrow(/could not be run/);
+    delete process.env.MARFA_TEST_FAULT;
+    expect(read("Kept.md")).toContain("changed elsewhere");
+    rmSync(join(folder!.dir, "Kept.md"));
+    const report = await scan();
+    expect(
+      existsSync(join(folder!.dir, "Kept.md")),
+      "a file the person deleted was brought back",
+    ).toBe(false);
+    const kept = moved();
+    expect(kept).toHaveLength(1);
+    expect(read(kept[0]!)).toContain("as it was\n");
+    expect(report.flagged.map((file) => [file.path, file.flag])).toContainEqual(
+      [kept[0], "kept"],
+    );
+  });
+
+  it("leaves a trashed item's file in place where the volume cannot rename without replacing", async () => {
+    const rows = [note(1, "Going"), note(2, "Witness")];
+    const { frames } = await seed(rows);
+    await pull();
+    rows.forEach((row, at) =>
+      frames.push(
+        copyItemEvent(
+          String(at + 2),
+          "item.trashed",
+          wireItem({ ...row, state: "trashed" }),
+        ),
+      ),
+    );
+    const caught = await folder!.folder.device().catchUp();
+    expect(caught.ok && caught.value.applied).toBe(2);
+    process.env.MARFA_TEST_FAULT = "rename-new-unsupported=Going.md";
+    const pulled = await pull();
+    delete process.env.MARFA_TEST_FAULT;
+    expect([pulled.removed, pulled.unwritten]).toEqual([1, 1]);
+    expect(read("Going.md")).toContain("body");
+    expect(pulled.flagged.map((file) => [file.path, file.flag])).toContainEqual(
+      ["Going.md", "unwritten"],
+    );
+    // The witness: where the volume can, the same removal goes ahead.
+    expect(existsSync(join(folder!.dir, "Witness.md"))).toBe(false);
+    expect(moved()).toEqual([]);
+  });
+
+  it("keeps a second save of the folder's settings file in the folder's root, and reports it", async () => {
+    const { frames } = await seed([note(1, "Witness")]);
+    await pull();
+    folder!.settings.settings = {
+      ...folder!.settings.settings,
+      ignore: ["*.log"],
+    };
+    folder!.settings.version += 1;
+    frames.push(
+      copyItemEvent("2", "item.updated", folderItem(folder!.settings)),
+    );
+    const caught = await folder!.folder.device().catchUp();
+    expect(caught.ok && caught.value.applied).toBe(1);
+    process.env.MARFA_TEST_FAULT =
+      "save-after-last-look=folder.yaml,save-during-put-back=folder.yaml";
+    const pulled = await pull();
+    delete process.env.MARFA_TEST_FAULT;
+    expect(pulled.settings).toMatchObject({ written: false });
+    expect(read(".marfa/folder.yaml")).toContain("saved after the last look\n");
+    expect(
+      readdirSync(join(folder!.dir, ".marfa")).filter((name) =>
+        name.startsWith("folder"),
+      ),
+      "a save of the settings file was kept inside the folder's state",
+    ).toEqual(["folder.yaml"]);
+    const kept = moved();
+    expect(kept).toHaveLength(1);
+    expect(read(kept[0]!)).toContain("saved again\n");
+    const report = await scan();
+    expect(report.flagged.map((file) => [file.path, file.flag])).toContainEqual(
+      [kept[0], "kept"],
+    );
+    expect(report.created).toBe(0);
   });
 });

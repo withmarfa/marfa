@@ -436,11 +436,14 @@ const DISPLACED: &str = "folder_displaced:";
 /// A file a write or a removal moved out of its path, recorded before the
 /// rename. `dir` is the target's directory and `aside` the directory its
 /// reserved names are in, each relative to the folder's root, or absolute
-/// where outside it.
+/// where outside it, and each with its device and inode, so a directory
+/// that took either's name is never settled against.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Displaced {
     pub(crate) dir: String,
+    pub(crate) dir_at: (u64, u64),
     pub(crate) aside: String,
+    pub(crate) aside_at: (u64, u64),
     pub(crate) displacement: super::landing::Displacement,
 }
 

@@ -227,6 +227,17 @@ impl Folder {
             files
                 .push(FileStatus::new(&held.path, item_id, "held").because(held.flag, held.reason));
         }
+        for kept in self
+            .unsettled()?
+            .into_iter()
+            .chain(self.walked_kept(&walked.kept))
+        {
+            if seen.insert(kept.path.clone()) {
+                files.push(
+                    FileStatus::new(&kept.path, None, "held").because(kept.flag, kept.reason),
+                );
+            }
+        }
         for (path, key) in paths.iter().zip(&keys) {
             seen.insert(key.clone());
             let captured = walked.opened.get(path);
