@@ -1476,15 +1476,17 @@ The CLI MUST print, for `marfa types scaffold`, a definition that `marfa types r
 
 ### `cli/types-check-judges`
 
-When `marfa types check` is given a folder, the CLI MUST report, for each `*.json` file directly in it, every problem the server's registration of the type in that file would refuse it for, each with the file, the path in the definition and the code and message the server gives, judging the type against the types the server ships and the types of the folder that the server would have registered before it, each type after every type it names as its `parent`, in `compatible_with` or in a table column's `type_constraints`.
+When `marfa types check` is given a folder, the CLI MUST report, for each `*.json` file directly in it, every problem the server's registration of the type in that file would refuse it for, each with the file, the path in the definition and the code and message the server gives, judging the type against the types the server ships and the types of the folder that passed before it, taking each type after the types of the folder that it names as its `parent`, in a `compatible_with` list of strings or in a table column's `type_constraints`, except a type in a loop of such names and a type that names itself.
 
-**Reason:** a repository that keeps type files must learn at its own checks what a server would refuse, and learn all of it at once, not one refusal at a time. The files of a folder have no order, so a type is judged after the types it needs, as a person would register them.
+**Reason:** a repository that keeps type files must learn at its own checks what a server would refuse, and learn all of it at once, not one refusal at a time. The files of a folder have no order, so a type is judged after the types it needs, as a person would register them. A server looks a name up only where it is a string in a well-formed list, so a name in a malformed `compatible_with` list orders nothing.
 
 **Tests:** `device/types-check.test.ts › refuses each definition a registration refuses, naming the file, the path, the code and the message`, `› refuses a loosened minimum and a reserved root`, `› passes a folder whose types name a shipped parent and each other`.
 
 ### `cli/types-check-passes`
 
-When `marfa types check` finds every type in the folder would be registered, the CLI MUST exit 0.
+When every file in the folder passes the folder's own checks and a server would register every definition in it, the CLI MUST exit 0 from `marfa types check`.
+
+**Reason:** a file whose name differs from its id is refused although a server would register it, so it keeps the exit from being 0.
 
 **Tests:** `device/types-check.test.ts › passes a folder whose types name a shipped parent and each other`.
 
@@ -1502,11 +1504,19 @@ If a type in the folder names a type that is neither shipped nor accepted in the
 
 **Tests:** `device/types-check.test.ts › gives a type that names an absent type the server's answer and says why beside it`.
 
+### `cli/types-check-refused-supplies-nothing`
+
+If `marfa types check` refuses a file in the folder, for the folder's own checks or for the server's answer, then the CLI MUST judge each type of the folder that names that file's type as the server judges it with the named type absent, and say beside the answer that the named type was refused in the folder.
+
+**Reason:** a refused definition is never registered, so no later type can stand on it, however well the definition would otherwise hold.
+
+**Tests:** `device/types-check.test.ts › gives a type that names an absent type the server's answer and says why beside it`.
+
 ### `cli/types-check-file-name`
 
-If a file's name is not its type's `id` followed by `.json`, then the CLI MUST refuse the file in `marfa types check` with `file_name_mismatch`, in whatever case the name differs, before any answer of the server for the type and whatever else the type holds.
+If a file's definition has an `id` that is a string, the empty string included, and the file's name is not that `id` followed by `.json`, then the CLI MUST refuse the file in `marfa types check` with `file_name_mismatch`, in whatever case the name differs, before any answer of the server for the type and whatever else the type holds.
 
-**Reason:** a plugins repository finds a type by its file name, so a name that differs from the id names another type.
+**Reason:** a plugins repository finds a type by its file name, so a name that differs from the id names another type. A definition with no `id`, or one that is not a string, has no name to compare, so the server's answer for it stands alone.
 
 **Tests:** `device/types-check.test.ts › refuses a file name that differs from the id, including by case`.
 

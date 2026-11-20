@@ -116,10 +116,15 @@ enum Link {
     Column,
 }
 
+/// A server looks up the targets only where every entry is a string; one that is not is refused first.
 fn compat_targets(body: &Obj) -> Vec<&str> {
     match body.get("compatible_with") {
         Some(Value::String(target)) => vec![target.as_str()],
-        Some(Value::Array(targets)) => targets.iter().filter_map(Value::as_str).collect(),
+        Some(Value::Array(targets)) => targets
+            .iter()
+            .map(Value::as_str)
+            .collect::<Option<Vec<&str>>>()
+            .unwrap_or_default(),
         _ => Vec::new(),
     }
 }
@@ -170,6 +175,8 @@ struct Entry {
     file: usize,
     id: String,
     body: Obj,
+    /// Refused by the folder's own checks, so never registered for a later type to name.
+    misnamed: bool,
 }
 
 /// The types of the folder in an order that registers each after the types it names, and the ones left that wait on a loop.
@@ -271,25 +278,37 @@ pub fn check_type_files(
                 }
             },
         };
-        let id = body
-            .get("id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string();
+        let declared = body.get("id").and_then(Value::as_str);
+        let mut misnamed = false;
+        if let Some(id) = declared
+            && file.name != format!("{id}.json")
+        {
+            misnamed = true;
+            let message = if id.is_empty() {
+                format!(
+                    "The file is named \"{}\" but its id is empty: give the type an id and name the file after it.",
+                    file.name
+                )
+            } else {
+                format!(
+                    "The file is named \"{}\" but its id is \"{id}\": name the file \"{id}.json\".",
+                    file.name
+                )
+            };
+            verdicts[at]
+                .problems
+                .push(problem("id", "file_name_mismatch", message));
+        }
+        let id = declared.unwrap_or_default().to_string();
         if !id.is_empty() {
             verdicts[at].id = Some(id.clone());
-            if file.name != format!("{id}.json") {
-                verdicts[at].problems.push(problem(
-                    "id",
-                    "file_name_mismatch",
-                    format!(
-                        "The file is named \"{}\" but its id is \"{id}\": name the file \"{id}.json\".",
-                        file.name
-                    ),
-                ));
-            }
         }
-        entries.push(Entry { file: at, id, body });
+        entries.push(Entry {
+            file: at,
+            id,
+            body,
+            misnamed,
+        });
     }
     let mut by_id: HashMap<&str, usize> = HashMap::new();
     for (index, entry) in entries.iter().enumerate() {
@@ -303,11 +322,13 @@ pub fn check_type_files(
     }
     let links: Vec<Vec<(usize, Link)>> = entries
         .iter()
-        .map(|entry| {
+        .enumerate()
+        .map(|(own, entry)| {
             let mut found: Vec<(usize, Link)> = Vec::new();
             for (link, named) in references(&entry.body, &entry.id) {
                 if !shipped.contains(named)
                     && let Some(index) = by_id.get(named)
+                    && (!entries[*index].misnamed || *index == own)
                     && !found.contains(&(*index, link))
                 {
                     found.push((*index, link));
@@ -325,7 +346,8 @@ pub fn check_type_files(
         verdicts[entry.file].context =
             context_of(entry, &working, &by_id, looped.as_deref(), &entries);
         match held {
-            Ok(stored) => working = working.with(stored),
+            Ok(stored) if !entry.misnamed => working = working.with(stored),
+            Ok(_) => {}
             Err(problems) => verdicts[entry.file].problems.extend(problems),
         }
     }
@@ -924,6 +946,128 @@ mod tests {
             "{found:?}"
         );
         assert!(!found.is_empty());
+    }
+
+    #[test]
+    fn a_file_refused_for_its_name_gives_later_types_nothing_to_stand_on() {
+        let body = |parent: Option<&str>| {
+            let mut body =
+                json!({ "id": "review.parent", "fields": { "x": { "type": "string" } } });
+            if let Some(parent) = parent {
+                body["parent"] = json!(parent);
+            }
+            body.to_string()
+        };
+        let witness = check(&[
+            file("review.parent.json", body(None)),
+            child_of("review.child", "review.parent"),
+        ]);
+        assert_eq!(witness.problem_count(), 0, "witness: {witness:?}");
+
+        let verdict = check(&[
+            file("Wrong.json", body(None)),
+            child_of("review.child", "review.parent"),
+            holder("review.holder", "review.parent"),
+        ]);
+        let found = problems_of(&verdict, "Wrong.json");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, "file_name_mismatch");
+        let found = problems_of(&verdict, "review.child.json");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].code, "validation_error");
+        assert_eq!(found[0].message, "Parent type \"review.parent\" not found");
+        assert_eq!(
+            context_of_file(&verdict, "review.child.json"),
+            Some("The parent \"review.parent\" was refused in this folder.")
+        );
+        let found = problems_of(&verdict, "review.holder.json");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].message.contains("which is not registered"));
+
+        let named_by_the_child = check(&[
+            file("Wrong.json", body(Some("review.child"))),
+            child_of("review.child", "review.parent"),
+        ]);
+        for name in ["Wrong.json", "review.child.json"] {
+            let context = context_of_file(&named_by_the_child, name).unwrap_or_default();
+            assert!(!context.contains("loop"), "{name}: {context}");
+            let found = problems_of(&named_by_the_child, name);
+            assert!(
+                found
+                    .iter()
+                    .any(|problem| problem.message.starts_with("Parent type ")
+                        && problem.message.ends_with(" not found")),
+                "{name}: {found:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_malformed_claim_is_not_a_reference_so_it_makes_no_loop() {
+        let claim = |targets: Value| {
+            definition(
+                "review.false-a",
+                json!({ "compatible_with": targets, "fields": { "x": { "type": "string" } } }),
+            )
+        };
+        let witness = check(&[
+            claim(json!(["review.false-b"])),
+            child_of("review.false-b", "review.false-a"),
+        ]);
+        let context = context_of_file(&witness, "review.false-a.json").unwrap_or_default();
+        assert!(context.contains("loop"), "witness: {context}");
+
+        let verdict = check(&[
+            claim(json!(["review.false-b", 1])),
+            child_of("review.false-b", "review.false-a"),
+        ]);
+        for name in ["review.false-a.json", "review.false-b.json"] {
+            let context = context_of_file(&verdict, name).unwrap_or_default();
+            assert!(!context.contains("loop"), "{name}: {context}");
+        }
+        let found = problems_of(&verdict, "review.false-a.json");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].path, "compatible_with");
+        let found = problems_of(&verdict, "review.false-b.json");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].message, "Parent type \"review.false-a\" not found");
+        assert_eq!(
+            context_of_file(&verdict, "review.false-b.json"),
+            Some("The parent \"review.false-a\" was refused in this folder.")
+        );
+    }
+
+    #[test]
+    fn a_file_whose_id_is_empty_is_refused_for_its_name_beside_the_servers_answer() {
+        let verdict = check(&[file(
+            "Empty.json",
+            r#"{"id": "", "fields": {"x": {"type": "string"}}}"#,
+        )]);
+        let found = problems_of(&verdict, "Empty.json");
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(found[0].code, "file_name_mismatch");
+        assert_eq!(found[0].path, "id");
+        assert_eq!(found[1].code, "validation_error");
+        assert!(found[1].message.starts_with("Invalid type identifier"));
+    }
+
+    #[test]
+    fn a_file_with_no_id_or_an_id_that_is_not_a_string_has_only_the_servers_answer() {
+        for text in [
+            r#"{"fields": {"x": {"type": "string"}}}"#,
+            r#"{"id": 7, "fields": {"x": {"type": "string"}}}"#,
+            r#"{"id": null, "fields": {"x": {"type": "string"}}}"#,
+        ] {
+            let verdict = check(&[file("Any.json", text)]);
+            let found = problems_of(&verdict, "Any.json");
+            assert!(!found.is_empty(), "{text}");
+            assert!(
+                found
+                    .iter()
+                    .all(|problem| problem.code != "file_name_mismatch"),
+                "{text}: {found:?}"
+            );
+        }
     }
 
     #[test]

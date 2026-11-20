@@ -288,6 +288,12 @@ fn references_between_types() -> Vec<Value> {
             json!({ "y": { "type": "string" } }),
         ),
         child("acme.kid-enum", "acme.bad-parent", bad_enum),
+        json!({ "id": "acme.false-a", "compatible_with": ["acme.false-b", 1], "fields": { "x": { "type": "string" } } }),
+        child(
+            "acme.false-b",
+            "acme.false-a",
+            json!({ "x": { "type": "string" } }),
+        ),
     ]
 }
 
@@ -386,7 +392,59 @@ async fn the_folder_check_gives_each_definition_the_answer_a_registration_gets()
         heard.sort();
         assert_eq!(heard, said, "{id}");
     }
-    assert_eq!((accepted, refused), (13, 30));
+    assert_eq!((accepted, refused), (13, 32));
+}
+
+#[tokio::test]
+async fn a_type_under_a_file_the_folder_refused_gets_the_answer_a_registration_gets_without_it() {
+    let parent = json!({ "id": "acme.parent", "fields": { "x": { "type": "string" } } });
+    let kid = child(
+        "acme.kid",
+        "acme.parent",
+        json!({ "y": { "type": "string" } }),
+    );
+    let with_parent = Instance::start().await;
+    assert_eq!(
+        with_parent.register(parent.clone()).await.status,
+        StatusCode::CREATED
+    );
+    assert_eq!(
+        with_parent.register(kid.clone()).await.status,
+        StatusCode::CREATED
+    );
+
+    let without_parent = Instance::start().await;
+    let reply = without_parent.register(kid.clone()).await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.body);
+    let (code, said) = answered(&reply);
+
+    let files = [
+        TypeFile {
+            name: "Wrong.json".into(),
+            content: Ok(parent.to_string().into_bytes()),
+        },
+        TypeFile {
+            name: "acme.kid.json".into(),
+            content: Ok(kid.to_string().into_bytes()),
+        },
+    ];
+    let verdict = check_type_files(&files, &shipped_registry().unwrap()).unwrap();
+    let checked = verdict
+        .files
+        .iter()
+        .find(|file| file.file == "acme.kid.json")
+        .unwrap();
+    assert!(
+        checked.problems.iter().all(|problem| problem.code == code),
+        "server {code}, checker {:?}",
+        checked.problems
+    );
+    let heard: Vec<String> = checked
+        .problems
+        .iter()
+        .map(|problem| problem.message.clone())
+        .collect();
+    assert_eq!(heard, said);
 }
 
 #[tokio::test]

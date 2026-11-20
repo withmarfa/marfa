@@ -308,6 +308,47 @@ describe("a folder of type definitions, checked offline", () => {
       "was refused in this folder",
     );
 
+    const misnamedParent = await verdictOf(
+      folderOf(
+        [{ id: "acme.m", fields: { x: note } }, under("acme.n", "acme.m")],
+        { "acme.m": "Wrong.json" },
+      ),
+      1,
+    );
+    expect(problemsOf(misnamedParent, "Wrong.json")).toMatchObject([
+      { code: "file_name_mismatch" },
+    ]);
+    expect(problemsOf(misnamedParent, "acme.n.json")).toMatchObject([
+      { code: "validation_error", message: 'Parent type "acme.m" not found' },
+    ]);
+    expect(contextOf(misnamedParent, "acme.n.json")).toContain(
+      "was refused in this folder",
+    );
+
+    const malformedClaim = await verdictOf(
+      folderOf([
+        {
+          id: "acme.claim",
+          compatible_with: ["acme.below", 1],
+          fields: { x: note },
+        },
+        under("acme.below", "acme.claim"),
+      ]),
+      1,
+    );
+    expect(problemsOf(malformedClaim, "acme.claim.json")).toMatchObject([
+      { path: "compatible_with", code: "invalid_schema" },
+    ]);
+    expect(problemsOf(malformedClaim, "acme.below.json")).toMatchObject([
+      {
+        code: "validation_error",
+        message: 'Parent type "acme.claim" not found',
+      },
+    ]);
+    for (const file of ["acme.claim.json", "acme.below.json"]) {
+      expect(contextOf(malformedClaim, file)).not.toContain("loop");
+    }
+
     const columns = await verdictOf(
       folderOf([
         holder("acme.a-holder", "acme.z-person"),
@@ -366,6 +407,34 @@ describe("a folder of type definitions, checked offline", () => {
       expect(problemsOf(verdict, name), name).toMatchObject([
         { code: "file_name_mismatch", path: "id" },
       ]);
+    }
+
+    const empty = await verdictOf(
+      folderOf([{ id: "", fields: { x: note } }], { "": "Empty.json" }),
+      1,
+    );
+    expect(problemsOf(empty, "Empty.json")).toMatchObject([
+      { code: "file_name_mismatch", path: "id" },
+      { code: "validation_error", path: "id" },
+    ]);
+
+    const unnamed = tempFolder("marfa-types-check-");
+    writeFileSync(
+      join(unnamed, "NoId.json"),
+      JSON.stringify({ fields: { x: note } }),
+    );
+    writeFileSync(
+      join(unnamed, "NumberId.json"),
+      JSON.stringify({ id: 7, fields: { x: note } }),
+    );
+    const noId = await verdictOf(unnamed, 1);
+    for (const file of ["NoId.json", "NumberId.json"]) {
+      const problems = problemsOf(noId, file);
+      expect(problems.length, file).toBeGreaterThan(0);
+      expect(
+        problems.some((problem) => problem.code === "file_name_mismatch"),
+        file,
+      ).toBe(false);
     }
   });
 
