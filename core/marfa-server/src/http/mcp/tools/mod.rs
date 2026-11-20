@@ -16,6 +16,7 @@ mod keys;
 mod maintain;
 mod moving;
 mod overview;
+mod purge;
 mod revoke;
 mod rows;
 mod settings;
@@ -102,6 +103,7 @@ fn definitions() -> Vec<(Home, Definition)> {
         (Home::Admin(Task::Settings), settings::read_definition()),
         (Home::Admin(Task::Settings), settings::change_definition()),
         (Home::Admin(Task::Trash), trash::definition()),
+        (Home::Admin(Task::Trash), purge::definition()),
         (Home::Admin(Task::Apps), apps::list_definition()),
         (Home::Admin(Task::Apps), apps::narrow_definition()),
         (Home::Admin(Task::Backups), backups::list_definition()),
@@ -260,6 +262,7 @@ async fn run(
         settings::READ_NAME => settings::read(app, caller).await,
         settings::CHANGE_NAME => settings::change(app, caller, arguments).await,
         trash::NAME => trash::run(app, caller, arguments).await,
+        purge::NAME => purge::run(app, caller, arguments).await,
         apps::LIST_NAME => apps::list(app, caller).await,
         apps::NARROW_NAME => apps::narrow(app, caller, arguments).await,
         backups::LIST_NAME => backups::list(app, caller).await,

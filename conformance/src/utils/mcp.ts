@@ -148,7 +148,7 @@ export const ADMIN_TOOLS_BY_PERMISSION: Readonly<Record<string, string[]>> = {
   "grants.manage": ["marfa_apps", "marfa_narrow_app"],
   "instance.maintain": ["marfa_maintain"],
   "instance.read": ["marfa_health"],
-  "items.purge": ["marfa_trash"],
+  "items.purge": ["marfa_purge", "marfa_trash"],
   "keys.manage": KEY_TOOLS,
   "keys.mint": KEY_TOOLS,
   "sign_ins.manage": ["marfa_rename_sign_in", "marfa_sign_ins"],

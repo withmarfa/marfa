@@ -94,6 +94,16 @@ impl<'c> Gate<'_, 'c> {
             .ok_or_else(not_found)
     }
 
+    /// The row as the owner's bin and history doors see it.
+    pub fn owner_row(&self, id: &str) -> Result<Item> {
+        let levers = self.caller.levers()?;
+        rows::by_id(self.tx, id)?
+            .filter(|row| !is_system(&row.type_id))
+            .filter(|row| self.caller.may_read_type(&row.type_id))
+            .filter(|row| levers.lists(&self.catalog.rules, &row.type_id, &row.source))
+            .ok_or_else(not_found)
+    }
+
     pub fn writable_row(&self, id: &str) -> Result<Item> {
         let row = self.readable_row(id)?;
         if row.state == "trashed" {
@@ -378,9 +388,25 @@ fn goes_with_hosts(gate: &Gate<'_, '_>, part: &Item, going: &HashSet<String>) ->
         .all(|link| going.contains(&link.to)))
 }
 
+/// The most items one purge of chosen rows takes, since it takes them all in one write.
+const CHOSEN_CAP: usize = 1_000;
+
+fn over_cap(message: &'static str) -> Refusal {
+    Refusal::new(Code::BulkCapExceeded, message).with_detail("cap", CHOSEN_CAP)
+}
+
 /// Each edge stands with the first row of the walk that touches it.
-fn purge_walk(gate: &Gate<'_, '_>, named: &[Item]) -> Result<Vec<Purging>> {
+fn purge_walk(gate: &Gate<'_, '_>, named: &[Item], cap: usize) -> Result<Vec<Purging>> {
     let mut going: HashSet<String> = named.iter().map(|row| row.id.clone()).collect();
+    let too_many = || {
+        over_cap(
+            "Purging these takes more than 1,000 items, counting the parts that go with them. \
+             Name fewer ids, or name some of the parts on their own first.",
+        )
+    };
+    if going.len() > cap {
+        return Err(too_many());
+    }
     let mut waiting: VecDeque<Item> = named.iter().cloned().collect();
     let mut taken = HashSet::new();
     let mut purging = Vec::new();
@@ -402,6 +428,9 @@ fn purge_walk(gate: &Gate<'_, '_>, named: &[Item]) -> Result<Vec<Purging>> {
                 && goes_with_hosts(gate, &part, &going)?
             {
                 going.insert(part.id.clone());
+                if going.len() > cap {
+                    return Err(too_many());
+                }
                 waiting.push_back(part);
             }
         }
@@ -411,15 +440,15 @@ fn purge_walk(gate: &Gate<'_, '_>, named: &[Item]) -> Result<Vec<Purging>> {
 }
 
 pub(super) fn walked_purge(gate: &Gate<'_, '_>, row: Item) -> Result<Vec<Purging>> {
-    purge_walk(gate, &[row])
+    purge_walk(gate, &[row], usize::MAX)
 }
 
-fn purged(gate: &Gate<'_, '_>, asked: &[Asked]) -> Result<Plan> {
+fn purged(gate: &Gate<'_, '_>, asked: &[Asked], cap: usize) -> Result<Plan> {
     let named = asked
         .iter()
         .map(|row| gate.purgeable(row))
         .collect::<Result<Vec<Item>>>()?;
-    let purging = purge_walk(gate, &named)?;
+    let purging = purge_walk(gate, &named, cap)?;
     Ok(Plan {
         digest: digest_of(named.iter()),
         named,
@@ -429,10 +458,136 @@ fn purged(gate: &Gate<'_, '_>, asked: &[Asked]) -> Result<Plan> {
     })
 }
 
+/// One walk from every chosen row at once, so a part two chosen hosts share goes with them.
+pub(super) fn chosen(gate: &Gate<'_, '_>, ids: &[String]) -> Result<Plan> {
+    gate.caller.require(Permission::ItemsPurge)?;
+    let mut seen = HashSet::new();
+    let mut asked = Vec::with_capacity(ids.len());
+    for id in ids {
+        if seen.insert(id.as_str()) {
+            gate.owner_row(id)?;
+            asked.push(Asked {
+                id: id.clone(),
+                version: None,
+            });
+        }
+    }
+    purged(gate, &asked, CHOSEN_CAP)
+}
+
+/// How many of the first `ids`, which together are over [`CHOSEN_CAP`], one chosen purge can
+/// take, refused when the first alone is over it. The search holds because the walk only grows
+/// as ids are added.
+pub(super) fn fitting(gate: &Gate<'_, '_>, ids: &[String]) -> Result<usize> {
+    let (mut fits, mut over) = (0, ids.len());
+    while over - fits > 1 {
+        let tried = usize::midpoint(fits, over);
+        match chosen(gate, &ids[..tried]) {
+            Ok(_) => fits = tried,
+            Err(refusal) if refusal.code == Code::BulkCapExceeded => over = tried,
+            Err(refusal) => return Err(refusal),
+        }
+    }
+    if fits == 0 && !ids.is_empty() {
+        return Err(over_cap(
+            "The next item in the trash takes more than 1,000 items, counting the parts that go \
+             with it. Name some of its parts on their own first.",
+        ));
+    }
+    Ok(fits)
+}
+
+/// What an item holds beside its row that its purge deletes, read once for both the preview's
+/// counts and the token.
+pub(super) struct Held {
+    pub versions: i64,
+    pub tags: i64,
+    pub extensions: i64,
+    pub table_rows: i64,
+    pub agreements: i64,
+    digest: [u8; 32],
+}
+
+/// Each part and each list is length-prefixed, so no two holdings feed the same bytes.
+fn feed(digest: &mut Sha256, part: &[u8]) {
+    counted(digest, part.len());
+    digest.update(part);
+}
+
+fn counted(digest: &mut Sha256, count: usize) {
+    digest.update((count as u64).to_le_bytes());
+}
+
+/// Content only: a time a running system rewrites would make a token stale for nothing.
+fn held(tx: &Transaction<'_>, item: &Item) -> Result<Held> {
+    let holding = rows::holding(tx, item.seq)?;
+    let tables = crate::app::tables::hosted(tx, item.seq)?;
+    let agreements = crate::app::connectors::agreements_on(tx, &item.id)?;
+    let mut digest = Sha256::new();
+    counted(&mut digest, holding.tags.len());
+    for tag in &holding.tags {
+        feed(&mut digest, tag.as_bytes());
+    }
+    counted(&mut digest, holding.extensions.len());
+    for (namespace, data) in &holding.extensions {
+        feed(&mut digest, namespace.as_bytes());
+        feed(&mut digest, data);
+    }
+    counted(&mut digest, tables.len());
+    for table in &tables {
+        feed(&mut digest, &table.key.to_le_bytes());
+        feed(&mut digest, table.name.as_bytes());
+        feed(&mut digest, &table.rows.to_le_bytes());
+        feed(&mut digest, table.last_batch.as_bytes());
+    }
+    counted(&mut digest, agreements.len());
+    for (source, waiting, record) in &agreements {
+        feed(&mut digest, source.as_bytes());
+        feed(&mut digest, &[u8::from(*waiting)]);
+        feed(&mut digest, record.as_bytes());
+    }
+    Ok(Held {
+        versions: holding.versions,
+        tags: holding.tags.len() as i64,
+        extensions: holding.extensions.len() as i64,
+        table_rows: tables.iter().map(|table| table.rows).sum(),
+        agreements: agreements.len() as i64,
+        digest: digest.finalize().into(),
+    })
+}
+
+/// Every item and edge the walk takes, at the version it stands at, and what each item holds,
+/// with each item's holding in walk order.
+pub(super) fn walk_held(tx: &Transaction<'_>, purging: &[Purging]) -> Result<(String, Vec<Held>)> {
+    let holdings = purging
+        .iter()
+        .map(|going| held(tx, &going.item))
+        .collect::<Result<Vec<Held>>>()?;
+    let mut taken: Vec<(char, &str, i64, Option<&[u8; 32]>)> = Vec::new();
+    for (going, holding) in purging.iter().zip(&holdings) {
+        taken.push((
+            'i',
+            going.item.id.as_str(),
+            going.item.version,
+            Some(&holding.digest),
+        ));
+        for (edge, _) in &going.edges {
+            taken.push(('e', edge.id.as_str(), edge.version, None));
+        }
+    }
+    taken.sort_unstable();
+    let mut digest = Sha256::new();
+    for (kind, id, version, holds) in taken {
+        let holds = holds.map(hex::encode).unwrap_or_default();
+        digest.update(format!("{kind}\0{id}\0{version}\0{holds}\n").as_bytes());
+    }
+    Ok((hex::encode(digest.finalize()), holdings))
+}
+
 pub(super) fn plan(gate: &Gate<'_, '_>, act: Act, asked: &[Asked]) -> Result<Plan> {
     match act {
         Act::Bin => binned(gate, asked),
-        Act::Purge => purged(gate, asked),
+        Act::Purge => purged(gate, asked, usize::MAX),
     }
 }
 

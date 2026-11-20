@@ -82,7 +82,7 @@ When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mc
 
 ### `mcp/tools-for-admin`
 
-When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_backups` and `marfa_take_backup` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors` and `marfa_make_endpoint` while it holds `connectors.manage`, `marfa_files` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
+When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_backups` and `marfa_take_backup` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors` and `marfa_make_endpoint` while it holds `connectors.manage`, `marfa_files` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
 
 **Reason:** a credential that holds a permission can do the owner task it opens through the API, so an agent holding it does the same from MCP, except for the tasks `mcp/tools-withheld` names.
 
@@ -144,9 +144,9 @@ If the rows of a page that `marfa_trash` or `marfa_connectors` answers do not al
 
 ### `mcp/tools-withheld`
 
-The server MUST NOT list at any MCP endpoint a tool that purges chosen items or empties the trash, revokes an app, ends a sign-in, removes a passkey, deletes a connector, clears a connector's state, retires an inbound endpoint, removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
+The server MUST NOT list at any MCP endpoint a tool that revokes an app, ends a sign-in, removes a passkey, deletes a connector, clears a connector's state, retires an inbound endpoint, removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
 
-**Reason:** an agent's confirmation of a change that cannot be undone must bind every effect of the change to the state the owner saw, and the confirmations for purging, emptying, revoking, ending, removing, deleting, clearing, retiring and adopting do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
+**Reason:** an agent's confirmation of a change that cannot be undone must bind every effect of the change to the state the owner saw, and the confirmations for revoking, ending, removing, deleting, clearing, retiring and adopting do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
 
 **Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`, `compliance/owner-tasks.test.ts › runs the trash's retention through the maintenance tool, removing only what the retention makes eligible and no chosen item`.
 
@@ -375,6 +375,202 @@ When a `marfa_delete` call carries a `confirm` token that an earlier call used t
 **Reason:** a client that did not see the first answer, such as one that timed out, learns that the change landed.
 
 **Tests:** `compliance/mcp-single-use.test.ts › says a repeated confirmation already moved the items to the trash`.
+
+## Purging items
+
+`marfa_purge` purges items from the trash in two calls: a preview, of the IDs it names or of one page of the trash, that answers the IDs to confirm and everything the purge would take, with a `confirm` token, and a call that sends those IDs with that token. The purge takes the walk of `POST /items/{id}/purge` from all the named items at once: each item's edges, and each part that went to the trash with its hosts once the walk takes every one of them.
+
+### `mcp/purge-destructive`
+
+When the server lists `marfa_purge`, the server MUST annotate it with `destructiveHint` `true` and `readOnlyHint` `false`.
+
+**Reason:** a purge cannot be undone, and a client asks the person differently before a tool that destroys data.
+
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+
+### `mcp/purge-preview`
+
+When `marfa_purge` is called without `confirm`, the server MUST NOT purge any item.
+
+**Tests:** `compliance/mcp-purge.test.ts › purges nothing when called without a confirmation`.
+
+### `mcp/purge-confirmed`
+
+When `marfa_purge` is called with the `confirm` token its preview of the same IDs gave, by the same credential, within five minutes, while the walk takes the items and edges the preview's walk took, each at the version the preview read and each item holding what the preview read, the server MUST purge those items and edges and no others.
+
+**Tests:** `compliance/mcp-purge.test.ts › purges the named items, everything their walk takes and what they hold with the confirmation the preview gave`, `› purges a part shared by two named hosts with them, where naming one host leaves it`.
+
+### `mcp/purge-walk-once`
+
+When `marfa_purge` names more than one item, the server MUST take each part that went to the trash with its hosts and whose every host is a named item or another item the walk takes.
+
+**Reason:** a part shared by two hosts goes only with its last host, so purging the hosts one by one would leave it behind.
+
+**Tests:** `compliance/mcp-purge.test.ts › purges a part shared by two named hosts with them, where naming one host leaves it`.
+
+### `mcp/purge-preview-shows`
+
+When `marfa_purge` previews, the server MUST answer under `items` each item the purge would take that the key can read, with its `id`, `type`, `title` and `version`, or, where they do not fit one answer, as many as fit and under `left_out` the number it left out, under `edges` the number of edges it would take that the key can read, under `hidden` the number of items and of edges it would take that the key cannot read, and under `total` the number of items it would take.
+
+**Reason:** the person agrees to everything the purge takes, and an item or edge the key cannot read is counted without being named. An agent that reads a short list as the whole purge agrees to less than it confirms.
+
+**Tests:** `compliance/mcp-purge.test.ts › purges the named items, everything their walk takes and what they hold with the confirmation the preview gave`, `› counts an item and an edge the key cannot read as hidden, and refuses the confirmation once the hidden item leaves the trash`, `› names as many items as fit one answer and how many it left out`.
+
+### `mcp/purge-preview-goes-with`
+
+When `marfa_purge` previews, the server MUST answer under `goes_with` how many earlier versions, tags, extensions, table rows and connector agreements the items the key can read hold.
+
+**Reason:** a purge also deletes what an item holds, which no restore brings back.
+
+**Tests:** `compliance/mcp-purge.test.ts › purges the named items, everything their walk takes and what they hold with the confirmation the preview gave`.
+
+### `mcp/purge-changed`
+
+If an item or edge the preview's walk took, or one the walk takes now, is not at the version the preview read, or an item the walk takes does not hold what the preview read, and every item the call names is still in the trash and the walk from them takes at most 1,000 items, then the server MUST refuse the `marfa_purge` call with the tool error code `confirmation_stale` and a new preview of the same IDs with a `confirm` token of its own.
+
+**Reason:** the person agreed to what the preview showed, not to what the purge would take now.
+
+**Tests:** `compliance/mcp-purge.test.ts › refuses a confirmation when a named item changed since the preview, with a new preview`, `› counts an item and an edge the key cannot read as hidden, and refuses the confirmation once the hidden item leaves the trash`, `› refuses a confirmation when a tag, an extension or a table row was added while the item was out of the trash, though its version did not move`, `› refuses a confirmation when a connector wrote an agreement on the item while it was in the trash`.
+
+### `mcp/purge-binds-held`
+
+If the tags or their order, the extensions, the tables or the connector agreements of an item the walk of a `marfa_purge` call takes differ, other than in a time, from what the preview that gave the call's `confirm` token read, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Reason:** a purge deletes what an item holds, and each of these can change without moving the item's version, such as while the item is out of the trash between the calls, or when a connector writes an agreement on an item in the trash. Only content is bound, never a time, so a time a running system rewrites does not make the token stale.
+
+**Tests:** `compliance/mcp-purge.test.ts › refuses a confirmation when a tag, an extension or a table row was added while the item was out of the trash, though its version did not move`, `› refuses a confirmation when a connector wrote an agreement on the item while it was in the trash`.
+
+### `mcp/purge-changed-hidden`
+
+If an item or edge the key cannot read changed since the preview in a way that changes what the walk takes or the version it stands at, then the server MUST refuse the `marfa_purge` call with the tool error code `confirmation_stale`.
+
+**Reason:** the confirmation covers every item and edge the purge deletes, including those the agent was only told the number of.
+
+**Tests:** `compliance/mcp-purge.test.ts › counts an item and an edge the key cannot read as hidden, and refuses the confirmation once the hidden item leaves the trash`.
+
+### `mcp/purge-gone`
+
+If an item a `marfa_purge` call names with a `confirm` token is no longer in the trash, then the server MUST refuse the call with the tool error code `confirmation_stale` and purge none of the items it names.
+
+**Reason:** the call answers the confirmation it was sent with, so it names no item as missing, and a person who agreed to a set must not find part of it done.
+
+**Tests:** `compliance/mcp-purge.test.ts › refuses a confirmation when a named item is gone, and purges nothing else it names`.
+
+### `mcp/purge-other-credential`
+
+If a `marfa_purge` call carries a `confirm` token a preview gave another credential, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Tests:** `compliance/mcp-purge.test.ts › refuses a confirmation another credential got`.
+
+### `mcp/purge-expired`
+
+If a `marfa_purge` call carries a `confirm` token from a preview more than five minutes earlier, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Tests:** `compliance/mcp-purge.test.ts › refuses a confirmation once five minutes have passed since the preview`.
+
+### `mcp/purge-token-first`
+
+If a `marfa_purge` call carries a `confirm` token that another credential got, that expired, or that a preview of other IDs gave, then the server MUST answer `confirmation_stale` without a new preview, whatever the call's IDs name.
+
+**Reason:** the server judges the token before it reads the IDs, so a token that does not hold tells the caller nothing about them.
+
+**Tests:** `compliance/mcp-purge.test.ts › refuses a confirmation sent with ids its preview did not name before reading them`, `› refuses a confirmation once five minutes have passed since the preview`, `› refuses a confirmation another credential got`.
+
+### `mcp/purge-atomic`
+
+If a `marfa_purge` call, with a `confirm` token that holds, fails after it has begun to purge, then the server MUST leave every item and edge the purge would take as it was.
+
+**Reason:** a person who agreed to a purge must not find part of it done.
+
+**Tests:** `compliance/mcp-purge.test.ts › leaves every item and the confirmation as they were when the confirmed purge fails, and purges them all without the fault`.
+
+### `mcp/purge-spent-on-commit`
+
+If a `marfa_purge` call fails before its purge commits, then the server MUST purge on the same `confirm` token when it is sent again within five minutes.
+
+**Reason:** a token is recorded as used in the transaction of the purge it allowed, so a purge that never happened does not use it up.
+
+**Tests:** `compliance/mcp-purge.test.ts › leaves every item and the confirmation as they were when the confirmed purge fails, and purges them all without the fault`.
+
+### `mcp/purge-single-use`
+
+If a `marfa_purge` call carries a `confirm` token that an earlier call already used, then the server MUST NOT purge any item on it.
+
+**Tests:** `compliance/mcp-purge.test.ts › purges nothing more on a confirmation an earlier call used, and says it already purged the items`.
+
+### `mcp/purge-repeated`
+
+When a `marfa_purge` call carries a `confirm` token that an earlier call by the same credential used to purge the same IDs, within five minutes of the preview, the server MUST answer `already_purged` as `true` and under `purged` the number of items that call purged.
+
+**Reason:** a client that did not see the first answer, such as one that timed out, learns that the purge landed.
+
+**Tests:** `compliance/mcp-purge.test.ts › purges nothing more on a confirmation an earlier call used, and says it already purged the items`.
+
+### `mcp/purge-remaining`
+
+When a `marfa_purge` call purges, or answers `already_purged`, the server MUST answer under `trash_remaining` the number of items in the trash that `marfa_trash` lists to the key.
+
+**Tests:** `compliance/mcp-purge.test.ts › purges the named items, everything their walk takes and what they hold with the confirmation the preview gave`, `› previews a page of the trash from a trash cursor and purges it on the ids the preview returned`, `› purges nothing more on a confirmation an earlier call used, and says it already purged the items`.
+
+### `mcp/purge-page`
+
+When `marfa_purge` is called with `page`, the server MUST answer under `ids` the IDs of at most 200 items, the next that `marfa_trash` lists after the page's `cursor`, or from the first item without one, and under `next_cursor` a cursor that continues after them if and only if another item follows.
+
+**Reason:** an agent empties the trash a page at a time, from where `marfa_trash` or the last preview stopped.
+
+**Tests:** `compliance/mcp-purge.test.ts › previews a page of the trash from a trash cursor and purges it on the ids the preview returned`.
+
+### `mcp/purge-page-confirm`
+
+If a `marfa_purge` call carries `page` and `confirm`, then the server MUST answer the tool error code `validation_error`.
+
+**Reason:** a page's items change as the trash does, so the confirming call names the IDs the preview answered.
+
+**Tests:** `compliance/mcp-purge.test.ts › previews a page of the trash from a trash cursor and purges it on the ids the preview returned`.
+
+### `mcp/purge-page-empty`
+
+When `marfa_purge` previews a page of the trash that holds no item, the server MUST answer an empty `ids` without a `confirm` token.
+
+**Tests:** `compliance/mcp-purge.test.ts › answers an empty page of the trash with no confirmation`.
+
+### `mcp/purge-cap`
+
+The server MUST NOT purge more than 1,000 items in one `marfa_purge` call.
+
+**Reason:** one purge takes its whole walk in one write, which holds other writes until it commits, and no request holds up the others for long.
+
+**Tests:** `compliance/mcp-purge.test.ts › refuses to preview ids whose walk takes more than 1,000 items, and previews a walk of 1,000`, `› refuses a confirmation whose walk grew past 1,000 items since the preview, and purges nothing`.
+
+### `mcp/purge-cap-grew`
+
+If the walk of a `marfa_purge` call with `confirm` takes more than 1,000 items, then the server MUST refuse the call with the tool error code `confirmation_stale` and no `confirm` token.
+
+**Reason:** the walk grew past what one call can take since the preview, so no new preview of the same IDs can be confirmed.
+
+**Tests:** `compliance/mcp-purge.test.ts › refuses a confirmation whose walk grew past 1,000 items since the preview, and purges nothing`.
+
+### `mcp/purge-cap-preview`
+
+If the walk from the IDs a `marfa_purge` call without `confirm` names would take more than 1,000 items, then the server MUST refuse the call with the tool error code `bulk_cap_exceeded`.
+
+**Reason:** a preview gives a token only for a purge one call can take, so the agent names fewer IDs, or some of the parts on their own first.
+
+**Tests:** `compliance/mcp-purge.test.ts › refuses to preview ids whose walk takes more than 1,000 items, and previews a walk of 1,000`.
+
+### `mcp/purge-page-fits`
+
+If the walk from a `marfa_purge` page would take more than 1,000 items, then the server MUST answer under `ids` the longest run of the page's first items whose walk takes at most 1,000 items, and under `next_cursor` a cursor that continues after them.
+
+**Reason:** an agent that empties the trash a page at a time keeps going with a smaller page, rather than stopping at a page it cannot purge.
+
+**Tests:** `compliance/mcp-purge.test.ts › previews a smaller page when a page's walk takes more than 1,000 items, and refuses a page whose first item alone does`.
+
+### `mcp/purge-page-first-over`
+
+If the walk from the first item of a `marfa_purge` page alone would take more than 1,000 items, then the server MUST refuse the call with the tool error code `bulk_cap_exceeded`.
+
+**Tests:** `compliance/mcp-purge.test.ts › previews a smaller page when a page's walk takes more than 1,000 items, and refuses a page whose first item alone does`.
 
 ## Moving items to another type
 

@@ -15,7 +15,7 @@ use super::{
 };
 use crate::app::App;
 use crate::app::access::reach::Demand;
-use crate::app::access::{Caller, Level};
+use crate::app::access::{Caller, Level, Permission};
 use crate::app::catalog::{self, Catalog, Snapshot};
 use crate::app::clock::Stamp;
 use crate::app::connectors::{ReadOnly, read_only};
@@ -23,7 +23,7 @@ use crate::app::edges::{self, Reach};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION, HOLD_READ_SNAPSHOT};
 use crate::app::housekeeping::DAY_MS;
 use crate::app::query::{Secret, States, bad_cursor, judge_type};
-use crate::app::refusal::Result;
+use crate::app::refusal::{Code, Result};
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
 const TITLES_PER_NAME: i64 = 20;
@@ -806,6 +806,164 @@ pub async fn bin_selection(
         let (page, next) = read.named_page(listing, true)?;
         let selected = page.into_iter().map(|row| (row.id, row.version)).collect();
         Ok((selected, next))
+    })
+    .await
+}
+
+/// How many items the bin lists to the caller.
+pub async fn bin_total(app: &App, caller: &Caller) -> Result<i64> {
+    reading(app, caller, move |read| {
+        let levers = read.caller.levers()?;
+        let rules = &read.catalog.rules;
+        Ok(rows::binned_counts(read.tx)?
+            .into_iter()
+            .filter(|(type_id, source, _)| {
+                read.caller.may_write_type(type_id) && levers.lists(rules, type_id, source)
+            })
+            .map(|(_, _, count)| count)
+            .sum())
+    })
+    .await
+}
+
+/// The rows an owner chose to purge: by id, or one page of the bin.
+#[derive(Clone, Debug)]
+pub enum Choosing {
+    Ids(Vec<String>),
+    Page { cursor: Option<String>, limit: i64 },
+}
+
+/// An item a purge takes, as the caller may see it.
+#[derive(Clone, Debug)]
+pub struct Going {
+    pub id: String,
+    pub type_id: String,
+    pub name: String,
+    pub version: i64,
+}
+
+/// What the items the caller may see hold, which goes with them.
+#[derive(Clone, Debug, Default)]
+pub struct GoesWith {
+    pub versions: i64,
+    pub tags: i64,
+    pub extensions: i64,
+    pub table_rows: i64,
+    pub connector_agreements: i64,
+}
+
+/// The walk [`write::purge_chosen`](super::write::purge_chosen) takes; `digest` covers hidden rows.
+#[derive(Clone, Debug)]
+pub struct PurgePreview {
+    pub ids: Vec<String>,
+    pub next_cursor: Option<String>,
+    pub items: Vec<Going>,
+    pub hidden_items: usize,
+    pub edges: usize,
+    pub hidden_edges: usize,
+    pub goes_with: GoesWith,
+    pub digest: String,
+}
+
+pub async fn purge_preview(app: &App, caller: &Caller, choosing: Choosing) -> Result<PurgePreview> {
+    reading(app, caller, move |read| {
+        read.caller.require(Permission::ItemsPurge)?;
+        let gate = Gate {
+            tx: read.tx,
+            caller: &read.caller,
+            catalog: &read.catalog,
+            claim: None,
+            server_own: false,
+        };
+        let page = |cursor: Option<String>, limit: i64| -> Result<(Vec<String>, Option<String>)> {
+            let listing = Listing {
+                type_id: None,
+                q: String::new(),
+                limit,
+                cursor,
+            };
+            let (page, next) = read.named_page(listing, true)?;
+            Ok((page.into_iter().map(|row| row.id).collect(), next))
+        };
+        let (ids, next_cursor, plan) = match choosing {
+            Choosing::Ids(asked) => {
+                let mut seen = HashSet::new();
+                let ids: Vec<String> = asked
+                    .into_iter()
+                    .filter(|id| seen.insert(id.clone()))
+                    .collect();
+                let plan = plan::chosen(&gate, &ids)?;
+                (ids, None, plan)
+            }
+            Choosing::Page { cursor, limit } => {
+                let (ids, next) = page(cursor.clone(), limit)?;
+                match plan::chosen(&gate, &ids) {
+                    Ok(plan) => (ids, next, plan),
+                    Err(refusal) if refusal.code == Code::BulkCapExceeded => {
+                        let fits = plan::fitting(&gate, &ids)?;
+                        let (ids, next) = page(cursor, fits as i64)?;
+                        let plan = plan::chosen(&gate, &ids)?;
+                        (ids, next, plan)
+                    }
+                    Err(refusal) => return Err(refusal),
+                }
+            }
+        };
+        let (digest, holdings) = plan::walk_held(read.tx, &plan.purging)?;
+        let levers = read.caller.levers()?;
+        let rules = &read.catalog.rules;
+        let shows = |row: &Item| {
+            !super::is_system(&row.type_id)
+                && read.caller.may_read_type(&row.type_id)
+                && levers.lists(rules, &row.type_id, &row.source)
+        };
+        let readable = |type_id: &str| read.caller.may_read_type(type_id);
+        let mut preview = PurgePreview {
+            ids,
+            next_cursor,
+            items: Vec::new(),
+            hidden_items: 0,
+            edges: 0,
+            hidden_edges: 0,
+            goes_with: GoesWith::default(),
+            digest,
+        };
+        for (going, holding) in plan.purging.iter().zip(&holdings) {
+            let item = &going.item;
+            if shows(item) {
+                let shown = super::shown_of(read.tx, &read.catalog, item, &readable)?;
+                preview.items.push(Going {
+                    id: item.id.clone(),
+                    type_id: item.type_id.clone(),
+                    name: shown.name.unwrap_or_else(|| super::UNTITLED.to_string()),
+                    version: item.version,
+                });
+                let held = &mut preview.goes_with;
+                held.versions += holding.versions;
+                held.tags += holding.tags;
+                held.extensions += holding.extensions;
+                held.table_rows += holding.table_rows;
+                held.connector_agreements += holding.agreements;
+            } else {
+                preview.hidden_items += 1;
+            }
+            for (edge, source) in &going.edges {
+                let target_shows = if edge.to_id == item.id {
+                    shows(item)
+                } else {
+                    rows::by_id(read.tx, &edge.to_id)?.is_some_and(|row| shows(&row))
+                };
+                if shows(source)
+                    && target_shows
+                    && read.caller.may_read_edge(&edge.edge_type, &source.type_id)
+                {
+                    preview.edges += 1;
+                } else {
+                    preview.hidden_edges += 1;
+                }
+            }
+        }
+        Ok(preview)
     })
     .await
 }
