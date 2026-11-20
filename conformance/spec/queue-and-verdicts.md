@@ -2340,11 +2340,11 @@ If a caller queues an update said to be read at version 0 while the copy holds a
 
 ### `queue-and-verdicts/as-read-own-create`
 
-When a caller queues an update said to be read at version 0 of an item whose create this device made and the server has answered, a device MUST send it on the version that create made.
+When a caller queues an update said to be read at version 0 of an item this device created under the id its create named, and the copy either has yet to settle the server's answer to that create or has held the item ever since it did, a device MUST send it on the version that create made.
 
-**Reason:** the copy shows its own create at version 0 until the server answers it, so an editor that read the item then read at least what that create made, and the copy cannot tell what more; on that version the server merges the edit (`versions/merge-stale`), or conflicts on it, against anything written since, this device's own later edits included.
+**Reason:** the copy shows its own create at version 0 until the server answers it, so an editor that read the item then read at least what that create made, and the copy cannot tell what more; on that version the server merges the edit (`versions/merge-stale`), or conflicts on it, against anything written since, this device's own later edits and anything a catch-up brought before the create's answer included. A copy that let the item go after settling the answer keeps no record of the create, so an item that left the copy and came back falls under `queue-and-verdicts/as-read-bounds`, as does a create a natural key resolved to an item made elsewhere.
 
-**Tests:** `device/queue.test.ts › sends an edit read at version 0 of its own create on the version that create made`, `› keeps both where another device changed the property an edit read at version 0 of its own create changed`.
+**Tests:** `device/queue.test.ts › sends an edit read at version 0 of its own create on the version that create made`, `› keeps both where another device changed the property an edit read at version 0 of its own create changed`, `› holds an edit read at version 0 of its own create that a catch-up brought before its answer, and sends it on the version that create made`, `› keeps both where another device changed the property an edit read at version 0 of its own create changed before the create was answered`.
 
 ### `queue-and-verdicts/as-read-held-ordinary`
 
