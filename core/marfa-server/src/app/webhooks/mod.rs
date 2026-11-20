@@ -101,6 +101,11 @@ pub fn retarget(unit: &Unit<'_, '_>, rules: &Rules, id: &str, to: &str) -> Resul
     )
 }
 
+/// The subscriptions [`forget_grant`] would remove.
+pub fn of_grant(tx: &Transaction<'_>, grant_id: &str) -> Result<Vec<Subscription>> {
+    store::list(tx, Some(&Maker::Grant(grant_id.to_string())))
+}
+
 /// An app's subscriptions belong to its grant, and go with it.
 pub fn forget_grant(tx: &Transaction<'_>, grant_id: &str) -> Result<()> {
     store::delete_for_grant(tx, grant_id)?;

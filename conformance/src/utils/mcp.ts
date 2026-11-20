@@ -151,13 +151,17 @@ export const ADMIN_TOOLS_BY_PERMISSION: Readonly<Record<string, string[]>> = {
     "marfa_make_endpoint",
     "marfa_retire_endpoint",
   ],
-  "grants.manage": ["marfa_apps", "marfa_narrow_app"],
+  "grants.manage": ["marfa_apps", "marfa_end_sign_in", "marfa_narrow_app"],
   "instance.maintain": ["marfa_maintain"],
   "instance.read": ["marfa_health"],
   "items.purge": ["marfa_purge", "marfa_trash"],
   "keys.manage": KEY_TOOLS,
   "keys.mint": KEY_TOOLS,
-  "sign_ins.manage": ["marfa_rename_sign_in", "marfa_sign_ins"],
+  "sign_ins.manage": [
+    "marfa_end_sign_in",
+    "marfa_rename_sign_in",
+    "marfa_sign_ins",
+  ],
   "webhooks.manage": ["marfa_manage_webhook", "marfa_webhooks"],
 };
 

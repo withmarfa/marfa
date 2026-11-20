@@ -212,7 +212,8 @@ impl Signer {
         })
     }
 
-    fn holds_target(
+    /// Whether the token was signed for this target, judged without reading it.
+    pub fn holds_target(
         &self,
         tool: &str,
         credential: &str,

@@ -420,8 +420,15 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     let kept = files::kept(identity);
     match identity {
         Some(identity) => files::prepare_root_folder(&folder.dir, identity)?,
-        None if runtime == Runtime::Native => marfa_acl::make_private_folders(&folder.dir)?,
-        None => std::fs::create_dir_all(&folder.dir)?,
+        None if runtime == Runtime::Native => {
+            marfa_acl::make_private_folder_in_open_folders(&folder.dir)?
+        }
+        None => {
+            if let Some(parent) = folder.dir.parent() {
+                marfa_acl::make_open_folders(parent)?;
+            }
+            std::fs::create_dir_all(&folder.dir)?
+        }
     }
 
     // The settings the server reads. The secrets are made once, and not at

@@ -1800,7 +1800,10 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
             &["marfa_change_settings", "marfa_settings"],
         ),
         ("items.purge", &["marfa_purge", "marfa_trash"]),
-        ("grants.manage", &["marfa_apps", "marfa_narrow_app"]),
+        (
+            "grants.manage",
+            &["marfa_apps", "marfa_end_sign_in", "marfa_narrow_app"],
+        ),
         (
             "backups.manage",
             &[
@@ -1813,7 +1816,11 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         ("blobs.manage", &["marfa_files", "marfa_remove_file_copy"]),
         (
             "sign_ins.manage",
-            &["marfa_rename_sign_in", "marfa_sign_ins"],
+            &[
+                "marfa_end_sign_in",
+                "marfa_rename_sign_in",
+                "marfa_sign_ins",
+            ],
         ),
     ];
     for (permission, tools) in cases {
@@ -2341,7 +2348,6 @@ async fn no_tool_offers_a_withheld_owner_task() {
                 "update_server",
                 "clock",
                 "add_passkey",
-                "end_sign_in",
                 "remove_passkey",
                 "revoke_app",
             ] {

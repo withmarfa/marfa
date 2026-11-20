@@ -135,6 +135,17 @@ pub fn rename(tx: &Transaction<'_>, id: &str, name: &str) -> Result<Option<Liste
         .optional()?)
 }
 
+/// The passkey with its credential ID, which never changes.
+pub fn by_id(tx: &Transaction<'_>, id: &str) -> Result<Option<(Listed, String)>> {
+    Ok(tx
+        .query_row(
+            &format!("SELECT {LISTED}, credential_id FROM passkeys WHERE id = ?1"),
+            params![id],
+            |row| Ok((listed(row)?, row.get(5)?)),
+        )
+        .optional()?)
+}
+
 pub fn remove(tx: &Transaction<'_>, id: &str) -> Result<bool> {
     Ok(tx.execute("DELETE FROM passkeys WHERE id = ?1", params![id])? == 1)
 }
