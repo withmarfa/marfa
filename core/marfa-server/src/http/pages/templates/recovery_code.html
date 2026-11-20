@@ -4,6 +4,7 @@
 <p class="notice error" id="setup-problem" role="alert">{{ message }}</p>
 {% endif %}
 <form method="post" action="/setup/exchange" class="stack">
+<input type="hidden" name="purpose" value="recovery">
 <div class="field">
 <label for="code">Recovery code</label>
 <input id="code" class="code" type="text" name="code" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required autofocus{% if has_problem %} aria-describedby="setup-problem" aria-invalid="true"{% endif %}>

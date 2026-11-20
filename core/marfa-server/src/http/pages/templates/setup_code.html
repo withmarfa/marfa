@@ -1,18 +1,27 @@
 <h1>Claim this Marfa</h1>
-<p class="lede">Enter the setup code to become its owner.</p>
+<p class="lede">This Marfa doesn't have an owner yet. Enter the setup code to become its owner.</p>
+{% if let Some(app) = app %}
+<p><bdi class="app-name">{{ app.name }}</bdi> at <bdi>{{ app.host }}</bdi> is asking to connect to this Marfa.</p>
+{% include "partials/app_caution.html" %}
+{% endif %}
+{% if connecting %}
+<p>After you create your account, you choose what the app can access, or turn it down.</p>
+{% endif %}
 <p class="notice" role="status" data-handoff-working hidden>Checking your setup link.</p>
 <p class="notice error" role="alert" data-handoff-failed hidden>That setup link has expired or was already used. Enter the setup code, or run <code>marfa setup open</code> again for a new link.</p>
 {% if let Some(message) = problem_message %}
 <p class="notice error" id="setup-problem" role="alert">{{ message }}</p>
 {% endif %}
 <form method="post" action="/setup/exchange" class="stack">
+<input type="hidden" name="return_to" value="{{ return_to }}">
 <div class="field">
 <label for="code">Setup code</label>
-<input id="code" class="code" type="text" name="code" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required autofocus{% if has_problem %} aria-describedby="setup-problem" aria-invalid="true"{% endif %}>
+<input id="code" class="code" type="text" name="code" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required autofocus aria-describedby="code-hint{% if has_problem %} setup-problem{% endif %}"{% if has_problem %} aria-invalid="true"{% endif %}>
+<p class="hint" id="code-hint">Marfa shows the setup code where it runs: in its terminal, or in its host's log.</p>
 </div>
 <details>
-<summary>Where's my setup code?</summary>
-<p>Marfa prints a setup code in its log when it starts without an owner.</p>
+<summary>Can't find the code?</summary>
+<p>Marfa makes a new setup code each time it starts without an owner, and only the newest one works.</p>
 <p>To make a new one, run <code>marfa setup code</code> on the computer that runs Marfa. To skip typing it, run <code>marfa setup open</code> instead. It opens a link that works once.</p>
 </details>
 <button type="submit" class="button primary wide">Continue</button>

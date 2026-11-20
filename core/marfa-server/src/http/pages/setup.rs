@@ -2,6 +2,8 @@ use askama::Template;
 
 use super::wait::Wait;
 use super::{Needs, Page, document, render_body};
+use crate::app::oauth::authorize::REQUEST_PATH;
+use crate::app::oauth::device::CONSENT_PATH;
 use crate::app::refusal::Result;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,9 +20,9 @@ impl SetupCodeProblem {
         match (self, recovering) {
             (SetupCodeProblem::MissingCode, false) => "Enter the setup code.".into(),
             (SetupCodeProblem::MissingCode, true) => "Enter the recovery code.".into(),
-            (SetupCodeProblem::WrongCode, false) => {
-                "That setup code isn't right. Check it and try again.".into()
-            }
+            (SetupCodeProblem::WrongCode, false) => "That setup code isn't right, or Marfa has \
+                 replaced it since. Enter the newest code Marfa shows."
+                .into(),
             (SetupCodeProblem::WrongCode, true) => {
                 "That recovery code isn't right, or it was already used or has expired.".into()
             }
@@ -41,19 +43,43 @@ impl SetupCodeProblem {
     }
 }
 
+/// The app that led to setup, named only beside the host it sends the person back to.
+#[derive(Debug, Clone)]
+pub struct AskingApp {
+    pub name: String,
+    pub host: String,
+}
+
+/// Whether `return_to` goes on with an app's request to connect.
+fn connects_an_app(return_to: &str) -> bool {
+    let path = return_to.split(['?', '#']).next().unwrap_or_default();
+    path == REQUEST_PATH || path == CONSENT_PATH
+}
+
 #[derive(Debug, Clone)]
 pub struct SetupCode {
     pub instance_name: String,
     pub problem: Option<SetupCodeProblem>,
-    /// The instance has an owner and offers a recovery code.
-    pub recovering: bool,
+    /// Where the browser goes once the instance is claimed, as `kept` read it.
+    pub return_to: String,
+    pub app: Option<AskingApp>,
+}
+
+/// The code page of an instance that has an owner and offers a recovery code.
+#[derive(Debug, Clone)]
+pub struct RecoveryCode {
+    pub instance_name: String,
+    pub problem: Option<SetupCodeProblem>,
 }
 
 #[derive(Template)]
 #[template(path = "setup_code.html")]
-struct SetupCodeBody {
+struct SetupCodeBody<'a> {
     problem_message: Option<String>,
     has_problem: bool,
+    return_to: &'a str,
+    app: Option<&'a AskingApp>,
+    connecting: bool,
 }
 
 #[derive(Template)]
@@ -66,23 +92,12 @@ struct RecoveryCodeBody {
 /// The page also takes a `/setup#handoff=` link: its script exchanges the
 /// ticket and reloads.
 pub fn setup_code(view: &SetupCode) -> Result<Page> {
-    let problem_message = view.problem.map(|problem| problem.message(view.recovering));
-    let has_problem = view.problem.is_some();
-    if view.recovering {
-        let body = render_body(&RecoveryCodeBody {
-            problem_message,
-            has_problem,
-        })?;
-        return document(
-            "Recover the owner",
-            &view.instance_name,
-            &body,
-            Needs::default(),
-        );
-    }
     let body = render_body(&SetupCodeBody {
-        problem_message,
-        has_problem,
+        problem_message: view.problem.map(|problem| problem.message(false)),
+        has_problem: view.problem.is_some(),
+        return_to: &view.return_to,
+        app: view.app.as_ref(),
+        connecting: connects_an_app(&view.return_to),
     })?;
     document(
         "Claim this Marfa",
@@ -92,6 +107,19 @@ pub fn setup_code(view: &SetupCode) -> Result<Page> {
             connect: true,
             confirm_dialog: false,
         },
+    )
+}
+
+pub fn recovery_code(view: &RecoveryCode) -> Result<Page> {
+    let body = render_body(&RecoveryCodeBody {
+        problem_message: view.problem.map(|problem| problem.message(true)),
+        has_problem: view.problem.is_some(),
+    })?;
+    document(
+        "Recover the owner",
+        &view.instance_name,
+        &body,
+        Needs::default(),
     )
 }
 
@@ -112,16 +140,22 @@ pub struct SetupDetails {
     pub email: String,
     pub errors: SetupFieldErrors,
     pub notice: Option<String>,
+    /// Where the browser goes once the instance is claimed, as `kept` read it.
+    pub return_to: String,
 }
 
 #[derive(Template)]
 #[template(path = "setup_details.html")]
 struct SetupDetailsBody<'a> {
     view: &'a SetupDetails,
+    connecting: bool,
 }
 
 pub fn setup_details(view: &SetupDetails) -> Result<Page> {
-    let body = render_body(&SetupDetailsBody { view })?;
+    let body = render_body(&SetupDetailsBody {
+        view,
+        connecting: connects_an_app(&view.return_to),
+    })?;
     document(
         "Create your account",
         &view.instance_name,

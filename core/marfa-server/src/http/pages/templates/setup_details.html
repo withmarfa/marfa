@@ -1,9 +1,13 @@
 <h1>Create your account</h1>
 <p class="lede">You'll use these details to sign in to this Marfa.</p>
+{% if connecting %}
+<p>Next, you choose what the app can access, or turn it down.</p>
+{% endif %}
 {% if let Some(message) = view.notice %}
 <p class="notice error" role="alert">{{ message }}</p>
 {% endif %}
 <form id="owner-form" method="post" action="/setup/claim" class="stack">
+<input type="hidden" name="return_to" value="{{ view.return_to }}">
 <div class="field">
 <label for="name">Name</label>
 <input id="name" type="text" name="name" value="{{ view.name }}" autocomplete="name"{% if view.errors.name.is_some() %} aria-invalid="true" aria-describedby="name-error"{% endif %}>
