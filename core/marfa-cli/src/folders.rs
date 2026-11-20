@@ -1138,6 +1138,15 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
                 printable(&file.path),
                 printable(&file.reason)
             ),
+            "carried" => format!(
+                "{} is kept{}: {}",
+                printable(&file.path),
+                file.item
+                    .as_ref()
+                    .map(|item| format!(" (item {})", printable(item)))
+                    .unwrap_or_default(),
+                printable(&file.reason)
+            ),
             "unwritten" | "outside" | "unsuited" | "absent" => {
                 let item = file
                     .item
