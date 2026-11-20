@@ -1,6 +1,7 @@
 //! An item's name and preview, read from its properties and its type's effective display hints.
 
 use std::cell::OnceCell;
+use std::collections::HashSet;
 use std::iter::{Enumerate, Peekable};
 
 use serde_json::{Map, Value};
@@ -277,10 +278,10 @@ impl Line<'_> {
     }
 }
 
-/// The footnote labels a text defines, read on the first reference that asks.
+/// The footnote labels a text defines, case folded, read on the first reference that asks.
 struct Notes<'a> {
     text: &'a str,
-    defined: OnceCell<Vec<&'a str>>,
+    defined: OnceCell<HashSet<String>>,
 }
 
 impl<'a> Notes<'a> {
@@ -292,23 +293,21 @@ impl<'a> Notes<'a> {
     }
 
     fn defines(&self, label: &str) -> bool {
-        let folded = |text: &str| {
-            text.chars()
-                .flat_map(char::to_lowercase)
-                .collect::<Vec<_>>()
-        };
-        let wanted = folded(label);
         self.defined
             .get_or_init(|| {
                 lines(self.text)
                     .filter_map(|line| {
                         footnote_definition(line.trim_start_matches(char::is_whitespace))
                     })
+                    .map(fold)
                     .collect()
             })
-            .iter()
-            .any(|defined| folded(defined) == wanted)
+            .contains(&fold(label))
     }
+}
+
+fn fold(label: &str) -> String {
+    label.chars().flat_map(char::to_lowercase).collect()
 }
 
 /// The label of a footnote definition that opens `content`, `[^label]:`.
@@ -323,7 +322,7 @@ fn footnote_label(label: &str) -> bool {
     !label.is_empty() && !label.contains(|c: char| c.is_whitespace() || c == '[')
 }
 
-/// The index of the line that closes front matter, where the text opens with it: a first line of `---`, not followed by an empty line, and the next line of `---`.
+/// The index of the line that closes the front matter `text` opens with.
 fn front_matter_end(text: &str) -> Option<usize> {
     let mut rest = lines(text.strip_prefix('\u{feff}').unwrap_or(text));
     if rest.next()? != "---" || rest.clone().next()?.is_empty() {
@@ -410,7 +409,7 @@ impl<'a> Iterator for Markdown<'a> {
     }
 }
 
-/// A table row's cells: the text between the pipes that are not escaped or in a code span, without a pipe at either end. An escaped pipe is a pipe.
+/// A row's cells, split at the pipes that are neither escaped nor in a code span.
 fn cells(row: &str) -> Vec<String> {
     let chars: Vec<char> = row.trim().chars().collect();
     let mut cells = Vec::new();
@@ -453,7 +452,7 @@ fn cells(row: &str) -> Vec<String> {
     cells
 }
 
-/// The number of columns a delimiter row marks, where `row` is one: cells of dashes, each with an optional colon at either end, and a pipe among them.
+/// The column count of a delimiter row, none where `row` is not one.
 fn delimiter_columns(row: &str) -> Option<usize> {
     let row = row.trim();
     if !row.contains('|') {
@@ -531,7 +530,7 @@ fn list_marker(line: &str) -> Option<&str> {
     marker(rest, ".").or_else(|| marker(rest, ")"))
 }
 
-/// The marker `[!type]` of a callout, with the `+` or `-` that folds it, at the start of `line`.
+/// The rest of `line` after a callout's `[!type]` marker and its `+` or `-`.
 fn callout_marker(line: &str) -> Option<&str> {
     let rest = line.strip_prefix("[!")?;
     let close = rest.find(']')?;
@@ -653,7 +652,7 @@ fn inline(text: &str, out: &mut Plain, notes: &Notes) {
     inline_chars(&chars, out, notes);
 }
 
-/// The character reference at the start of `chars`, such as `&amp;`, `&#169;` or `&#xA9;`, with the characters it takes, none where the text is no reference. The Markdown parser the core already links decides, so an unknown name or an out-of-range number stays as written.
+/// The text and length of the character reference at the start of `chars`. The Markdown parser holds the entity table, so it decides what a reference is.
 fn reference(chars: &[char]) -> Option<(String, usize)> {
     let name = chars[1..]
         .iter()
@@ -673,7 +672,7 @@ fn reference(chars: &[char]) -> Option<(String, usize)> {
     (decoded != source).then_some((decoded, name + 2))
 }
 
-/// The index of the `==` that closes a highlight whose text starts at `from`, skipping escapes and code spans.
+/// The index of the `==` that closes a highlight whose text starts at `from`.
 fn highlight_close(chars: &[char], from: usize) -> Option<usize> {
     let mut at = from;
     while at < chars.len() {
