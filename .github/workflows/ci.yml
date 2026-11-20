@@ -1534,14 +1534,28 @@ jobs:
         run: scripts/icon-sets.test.sh
       - name: Write the digest and the icon sets with Rust and check for drift
         run: |
+          rm packages/types/shipped-shapes.sha256
           (cd core && MARFA_WRITE_CATALOG=1 cargo nextest run --locked -p marfa-rules the_committed_digest_is)
-          scripts/icon-sets.sh
-          files="packages/types/shipped-shapes.sha256 packages/types/generated"
-          if [ -n "$(git status --porcelain $files)" ]; then
-            git status --porcelain $files
-            echo "The shapes' digest or the icon sets differ from what the Rust writers produce. Run 'MARFA_WRITE_CATALOG=1 cargo nextest run -p marfa-rules builtin::catalog_file' in core and 'scripts/icon-sets.sh', and commit."
+          if [ -n "$(git status --porcelain packages/types/shipped-shapes.sha256)" ]; then
+            git status --porcelain packages/types/shipped-shapes.sha256
+            echo "The shapes' digest differs from what the Rust writer produces. Run 'MARFA_WRITE_CATALOG=1 cargo nextest run -p marfa-rules builtin::catalog_file' in core and commit."
             exit 1
           fi
+          # A fresh folder, so a set already in the tree cannot stand in for one the Rust writer did not write.
+          sets="icon-set-lucide.json icon-set-simple-icons.json"
+          fresh="${RUNNER_TEMP}/icon-sets"
+          rm -rf "${fresh}"
+          scripts/icon-sets.sh "${fresh}"
+          if [ "$(ls -A "${fresh}")" != "$(printf '%s\n' ${sets})" ]; then
+            echo "The Rust icon writer wrote: $(ls -A "${fresh}")"
+            exit 1
+          fi
+          for set in ${sets}; do
+            git show "HEAD:packages/types/generated/${set}" | cmp - "${fresh}/${set}" || {
+              echo "${set} differs from what the Rust icon writer produces. Run 'scripts/icon-sets.sh' and commit."
+              exit 1
+            }
+          done
 
   version-fields:
     needs: changes
