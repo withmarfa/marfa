@@ -449,7 +449,11 @@ impl Folder {
             .maybe(born(&meta).as_deref());
         entries(&mut print, &self.root, &[FILES])?;
         entries(&mut print, &self.root.join(FILES), &[&self.instance])?;
-        entries(&mut print, &self.area(), &[disk::MARKER, disk::LOCK, disk::TMP])?;
+        entries(
+            &mut print,
+            &self.area(),
+            &[disk::MARKER, disk::LOCK, disk::TMP],
+        )?;
         Ok(print.finish())
     }
 
@@ -1119,5 +1123,72 @@ mod tests {
             Some(Ok(()))
         ));
         assert_eq!(fs::read_to_string(&marker).unwrap(), "retry");
+    }
+
+    #[test]
+    fn a_fingerprint_ignores_what_the_system_and_the_server_make() {
+        let dir = TempDir::new().unwrap();
+        let folder = unmounted_at(dir.path());
+        let before = folder.fingerprint().unwrap();
+        let area = dir.path().join(FILES).join("instance");
+        fs::create_dir_all(area.join(disk::TMP)).unwrap();
+        for made in [
+            dir.path().join(".DS_Store"),
+            dir.path().join("._backups"),
+            dir.path().join(FILES).join(".DS_Store"),
+            area.join(".DS_Store"),
+            area.join(disk::MARKER),
+            area.join(disk::LOCK),
+        ] {
+            fs::write(made, b"x").unwrap();
+        }
+        assert_eq!(folder.fingerprint().unwrap(), before);
+
+        fs::write(area.join("abcd"), b"x").unwrap();
+        assert_ne!(folder.fingerprint().unwrap(), before, "a file in the area");
+    }
+
+    #[test]
+    fn a_fingerprint_tells_a_folder_swapped_at_the_same_path() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("backups");
+        fs::create_dir_all(root.join("backups")).unwrap();
+        let folder = unmounted_at(&root);
+        let before = folder.fingerprint().unwrap();
+        assert_eq!(folder.fingerprint().unwrap(), before);
+
+        fs::rename(&root, dir.path().join("moved")).unwrap();
+        fs::create_dir_all(root.join("backups")).unwrap();
+        assert_ne!(folder.fingerprint().unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn a_held_adopt_reads_the_folder_then_marks_it_under_one_lock() {
+        let dir = TempDir::new().unwrap();
+        let folder = unmounted_at(dir.path());
+        let before = folder.fingerprint().unwrap();
+        let holding = folder
+            .hold_within(Duration::from_secs(2))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(holding.found, Adoptable::Unmarked);
+        assert_eq!(
+            holding.fingerprint, before,
+            "making the area changes nothing"
+        );
+        assert!(folder.claim_unended());
+        let area = dir.path().join(FILES).join("instance");
+        assert!(Disk::lock_area(&area).is_err(), "the area is not locked");
+
+        let claimed = folder
+            .claim_held(holding, "adopted".into(), Duration::from_secs(2))
+            .await
+            .unwrap();
+        claimed.written.unwrap();
+        assert_eq!(claimed.fingerprint.unwrap(), before);
+        assert!(!folder.claim_unended());
+        assert!(folder.reachable());
+        assert_eq!(folder.files().id(), "adopted");
     }
 }

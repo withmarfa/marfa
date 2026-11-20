@@ -564,4 +564,34 @@ mod tests {
         assert_eq!(open("key-a", "target", 1_000 + LIFE_MS), Opening::Stale);
         assert_eq!(open("key-a", "target", 2_000), Opening::Open);
     }
+
+    #[test]
+    fn a_peek_judges_a_bound_token_as_open_would_and_writes_nothing() {
+        let signer = signer();
+        let mut connection = spent_table();
+        let tx = connection.transaction().unwrap();
+        let token = signer
+            .issue_bound("marfa_purge", "key-a", "target", "subject", 1_000)
+            .unwrap();
+        let bound = parse_bound(&token.text).unwrap();
+        let at = |ms: i64| Stamp::from_ms(ms).unwrap();
+        let peek = |credential: &str, target: &str, ms: i64| {
+            signer
+                .peek(&tx, "marfa_purge", credential, target, &bound, at(ms))
+                .unwrap()
+        };
+        assert_eq!(peek("key-a", "target", 2_000), Opening::Open);
+        assert_eq!(peek("key-b", "target", 2_000), Opening::Stale);
+        assert_eq!(peek("key-a", "other", 2_000), Opening::Stale);
+        assert_eq!(peek("key-a", "target", 1_000 + LIFE_MS), Opening::Stale);
+        spend_bound(&tx, &bound, "key-a", "target", 3).unwrap();
+        assert_eq!(peek("key-a", "target", 2_000), Opening::Spent { total: 3 });
+        assert_eq!(peek("key-b", "target", 2_000), Opening::Stale);
+        assert_eq!(peek("key-a", "target", 1_000 + LIFE_MS), Opening::Stale);
+        assert_eq!(
+            peek("key-a", "target", 2_000),
+            Opening::Spent { total: 3 },
+            "a peek swept the spent record"
+        );
+    }
 }

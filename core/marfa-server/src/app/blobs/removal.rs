@@ -9,7 +9,7 @@ use serde_json::json;
 
 use super::rows::{self, Held};
 use super::store::{Answer, Store};
-use super::{Hash, below, copy_not_found, keep_held, not_found, owned, own_others, unavailable};
+use super::{Hash, below, copy_not_found, keep_held, not_found, own_others, owned, unavailable};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
 use crate::app::fingerprint::Fingerprint;

@@ -35,9 +35,9 @@ const CLEAR_REPEATED: &str =
     "This confirmation already cleared this state. This call changed nothing.";
 
 const STALE: &str = "This confirmation does not hold for this connector. This call changed nothing. Preview again to get a new confirmation.";
-const CHANGED: &str =
+pub(super) const CHANGED: &str =
     "What the preview showed has changed. This call changed nothing; here is a new preview.";
-const CHANGED_GONE: &str =
+pub(super) const CHANGED_GONE: &str =
     "What the preview showed has changed. This call changed nothing. Preview again.";
 
 pub fn definition() -> Definition {

@@ -1,5 +1,6 @@
 //! Validates tool arguments and dispatches with the caller's credential.
 
+mod adopt_backup_folder;
 mod apps;
 mod audit;
 mod backups;
@@ -18,6 +19,7 @@ mod maintain;
 mod moving;
 mod overview;
 mod purge;
+mod remove_file_copy;
 mod retire_endpoint;
 mod revoke;
 mod rows;
@@ -110,6 +112,10 @@ fn definitions() -> Vec<(Home, Definition)> {
         (Home::Admin(Task::Apps), apps::narrow_definition()),
         (Home::Admin(Task::Backups), backups::list_definition()),
         (Home::Admin(Task::Backups), backups::take_definition()),
+        (
+            Home::Admin(Task::Backups),
+            adopt_backup_folder::definition(),
+        ),
         (Home::Admin(Task::Maintain), maintain::definition()),
         (Home::Admin(Task::Connectors), connectors::list_definition()),
         (
@@ -122,6 +128,7 @@ fn definitions() -> Vec<(Home, Definition)> {
             delete_connector::definition(),
         ),
         (Home::Admin(Task::Files), files::definition()),
+        (Home::Admin(Task::Files), remove_file_copy::definition()),
         (Home::Admin(Task::SignIns), sign_ins::list_definition()),
         (Home::Admin(Task::SignIns), sign_ins::rename_definition()),
     ]
@@ -280,6 +287,8 @@ async fn run(
         retire_endpoint::NAME => retire_endpoint::run(app, caller, arguments).await,
         delete_connector::NAME => delete_connector::run(app, caller, arguments).await,
         files::NAME => files::run(app, caller, arguments).await,
+        remove_file_copy::NAME => remove_file_copy::run(app, caller, arguments).await,
+        adopt_backup_folder::NAME => adopt_backup_folder::run(app, caller, arguments).await,
         sign_ins::LIST_NAME => sign_ins::list(app, caller).await,
         sign_ins::RENAME_NAME => sign_ins::rename(app, caller, arguments).await,
         _ => Err(Stop::invalid("No tool has this name.")),

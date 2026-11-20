@@ -60,8 +60,8 @@ pub struct Adopted {
     pub files_folder: String,
     pub marker: Marker,
     /// The folder read otherwise once the marker was written than when it was locked, or could
-    /// not be read again.
-    pub folder_changed: bool,
+    /// not be read again; `None` where the folder did not answer.
+    pub folder_changed: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -74,7 +74,8 @@ pub enum Adopting {
 #[derive(Debug)]
 pub struct FolderNow {
     pub store_id: String,
-    pub marked: bool,
+    /// `None` where the folder did not answer in time.
+    pub marked: Option<bool>,
 }
 
 pub fn target() -> String {
@@ -234,13 +235,11 @@ impl App {
         self.look_to_adopt(&folder, followed).await?;
         let root = folder.root().display().to_string();
         let looked = folder.clone();
-        let fingerprint = tokio::time::timeout(
-            self.blobs.check(),
-            blocking(move || looked.fingerprint()),
-        )
-        .await
-        .map_err(|_| unanswered(&root, "did not answer in time"))?
-        .map_err(|error| looked_at_failed(&root, &error))?;
+        let fingerprint =
+            tokio::time::timeout(self.blobs.check(), blocking(move || looked.fingerprint()))
+                .await
+                .map_err(|_| unanswered(&root, "did not answer in time"))?
+                .map_err(|error| looked_at_failed(&root, &error))?;
         let (caller, at, app) = (caller.clone(), self.clock.stamp(), self.clone());
         let (named, old) = (folder.root().to_path_buf(), folder.files().id().to_string());
         let forgets = self
@@ -261,9 +260,9 @@ impl App {
     }
 
     /// The backup folder's store now, and whether its files area holds that store's marker.
-    pub async fn backup_folder_now(&self) -> Result<Option<FolderNow>> {
+    pub async fn backup_folder_now(&self) -> Option<FolderNow> {
         let Some(Destination::Folder(folder)) = Destination::of(&self.blobs.attachment()) else {
-            return Ok(None);
+            return None;
         };
         let looked = folder.clone();
         let marked = tokio::time::timeout(
@@ -272,12 +271,17 @@ impl App {
         )
         .await
         .ok()
-        .and_then(|joined| joined.ok())
-        .unwrap_or(false);
-        Ok(Some(FolderNow {
+        .and_then(|joined| joined.ok());
+        Some(FolderNow {
             store_id: folder.files().id().to_string(),
             marked,
-        }))
+        })
+    }
+
+    /// Judges an adopt's confirmation alone, before the folder is looked at.
+    pub async fn peek_adoption(&self, guard: &Guard) -> Result<Option<Halt>> {
+        let (guard, now) = (guard.clone(), self.clock.instant());
+        self.db.read(move |tx| guard.peek(tx, now)).await
     }
 
     /// Takes an unmarked backup folder as a new store, forgetting the old one's copies and backups.
@@ -377,8 +381,13 @@ impl App {
                     }
                 }
                 let backups = forget_backups(unit.tx(), &forgotten)?;
-                let copies =
-                    Blobs::replace_folder_store(unit.tx(), &forgotten, &new_id, &locator, &unit.at)?;
+                let copies = Blobs::replace_folder_store(
+                    unit.tx(),
+                    &forgotten,
+                    &new_id,
+                    &locator,
+                    &unit.at,
+                )?;
                 housekeeping::bring_forward(unit.tx(), REPLICATION, &unit.at)?;
                 unit.audit(
                     "store",
@@ -411,26 +420,28 @@ impl App {
         };
         self.faults.hold(HOLD_STORES_SWAP, None).await;
         let locked = holding.fingerprint.clone();
-        let (marker, folder_changed) =
-            match folder.claim_held(holding, id.clone(), self.blobs.check()).await {
-                Some(claimed) => {
-                    let changed = claimed.fingerprint.as_ref().ok() != Some(&locked);
-                    if changed {
-                        tracing::warn!("The backup folder changed while it was adopted");
-                    }
-                    match claimed.written {
-                        Ok(()) => (Marker::Written, changed),
-                        Err(error) => (Marker::Failed(error.to_string()), changed),
-                    }
+        let (marker, folder_changed) = match folder
+            .claim_held(holding, id.clone(), self.blobs.check())
+            .await
+        {
+            Some(claimed) => {
+                let changed = claimed.fingerprint.as_ref().ok() != Some(&locked);
+                if changed {
+                    tracing::warn!("The backup folder changed while it was adopted");
                 }
-                None => {
-                    if let Err(refused) = self.retake_folder(&folder).await {
-                        tracing::error!(%refused, "An adopt whose claim did not answer left the backup folder unchecked");
-                        self.blobs.doubt_record();
-                    }
-                    (Marker::Unanswered, true)
+                match claimed.written {
+                    Ok(()) => (Marker::Written, Some(changed)),
+                    Err(error) => (Marker::Failed(error.to_string()), Some(changed)),
                 }
-            };
+            }
+            None => {
+                if let Err(refused) = self.retake_folder(&folder).await {
+                    tracing::error!(%refused, "An adopt whose claim did not answer left the backup folder unchecked");
+                    self.blobs.doubt_record();
+                }
+                (Marker::Unanswered, None)
+            }
+        };
         tracing::info!(store = %id, replaced = %old_id, backups, copies, "The backup folder was adopted");
         Ok(Adopting::Done(Adopted {
             store_id: id,
