@@ -33,7 +33,7 @@ let serial = 0;
 beforeAll(async () => {
   sinks = await startFaultSinks();
   server = await bootFreshServer("inbound-faults", {
-    ...sinks.env(),
+    ...sinks.serverEnv(),
     ...QUIET_SCHEDULE,
   });
   await quiet(server, ["inbound-delivery-cleanup"]);

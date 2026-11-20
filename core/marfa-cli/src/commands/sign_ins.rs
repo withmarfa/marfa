@@ -29,7 +29,7 @@ pub enum SignInsCommand {
         /// The sign-in's id.
         id: String,
         /// For an app, also revoke every key it minted, and every key those
-        /// keys minted. Refused for a browser or a key.
+        /// keys minted, but an owner's key. Refused for a browser or a key.
         #[arg(long)]
         revoke_keys: bool,
     },

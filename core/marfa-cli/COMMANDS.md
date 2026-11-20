@@ -417,7 +417,7 @@ marfa apps revoke [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--revoke-keys` | Also revoke every key the app minted, and every key those keys minted. |
+| `--revoke-keys` | Also revoke every key the app minted, and every key those keys minted, but an owner's key. |
 
 ## sign-ins
 
@@ -464,7 +464,7 @@ marfa sign-ins end [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--revoke-keys` | For an app, also revoke every key it minted, and every key those keys minted. Refused for a browser or a key. |
+| `--revoke-keys` | For an app, also revoke every key it minted, and every key those keys minted, but an owner's key. Refused for a browser or a key. |
 
 ### marfa sign-ins end-all
 
@@ -1901,6 +1901,8 @@ Mint a key. Needs `keys.mint` or local authority.
 
 The key holds exactly what the flags name. A permission, a map entry or a claim each names a part of what it holds, and a part left unnamed is held as nothing. `--all-access` names every permission and every map at its widest. With none named, a key sent to a server takes the caller's whole set, and through `--socket` the command is refused, since the socket's authority has no limit to take.
 
+A key made through a sign-in or a key that holds `keys.manage`, as `marfa login`'s does, is the owner's: it carries no app, so it keeps working when the app sign-in that made it is disconnected or narrowed. An app's access token passed with `--key` or `MARFA_API_KEY` makes an app's key. With `keys.manage`, `--claim` can name any source but one starting `oauth:` or `restored:`.
+
 ```text
 marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
 ```
@@ -1943,6 +1945,8 @@ marfa keys current [OPTIONS]
 ### marfa keys update
 
 Change a key's label, tier, expiry or permission maps. Needs `keys.manage`, `keys.mint` (a key within the caller's reach) or local authority.
+
+`keys.mint` widens a key within what the caller holds and no later than the caller's own expiry. `keys.manage` without `keys.mint` only narrows a key and never moves its expiry later. A key an app made only narrows, whoever changes it.
 
 ```text
 marfa keys update [OPTIONS] <ID>

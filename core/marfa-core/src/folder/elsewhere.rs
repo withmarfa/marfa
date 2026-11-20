@@ -149,6 +149,14 @@ impl Peer {
         }
     }
 
+    /// Whether its store, read, follows a folder other than `own`; one of the
+    /// same folder holds the same query, perhaps not yet read.
+    fn follows_another(&self, own: &str) -> bool {
+        self.folder
+            .as_ref()
+            .is_some_and(|folder| folder.folder != own)
+    }
+
     /// Whether its query holds the item; `None` where its copy cannot say.
     fn holds(&self, item_id: &str) -> Option<bool> {
         self.members
@@ -527,6 +535,12 @@ impl<'a> Peers<'a> {
         &self.loaded().0
     }
 
+    fn other_folders(&self) -> impl Iterator<Item = &Peer> {
+        self.all()
+            .iter()
+            .filter(|peer| peer.follows_another(&self.of.folder))
+    }
+
     pub(super) fn unreadable(&self) -> Option<&str> {
         self.loaded().1.as_deref()
     }
@@ -721,7 +735,7 @@ impl<'a> Peers<'a> {
     /// Whether another folder holds the item, or a document it is attached
     /// to, with a file of it already.
     pub(super) fn filed_elsewhere(&self, item_id: &str) -> bool {
-        self.all().iter().any(|peer| {
+        self.other_folders().any(|peer| {
             (peer.holds(item_id) == Some(true) || peer.holds_document_of(item_id))
                 && peer
                     .bound_to(item_id)
@@ -736,7 +750,7 @@ impl<'a> Peers<'a> {
         item_id: &str,
         taking: &HashSet<String>,
     ) -> Option<(super::transfer::Entry, state::Bound)> {
-        for peer in self.all() {
+        for peer in self.other_folders() {
             let Some(bound) = peer.bound_to(item_id) else {
                 continue;
             };

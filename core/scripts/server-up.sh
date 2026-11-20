@@ -23,8 +23,6 @@ umask 077
 # The server this boots is throwaway, so it reports nothing, whatever the shell sets.
 # shellcheck source=no-telemetry.sh
 source "$(dirname "${BASH_SOURCE[0]}")/no-telemetry.sh"
-# Whatever a test server does send says it came from one.
-export OTEL_RESOURCE_ATTRIBUTES=deployment.environment=test
 
 repo="${MARFA_SERVER_REPO:-$(cd "$(dirname "$0")/../.." && pwd)}"
 server_bin="${MARFA_SERVER_BIN:-${CARGO_TARGET_DIR:-${repo}/core/target}/release/marfa-server}"
@@ -92,8 +90,10 @@ control_dir="$(cd "${control_dir}" && pwd -P)"
 export MARFA_CONTROL_SOCKET="${control_dir}/marfa.sock"
 
 # The recorded process owns the listener and both file reservations.
+# The server reads no OTEL_* name, so the switch meant for the command line is not passed to it.
 (
   cd "${state}"
+  unset OTEL_SDK_DISABLED
   exec "${server_bin}"
 ) >"${log}" 2>&1 &
 pid=$!
@@ -141,6 +141,12 @@ for _ in $(seq 1 120); do
   sleep 0.5
 done
 curl -fsS --max-time 2 "${url}/health" >/dev/null 2>&1 || fail "no answer from ${url}/health"
+
+# Whatever a test server does send says it came from one.
+curl -fsS --max-time 15 --unix-socket "${MARFA_CONTROL_SOCKET}" \
+  -X PATCH http://localhost/config -H 'Content-Type: application/json' \
+  --data '{"otel_resource_attributes":"deployment.environment=test"}' >/dev/null ||
+  fail "the server could not be marked as a test server"
 
 if [[ -n "${kept_key}" ]]; then
   write_env "${kept_key}"

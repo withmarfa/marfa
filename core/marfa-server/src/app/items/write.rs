@@ -877,7 +877,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             name: source.to_string(),
             disclosed,
         });
-        if self.caller().may_grant(source) {
+        if self.caller().writes_under(source) {
             return Ok(());
         }
         Err(Refusal::new(

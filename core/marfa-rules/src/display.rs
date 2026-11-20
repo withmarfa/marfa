@@ -18,6 +18,16 @@ pub struct ItemDisplay {
     pub preview: Option<String>,
 }
 
+/// The name `display` gives, without building the preview.
+pub fn display_name(
+    properties: &Map<String, Value>,
+    title_field: Option<&str>,
+    body_field: Option<&str>,
+    name_from_body: bool,
+) -> Option<String> {
+    name(properties, title_field, body_field, name_from_body).map(|named| named.text)
+}
+
 pub fn display(
     properties: &Map<String, Value>,
     title_field: Option<&str>,
@@ -57,19 +67,24 @@ pub fn title_name(properties: &Map<String, Value>, title_field: Option<&str>) ->
         })
 }
 
-/// A part named after its host: the edge type's label, a space and the host's name. Its name comes from no line of its body, so the preview keeps every line.
+/// The name of a part named after its host: the edge type's label, a space and the host's name.
+pub fn part_name(label: &str, host_name: &str) -> Option<String> {
+    let mut plain = Plain::new(NAME_POINTS);
+    plain.push_str(label);
+    plain.push(' ');
+    plain.push_str(host_name);
+    plain.finish()
+}
+
+/// A part named after its host. Its name comes from no line of its body, so the preview keeps every line.
 pub fn part_display(
     properties: &Map<String, Value>,
     body_field: Option<&str>,
     label: &str,
     host_name: &str,
 ) -> ItemDisplay {
-    let mut plain = Plain::new(NAME_POINTS);
-    plain.push_str(label);
-    plain.push(' ');
-    plain.push_str(host_name);
     ItemDisplay {
-        name: plain.finish(),
+        name: part_name(label, host_name),
         preview: properties
             .get(body_field.unwrap_or(BODY_PROPERTY))
             .and_then(Value::as_str)
@@ -925,6 +940,28 @@ mod tests {
             }
         }
         assert!(failed.is_empty(), "{}", failed.join("\n"));
+    }
+
+    #[test]
+    fn names_every_shared_case_without_building_the_preview() {
+        let shared: Shared = serde_json::from_str(SHARED).unwrap();
+        let catalog = catalog(&shared.types);
+        let mut failed = Vec::new();
+        for case in &shared.cases {
+            let got = catalog.display_name(&case.r#type, &case.properties);
+            if got != case.name {
+                failed.push(format!(
+                    "{}: got {got:?}, want {:?}",
+                    case.description, case.name
+                ));
+            }
+        }
+        assert!(failed.is_empty(), "{}", failed.join("\n"));
+        let long = "x".repeat(300);
+        let properties = serde_json::json!({ "body": "Note", "title": "T" });
+        let shown = part_display(properties.as_object().unwrap(), None, "Comment on", &long);
+        assert_eq!(part_name("Comment on", &long), shown.name);
+        assert_eq!(shown.name.unwrap().chars().count(), NAME_POINTS);
     }
 
     #[test]

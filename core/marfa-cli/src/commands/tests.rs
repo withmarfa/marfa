@@ -1993,6 +1993,61 @@ mod dispatch {
     }
 
     #[test]
+    fn a_key_made_by_a_credential_that_holds_keys_manage_is_the_owners() {
+        let root = format!(
+            r#"{{"name":"marfa","contract":{}}}"#,
+            marfa_core::contract::CONTRACT_VERSION
+        );
+        let minted = r#"{"key":{"id":"k"},"secret":"marfa_k1_y"}"#;
+        for (current, owners) in [
+            (
+                Answer::json("200 OK", r#"{"permissions":["keys.mint","keys.manage"]}"#),
+                true,
+            ),
+            (
+                Answer::json("200 OK", r#"{"permissions":["keys.mint"]}"#),
+                false,
+            ),
+            (
+                Answer::json(
+                    "403 Forbidden",
+                    r#"{"error":{"code":"forbidden","message":"An access token is not a key."}}"#,
+                ),
+                false,
+            ),
+        ] {
+            let door = Door::open(vec![
+                Answer::json("200 OK", &root),
+                current,
+                Answer::json("201 Created", minted),
+            ]);
+            keys::run(
+                keys::KeysCommand::Create(keys::KeyCreateArgs {
+                    label: "made".into(),
+                    source: "made-1".into(),
+                    ..Default::default()
+                }),
+                &remote_at(&door),
+                &QUIET,
+                &|_| {},
+            )
+            .unwrap();
+            let received = door.received();
+            let asked: Vec<String> = received
+                .iter()
+                .map(|r| format!("{} {}", r.method(), r.path()))
+                .collect();
+            assert_eq!(asked, ["GET /", "GET /keys/current", "POST /keys"]);
+            let sent: serde_json::Value = serde_json::from_str(&received[2].body).unwrap();
+            assert_eq!(
+                sent.get("owner_key"),
+                owners.then_some(&json!(true)),
+                "{sent}"
+            );
+        }
+    }
+
+    #[test]
     fn a_delete_carries_the_idempotency_key_it_was_given() {
         let door = Door::open(vec![Answer::json("200 OK", r#"{"item":{"id":"i"}}"#)]);
         items::run(

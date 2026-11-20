@@ -24,6 +24,7 @@ use super::config;
 use super::keys::{self, Key};
 use super::oauth;
 use super::refusal::{Code, Refusal, Result};
+use super::sources;
 pub use items::printable;
 pub use jobs::{Setting, standing_holder};
 pub use levers::{Holding, Levers, OwnLevers, Standing, report_unread};
@@ -146,21 +147,39 @@ impl Grants {
         })
     }
 
-    /// The holder may grant its own source and its claims.
+    /// What `wanted` holds beyond these, where a key holding `own` holds that source too.
     pub fn first_beyond(&self, own: &str, wanted: &Grants) -> Option<Beyond> {
         self.first_scope_beyond(wanted)
             .map(Beyond::Scope)
-            .or_else(|| {
-                wanted
-                    .sources
-                    .iter()
-                    .find(|source| !self.may_grant(own, source))
-                    .map(|source| Beyond::Source(source.clone()))
-            })
+            .or_else(|| first_source(wanted, |source| self.holds_source(own, source)))
     }
 
-    fn may_grant(&self, own: &str, source: &str) -> bool {
+    fn holds_source(&self, own: &str, source: &str) -> bool {
         source == own || self.sources.iter().any(|claim| claim == source)
+    }
+}
+
+fn first_source(wanted: &Grants, granted: impl Fn(&str) -> bool) -> Option<Beyond> {
+    wanted
+        .sources
+        .iter()
+        .find(|source| !granted(source))
+        .map(|source| Beyond::Source(source.clone()))
+}
+
+/// Why a key may only be narrowed, worded for a change that widens it.
+fn narrows_only(beyond: Beyond, why: &str) -> Refusal {
+    match beyond {
+        Beyond::Scope(scope) => Refusal::new(
+            Code::Forbidden,
+            format!("This gives the key {scope}, which it does not hold, and {why}"),
+        )
+        .with_detail("required_scope", scope),
+        Beyond::Source(source) => Refusal::new(
+            Code::Forbidden,
+            format!("This gives the key the source {source}, which it does not hold, and {why}"),
+        )
+        .with_detail("source", source),
     }
 }
 
@@ -395,13 +414,16 @@ impl Caller {
     }
 
     pub fn check_ceiling(&self, wanted: &Grants) -> Result<()> {
-        let beyond = match self {
-            Caller::Local(_) | Caller::Server => None,
-            Caller::Owner(_) => Grants::default().first_beyond("", wanted),
-            Caller::Key(key) | Caller::App { key, .. } => {
-                key.grants.first_beyond(&key.source, wanted)
-            }
+        let nothing = Grants::default();
+        let held = match self {
+            Caller::Local(_) | Caller::Server => return Ok(()),
+            Caller::Owner(_) => &nothing,
+            Caller::Key(key) | Caller::App { key, .. } => &key.grants,
         };
+        let beyond = held
+            .first_scope_beyond(wanted)
+            .map(Beyond::Scope)
+            .or_else(|| first_source(wanted, |source| self.may_grant(source)));
         beyond.map_or(Ok(()), |beyond| Err(beyond.into()))
     }
 
@@ -414,12 +436,20 @@ impl Caller {
         }
     }
 
-    pub fn may_grant(&self, source: &str) -> bool {
+    /// A write names the caller's own source or one it claims.
+    pub fn writes_under(&self, source: &str) -> bool {
         match self {
             Caller::Local(_) | Caller::Server => true,
             Caller::Owner(_) => false,
-            Caller::Key(key) | Caller::App { key, .. } => key.grants.may_grant(&key.source, source),
+            Caller::Key(key) | Caller::App { key, .. } => {
+                key.grants.holds_source(&key.source, source)
+            }
         }
+    }
+
+    /// Whoever reaches every key may hand any of them any source the server does not keep for itself.
+    pub fn may_grant(&self, source: &str) -> bool {
+        self.writes_under(source) || (self.manages_keys() && !sources::reserved(source))
     }
 
     pub fn check_own_source(&self, source: &str, claimed_elsewhere: bool) -> Result<()> {
@@ -439,18 +469,29 @@ impl Caller {
         }
     }
 
+    /// `keys.manage` narrows any key and `keys.mint` widens one within the caller; holding both gives either.
     pub fn check_update(&self, target: &Key, change: &Change<'_>) -> Result<()> {
         if change.levers.is_some() {
             self.require(Permission::ConfigManage)?;
         }
-        let acting_by_manage = !self.is_local() && self.manages_keys();
-        if change.narrow_only || acting_by_manage || target.oauth_client_id.is_some() {
-            if let Some(beyond) = target.grants.first_beyond(&target.source, change.grants) {
-                return Err(beyond.into());
-            }
-            let limit = target.expires_at.as_deref();
-            if change.life.is_some_and(|wanted| outlives(wanted, limit)) {
-                return Err(longer_life(limit));
+        let limit = target.expires_at.as_deref();
+        let widening = target.grants.first_beyond(&target.source, change.grants);
+        let lengthens = change.life.is_some_and(|wanted| outlives(wanted, limit));
+        if widening.is_some() || lengthens {
+            let why = if target.oauth_client_id.is_some() {
+                Some("a key an app made can only be narrowed.")
+            } else if change.narrow_only {
+                Some("narrow_only refuses a widening.")
+            } else if !self.is_local() && !self.holds(Permission::KeysMint) {
+                Some("keys.manage only narrows a key. Widening a key needs keys.mint.")
+            } else {
+                None
+            };
+            if let Some(why) = why {
+                return Err(match widening {
+                    Some(beyond) => narrows_only(beyond, why),
+                    None => longer_life(limit),
+                });
             }
         }
         if change.narrow_only
@@ -464,20 +505,17 @@ impl Caller {
             )
             .with_detail("field", "enforcement_override"));
         }
-        if !self.is_local() && !self.manages_keys() {
-            self.require(Permission::KeysMint)?;
-            self.check_ceiling(change.grants)?;
-            let widens = target
-                .grants
-                .first_beyond(&target.source, change.grants)
-                .is_some();
-            match change.life {
-                Some(wanted) => self.check_life(wanted)?,
-                None if widens => self.check_life(target.expires_at.as_deref())?,
-                None => {}
-            }
+        let narrows = widening.is_none() && !lengthens;
+        if self.is_local() || (narrows && self.manages_keys()) {
+            return Ok(());
         }
-        Ok(())
+        self.require(Permission::KeysMint)?;
+        self.check_ceiling(change.grants)?;
+        match change.life {
+            Some(wanted) => self.check_life(wanted),
+            None if widening.is_some() => self.check_life(limit),
+            None => Ok(()),
+        }
     }
 
     pub fn sees_source(&self, source: &str) -> bool {
@@ -804,48 +842,224 @@ mod tests {
         assert!(Caller::local().reaches(&wide_types(key("t", "t", &[KeysManage], &["x"]))));
     }
 
+    fn app(key: Key) -> Caller {
+        Caller::App {
+            key: Box::new(key),
+            grant: Box::new(oauth::Granted {
+                client_id: "client".into(),
+                owner_id: "owner".into(),
+                grant_id: "grant".into(),
+                authenticated_at: None,
+            }),
+        }
+    }
+
+    fn app_key(mut key: Key) -> Key {
+        key.source = "oauth:client".into();
+        key.oauth_client_id = Some("client".into());
+        key
+    }
+
+    fn refusal_detail(refusal: &Refusal, name: &str) -> Option<Value> {
+        refusal.details.as_ref().and_then(|d| d.get(name).cloned())
+    }
+
     #[test]
     fn an_update_is_held_to_the_caller_and_to_the_key() {
-        use Permission::{AuditRead, ConfigManage, KeysManage, KeysMint};
+        use Permission::{AuditRead, ConfigManage, KeysManage, KeysMint, WebhooksManage};
         let target = key("t", "t", &[AuditRead], &[]);
         let wider = key("t", "t", &[AuditRead, KeysMint], &[]).grants;
+        let beyond_minter = key("t", "t", &[AuditRead, WebhooksManage], &[]).grants;
+        let nothing = Grants::default();
         let change = |grants, narrow_only| Change {
             grants,
             life: None,
             levers: None,
             narrow_only,
         };
-        let manager = Caller::Key(Box::new(key("m", "m", &[KeysManage, KeysMint], &[])));
-        let minter = Caller::Key(Box::new(key("n", "n", &[KeysMint, AuditRead], &[])));
-        assert!(
-            Caller::local()
-                .check_update(&target, &change(&wider, false))
-                .is_ok()
-        );
-        assert!(
-            Caller::local()
-                .check_update(&target, &change(&wider, true))
-                .is_err()
-        );
-        assert!(
-            manager
-                .check_update(&target, &change(&wider, false))
-                .is_err()
-        );
-        let nothing = Grants::default();
-        assert!(
-            manager
-                .check_update(&target, &change(&nothing, false))
-                .is_ok()
-        );
-        assert!(minter.check_update(&target, &change(&wider, false)).is_ok());
+        let held = |permissions: &[Permission]| {
+            let mut all = vec![AuditRead];
+            all.extend_from_slice(permissions);
+            key("c", "c", &all, &[])
+        };
+        let mut made_by_an_app = target.clone();
+        made_by_an_app.oauth_client_id = Some("client".into());
+        let local = Caller::local();
+        let plain = Caller::Key(Box::new(held(&[])));
+        let manager = Caller::Key(Box::new(held(&[KeysManage])));
+        let minter = Caller::Key(Box::new(held(&[KeysMint])));
+        let both = Caller::Key(Box::new(held(&[KeysManage, KeysMint])));
+        let app_manager = app(app_key(held(&[KeysManage])));
+        let app_minter = app(app_key(held(&[KeysMint])));
+        let app_both = app(app_key(held(&[KeysManage, KeysMint])));
+        for (name, caller, target, grants, narrow_only, allowed) in [
+            ("local widens", &local, &target, &wider, false, true),
+            ("local, narrow_only", &local, &target, &wider, true, false),
+            (
+                "local, a key an app made",
+                &local,
+                &made_by_an_app,
+                &wider,
+                false,
+                false,
+            ),
+            (
+                "a key holding neither",
+                &plain,
+                &target,
+                &nothing,
+                false,
+                false,
+            ),
+            ("manage narrows", &manager, &target, &nothing, false, true),
+            (
+                "manage alone widens",
+                &manager,
+                &target,
+                &wider,
+                false,
+                false,
+            ),
+            ("mint narrows", &minter, &target, &nothing, false, true),
+            (
+                "mint widens within itself",
+                &minter,
+                &target,
+                &wider,
+                false,
+                true,
+            ),
+            (
+                "mint widens beyond itself",
+                &minter,
+                &target,
+                &beyond_minter,
+                false,
+                false,
+            ),
+            (
+                "both widen within the caller",
+                &both,
+                &target,
+                &wider,
+                false,
+                true,
+            ),
+            (
+                "both widen beyond the caller",
+                &both,
+                &target,
+                &beyond_minter,
+                false,
+                false,
+            ),
+            ("both narrow", &both, &target, &nothing, false, true),
+            ("both, narrow_only", &both, &target, &wider, true, false),
+            (
+                "both, a key an app made",
+                &both,
+                &made_by_an_app,
+                &wider,
+                false,
+                false,
+            ),
+            (
+                "both narrow a key an app made",
+                &both,
+                &made_by_an_app,
+                &nothing,
+                false,
+                true,
+            ),
+            (
+                "an app's manage alone widens",
+                &app_manager,
+                &target,
+                &wider,
+                false,
+                false,
+            ),
+            (
+                "an app's manage narrows",
+                &app_manager,
+                &target,
+                &nothing,
+                false,
+                true,
+            ),
+            (
+                "an app's mint widens",
+                &app_minter,
+                &target,
+                &wider,
+                false,
+                true,
+            ),
+            (
+                "an app's mint and manage widen",
+                &app_both,
+                &target,
+                &wider,
+                false,
+                true,
+            ),
+            (
+                "an app's both widen beyond it",
+                &app_both,
+                &target,
+                &beyond_minter,
+                false,
+                false,
+            ),
+        ] {
+            assert_eq!(
+                caller
+                    .check_update(target, &change(grants, narrow_only))
+                    .is_ok(),
+                allowed,
+                "{name}"
+            );
+        }
 
-        let mut app_key = target.clone();
-        app_key.oauth_client_id = Some("client".into());
+        let refused = manager
+            .check_update(&target, &change(&wider, false))
+            .unwrap_err();
+        assert_eq!(refused.code, Code::Forbidden);
         assert!(
-            Caller::local()
-                .check_update(&app_key, &change(&wider, false))
-                .is_err()
+            refused.message.contains("keys.manage only narrows"),
+            "{}",
+            refused.message
+        );
+        assert!(
+            !refused.message.contains("you do not hold"),
+            "{}",
+            refused.message
+        );
+        assert_eq!(
+            refusal_detail(&refused, "required_scope"),
+            Some(json!("keys.mint"))
+        );
+        let claiming = key("t", "t", &[AuditRead], &["theirs"]).grants;
+        let refused = manager
+            .check_update(&target, &change(&claiming, false))
+            .unwrap_err();
+        assert!(
+            refused.message.contains("keys.manage only narrows"),
+            "{}",
+            refused.message
+        );
+        assert_eq!(refusal_detail(&refused, "source"), Some(json!("theirs")));
+        let refused = minter
+            .check_update(&target, &change(&beyond_minter, false))
+            .unwrap_err();
+        assert!(
+            refused.message.contains("which you do not hold"),
+            "{}",
+            refused.message
+        );
+        assert_eq!(
+            refusal_detail(&refused, "required_scope"),
+            Some(json!("webhooks.manage"))
         );
 
         let levers = Levers::from_row("{}").unwrap();
@@ -871,8 +1085,71 @@ mod tests {
     }
 
     #[test]
+    fn keys_manage_grants_any_source_the_server_does_not_keep() {
+        use Permission::{KeysManage, KeysMint};
+        let claiming = |sources: &[&str]| key("w", "w", &[], sources).grants;
+        let minter = Caller::Key(Box::new(key("n", "n", &[KeysMint], &["ours"])));
+        let both = Caller::Key(Box::new(key("b", "b", &[KeysManage, KeysMint], &[])));
+        let app_both = app(app_key(key("a", "a", &[KeysManage, KeysMint], &[])));
+        let at = Stamp::from_ms(0).unwrap();
+        let browser = Caller::Owner(Box::new(Session {
+            id: "s".into(),
+            owner_id: "owner".into(),
+            created_at: at,
+            last_used_at: at,
+            expires_at: at,
+            user_agent: None,
+            standing: Standing::default(),
+        }));
+        for (name, caller, source, granted) in [
+            ("mint, its own source", &minter, "n", true),
+            ("mint, its claim", &minter, "ours", true),
+            ("mint, another source", &minter, "theirs", false),
+            ("manage, another source", &both, "theirs", true),
+            (
+                "manage, a connector's source",
+                &both,
+                "connector:github",
+                true,
+            ),
+            ("manage, an app's source", &both, "oauth:client", false),
+            ("manage, a restored source", &both, "Restored:device", false),
+            ("an app's manage, another source", &app_both, "theirs", true),
+            (
+                "an app's manage, its own app's source",
+                &app_both,
+                "oauth:client",
+                true,
+            ),
+            (
+                "an app's manage, another app's source",
+                &app_both,
+                "oauth:other",
+                false,
+            ),
+            ("a browser session", &browser, "theirs", false),
+            ("local authority", &Caller::local(), "theirs", true),
+        ] {
+            assert_eq!(caller.may_grant(source), granted, "{name}");
+            assert_eq!(
+                caller.check_ceiling(&claiming(&[source])).is_ok(),
+                granted,
+                "{name}"
+            );
+        }
+        assert!(!both.writes_under("theirs"));
+        assert!(both.writes_under("b"));
+        assert!(both.sees_source("oauth:client"));
+    }
+
+    #[test]
     fn a_widening_update_is_held_to_the_callers_life() {
-        use Permission::{AuditRead, KeysMint};
+        use Permission::{AuditRead, KeysManage, KeysMint};
+        let held_until = |id: &str, permissions: &[Permission], end: Option<&str>| {
+            let mut key = key(id, id, permissions, &[]);
+            key.expires_at = end.map(Into::into);
+            key
+        };
         let expiring = |id: &str, end: Option<&str>| {
             let mut key = key(id, id, &[KeysMint, AuditRead], &[]);
             key.expires_at = end.map(Into::into);
@@ -888,6 +1165,12 @@ mod tests {
         };
         let minter = Caller::Key(Box::new(expiring("w", Some("2030"))));
         let lasting = Caller::Key(Box::new(expiring("l", None)));
+        let both = Caller::Key(Box::new(held_until(
+            "b",
+            &[KeysManage, KeysMint, AuditRead],
+            Some("2030"),
+        )));
+        let manager = Caller::Key(Box::new(held_until("m", &[KeysManage, AuditRead], None)));
         let open = key("t", "t", &[AuditRead], &[]);
         let mut shorter = open.clone();
         shorter.expires_at = Some("2029".into());
@@ -899,6 +1182,26 @@ mod tests {
             (&minter, &open, &open.grants, None, true),
             (&minter, &shorter, &wider, None, true),
             (&lasting, &open, &wider, None, true),
+            (&both, &open, &wider, None, false),
+            (&both, &open, &wider, Some(Some("2030")), true),
+            (&both, &open, &wider, Some(Some("2031")), false),
+            (
+                &both,
+                &shorter,
+                &shorter.grants,
+                Some(Some("2029-06")),
+                true,
+            ),
+            (&both, &open, &narrower, Some(None), true),
+            (&manager, &shorter, &shorter.grants, Some(None), false),
+            (
+                &manager,
+                &shorter,
+                &shorter.grants,
+                Some(Some("2028")),
+                true,
+            ),
+            (&manager, &open, &narrower, Some(Some("2028")), true),
         ] {
             assert_eq!(
                 caller.check_update(target, &change(grants, life)).is_ok(),

@@ -7,7 +7,7 @@ use crate::credentials::{self, Kept};
 use crate::error::CliError;
 use crate::output::{Printer, printable};
 use crate::remote::Remote;
-use crate::remote::request::Request;
+use crate::remote::request::{Body, Request};
 use crate::values::Tier;
 
 #[derive(Debug, Subcommand)]
@@ -20,6 +20,13 @@ pub enum KeysCommand {
     /// every map at its widest. With none named, a key sent to a server takes
     /// the caller's whole set, and through `--socket` the command is refused,
     /// since the socket's authority has no limit to take.
+    ///
+    /// A key made through a sign-in or a key that holds `keys.manage`, as
+    /// `marfa login`'s does, is the owner's: it carries no app, so it keeps working
+    /// when the app sign-in that made it is disconnected or narrowed. An
+    /// app's access token passed with `--key` or `MARFA_API_KEY` makes an
+    /// app's key. With `keys.manage`, `--claim` can name any source but one
+    /// starting `oauth:` or `restored:`.
     Create(KeyCreateArgs),
     /// List key metadata. Needs `keys.manage`, `keys.mint` (the keys within
     /// the caller's reach) or local authority.
@@ -29,6 +36,11 @@ pub enum KeysCommand {
     Current,
     /// Change a key's label, tier, expiry or permission maps. Needs `keys.manage`,
     /// `keys.mint` (a key within the caller's reach) or local authority.
+    ///
+    /// `keys.mint` widens a key within what the caller holds and no later
+    /// than the caller's own expiry. `keys.manage` without `keys.mint` only
+    /// narrows a key and never moves its expiry later. A key an app made
+    /// only narrows, whoever changes it.
     Update(KeyUpdateArgs),
     /// Revoke a key; the next request bearing it is refused. Needs
     /// `keys.manage`, `keys.mint` (a key within the caller's reach) or local
@@ -464,6 +476,38 @@ pub fn create_request(args: &KeyCreateArgs, local: bool) -> Result<Request, CliE
     Ok(Request::post(&["keys"]).json(Value::Object(body)).minting())
 }
 
+/// Asks for the key to be the owner's, so that it stays when an app's
+/// sign-in that made it is disconnected or narrowed.
+pub fn owners(mut request: Request) -> Request {
+    if let Body::Json(Value::Object(body)) = &mut request.body {
+        body.insert("owner_key".into(), Value::Bool(true));
+    }
+    request
+}
+
+/// A sign-in is an app's access token, which the server does not answer
+/// as a key (`keys-and-oauth/current-key-app`); what it holds is the
+/// `scope` its token answer carried.
+fn reaches_every_key(remote: &Remote) -> Result<bool, CliError> {
+    if let Some(Kept::Token { scope, .. }) = remote.kept() {
+        return Ok(scope
+            .as_deref()
+            .unwrap_or_default()
+            .split_whitespace()
+            .any(|scope| scope == "keys.manage"));
+    }
+    match remote.json(&current_request()) {
+        Ok(key) => Ok(key
+            .get("permissions")
+            .and_then(Value::as_array)
+            .is_some_and(|held| held.iter().any(|word| word == "keys.manage"))),
+        Err(CliError::Refused {
+            status: 403, code, ..
+        }) if code == "forbidden" => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn list_request() -> Request {
     Request::get(&["keys"])
 }
@@ -514,7 +558,21 @@ pub fn run(
     resume: &dyn Fn(&str),
 ) -> Result<(), CliError> {
     let request = match &command {
-        KeysCommand::Create(args) => create_request(args, remote.is_local())?,
+        KeysCommand::Create(args) => {
+            let mut request = create_request(args, remote.is_local())?;
+            if remote.is_local() {
+                request
+            } else {
+                // The root is held before the read that decides the body, so the mint need not hold it again.
+                remote.hold_root()?;
+                request.mints = false;
+                if reaches_every_key(remote)? {
+                    owners(request)
+                } else {
+                    request
+                }
+            }
+        }
         KeysCommand::List => list_request(),
         KeysCommand::Current => current_request(),
         KeysCommand::Update(args) => update_request(args)?,

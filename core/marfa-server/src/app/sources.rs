@@ -27,6 +27,14 @@ const ICON_SETS: [(&str, &str); 2] = [
 
 pub const FIELDS: [&str; 2] = ["name", "mark"];
 
+/// The server's own: an app's source and a restored app's source, which no key may take or claim.
+const RESERVED: [&str; 2] = ["oauth:", RESTORED];
+
+pub fn reserved(source: &str) -> bool {
+    let lowered = source.to_ascii_lowercase();
+    RESERVED.iter().any(|prefix| lowered.starts_with(prefix))
+}
+
 pub fn length(text: &str) -> usize {
     text.chars().count()
 }

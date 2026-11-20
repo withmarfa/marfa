@@ -83,37 +83,6 @@ pub const DECLARED: &[Declared] = &[
     ),
     secret("MARFA_KEY_SALT", "Secret that keys are stored under."),
     secret("MARFA_AUTH_SECRET", "Secret that sign-in is signed with."),
-    plain(
-        "MARFA_OTEL_SAMPLE_RATIO",
-        "The share of requests whose traces are kept.",
-    ),
-    plain("OTEL_SDK_DISABLED", "Turns telemetry off."),
-    plain(
-        "OTEL_SERVICE_NAME",
-        "The name telemetry reports the server as.",
-    ),
-    plain(
-        "OTEL_RESOURCE_ATTRIBUTES",
-        "Extra labels telemetry carries.",
-    ),
-    secret("OTEL_EXPORTER_OTLP_ENDPOINT", "Where telemetry is sent."),
-    secret(
-        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
-        "Where traces are sent.",
-    ),
-    secret("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", "Where logs are sent."),
-    secret(
-        "OTEL_EXPORTER_OTLP_HEADERS",
-        "Headers telemetry is sent with.",
-    ),
-    secret(
-        "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
-        "Headers traces are sent with.",
-    ),
-    secret(
-        "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
-        "Headers logs are sent with.",
-    ),
     hook("MARFA_TEST_HOOKS", "Turns the test hooks on."),
     hook(
         "MARFA_TEST_CLOCK_OFFSET_MS",

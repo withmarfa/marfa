@@ -462,12 +462,16 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
                 &request.source,
                 connectors::source_held(unit.tx(), &request.source)?,
             )?;
+            let app_origin = caller.key().and_then(|maker| maker.oauth_client_id.clone());
+            if request.owner_key && app_origin.is_some() {
+                caller.require(Permission::KeysManage)?;
+            }
             let key = Key {
                 id: uuid::Uuid::now_v7().to_string(),
                 label: request.label,
                 source: request.source,
                 default_tier: request.default_tier,
-                oauth_client_id: caller.key().and_then(|maker| maker.oauth_client_id.clone()),
+                oauth_client_id: app_origin.filter(|_| !request.owner_key),
                 grants,
                 levers: request.levers.flatten().into(),
                 standing: Standing::default(),
@@ -476,7 +480,11 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
                 last_used_at: None,
             };
             insert(unit.tx(), &key, &hash)?;
-            unit.audit("key", &key.id, Some(json!({ "actor": caller.audit_id() })))?;
+            let mut details = json!({ "actor": caller.audit_id() });
+            if request.owner_key {
+                details["owner_key"] = true.into();
+            }
+            unit.audit("key", &key.id, Some(details))?;
             Ok(key)
         })
         .await?;

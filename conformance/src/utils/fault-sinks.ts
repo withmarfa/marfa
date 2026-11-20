@@ -3,19 +3,26 @@ import { gunzipSync } from "node:zlib";
 import { expect } from "vitest";
 
 /**
- * Where a server under test reports an unhandled fault, in the places a
- * fixture can read: the log records and spans it exports over OTLP, and the
- * exceptions it sends to error tracking. One receiver on the loopback address
- * is all three, so a fixture boots its server with {@link FaultSinks.env} and
- * reads what arrived. The server posts a batch to PostHog's capture v1.
+ * Where a server or the command line under test reports an unhandled fault,
+ * in the places a fixture can read: the log records and spans it exports over
+ * OTLP, and the exceptions the server sends to error tracking. One receiver on
+ * the loopback address is all three, so a fixture boots its server with
+ * {@link FaultSinks.serverEnv}, or runs the command line with
+ * {@link FaultSinks.env}, and reads what arrived. The server posts a batch to
+ * PostHog's capture v1.
  */
 export interface FaultSinks {
   /**
-   * The settings that point the three reports at the receiver. They name the
-   * switch too, since a booted test server is told to send nothing unless a
-   * fixture says otherwise.
+   * The command line's settings that point its reports at the receiver. They
+   * name the switch too, since a test run tells the command line to send
+   * nothing unless a fixture says otherwise.
    */
   env(): Record<string, string>;
+  /**
+   * The seeds of a booted test server's stored settings that point its three
+   * reports at the receiver.
+   */
+  serverEnv(): Record<string, string>;
   /** What it was sent as OTLP traces, as OTLP log records and as error tracking's events. */
   readonly traces: Record<string, unknown>[];
   readonly logRecords: Record<string, unknown>[];
@@ -24,6 +31,19 @@ export interface FaultSinks {
   readonly elsewhere: Record<string, unknown>[];
   /** The headers of each batch the server posted to capture v1, in order. */
   readonly trackedHeaders: Record<string, string | string[] | undefined>[];
+  /**
+   * When each batch the server posted to capture v1 reached the receiver, as
+   * `performance.now()` read on the request, parallel to `trackedErrors`.
+   */
+  readonly trackedArrivals: number[];
+  /** Each OTLP post, traces and log records alike, with its headers, in order. */
+  readonly exports: {
+    signal: "traces" | "logs";
+    headers: Record<string, string | string[] | undefined>;
+    body: Record<string, unknown>;
+    /** `performance.now()` when the request reached the receiver, before its body was read. */
+    arrivedAt: number;
+  }[];
   sentLogRecords(): {
     body: unknown;
     attributes: Record<string, unknown>;
@@ -93,7 +113,10 @@ export async function startFaultSinks(): Promise<FaultSinks> {
   const trackedErrors: Record<string, unknown>[] = [];
   const elsewhere: Record<string, unknown>[] = [];
   const trackedHeaders: FaultSinks["trackedHeaders"][number][] = [];
+  const trackedArrivals: number[] = [];
+  const exports: FaultSinks["exports"][number][] = [];
   const receiver: Server = createServer((request, response) => {
+    const arrivedAt = performance.now();
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
@@ -106,11 +129,26 @@ export async function startFaultSinks(): Promise<FaultSinks> {
           unknown
         >;
         const path = request.url ?? "";
-        if (path.startsWith("/v1/traces")) traces.push(parsed);
-        else if (path.startsWith("/v1/logs")) logRecords.push(parsed);
-        else if (path.startsWith(CAPTURE_V1)) {
+        if (path.startsWith("/v1/traces")) {
+          traces.push(parsed);
+          exports.push({
+            signal: "traces",
+            headers: { ...request.headers },
+            body: parsed,
+            arrivedAt,
+          });
+        } else if (path.startsWith("/v1/logs")) {
+          logRecords.push(parsed);
+          exports.push({
+            signal: "logs",
+            headers: { ...request.headers },
+            body: parsed,
+            arrivedAt,
+          });
+        } else if (path.startsWith(CAPTURE_V1)) {
           trackedErrors.push(parsed);
           trackedHeaders.push({ ...request.headers });
+          trackedArrivals.push(arrivedAt);
         } else elsewhere.push(parsed);
       } finally {
         response
@@ -134,11 +172,18 @@ export async function startFaultSinks(): Promise<FaultSinks> {
       MARFA_POSTHOG_HOST: origin,
       MARFA_POSTHOG_PROJECT_TOKEN: "phc_conformance_fixture",
     }),
+    serverEnv: () => ({
+      MARFA_OTEL_EXPORTER_OTLP_ENDPOINT: origin,
+      MARFA_POSTHOG_HOST: origin,
+      MARFA_POSTHOG_PROJECT_TOKEN: "phc_conformance_fixture",
+    }),
     traces,
     logRecords,
     trackedErrors,
     elsewhere,
     trackedHeaders,
+    trackedArrivals,
+    exports,
     sentLogRecords() {
       type Batch = {
         resourceLogs: {

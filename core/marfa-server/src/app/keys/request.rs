@@ -6,9 +6,8 @@ use crate::app::sources;
 
 const MAX_CLAIMS: usize = 1000;
 const MAX_SOURCE_LENGTH: usize = 200;
-const RESERVED_SOURCES: [&str; 2] = ["oauth:", "restored:"];
 
-pub const MINT_FIELDS: [&str; 12] = [
+pub const MINT_FIELDS: [&str; 13] = [
     "label",
     "source",
     "sources",
@@ -21,6 +20,7 @@ pub const MINT_FIELDS: [&str; 12] = [
     "profile_permissions",
     "enforcement_override",
     "expires_at",
+    "owner_key",
 ];
 
 pub const UPDATE_FIELDS: [&str; 12] = [
@@ -129,13 +129,6 @@ fn permission_list(value: &Value) -> Result<Vec<Permission>> {
     Ok(permissions)
 }
 
-fn reserved(source: &str) -> bool {
-    let lowered = source.to_ascii_lowercase();
-    RESERVED_SOURCES
-        .iter()
-        .any(|prefix| lowered.starts_with(prefix))
-}
-
 fn held_source(text: &str, field: &str) -> Result<String> {
     let trimmed = text.trim();
     if trimmed.is_empty() || sources::length(trimmed) > MAX_SOURCE_LENGTH {
@@ -148,7 +141,7 @@ fn held_source(text: &str, field: &str) -> Result<String> {
             "{field} can't be . or .., which a client folds out of a path."
         )));
     }
-    if reserved(trimmed) {
+    if sources::reserved(trimmed) {
         return Err(Refusal::validation(format!(
             "{field} can't start with oauth: or restored:."
         )));
@@ -236,6 +229,7 @@ pub struct Mint {
     pub families: Families,
     pub levers: Option<Option<Levers>>,
     pub expires_at: Option<Option<String>>,
+    pub owner_key: bool,
 }
 
 impl Mint {
@@ -253,7 +247,19 @@ impl Mint {
             families: Families::from_body(body)?,
             levers: body.get("enforcement_override").map(levers).transpose()?,
             expires_at: body.get("expires_at").map(expiry).transpose()?,
+            owner_key: flag(body, "owner_key")?,
         })
+    }
+}
+
+fn flag(body: &Object<String, Value>, field: &str) -> Result<bool> {
+    match body.get(field) {
+        None => Ok(false),
+        Some(Value::Bool(flag)) => Ok(*flag),
+        Some(_) => Err(
+            Refusal::validation(format!("{field} must be true or false."))
+                .with_detail("field", field),
+        ),
     }
 }
 
@@ -270,11 +276,7 @@ pub struct Update {
 
 impl Update {
     pub fn from_body(body: &Object<String, Value>) -> Result<Update> {
-        let narrow_only = match body.get("narrow_only") {
-            None => false,
-            Some(Value::Bool(flag)) => *flag,
-            Some(_) => return Err(Refusal::validation("narrow_only must be true or false.")),
-        };
+        let narrow_only = flag(body, "narrow_only")?;
         Ok(Update {
             label: body.get("label").map(label).transpose()?,
             default_tier: body.get("default_tier").map(tier).transpose()?,

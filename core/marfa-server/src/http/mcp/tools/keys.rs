@@ -48,7 +48,7 @@ pub fn manage_definition() -> Definition {
     Definition {
         name: MANAGE_NAME,
         title: "Make or narrow a key",
-        description: "Use to make an API key for an app or script, or to narrow what a key may reach. A key never gets more than this credential holds; a new key that names no permissions or maps gets all of it, so name only what the key needs. Making a key returns its secret once: give it to the person, who keeps it.",
+        description: "Use to make an API key for an app or script, or to narrow what a key may reach. A key never gets more than this credential holds; a new key that names no permissions or maps gets all of it, so name only what the key needs. Set `owner_key` to make the owner's own key, which an app's disconnection leaves working; an app needs `keys.manage` for it. Name `sources` to let a key also write under other sources; one this credential cannot write under needs `keys.manage`. Making a key returns its secret once: give it to the person, who keeps it.",
         input: json!({
             "type": "object",
             "properties": {
@@ -64,6 +64,10 @@ pub fn manage_definition() -> Definition {
                 "edge_permissions": { "type": "object", "additionalProperties": level },
                 "metadata_permissions": { "type": "object", "additionalProperties": level },
                 "expires_at": { "type": "string", "description": "When the key stops working (RFC 3339)." },
+                "owner_key": { "type": "boolean",
+                    "description": "To make a key: `true` for the owner's own key, not an app's. It then carries no app, so disconnecting or narrowing the app leaves it working." },
+                "sources": { "type": "array", "items": { "type": "string", "minLength": 1 },
+                    "description": "To make a key: the sources it may also write under, besides its own `source`." },
             },
             "required": ["action"],
             "additionalProperties": false,
@@ -144,7 +148,7 @@ pub async fn manage(app: &Arc<App>, caller: &Caller, arguments: Map<String, Valu
                 "A new key needs a label and a source.",
             ));
         }
-        let mut names = vec!["label", "source", "expires_at"];
+        let mut names = vec!["label", "source", "sources", "expires_at", "owner_key"];
         names.extend(GRANT_FIELDS);
         let mint = Mint::from_body(&body_of(&arguments, &names))?;
         let (key, secret) = keys::mint(app, caller, mint).await?;
@@ -162,6 +166,14 @@ pub async fn manage(app: &Arc<App>, caller: &Caller, arguments: Map<String, Valu
     };
     if arguments.contains_key("source") {
         return Err(Stop::invalid("A key's source cannot change."));
+    }
+    if ["owner_key", "sources"]
+        .iter()
+        .any(|name| arguments.contains_key(*name))
+    {
+        return Err(Stop::invalid(
+            "owner_key and sources apply only when making a key.",
+        ));
     }
     item_id(&id)?;
     let mut names = vec!["label", "expires_at"];
