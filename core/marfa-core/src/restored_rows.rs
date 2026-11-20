@@ -205,21 +205,14 @@ pub(crate) fn release(conn: &Connection) -> Result<()> {
 
 /// Marks the table for comparison. The first mark also marks every receipt
 /// of the table answered so far as answered before it.
-fn mark(conn: &Connection, item: &str, table: &str, restored: bool) -> Result<()> {
+fn mark(conn: &Connection, item: &str, table: &str) -> Result<()> {
     let first = conn
-        .prepare_cached(
-            "INSERT OR IGNORE INTO held_tables (item_id, name, restored) VALUES (?1, ?2, ?3)",
-        )?
-        .execute(params![item, table, restored])?
+        .prepare_cached("INSERT OR IGNORE INTO held_tables (item_id, name) VALUES (?1, ?2)")?
+        .execute(params![item, table])?
         > 0;
     if first {
         conn.prepare_cached("UPDATE row_receipts SET held = 1 WHERE item_id = ?1 AND name = ?2")?
             .execute(params![item, table])?;
-    } else if restored {
-        conn.prepare_cached(
-            "UPDATE held_tables SET restored = 1 WHERE item_id = ?1 AND name = ?2",
-        )?
-        .execute(params![item, table])?;
     }
     Ok(())
 }
@@ -275,7 +268,7 @@ pub(crate) fn hold_copy(conn: &Connection) -> Result<()> {
         let Some(rows) = holdable(conn, &item, &table)? else {
             continue;
         };
-        mark(conn, &item, &table, true)?;
+        mark(conn, &item, &table)?;
         if !rows {
             continue;
         }
@@ -315,7 +308,7 @@ pub(crate) fn hold_unseen(conn: &Connection) -> Result<()> {
         let Some(rows) = holdable(conn, &item, &table)? else {
             continue;
         };
-        mark(conn, &item, &table, false)?;
+        mark(conn, &item, &table)?;
         if rows && !removal {
             hold_row(conn, &item, &table, &id)?;
         }
@@ -374,16 +367,16 @@ fn parsed(text: Option<&str>) -> Value {
 /// removal (`device/restored-rows-kept`). Nothing is kept of a row this
 /// device wrote since the rows were set aside.
 pub(crate) fn keep_lost(conn: &Connection, item: &str, table: &str) -> Result<()> {
-    let restored: Option<bool> = conn
+    let marked = conn
         .query_row_cached(
-            "SELECT restored FROM held_tables WHERE item_id = ?1 AND name = ?2",
+            "SELECT 1 FROM held_tables WHERE item_id = ?1 AND name = ?2",
             params![item, table],
-            |row| row.get(0),
+            |_| Ok(()),
         )
         .optional()?;
-    let Some(restored) = restored else {
+    if marked.is_none() {
         return Ok(());
-    };
+    }
     // Written since by this device, and taken.
     let since = "EXISTS (SELECT 1 FROM row_receipts s
                           WHERE s.item_id = ?1 AND s.name = ?2 AND s.id = {row} AND s.held = 0)";
@@ -438,13 +431,12 @@ pub(crate) fn keep_lost(conn: &Connection, item: &str, table: &str) -> Result<()
             "SELECT k.id, MAX(k.at), r.updated_at FROM row_receipts k
                JOIN table_rows r ON r.item_id = k.item_id AND r.name = k.name AND r.id = k.id
               WHERE k.item_id = ?1 AND k.name = ?2 AND k.removal = 1 AND k.held = 1
-                AND k.answered_at >= ?3 AND (?4 OR k.seen = 0)
-                AND NOT ({})
+                AND k.answered_at >= ?3 AND NOT ({})
               GROUP BY k.id
               ORDER BY k.id",
             since.replace("{row}", "k.id")
         ))?;
-        let rows = query.query_map(params![item, table, floor(), restored], |row| {
+        let rows = query.query_map(params![item, table, floor()], |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,

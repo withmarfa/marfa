@@ -194,13 +194,10 @@ CREATE TABLE IF NOT EXISTS held_rows (
   PRIMARY KEY (item_id, name, id)
 ) WITHOUT ROWID;
 
--- The tables to compare once filled whole. `restored` where a restore was
--- found, so every removal this device made is read, and not only those no
--- event has shown.
+-- The tables to compare once filled whole.
 CREATE TABLE IF NOT EXISTS held_tables (
   item_id TEXT NOT NULL,
   name TEXT NOT NULL,
-  restored INTEGER NOT NULL CHECK (restored IN (0, 1)),
   PRIMARY KEY (item_id, name)
 ) WITHOUT ROWID;
 

@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Readable } from "node:stream";
+import { v7 as uuidv7 } from "uuid";
 import { afterAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
@@ -708,6 +709,233 @@ describe("a server restored behind work this device sent it", () => {
         "a change the restored server made after the copy held the item was put back over",
       ).toEqual([["create_item", id]]);
       expect(value(await w.device.get(held.id)).tags).toEqual(["elsewhere"]);
+    },
+    TIMEOUT,
+  );
+});
+
+type Operation = Record<string, unknown>;
+
+/** A type with a `steps` table, and an item of it with the rows `operations` write. */
+async function steps(
+  client: MarfaClient,
+  label: string,
+  items: Operation[][],
+): Promise<{ type: string; items: string[] }> {
+  const type = `user.${label}`;
+  const registered = await client.registerType({
+    id: type,
+    fields: { title: { type: "string" } },
+    tables: {
+      steps: {
+        columns: { count: { type: "integer" }, note: { type: "string" } },
+      },
+    },
+  } as never);
+  expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+  const made: string[] = [];
+  for (const operations of items) {
+    const item = await client.createItem({
+      type,
+      tier: "library",
+      properties: { title: "Steps" },
+    } as never);
+    expect(item.ok, JSON.stringify(item.error)).toBe(true);
+    const written = await client.writeRows(item.data.item.id, "steps", {
+      operations,
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    made.push(item.data.item.id);
+  }
+  return { type, items: made };
+}
+
+/** The rows of an item's `steps` table the server holds now, as `id: count`. */
+async function serverSteps(
+  client: MarfaClient,
+  item: string,
+): Promise<Record<string, unknown>> {
+  const read = await client.rawRequest<{
+    data: { id: string; values: Record<string, unknown> }[];
+  }>(`/items/${item}/tables/steps/rows?limit=1000`);
+  expect(read.status, JSON.stringify(read.error)).toBe(200);
+  return Object.fromEntries(
+    read.data.data.map((row) => [row.id, row.values.count]),
+  );
+}
+
+/** The rows of an item's `steps` table the copy shows, as `id: count`. */
+async function copySteps(
+  device: CliDevice,
+  item: string,
+): Promise<Record<string, unknown>> {
+  const page = value(
+    await device.tableRead<{
+      data: { id: string; values: Record<string, unknown> }[];
+    }>(["list", item, "steps", "--limit", "1000"]),
+  );
+  expect(page.held, "the copy does not hold the table whole").toBe(true);
+  return Object.fromEntries(
+    page.data.map((row) => [row.id, row.values.count]),
+  );
+}
+
+function put(id: string, count: number): Operation {
+  return { op: "put", id, values: { count } };
+}
+
+describe("table rows a server restored behind lost", () => {
+  it(
+    "keeps the rows this device wrote and removed since the backup, blocked until released, where the copy had not caught up past them",
+    async () => {
+      const w = await world("restored-rows-level");
+      const [kept, changed, removed] = [uuidv7(), uuidv7(), uuidv7()];
+      const { type, items } = await steps(w.client(), "restored-rows-level", [
+        [put(kept, 1), put(changed, 2), put(removed, 3)],
+      ]);
+      const item = items[0] ?? "";
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.holdTable(type, "steps"));
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const added = uuidv7();
+      value(
+        await w.device.writeRows(item, "steps", [
+          put(changed, 20),
+          put(added, 4),
+          { op: "delete", id: removed },
+        ]),
+      );
+      expect((await sent(w.device)).answered).toBe(1);
+
+      await w.restore(image);
+      expect(await serverSteps(w.client(), item)).toEqual({
+        [kept]: 1,
+        [changed]: 2,
+        [removed]: 3,
+      });
+      expect(
+        expired(await w.device.catchUp()),
+        "a copy level with the restored server's log took it as holding the rows",
+      ).toBe("copy_expired");
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.fillTables());
+
+      expect(await keptBlocked(w.device)).toEqual([["write_rows", item]]);
+      const written = { [kept]: 1, [changed]: 20, [added]: 4 };
+      expect(await copySteps(w.device, item)).toEqual(written);
+      const before = w.sent.length;
+      value(await w.device.drain());
+      expect(
+        w.sent.slice(before).filter((line) => line.startsWith("POST /items")),
+        "a blocked row write was sent",
+      ).toEqual([]);
+
+      expect(value(await w.device.release({ reason: "server_restored" }))).toBe(
+        1,
+      );
+      value(await w.device.drain());
+      expect(await serverSteps(w.client(), item)).toEqual(written);
+      expect(
+        (await queue(w.device)).filter((write) => write.verdict === "blocked"),
+      ).toEqual([]);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "keeps the rows this device wrote since the backup where the restored server has written past the copy's cursor, and nothing of a table it holds as the copy did",
+    async () => {
+      const w = await world("restored-rows-anchor");
+      const [lost, untouched] = [uuidv7(), uuidv7()];
+      const { type, items } = await steps(w.client(), "restored-rows-anchor", [
+        [put(lost, 1)],
+        [put(untouched, 1)],
+      ]);
+      const [written, whole] = [items[0] ?? "", items[1] ?? ""];
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.holdTable(type, "steps"));
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      value(await w.device.writeRows(written, "steps", [put(lost, 10)]));
+      await sent(w.device);
+      // The stream shows the batch, so no receipt of it is left unseen.
+      value(await w.device.catchUp());
+
+      await w.restore(image);
+      await note(w.client(), "written after the restore");
+      await note(w.client(), "and again");
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.fillTables());
+
+      expect(
+        await keptBlocked(w.device),
+        "the rows the restored server lost were not kept, or a table it holds as the copy did kept a write",
+      ).toEqual([["write_rows", written]]);
+      expect(await copySteps(w.device, written)).toEqual({ [lost]: 10 });
+      expect(await copySteps(w.device, whole)).toEqual({ [untouched]: 1 });
+
+      value(await w.device.release({ reason: "server_restored" }));
+      value(await w.device.drain());
+      expect(await serverSteps(w.client(), written)).toEqual({ [lost]: 10 });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "sends a row write queued before the restore once the kept rows are withdrawn, refusing none of it",
+    async () => {
+      const w = await world("restored-rows-withdrawn");
+      const row = uuidv7();
+      const { type, items } = await steps(
+        w.client(),
+        "restored-rows-withdrawn",
+        [[put(row, 1)]],
+      );
+      const item = items[0] ?? "";
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.holdTable(type, "steps"));
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      value(await w.device.writeRows(item, "steps", [put(row, 2)]));
+      await sent(w.device);
+
+      await w.restore(image);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.fillTables());
+      const later = value(
+        await w.device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { note: "later" } },
+        ]),
+      );
+      const [kept] = (await queue(w.device)).filter(
+        (write) => write.reason === "server_restored",
+      );
+      expect(kept, "no row write was kept").toBeDefined();
+      expect((await queue(w.device)).find((write) => write.id === later.id))
+        .toMatchObject({ follows: kept?.id, verdict: null });
+      value(await w.device.drain());
+      expect(
+        (await serverSteps(w.client(), item))[row],
+        "the later write went ahead of the kept one",
+      ).toBe(1);
+
+      value(await w.device.withdraw(kept?.id ?? ""));
+      value(await w.device.drain());
+      expect(
+        (await queue(w.device)).find((write) => write.id === later.id),
+      ).toMatchObject({ verdict: "accepted" });
+      const read = await w
+        .client()
+        .rawRequest<{
+          data: { id: string; values: Record<string, unknown> }[];
+        }>(`/items/${item}/tables/steps/rows?limit=1000`);
+      expect(read.data.data.find((one) => one.id === row)?.values).toEqual({
+        count: 1,
+        note: "later",
+      });
     },
     TIMEOUT,
   );
