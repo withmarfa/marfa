@@ -557,22 +557,24 @@ pub fn open(options: &Options, lock: Lock, faults: &Faults) -> Result<Opened, Fa
     let target = Target::of(&options.path);
     let label = target.label();
     let file = options.path.file();
-    let judged = match &target {
-        Target::File(path) => judge_file(path, options, &label)?,
-        Target::Uri(_) => {
+    // A URI that names a file on disk is judged, and copied before an upgrade, as that file: its
+    // own parameters, such as `mode=rw`, could fail a read-only open of a file that holds data.
+    let judged = match (&target, file.as_deref()) {
+        (Target::Memory(_), _) => Judged::plain(Standing::Unfinished),
+        (_, Some(path)) => judge_file(path, options, &label)?,
+        (_, None) => {
             let read_only = OpenFlags::SQLITE_OPEN_READ_ONLY;
             Judged::plain(match target.open(read_only) {
                 Ok(conn) => migrate::judge(&conn, options.migrations, &label)?,
                 Err(_) => Standing::Unfinished,
             })
         }
-        Target::Memory(_) => Judged::plain(Standing::Unfinished),
     };
     let standing = judged.standing;
-    if matches!(standing, Standing::Behind(_)) && !matches!(target, Target::File(_)) {
+    if matches!(standing, Standing::Behind(_)) && file.is_none() {
         return Err(Failure::start(format!(
-            "{label} is at an earlier schema version, and only a database named by its path is \
-             upgraded, since a copy is kept beside it first"
+            "{label} is at an earlier schema version, and only a database on disk is upgraded, \
+             since a copy is kept beside it first"
         )));
     }
 
@@ -590,7 +592,7 @@ pub fn open(options: &Options, lock: Lock, faults: &Faults) -> Result<Opened, Fa
         mark(options, Upgrade::Began);
     }
     let mut copy = None;
-    if let (Standing::Behind(from), true, Target::File(path)) = (&standing, judged.copy, &target) {
+    if let (Standing::Behind(from), true, Some(path)) = (&standing, judged.copy, &file) {
         copy = Some(copy_before_upgrade(
             &writer, path, options, faults, &label, *from,
         )?);
