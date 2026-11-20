@@ -117,7 +117,7 @@ Each job is named as GitHub shows it.
   - A package npm has never published stops the job before anything is published. Its first version is published by hand from the run's artifacts, with a trusted publisher set to this repository, `release.yml` and the environment `release`: that is a maintainer's step, so stop and say so; never publish it yourself.
 - **`Update the Homebrew tap`** fails when `HOMEBREW_TAP` is `publish` and the secret `HOMEBREW_TAP_TOKEN` is missing. Set it, as a secret of the `release` environment (until it is moved there, a repository secret also reaches other workflows), to a fine-grained token with Contents read and write on `withmarfa/homebrew-tap`, then re-run the job. If several releases' tap jobs failed, re-run them oldest first: the job does not refuse to move the formula back to an older version.
 - **A re-run of `Publish`** attests again, which adds attestations and removes none; a file or digest then has more than one, all from this repository's workflow.
-- **A fix that needs a code change** cannot reach a tag that already ran. `Read the version` refuses the next version while this one is tagged and not released, so stop and bring it to a maintainer.
+- **A fix that needs a code change** cannot reach a tag that already ran. `Read the version` refuses the next version while this one is tagged and not released. Abandon the version instead: in a pull request, add it to `scripts/release/abandoned-versions` with the reason, merge the fix, and tag the next version on a green `main`. Nothing for the abandoned version may already be public.
 
 ## Never
 
