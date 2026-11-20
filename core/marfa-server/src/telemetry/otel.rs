@@ -1,5 +1,5 @@
 //! Traces and log records over OTLP/HTTP with JSON bodies, sent by a blocking client from
-//! the exporters' own threads, with no retry.
+//! the exporters' own threads, with no retry. Metrics are in `metrics`, through the same client.
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
@@ -58,7 +58,7 @@ impl Halt {
 /// Sends only the stored headers: the exporter adds `OTEL_EXPORTER_OTLP_*HEADERS` on its own,
 /// a `content-type` among them.
 #[derive(Debug)]
-struct Blocking {
+pub(super) struct Blocking {
     url: String,
     headers: Vec<(HeaderName, HeaderValue)>,
     private_allowed: bool,
@@ -138,7 +138,7 @@ fn plain_integers(body: &[u8]) -> Vec<u8> {
 }
 
 /// A header the settings' rule took but HTTP cannot carry is left out.
-fn client(export: &Export, halt: &Halt) -> Blocking {
+pub(super) fn client(export: &Export, halt: &Halt) -> Blocking {
     Blocking {
         url: export.url.clone(),
         headers: export

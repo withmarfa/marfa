@@ -6402,7 +6402,7 @@ export interface components {
              */
             error_reporting_enabled: boolean;
             /**
-             * @description `true` if Marfa sends telemetry about itself: traces and log records to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.
+             * @description `true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.
              * @default true
              */
             telemetry_enabled: boolean;
@@ -35045,13 +35045,13 @@ export interface operations {
                     /** @description The PostHog project token Marfa sends its fault reports with, with no whitespace around it. It needs `posthog_host` set too. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
                     posthog_project_token?: string;
                     /**
-                     * @description `true` if Marfa sends telemetry about itself: traces and log records to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.
+                     * @description `true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.
                      * @default true
                      */
                     telemetry_enabled?: boolean;
                     /**
                      * Format: uri
-                     * @description The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, and log records to, under `v1/logs`, keeping its query. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
+                     * @description The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, log records to, under `v1/logs`, and metrics to, under `v1/metrics`, keeping its query. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
                      * @example https://collector.example:4318
                      */
                     otel_exporter_otlp_endpoint?: string;
@@ -35066,6 +35066,11 @@ export interface operations {
                      */
                     otel_exporter_otlp_logs_endpoint?: string;
                     /**
+                     * Format: uri
+                     * @description The URL Marfa posts metrics to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
+                     */
+                    otel_exporter_otlp_metrics_endpoint?: string;
+                    /**
                      * @description The headers Marfa sends with every OTLP export, as comma-separated `key=value` pairs with percent-encoded values and no whitespace around them. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.
                      * @example authorization=Bearer%20token
                      */
@@ -35074,6 +35079,8 @@ export interface operations {
                     otel_exporter_otlp_traces_headers?: string;
                     /** @description The headers Marfa sends with log exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
                     otel_exporter_otlp_logs_headers?: string;
+                    /** @description The headers Marfa sends with metric exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it. */
+                    otel_exporter_otlp_metrics_headers?: string;
                     /**
                      * @description The share of traces Marfa exports, from 0 to 1. A trace that holds an error is exported whatever this says. Absent: `0.05`.
                      * @default 0.05
@@ -35577,13 +35584,13 @@ export interface operations {
                     /** @description The PostHog project token Marfa sends its fault reports with, with no whitespace around it. It needs `posthog_host` set too. Marfa never returns it. `null` or an empty string removes it. */
                     posthog_project_token?: string | null;
                     /**
-                     * @description `true` if Marfa sends telemetry about itself: traces and log records to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`. `null` removes it, so the server's default applies.
+                     * @description `true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`. `null` removes it, so the server's default applies.
                      * @default true
                      */
                     telemetry_enabled?: boolean | null;
                     /**
                      * Format: uri
-                     * @description The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, and log records to, under `v1/logs`, keeping its query. Marfa never returns it. `null` or an empty string removes it.
+                     * @description The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, log records to, under `v1/logs`, and metrics to, under `v1/metrics`, keeping its query. Marfa never returns it. `null` or an empty string removes it.
                      * @example https://collector.example:4318
                      */
                     otel_exporter_otlp_endpoint?: string | null;
@@ -35598,6 +35605,11 @@ export interface operations {
                      */
                     otel_exporter_otlp_logs_endpoint?: string | null;
                     /**
+                     * Format: uri
+                     * @description The URL Marfa posts metrics to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. `null` or an empty string removes it.
+                     */
+                    otel_exporter_otlp_metrics_endpoint?: string | null;
+                    /**
                      * @description The headers Marfa sends with every OTLP export, as comma-separated `key=value` pairs with percent-encoded values and no whitespace around them. Marfa never returns it. `null` or an empty string removes it.
                      * @example authorization=Bearer%20token
                      */
@@ -35606,6 +35618,8 @@ export interface operations {
                     otel_exporter_otlp_traces_headers?: string | null;
                     /** @description The headers Marfa sends with log exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it. */
                     otel_exporter_otlp_logs_headers?: string | null;
+                    /** @description The headers Marfa sends with metric exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it. */
+                    otel_exporter_otlp_metrics_headers?: string | null;
                     /**
                      * @description The share of traces Marfa exports, from 0 to 1. A trace that holds an error is exported whatever this says. Absent: `0.05`. `null` removes it, so the server's default applies.
                      * @default 0.05

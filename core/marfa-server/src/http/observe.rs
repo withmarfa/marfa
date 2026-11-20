@@ -11,7 +11,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
-use super::answer::{Page, Unhandled, asks_for_html, refusal_answer};
+use super::answer::{Endless, Page, Unhandled, asks_for_html, refusal_answer};
 use super::body::Shared;
 use super::caller_address::caller_address;
 use super::listening::Peer;
@@ -22,7 +22,7 @@ use crate::app::refusal::{Code, Refusal};
 use crate::app::{App, instance};
 use crate::listener::{Declaration, Transport};
 use crate::log;
-use crate::telemetry::Finished;
+use crate::telemetry::{Finished, Served};
 
 #[derive(Default)]
 pub struct Notes {
@@ -218,6 +218,14 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         key_id: notes.key_id.get().map(String::as_str),
         error_code,
     });
+    if response.extensions().get::<Endless>().is_none() {
+        observed.app.telemetry.record_request(&Served {
+            method: &method,
+            route,
+            status,
+            elapsed: started.elapsed(),
+        });
+    }
     let live = observed.app.settings.live();
     let done = Finished {
         request_id: &request_id,

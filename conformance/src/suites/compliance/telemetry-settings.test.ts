@@ -304,14 +304,24 @@ describe("the telemetry settings", () => {
       expect(alone.text).toContain("validation_error");
       expect(alone.text).toContain("otel_exporter_otlp_traces_endpoint");
       expect(alone.text).not.toContain("hush");
+      const metricsAlone = await configure(server, {
+        otel_exporter_otlp_metrics_endpoint: "https://hush.example.test/in",
+      });
+      expect(metricsAlone.status).toBe(400);
+      expect(metricsAlone.text).toContain(
+        "otel_exporter_otlp_metrics_endpoint",
+      );
+      expect(metricsAlone.text).not.toContain("hush");
 
       for (const [key, value] of [
         ["otel_exporter_otlp_endpoint", "ftp://hush.example.test"],
         ["otel_exporter_otlp_endpoint", "hush.example.test:4318"],
         ["otel_exporter_otlp_logs_endpoint", "not a url hush"],
+        ["otel_exporter_otlp_metrics_endpoint", "not a url hush"],
         ["otel_exporter_otlp_headers", "authorization=hush%zz"],
         ["otel_exporter_otlp_traces_headers", "hush"],
         ["otel_exporter_otlp_logs_headers", " authorization=hush"],
+        ["otel_exporter_otlp_metrics_headers", "hush"],
         ["otel_resource_attributes", "team"],
         ["otel_sample_ratio", 1.0001],
         ["otel_sample_ratio", -0.5],

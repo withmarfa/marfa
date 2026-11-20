@@ -7,6 +7,7 @@ use crate::identity::headers;
 pub enum Signal {
     Traces,
     Logs,
+    Metrics,
 }
 
 pub const GENERAL_ENDPOINT: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
@@ -17,6 +18,7 @@ impl Signal {
         match self {
             Signal::Traces => "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
             Signal::Logs => "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+            Signal::Metrics => "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
         }
     }
 
@@ -24,6 +26,7 @@ impl Signal {
         match self {
             Signal::Traces => "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
             Signal::Logs => "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+            Signal::Metrics => "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
         }
     }
 
@@ -31,6 +34,7 @@ impl Signal {
         match self {
             Signal::Traces => "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",
             Signal::Logs => "OTEL_EXPORTER_OTLP_LOGS_TIMEOUT",
+            Signal::Metrics => "OTEL_EXPORTER_OTLP_METRICS_TIMEOUT",
         }
     }
 
@@ -38,6 +42,7 @@ impl Signal {
         match self {
             Signal::Traces => "traces",
             Signal::Logs => "logs",
+            Signal::Metrics => "metrics",
         }
     }
 }
@@ -203,6 +208,10 @@ mod tests {
         ];
         assert_eq!(url(&both, Signal::Traces), "https://traces.example/in");
         assert_eq!(url(&both, Signal::Logs), "http://general:4318/v1/logs");
+        assert_eq!(
+            url(&both, Signal::Metrics),
+            "http://general:4318/v1/metrics"
+        );
     }
 
     #[test]

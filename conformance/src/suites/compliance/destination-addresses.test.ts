@@ -194,6 +194,7 @@ describe("where the server may send", () => {
           "otel_exporter_otlp_endpoint",
           "otel_exporter_otlp_traces_endpoint",
           "otel_exporter_otlp_logs_endpoint",
+          "otel_exporter_otlp_metrics_endpoint",
         ];
         // A signal's endpoint is set beside the base, so the switch is the one
         // rule it can break.
@@ -222,6 +223,7 @@ describe("where the server may send", () => {
             otel_exporter_otlp_endpoint: null,
             otel_exporter_otlp_traces_endpoint: null,
             otel_exporter_otlp_logs_endpoint: null,
+            otel_exporter_otlp_metrics_endpoint: null,
           });
         }
       } finally {

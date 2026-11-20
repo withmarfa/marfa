@@ -779,6 +779,15 @@ fn a_platform_variable_never_overrides_the_stored_settings() {
         ("OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT", "0"),
         ("OTEL_BSP_SCHEDULE_DELAY", "600000"),
         ("OTEL_BLRP_SCHEDULE_DELAY", "600000"),
+        ("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", planted_host.as_str()),
+        (
+            "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+            "x-planted=metrics,authorization=planted",
+        ),
+        ("OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE", "delta"),
+        ("OTEL_METRIC_EXPORT_INTERVAL", "50"),
+        ("OTEL_METRIC_EXPORT_TIMEOUT", "1"),
+        ("OTEL_METRICS_EXEMPLAR_FILTER", "always_on"),
         ("OTEL_SDK_DISABLED", "true"),
         ("OTEL_SERVICE_NAME", "planted"),
         ("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=planted"),
@@ -816,6 +825,8 @@ fn a_platform_variable_never_overrides_the_stored_settings() {
             );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
+        // A planted interval of 50 ms would have sent a collection by now.
+        assert!(posted(&received, "/v1/metrics").is_empty());
         guard.stop(Duration::from_secs(5));
     });
 
@@ -836,6 +847,25 @@ fn a_platform_variable_never_overrides_the_stored_settings() {
                 .all(|(_, value)| value.is_empty())
         );
     }
+    // The witness: the stop sends what was collected, as the stored settings say.
+    let sent = posted(&received, "/v1/metrics");
+    assert!(!sent.is_empty());
+    for head in heads(&received, "/v1/metrics") {
+        let held = |name: &str| {
+            head.iter()
+                .find(|(key, _)| key == name)
+                .map(|(_, value)| value.as_str())
+        };
+        assert_eq!(held("authorization"), Some("stored"));
+        assert_eq!(held("x-planted"), None);
+    }
+    for metric in metrics_of(&received) {
+        let data = metric
+            .get("histogram")
+            .or_else(|| metric.get("sum"))
+            .unwrap();
+        assert_eq!(data["aggregationTemporality"], 2, "{metric}");
+    }
     let everything: String = received
         .lock()
         .unwrap()
@@ -846,4 +876,242 @@ fn a_platform_variable_never_overrides_the_stored_settings() {
     assert!(!everything.contains("deployment.environment"));
     assert!(everything.contains("marfa.request_id"));
     assert!(planted.lock().unwrap().is_empty());
+}
+
+/// The metrics called `name`.
+fn named<'a>(all: &'a [Value], name: &str) -> Vec<&'a Value> {
+    all.iter().filter(|metric| metric["name"] == name).collect()
+}
+
+/// The path of each request the receiver has taken.
+fn paths(received: &Received) -> Vec<String> {
+    received
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(path, ..)| path.clone())
+        .collect()
+}
+
+/// Every metric of every `/v1/metrics` post.
+fn metrics_of(received: &Received) -> Vec<Value> {
+    posted(received, "/v1/metrics")
+        .iter()
+        .flat_map(|batch| batch["resourceMetrics"].as_array().unwrap().clone())
+        .flat_map(|resource| resource["scopeMetrics"].as_array().unwrap().clone())
+        .flat_map(|scope| scope["metrics"].as_array().unwrap().clone())
+        .collect()
+}
+
+fn attribute(point: &Value, key: &str) -> Option<String> {
+    point["attributes"]
+        .as_array()?
+        .iter()
+        .find(|found| found["key"] == key)
+        .map(|found| {
+            let value = &found["value"];
+            value["stringValue"]
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| value["intValue"].to_string().trim_matches('"').to_string())
+        })
+}
+
+fn count_of(point: &Value) -> u64 {
+    match &point["count"] {
+        Value::String(text) => text.parse().unwrap(),
+        other => other.as_u64().unwrap(),
+    }
+}
+
+async fn ask(router: &Router, path: &str, token: Option<&str>) -> StatusCode {
+    let mut call = Request::builder().method(Method::GET).uri(path);
+    if let Some(token) = token {
+        call = call.header(header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+    router
+        .clone()
+        .oneshot(call.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+        .status()
+}
+
+#[tokio::test]
+async fn requests_and_memory_reach_the_base_endpoint_as_two_metrics_when_the_server_stops() {
+    let (host, received) = receiver(false);
+    let pairs = settings(&host, &[]);
+    let (instance, guard) = Instance::start(&borrowed(&pairs)).await;
+    let key = instance.key.clone();
+    let id = uuid::Uuid::now_v7();
+    for _ in 0..3 {
+        assert_eq!(
+            ask(&instance.public, &format!("/items/{id}"), Some(&key)).await,
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert_eq!(ask(&instance.public, "/health", None).await, StatusCode::OK);
+    assert_eq!(
+        ask(&instance.public, &format!("/no/such/{id}"), None).await,
+        StatusCode::NOT_FOUND
+    );
+    // A refused request to the stream is recorded; the stream that follows is not.
+    assert_eq!(
+        ask(&instance.public, "/events", None).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        ask(&instance.public, "/events", Some(&key)).await,
+        StatusCode::OK
+    );
+    assert!(posted(&received, "/v1/metrics").is_empty());
+    guard.stop(Duration::from_secs(5));
+
+    let all = metrics_of(&received);
+    let duration = named(&all, "http.server.request.duration");
+    assert!(!duration.is_empty(), "{all:?}");
+    let mut points = Vec::new();
+    for metric in &duration {
+        assert_eq!(metric["unit"], "s");
+        assert_eq!(metric["histogram"]["aggregationTemporality"], 2);
+        points.extend(metric["histogram"]["dataPoints"].as_array().unwrap());
+    }
+    let by = |route: Option<&str>, status: &str| -> u64 {
+        points
+            .iter()
+            .filter(|point| {
+                attribute(point, "http.route").as_deref() == route
+                    && attribute(point, "http.response.status_code").as_deref() == Some(status)
+            })
+            .map(|point| count_of(point))
+            .sum()
+    };
+    for point in &points {
+        assert_eq!(
+            point["explicitBounds"],
+            json!([
+                0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0
+            ])
+        );
+        let keys: Vec<&str> = point["attributes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|found| found["key"].as_str().unwrap())
+            .collect();
+        assert!(
+            keys.iter().all(|key| [
+                "http.request.method",
+                "http.route",
+                "http.response.status_code"
+            ]
+            .contains(key)),
+            "{keys:?}"
+        );
+        assert!(!point.to_string().contains(&id.to_string()));
+    }
+    // The witness: the other requests are counted, so the stream's is left out, not lost.
+    assert_eq!(by(Some("/items/{id}"), "404"), 3);
+    assert_eq!(by(Some("/health"), "200"), 1);
+    assert_eq!(by(None, "404"), 1);
+    assert_eq!(by(Some("/events"), "401"), 1);
+    assert_eq!(by(Some("/events"), "200"), 0);
+
+    let memory = named(&all, "process.memory.usage");
+    assert!(!memory.is_empty());
+    for metric in memory {
+        assert_eq!(metric["unit"], "By");
+        assert_eq!(metric["sum"]["isMonotonic"], false);
+        assert_eq!(metric["sum"]["aggregationTemporality"], 2);
+        for point in metric["sum"]["dataPoints"].as_array().unwrap() {
+            assert!(
+                point["asInt"]
+                    .to_string()
+                    .trim_matches('"')
+                    .parse::<i64>()
+                    .unwrap()
+                    > 1_000_000
+            );
+        }
+    }
+
+    for batch in posted(&received, "/v1/metrics") {
+        let resource = &batch["resourceMetrics"][0]["resource"];
+        assert_eq!(
+            attribute(resource, "service.instance.id").as_deref(),
+            Some(instance.app.instance_id.as_str())
+        );
+        assert_eq!(
+            attribute(resource, "service.version").as_deref(),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
+        assert_eq!(
+            attribute(resource, "service.name").as_deref(),
+            Some("marfa-server")
+        );
+    }
+}
+
+#[tokio::test]
+async fn no_metric_is_sent_while_the_switch_is_off_or_the_endpoint_is_unset() {
+    let (host, received) = receiver(false);
+    let off = settings(&host, &[("MARFA_TELEMETRY_ENABLED", "false".to_string())]);
+    let (instance, guard) = Instance::start(&borrowed(&off)).await;
+    assert_eq!(ask(&instance.public, "/health", None).await, StatusCode::OK);
+    guard.stop(Duration::from_secs(5));
+    assert_eq!(paths(&received), Vec::<String>::new(), "switch off");
+
+    // A stored value removed falls back to the seed, so the endpoint is stored, not seeded.
+    let (instance, guard) = Instance::start(&[("MARFA_ALLOW_PRIVATE_ADDRESSES", "true")]).await;
+    instance
+        .configure(json!({ "otel_exporter_otlp_endpoint": host }))
+        .await;
+    instance
+        .configure(json!({ "otel_exporter_otlp_endpoint": null }))
+        .await;
+    assert_eq!(ask(&instance.public, "/health", None).await, StatusCode::OK);
+    guard.stop(Duration::from_secs(5));
+    assert_eq!(paths(&received), Vec::<String>::new(), "endpoint unset");
+
+    // The witness: the same requests, with the endpoint and the switch as they were, are sent.
+    let on = settings(&host, &[]);
+    let (instance, guard) = Instance::start(&borrowed(&on)).await;
+    assert_eq!(ask(&instance.public, "/health", None).await, StatusCode::OK);
+    guard.stop(Duration::from_secs(5));
+    assert!(!posted(&received, "/v1/metrics").is_empty());
+}
+
+#[tokio::test]
+async fn the_metrics_endpoint_and_headers_are_used_beside_the_base_and_a_change_replaces_them() {
+    let (host, received) = receiver(false);
+    let (own_host, own) = receiver(false);
+    let pairs = settings(
+        &host,
+        &[
+            (
+                "MARFA_OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+                format!("{own_host}/v1/metrics"),
+            ),
+            (
+                "MARFA_OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+                "x-team=one".to_string(),
+            ),
+        ],
+    );
+    let (instance, guard) = Instance::start(&borrowed(&pairs)).await;
+    assert_eq!(ask(&instance.public, "/health", None).await, StatusCode::OK);
+    instance
+        .configure(json!({ "otel_exporter_otlp_metrics_headers": "x-team=two" }))
+        .await;
+    assert_eq!(ask(&instance.public, "/health", None).await, StatusCode::OK);
+    guard.stop(Duration::from_secs(5));
+
+    // The replaced exporter sends nothing more, so every post carries the new header.
+    let heads = heads(&own, "/v1/metrics");
+    assert!(!heads.is_empty());
+    for head in heads {
+        let team = head.iter().find(|(name, _)| name == "x-team");
+        assert_eq!(team.map(|(_, value)| value.as_str()), Some("two"));
+    }
+    assert!(posted(&received, "/v1/metrics").is_empty());
 }

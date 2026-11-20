@@ -6,8 +6,9 @@ use super::registry::{
     ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED,
     HEARTBEAT_URL, OBJECT_STORE_BUCKET, OBJECT_STORE_ENDPOINT, OBJECT_STORE_PATH_STYLE,
     OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
-    OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, POSTHOG_HOST, POSTHOG_PROJECT_TOKEN, Setting, Snapshot,
-    VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, POSTHOG_HOST,
+    POSTHOG_PROJECT_TOKEN, Setting, Snapshot, VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS,
+    VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
 };
 use super::sealed::Secret;
 use super::start::Fixed;
@@ -86,7 +87,7 @@ pub const TOGETHER: &[Together] = &[
     },
     Together {
         name: "destinations_are_public",
-        description: "While allow_private_addresses is false, heartbeat_url, posthog_host, otel_exporter_otlp_endpoint, otel_exporter_otlp_traces_endpoint, otel_exporter_otlp_logs_endpoint and object_store_endpoint cannot be written as a loopback, private or other address that is not public.",
+        description: "While allow_private_addresses is false, heartbeat_url, posthog_host, otel_exporter_otlp_endpoint, otel_exporter_otlp_traces_endpoint, otel_exporter_otlp_logs_endpoint, otel_exporter_otlp_metrics_endpoint and object_store_endpoint cannot be written as a loopback, private or other address that is not public.",
         keys: &[
             "allow_private_addresses",
             "heartbeat_url",
@@ -94,17 +95,19 @@ pub const TOGETHER: &[Together] = &[
             "otel_exporter_otlp_endpoint",
             "otel_exporter_otlp_traces_endpoint",
             "otel_exporter_otlp_logs_endpoint",
+            "otel_exporter_otlp_metrics_endpoint",
             "object_store_endpoint",
         ],
         judge: destinations_are_public,
     },
     Together {
         name: "otlp_signal_needs_base",
-        description: "otel_exporter_otlp_traces_endpoint and otel_exporter_otlp_logs_endpoint can be set only while otel_exporter_otlp_endpoint is set.",
+        description: "otel_exporter_otlp_traces_endpoint, otel_exporter_otlp_logs_endpoint and otel_exporter_otlp_metrics_endpoint can be set only while otel_exporter_otlp_endpoint is set.",
         keys: &[
             "otel_exporter_otlp_endpoint",
             "otel_exporter_otlp_traces_endpoint",
             "otel_exporter_otlp_logs_endpoint",
+            "otel_exporter_otlp_metrics_endpoint",
         ],
         judge: otlp_signal_needs_base,
     },
@@ -279,6 +282,7 @@ fn destinations_are_public(judged: &Judged) -> Vec<Breach> {
         secret(OTEL_EXPORTER_OTLP_ENDPOINT),
         secret(OTEL_EXPORTER_OTLP_TRACES_ENDPOINT),
         secret(OTEL_EXPORTER_OTLP_LOGS_ENDPOINT),
+        secret(OTEL_EXPORTER_OTLP_METRICS_ENDPOINT),
         (
             OBJECT_STORE_ENDPOINT.entry.key,
             after.get(OBJECT_STORE_ENDPOINT),
@@ -310,6 +314,7 @@ fn otlp_signal_needs_base(judged: &Judged) -> Vec<Breach> {
     let lonely: Vec<&'static str> = [
         OTEL_EXPORTER_OTLP_TRACES_ENDPOINT.entry,
         OTEL_EXPORTER_OTLP_LOGS_ENDPOINT.entry,
+        OTEL_EXPORTER_OTLP_METRICS_ENDPOINT.entry,
     ]
     .into_iter()
     .filter(|signal| after.secret_set(signal))
