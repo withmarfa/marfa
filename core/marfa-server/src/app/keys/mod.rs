@@ -563,7 +563,7 @@ pub(crate) fn end_all_of_app(unit: &Unit<'_, '_>, client_id: &str) -> Result<usi
     Ok(ended)
 }
 
-/// The keys [`end_all_of_app`] would end. A key whose expiry does not read refuses.
+/// The keys [`end_all_of_app`] would end, a key whose expiry does not read among them.
 pub(crate) fn all_of_app(tx: &Transaction<'_>, client_id: &str, at: &str) -> Result<Vec<Key>> {
     let now = Stamp::read(at)?;
     let held = tx

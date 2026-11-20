@@ -254,7 +254,7 @@ pub(crate) fn withdraw(
     Ok(0)
 }
 
-/// `DELETE /oauth/grants/{id}` in the caller's transaction; answers how many keys it ended.
+/// `DELETE /grants/{id}` in the caller's transaction; answers how many keys it ended.
 pub(crate) fn revoke_in(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,

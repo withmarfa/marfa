@@ -177,7 +177,7 @@ pub(crate) enum Held {
 }
 
 /// A browser sign-in needs `sign_ins.manage`, and an app it or `grants.manage`, as
-/// `DELETE /owner/sign-ins/{id}` and `DELETE /oauth/grants/{id}` each allow.
+/// `DELETE /owner/sign-ins/{id}` and `DELETE /grants/{id}` each allow.
 pub(crate) fn held(
     tx: &Transaction<'_>,
     caller: &Caller,
