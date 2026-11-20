@@ -333,7 +333,7 @@ where
         app.clone(),
         |app: &App| &app.db,
         |app: &App| app.updates.set(State::Idle),
-        move |tx| {
+        move |tx, begun: &Begun| {
             let at = deciding.clock.stamp();
             let caller = caller.current(tx, &at)?;
             caller.require(Permission::InstanceMaintain)?;
@@ -350,7 +350,8 @@ where
             if !deciding.updates.begin(&job.version) {
                 return Ok(Ok(None));
             }
-            let recorded = audit::record_from(
+            begun.mark();
+            audit::record_from(
                 tx,
                 &at,
                 Some(&caller),
@@ -361,11 +362,7 @@ where
                     resource_id: None,
                     details: origin.mark(Some(json!({ "from": job.from, "to": job.version }))),
                 },
-            );
-            if let Err(refused) = recorded {
-                deciding.updates.set(State::Idle);
-                return Err(refused);
-            }
+            )?;
             Ok(Ok(Some(run(deciding.clone(), job))))
         },
     )
@@ -376,13 +373,24 @@ where
     }
 }
 
+/// What `decide` marks once it has begun the update, so a write that then fails undoes it.
+struct Begun(Arc<AtomicBool>);
+
+impl Begun {
+    fn mark(&self) {
+        self.0.store(true, Ordering::SeqCst);
+    }
+}
+
 /// Runs `decide` on the writer from a task of its own, and starts what it begins once the write
 /// has committed, so begun work runs even if the request is gone by then.
 async fn begin_on_writer<O, W, T>(
     owner: Arc<O>,
     db: fn(&O) -> &db::Db,
     undo_begin: fn(&O),
-    decide: impl FnOnce(&Transaction<'_>) -> Result<std::result::Result<Option<W>, T>> + Send + 'static,
+    decide: impl FnOnce(&Transaction<'_>, &Begun) -> Result<std::result::Result<Option<W>, T>>
+    + Send
+    + 'static,
 ) -> Result<std::result::Result<(), T>>
 where
     O: Send + Sync + 'static,
@@ -390,16 +398,10 @@ where
     T: Send + 'static,
 {
     let begun = Arc::new(AtomicBool::new(false));
-    let marked = begun.clone();
+    let marked = Begun(begun.clone());
     let task = tokio::spawn(provenance::carried(async move {
         let decided = db(&owner)
-            .write(Write::caller(UPDATE_STARTED), move |tx| {
-                let decided = decide(tx)?;
-                if matches!(decided, Ok(Some(_))) {
-                    marked.store(true, Ordering::SeqCst);
-                }
-                Ok(decided)
-            })
+            .write(Write::caller(UPDATE_STARTED), move |tx| decide(tx, &marked))
             .await;
         match decided {
             Ok(Ok(Some(work))) => {
