@@ -1886,6 +1886,14 @@ While a file in the directory that the scan holds for a clash with another file'
 
 **Tests:** `device/folders-contract-b.test.ts › trashes no item whose file moved to a name the folder does not send`, `› keeps the item of a paused removal's file that returned under a name another file holds`.
 
+### `folder-files/missing-file-carried-count`
+
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, carries a missing file's identity or the ID of its item, a device MUST count the missing file as `carried` in the scan report.
+
+**Reason:** the item is kept because another file carries it, not because the walk did not reach it, so `unreached` and its reason would mislead.
+
+**Tests:** `device/folders-contract-b.test.ts › trashes no item whose file moved to a name the folder does not send`.
+
 ### `folder-files/missing-file-carried-quick-pass`
 
 While a file in the directory that the scan holds for a clash with another file's name, or does not send, carries a missing file's identity or the ID of its item, when a folder watch runs a pass that looks only at the paths its events named, a device MUST NOT queue deletion of the missing file's item.

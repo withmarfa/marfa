@@ -594,7 +594,11 @@ mod tests {
         std::fs::rename(dir.path().join("note.md"), dir.path().join("note.bin")).unwrap();
         std::fs::remove_file(dir.path().join("gone.md")).unwrap();
         let first = folder.scan().unwrap();
-        assert_eq!(first.missing, 1, "{first:?}");
+        assert_eq!(
+            (first.missing, first.carried, first.unreached),
+            (1, 1, 0),
+            "{first:?}"
+        );
         past_the_grace(&folder, "gone.md");
         let swept = folder.scan().unwrap();
         // The witness: the file gone under every name is let go.

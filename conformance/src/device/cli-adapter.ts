@@ -1434,6 +1434,10 @@ export interface ScanReport {
   /** Bound files the walk did not reach, held rather than journaled
    *  (`folder-documents/excluded-binding-kept` and `folder-documents/unreadable-bindings`). */
   unreached: number;
+  /** Bound files gone from their paths whose items a file the scan holds for
+   *  its name, or does not send, carries, kept rather than journaled
+   *  (`folder-files/missing-file-carried-count`). */
+  carried: number;
   /** Directories the walk did not enter, each flagged `package` or
    *  `unreadable` (`folder-documents/package-scan` and `folder-documents/unreadable-directory`), or `gone` where one went away while
    *  the walk read it (`folder-files/walk-directory-gone`). */

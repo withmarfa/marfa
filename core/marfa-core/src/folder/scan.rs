@@ -1740,7 +1740,7 @@ impl Folder {
                 if let Some(carried) = scan.held_carried.get(&path) {
                     let identity = carried.identity.as_deref();
                     state::journal_carried(&conn, &path, &item_id, &carried.carrier, identity)?;
-                    report.unreached += 1;
+                    report.carried += 1;
                     continue;
                 }
                 // Back inside the grace, so the server never hears of it.
@@ -1802,13 +1802,13 @@ impl Folder {
                 });
             if let Some((carrier, identity)) = carrier {
                 state::journal_carried(&conn, &path, &item_id, &carrier, identity.as_deref())?;
-                report.unreached += 1;
+                report.carried += 1;
                 continue;
             }
             // A quick pass that touched a carrier walks instead, so this one
             // did not look at the file that carries it.
             if quick && was_carried {
-                report.unreached += 1;
+                report.carried += 1;
                 continue;
             }
             if quick && !held {

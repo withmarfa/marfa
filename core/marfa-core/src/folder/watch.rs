@@ -1584,6 +1584,7 @@ struct Standing {
     stopped: Option<String>,
     lost: usize,
     unreached: usize,
+    carried: usize,
     /// Each as its path and reason.
     directories: Vec<(String, String)>,
     secrets: Vec<String>,
@@ -1715,6 +1716,7 @@ impl Telling {
             ),
             lost: scan.lost,
             unreached: scan.unreached,
+            carried: scan.carried,
             directories: scan
                 .directories
                 .iter()

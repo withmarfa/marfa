@@ -1637,6 +1637,10 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
                 report.unreached,
                 "bound but not reached, where the lists no longer take them or a package or an unreadable directory holds them, so held rather than deleted",
             ),
+            (
+                report.carried,
+                "gone from their paths but kept, because a file the folder holds for its name or does not send carries them",
+            ),
         ]
         .into_iter()
         .filter(|(count, _)| *count > 0)

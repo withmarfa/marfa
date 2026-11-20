@@ -860,6 +860,12 @@ fn passed(
                             scanned.unreached
                         )
                     }),
+                    (scanned.carried > 0).then(|| {
+                        format!(
+                            ", {} kept because a file the folder holds or does not send carries them",
+                            scanned.carried
+                        )
+                    }),
                 ]
                 .into_iter()
                 .flatten()

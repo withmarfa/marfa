@@ -797,7 +797,10 @@ it("trashes no item whose file moved to a name the folder does not send", async 
   renameSync(join(harness.dir, "Note 0.md"), join(harness.dir, "Note 0.bin"));
   rmSync(join(harness.dir, "Note 1.md"));
   const first = await harness.folder.scan();
-  expect(first.ok && first.value.missing, JSON.stringify(first)).toBe(1);
+  expect(
+    first.ok && [first.value.missing, first.value.carried, first.value.unreached],
+    JSON.stringify(first),
+  ).toEqual([1, 1, 0]);
   await new Promise((resolve) => setTimeout(resolve, 6_000));
   const swept = await harness.folder.scan();
   // The witness: the file gone under every name is trashed in the same sweep.

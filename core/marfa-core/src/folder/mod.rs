@@ -270,6 +270,9 @@ pub struct ScanReport {
     pub flagged: Vec<Flagged>,
     pub embeds: Vec<Flagged>,
     pub unreached: usize,
+    /// Bound files gone from their paths whose items a file the scan holds
+    /// for its name, or does not send, carries, so kept.
+    pub carried: usize,
     pub directories: Vec<Flagged>,
     pub secrets: Vec<String>,
     pub paused: usize,
