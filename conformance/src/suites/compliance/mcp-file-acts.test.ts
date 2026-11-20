@@ -6,6 +6,7 @@ import {
   renameSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -53,6 +54,7 @@ const REMOVE = "marfa_remove_file_copy";
 const ADOPT = "marfa_adopt_backup_folder";
 const SIZE = 2048;
 const JOBS = ["blob-integrity", "blob-replicate", "blob-orphans"];
+const REPLICATION_HELD = "hold:housekeeping:blob-replicate";
 
 type Answer = Record<string, unknown>;
 
@@ -102,15 +104,8 @@ async function admin(
   server: FreshServer,
   label: string,
   permissions: string[],
-): Promise<{ connection: McpConnection; keyId: string; key: string }> {
+): Promise<{ connection: McpConnection; keyId: string }> {
   const { id, key } = await mint(server, label, permissions);
-  return { connection: await connect(server, key), keyId: id, key };
-}
-
-async function connect(
-  server: FreshServer,
-  key: string,
-): Promise<McpConnection> {
   const connection = await connectMcp(
     server.apiUrl,
     key,
@@ -118,7 +113,7 @@ async function connect(
     "/mcp/admin",
   );
   connections.push(connection);
-  return connection;
+  return { connection, keyId: id };
 }
 
 /** Waits until no blob job runs, and the next run of each is far off. */
@@ -188,10 +183,10 @@ beforeAll(async () => {
   await Promise.all([bootCopies(), bootFolder()]);
 }, FRESH_SERVER_TIMEOUT_MS + 120_000);
 
+// The server restored from an export keeps its replication held until its own case clears it.
 afterEach(async () => {
   await copies?.clearFault();
   await folder?.clearFault();
-  await found?.clearFault();
 });
 
 afterAll(async () => {
@@ -558,7 +553,6 @@ describe("marfa_remove_file_copy on a copy the server did not write", () => {
   let kept: { hash: string; bytes: Uint8Array };
   let rewritten: { hash: string; bytes: Uint8Array };
   let foundAdmin: McpConnection;
-  let foundKey: string;
 
   beforeAll(async () => {
     kept = await replicated("found and kept");
@@ -568,21 +562,20 @@ describe("marfa_remove_file_copy on a copy the server did not write", () => {
     ).exportArchive({ files: "false" });
     expect(archive.status).toBe(200);
 
-    // Replication would write over each copy it found, so it copies nothing until the case says.
-    found = await bootFreshServer("mcp-file-acts-found", {
-      ...copiesStore,
-      MARFA_TEST_TUNING: "blob_replicate_batch=0",
-    });
+    // Replication would write over each copy it found, so it waits until the case says.
+    found = await bootFreshServer("mcp-file-acts-found", copiesStore);
     await jobsIdle(found);
+    await found.setFault(REPLICATION_HELD);
     const restored = await ownerOf(found).restoreArchive(archive.data);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(restored.data.blobs_missing).toEqual([]);
+    await found.waitForHold(REPLICATION_HELD);
     for (const file of [kept, rewritten]) {
       expect(await kinds(found, file.hash)).toEqual(["s3"]);
       await placeAgain(found, file.bytes);
       expect(await kinds(found, file.hash)).toEqual(["disk", "s3"]);
     }
-    ({ connection: foundAdmin, key: foundKey } = await admin(found, "found", [
+    ({ connection: foundAdmin } = await admin(found, "found-files", [
       "blobs.manage",
     ]));
   }, FRESH_SERVER_TIMEOUT_MS + 120_000);
@@ -622,15 +615,12 @@ describe("marfa_remove_file_copy on a copy the server did not write", () => {
     const shown = await call(foundAdmin, REMOVE, args);
     expect(shown).toMatchObject({ copy: { written: false }, bytes: "kept" });
 
-    await found!.restart({
-      env: { MARFA_TEST_TUNING: "blob_replicate_batch=100" },
-    });
+    await found!.clearFault();
     await replicateUntilCaughtUp(
       clientsFor(found!).operator,
       `the server's own copy of ${rewritten.hash}`,
     );
-    const again = await connect(found!, foundKey);
-    const refused = await stale(again, REMOVE, {
+    const refused = await stale(foundAdmin, REMOVE, {
       ...args,
       confirm: shown.confirm,
     });
@@ -848,9 +838,19 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
     const shown = await call(backupsAdmin, ADOPT, {});
     const forgets = shown.forgets as { file_copies: number };
 
-    await runJob(operator, "blob-orphans");
-    await runJob(operator, "blob-orphans");
-    expect((await operator.listBlobCopies(hash)).status).toBe(404);
+    // A purge needs the folder it surveys, so the old disk is back for it, then gone again.
+    const old = join(parent, `old disk ${String(swaps)}`);
+    const replacement = join(parent, `replacement disk ${String(swaps)}`);
+    renameSync(root, replacement);
+    renameSync(old, root);
+    try {
+      await runJob(operator, "blob-orphans");
+      await runJob(operator, "blob-orphans");
+      expect((await operator.listBlobCopies(hash)).status).toBe(404);
+    } finally {
+      renameSync(root, old);
+      renameSync(replacement, root);
+    }
     const refused = await stale(backupsAdmin, ADOPT, {
       confirm: shown.confirm,
     });
@@ -877,7 +877,7 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
       marked: true,
     });
 
-    writeFileSync(markerPath(), "another store");
+    writeFileSync(markerPath(), randomUUID());
     try {
       expect(await again()).toMatchObject({
         store_id: adopted.store_id,
@@ -1023,10 +1023,11 @@ describe("a confirmation of a removal or an adopt", () => {
     const backup = await ownerOf(folder).runBackup();
     expect(backup.status, JSON.stringify(backup.error)).toBe(200);
     const old = await folderStore();
-    const backups = (await clientsFor(folder).operator.listBackups()).data.data
-      .length;
     await loseTheDisk();
     const adopting = await call(backupsAdmin, ADOPT, {});
+    expect((adopting.forgets as { backups: string[] }).backups).toContain(
+      backup.data.backup.name,
+    );
     await folder.setFault("fail:audit=backup_folder.adopt");
     const failedAdopt = await callTool(backupsAdmin, ADOPT, {
       confirm: adopting.confirm,
@@ -1035,9 +1036,10 @@ describe("a confirmation of a removal or an adopt", () => {
     expect(failedAdopt.isError).toBe(true);
     expect((await folderStore()).id).toBe(old.id);
     expect(markerNow()).toBeUndefined();
-    expect(
-      (await clientsFor(folder).operator.listBackups()).data.data,
-    ).toHaveLength(backups);
+    // The backups and copies it would forget are all still recorded.
+    expect((await call(backupsAdmin, ADOPT, {})).forgets).toEqual(
+      adopting.forgets,
+    );
     expect(await lastBackup()).toBe(backup.data.backup.name);
     await folder.clearFault();
     const adopted = await call(backupsAdmin, ADOPT, {
