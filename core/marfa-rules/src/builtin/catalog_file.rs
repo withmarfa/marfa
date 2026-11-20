@@ -276,6 +276,17 @@ pub(super) fn register_types(types: &[Source]) -> Result<Vec<Registered>, Vec<St
     Ok(held.into_values().collect())
 }
 
+/// A lowercase word, or words joined by single hyphens, that starts with a letter.
+fn is_kebab_word(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
 pub(super) fn register_edges(edges: &[Source]) -> Result<Vec<Obj>, Vec<String>> {
     let mut refused: Vec<String> = Vec::new();
     let mut found: Vec<Obj> = Vec::new();
@@ -299,6 +310,17 @@ pub(super) fn register_edges(edges: &[Source]) -> Result<Vec<Obj>, Vec<String>> 
         }
         if !edge_id(&id) {
             problems.push("not an edge type identifier".into());
+        } else if !is_kebab_word(&id) {
+            problems.push("a shipped edge type is one lowercase kebab word".into());
+        }
+        for side in ["from_type_constraints", "to_type_constraints"] {
+            if row
+                .get(side)
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty)
+            {
+                problems.push(format!("{side} is empty, so no item could be an end"));
+            }
         }
         let taken = |name: &str| {
             found.iter().find_map(|edge| {

@@ -203,6 +203,39 @@ mod status {
     }
 
     #[test]
+    fn a_subtype_joins_its_new_words_after_the_inherited_ones_each_with_its_group() {
+        let held = registry_with(&[
+            work_item(),
+            json!({"id": "acme.bug", "parent": "acme.work", "fields": {
+                "stage": {"type": "status", "status_values": [{"value": "blocked", "group": "in_progress"}]}}}),
+        ]);
+        let resolved = crate::schema::resolve(&held, "acme.bug", false)
+            .unwrap()
+            .unwrap();
+        let found: Vec<(&str, &str)> = resolved["fields"]["stage"]["status_values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|word| {
+                (
+                    word["value"].as_str().unwrap(),
+                    word["group"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                ("todo", "not_started"),
+                ("doing", "in_progress"),
+                ("done", "completed"),
+                ("dropped", "canceled"),
+                ("blocked", "in_progress"),
+            ]
+        );
+    }
+
+    #[test]
     fn a_subtype_may_not_repeat_an_inherited_word_add_a_second_status_or_change_the_kind() {
         let held = registry_with(&[work_item()]);
         let repeated = refused(
@@ -1347,6 +1380,7 @@ mod explanations {
     #[test]
     fn every_refusal_names_where_it_happened_what_was_required_what_arrived_and_what_to_do() {
         let held = registry_with(&[]);
+        assert_eq!(classes().len(), 32);
         for (name, input, at) in classes() {
             let issues = refused(input, &held);
             let found = issues
@@ -1641,7 +1675,7 @@ mod edges {
     }
 
     #[test]
-    fn an_edge_type_that_is_not_an_object_or_lacks_its_id_or_cardinality_is_refused() {
+    fn an_edge_type_that_lacks_its_id_or_cardinality_is_refused_naming_it() {
         assert!(request_shape(&Obj::new()).is_err());
         assert_eq!(
             edge_field(&request_shape(&row(json!({"cardinality": "many-to-many"}))).unwrap_err()),
@@ -1784,6 +1818,34 @@ mod edges {
 
 mod folder {
     use super::*;
+
+    #[test]
+    fn a_shipped_edge_file_is_refused_for_an_id_that_is_not_kebab_or_a_constraint_list_that_is_empty()
+     {
+        let file = |id: &str, extra: Value| {
+            let mut definition = json!({"id": id, "label": "L", "reverse_label": "R", "cardinality": "many-to-many"});
+            if let (Some(definition), Some(extra)) = (definition.as_object_mut(), extra.as_object())
+            {
+                definition.extend(extra.clone());
+            }
+            (format!("{id}.json"), row(definition))
+        };
+        assert!(register_edges(&[file("in-thread", json!({}))]).is_ok());
+        for id in [
+            "in_thread",
+            "in.thread",
+            "-thread",
+            "thread-",
+            "in--thread",
+            "In-thread",
+        ] {
+            assert!(register_edges(&[file(id, json!({}))]).is_err(), "{id}");
+        }
+        for side in ["from_type_constraints", "to_type_constraints"] {
+            let refused = register_edges(&[file("in-thread", json!({side: []}))]).unwrap_err();
+            assert!(refused[0].contains(side), "{refused:?}");
+        }
+    }
 
     #[test]
     fn a_folder_of_definitions_is_refused_for_a_repeated_id_a_missing_parent_or_a_loop() {

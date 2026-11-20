@@ -57,7 +57,7 @@ A subtype declares only the fields it adds. It may declare an inherited field ag
 
 ## Edge type definition
 
-An edge type file names its `id` (the file is `<id>.json`), `cardinality` (`one-to-one`, `one-to-many`, `many-to-one` or `many-to-many`), `label` and `reverse_label`, and may name `description`, `from_type_constraints` and `to_type_constraints` (each `["*"]` where it names none: type identifiers or `role:container`), `cascade_on_delete` (`cascade`, `orphan`, `block` or `with-hosts`, `orphan` where it names none), `property_schema` (property name to a field definition that takes `type`, `description`, `required`, `enum_values`, `items_type` and `format`), `reverse_name` and `written_from` (`from`, `to` or `none`, `from` where it names none). A shipped edge type is a lowercase kebab word, and no `id` or `reverse_name` is held by two shipped edge types.
+An edge type file names its `id` (the file is `<id>.json`), `cardinality` (`one-to-one`, `one-to-many`, `many-to-one` or `many-to-many`), `label` and `reverse_label`, and may name `description`, `from_type_constraints` and `to_type_constraints` (each `["*"]` where it names none: type identifiers or `role:container`), `cascade_on_delete` (`cascade`, `orphan`, `block` or `with-hosts`, `orphan` where it names none), `property_schema` (property name to a field definition that takes `type`, `description`, `required`, `enum_values`, `items_type` and `format`), `reverse_name` and `written_from` (`from`, `to` or `none`, `from` where it names none). A shipped edge type is a lowercase kebab word with no empty constraint list, and no `id` or `reverse_name` is held by two shipped edge types.
 
 ## Checking and writing
 

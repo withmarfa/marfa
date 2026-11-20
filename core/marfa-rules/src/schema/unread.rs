@@ -207,6 +207,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn each_nested_list_holds_the_keys_its_model_has() {
+        fn sorted<'a>(keys: &[&'a str]) -> Vec<&'a str> {
+            let mut keys = keys.to_vec();
+            keys.sort_unstable();
+            keys
+        }
+        assert_eq!(
+            sorted(&HINT_KEYS),
+            ["body_field", "icon", "name_from_body", "title_field"]
+        );
+        assert_eq!(
+            sorted(&VERSION_KEYS),
+            [
+                "daily_snapshot_days",
+                "max_versions",
+                "recent_days",
+                "weekly_snapshot_days"
+            ]
+        );
+        assert_eq!(sorted(&MERGE_KEYS), ["default", "fields"]);
+        assert_eq!(sorted(&RETENTION_KEYS), ["feed_days"]);
+        let left_out = [
+            "items_fields",
+            "label",
+            "max_items",
+            "max_length",
+            "maximum",
+            "minimum",
+            "searchable",
+            "status_values",
+        ];
+        assert_eq!(
+            sorted(&EDGE_PROPERTY_KEYS),
+            sorted(
+                &FIELD_KEYS
+                    .into_iter()
+                    .filter(|key| !left_out.contains(key))
+                    .collect::<Vec<_>>()
+            )
+        );
+    }
+
     /// Whether registration reads `key`: some value of it is refused where it is, or it is stored back as written.
     fn is_read(
         build: impl Fn(Value) -> Value,
