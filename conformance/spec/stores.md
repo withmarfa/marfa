@@ -518,7 +518,7 @@ If a run of `blob-replicate` ends with `outcome` `failed` because attached store
 
 **Reason:** a failure copying into the blob folder is not a failure of the backup destination, and only the store's ID tells them apart.
 
-**Tests:** `compliance/blob-store-silent.test.ts › tells one file the object store refused as files waiting for their copy, not as a store that is gone`.
+**Tests:** `compliance/blob-store-silent.test.ts › tells one file the object store refused as files waiting for their copy, not as a store that is gone`, `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
 
 ### `stores/replicate-write-no-answer`
 

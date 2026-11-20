@@ -1587,7 +1587,7 @@
                   "turned_off",
                   "destination_unusable"
                 ],
-                "description": "Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0. If both of the last two apply, the reason is `destination_unusable`."
+                "description": "Why backups are `off` or `failing`: `no_backup_destination` when no destination is set, `destination_unusable` when the one set can't be used, or `turned_off` when `backup_interval_seconds` is 0. `destination_unusable` wins if both apply."
               },
               "destination": {
                 "type": "string",
@@ -6921,6 +6921,13 @@
             },
             {
               "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Text by name, such as `refused` for `blob-replicate`: the ID of each store that took no copy, and why."
             }
           ]
         },

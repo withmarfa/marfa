@@ -15,6 +15,7 @@ import {
   replicateUntilCaughtUp,
   runJob,
 } from "../../utils/own-blob-server.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 import { waitFor } from "../../utils/wait.js";
 
 /**
@@ -197,10 +198,21 @@ describe("an object store the address rules refuse", () => {
         );
         expect(waiting.status, JSON.stringify(waiting.error)).toBe(201);
         await named(working, waiting.data.hash);
-        const replicated = await runJob(operator, "blob-replicate", "either");
+        const replicated = await runJob<{
+          remaining: number;
+          refused: Record<string, string>;
+        }>(operator, "blob-replicate", "either");
         expect(replicated.outcome).toBe("failed");
         expect(replicated.error).toContain(SWITCH);
         expect(replicated.result.remaining).toBeGreaterThanOrEqual(1);
+        expect(replicated.result.refused[id]).toContain(SWITCH);
+        const listed = await operator.listHousekeeping();
+        expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+        await expectMatchesSchema("GET", "/housekeeping", 200, listed.data);
+        expect(
+          listed.data.data.find((job) => job.name === "blob-replicate")
+            ?.last_result,
+        ).toEqual(replicated.result);
         const checked = await runJob(operator, "blob-integrity");
         expect(checked.result).toMatchObject({ struck: 0 });
         expect(checked.result.unreachable).toBeGreaterThanOrEqual(1);
