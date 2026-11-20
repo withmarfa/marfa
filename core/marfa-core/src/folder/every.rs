@@ -114,8 +114,9 @@ impl Unwatched {
     pub fn paused() -> Unwatched {
         Unwatched {
             code: PAUSED.into(),
-            message: "this directory's sync is paused; it is watched once `folders resume` lets it go on"
-                .into(),
+            message:
+                "this directory's sync is paused; it is watched once `folders resume` lets it go on"
+                    .into(),
         }
     }
 

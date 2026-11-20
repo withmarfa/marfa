@@ -421,12 +421,12 @@ pub fn run(
             output::report(&report, json, || describe_health(&report))
         }
         FoldersCommand::Pause { dir } => {
-            let folder = working(&dir, None)?;
+            let folder = working(&dir, named.session_if_named()?)?;
             let changed = folder.pause_sync()?;
             paused_report(&folder, true, changed, json)
         }
         FoldersCommand::Resume { dir } => {
-            let folder = working(&dir, None)?;
+            let folder = working(&dir, named.session_if_named()?)?;
             let changed = folder.resume_sync()?;
             paused_report(&folder, false, changed, json)
         }

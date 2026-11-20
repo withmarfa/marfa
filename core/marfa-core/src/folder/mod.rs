@@ -30,8 +30,8 @@ mod selective;
 mod unmatched;
 pub use beneath::BeneathReport;
 pub(crate) use first::waiting;
-pub(crate) use paused::paused;
 pub use first::{FirstSync, Synced};
+pub(crate) use paused::paused;
 pub use pull::{PullReport, copy_changed};
 pub use removal::{Confirmed, Restored};
 mod health;
@@ -4603,9 +4603,7 @@ mod tests {
         drop(core);
         std::fs::write(dir.path().join("note.md"), "# Note\n").unwrap();
         let folder = Folder::open(dir.path(), None).unwrap();
-        let paused = |error: std::result::Result<(), CoreError>| {
-            matches!(error, Err(CoreError::Invalid(said)) if said.contains("folders resume"))
-        };
+        let paused = |error: std::result::Result<(), CoreError>| matches!(error, Err(CoreError::Invalid(said)) if said.contains("folders resume"));
         let stop = AtomicBool::new(false);
 
         // The witness: before the pause none of these is refused for it.
@@ -4613,7 +4611,10 @@ mod tests {
         assert!(!paused(folder.pull().map(drop)));
 
         assert!(folder.pause_sync().unwrap());
-        assert!(!folder.pause_sync().unwrap(), "a second pause changes nothing");
+        assert!(
+            !folder.pause_sync().unwrap(),
+            "a second pause changes nothing"
+        );
         assert!(paused(folder.sync().map(drop)));
         assert!(paused(folder.send_only().map(drop)));
         assert!(paused(folder.pull().map(drop)));
@@ -4642,7 +4643,10 @@ mod tests {
         assert!(Folder::paused_at(dir.path()));
 
         assert!(folder.resume_sync().unwrap());
-        assert!(!folder.resume_sync().unwrap(), "resuming a directory that runs changes nothing");
+        assert!(
+            !folder.resume_sync().unwrap(),
+            "resuming a directory that runs changes nothing"
+        );
         assert!(!paused(folder.pull().map(drop)));
         assert!(
             !folder

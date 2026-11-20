@@ -1483,6 +1483,10 @@ export interface StatusReport {
     additions: number;
     outside_query: number;
   };
+  /** Whether the person paused the directory's sync (`folder-sync/pause-status`). */
+  sync_paused: boolean;
+  /** How many directories the watch could not watch when it last reported (`folder-sync/unwatched-status`). */
+  unwatched: number;
   /** Present while the first sync waits to be confirmed (`folder-setup/first-sync-status`). */
   first_sync?: {
     plan: { write: number; send: number; beside: number; left: number } | null;
@@ -1744,6 +1748,21 @@ export class CliFolder {
     return this.run<StatusReport>(["folders", "status", this.dir]);
   }
 
+  /** Where every file stands, printed for a person. */
+  async statusText(): Promise<Outcome<string>> {
+    return this.device().rootText(["folders", "status", this.dir]);
+  }
+
+  /** Pauses the directory's sync (`folder-sync/pause-command`). */
+  async pause(): Promise<Outcome<PauseReport>> {
+    return this.run<PauseReport>(["folders", "pause", this.dir, ...this.server()]);
+  }
+
+  /** Lets a paused directory's sync go on (`folder-sync/resume-command`). */
+  async resume(): Promise<Outcome<PauseReport>> {
+    return this.run<PauseReport>(["folders", "resume", this.dir, ...this.server()]);
+  }
+
   /** Lets the first sync go, or a paused large removal. */
   async confirm(): Promise<
     Outcome<{
@@ -1966,9 +1985,19 @@ export interface AddedFolder {
 }
 
 /** A folder a machine's registry lists (`folder-setup/registry-lists-folders`). */
+/** What `folders pause` and `folders resume` answer. */
+export interface PauseReport {
+  dir: string;
+  paused: boolean;
+  /** False where the directory was already as the command left it. */
+  changed: boolean;
+}
+
 export interface RegisteredFolder {
   dir: string;
   folder: string;
+  /** Whether the directory's sync is paused (`folder-sync/pause-list`). */
+  paused: boolean;
   /** An opaque identity of the directory the folder opened. */
   root?: string;
 }

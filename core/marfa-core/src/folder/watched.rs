@@ -37,8 +37,9 @@ impl<W: Watcher> Directories for W {
 }
 
 /// Whether a fixture has the registration of `directory` refused: the file the
-/// fault names lists, one to a line, names that end the paths it refuses, and
-/// refuses none once the file is gone.
+/// fault names lists, one to a line, names that end the path of a directory it
+/// refuses with every directory below it, and refuses none once the file is
+/// gone.
 #[cfg(debug_assertions)]
 fn refused_by_fault(directory: &Path) -> bool {
     crate::fault::named("watch-refuse")
@@ -46,7 +47,7 @@ fn refused_by_fault(directory: &Path) -> bool {
         .is_some_and(|names| {
             names
                 .lines()
-                .any(|name| !name.is_empty() && directory.ends_with(name))
+                .any(|name| !name.is_empty() && directory.ancestors().any(|up| up.ends_with(name)))
         })
 }
 
