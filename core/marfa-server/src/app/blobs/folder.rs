@@ -393,21 +393,22 @@ impl Folder {
     /// Settles a claim an adopt left in the files area against `recorded`, the store the record
     /// names there. Whether or not the claim settles, a store the record names in place of the
     /// one in use is used from then on, unmounted until a folder holding its marker is back, so
-    /// the record is never written back to the store it replaced. Answers `false` where the
-    /// files area is not there, so a claim in it was not read. It blocks.
-    pub fn settle(&self, recorded: Option<String>) -> io::Result<bool> {
+    /// the record is never written back to the store it replaced. A files area that is not
+    /// there has nothing to settle now: a claim for the store the record names becomes the
+    /// marker once it is back. It blocks.
+    pub fn settle(&self, recorded: Option<String>) -> io::Result<()> {
         if self.reachable() {
-            return Ok(true);
+            return Ok(());
         }
         let area = self.area();
-        let read = match self.files().pending(&area) {
-            Ok(Some(claim)) => self.settle_held(claim, recorded.as_deref()).map(|()| true),
-            Ok(None) => Ok(true),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        let settled = match self.files().pending(&area) {
+            Ok(Some(claim)) => self.settle_held(claim, recorded.as_deref()),
+            Ok(None) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
             Err(error) => Err(error),
         };
         self.follow_record(recorded, area);
-        read
+        settled
     }
 
     /// Settles `claim`, an adopt's own claim on the files area that still holds its lock, against

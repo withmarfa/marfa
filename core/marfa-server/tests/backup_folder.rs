@@ -1157,7 +1157,7 @@ async fn adopted_without_its_marker(parent: &Path) -> (Arc<Instance>, PathBuf, S
 }
 
 #[tokio::test]
-async fn an_adopt_whose_marker_waits_while_the_disk_is_away_stays_unsettled_and_finishes_once_it_is_back()
+async fn an_adopt_whose_marker_waits_while_the_disk_is_away_settles_and_the_folder_takes_its_marker_once_it_is_back()
  {
     let parent = TempDir::new().unwrap();
     let (instance, area, file) = adopted_without_its_marker(parent.path()).await;
@@ -1167,9 +1167,17 @@ async fn an_adopt_whose_marker_waits_while_the_disk_is_away_stays_unsettled_and_
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
     assert!(
-        !instance.app.blobs.settled(),
-        "a claim the server could not read was taken as settled"
+        instance.app.blobs.settled(),
+        "a files area that is not there kept the record in doubt"
     );
+    let waiting = fs::read_dir(away.join("files"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert!(waiting.join(".marfa-store.pending").is_file());
+    assert!(!waiting.join(".marfa-store").exists());
 
     fs::rename(&away, &folder).unwrap();
     let (status, body) = instance.back_up().await;
@@ -1201,6 +1209,41 @@ async fn an_adopt_recorded_before_a_restart_with_the_disk_away_gives_the_folder_
     assert!(area.join(".marfa-store").is_file());
     assert!(!area.join(".marfa-store.pending").exists());
     assert!(copy_of(&folder, &again.id(), &file).is_file());
+}
+
+#[tokio::test]
+async fn a_blank_disk_put_in_place_of_one_whose_adopt_marker_waits_can_be_adopted() {
+    let parent = TempDir::new().unwrap();
+    let (instance, _, file) = adopted_without_its_marker(parent.path()).await;
+    let folder = parent.path().join("disk");
+    let away = parent.path().join("away");
+    fs::rename(&folder, &away).unwrap();
+    fs::create_dir(&folder).unwrap();
+    let (status, refused) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
+
+    let (status, adopted) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{adopted}");
+    let waiting = fs::read_dir(away.join("files"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let claimed = fs::read_to_string(waiting.join(".marfa-store.pending")).unwrap();
+    assert_eq!(adopted["replaced_store_id"], claimed.trim(), "{adopted}");
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let area = folder.join("files").join(instance.id());
+    assert_eq!(
+        fs::read_to_string(area.join(".marfa-store"))
+            .unwrap()
+            .trim(),
+        adopted["store_id"].as_str().unwrap()
+    );
+    assert!(copy_of(&folder, &instance.id(), &file).is_file());
 }
 
 #[tokio::test]

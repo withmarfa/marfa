@@ -1321,8 +1321,7 @@ impl App {
 
     /// Settles what an adopt that did not finish left in the backup folder against the record:
     /// its claim is promoted where the record names its store, and removed where it does not.
-    /// Answers `false` where the files area is not there, so a claim in it was not read.
-    pub(crate) async fn settle_folder(&self, folder: &Arc<Folder>) -> Result<bool> {
+    pub(crate) async fn settle_folder(&self, folder: &Arc<Folder>) -> Result<()> {
         self.settling(folder, |folder, recorded| folder.settle(recorded))
             .await
     }
@@ -1416,33 +1415,14 @@ impl App {
                     if !blobs.record_doubted.load(Ordering::SeqCst) {
                         return Ok(());
                     }
-                    let mut unread = None;
-                    if let Some(folder) = &current.folder {
-                        match self.settle_folder(folder).await {
-                            Ok(true) => {}
-                            Ok(false) => unread = Some(folder.root().display().to_string()),
-                            Err(refused) => {
-                                tracing::error!(%refused, "The backup folder in use could not be checked against its record");
-                                return Err(refused);
-                            }
-                        }
+                    if let Some(folder) = &current.folder
+                        && let Err(refused) = self.settle_folder(folder).await
+                    {
+                        tracing::error!(%refused, "The backup folder in use could not be checked against its record");
+                        return Err(refused);
                     }
                     match self.record_stores(&current).await {
-                        Ok(Recorded::At(_)) => {
-                            // A claim in a files area that is not there is not settled.
-                            if let Some(root) = unread {
-                                return Err(Refusal::new(
-                                    Code::BlobStoreUnavailable,
-                                    format!(
-                                        "The backup folder {root} is not there, so a claim an \
-                                         adopt that did not finish may have left in it is not \
-                                         settled. Backups wait until its disk is back, and the \
-                                         server settles the claim then."
-                                    ),
-                                ));
-                            }
-                            blobs.record_doubted.store(false, Ordering::SeqCst)
-                        }
+                        Ok(Recorded::At(_)) => blobs.record_doubted.store(false, Ordering::SeqCst),
                         Ok(Recorded::Superseded) => {}
                         Err(refused) => {
                             tracing::error!(%refused, "The stores in use could not be recorded");
