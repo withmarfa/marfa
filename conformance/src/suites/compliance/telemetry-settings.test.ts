@@ -173,9 +173,9 @@ describe("the telemetry settings", () => {
         expect(carried(sinks, signal, unset, "authorization")).toEqual([]);
         // Queued under the headers the change replaced, the first write is
         // dropped: whatever of it arrived went before the change.
-        expect(
-          carried(sinks, signal, first, "authorization", changed),
-        ).toEqual([]);
+        expect(carried(sinks, signal, first, "authorization", changed)).toEqual(
+          [],
+        );
         for (const value of carried(sinks, signal, first, "authorization")) {
           expect(value).toBe("Bearer one");
         }

@@ -2672,7 +2672,7 @@ While `telemetry_enabled` is off, the server MUST export no trace, no log record
 
 **Reason:** an owner pauses telemetry without clearing the endpoints and headers, which are secrets and are never shown back.
 
-**Tests:** `compliance/telemetry-settings.test.ts › send nothing while telemetry_enabled is false, and send again once it is true, with no setting written again`.
+**Tests:** `compliance/telemetry-settings.test.ts › send nothing while telemetry_enabled is false, drop what was queued before it went off, and send again once it is true, with no setting written again`.
 
 ### `instance/telemetry-follows-settings`
 
@@ -2680,13 +2680,21 @@ When a write to `/config` changes a telemetry setting, the server MUST export ea
 
 **Reason:** an owner sets telemetry up, moves it to another collector or changes a credential from any app, and sees the next request reach it. The telemetry settings are `telemetry_enabled`, the three OTLP endpoints, the three OTLP header settings, `otel_sample_ratio`, `otel_service_name` and `otel_resource_attributes`.
 
-**Tests:** `compliance/telemetry-settings.test.ts › send the next trace and log record with the endpoint and headers a write to /config just set, with no restart`.
+**Tests:** `compliance/telemetry-settings.test.ts › send the next trace and log record with the endpoint and headers a write to /config just set, with no restart, and drop those queued before it`.
+
+### `instance/telemetry-change-drops-queued`
+
+When a write to `/config` changes a setting that decides whether, where or how the server sends traces, log records or exception reports, the server MUST NOT send a record of those kinds that it held unsent when the write was answered.
+
+**Reason:** a record waits a few seconds in a batch before it is sent. Sent after the change, it would leave after the owner turned telemetry off, go to a receiver the owner moved away from, carry a credential the owner replaced, or reach an address `allow_private_addresses` no longer allows. A change applies to every record not yet sent, so a record queued under the old settings is dropped, not sent under either. The settings are `telemetry_enabled`, the telemetry settings, `posthog_host`, `posthog_project_token`, `error_reporting_enabled` and `allow_private_addresses`. A post already on its way is not called back. When the server stops, its settings have not changed, so it sends what it holds.
+
+**Tests:** `compliance/telemetry-settings.test.ts › send nothing while telemetry_enabled is false, drop what was queued before it went off, and send again once it is true, with no setting written again`, `› send the next trace and log record with the endpoint and headers a write to /config just set, with no restart, and drop those queued before it`.
 
 ### `instance/telemetry-headers`
 
 When the server exports a trace or a log record, the server MUST send it with the headers `otel_exporter_otlp_headers` names, each replaced by the one of the same name that the signal's own header setting, `otel_exporter_otlp_traces_headers` or `otel_exporter_otlp_logs_headers`, names.
 
-**Tests:** `compliance/telemetry-settings.test.ts › send the next trace and log record with the endpoint and headers a write to /config just set, with no restart`.
+**Tests:** `compliance/telemetry-settings.test.ts › send the next trace and log record with the endpoint and headers a write to /config just set, with no restart, and drop those queued before it`.
 
 ### `instance/telemetry-environment-ignored`
 
