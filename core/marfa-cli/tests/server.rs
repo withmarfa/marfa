@@ -1731,7 +1731,7 @@ fn a_settings_file_managed_elsewhere_is_used_as_it_is() {
     }
 
     // It stays external without the flag, and a new rendering is picked up.
-    let rendered = CLOUDFLARE_FILE.replace("mine", "other");
+    let rendered = CLOUDFLARE_FILE.replace("CONNECTIONS=512", "CONNECTIONS=256");
     fs::write(rig.dir.join("marfa.env"), &rendered).unwrap();
     rig.installed(&[]);
     assert_eq!(rig.file("marfa.env"), rendered);
@@ -2516,7 +2516,7 @@ fn settings_managed_elsewhere_are_applied_by_running_install_again() {
     let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
     fs::write(
         rig.dir.join("marfa.env"),
-        NATIVE_CLOUDFLARE_FILE.replace("mine", "other"),
+        NATIVE_CLOUDFLARE_FILE.replace("CONNECTIONS=512", "CONNECTIONS=256"),
     )
     .unwrap();
     rig.native_installed(&external);
