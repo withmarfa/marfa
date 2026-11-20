@@ -1310,8 +1310,7 @@ impl Intake {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Retry {
     Trouble,
-    /// Tries a store that could not be used again only if a follow was asked for since it was
-    /// tried, so a follow already made since the ask is not repeated.
+    /// Tries a troubled store again only if a follow was asked for after it was last tried.
     Changed,
     /// Only brings the store in use and its record to the committed settings.
     Settle,
