@@ -240,7 +240,7 @@ When `marfa server run` makes the install's data folder, the `update` folder in 
 
 ### `updates/run-files-private`
 
-When `marfa server run` creates a file or a folder without a mode of its own, the CLI MUST make it readable and writable by its own account alone, whatever umask the CLI started under.
+When `marfa server run` creates a file or a folder without a mode of its own, the CLI MUST give it no mode bits for group or others, whatever umask the CLI started under.
 
 **Reason:** a service manager may start `marfa server run` under a umask that opens new files and folders to the account's group, and what the CLI makes in the install's folders is the owner's.
 
