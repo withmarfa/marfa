@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 
 use super::settings::Settings;
 use super::{Folder, STATE_DIR, state};
+use crate::directory::{Directory, FileType};
 use crate::error::CoreError;
 use crate::http::ByIdRead;
 use crate::{Result, catch_up};
@@ -22,6 +23,17 @@ pub struct BeneathReport {
     pub resolved: Option<String>,
     /// Why the path still names no item.
     pub waiting: Option<String>,
+}
+
+/// How a scan judges new files while the query narrows beneath a path.
+pub(super) enum PendingBeneath {
+    /// The query names no path.
+    No,
+    /// The file has no item yet; only the file at this on-disk path is known
+    /// to lie beneath it.
+    Unbound(Option<String>),
+    /// The file has an item the query does not name yet: the settings that do.
+    Bound(Box<Settings>),
 }
 
 /// Version conflicts met in a row before a pass leaves the rest to the next.
@@ -48,39 +60,25 @@ impl Folder {
         Ok(None)
     }
 
-    /// The on-disk path of the file `path` names by `names::same`, exact name first.
+    pub(super) fn pending_beneath_of(&self, settings: &Settings) -> Result<PendingBeneath> {
+        let Some(path) = settings.pending_beneath() else {
+            return Ok(PendingBeneath::No);
+        };
+        Ok(match self.bound_beneath(path)? {
+            Some(bound) => PendingBeneath::Bound(Box::new(settings.beneath_item(&bound.item_id))),
+            None => PendingBeneath::Unbound(self.file_named(path)),
+        })
+    }
+
+    /// The on-disk path of the file `path` names by `names::same`. Of several
+    /// that match, the first in the scan's order is the one the folder keeps
+    /// (`one_per_name`); a link or a folder is never the file.
     pub(super) fn file_named(&self, path: &str) -> Option<String> {
         let parts: Vec<&str> = path.split('/').collect();
-        let mut directory = self.root_dir.clone();
-        let mut found: Vec<String> = Vec::new();
-        for (at, part) in parts.iter().enumerate() {
-            if found.is_empty() && names::same(part, STATE_DIR) {
-                return None;
-            }
-            let mut same: Vec<String> = directory
-                .entries()
-                .ok()?
-                .into_iter()
-                .filter_map(|name| name.into_string().ok())
-                .filter(|name| names::same(name, part))
-                .collect();
-            same.sort();
-            let name = same
-                .iter()
-                .find(|name| name == part)
-                .or(same.first())?
-                .clone();
-            let kind = directory.entry_kind(Path::new(&name)).ok()?;
-            found.push(name);
-            if at + 1 == parts.len() {
-                return (kind == crate::directory::FileType::RegularFile).then(|| found.join("/"));
-            }
-            if kind != crate::directory::FileType::Directory {
-                return None;
-            }
-            directory = directory.child(Path::new(&found[at]), false).ok()?;
+        if names::same(parts.first()?, STATE_DIR) {
+            return None;
         }
-        None
+        named_in(&self.root_dir, &parts, "")
     }
 
     /// Why no pass could send the file at `path`, where none could.
@@ -106,20 +104,26 @@ impl Folder {
         Ok(None)
     }
 
+    /// Why `settings` narrow beneath a file no pass could send, where they do.
+    pub(super) fn beneath_refusal(&self, settings: &Settings) -> Result<Option<String>> {
+        let Some(path) = settings.pending_beneath() else {
+            return Ok(None);
+        };
+        if self.bound_beneath(path)?.is_some() {
+            return Ok(None);
+        }
+        Ok(self.unsendable(settings, path)?.map(|why| {
+            format!(
+                "the folder narrows beneath the file {path}, and {why}; put the file there, or change `query.beneath` with `marfa folders update`"
+            )
+        }))
+    }
+
     /// Refuses, before anything is sent or written, a query that narrows
     /// beneath a file no pass could send.
     pub(super) fn check_beneath_file(&self) -> Result<()> {
-        let settings = self.settings()?;
-        let Some(path) = settings.pending_beneath() else {
-            return Ok(());
-        };
-        if self.bound_beneath(path)?.is_some() {
-            return Ok(());
-        }
-        match self.unsendable(&settings, path)? {
-            Some(why) => Err(CoreError::Invalid(format!(
-                "the folder narrows beneath the file {path}, and {why}; put the file there, or change `query.beneath` with `marfa folders update`"
-            ))),
+        match self.beneath_refusal(&self.settings()?)? {
+            Some(refusal) => Err(CoreError::Invalid(refusal)),
             None => Ok(()),
         }
     }
@@ -232,4 +236,34 @@ impl Folder {
             Some("the folder's query kept changing under it".into()),
         )
     }
+}
+
+fn named_in(directory: &Directory, parts: &[&str], above: &str) -> Option<String> {
+    let (part, rest) = parts.split_first()?;
+    let wanted = if rest.is_empty() {
+        FileType::RegularFile
+    } else {
+        FileType::Directory
+    };
+    let mut same: Vec<String> = directory
+        .entries()
+        .ok()?
+        .into_iter()
+        .filter_map(|name| name.into_string().ok())
+        .filter(|name| names::same(name, part))
+        .filter(|name| directory.entry_kind(Path::new(name)).ok() == Some(wanted))
+        .collect();
+    same.sort();
+    same.into_iter().find_map(|name| {
+        let at = if above.is_empty() {
+            name.clone()
+        } else {
+            format!("{above}/{name}")
+        };
+        if rest.is_empty() {
+            return Some(at);
+        }
+        let child = directory.child(Path::new(&name), false).ok()?;
+        named_in(&child, rest, &at)
+    })
 }

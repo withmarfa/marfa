@@ -168,12 +168,17 @@ impl Folder {
         let settings = self.send_settings_edit()?;
         // After the edit, so a person can mend a bad path in the settings file.
         self.check_beneath_file()?;
-        let scan = self.scan()?;
+        let mut scan = self.scan()?;
         let mut rebuilt = None;
         let mut drain = self.drain_rebuilding(&mut rebuilt)?;
         // After the file is sent, and before the catch-up reads the copy
         // under the id.
         let beneath = self.resolve_beneath()?;
+        // The files held while the path had no item can be judged now.
+        if scan.held_outside > 0 && beneath.as_ref().is_some_and(|said| said.resolved.is_some()) {
+            scan.absorb_rescan(self.scan()?);
+            drain.absorb(self.drain_rebuilding(&mut rebuilt)?);
+        }
         let catch_up = match self.catch_up() {
             Ok(caught) => Ok(caught),
             Err(error) if error.is_environmental() => Err(error),

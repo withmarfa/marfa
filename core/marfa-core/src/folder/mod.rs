@@ -291,6 +291,20 @@ pub struct ScanReport {
     pub swept: bool,
 }
 
+impl ScanReport {
+    /// A rescan of the same sync: what it made is added, and what it holds
+    /// back is what it reports.
+    pub(super) fn absorb_rescan(&mut self, later: ScanReport) {
+        self.created += later.created;
+        self.updated += later.updated;
+        self.renamed += later.renamed;
+        self.requeued += later.requeued;
+        self.flagged = merged_flagged(&self.flagged, &later.flagged);
+        self.held_outside = later.held_outside;
+        self.paused_additions = later.paused_additions;
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Unsure {
     pub path: String,

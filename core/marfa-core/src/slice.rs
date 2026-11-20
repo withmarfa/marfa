@@ -239,9 +239,6 @@ impl SliceQuery {
     /// where it narrows by states alone and holds each state `asked` names,
     /// or where it holds the narrowing a copy of `asked` would.
     pub(crate) fn covers(&self, asked: &SliceQuery) -> Result<bool> {
-        if asked.nothing {
-            return Ok(true);
-        }
         if self.nothing {
             return Ok(false);
         }

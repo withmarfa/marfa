@@ -4,15 +4,22 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { answers, refusal } from "../../device/marfa-answers.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
 import type { Item, Outcome } from "../../device/protocol.js";
 import type { Answer, RecordedRequest } from "../../device/scripted-server.js";
 import { folderHarness, folderItem, type FolderHarness } from "./harness.js";
-import { put, scriptFolderWrites, settingsFile } from "./folders.shared.js";
+import {
+  onCaseSensitiveVolume,
+  put,
+  scriptFolderWrites,
+  sentTitles,
+  settingsFile,
+} from "./folders.shared.js";
 
 /**
  * A folder whose query narrows beneath the path of a file it holds, on a
@@ -239,8 +246,10 @@ describe("a folder narrowed beneath a file it holds", () => {
     },
   );
 
-  it("sends no new file but the one the path names while it holds files outside the query", async () => {
+  it("sends the files beneath the project in the pass that names its item, and holds the rest outside the query", async () => {
     const project = "---\ntitle: Project\n---\nProject\n";
+    const inside =
+      '---\ntitle: Inside\nchild-of: "[[Project]]"\n---\nunder the project\n';
     const outside = "---\ntitle: Other\n---\nx\n";
     harness = await folderHarness("beneath-file-hold", {
       settings: {
@@ -251,11 +260,12 @@ describe("a folder narrowed beneath a file it holds", () => {
       items: { "core.note": [note(4, "Outside")] },
     });
     scriptFolderWrites(harness);
-    changes(harness);
+    const sent = changes(harness);
     put(harness, PATH, project);
+    put(harness, "Projects/inside.md", inside);
     const other = put(harness, "Other/x.md", outside);
 
-    // The witness: a folder that holds nothing outside sends both files.
+    // The witness: a folder that holds nothing outside sends all three files.
     const control = await folderHarness("beneath-file-hold-control", {
       settings: {
         query: { types: ["core.note"] },
@@ -265,16 +275,19 @@ describe("a folder narrowed beneath a file it holds", () => {
     try {
       scriptFolderWrites(control);
       put(control, PATH, project);
+      put(control, "Projects/inside.md", inside);
       put(control, "Other/x.md", outside);
       value(await control.folder.push());
-      expect(created(control)).toBe(2);
+      expect(created(control)).toBe(3);
     } finally {
       await control.stop();
     }
 
-    value(await harness.folder.push());
-    expect(created(harness)).toBe(1);
+    const pushed = value(await harness.folder.push());
+    expect(sent).toHaveLength(1);
+    expect(sentTitles(harness).sort()).toEqual(["Inside", "Project"]);
     expect(readFileSync(other, "utf8")).toBe(outside);
+    expect(pushed.scan.held_outside).toBe(1);
     const status = value(await harness.folder.status());
     expect(status.paused.outside_query).toBe(1);
   });
@@ -296,6 +309,71 @@ describe("a folder narrowed beneath a file it holds", () => {
       beneath: id(1),
     });
     expect(await heldIds(harness)).toEqual([id(1), id(2), id(3)]);
+  });
+
+  it("sends the first in byte order of the files the query's path matches, and neither a link nor a folder in its place", async () => {
+    // Names the folder compares as one that a case-sensitive volume keeps
+    // apart, where both can be there.
+    const file = (title: string): string =>
+      `---\ntitle: ${title}\n---\n${title}\n`;
+    const run = async (
+      label: string,
+      named: string,
+      setup: (folder: FolderHarness) => void,
+    ): Promise<string[]> => {
+      const made = await folderHarness(label, {
+        settings: {
+          query: { types: ["core.note"], beneath: named },
+          defaults: { type: "core.note" },
+          outside_query: "hold",
+        },
+      });
+      try {
+        await onCaseSensitiveVolume(made);
+        scriptFolderWrites(made);
+        changes(made);
+        setup(made);
+        value(await made.folder.push());
+        expect(value(await made.folder.status()).paused.outside_query).toBe(1);
+        return sentTitles(made);
+      } finally {
+        await made.stop();
+      }
+    };
+    const named = "projects/strasse cafe.md";
+
+    // Two files match: the first in byte order is the one the folder keeps.
+    expect(
+      await run("beneath-file-fold-order", named, (made) => {
+        put(made, "Projects/Stra\u00dfe Cafe.md", file("Sharp"));
+        put(made, "Projects/STRASSE Cafe.md", file("Capitals"));
+        put(made, "Other.md", file("Other"));
+      }),
+    ).toEqual(["Capitals"]);
+
+    // A link that sorts first does not hide the file.
+    expect(
+      await run("beneath-file-fold-link", named, (made) => {
+        put(made, "Projects/Stra\u00dfe Cafe.md", file("Sharp"));
+        put(made, "Other.md", file("Other"));
+        symlinkSync(
+          join(made.dir, "Other.md"),
+          join(made.dir, "Projects/STRASSE Cafe.md"),
+        );
+      }),
+    ).toEqual(["Sharp"]);
+
+    // A folder that sorts first, and holds no such file, does not hide it.
+    expect(
+      await run(
+        "beneath-file-fold-folder",
+        "PROJECTS/strasse cafe.md",
+        (made) => {
+          put(made, "Projects/inside.md", file("Inside"));
+          put(made, "projects/Stra\u00dfe Cafe.md", file("Sharp"));
+        },
+      ),
+    ).toEqual(["Sharp"]);
   });
 
   it("judges the path a person has put in the settings file, so a bad path can be mended there", async () => {
@@ -321,12 +399,24 @@ describe("a folder narrowed beneath a file it holds", () => {
     const file = settingsFile(harness);
     mkdirSync(dirname(file), { recursive: true });
     const text = existsSync(file) ? readFileSync(file, "utf8") : "";
-    writeFileSync(
-      file,
+    const held = harness;
+    const edit = (beneath: string): string =>
       text.includes("Projects/gone.md")
-        ? text.replace("Projects/gone.md", PATH)
-        : `folder: ${harness.settings.id}\nversion: ${harness.settings.version}\nquery:\n  types:\n    - core.note\n  beneath: ${PATH}\n`,
-    );
+        ? text.replace("Projects/gone.md", beneath)
+        : `folder: ${held.settings.id}\nversion: ${held.settings.version}\nquery:\n  types:\n    - core.note\n  beneath: ${beneath}\n`;
+
+    // An edit naming a file that is not there is sent nowhere, and the
+    // folder's own path stays what the server holds.
+    writeFileSync(file, edit("Projects/typo.md"));
+    const typo = await harness.folder.push();
+    expect(typo.ok, JSON.stringify(typo)).toBe(false);
+    expect(sent).toEqual([]);
+    expect(harness.settings.settings.query).toEqual({
+      types: ["core.note"],
+      beneath: "Projects/gone.md",
+    });
+
+    writeFileSync(file, edit(PATH));
     value(await harness.folder.push());
     expect(sent.map((body) => body.query)).toEqual([
       { types: ["core.note"], beneath: PATH },

@@ -1,4 +1,14 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { spawnSync } from "node:child_process";
+import { expect } from "vitest";
 import { join } from "node:path";
 import {
   answers,
@@ -13,7 +23,9 @@ import {
   wireItem,
   writeAnswers,
 } from "../../device/marfa-answers.js";
-import { folderItem, scriptWrites } from "./harness.js";
+import { KEY, folderItem, requireBinary, scriptWrites } from "./harness.js";
+import { CliFolder } from "../../device/cli-adapter.js";
+import { detachImageAtCleanup, tempFolder } from "../../utils/temp-folder.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import {
   FolderDoor,
@@ -737,4 +749,56 @@ export function edit(
     throw new Error(`${name} does not carry ${String(from)}:\n${text}`);
   }
   writeFileSync(join(harness.dir, name), next);
+}
+
+/**
+ * Moves the folder onto a volume that keeps names differing only in case
+ * apart: a case-sensitive APFS image on a Mac, the temporary folder's own
+ * file system elsewhere.
+ */
+export async function onCaseSensitiveVolume(
+  moved: FolderHarness,
+): Promise<void> {
+  const scratch = tempFolder("marfa-case-sensitive-");
+  const mount = join(scratch, "volume");
+  mkdirSync(mount);
+  if (process.platform === "darwin") {
+    const image = join(scratch, "case.sparseimage");
+    const made = spawnSync("hdiutil", [
+      "create",
+      "-size",
+      "256m",
+      "-type",
+      "SPARSE",
+      "-fs",
+      "Case-sensitive APFS",
+      "-volname",
+      "conformance",
+      image,
+    ]);
+    expect(made.status, String(made.stderr)).toBe(0);
+    const attached = spawnSync("hdiutil", [
+      "attach",
+      image,
+      "-mountpoint",
+      mount,
+      "-nobrowse",
+      "-noautoopen",
+    ]);
+    expect(attached.status, String(attached.stderr)).toBe(0);
+    detachImageAtCleanup(mount);
+  }
+  const dir = join(mount, "notes");
+  cpSync(moved.dir, dir, { recursive: true });
+  rmSync(moved.dir, { recursive: true });
+  moved.dir = dir;
+  moved.folder = new CliFolder(dir, {
+    binary: requireBinary(),
+    url: moved.server.url,
+    key: KEY,
+    registry: moved.registry,
+  });
+  writeFileSync(join(dir, "case.probe"), "");
+  expect(existsSync(join(dir, "CASE.probe"))).toBe(false);
+  rmSync(join(dir, "case.probe"));
 }

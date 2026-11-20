@@ -740,9 +740,17 @@ While a folder's query names `beneath` as a path whose file has no item the serv
 
 While a folder's query names `beneath` as a path whose file has no item on the device, and the folder's `outside_query` is `hold`, a device MUST NOT send a new file other than the one the path names.
 
-**Reason:** which new files lie beneath the project is known only once it has an item, so the others are held on disk and judged again by a later pass (`folder-guards/outside-query-held`).
+**Reason:** which new files lie beneath the project is known only once it has an item, so the others are held on disk until then.
 
-**Tests:** `device/folders-beneath-file.test.ts › sends no new file but the one the path names while it holds files outside the query`.
+**Tests:** `device/folders-beneath-file.test.ts › sends the files beneath the project in the pass that names its item, and holds the rest outside the query`.
+
+### `folder-setup/beneath-file-hold-outside-one-pass`
+
+When a device replaces the path in a folder's query with the id of the file's item, and the folder's `outside_query` is `hold`, a device MUST judge the new files it held while the path had no item by the query with that id, and send those it holds, in the same sync.
+
+**Reason:** a folder is set up in one pass (`folder-setup/beneath-file-one-pass`), so a file beneath the project is not left for a later push, and a file held outside the query is held for being outside it and not for waiting.
+
+**Tests:** `device/folders-beneath-file.test.ts › sends the files beneath the project in the pass that names its item, and holds the rest outside the query`.
 
 ### `folder-setup/beneath-file-missing-refused`
 
@@ -760,6 +768,14 @@ If a device refuses a sync because the file its folder's query names in `beneath
 
 ### `folder-setup/beneath-file-settings-edit`
 
+When a folder's settings file changes `query.beneath` to a path no file the folder sends is at, a device MUST NOT send the change.
+
+**Reason:** the server would hold a path no device could resolve, and every other device's copy would hold nothing until someone changed it.
+
+**Tests:** `device/folders-beneath-file.test.ts › judges the path a person has put in the settings file, so a bad path can be mended there`.
+
+### `folder-setup/beneath-file-settings-edit-mends`
+
 When a folder's settings file changes `query.beneath` while the path the folder holds names no file it sends, a device MUST judge the changed path and not the path it replaces.
 
 **Reason:** a person mends a bad path by editing the settings file, so the device sends that edit before it refuses the old path.
@@ -773,6 +789,22 @@ When a folder's query names `beneath` as a path, a device MUST take the file it 
 **Reason:** two names are the same path when they differ only in case or Unicode form, as the folder compares them everywhere else (`folder-setup/first-sync-plan`), whether or not the file system opens one name for both. A path that no file is at by that rule names no file.
 
 **Tests:** `device/folders-beneath-file.test.ts › takes the file the query names for the one the folder holds, as the folder compares paths`.
+
+### `folder-setup/beneath-file-path-match-first`
+
+Where several files the folder holds match a path in `query.beneath` by case or Unicode form, a device MUST take the first in byte order for the file the path names.
+
+**Reason:** the folder keeps the first of two names it compares as one, so that is the file it sends.
+
+**Tests:** `device/folders-beneath-file.test.ts › sends the first in byte order of the files the query's path matches, and neither a link nor a folder in its place`.
+
+### `folder-setup/beneath-file-path-match-regular`
+
+Where a link or a folder matches a path in `query.beneath` by case or Unicode form, a device MUST NOT take it for the file the path names.
+
+**Reason:** the folder sends neither, so a link or a folder that sorts first must not hide a file that matches.
+
+**Tests:** `device/folders-beneath-file.test.ts › sends the first in byte order of the files the query's path matches, and neither a link nor a folder in its place`.
 
 ### `folder-setup/beneath-file-conflict-named`
 

@@ -3,6 +3,7 @@ use std::sync::atomic::Ordering;
 
 use crate::Seen;
 
+use super::beneath::PendingBeneath;
 use super::default_edges::default_edges_of;
 use super::push::{admission_hold, file_item_draft, new_document};
 use super::scoped::{Guard, Inventory, Looked, Plan, Reading, linked_elsewhere};
@@ -2529,8 +2530,9 @@ impl Folder {
         let mut kept_back = HashSet::new();
         let mut paths = Vec::new();
         if scan.settings.outside_query == OutsideQuery::Hold {
+            let pending = self.pending_beneath_of(&scan.settings)?;
             for at in self.new_files(scan, claims, waiting) {
-                match self.is_outside(&scan.files[at], scan)? {
+                match self.is_outside(&scan.files[at], scan, &pending)? {
                     Some(false) => {}
                     Some(true) => {
                         paths.push(scan.files[at].key.clone());
@@ -2552,20 +2554,18 @@ impl Folder {
     /// Whether the query would not hold the item a new file becomes, or
     /// `None` where that cannot be told. What the copy would refuse to make
     /// is not judged here: it is flagged where it is made.
-    fn is_outside(&self, file: &Scanned, scan: &ScanState) -> Result<Option<bool>> {
+    fn is_outside(
+        &self,
+        file: &Scanned,
+        scan: &ScanState,
+        pending: &PendingBeneath,
+    ) -> Result<Option<bool>> {
         let (catalog, edge_types) = (&scan.catalog, &scan.edge_types);
-        // Beneath a file with no item yet, only that file is known to be inside.
-        let named;
-        let settings = match scan.settings.pending_beneath() {
-            Some(path) if !marfa_rules::names::same(&file.key, path) => {
-                match self.bound_beneath(path)? {
-                    None => return Ok(Some(true)),
-                    Some(bound) => {
-                        named = scan.settings.beneath_item(&bound.item_id);
-                        &named
-                    }
-                }
+        let settings = match pending {
+            PendingBeneath::Unbound(named) if named.as_deref() != Some(file.key.as_str()) => {
+                return Ok(Some(true));
             }
+            PendingBeneath::Bound(named) => &**named,
             _ => &scan.settings,
         };
         if let Some(file_type) = self.file_type_of(&file.path, settings, catalog) {
