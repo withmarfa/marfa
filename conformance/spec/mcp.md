@@ -216,7 +216,7 @@ If `marfa_change_settings` refuses with `insufficient_user_authentication` an ap
 
 While an app's consent asks a browser session to begin after a time (`mcp/settings-step-up-renewal`), if the app presents a refresh token whose browser session began before that time, then the server MUST refuse the refresh with `invalid_grant`.
 
-**Reason:** a client's reconnect refreshes the stored sign-in rather than asking for a new one, so the refusal sends it to a full authorization, which asks the person to sign in. A refresh token from a sign-in after that time refreshes as before, at every endpoint of the app.
+**Reason:** a client's reconnect refreshes the stored sign-in rather than asking for a new one, so the refusal sends it to a full authorization, which asks the person to sign in. The refusal covers every refresh token of the app, whatever resource it names; one from a sign-in at or after that time refreshes as before.
 
 **Tests:** `compliance/mcp-step-up.test.ts › refuses with invalid_grant a refresh of a sign-in older than the refusal, and refreshes a token from a new sign-in`.
 

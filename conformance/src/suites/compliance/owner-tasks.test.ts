@@ -657,8 +657,7 @@ function expectSameRefusal(
   );
 }
 
-/** What each setting that needs a recent sign-in is set to by a request a key makes. */
-/** The settings the tool offers that need a recent sign-in; `sign_in_address` is not offered. */
+/** What a key's request sets each setting to that needs a recent sign-in and the tool offers; it does not offer `sign_in_address`. */
 const STEP_UP_SETTINGS: Record<string, unknown> = {
   allow_private_addresses: true,
   object_store_bucket: "another-bucket",
