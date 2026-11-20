@@ -141,6 +141,8 @@ fn upgrade_native(
     });
     out.report(&report, |_| {
         let moved = match (changed, &from) {
+            // The programs were already the target's, and its server was not running.
+            (false, _) if moves => format!("Started {target}, which this install is on."),
             (false, _) => format!("Already on {target}."),
             (true, Some(from)) => format!("Upgraded from {from} to {target}."),
             (true, None) => format!("Upgraded to {target}."),
