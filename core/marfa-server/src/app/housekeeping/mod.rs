@@ -631,6 +631,7 @@ mod tests {
     const NO_CLOCK_TABLE: &[Migration] = &[Migration {
         version: 1,
         sql: "CREATE TABLE housekeeping_jobs (name TEXT PRIMARY KEY, next_run_at TEXT, last_outcome TEXT) STRICT;",
+        done: None,
     }];
 
     #[tokio::test]

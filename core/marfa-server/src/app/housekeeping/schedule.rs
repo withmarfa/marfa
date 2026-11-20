@@ -328,8 +328,7 @@ mod tests {
     fn a_wake_during_a_claimed_run_survives_its_finish() {
         for offset in [0, 1] {
             let mut db = rusqlite::Connection::open_in_memory().unwrap();
-            db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
-                .unwrap();
+            crate::db::migrate::make_all(&db).unwrap();
             let tx = db.transaction().unwrap();
             apply(
                 &tx,
@@ -470,8 +469,7 @@ mod tests {
     #[test]
     fn a_request_to_run_soon_never_delays_a_job_and_is_answered_once() {
         let mut db = rusqlite::Connection::open_in_memory().unwrap();
-        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
-            .unwrap();
+        crate::db::migrate::make_all(&db).unwrap();
         let tx = db.transaction().unwrap();
         let wanted = Wanted {
             wakes_on_files: true,
@@ -496,8 +494,7 @@ mod tests {
     #[test]
     fn a_change_to_a_file_s_record_asks_only_the_jobs_that_read_files() {
         let db = rusqlite::Connection::open_in_memory().unwrap();
-        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
-            .unwrap();
+        crate::db::migrate::make_all(&db).unwrap();
         db.pragma_update(None, "foreign_keys", false).unwrap();
         for (name, wakes) in [("reader", 1), ("other", 0)] {
             db.execute(
@@ -538,8 +535,7 @@ mod tests {
     #[test]
     fn a_job_stored_with_the_wrong_file_flag_is_corrected_by_the_next_plan() {
         let mut db = rusqlite::Connection::open_in_memory().unwrap();
-        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
-            .unwrap();
+        crate::db::migrate::make_all(&db).unwrap();
         let tx = db.transaction().unwrap();
         let enter = |wakes_on_files| Step::Enter {
             name: "job",
@@ -618,8 +614,7 @@ mod tests {
     #[test]
     fn the_signature_moves_with_an_idle_schedule_and_not_with_a_running_job_s() {
         let db = rusqlite::Connection::open_in_memory().unwrap();
-        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
-            .unwrap();
+        crate::db::migrate::make_all(&db).unwrap();
         assert_eq!(signature(&db).unwrap(), "");
         db.execute(
             "INSERT INTO housekeeping_jobs (name, next_run_at) VALUES ('job', ?1)",

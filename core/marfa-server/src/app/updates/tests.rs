@@ -860,6 +860,7 @@ async fn a_start_whose_audit_entry_fails_puts_the_update_back_to_idle() {
     const NO_AUDIT_LOG: &[Migration] = &[Migration {
         version: 1,
         sql: "CREATE TABLE unrelated (id INTEGER PRIMARY KEY) STRICT;",
+        done: None,
     }];
     let owner = starting(NO_AUDIT_LOG, Arc::default());
 

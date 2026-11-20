@@ -1029,12 +1029,11 @@ mod tests {
     use rusqlite::{Connection, StatementStatus};
 
     use super::*;
-    use crate::db::migrate::MIGRATIONS;
 
     #[test]
     fn a_snapshot_lookup_costs_the_ids_asked_for_and_not_the_history_held() {
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        crate::db::migrate::make_all(&conn).unwrap();
         conn.pragma_update(None, "foreign_keys", false).unwrap();
         let tx = conn.transaction().unwrap();
         let id = |at: u32| format!("01a1bdba-8640-72ba-b7d6-{at:012x}");

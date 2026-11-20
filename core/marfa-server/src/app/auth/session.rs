@@ -432,8 +432,7 @@ mod tests {
 
     fn owned() -> Connection {
         let db = Connection::open_in_memory().unwrap();
-        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
-            .unwrap();
+        crate::db::migrate::make_all(&db).unwrap();
         let then = at(NOW - 60_000);
         db.execute(
             "INSERT INTO owner (id, name, username, password, created_at, updated_at) \

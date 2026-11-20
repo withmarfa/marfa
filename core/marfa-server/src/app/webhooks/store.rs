@@ -617,8 +617,7 @@ fn a_due_time_that_does_not_read_is_refused() {
 fn baseline() -> rusqlite::Connection {
     let db = rusqlite::Connection::open_in_memory().unwrap();
     db.pragma_update(None, "foreign_keys", false).unwrap();
-    db.execute_batch(crate::db::migrate::MIGRATIONS[0].sql)
-        .unwrap();
+    crate::db::migrate::make_all(&db).unwrap();
     db
 }
 

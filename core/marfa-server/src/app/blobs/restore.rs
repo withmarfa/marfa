@@ -519,7 +519,6 @@ mod tests {
     use rusqlite::Connection;
 
     use super::*;
-    use crate::db::migrate::MIGRATIONS;
 
     const AT: &str = "2026-01-01T00:00:00.000Z";
 
@@ -543,7 +542,7 @@ mod tests {
     #[test]
     fn a_found_object_takes_the_place_of_a_recorded_copy_that_did_not_answer() {
         let mut conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        crate::db::migrate::make_all(&conn).unwrap();
         let tx = conn.transaction().unwrap();
         rows::attach(&tx, "bucket", "s3", "s3://bucket/marfa", AT).unwrap();
 

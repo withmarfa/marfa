@@ -798,8 +798,7 @@ mod parity {
 
     fn held(corpus: &Value) -> Connection {
         let db = Connection::open_in_memory().unwrap();
-        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
-            .unwrap();
+        crate::db::migrate::make_all(&db).unwrap();
         for row in corpus["table"]["rows"].as_array().unwrap() {
             db.execute(
                 "INSERT INTO table_rows (table_seq, id, updated_at, batch, body) \
