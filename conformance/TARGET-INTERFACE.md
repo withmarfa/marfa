@@ -240,6 +240,11 @@ stays because that thing is what it checks.
   fault `volume-full`, which stands for the volume a device finds full when
   it tries to make a file there. No door or fault makes a store of another
   build's version, and a fixture cannot fill the volume its runner writes to.
+- `compliance/mcp-sign-in-acts.test.ts`, "refuses a confirmation once a new
+  approval added a destination since the preview, with a new preview", adds a
+  redirect URI to an app's stored registration while the server runs. Only a
+  client's metadata document offers a new one, and the server fetches that
+  only from a public address over `https`, which no fixture can serve.
 - `inbound-faults`, `inbound-logs` and the other fixtures that read the log
   through `serverOutput` check what the server logged. The log is the subject.
 

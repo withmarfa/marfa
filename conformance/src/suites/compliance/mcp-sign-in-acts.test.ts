@@ -1,4 +1,12 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { randomUUID } from "node:crypto";
 import { MarfaClient } from "../../client/api.js";
 import { controlRequest } from "../../utils/control-request.js";
@@ -16,8 +24,20 @@ import {
   toolResult,
   type McpConnection,
 } from "../../utils/mcp.js";
+import { withInstanceDatabase } from "../../utils/instance-database.js";
 import { testAuthenticator } from "../../utils/passkey-authenticator.js";
-import { connect, registerApp } from "../../utils/signed-in.js";
+import {
+  authorize,
+  authorizeQuery,
+  CALLBACK,
+  codeFor,
+  connect,
+  decide,
+  pkce,
+  registerApp,
+  sentTo,
+  token,
+} from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
 /**
@@ -658,6 +678,113 @@ describe("marfa_end_sign_in ends an app", () => {
     expect(done.ended).toBe(true);
     expect(await appLive(fresh)).toBe(false);
   });
+
+  it("ends the app on a confirmation after codes were issued and redeemed for it and an event was queued for its webhook since the preview", async () => {
+    const owner = await app();
+    const hook = await webhook(owner);
+    const shown = await preview({ id: owner.grantId });
+    const issue = () =>
+      codeFor(
+        server,
+        home.origin,
+        ownerCookie,
+        { clientId: owner.clientId },
+        APP_SCOPE,
+      );
+    const unredeemed = await issue();
+    expect(unredeemed.silent).toBe(true);
+    const redeemed = await issue();
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code: redeemed.code,
+      redirect_uri: CALLBACK,
+      code_verifier: redeemed.verifier,
+      client_id: owner.clientId,
+    });
+    expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
+    const written = await new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: server.workingKey,
+    }).createItem({ type: "core.note", properties: { title: "queued" } });
+    expect(written.status, JSON.stringify(written.error)).toBe(201);
+    // The witness: the write queued a delivery for the app's webhook.
+    await vi.waitFor(
+      async () => {
+        const listed = await asApp(owner).listWebhookDeliveries(hook.id);
+        expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+        expect(listed.data.data.map((row) => row.event_type)).toContain(
+          "item.created",
+        );
+      },
+      { timeout: 20_000, interval: 100 },
+    );
+    const done = await preview({ id: owner.grantId, confirm: shown.confirm });
+    expect(done).toMatchObject({ ended: true, kind: "app" });
+    expect(await appLive(owner.token)).toBe(false);
+    expect(await appLive(exchanged.body.access_token!)).toBe(false);
+    expect(await webhookIds()).not.toContain(hook.id);
+  });
+
+  it("refuses a confirmation once a new approval added a destination since the preview, with a new preview", async () => {
+    const owner = await app();
+    const shown = await preview({ id: owner.grantId });
+    const added = "http://127.0.0.1:9/added";
+    // Only a client's metadata document, served from a public address, offers a new redirect URI.
+    withInstanceDatabase(server.sqlitePath, (db) => {
+      const changed = db
+        .prepare(
+          "UPDATE oauth_clients SET redirect_uris = json_insert(redirect_uris, '$[#]', ?) WHERE client_id = ?",
+        )
+        .run(added, owner.clientId);
+      expect(Number(changed.changes)).toBe(1);
+    });
+    const asked = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(owner.clientId, APP_SCOPE, pkce(), {
+          redirect_uri: added,
+        }),
+        ownerCookie,
+      ),
+    );
+    expect(asked?.href.startsWith(added)).toBe(false);
+    const landed = await decide(
+      server,
+      home.origin,
+      ownerCookie,
+      asked!,
+      true,
+      APP_SCOPE.split(" "),
+    );
+    expect(landed?.href.startsWith(added)).toBe(true);
+    const refused = await stale({ id: owner.grantId, confirm: shown.confirm });
+    expect(refused.scopes).toEqual(shown.scopes);
+    expect(typeof refused.confirm).toBe("string");
+    expect(await appLive(owner.token)).toBe(true);
+    // The witness: approving again with no new destination leaves the new preview's confirmation holding.
+    const again = await sentTo(
+      server,
+      await authorize(
+        server,
+        authorizeQuery(owner.clientId, APP_SCOPE, pkce(), {
+          prompt: "consent",
+        }),
+        ownerCookie,
+      ),
+    );
+    const approved = await decide(
+      server,
+      home.origin,
+      ownerCookie,
+      again!,
+      true,
+      APP_SCOPE.split(" "),
+    );
+    expect(approved?.searchParams.get("code")).toBeTruthy();
+    const done = await preview({ id: owner.grantId, confirm: refused.confirm });
+    expect(done.ended).toBe(true);
+  });
 });
 
 describe("marfa_end_sign_in removes a passkey", () => {
@@ -779,12 +906,13 @@ describe("a confirmation of ending a sign-in", () => {
       expect(refused.confirm, JSON.stringify(args)).toBeUndefined();
     }
     const browsing = await preview({ id: signed.id });
-    const wrong = await stale({
-      kind: "passkey",
-      id: key.id,
-      confirm: browsing.confirm,
-    });
-    expect(wrong.confirm).toBeUndefined();
+    for (const args of [
+      { kind: "passkey", id: key.id },
+      { id: signed.id, revoke_keys: true },
+    ]) {
+      const wrong = await stale({ ...args, confirm: browsing.confirm });
+      expect(wrong.confirm, JSON.stringify(args)).toBeUndefined();
+    }
     expect(await browserLive(signed.cookie)).toBe(true);
     expect(await appLive(owner.token)).toBe(true);
     expect(await appLive(other.token)).toBe(true);

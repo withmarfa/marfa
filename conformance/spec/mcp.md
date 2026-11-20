@@ -146,7 +146,7 @@ If the rows of a page that `marfa_trash` or `marfa_connectors` answers do not al
 
 The server MUST NOT list at any MCP endpoint a tool that removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
 
-**Reason:** an agent's confirmation of a change that cannot be undone must bind every effect of the change to the state the owner saw, and the confirmations for removing a copy of a file and adopting the backup folder do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
+**Reason:** an agent's confirmation of a change that cannot be undone must bind the change to the state the owner saw, and the confirmations for removing a copy of a file and adopting the backup folder do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
 
 **Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`, `compliance/owner-tasks.test.ts › runs the trash's retention through the maintenance tool, removing only what the retention makes eligible and no chosen item`.
 
@@ -902,7 +902,7 @@ When `marfa_end_sign_in` ends an app, the server MUST answer under `revoked_keys
 
 ### `mcp/end-sign-in-key`
 
-If a `marfa_end_sign_in` call names a key, then the server MUST refuse the call with the tool error code `validation_error` and `use_tool` as `marfa_revoke_key`.
+While a credential holds `sign_ins.manage`, if a `marfa_end_sign_in` call names a key, then the server MUST refuse the call with the tool error code `validation_error` and `use_tool` as `marfa_revoke_key`.
 
 **Reason:** a key has one way to be revoked from MCP, whose confirmation binds the key as the person saw it (`mcp/revoke-confirmed`).
 
@@ -916,11 +916,11 @@ If a `marfa_end_sign_in` call sets `revoke_keys` to `true` and names a browser s
 
 ### `mcp/end-sign-in-app-changed`
 
-If an app's name or approved scopes changed, or one of its webhooks was made, changed or deleted, since a `marfa_end_sign_in` preview of ending it, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and a new preview with a `confirm` token of its own.
+If an app's name, approved scopes or approved destinations changed, or one of its webhooks was made, changed or deleted, since a `marfa_end_sign_in` preview of ending it, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and a new preview with a `confirm` token of its own.
 
-**Reason:** the person agreed to end the app the preview showed, and ending it deletes its webhooks with the events they have not delivered yet.
+**Reason:** the person agreed to end the app as the preview showed it: its name, what it may reach and where it may be sent a code, and the webhooks that are deleted with it.
 
-**Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses a confirmation once a webhook was made, changed or deleted since the preview, with a new preview`, `› refuses a confirmation once the app's access was narrowed since the preview, with a new preview`, `› refuses a confirmation once the app was renamed since the preview, with a new preview`.
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses a confirmation once a webhook was made, changed or deleted since the preview, with a new preview`, `› refuses a confirmation once the app's access was narrowed since the preview, with a new preview`, `› refuses a confirmation once the app was renamed since the preview, with a new preview`, `› refuses a confirmation once a new approval added a destination since the preview, with a new preview`.
 
 ### `mcp/end-sign-in-app-keys-changed`
 
@@ -937,6 +937,14 @@ When an app only refreshed its tokens between a `marfa_end_sign_in` preview of e
 **Reason:** an app refreshes its tokens as it works, so a confirmation bound to them would rarely hold. The preview's `token_chains` is counted when it is read, and ending the app ends every token chain it has when it happens.
 
 **Tests:** `compliance/mcp-sign-in-acts.test.ts › ends the app on a confirmation after it refreshed its token since the preview`.
+
+### `mcp/end-sign-in-codes-unbound`
+
+When only a code was issued or redeemed for an app, or events were queued for its webhooks, between a `marfa_end_sign_in` preview of ending it and the confirmation, the server MUST end the app on the confirmation.
+
+**Reason:** a code becomes a token chain once redeemed, and an event is queued for a webhook on every item write it matches, so a confirmation bound to them would rarely hold. Ending the app removes every code it has not redeemed and deletes its webhooks with every delivery queued for them when it happens.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › ends the app on a confirmation after codes were issued and redeemed for it and an event was queued for its webhook since the preview`.
 
 ### `mcp/end-sign-in-passkey-changed`
 
