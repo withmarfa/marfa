@@ -7,7 +7,7 @@ use super::queue::{
     current_item_writes, edge_write_waits, row_writes_wait, untaken_create_for_edge,
     untaken_creates_for_item,
 };
-use super::reach::edge_brought;
+use super::reach::{edge_brought, note_refused_older};
 use super::reads::{edge_by_id, edge_ends, items_by_ids};
 use super::rows::{upsert_edge, upsert_item};
 use crate::error::CoreError;
@@ -97,8 +97,21 @@ pub(crate) fn put_server_item(
         item.version,
         &item.updated_at,
     )? {
+        note_refused_older(conn, Subject::Item, &item.id)?;
         return Ok(false);
     }
+    place_server_item(conn, item, tags, catalog)?;
+    Ok(true)
+}
+
+/// Puts the server's `item` in the copy whatever row the copy holds, for a
+/// row the server is known to hold at an earlier point than the copy's.
+pub(crate) fn place_server_item(
+    conn: &Connection,
+    item: &WireItem,
+    tags: Option<&[String]>,
+    catalog: &marfa_rules::catalog::Catalog,
+) -> Result<(), CoreError> {
     let beneath_tags = match tags {
         Some(tags) => Some(tags.to_vec()),
         None => beneath_item(conn, &item.id)?.map(|held| held.tags),
@@ -110,7 +123,7 @@ pub(crate) fn put_server_item(
     {
         crate::body::rule::landed(conn, catalog, &item.id)?;
     }
-    Ok(true)
+    Ok(())
 }
 
 /// `put_server_item` for an edge.
@@ -126,8 +139,15 @@ pub(crate) fn put_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool
         edge.version,
         &edge.updated_at,
     )? {
+        note_refused_older(conn, Subject::Edge, &edge.id)?;
         return Ok(false);
     }
+    place_server_edge(conn, edge)?;
+    Ok(true)
+}
+
+/// `place_server_item` for an edge.
+pub(crate) fn place_server_edge(conn: &Connection, edge: &WireEdge) -> Result<(), CoreError> {
     upsert_edge(conn, edge)?;
     if edge_write_waits(conn, &edge.id)?
         && let Some(held) = edge_by_id(conn, &edge.id)?
@@ -141,7 +161,7 @@ pub(crate) fn put_server_edge(conn: &Connection, edge: &WireEdge) -> Result<bool
     } else {
         drop_beneath(conn, Subject::Edge, &edge.id)?;
     }
-    Ok(true)
+    Ok(())
 }
 
 fn subject_name(subject: Subject) -> &'static str {

@@ -342,10 +342,12 @@ pub(crate) struct Lost {
 
 /// The server's row the filled copy holds: the one beneath any writes
 /// waiting on it. `None` where only a waiting create holds it, where the
-/// copy holds no row, or where a refill in place has not brought the row it
-/// still holds from before.
+/// copy holds no row, where a refill in place has not brought the row it
+/// still holds from before, or where the fill kept that row over an earlier
+/// one the server gave.
 fn filled_item(conn: &Connection, id: &str) -> Result<Option<Item>> {
     if !store::untaken_creates_for_item(conn, id)?.is_empty()
+        || store::refused_older(conn, Subject::Item, id)?
         || (store::refilling(conn)? && !crate::reach::answered(conn, id)?)
     {
         return Ok(None);
@@ -358,6 +360,7 @@ fn filled_item(conn: &Connection, id: &str) -> Result<Option<Item>> {
 
 fn filled_edge(conn: &Connection, id: &str) -> Result<Option<Edge>> {
     if !store::untaken_create_for_edge(conn, id)?.is_empty()
+        || store::refused_older(conn, Subject::Edge, id)?
         || (store::refilling(conn)? && !store::refill_brought_edge(conn, id)?)
     {
         return Ok(None);
@@ -398,8 +401,8 @@ fn server_edge(core: &Core, http: &Http, stop: &AtomicBool, id: &str) -> Result<
 /// a row the copy does not hold, and the removals the receipts keep with the
 /// server: every one after a restore, otherwise those no event has shown.
 /// A row whose read says nothing of it (`heard`) is set aside: nothing of
-/// it is kept, and no later comparison reads it. `None` where no hydration
-/// set rows aside to compare.
+/// it is kept, and no later comparison reads it. `None` where no restore was
+/// found and no hydration set rows aside to compare.
 pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Option<Lost>> {
     let (held_items, held_edges, removals, restored) = {
         let conn = core.conn()?;
@@ -590,6 +593,7 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
     let Some(lost) = lost else {
         // The copy is filled from the server: what a change receipt named is
         // there, or went with the rows the fill cleared.
+        store::forget_refused_older(tx)?;
         return store::restored::forget_change_receipts(tx);
     };
     let mut kept: Vec<String> = Vec::new();
@@ -636,9 +640,7 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
                 }
             }
             LostEdge::Remove(server) => {
-                if store::edge_by_id(tx, &server.id)?.is_none() {
-                    store::upsert_edge(tx, &server.as_wire())?;
-                }
+                show_edge(tx, server)?;
                 kept.push(crate::edge_writes::queue_edge_delete(tx, server, &[])?.id);
             }
         }
@@ -717,11 +719,13 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
         )?;
     }
     store::restored::release_held_back(tx)?;
+    store::forget_refused_older(tx)?;
     store::restored::forget_change_receipts(tx)
 }
 
-/// Upserts `item` as the server holds it where the copy holds no row, and
-/// pins it where the slice does not declare it.
+/// Puts `item` as the server holds it where the copy holds no row, or holds
+/// one the fill kept over the server's earlier row, and pins it where the
+/// slice does not declare it.
 fn show_item(tx: &Connection, catalog: &Catalog, item: &Item) -> Result<()> {
     if !store::item_held(tx, &item.id)? {
         store::upsert_item(
@@ -730,8 +734,20 @@ fn show_item(tx: &Connection, catalog: &Catalog, item: &Item) -> Result<()> {
             Some(&item.tags),
             &catalog.indexing(&item.r#type),
         )?;
+    } else if store::refused_older(tx, Subject::Item, &item.id)? {
+        store::place_server_item(tx, &item.as_wire(), Some(&item.tags), catalog)?;
     }
     crate::write::pin_unless_declared(tx, catalog, &item.r#type, item.tier, &item.id)
+}
+
+/// `show_item` for an edge, which is never pinned.
+fn show_edge(tx: &Connection, edge: &Edge) -> Result<()> {
+    if store::edge_by_id(tx, &edge.id)?.is_none() {
+        store::upsert_edge(tx, &edge.as_wire())?;
+    } else if store::refused_older(tx, Subject::Edge, &edge.id)? {
+        store::place_server_edge(tx, &edge.as_wire())?;
+    }
+    Ok(())
 }
 
 fn enqueue(
@@ -950,11 +966,12 @@ fn keep_edge_update(tx: &Connection, held: &Edge, server: &Edge) -> Result<Optio
         to_id: (held.to_id != server.to_id).then(|| held.to_id.clone()),
     };
     if edit.properties == server.properties && edit.from_id.is_none() && edit.to_id.is_none() {
+        if store::refused_older(tx, Subject::Edge, &server.id)? {
+            store::place_server_edge(tx, &server.as_wire())?;
+        }
         return Ok(None);
     }
-    if store::edge_by_id(tx, &server.id)?.is_none() {
-        store::upsert_edge(tx, &server.as_wire())?;
-    }
+    show_edge(tx, server)?;
     let mut depends_on = store::untaken_create_for_edge(tx, &server.id)?;
     for end in [&edit.from_id, &edit.to_id].into_iter().flatten() {
         for create in store::untaken_creates_for_item(tx, end)? {

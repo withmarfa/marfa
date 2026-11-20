@@ -1,11 +1,12 @@
 //! The slice's reach: clearing it, settling what lies beneath it and filling it again.
 
-use super::completeness::{let_go_unless_kept, refilling, slice_query};
+use super::completeness::{hydration_complete, let_go_unless_kept, refilling, slice_query};
 use super::marks::item_held;
 use super::meta::{META_REFILL, meta_delete, meta_delete_under, meta_get, meta_set};
 use super::queue::edge_write_waits;
 use super::rows::{WAITING, evict_item, forget_edge, whole_edge_types};
 use crate::error::CoreError;
+use crate::model::Subject;
 use rusqlite::Connection;
 use std::collections::HashSet;
 
@@ -113,6 +114,40 @@ pub fn refill_brought_edge(conn: &Connection, id: &str) -> Result<bool, CoreErro
     Ok(meta_get(conn, &edge_brought(id))?.is_some())
 }
 
+const REFUSED_OLDER: &str = "refused_older/";
+
+fn refused_older_key(subject: Subject, id: &str) -> String {
+    let subject = match subject {
+        Subject::Item => "item",
+        Subject::Edge => "edge",
+    };
+    format!("{REFUSED_OLDER}{subject}/{id}")
+}
+
+/// Keeps, while a hydration runs, that the server gave `id` at a point
+/// earlier than the row the copy holds, which the copy kept: that row is then
+/// not the server's to compare with (`crate::restored::compare`).
+pub(crate) fn note_refused_older(
+    conn: &Connection,
+    subject: Subject,
+    id: &str,
+) -> Result<(), CoreError> {
+    if hydration_complete(conn)? && !refilling(conn)? {
+        return Ok(());
+    }
+    meta_set(conn, &refused_older_key(subject, id), "true")
+}
+
+/// Whether the hydration under way kept the copy's row of `id` over an
+/// earlier one the server gave.
+pub fn refused_older(conn: &Connection, subject: Subject, id: &str) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, &refused_older_key(subject, id))?.is_some())
+}
+
+pub(crate) fn forget_refused_older(conn: &Connection) -> Result<(), CoreError> {
+    meta_delete_under(conn, REFUSED_OLDER)
+}
+
 fn forget_marks_of_the_walk(conn: &Connection) -> Result<(), CoreError> {
     for prefix in [
         "item_listed/",
@@ -120,6 +155,7 @@ fn forget_marks_of_the_walk(conn: &Connection) -> Result<(), CoreError> {
         "item_early/",
         EDGE_BROUGHT,
         super::write_state::MADE,
+        REFUSED_OLDER,
     ] {
         meta_delete_under(conn, prefix)?;
     }
@@ -144,7 +180,7 @@ pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
     meta_delete_under(conn, "item_listed/")?;
     meta_delete_under(conn, "item_early/")?;
     meta_delete_under(conn, EDGE_BROUGHT)?;
-    Ok(())
+    forget_refused_older(conn)
 }
 
 /// The ids a waiting write names: as its item or its to item, or as an end

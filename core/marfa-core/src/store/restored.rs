@@ -488,6 +488,10 @@ pub(crate) fn forget_anchor(conn: &Connection) -> Result<(), CoreError> {
 /// only where the filled copy lacks a row.
 const META_CHECKING: &str = "restore_check";
 
+/// Set from the moment a restore is found until a comparison has run, so the
+/// removals are read even where the copy held nothing to set aside.
+const META_RESTORE_FOUND: &str = "restore_found";
+
 /// Sets aside what the copy holds as the server last answered it, before the
 /// copy is cleared: the row beneath any writes waiting on it, or the row
 /// itself. A create still waiting is left out, since the queue keeps it, and
@@ -505,7 +509,8 @@ pub(crate) fn hold_copy(conn: &Connection) -> Result<(), CoreError> {
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<Result<_, _>>()?;
     hold_edges(conn, edges)?;
-    super::meta_delete(conn, META_CHECKING)
+    super::meta_delete(conn, META_CHECKING)?;
+    super::meta_set(conn, META_RESTORE_FOUND, "true")
 }
 
 /// Sets aside, as `hold_copy` does, the rows the receipts no event has shown
@@ -524,15 +529,16 @@ pub(crate) fn hold_unseen(conn: &Connection) -> Result<(), CoreError> {
     super::meta_set(conn, META_CHECKING, "true")
 }
 
-/// Whether the whole copy is set aside, after a restore was found.
+/// Whether a restore was found and the whole copy set aside, however little
+/// it held.
 pub(crate) fn restore_held(conn: &Connection) -> Result<bool, CoreError> {
-    Ok(holds_back(conn)? && super::meta_get(conn, META_CHECKING)?.is_none())
+    Ok(super::meta_get(conn, META_RESTORE_FOUND)?.is_some())
 }
 
-/// Whether a hydration set aside rows to compare: the whole copy, or what
-/// `hold_unseen` named.
+/// Whether a hydration has a comparison to run: after a restore was found,
+/// or over what `hold_unseen` named.
 pub(crate) fn comparing(conn: &Connection) -> Result<bool, CoreError> {
-    Ok(holds_back(conn)? || super::meta_get(conn, META_CHECKING)?.is_some())
+    Ok(restore_held(conn)? || holds_back(conn)? || super::meta_get(conn, META_CHECKING)?.is_some())
 }
 
 fn hold_named(conn: &Connection, named: &[(Subject, String)]) -> Result<(), CoreError> {
@@ -677,7 +683,8 @@ pub(crate) fn follow_nothing(conn: &Connection, id: &str) -> Result<(), CoreErro
 
 pub(crate) fn release_held_back(conn: &Connection) -> Result<(), CoreError> {
     conn.execute("DELETE FROM held_back", [])?;
-    super::meta_delete(conn, META_CHECKING)
+    super::meta_delete(conn, META_CHECKING)?;
+    super::meta_delete(conn, META_RESTORE_FOUND)
 }
 
 #[cfg(test)]

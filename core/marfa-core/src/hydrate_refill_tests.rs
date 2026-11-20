@@ -1269,19 +1269,25 @@ fn a_server_restored_before_any_refill_clears_rather_than_fill_over_later_versio
 /// and the time every scripted row carries, which no event has shown unless
 /// `seen`.
 fn receipt(core: &Core, id: &str, version: i64, removal: bool, seen: bool) {
+    receipt_of(core, "item", id, version, removal, seen);
+}
+
+/// `receipt` for a `subject` of `item` or `edge`.
+fn receipt_of(core: &Core, subject: &str, id: &str, version: i64, removal: bool, seen: bool) {
     core.conn()
         .unwrap()
         .execute(
             "INSERT INTO answer_receipts
                (write_id, subject, id, version, updated_at, removal, answered_at, seen)
-             VALUES (?1, 'item', ?2, ?3, '2026-01-01T00:00:00Z', ?4, ?5, ?6)",
+             VALUES (?1, ?7, ?2, ?3, '2026-01-01T00:00:00Z', ?4, ?5, ?6)",
             rusqlite::params![
                 format!("w {id}"),
                 id,
                 version,
                 removal,
                 store::now_millis(),
-                seen
+                seen,
+                subject
             ],
         )
         .unwrap();
@@ -1377,6 +1383,178 @@ fn a_refill_of_the_same_instance_keeps_a_row_the_server_lost_that_the_walk_left_
         kept_blocked(&core),
         [("CreateItem".to_string(), "gone".to_string())],
         "the row the walk left out was judged by the copy's own stale row"
+    );
+}
+
+/// `row` for `id` at `version`, titled `title`, in `state` since `updated_at`.
+fn row_as(id: &str, version: i64, title: &str, state: &str, updated_at: &str) -> Value {
+    let mut row = row(id, version, &[]);
+    row["item"]["properties"]["title"] = title.into();
+    row["item"]["state"] = state.into();
+    row["item"]["updated_at"] = updated_at.into();
+    row
+}
+
+fn beneath_version(core: &Core, subject: crate::model::Subject, id: &str) -> Option<i64> {
+    let conn = core.conn().unwrap();
+    match subject {
+        crate::model::Subject::Item => store::beneath_item(&conn, id)
+            .unwrap()
+            .map(|item| item.version),
+        crate::model::Subject::Edge => store::beneath_edge(&conn, id)
+            .unwrap()
+            .map(|edge| edge.version),
+    }
+}
+
+#[test]
+fn a_refill_in_place_puts_back_an_edit_the_server_holds_at_an_earlier_version() {
+    let server = Scripted::start();
+    // This device's edit made `kept` version 2, and the server was then
+    // restored to version 1 and written past the copy's cursor and anchor.
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(
+            core,
+            &[row_as(
+                "kept",
+                2,
+                "kept, edited",
+                "active",
+                "2026-01-01T00:00:00Z",
+            )],
+        );
+    });
+    receipt(&core, "kept", 2, false, false);
+    server.on(
+        "/items/kept",
+        vec![scripted::certified(scripted::json(
+            200,
+            &row("kept", 1, &[]).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("UpdateItem".to_string(), "kept".to_string())],
+        "the refill judged the row by the copy's own later version"
+    );
+    assert_eq!(server.seen("/items/kept").len(), 1);
+    assert_eq!(
+        core.get("kept").unwrap().unwrap().properties["title"],
+        "kept, edited"
+    );
+    assert_eq!(
+        beneath_version(&core, crate::model::Subject::Item, "kept"),
+        Some(1),
+        "the edit waits over a row the server does not hold"
+    );
+}
+
+#[test]
+fn a_refill_in_place_puts_back_an_edge_edit_the_server_holds_at_an_earlier_version() {
+    let server = Scripted::start();
+    let core = aged_out_after(&server, copy(&server), |core| {
+        let mut edge = edge_of("stays", "kept", "changed");
+        edge["version"] = 2.into();
+        edge["properties"] = json!({"note": "edited"});
+        let edge: crate::wire::WireEdge = serde_json::from_value(edge).unwrap();
+        store::put_server_edge(&core.conn().unwrap(), &edge).unwrap();
+    });
+    receipt_of(&core, "edge", "stays", 2, false, false);
+    server.on(
+        "/edges/stays",
+        vec![scripted::certified(scripted::json(
+            200,
+            &json!({"edge": edge_of("stays", "kept", "changed")}).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("UpdateEdge".to_string(), "stays".to_string())],
+        "the refill judged the edge by the copy's own later version"
+    );
+    assert_eq!(server.seen("/edges/stays").len(), 1);
+    assert_eq!(
+        beneath_version(&core, crate::model::Subject::Edge, "stays"),
+        Some(1),
+        "the edit waits over an edge the server does not hold"
+    );
+}
+
+#[test]
+fn a_refill_in_place_puts_back_in_the_bin_an_item_the_server_holds_out_of_it() {
+    let server = Scripted::start();
+    // This device trashed `kept`, which keeps its version and moves its time.
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(
+            core,
+            &[row_as("kept", 1, "kept", "trashed", "2026-01-02T00:00:00Z")],
+        );
+    });
+    receipt(&core, "kept", 1, true, false);
+    server.on(
+        "/items/kept",
+        vec![scripted::certified(scripted::json(
+            200,
+            &row("kept", 1, &[]).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("DeleteItem".to_string(), "kept".to_string())],
+        "the refill judged the removal by the copy's own row in the bin"
+    );
+    assert_eq!(
+        beneath_version(&core, crate::model::Subject::Item, "kept"),
+        Some(1)
+    );
+}
+
+#[test]
+fn a_restore_found_in_a_copy_with_nothing_to_set_aside_still_puts_back_a_removal() {
+    let server = Scripted::start();
+    // Every item the copy holds is read only, so nothing is set aside.
+    let core = aged_out_after(&server, copy(&server), |core| {
+        core.conn()
+            .unwrap()
+            .execute_batch("UPDATE items SET read_only = 1; DELETE FROM edges;")
+            .unwrap();
+    });
+    receipt(&core, "binned", 1, true, true);
+    server.on(
+        "/items",
+        vec![page(
+            vec![
+                row("kept", 1, &[]),
+                row("changed", 1, &[]),
+                row("binned", 1, &[]),
+            ],
+            None,
+        )],
+    );
+    server.on("/items/bulk-get", vec![pinned_row()]);
+    server.on("/events", vec![head("2"), replay(vec![], "2")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(!report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("DeleteItem".to_string(), "binned".to_string())],
+        "a restore found with nothing set aside read no removal"
     );
 }
 
