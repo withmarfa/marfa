@@ -217,6 +217,9 @@ pub struct Folder {
     /// Items whose refused placement is no longer withheld, which a narrow
     /// pull sends: nothing in the copy says that the key's grant came back.
     released: std::sync::Mutex<std::collections::BTreeSet<String>>,
+    /// Files whose form is the one a directory writes with no form, by item
+    /// and bytes, so a pass does not render them again to know it.
+    unformed: std::sync::Mutex<std::collections::HashSet<(String, String)>>,
     permissions: std::sync::OnceLock<bool>,
     /// Renames to follow a title that the file system refused, by item: the
     /// path the file kept and the one refused, not tried again while both
@@ -498,6 +501,7 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             kept_looked: std::sync::Mutex::new(None),
             released: std::sync::Mutex::default(),
+            unformed: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
@@ -632,6 +636,7 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             kept_looked: std::sync::Mutex::new(None),
             released: std::sync::Mutex::default(),
+            unformed: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),
@@ -682,6 +687,7 @@ impl Folder {
             unread_give_ways: std::sync::Mutex::new(Default::default()),
             kept_looked: std::sync::Mutex::new(None),
             released: std::sync::Mutex::default(),
+            unformed: std::sync::Mutex::default(),
             permissions: std::sync::OnceLock::new(),
             refused_renames: std::sync::Mutex::new(HashMap::new()),
             barred: std::sync::Mutex::new(None),

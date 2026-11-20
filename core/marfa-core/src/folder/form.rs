@@ -1,7 +1,7 @@
 //! How a file writes its frontmatter, apart from what it says: the keys in
 //! order, which are empty, and each value's style. A placement carries it, so
 //! a directory that never had the file writes it as the file was written.
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -10,13 +10,19 @@ use tree_sitter::Node;
 use super::document::{self, Document, same_value};
 use super::edge_types::EdgeTypes;
 use super::placement::{self, PLACEMENT_EDGE, Withheld};
-use super::{Folder, Scanned, fields, preserve, state};
+use super::{BoundFiles, Folder, Scanned, fields, preserve, state};
 use crate::Result;
 use crate::body::embed::carries_frontmatter;
-use crate::model::EdgeEdit;
+use crate::body::resolve::Names;
+use crate::error::CoreError;
+use crate::model::{EdgeEdit, WriteKind};
+use marfa_rules::catalog::Catalog;
 
 /// The placement property that holds a file's form.
 pub(super) const FORM_PROPERTY: &str = "form";
+
+/// The items whose form waits on the server taking a change to the item.
+const META_FORMS_OWED: &str = "folder_forms_owed";
 
 /// The most a form may take as JSON: a larger one is not kept.
 const FORM_LIMIT: usize = 8 * 1024;
@@ -92,6 +98,24 @@ impl Form {
         (serde_json::to_vec(&form).ok()?.len() <= FORM_LIMIT).then_some(form)
     }
 
+    /// Whether this form is `held` with only the own lines a device writes
+    /// into a file that lacks them added after its last key, which a
+    /// directory writing the file adds in the same place.
+    fn only_stamped_beyond(&self, held: &Form) -> bool {
+        let stamped = self
+            .keys
+            .iter()
+            .rev()
+            .take_while(|key| {
+                matches!(
+                    key.key.as_str(),
+                    fields::TYPE_FIELD | fields::TIER_FIELD | fields::STATE_FIELD
+                ) && !held.keys.iter().any(|was| was.key == key.key)
+            })
+            .count();
+        self.keys[..self.keys.len() - stamped] == held.keys[..]
+    }
+
     /// The form a placement's property holds, where it is one.
     pub(super) fn read(value: &Value) -> Option<Form> {
         serde_json::from_value(value.clone()).ok()
@@ -153,8 +177,9 @@ impl Form {
 
 impl Folder {
     /// The form to keep on the item's placement for `document`: the keys of
-    /// its own fields, its edges and the properties the item holds, and every
-    /// empty one. `None` where the server's placement takes no form.
+    /// its own fields but its id and version, its edges and the properties
+    /// the item holds, and every empty one. `None` where the server's
+    /// placement takes no form.
     pub(super) fn form_for(
         &self,
         item_id: &str,
@@ -173,29 +198,46 @@ impl Folder {
         let Some(item) = self.core.get(item_id)? else {
             return Ok(None);
         };
+        // The id and version lines are the device's own, and stamping them
+        // into a file the person wrote would change the form at once.
         Ok(Form::of(document, |key, value| {
-            value.is_null()
-                || fields::reserved(key, edge_types)
-                || item.properties.contains_key(key)
+            key != fields::ID_FIELD
+                && key != fields::VERSION_FIELD
+                && (value.is_null()
+                    || fields::reserved(key, edge_types)
+                    || item.properties.contains_key(key))
         })
         .map(|form| form.value()))
     }
 
-    /// Sends the form of each document the pass read whose placement holds
-    /// another: one this pass found changed, or any whose placement holds
-    /// none. A file this directory wrote and nobody changed since sends
-    /// nothing, so the form follows the directory where a person last wrote.
+    /// Sends the form of each document the pass read whose placement should
+    /// hold it: one a person changed since the pass before, one whose form
+    /// waited on the server taking the item's change, and one a person wrote
+    /// whose placement holds none. A file this directory wrote and nobody
+    /// changed since sends nothing, so the form follows the directory where a
+    /// person last wrote.
     pub(super) fn send_forms(
         &self,
         files: &[Scanned],
         snapshot: &[state::Bound],
+        catalog: &Catalog,
         edge_types: &EdgeTypes,
         withheld: &Withheld,
     ) -> Result<()> {
-        let before: std::collections::HashMap<&str, &state::Bound> = snapshot
+        let mut names = None;
+        let judging = Judging {
+            catalog,
+            edge_types,
+            withheld,
+        };
+        // By item, so a move that leaves the bytes alone is no change.
+        let before: HashMap<&str, &str> = snapshot
             .iter()
-            .map(|bound| (bound.path.as_str(), bound))
+            .map(|bound| (bound.item_id.as_str(), bound.content_hash.as_str()))
             .collect();
+        let was = self.owed_forms()?;
+        let mut owed = was.clone();
+        let mut judged: BTreeSet<String> = BTreeSet::new();
         for file in files {
             if file.deferred || file.unreadable.is_some() || !carries_frontmatter(&file.path) {
                 continue;
@@ -203,48 +245,187 @@ impl Folder {
             let Some(bound) = state::bound_at(&*self.core.conn()?, &file.key)? else {
                 continue;
             };
-            if bound.held.is_some() || bound.holds_refusal() || bound.content_hash != file.hash {
+            if bound.content_hash != file.hash {
                 continue;
             }
-            let Some(edge) = self.placement(&bound.item_id)? else {
+            judged.insert(bound.item_id.clone());
+            let changed = bound.written_hash.as_deref() != Some(file.hash.as_str())
+                && before
+                    .get(bound.item_id.as_str())
+                    .is_none_or(|was| *was != file.hash);
+            self.send_form(&bound, &file.text, changed, &judging, &mut names, &mut owed)?;
+        }
+        // A form that waited, its file left unread by a quick pass.
+        for item in was.difference(&judged) {
+            let Some(bound) = state::bound_to_item(&*self.core.conn()?, item)? else {
+                owed.remove(item);
                 continue;
             };
-            let Some(path) =
-                placement::path_of(&edge).filter(|path| marfa_rules::names::same(path, &file.key))
-            else {
+            let Ok(bytes) = self.root_dir.read(std::path::Path::new(&bound.path)) else {
                 continue;
             };
-            let changed = before
-                .get(file.key.as_str())
-                .is_none_or(|was| was.item_id != bound.item_id || was.content_hash != file.hash);
-            let held = edge.properties.get(FORM_PROPERTY);
-            if held.is_some() && !changed || withheld.contains_key(&bound.item_id) {
+            if state::hash(&bytes) != bound.content_hash {
                 continue;
             }
-            let document = document::read(&file.text);
-            let Some(form) = self.form_for(&bound.item_id, &document, edge_types)? else {
+            let Ok(text) = String::from_utf8(bytes) else {
+                owed.remove(item);
                 continue;
             };
-            if held == Some(&form) {
-                continue;
-            }
-            let mut properties = Map::new();
-            properties.insert(
-                placement::PATH_PROPERTY.into(),
-                Value::String(path.to_string()),
-            );
-            properties.insert(FORM_PROPERTY.into(), form);
-            self.core.update_edge(
-                &edge.id,
-                &EdgeEdit {
-                    properties,
-                    base_version: Some(edge.version),
-                    ..Default::default()
-                },
-            )?;
+            self.send_form(&bound, &text, false, &judging, &mut names, &mut owed)?;
+        }
+        if owed != was {
+            self.keep_owed_forms(&owed)?;
         }
         Ok(())
     }
+
+    /// Sends the form of the file `bound` holds, `text`, where it is due,
+    /// noting in `owed` a form that waits on the server taking the item's
+    /// change, so a key the server refuses never reaches it.
+    fn send_form(
+        &self,
+        bound: &state::Bound,
+        text: &str,
+        changed: bool,
+        judging: &Judging<'_>,
+        names: &mut Option<Names>,
+        owed: &mut BTreeSet<String>,
+    ) -> Result<()> {
+        let Judging {
+            catalog,
+            edge_types,
+            withheld,
+        } = *judging;
+        let item = bound.item_id.as_str();
+        let was_owed = owed.remove(item);
+        if bound.held.is_some() || bound.holds_refusal() || withheld.contains_key(item) {
+            return Ok(());
+        }
+        let Some(edge) = self.placement(item)? else {
+            return Ok(());
+        };
+        if !placement::path_of(&edge)
+            .is_some_and(|path| marfa_rules::names::same(path, &bound.path))
+        {
+            return Ok(());
+        }
+        let held = edge.properties.get(FORM_PROPERTY);
+        if held.is_some() && !changed && !was_owed {
+            return Ok(());
+        }
+        let document = document::read(text);
+        let Some(form) = self.form_for(item, &document, edge_types)? else {
+            return Ok(());
+        };
+        if held == Some(&form)
+            || held
+                .and_then(Form::read)
+                .zip(Form::read(&form))
+                .is_some_and(|(held, form)| form.only_stamped_beyond(&held))
+        {
+            return Ok(());
+        }
+        // A file written as a directory writes the item with no form fills
+        // none: it stands for no person's way of writing it.
+        if held.is_none() && self.written_unformed(bound, &form, catalog, edge_types, names)? {
+            return Ok(());
+        }
+        let waits = crate::store::waiting_writes_for_item(&*self.core.conn()?, item)?
+            .iter()
+            .any(|write| {
+                write.verdict.is_none()
+                    && matches!(write.kind, WriteKind::CreateItem | WriteKind::UpdateItem)
+            });
+        if waits {
+            owed.insert(item.to_string());
+            return Ok(());
+        }
+        let mut properties = Map::new();
+        properties.insert(FORM_PROPERTY.into(), form);
+        self.core.update_edge(
+            &edge.id,
+            &EdgeEdit {
+                properties,
+                base_version: Some(edge.version),
+                ..Default::default()
+            },
+        )?;
+        Ok(())
+    }
+
+    /// Whether `form`, the form of the file `bound` holds, is the one a
+    /// directory gives the item when it writes it with no form.
+    fn written_unformed(
+        &self,
+        bound: &state::Bound,
+        form: &Value,
+        catalog: &Catalog,
+        edge_types: &EdgeTypes,
+        names: &mut Option<Names>,
+    ) -> Result<bool> {
+        let seen = (bound.item_id.clone(), bound.content_hash.clone());
+        let mut unformed = self
+            .unformed
+            .lock()
+            .map_err(|_| CoreError::Store("the unformed files were poisoned".into()))?;
+        if unformed.contains(&seen) {
+            return Ok(true);
+        }
+        let Some(item) = self.core.get(&bound.item_id)? else {
+            return Ok(false);
+        };
+        let names = match names {
+            Some(names) => names,
+            None => names.insert(Names::load(&*self.core.conn()?, catalog, &BoundFiles)?),
+        };
+        let rendered = self.render_with(
+            &item,
+            &bound.path,
+            None,
+            catalog,
+            edge_types,
+            (names, None, &bound.lines),
+        )?;
+        let Ok(text) = rendered.text else {
+            return Ok(false);
+        };
+        let written = self.form_for(&item.id, &document::read(&text), edge_types)?;
+        let same = written.as_ref() == Some(form)
+            || written
+                .as_ref()
+                .and_then(Form::read)
+                .zip(Form::read(form))
+                .is_some_and(|(written, form)| form.only_stamped_beyond(&written));
+        if same {
+            unformed.insert(seen);
+        }
+        Ok(same)
+    }
+
+    fn owed_forms(&self) -> Result<BTreeSet<String>> {
+        Ok(
+            crate::store::meta_get(&*self.core.conn()?, META_FORMS_OWED)?
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or_default(),
+        )
+    }
+
+    fn keep_owed_forms(&self, owed: &BTreeSet<String>) -> Result<()> {
+        let conn = self.core.conn()?;
+        if owed.is_empty() {
+            crate::store::meta_delete(&conn, META_FORMS_OWED)
+        } else {
+            crate::store::meta_set(&conn, META_FORMS_OWED, &serde_json::to_string(owed)?)
+        }
+    }
+}
+
+/// What a pass judges each file's form by.
+#[derive(Clone, Copy)]
+struct Judging<'a> {
+    catalog: &'a Catalog,
+    edge_types: &'a EdgeTypes,
+    withheld: &'a Withheld,
 }
 
 impl Key {
@@ -626,6 +807,20 @@ mod tests {
             written(&found, &front(json!({"tags": ["a", "b"]}))),
             "tags: a, b\n"
         );
+    }
+
+    #[test]
+    fn own_lines_a_device_adds_after_the_last_key_leave_the_form_as_it_was() {
+        let held = form("title: A\nstarts_at:\n");
+        assert!(
+            form("title: A\nstarts_at:\ntype: core.note\ntier: library\n")
+                .only_stamped_beyond(&held)
+        );
+        assert!(!form("tier: library\ntitle: A\nstarts_at:\n").only_stamped_beyond(&held));
+        assert!(!form("title: A\nstarts_at:\nother: 1\n").only_stamped_beyond(&held));
+        assert!(!form("title: 'A'\nstarts_at:\ntype: core.note\n").only_stamped_beyond(&held));
+        let tiered = form("title: A\ntier: library\n");
+        assert!(!form("title: A\ntype: core.note\ntier: library\n").only_stamped_beyond(&tiered));
     }
 
     #[test]

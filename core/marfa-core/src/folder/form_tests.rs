@@ -351,3 +351,92 @@ fn a_placement_the_server_takes_no_form_on_carries_none() {
         "{writes:?}"
     );
 }
+
+#[test]
+fn a_form_changed_by_an_edit_waits_for_the_server_to_take_that_edit() {
+    let pair = two(&[("Top.md", TOP), ("A decision.md", DECISION)]);
+    let path = pair.first.path().join("A decision.md");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(
+        &path,
+        text.replacen(
+            "title: A decision\n",
+            "title: A decision\nadded_key: its value\n",
+            1,
+        ),
+    )
+    .unwrap();
+    pair.a.scan().unwrap();
+    let carrying = |kind: &str, text: &str| {
+        let conn = pair.a.core.conn().unwrap();
+        store::read_writes(&conn, "WHERE kind = ?1", [kind])
+            .unwrap()
+            .into_iter()
+            .filter(|write| store::payload_of(&conn, &write.id).unwrap().contains(text))
+            .collect::<Vec<_>>()
+    };
+    let edit = carrying("update_item", "its value");
+    assert_eq!(edit.len(), 1, "the witness: the edit was queued");
+    assert_eq!(carrying("update_edge", "added_key").len(), 0);
+    pair.a.scan().unwrap();
+    assert_eq!(carrying("update_edge", "added_key").len(), 0);
+
+    // Once the server takes the edit, the next pass sends the form, though
+    // the file is as that pass left it.
+    store::record_verdict(
+        &pair.a.core.conn().unwrap(),
+        &edit[0].id,
+        &store::Answered {
+            verdict: crate::model::Verdict::Accepted,
+            reason: None,
+            answer: None,
+            conflicted_copy_id: None,
+        },
+    )
+    .unwrap();
+    pair.a.scan().unwrap();
+    let form = carrying("update_edge", "added_key");
+    assert_eq!(form.len(), 1, "{form:?}");
+    let payload = store::payload_of(&pair.a.core.conn().unwrap(), &form[0].id).unwrap();
+    assert!(!payload.contains("its value"), "{payload}");
+    assert!(!payload.contains("\"path\""), "{payload}");
+    pair.a.scan().unwrap();
+    assert_eq!(carrying("update_edge", "added_key").len(), 1);
+}
+
+#[test]
+fn a_file_written_with_no_form_fills_none_and_a_persons_file_fills_its_own() {
+    let pair = two(&[("Top.md", TOP), ("A decision.md", DECISION)]);
+    pair.pulled(no_form);
+    let forms_sent = |folder: &Folder| {
+        let conn = folder.core.conn().unwrap();
+        store::read_writes(&conn, "WHERE kind = 'update_edge'", [])
+            .unwrap()
+            .into_iter()
+            .filter(|write| {
+                store::payload_of(&conn, &write.id)
+                    .unwrap()
+                    .contains("\"form\"")
+            })
+            .count()
+    };
+    pair.b.scan().unwrap();
+    pair.b.scan().unwrap();
+    assert_eq!(
+        forms_sent(&pair.b),
+        0,
+        "{}",
+        pair.second_file("A decision.md")
+    );
+
+    // The witness: the person's file, its placement holding no form, fills it.
+    let mut edge = pair.placement("A decision.md").as_wire();
+    edge.version += 1;
+    no_form(&mut edge.properties);
+    store::put_server_edge(&pair.a.core.conn().unwrap(), &edge).unwrap();
+    let before = forms_sent(&pair.a);
+    pair.a.scan().unwrap();
+    assert_eq!(forms_sent(&pair.a), before + 1);
+    pair.a.scan().unwrap();
+    assert_eq!(forms_sent(&pair.a), before + 1);
+}

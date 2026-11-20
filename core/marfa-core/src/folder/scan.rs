@@ -356,6 +356,7 @@ impl Folder {
         self.send_forms(
             &scan.files,
             &scan.snapshot,
+            &scan.catalog,
             &scan.edge_types,
             &self.withheld()?,
         )?;
