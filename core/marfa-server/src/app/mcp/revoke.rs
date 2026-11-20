@@ -22,7 +22,7 @@ pub enum Confirmed {
 }
 
 /// The key as it reaches, which is all a revoke confirms: using the key does not change it.
-fn digest_of(key: &Key) -> String {
+pub fn digest_of(key: &Key) -> String {
     let mut shown = key.to_json();
     shown.remove("last_used_at");
     hex::encode(Sha256::digest(Value::Object(shown).to_string().as_bytes()))

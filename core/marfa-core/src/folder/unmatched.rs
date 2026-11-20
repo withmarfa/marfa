@@ -86,6 +86,7 @@ impl Folder {
     /// the rest go on.
     pub fn remove_unmatched(&self, paths: &[String]) -> Result<UnmatchedRemoved> {
         self.refuse_if_gone()?;
+        self.refuse_while_paused()?;
         self.refuse_while_waiting()?;
         let mut done = UnmatchedRemoved::default();
         if paths.is_empty() {

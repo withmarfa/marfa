@@ -159,6 +159,9 @@ pub(crate) fn went_back(
             }
         }
     }
+    if crate::restored_rows::lost(core, http, stop, opening.opened)? {
+        return Err(CoreError::expired(format!("{LOST_WRITE}, {RESTORED}")));
+    }
     Ok(())
 }
 
@@ -196,7 +199,7 @@ fn judged(http: &Http, stop: &AtomicBool, receipt: &Receipt) -> Result<Option<bo
 /// What a read of one row answered, or `None` where the answer was about
 /// that row alone and said nothing of it: a body that does not read, or a
 /// refusal of the read itself (`device/expire-write-unreadable`).
-fn heard<T>(read: Result<T>) -> Result<Option<T>> {
+pub(crate) fn heard<T>(read: Result<T>) -> Result<Option<T>> {
     match read {
         Ok(read) => Ok(Some(read)),
         Err(error) if says_nothing(&error) => {
@@ -796,6 +799,9 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
         // The server holds nothing the write could have changed, so a key
         // it went under answers nothing the write is owed.
         store::restored::send_afresh(tx, &row.id)?;
+        if row.kind == WriteKind::ReplaceTags {
+            store::forget_read_tags(tx, &row.id)?;
+        }
         let over_create = match row.kind {
             WriteKind::UpdateItem | WriteKind::DeleteItem => row
                 .item_id
@@ -919,7 +925,8 @@ fn keep_create(
     store::restored::follow_nothing(tx, &create)?;
     kept.push(create.clone());
     if !held.tags.is_empty() {
-        kept.push(queue_tags(tx, held, std::slice::from_ref(&create))?);
+        // The create carries no tags, so the row it makes holds none.
+        kept.push(queue_tags(tx, held, &[], std::slice::from_ref(&create))?);
     }
     Ok(create)
 }
@@ -964,7 +971,7 @@ fn keep_update(
         )?);
     }
     if kept_tags(held) != kept_tags(server) {
-        kept.push(queue_tags(tx, held, &[])?);
+        kept.push(queue_tags(tx, held, &server.tags, &[])?);
     }
     if held.state != server.state
         && held.state != ItemState::Revoked
@@ -975,11 +982,17 @@ fn keep_update(
     Ok(())
 }
 
-fn queue_tags(tx: &Connection, held: &Item, depends_on: &[String]) -> Result<String> {
+/// `read` are the tags the server held when the copy was compared with it.
+fn queue_tags(
+    tx: &Connection,
+    held: &Item,
+    read: &[String],
+    depends_on: &[String],
+) -> Result<String> {
     let payload = crate::model::TagsWrite {
         tags: held.tags.clone(),
     }
-    .payload()?;
+    .payload(read)?;
     store::hold_beneath_item(tx, &held.id)?;
     store::replace_tags(tx, &held.id, &held.tags)?;
     store::reindex_item(tx, &held.id)?;

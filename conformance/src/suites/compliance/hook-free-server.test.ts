@@ -683,6 +683,35 @@ describe("the files a server keeps", () => {
     expect([mode(shared), mode(other)]).toEqual([0o755, 0o644]);
   });
 
+  it("names its release beside its database once it serves, and not before", async () => {
+    const data = folder("marfa-hf-data-");
+    const record = resolve(data, "marfa.db.release");
+    writeFileSync(record, "0.0.1\n");
+    chmodSync(record, 0o644);
+    // A start that refuses leaves what an earlier release named.
+    const refused = start(data, { MARFA_PORT: "soon" });
+    expect(await refusal(refused), refused.output()).not.toBe(0);
+    expect(readFileSync(record, "utf8")).toBe("0.0.1\n");
+    // The witness: a start that serves replaces it with its own release, privately.
+    const run = start(data);
+    await listening(run);
+    const port = /listening on port (\d+)/.exec(run.output())?.[1];
+    expect(port, run.output()).toBeDefined();
+    const answer = await fetch(`http://127.0.0.1:${port}/`);
+    const { version } = (await answer.json()) as { version: string };
+    await within(
+      EXIT_BUDGET_MS,
+      "the release was named",
+      (async () => {
+        while (readFileSync(record, "utf8") !== `${version}\n`) {
+          await new Promise((again) => setTimeout(again, 20));
+        }
+      })(),
+    );
+    expect(mode(record)).toBe(0o600);
+    await stop(run);
+  });
+
   it("refuses to start on a blob folder that is a symbolic link, and leaves what it points to as it was", async () => {
     const data = folder("marfa-hf-data-");
     const outside = folder("marfa-hf-outside-");

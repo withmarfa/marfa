@@ -84,6 +84,28 @@ pub const META_COPY_REVISION: &str = "copy_revision";
 /// same path.
 pub const META_STORE_ID: &str = "store_id";
 
+/// The release the build that last opened the store as its writer was made as,
+/// so a build that refuses the store can name it. Data, not shape: a build
+/// that does not read it opens the store as before.
+pub const META_RELEASE: &str = "release";
+
+/// The release this build was made as; `0.0.0` in a build no release stamped.
+pub const RELEASE: &str = env!("CARGO_PKG_VERSION");
+
+/// What a build no release stamped records as its release.
+pub const DEVELOPMENT_RELEASE: &str = "0.0.0";
+
+/// Whether `text` is a release as `scripts/release/stamp-version.sh` stamps
+/// one: three numbers joined by dots. The store holds any text, and a refusal
+/// puts a release in a message and in a command a person is told to run.
+pub fn is_release(text: &str) -> bool {
+    let mut parts = text.split('.');
+    let number = |part: Option<&str>| {
+        part.is_some_and(|part| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit()))
+    };
+    number(parts.next()) && number(parts.next()) && number(parts.next()) && parts.next().is_none()
+}
+
 /// The latest change of an edge `edge_changes` no longer records
 /// (`prune_edge_changes`).
 pub const META_EDGE_CHANGES_FLOOR: &str = "edge_changes_floor";

@@ -466,7 +466,7 @@ export interface paths {
         get?: never;
         /**
          * Replace an item's tags
-         * @description Replaces the item's tags with the ones you send and returns them. An empty list clears all tags.
+         * @description Replaces the item's tags with the ones you send and returns them. An empty list clears all tags. Send `read_tags` to replace them only if the item still has the tags you read.
          */
         put: operations["replaceItemTags"];
         /**
@@ -3175,6 +3175,7 @@ export interface components {
          * @description The instance's health: the worst state of its components, and each one's state.
          * @example {
          *       "status": "ok",
+         *       "claimed": true,
          *       "components": {
          *         "database": {
          *           "status": "ok",
@@ -3214,6 +3215,8 @@ export interface components {
              * @enum {string}
              */
             status: "ok" | "degraded" | "down";
+            /** @description `true` if the instance has an owner, `false` if it is waiting to be claimed with its setup code, and `null` if Marfa couldn't read its database to tell. */
+            claimed: boolean | null;
             /** @description Each component checked: reading and writing the database, free disk space and the blob store. */
             components: {
                 /** @description Whether the database answers a read. */
@@ -3775,7 +3778,7 @@ export interface components {
                 };
             };
         };
-        /** @description A failed exact version precondition: the error and the item now. */
+        /** @description A failed precondition on the item: the error and the item now. */
         ItemStaleVersion: {
             error: components["schemas"]["VersionConflictError"] & unknown;
             current: components["schemas"]["ConflictSnapshot"] & unknown;
@@ -6055,10 +6058,10 @@ export interface components {
         /** @description A safe problem code and its count. */
         FolderStatusProblem: {
             /**
-             * @description conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable entry; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings.
+             * @description What is wrong: an unresolved `conflict`, a `refused` write, a `credential_refused`, an `unreadable` entry, a `held_file`, an `unavailable` sync, `root_gone`, `settings_invalid`, an `unwatched` part, or the sync is `paused`.
              * @enum {string}
              */
-            code: "conflict" | "refused" | "credential_refused" | "unreadable" | "held_file" | "unavailable" | "root_gone" | "settings_invalid";
+            code: "conflict" | "refused" | "credential_refused" | "unreadable" | "held_file" | "unavailable" | "root_gone" | "settings_invalid" | "unwatched" | "paused";
             /** @description The number of current observations with this problem. */
             count: number;
         };
@@ -13918,6 +13921,8 @@ export interface operations {
                      * @default []
                      */
                     tags?: string[];
+                    /** @description The tags you read. If the item now has a different set of tags, no tag changes; order and repeats don't count. Leave it out to replace the tags as the item stands. */
+                    read_tags?: string[];
                 };
             };
         };
@@ -13943,7 +13948,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: `tags` is not a list of valid tags or has more than 100, or the body has a field this endpoint doesn't take.
+             * @description - `validation_error`: `tags` is not a list of valid tags or has more than 100, `read_tags` is not a list of strings, or the body has a field this endpoint doesn't take.
              *     - `invalid_id`: the ID is not a valid item ID.
              */
             400: {
@@ -14007,7 +14012,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTimeoutRefusal"];
                 };
             };
-            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            /**
+             * @description - `version_conflict`: `read_tags` differs from the item's tags. `current` is the item now; no tag changed.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14017,7 +14025,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["ItemStaleVersion"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -36380,6 +36388,7 @@ export interface operations {
                     /**
                      * @example {
                      *       "status": "ok",
+                     *       "claimed": true,
                      *       "components": {
                      *         "database": {
                      *           "status": "ok",
@@ -38085,7 +38094,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
+             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before 0.0.72 or a later version, or has an invalid line or one over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */
@@ -38702,7 +38711,7 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `blob_store_unavailable`: the backup folder is not there, or Marfa could not write the new store marker after it forgot the old disk's backups and file copies. Mount the disk it is on, or make the folder writable, then try again. */
+            /** @description `blob_store_unavailable`: the backup folder is not there, did not answer in time, or Marfa could not write the new store marker after it forgot the old disk's backups and file copies. A folder that did not answer in time may keep this adopt's claim. Mount the disk it is on, or make the folder writable, then try again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -38892,7 +38901,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the backup doesn't read, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
+             * @description - `validation_error`: the backup doesn't read, lacks or repeats an entry, is from before 0.0.72 or a later version, or has an invalid line or one over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */

@@ -352,6 +352,30 @@ pub(super) struct Summary {
     pub changed_at: String,
 }
 
+pub(crate) struct Hosted {
+    pub key: i64,
+    pub name: String,
+    pub rows: i64,
+    pub last_batch: String,
+}
+
+pub(super) fn hosted(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Hosted>> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT seq, table_name, row_count, last_batch FROM table_summaries \
+             WHERE item_seq = ?1 ORDER BY seq",
+        )?
+        .query_map([seq], |row| {
+            Ok(Hosted {
+                key: row.get(0)?,
+                name: row.get(1)?,
+                rows: row.get(2)?,
+                last_batch: row.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
 pub(super) fn summaries(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Summary>> {
     let mut statement = tx.prepare_cached(
         "SELECT table_name, row_count, bytes, last_batch, changed_at FROM table_summaries \

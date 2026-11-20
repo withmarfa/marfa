@@ -18,6 +18,7 @@ pub mod edges;
 pub mod enrichment;
 pub mod events;
 pub mod faults;
+pub mod fingerprint;
 pub mod folders;
 pub mod health;
 pub mod housekeeping;
@@ -128,19 +129,30 @@ pub struct App {
 /// The locks a server holds on its database and blob folder while it runs.
 pub struct Held {
     database: Lock,
-    /// None where the blob folder has no marker yet; the store takes it when it opens the folder.
-    blobs: Option<std::fs::File>,
+    /// None where the blob folder is not there yet; the store makes and locks it when it opens.
+    blobs: Option<blobs::Taken>,
 }
 
 /// Judges the server's files, takes their locks, and only then makes them private, so a second
 /// server is refused before it changes anything of the first's. It blocks.
 pub fn take_files(database: &DatabasePath, blobs: &Path) -> Result<(Kept, Held), Failure> {
     let judged = Kept::judged(database, blobs)?;
-    // A running server has marked its folder; an unmarked one gets no lock file until it opens.
-    let marked = judged.has_blob_folder() && blobs.join(blobs::MARKER).is_file();
+    let database = Lock::take(database)?;
+    let taken = judged
+        .blob_folder()
+        .map(|opened| {
+            let opened = opened.try_clone().map_err(|error| {
+                Failure::start(format!(
+                    "The blob folder {} could not be opened: {error}",
+                    blobs.display()
+                ))
+            })?;
+            blobs::take_blob_folder(opened, blobs)
+        })
+        .transpose()?;
     let held = Held {
-        database: Lock::take(database)?,
-        blobs: marked.then(|| blobs::lock_blobs(blobs)).transpose()?,
+        database,
+        blobs: taken,
     };
     Ok((judged.keep()?, held))
 }
@@ -220,7 +232,15 @@ impl App {
         )
         .await?;
         if blobs.folder_opened() {
-            blocking(move || kept.blobs_opened()).await?;
+            let opened = blobs
+                .with_folder(|dir| dir.try_clone())
+                .transpose()
+                .map_err(|error| {
+                    Failure::start(format!("The blob folder could not be opened: {error}"))
+                })?;
+            if let Some(opened) = opened {
+                blocking(move || kept.blobs_opened(&opened)).await?;
+            }
         }
         db.write(Write::own(), move |tx| catalog::reconcile(tx, &at))
             .await

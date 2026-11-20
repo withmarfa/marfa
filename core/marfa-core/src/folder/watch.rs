@@ -7,7 +7,7 @@ use super::handover::{self, Requests};
 use super::lists::Lists;
 use super::scoped::{Reading, Touched};
 use super::selective::Selection;
-use super::watched::{Listening, Reach, settings_file};
+use super::watched::{Directories, Listening, Reach, settings_file};
 use super::{
     Barred, Drained, Flagged, Folder, PullReport, ScanReport, SettingsFileReport, StorageCause,
     Uncarried, Unsure, landing,
@@ -36,6 +36,8 @@ const HELD_MOST: Duration = Duration::from_secs(5);
 /// time, up to `WRITER_LOOK_MOST`.
 const WRITER_LOOK_FIRST: Duration = Duration::from_secs(2);
 const WRITER_LOOK_MOST: Duration = Duration::from_secs(60);
+/// How often a watch looks again at the directories it could not register.
+const UNWATCHED_EVERY: Duration = Duration::from_secs(30);
 
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 
@@ -266,6 +268,7 @@ impl Folder {
         mut tell: impl FnMut(WatchEvent) -> Result<(), E>,
     ) -> Result<WatchEnd, WatchError<E>> {
         let _lowered = lowered();
+        self.refuse_while_paused()?;
         // Only a person's go-ahead lets it write or send, and none can reach
         // a folder this watch holds.
         self.refuse_while_waiting()?;
@@ -345,6 +348,8 @@ impl Folder {
 
         let mut gate = Gate::new(crate::clock::now());
         let mut telling = Telling::default();
+        let _unwatched = Uncounted(self);
+        self.count_unwatched(&listening, &mut telling);
         let mut last_full: Option<Instant> = None;
         let mut send_again_at = self.kept_wait();
         // Whether anything has happened since the last pass began that it
@@ -396,6 +401,7 @@ impl Folder {
                     if let Some(said) = unwatchable(&listening.follow(&event)) {
                         tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
                     }
+                    self.count_unwatched(&listening, &mut telling);
                     if !listening
                         .reach
                         .passes_over(&event, dir, |path| self.stands_as_read(path))
@@ -496,11 +502,21 @@ impl Folder {
             if let Some(passes) = rate.started(crate::clock::now()) {
                 tell(WatchEvent::Busy { passes }).map_err(WatchError::Told)?;
             }
+            let uncovered = listening.unwatched();
             if let Some(unwatched) = listening.ready(&mut touched)
                 && let Some(said) = unwatchable(&unwatched)
             {
                 tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
             }
+            self.count_unwatched(&listening, &mut telling);
+            self.look_at_unwatched(
+                &listening,
+                dir,
+                &uncovered,
+                (&mut telling, full_every),
+                full,
+                &mut touched,
+            );
             let scope = touched.scope();
             let passed = self.pass(
                 full,
@@ -550,6 +566,62 @@ impl Folder {
             stale = false;
         }
         Ok(WatchEnd::Stopped)
+    }
+
+    /// Keeps the count of unwatched directories, and reports it when it changes.
+    pub(super) fn count_unwatched<W: Directories>(
+        &self,
+        listening: &Listening<W>,
+        telling: &mut Telling,
+    ) {
+        let now = listening.unwatched().len();
+        if self.unwatched.swap(now, Ordering::SeqCst) != now {
+            telling.health_changed = true;
+            telling.unwatched_due = None;
+        }
+    }
+
+    /// Names the files of the unwatched directories for the pass, each time the look is due.
+    pub(super) fn look_at_unwatched<W: Directories>(
+        &self,
+        listening: &Listening<W>,
+        root: &Path,
+        uncovered: &[PathBuf],
+        (telling, full_every): (&mut Telling, Duration),
+        full: bool,
+        touched: &mut Touched,
+    ) {
+        let now = crate::clock::now();
+        let due = telling.unwatched_due.is_none_or(|due| now >= due);
+        let looking = full || (!uncovered.is_empty() && due);
+        if looking && !full {
+            self.name_unwatched(listening, root, uncovered, touched);
+        }
+        telling.unwatched_due = if listening.unwatched().is_empty() {
+            None
+        } else if looking {
+            Some(now + unwatched_every(full_every))
+        } else {
+            telling.unwatched_due
+        };
+    }
+
+    /// Names the files in `uncovered` and those the last pass found there.
+    fn name_unwatched<W: Directories>(
+        &self,
+        listening: &Listening<W>,
+        root: &Path,
+        uncovered: &[PathBuf],
+        touched: &mut Touched,
+    ) {
+        let kept = self.kept_beneath(root, uncovered).unwrap_or_default();
+        touched.name(
+            root,
+            listening
+                .files_beneath(root, uncovered)
+                .into_iter()
+                .chain(kept.into_iter().map(|key| root.join(key))),
+        );
     }
 
     /// Reads the settings again. Returns whether the rules for which paths
@@ -1292,6 +1364,27 @@ fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
     crate::clock::wait(stop, wait, Duration::from_millis(250));
 }
 
+/// The wait between looks at the unwatched directories.
+fn unwatched_every(full_every: Duration) -> Duration {
+    #[cfg(debug_assertions)]
+    if let Some(millis) = crate::fault::named("unwatched-every").and_then(|ms| ms.parse().ok()) {
+        return Duration::from_millis(millis);
+    }
+    UNWATCHED_EVERY.min(full_every)
+}
+
+/// Where a watch ends, clears the unwatched count and reports once.
+pub(super) struct Uncounted<'a>(pub(super) &'a Folder);
+
+impl Drop for Uncounted<'_> {
+    fn drop(&mut self) {
+        if self.0.unwatched.swap(0, Ordering::SeqCst) > 0 {
+            self.0.health_observe(false, true, None, None, false);
+            self.0.health_send();
+        }
+    }
+}
+
 fn full_due(last: Option<Instant>, now: Instant, every: Duration) -> bool {
     last.is_none_or(|last| now.duration_since(last) >= every)
 }
@@ -1452,7 +1545,7 @@ fn stirred(
 /// What the passes have told, so a standing condition is told once, not
 /// once a second.
 #[derive(Debug, Default)]
-struct Telling {
+pub(super) struct Telling {
     standing: Option<Standing>,
     unreachable: bool,
     /// Last pass failure reported.
@@ -1472,6 +1565,9 @@ struct Telling {
     /// for writing, which ends the rest, and how long the last such wait was.
     writer_look: Option<Instant>,
     writer_wait: Duration,
+    /// While directories stand unwatched, when the next look at them is due,
+    /// which ends the rest.
+    pub(super) unwatched_due: Option<Instant>,
     /// When the last pass began its scan.
     scan_began: Option<Instant>,
     /// When the last pass began to read the copy for its pull.
@@ -1487,9 +1583,7 @@ struct Telling {
 }
 
 impl Telling {
-    /// Whether a tick leaves the folder be. A tick alone moves nothing on a
-    /// folder the last pass left at rest: a pass walks the whole folder, so
-    /// it is not run to find out.
+    /// Whether a tick leaves the folder be.
     fn rests(&self, full: bool, changed: bool) -> bool {
         !full
             && !changed
@@ -1497,6 +1591,9 @@ impl Telling {
             && self.key_due.is_none_or(|due| crate::clock::now() < due)
             && self.kept_look.is_none_or(|due| crate::clock::now() < due)
             && self.writer_look.is_none_or(|due| crate::clock::now() < due)
+            && self
+                .unwatched_due
+                .is_none_or(|due| crate::clock::now() < due)
     }
 
     /// Whether a change the copy took at `applied` is one the last pull did not
@@ -1965,6 +2062,31 @@ mod tests {
         assert!(gate(HELD_MOST - Duration::from_millis(1)).reads_first(now));
         // Witness: past the ceiling the gate is asked whatever waits.
         assert!(!gate(HELD_MOST).reads_first(now));
+    }
+
+    #[test]
+    fn a_tick_leaves_a_folder_at_rest_be_until_the_look_at_what_cannot_be_watched_is_due() {
+        let at_rest = |unwatched_due: Option<Instant>| Telling {
+            at_rest: true,
+            unwatched_due,
+            ..Telling::default()
+        };
+        // With nothing unwatched, a tick starts no pass: the watch wakes itself for nothing.
+        assert!(at_rest(None).rests(false, false));
+        let now = crate::clock::now();
+        assert!(at_rest(Some(now + Duration::from_secs(60))).rests(false, false));
+        // The witness: a look that is due ends the rest.
+        assert!(!at_rest(Some(now)).rests(false, false));
+        assert_eq!(
+            unwatched_every(Duration::from_secs(600)),
+            UNWATCHED_EVERY,
+            "a look comes well inside the default full pass"
+        );
+        assert_eq!(
+            unwatched_every(Duration::from_secs(10)),
+            Duration::from_secs(10),
+            "and never later than a shorter full pass"
+        );
     }
 
     #[test]

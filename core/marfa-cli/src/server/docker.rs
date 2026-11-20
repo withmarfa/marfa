@@ -9,9 +9,21 @@ use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use ipnet::IpNet;
+use marfa_rules::update_record::run_within;
 use serde_json::Value;
 
 use crate::error::CliError;
+use crate::server::run::REFUSED;
+
+/// Where the image keeps its server and its database.
+const CONTAINER_SERVER: &str = "/usr/local/bin/marfa-server";
+const CONTAINER_DATABASE: &str = "/data/marfa.db";
+/// The first release whose server answers `--can-open`.
+pub const FIRST_ASKED: &str = "0.0.76";
+
+/// How long a server in a container may take to say whether it opens the database, starting the
+/// container included.
+const PROBE_LIMIT: Duration = Duration::from_secs(120);
 
 pub struct Docker {
     program: OsString,
@@ -148,6 +160,45 @@ impl Docker {
             )));
         }
         Ok(())
+    }
+
+    pub fn pull(&self, image: &str) -> Result<(), CliError> {
+        self.show(&format!("docker pull {image}"));
+        self.succeed(&["pull", "--quiet", image]).map(|_| ())
+    }
+
+    /// What `image`'s server says when it will not run on `settings` and the database in the
+    /// volume `volume`, or `None` when it will, or when it could not be asked: a server asked to
+    /// start judges both again. An image before [`FIRST_ASKED`] knows no such question. The values
+    /// reach the container through this command's environment, never its arguments.
+    pub fn will_not_open(
+        &self,
+        image: &str,
+        volume: &str,
+        settings: &[(String, String)],
+    ) -> Option<String> {
+        let mount = format!("{volume}:/data");
+        let mut args = vec![
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--volume",
+            &mount,
+            "--entrypoint",
+            CONTAINER_SERVER,
+        ];
+        for (name, _) in settings {
+            args.extend(["--env", name]);
+        }
+        args.extend([image, "--can-open", CONTAINER_DATABASE]);
+        self.show(&format!(
+            "docker run --rm --network none --volume {mount} --entrypoint {CONTAINER_SERVER} {image} --can-open {CONTAINER_DATABASE}"
+        ));
+        let mut command = self.command(&args);
+        command.envs(settings.iter().map(|(name, value)| (name, value)));
+        let ran = run_within(command, PROBE_LIMIT).ok()?;
+        (ran.status.code() == Some(REFUSED)).then(|| ran.stderr.trim().to_string())
     }
 
     pub fn remove_container(&self, name: &str) -> Result<(), CliError> {

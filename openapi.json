@@ -1433,6 +1433,13 @@
             ],
             "description": "`ok`: serving normally. `degraded`: serving, but something is slow, low or unknown. `down`: something refused."
           },
+          "claimed": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`true` if the instance has an owner, `false` if it is waiting to be claimed with its setup code, and `null` if Marfa couldn't read its database to tell."
+          },
           "components": {
             "type": "object",
             "properties": {
@@ -1775,12 +1782,14 @@
         },
         "required": [
           "status",
+          "claimed",
           "components",
           "backups"
         ],
         "description": "The instance's health: the worst state of its components, and each one's state.",
         "example": {
           "status": "ok",
+          "claimed": true,
           "components": {
             "database": {
               "status": "ok",
@@ -2877,7 +2886,7 @@
           "error",
           "current"
         ],
-        "description": "A failed exact version precondition: the error and the item now."
+        "description": "A failed precondition on the item: the error and the item now."
       },
       "LinkTakenOrSourceIdConflictOrTypeMismatchRefusal": {
         "type": "object",
@@ -8148,7 +8157,7 @@
             "items": {
               "$ref": "#/components/schemas/FolderStatusProblem"
             },
-            "maxItems": 8,
+            "maxItems": 10,
             "description": "The current problem counts, each code once; an empty list means none were observed."
           }
         },
@@ -8178,9 +8187,11 @@
               "held_file",
               "unavailable",
               "root_gone",
-              "settings_invalid"
+              "settings_invalid",
+              "unwatched",
+              "paused"
             ],
-            "description": "conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable entry; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings."
+            "description": "What is wrong: an unresolved `conflict`, a `refused` write, a `credential_refused`, an `unreadable` entry, a `held_file`, an `unavailable` sync, `root_gone`, `settings_invalid`, an `unwatched` part, or the sync is `paused`."
           },
           "count": {
             "type": "integer",
@@ -8372,7 +8383,7 @@
             "items": {
               "$ref": "#/components/schemas/FolderStatusProblem"
             },
-            "maxItems": 8,
+            "maxItems": 10,
             "description": "The current problem counts, each code once; an empty list means none were observed."
           },
           "received_at": {
@@ -23137,7 +23148,7 @@
           "Metadata"
         ],
         "summary": "Replace an item's tags",
-        "description": "Replaces the item's tags with the ones you send and returns them. An empty list clears all tags.",
+        "description": "Replaces the item's tags with the ones you send and returns them. An empty list clears all tags. Send `read_tags` to replace them only if the item still has the tags you read.",
         "security": [
           {
             "bearerAuth": []
@@ -23191,6 +23202,13 @@
                     },
                     "default": [],
                     "description": "The tags the item will have: at most 100, each up to 128 characters. An empty list clears them."
+                  },
+                  "read_tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The tags you read. If the item now has a different set of tags, no tag changes; order and repeats don't count. Leave it out to replace the tags as the item stands."
                   }
                 },
                 "additionalProperties": false
@@ -23227,7 +23245,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `tags` is not a list of valid tags or has more than 100, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `validation_error`: `tags` is not a list of valid tags or has more than 100, `read_tags` is not a list of strings, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23338,11 +23356,14 @@
             }
           },
           "409": {
-            "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "description": "- `version_conflict`: `read_tags` differs from the item's tags. `current` is the item now; no tag changed.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ItemStaleVersion"
+                    },
                     {
                       "$ref": "#/components/schemas/InstanceChangedRefusal"
                     },
@@ -62281,6 +62302,7 @@
                 },
                 "example": {
                   "status": "ok",
+                  "claimed": true,
                   "components": {
                     "database": {
                       "status": "ok",
@@ -65350,7 +65372,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
+            "description": "- `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before 0.0.72 or a later version, or has an invalid line or one over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
             "content": {
               "application/json": {
                 "schema": {
@@ -66424,7 +66446,7 @@
             }
           },
           "503": {
-            "description": "`blob_store_unavailable`: the backup folder is not there, or Marfa could not write the new store marker after it forgot the old disk's backups and file copies. Mount the disk it is on, or make the folder writable, then try again.",
+            "description": "`blob_store_unavailable`: the backup folder is not there, did not answer in time, or Marfa could not write the new store marker after it forgot the old disk's backups and file copies. A folder that did not answer in time may keep this adopt's claim. Mount the disk it is on, or make the folder writable, then try again.",
             "content": {
               "application/json": {
                 "schema": {
@@ -66789,7 +66811,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the backup doesn't read, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
+            "description": "- `validation_error`: the backup doesn't read, lacks or repeats an entry, is from before 0.0.72 or a later version, or has an invalid line or one over 64 MiB.\n- `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.\n- `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.",
             "content": {
               "application/json": {
                 "schema": {

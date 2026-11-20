@@ -24,6 +24,8 @@ pub(super) enum Code {
     Unavailable,
     RootGone,
     SettingsInvalid,
+    Unwatched,
+    Paused,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -534,6 +536,9 @@ impl Folder {
             Ok(status) => status.snapshot,
             Err(_) => {
                 let mut snapshot = previous.clone().unwrap_or_default();
+                snapshot
+                    .problems
+                    .retain(|problem| !matches!(problem.code, Code::Unwatched | Code::Paused));
                 snapshot.first_sync_waiting = self
                     .awaiting_confirmation()
                     .unwrap_or(snapshot.first_sync_waiting);
@@ -592,6 +597,19 @@ impl Folder {
                 count: 1,
             });
         }
+        if super::paused(&conn).unwrap_or(false) {
+            snapshot.problems.push(Problem {
+                code: Code::Paused,
+                count: 1,
+            });
+        }
+        let unwatched = self.unwatched.load(Ordering::SeqCst);
+        if unwatched > 0 {
+            snapshot.problems.push(Problem {
+                code: Code::Unwatched,
+                count: count(unwatched),
+            });
+        }
         if let Some(error) = error {
             snapshot.problems.push(Problem {
                 code: if matches!(error, CoreError::Unauthorized { .. }) {
@@ -623,6 +641,7 @@ impl Folder {
                     | Code::CredentialRefused
                     | Code::RootGone
                     | Code::SettingsInvalid
+                    | Code::Paused
             ) {
                 1
             } else {
@@ -1507,6 +1526,8 @@ pub(in crate::folder) mod tests {
             directories: Vec::new(),
             first_sync: None,
             beneath_waiting: None,
+            sync_paused: false,
+            unwatched: 0,
         };
         let snapshot = local_snapshot(&status);
         assert_eq!(snapshot.pending_uploads, 1);
@@ -1628,6 +1649,7 @@ pub(in crate::folder) mod tests {
             last_reads: std::sync::Mutex::default(),
             inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
+            unwatched: std::sync::atomic::AtomicUsize::new(0),
             replaced: None,
             root_dir,
             state_dir,

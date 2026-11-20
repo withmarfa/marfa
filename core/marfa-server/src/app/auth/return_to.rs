@@ -67,8 +67,10 @@ fn escaped(text: &str) -> String {
     out
 }
 
+/// Where `kept` sends a browser that names nowhere it may go.
+pub const HOME: &str = "/";
+
 pub fn kept(value: &str, origin: &str) -> String {
-    const HOME: &str = "/";
     let trimmed = value.trim_matches(|c: char| c <= ' ');
     let text: String = trimmed
         .chars()
@@ -102,6 +104,16 @@ pub fn kept(value: &str, origin: &str) -> String {
         return HOME.to_string();
     }
     escaped(&format!("{resolved}{tail}"))
+}
+
+/// `text` as one value in a query string.
+pub fn encoded(text: &str) -> String {
+    url::form_urlencoded::byte_serialize(text.as_bytes()).collect()
+}
+
+/// The sign-in page, then `back`, a value `kept` has read.
+pub fn through_sign_in(back: &str) -> String {
+    format!("/auth/sign-in?return_to={}", encoded(back))
 }
 
 #[cfg(test)]

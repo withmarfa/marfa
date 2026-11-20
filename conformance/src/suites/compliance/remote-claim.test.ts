@@ -6,6 +6,7 @@ import {
   stopServer,
 } from "../../../scripts/marfa-server.js";
 import { signInOwnerWithPassword } from "../../client/owner-session.js";
+import { readControls } from "../../utils/approval-form.js";
 import { controlRequest } from "../../utils/control-request.js";
 import {
   approvedApp,
@@ -642,13 +643,22 @@ describe("owner recovery", () => {
       const first = await pageText(server.apiUrl);
       expect(first).toContain("Recover the owner");
       expect(first).toContain('action="/setup/exchange"');
-      const exchanged = await post(
-        server.apiUrl,
-        "/setup/exchange",
-        { code },
-        { origin },
-      );
-      expect(exchanged.status).toBe(200);
+      // The form as the page sends it: its hidden fields and the code.
+      const hidden = readControls(first)
+        .filter((control) => control.type === "hidden")
+        .map((control): [string, string] => [control.name, control.value]);
+      const exchanged = await fetch(`${server.apiUrl}/setup/exchange`, {
+        method: "POST",
+        redirect: "manual",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          accept: "text/html",
+          origin,
+        },
+        body: new URLSearchParams([...hidden, ["code", code]]),
+      });
+      expect(exchanged.status).toBe(303);
+      expect(exchanged.headers.get("location")).toBe("/setup");
       const setup = cookiesOf(exchanged);
       expect(await pageText(server.apiUrl, setup)).toContain(
         'id="recover-form"',

@@ -14,8 +14,10 @@ use sha2::{Digest, Sha256};
 use super::App;
 use super::access::Caller;
 use super::connectors::{self, Registration, Window};
+use super::fingerprint::Fingerprint;
 use super::keys;
 use super::refusal::{Code, Refusal, Result};
+use super::unit::Unit;
 use crate::app::clock::Stamp;
 pub use cleanup::delivery_cleanup;
 pub use receive::{
@@ -172,35 +174,139 @@ pub async fn list_endpoints(app: &App, caller: &Caller, connector_id: String) ->
     .await
 }
 
+pub const RETIRED: &str = "inbound_endpoint.retire";
+
 pub async fn retire_endpoint(
     app: &App,
     caller: &Caller,
     connector_id: String,
     endpoint_id: String,
 ) -> Result<Value> {
-    app.write(caller, "inbound_endpoint.retire", move |unit| {
-        let tx = unit.tx();
-        let registration = manageable(tx, &unit.caller, &connector_id)?;
-        let held = store::holds(tx, &registration.source, &registration.id)?;
-        let endpoint = store::endpoint_of(tx, &registration.source, &endpoint_id)?
-            .filter(|_| held)
-            .ok_or_else(endpoint_not_found)?;
-        if endpoint.retired_at.is_some() {
-            return Ok(endpoint_json(&endpoint, &registration.id, None));
-        }
-        store::retire(tx, &endpoint.id, &unit.at)?;
-        unit.audit(
-            "inbound_endpoint",
-            &endpoint.id,
-            Some(json!({ "connector_id": registration.id })),
-        )?;
-        let retired = Endpoint {
-            retired_at: Some(unit.at.clone()),
-            ..endpoint
-        };
-        Ok(endpoint_json(&retired, &registration.id, None))
+    app.write(caller, RETIRED, move |unit| {
+        retire_in(unit, &connector_id, &endpoint_id)
     })
     .await
+}
+
+/// Retires the endpoint in the caller's write, refused as the operation refuses.
+pub(crate) fn retire_in(
+    unit: &Unit<'_, '_>,
+    connector_id: &str,
+    endpoint_id: &str,
+) -> Result<Value> {
+    let tx = unit.tx();
+    let registration = manageable(tx, &unit.caller, connector_id)?;
+    let held = store::holds(tx, &registration.source, &registration.id)?;
+    let endpoint = store::endpoint_of(tx, &registration.source, endpoint_id)?
+        .filter(|_| held)
+        .ok_or_else(endpoint_not_found)?;
+    if endpoint.retired_at.is_some() {
+        return Ok(endpoint_json(&endpoint, &registration.id, None));
+    }
+    store::retire(tx, &endpoint.id, &unit.at)?;
+    unit.audit(
+        "inbound_endpoint",
+        &endpoint.id,
+        Some(json!({ "connector_id": registration.id })),
+    )?;
+    let retired = Endpoint {
+        retired_at: Some(unit.at.clone()),
+        ..endpoint
+    };
+    Ok(endpoint_json(&retired, &registration.id, None))
+}
+
+/// An endpoint as a confirmation to retire it binds it.
+pub struct Retiring {
+    pub endpoint: Value,
+    pub live: bool,
+    /// Deliveries it carried that no one has marked handled, which retiring it keeps.
+    pub unhandled: i64,
+    digest: String,
+}
+
+impl Retiring {
+    /// The endpoint's id, its address's hash, the registration that holds it and whether it is live.
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+}
+
+/// The endpoint as retiring it would find it, refused as the operation refuses.
+pub(crate) fn retiring(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    connector_id: &str,
+    endpoint_id: &str,
+) -> Result<Retiring> {
+    let registration = manageable(tx, caller, connector_id)?;
+    let held = store::holds(tx, &registration.source, &registration.id)?;
+    let (endpoint, token_hash) = store::endpoint_hashed(tx, &registration.source, endpoint_id)?
+        .filter(|_| held)
+        .ok_or_else(endpoint_not_found)?;
+    let live = endpoint.retired_at.is_none();
+    let mut fingerprint = Fingerprint::new("inbound-endpoint-retire");
+    fingerprint
+        .text(&endpoint.id)
+        .text(&token_hash)
+        .text(&registration.id)
+        .flag(live);
+    Ok(Retiring {
+        unhandled: store::unhandled_on(tx, &endpoint.id)?,
+        endpoint: endpoint_json(&endpoint, &registration.id, None),
+        live,
+        digest: fingerprint.finish(),
+    })
+}
+
+/// The endpoints and deliveries a source's current registration holds, which deleting it removes.
+pub struct Held {
+    pub endpoints: Vec<Value>,
+    bound: Vec<(String, String, bool)>,
+    unhandled: Vec<String>,
+    pub handled: i64,
+}
+
+impl Held {
+    pub fn unhandled(&self) -> usize {
+        self.unhandled.len()
+    }
+
+    /// Each endpoint by id, address hash and whether it is retired, and each unhandled delivery.
+    pub fn bind(&self, fingerprint: &mut Fingerprint) {
+        fingerprint.number(self.bound.len() as i64);
+        for (id, token_hash, retired) in &self.bound {
+            fingerprint.text(id).text(token_hash).flag(*retired);
+        }
+        fingerprint.number(self.unhandled.len() as i64);
+        for id in &self.unhandled {
+            fingerprint.text(id);
+        }
+    }
+}
+
+/// What the registration holds, or nothing where another registration holds its source.
+pub(crate) fn held_by(tx: &Transaction<'_>, registration: &Registration) -> Result<Option<Held>> {
+    if !store::holds(tx, &registration.source, &registration.id)? {
+        return Ok(None);
+    }
+    let endpoints = store::endpoints_hashed(tx, &registration.source)?;
+    let tally = store::tally(tx, &registration.source)?;
+    Ok(Some(Held {
+        endpoints: endpoints
+            .iter()
+            .map(|(endpoint, _)| endpoint_json(endpoint, &registration.id, None))
+            .collect(),
+        bound: endpoints
+            .into_iter()
+            .map(|(endpoint, token_hash)| {
+                let retired = endpoint.retired_at.is_some();
+                (endpoint.id, token_hash, retired)
+            })
+            .collect(),
+        unhandled: store::unhandled_ids(tx, &registration.source)?,
+        handled: tally.retained - tally.pending,
+    }))
 }
 
 /// The registration whose deliveries only its own key reads.

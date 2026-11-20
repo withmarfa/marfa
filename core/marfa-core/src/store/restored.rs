@@ -284,6 +284,9 @@ pub(crate) fn receipts_seen(
     kind: &str,
     payload: &EventPayload,
 ) -> Result<(), CoreError> {
+    if let Some(rows) = &payload.rows {
+        return crate::restored_rows::seen_by(conn, rows);
+    }
     let (subject, carried) = match (&payload.item, &payload.edge) {
         (Some(item), _) => (
             Subject::Item,
@@ -439,17 +442,19 @@ pub(crate) fn receipt_confirmed(conn: &Connection, receipt: &Receipt) -> Result<
     Ok(())
 }
 
+/// Lets go of every receipt and every table row set aside.
 pub(crate) fn forget_receipts(conn: &Connection) -> Result<(), CoreError> {
     conn.execute("DELETE FROM answer_receipts", [])?;
-    Ok(())
+    crate::restored_rows::forget(conn)
 }
 
 /// Lets go of the receipts that are not removals, once a comparison has
-/// kept what they named or found the server holds it.
+/// kept what they named or found the server holds it, or set aside the
+/// table rows they named.
 pub(crate) fn forget_change_receipts(conn: &Connection) -> Result<(), CoreError> {
     conn.execute("DELETE FROM answer_receipts WHERE removal = 0", [])?;
     conn.execute("UPDATE answer_receipts SET seen = 1 WHERE seen = 0", [])?;
-    Ok(())
+    crate::restored_rows::forget_changes(conn)
 }
 
 /// What tells one event from another at the same id: its kind, the row it
@@ -523,6 +528,7 @@ pub(crate) fn hold_copy(conn: &Connection) -> Result<(), CoreError> {
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<Result<_, _>>()?;
     hold_edges(conn, edges)?;
+    crate::restored_rows::hold_copy(conn)?;
     super::meta_delete(conn, META_CHECKING)?;
     super::meta_set(conn, META_RESTORE_FOUND, "true")
 }
@@ -540,6 +546,7 @@ pub(crate) fn hold_unseen(conn: &Connection) -> Result<(), CoreError> {
         .map(|receipt| (receipt.subject, receipt.id))
         .collect();
     hold_named(conn, &named)?;
+    crate::restored_rows::hold_unseen(conn)?;
     super::meta_set(conn, META_CHECKING, "true")
 }
 

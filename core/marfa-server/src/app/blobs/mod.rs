@@ -8,6 +8,7 @@ mod hash;
 pub mod link;
 pub mod range;
 pub mod references;
+pub mod removal;
 pub mod restore;
 mod room;
 mod rows;
@@ -25,7 +26,6 @@ use std::time::Duration;
 
 use arc_swap::ArcSwap;
 use futures_util::StreamExt;
-use futures_util::future::join_all;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -34,8 +34,8 @@ use super::access::{Caller, Permission};
 use super::catalog::{self, Snapshot};
 use super::faults::{
     FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, FAIL_STORES_RECORD, FAIL_STORES_RECORD_LOST,
-    Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS, HOLD_BLOB_READ, HOLD_BLOB_WRITE, HOLD_STORES_RECORD,
-    HOLD_STORES_SWAP, Lie,
+    Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS, HOLD_BLOB_READ, HOLD_BLOB_WRITE, HOLD_FOLDER_SETTLE,
+    HOLD_STORES_RECORD, HOLD_STORES_SWAP, Lie,
 };
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
@@ -45,8 +45,8 @@ use crate::failure::Failure;
 use crate::settings::registry::Snapshot as Settings;
 use crate::settings::registry::{BACKUP_PATH, BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
 use crate::telemetry::caught;
-use disk::{Disk, Place, Staged};
-pub use disk::{MARKER, Scratch, lock_blobs};
+use disk::{Claim, Disk, Place, Staged};
+pub use disk::{MARKER, Scratch, Taken, lock_blobs, take_blob_folder};
 pub use folder::Folder;
 pub use hash::Hash;
 pub use restore::stored_size;
@@ -535,7 +535,7 @@ impl Blobs {
     /// there, and the recorded store stays in use.
     pub async fn open(
         db: &Db,
-        (root, held): (&Path, Option<File>),
+        (root, held): (&Path, Option<disk::Taken>),
         Beside {
             wanted,
             instance,
@@ -571,7 +571,7 @@ impl Blobs {
         }
         let folder_opened = away.is_none();
         let disk = Arc::new(match away {
-            Some(id) => Disk::awaiting_blob_folder(id, root.to_path_buf()),
+            Some(id) => Disk::unmounted(id, root.to_path_buf(), Place::Blobs),
             None => {
                 let folder = root.to_path_buf();
                 tokio::task::spawn_blocking(move || Disk::open(&folder, Place::Blobs, held))
@@ -609,9 +609,19 @@ impl Blobs {
         self.disk.reachable()
     }
 
-    /// Whether the blob folder returned after the start and cannot be locked now. It blocks.
-    pub fn folder_unlockable(&self) -> bool {
-        self.disk.returned_unlockable()
+    /// What keeps the blob folder from taking a file now, where something does. It blocks.
+    pub fn folder_unwritable(&self) -> Option<String> {
+        self.disk.unwritable()
+    }
+
+    /// Why the blob folder's locks may not keep out a server on another machine.
+    pub fn folder_shared(&self) -> Option<String> {
+        self.disk.shared()
+    }
+
+    /// Runs `run` on the blob folder's descriptor, where the store holds it.
+    pub fn with_folder<T>(&self, run: impl FnOnce(&File) -> T) -> Option<T> {
+        self.disk.with_dir(run)
     }
 
     /// Whether the store in use is the usable one `wanted` names.
@@ -713,6 +723,30 @@ impl Blobs {
         let forgotten = rows::forget_store(tx, old, at)?;
         rows::attach(tx, id, "folder", locator, at)?;
         Ok(forgotten)
+    }
+
+    /// How many copies the copy record records in `store`.
+    pub fn copies_in(tx: &rusqlite::Transaction<'_>, store: &str) -> Result<i64> {
+        rows::copies_in(tx, store)
+    }
+
+    /// How many deletions of bytes wait in `store`, and how many blobs failed to copy to it.
+    pub fn leftovers_in(tx: &rusqlite::Transaction<'_>, store: &str) -> Result<(i64, i64)> {
+        rows::leftovers_in(tx, store)
+    }
+
+    /// How many of `hashes` are recorded blobs that nothing keeps, so a purge takes them once
+    /// nothing else holds them.
+    pub fn unkept_among<'a>(
+        tx: &rusqlite::Transaction<'_>,
+        hashes: impl IntoIterator<Item = &'a str>,
+    ) -> Result<i64> {
+        rows::unkept_among(tx, hashes)
+    }
+
+    /// The attached folder store the record names.
+    pub fn attached_folder(tx: &rusqlite::Transaction<'_>) -> Result<Option<String>> {
+        rows::attached_folder(tx)
     }
 
     pub fn check_adoptable(
@@ -1339,8 +1373,17 @@ impl App {
         Ok(recorded)
     }
 
-    /// An adopt may have recorded a new ID without finishing its claim on the folder.
-    pub(crate) async fn retake_folder(&self, folder: &Arc<Folder>) -> Result<()> {
+    /// Settles `claim`, an adopt's own claim on the backup folder, against the record without
+    /// letting go of the folder's lock first, so no other server settles it meanwhile. A claim
+    /// this does not settle stays held for the next follow.
+    pub(crate) async fn settle_claim(&self, folder: &Arc<Folder>, claim: Claim) -> Result<()> {
+        folder.hold_unsettled(claim);
+        self.settle_folder(folder).await
+    }
+
+    /// Settles what an adopt that did not finish left in the backup folder against the record:
+    /// its claim is promoted where the record names its store, and removed where it does not.
+    pub(crate) async fn settle_folder(&self, folder: &Arc<Folder>) -> Result<()> {
         let deadline = self.blobs.check();
         let late = || {
             Refusal::new(
@@ -1355,31 +1398,30 @@ impl App {
         if folder.claim_unended() {
             return Err(late());
         }
-        let looked = folder.clone();
-        let reachable = tokio::time::timeout(
-            deadline,
-            tokio::task::spawn_blocking(move || looked.reachable()),
-        )
-        .await
-        .map_err(|_| late())?;
-        if joined(reachable)? {
-            return Ok(());
-        }
-        let files = folder.files();
-        let locator = files.root().display().to_string();
+        self.faults.hold(HOLD_FOLDER_SETTLE, None).await;
+        let locator = folder.files().root().display().to_string();
         let recorded = self
             .db
             .read(move |tx| rows::folder_at(tx, &locator))
             .await?;
-        let Some(id) = recorded.filter(|id| id != files.id()) else {
-            return Ok(());
-        };
-        match folder.claim_within(id, deadline).await {
-            None => Err(late()),
-            Some(Ok(())) => Ok(()),
-            Some(Err(error)) => {
-                tracing::warn!(%error, "The backup folder could not take the store the record names");
-                Ok(())
+        match folder
+            .within(deadline, move |folder| folder.settle(recorded), |()| {})
+            .await
+        {
+            Err(_) => Err(late()),
+            Ok(Ok(())) => Ok(()),
+            // The record stays in doubt, so the next follow tries again.
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "The backup folder's claim by an adopt could not be settled");
+                Err(Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!(
+                        "The backup folder {} keeps the claim of an adopt that did not finish, \
+                         and the claim could not be settled: {error}. Check that the folder is \
+                         writable; the server settles it once it can.",
+                        folder.root().display()
+                    ),
+                ))
             }
         }
     }
@@ -1418,10 +1460,10 @@ impl App {
                         return Ok(());
                     }
                     if let Some(folder) = &current.folder
-                        && let Err(refused) = self.retake_folder(folder).await
+                        && let Err(refused) = self.settle_folder(folder).await
                     {
                         tracing::error!(%refused, "The backup folder in use could not be checked against its record");
-                        return Err(unrecorded());
+                        return Err(refused);
                     }
                     match self.record_stores(&current).await {
                         Ok(Recorded::At(_)) => blobs.record_doubted.store(false, Ordering::SeqCst),
@@ -1537,10 +1579,10 @@ impl App {
         let Some(staged) = intake.staged.take() else {
             return Err(Refusal::internal("an upload finished twice"));
         };
-        let spooled = staged.path().to_path_buf();
+        let spooled = staged.unspool();
         let placed = self.place_staged(staged, &intake.mime_type).await;
         if placed.is_err() {
-            let _ = tokio::task::spawn_blocking(move || disk::unspool(&spooled)).await;
+            let _ = tokio::task::spawn_blocking(move || spooled.run()).await;
         }
         placed
     }
@@ -1929,114 +1971,6 @@ impl App {
     pub async fn blob_orphans(&self, caller: &Caller) -> Result<Vec<OrphanRecord>> {
         caller.require(Permission::InstanceRead)?;
         self.db.read(rows::orphans).await
-    }
-
-    /// Queues deletion with the copy's removal before deleting its bytes.
-    pub async fn drop_copy(
-        self: &Arc<App>,
-        caller: &Caller,
-        hash: &Hash,
-        store_id: &str,
-    ) -> Result<()> {
-        let (app, caller, hash) = (self.clone(), caller.clone(), hash.clone());
-        let store_id = store_id.to_string();
-        owned(async move { app.dropping(&caller, &hash, &store_id).await }).await
-    }
-
-    async fn dropping(&self, caller: &Caller, hash: &Hash, store_id: &str) -> Result<()> {
-        let blob = hash.clone();
-        let (found, holders) = self
-            .db
-            .read(move |tx| Ok((rows::find(tx, &blob)?, rows::holders(tx, &blob)?)))
-            .await?;
-        let Some(found) = found else {
-            return Err(not_found());
-        };
-        if self.blobs.gate.unfinished(hash) {
-            return Err(unavailable());
-        }
-        let store = self
-            .blobs
-            .store(store_id)
-            .filter(|_| holders.iter().any(|held| held.store_id == store_id))
-            .ok_or_else(copy_not_found)?;
-        if matches!(store, Store::S3(_) | Store::Folder(_)) {
-            crate::app::backups::survey_folder(self).await?;
-        }
-        let (blob, kept_in) = (hash.clone(), store_id.to_string());
-        self.db
-            .read(move |tx| keep_held(tx, &blob, &kept_in))
-            .await?;
-        let seeds = self.settings.seeds();
-        let min_copies = self
-            .db
-            .read(move |tx| stored::deciding(tx, &seeds, BLOB_MIN_COPIES))
-            .await?;
-        let kept = own_others(&holders, store_id);
-        if (kept as u64) < min_copies {
-            return Err(below(kept + 1, min_copies));
-        }
-        let _held = self.lock_to_write(hash).await?;
-        if self.blobs.gate.unfinished(hash) {
-            return Err(unavailable());
-        }
-        let blob = hash.clone();
-        let holders = self.db.read(move |tx| rows::holders(tx, &blob)).await?;
-        if !holders.iter().any(|held| held.store_id == store_id) {
-            return Err(copy_not_found());
-        }
-        let others: Vec<(Store, &str)> = holders
-            .iter()
-            .filter(|held| held.store_id != store_id && held.written)
-            .filter_map(|held| Some((self.blobs.store(&held.store_id)?, held.object.as_str())))
-            .collect();
-        let answers = join_all(
-            others
-                .iter()
-                .map(|(other, object)| self.blobs.answer_of(other, &found.hash, object)),
-        )
-        .await;
-        let mut confirmed = 0;
-        for ((other, _), answer) in others.iter().zip(&answers) {
-            if matches!(answer, Ok(Answer::Holds(size)) if *size == found.size_bytes)
-                && self.blobs.is_itself(other).await
-            {
-                confirmed += 1;
-            }
-        }
-        if (confirmed as u64) < min_copies {
-            return Err(below(confirmed + 1, min_copies));
-        }
-        let (blob, dropped) = (hash.clone(), store_id.to_string());
-        let seeds = self.settings.seeds();
-        self.write(caller, "blob.copy_dropped", move |unit| {
-            unit.caller.require(Permission::BlobsManage)?;
-            let holders = rows::holders(unit.tx(), &blob)?;
-            if !holders.iter().any(|held| held.store_id == dropped) {
-                return Err(copy_not_found());
-            }
-            keep_held(unit.tx(), &blob, &dropped)?;
-            let min_copies = stored::deciding(unit.tx(), &seeds, BLOB_MIN_COPIES)?;
-            let kept = own_others(&holders, &dropped);
-            if (kept as u64) < min_copies {
-                return Err(below(kept + 1, min_copies));
-            }
-            if (confirmed as u64) < min_copies {
-                return Err(below(confirmed + 1, min_copies));
-            }
-            let object = holders
-                .iter()
-                .find(|held| held.store_id == dropped)
-                .map(|held| held.object.as_str())
-                .ok_or_else(copy_not_found)?;
-            rows::remove_copy(unit.tx(), &blob, &dropped, object, &unit.at)?;
-            unit.audit("blob", blob.as_str(), Some(json!({ "store_id": dropped })))
-        })
-        .await?;
-        if let Err(failure) = self.finish_deletion(&store, hash).await {
-            tracing::warn!(?failure, "A dropped copy's bytes wait for a later run");
-        }
-        Ok(())
     }
 }
 

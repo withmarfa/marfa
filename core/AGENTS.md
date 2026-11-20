@@ -52,6 +52,7 @@ These rules add to the root `AGENTS.md` for work under `core/`. Under `core/marf
 - The core records only an operation's name, a count, an outcome word, a write's kind, an HTTP status and an error code. Never an item's content, title, tag, id or key, a credential, an address, a header, a path, a query or an error message. `marfa-core/src/telemetry_tests.rs` fails if a recognizable secret reaches a span or an event.
 - Record only through `marfa-core/src/telemetry.rs`, the one source file outside the tests that names `tracing`.
 - The binary exports only the field names listed in `marfa-cli/src/telemetry/layer.rs`. To export a new field, add it there.
+- Nothing is sent until the owner sets where: the rule and its checks are in the root `AGENTS.md`, "What Marfa promises its owner".
 - `core/TELEMETRY.md` describes what is sent. `marfa-cli/src/reference.rs` fails when a telemetry variable the binary reads is missing from it or from `marfa-cli/COMMANDS.md`.
 
 ## The command line

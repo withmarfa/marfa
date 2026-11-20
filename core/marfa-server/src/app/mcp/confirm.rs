@@ -16,6 +16,7 @@ pub const LIFE_MS: i64 = 5 * 60 * 1000;
 /// Keeps a confirmation's key from being any other use of the instance's secret.
 const KEY_LABEL: &[u8] = b"marfa-mcp-confirmation-key";
 const MESSAGE_LABEL: &str = "marfa-mcp-confirmation\n";
+const TARGET_LABEL: &str = "marfa-mcp-confirmation-target\n";
 const SIGNATURE_CHARS: usize = 43;
 
 #[derive(Clone)]
@@ -42,19 +43,62 @@ pub struct Parsed {
     pub expires_at_ms: i64,
 }
 
-pub fn parse(token: &str) -> Option<Parsed> {
-    let (expires, signature) = token.split_once('.')?;
+fn expiry_of(expires: &str) -> Option<i64> {
     let whole = !expires.is_empty()
         && expires.len() <= 15
         && expires.bytes().all(|byte| byte.is_ascii_digit());
-    let plain = signature.len() == SIGNATURE_CHARS
-        && signature
+    whole.then(|| expires.parse().unwrap_or(i64::MAX))
+}
+
+fn is_signature(text: &str) -> bool {
+    text.len() == SIGNATURE_CHARS
+        && text
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
-    (whole && plain).then(|| Parsed {
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+pub fn parse(token: &str) -> Option<Parsed> {
+    let (expires, signature) = token.split_once('.')?;
+    let expires_at_ms = expiry_of(expires)?;
+    is_signature(signature).then(|| Parsed {
         signature: signature.to_string(),
-        expires_at_ms: expires.parse().unwrap_or(i64::MAX),
+        expires_at_ms,
     })
+}
+
+/// A confirmation of an owner's destructive tool, whose target is judged before the target is read.
+#[derive(Clone)]
+pub struct Bound {
+    pub expires_at_ms: i64,
+    target: String,
+    /// The subject's signature, which also keys the spent record.
+    pub signature: String,
+}
+
+pub fn parse_bound(token: &str) -> Option<Bound> {
+    let mut parts = token.split('.');
+    let (Some(expires), Some(target), Some(signature), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return None;
+    };
+    let expires_at_ms = expiry_of(expires)?;
+    (is_signature(target) && is_signature(signature)).then(|| Bound {
+        expires_at_ms,
+        target: target.to_string(),
+        signature: signature.to_string(),
+    })
+}
+
+/// What a bound confirmation allows before its target is read.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Opening {
+    /// Signed for this credential and target, unspent and unexpired: read the target next.
+    Open,
+    /// This credential's confirmation of this target was spent on the change it allowed.
+    Spent { total: i64 },
+    /// Another tool's, credential's or target's, or expired.
+    Stale,
 }
 
 /// Whether the token is well formed and its time has passed.
@@ -95,9 +139,20 @@ impl Signer {
         subject: &str,
         expires_ms: i64,
     ) -> Result<String> {
+        self.signed(MESSAGE_LABEL, tool, credential, subject, expires_ms)
+    }
+
+    fn signed(
+        &self,
+        label: &str,
+        tool: &str,
+        credential: &str,
+        subject: &str,
+        expires_ms: i64,
+    ) -> Result<String> {
         let mut mac = Hmac::<Sha256>::new_from_slice(&self.0)
             .map_err(|_| Refusal::internal("the confirmation key was refused"))?;
-        mac.update(MESSAGE_LABEL.as_bytes());
+        mac.update(label.as_bytes());
         for part in [tool, credential, subject, &expires_ms.to_string()] {
             mac.update(&(part.len() as u64).to_be_bytes());
             mac.update(part.as_bytes());
@@ -137,6 +192,128 @@ impl Signer {
             },
         )
     }
+
+    /// A confirmation whose target is signed apart from its subject, to be checked unread.
+    pub fn issue_bound(
+        &self,
+        tool: &str,
+        credential: &str,
+        target: &str,
+        subject: &str,
+        now_ms: i64,
+    ) -> Result<Token> {
+        let expires_at = Stamp::from_ms(now_ms.saturating_add(LIFE_MS))?;
+        let ms = expires_at.ms();
+        let target = self.signed(TARGET_LABEL, tool, credential, target, ms)?;
+        let subject = self.signature(tool, credential, subject, ms)?;
+        Ok(Token {
+            text: format!("{ms}.{target}.{subject}"),
+            expires_at,
+        })
+    }
+
+    /// Whether the token was signed for this target, judged without reading it.
+    pub fn holds_target(
+        &self,
+        tool: &str,
+        credential: &str,
+        target: &str,
+        bound: &Bound,
+    ) -> Result<bool> {
+        let expected = self.signed(TARGET_LABEL, tool, credential, target, bound.expires_at_ms)?;
+        Ok(bool::from(
+            expected.as_bytes().ct_eq(bound.target.as_bytes()),
+        ))
+    }
+
+    /// Whether the target as read now is the subject the preview signed.
+    pub fn holds_subject(
+        &self,
+        tool: &str,
+        credential: &str,
+        subject: &str,
+        bound: &Bound,
+    ) -> Result<bool> {
+        let expected = self.signature(tool, credential, subject, bound.expires_at_ms)?;
+        Ok(bool::from(
+            expected.as_bytes().ct_eq(bound.signature.as_bytes()),
+        ))
+    }
+
+    /// Judges a bound confirmation in the write that would spend it, without reading its target.
+    pub fn open(
+        &self,
+        tx: &Transaction<'_>,
+        tool: &str,
+        credential: &str,
+        target: &str,
+        bound: &Bound,
+        now: Stamp,
+    ) -> Result<Opening> {
+        if !self.holds_target(tool, credential, target, bound)? {
+            return Ok(Opening::Stale);
+        }
+        sweep(tx, now)?;
+        if let Some(spent) = spent(tx, &bound.signature)? {
+            return Ok(
+                if spent.credential == credential && spent.ids_digest == target {
+                    Opening::Spent { total: spent.total }
+                } else {
+                    Opening::Stale
+                },
+            );
+        }
+        if bound.expires_at_ms <= now.ms() {
+            return Ok(Opening::Stale);
+        }
+        Ok(Opening::Open)
+    }
+
+    /// Judges a bound confirmation in a read as `open` would in the write, before anything costly.
+    pub fn peek(
+        &self,
+        tx: &Transaction<'_>,
+        tool: &str,
+        credential: &str,
+        target: &str,
+        bound: &Bound,
+        now: Stamp,
+    ) -> Result<Opening> {
+        if !self.holds_target(tool, credential, target, bound)? {
+            return Ok(Opening::Stale);
+        }
+        // A spent record lasts as long as its token, so an expired token has none `open` keeps.
+        if bound.expires_at_ms <= now.ms() {
+            return Ok(Opening::Stale);
+        }
+        Ok(match spent(tx, &bound.signature)? {
+            Some(spent) if spent.credential == credential && spent.ids_digest == target => {
+                Opening::Spent { total: spent.total }
+            }
+            Some(_) => Opening::Stale,
+            None => Opening::Open,
+        })
+    }
+}
+
+/// Records a bound confirmation as spent, in the transaction of the change it allowed.
+pub fn spend_bound(
+    tx: &Transaction<'_>,
+    bound: &Bound,
+    credential: &str,
+    target: &str,
+    total: i64,
+) -> Result<()> {
+    spend(
+        tx,
+        &Parsed {
+            signature: bound.signature.clone(),
+            expires_at_ms: bound.expires_at_ms,
+        },
+        credential,
+        target,
+        total,
+    )
 }
 
 /// A confirmation that was spent, and what it allowed.
@@ -296,5 +473,126 @@ mod tests {
         assert_eq!(subject_digest(&one, "d"), subject_digest(&other, "d"));
         assert_ne!(subject_digest(&one, "d"), subject_digest(&one, "e"));
         assert_eq!(ids_digest(&one), ids_digest(&other));
+    }
+
+    #[test]
+    fn a_bound_token_signs_its_target_apart_from_its_subject() {
+        let signer = signer();
+        let token = signer
+            .issue_bound("marfa_purge", "key-a", "target", "subject", 1_000)
+            .unwrap();
+        let bound = parse_bound(&token.text).unwrap();
+        assert!(
+            signer
+                .holds_target("marfa_purge", "key-a", "target", &bound)
+                .unwrap()
+        );
+        assert!(
+            signer
+                .holds_subject("marfa_purge", "key-a", "subject", &bound)
+                .unwrap()
+        );
+        for (tool, credential, target) in [
+            ("marfa_other", "key-a", "target"),
+            ("marfa_purge", "key-b", "target"),
+            ("marfa_purge", "key-a", "subject"),
+        ] {
+            assert!(
+                !signer
+                    .holds_target(tool, credential, target, &bound)
+                    .unwrap(),
+                "{tool} {credential} {target}"
+            );
+        }
+        assert!(
+            !signer
+                .holds_subject("marfa_purge", "key-a", "changed", &bound)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn a_bound_token_and_a_plain_one_are_never_read_as_each_other() {
+        let signer = signer();
+        let bound = signer
+            .issue_bound("marfa_purge", "key-a", "target", "subject", 1_000)
+            .unwrap();
+        let plain = signer
+            .issue("marfa_delete", "key-a", "subject", 1_000)
+            .unwrap();
+        assert!(parse(&bound.text).is_none());
+        assert!(parse_bound(&plain.text).is_none());
+        let signature = "A".repeat(SIGNATURE_CHARS);
+        assert!(parse_bound(&format!("1.{signature}.{signature}.{signature}")).is_none());
+        assert!(parse_bound(&format!("x.{signature}.{signature}")).is_none());
+    }
+
+    fn spent_table() -> rusqlite::Connection {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE mcp_spent_confirmations (token TEXT PRIMARY KEY NOT NULL, \
+                 credential TEXT NOT NULL, subject_digest TEXT NOT NULL, \
+                 total INTEGER NOT NULL, expires_at TEXT NOT NULL) STRICT, WITHOUT ROWID;",
+            )
+            .unwrap();
+        connection
+    }
+
+    #[test]
+    fn a_bound_token_is_judged_by_its_target_then_its_spend_then_its_expiry() {
+        let signer = signer();
+        let mut connection = spent_table();
+        let tx = connection.transaction().unwrap();
+        let token = signer
+            .issue_bound("marfa_purge", "key-a", "target", "subject", 1_000)
+            .unwrap();
+        let bound = parse_bound(&token.text).unwrap();
+        let at = |ms: i64| Stamp::from_ms(ms).unwrap();
+        let open = |credential: &str, target: &str, ms: i64| {
+            signer
+                .open(&tx, "marfa_purge", credential, target, &bound, at(ms))
+                .unwrap()
+        };
+        assert_eq!(open("key-a", "target", 2_000), Opening::Open);
+        assert_eq!(open("key-b", "target", 2_000), Opening::Stale);
+        assert_eq!(open("key-a", "other", 2_000), Opening::Stale);
+        assert_eq!(open("key-a", "target", 1_000 + LIFE_MS), Opening::Stale);
+        spend_bound(&tx, &bound, "key-a", "target", 3).unwrap();
+        assert_eq!(open("key-a", "target", 2_000), Opening::Spent { total: 3 });
+        assert_eq!(open("key-b", "target", 2_000), Opening::Stale);
+        // A spent record lasts as long as the token, and no longer.
+        assert_eq!(open("key-a", "target", 1_000 + LIFE_MS), Opening::Stale);
+        assert_eq!(open("key-a", "target", 2_000), Opening::Open);
+    }
+
+    #[test]
+    fn a_peek_judges_a_bound_token_as_open_would_and_writes_nothing() {
+        let signer = signer();
+        let mut connection = spent_table();
+        let tx = connection.transaction().unwrap();
+        let token = signer
+            .issue_bound("marfa_purge", "key-a", "target", "subject", 1_000)
+            .unwrap();
+        let bound = parse_bound(&token.text).unwrap();
+        let at = |ms: i64| Stamp::from_ms(ms).unwrap();
+        let peek = |credential: &str, target: &str, ms: i64| {
+            signer
+                .peek(&tx, "marfa_purge", credential, target, &bound, at(ms))
+                .unwrap()
+        };
+        assert_eq!(peek("key-a", "target", 2_000), Opening::Open);
+        assert_eq!(peek("key-b", "target", 2_000), Opening::Stale);
+        assert_eq!(peek("key-a", "other", 2_000), Opening::Stale);
+        assert_eq!(peek("key-a", "target", 1_000 + LIFE_MS), Opening::Stale);
+        spend_bound(&tx, &bound, "key-a", "target", 3).unwrap();
+        assert_eq!(peek("key-a", "target", 2_000), Opening::Spent { total: 3 });
+        assert_eq!(peek("key-b", "target", 2_000), Opening::Stale);
+        assert_eq!(peek("key-a", "target", 1_000 + LIFE_MS), Opening::Stale);
+        assert_eq!(
+            peek("key-a", "target", 2_000),
+            Opening::Spent { total: 3 },
+            "a peek swept the spent record"
+        );
     }
 }

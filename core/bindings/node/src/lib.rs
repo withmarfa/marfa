@@ -1677,6 +1677,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::ContractMismatch { .. }
         | E::ServerTooOld { .. }
         | E::FirstSyncWaiting
+        | E::SyncPaused
         | E::Canceled => error.to_string(),
     };
     let mut fields = match error {
@@ -1774,6 +1775,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::ReadingHandle
         | E::OpenedToRead
         | E::FirstSyncWaiting
+        | E::SyncPaused
         | E::Canceled
         | E::Invalid(_)
         | E::NotAnswerable(_)
@@ -3797,6 +3799,7 @@ mod tests {
                 reason: "its table queue".into(),
                 unsent: Some(2),
                 folder: None,
+                release: None,
             }),
             vec![
                 ("path", json!("/store")),

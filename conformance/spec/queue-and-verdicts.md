@@ -190,7 +190,7 @@ If the read of `queue-and-verdicts/resend-read-first` finds a create by natural 
 
 When a device sends again, after the read of `queue-and-verdicts/resend-read-first` found its subject, a tag write that adds or removes one tag, a lifecycle move, a restore, or a create by natural key on an item it held when it first sent the create, a device MUST name the version of the subject it held when it first sent the write, on that send and every later send under the same key.
 
-**Reason:** under the new credential the server runs the write afresh, so without a version it would act on an item changed in a way the copy had not read when it first sent the write; named, the server answers `409 version_conflict` and the write is blocked `conflict_unresolved` (`queue-and-verdicts/conflict-blocks`). The server's fingerprint of a key covers the query and body, so every send under the key names the same version. A version moves with an item's properties and type, never with its tags or state, so another device's tag or lifecycle change is not caught, and a tag write that replaces every tag and an extension write, whose operations take no version, can land over newer work of their own kind.
+**Reason:** under the new credential the server runs the write afresh, so without a version it would act on an item changed in a way the copy had not read when it first sent the write; named, the server answers `409 version_conflict` and the write is blocked `conflict_unresolved` (`queue-and-verdicts/conflict-blocks`). The server's fingerprint of a key covers the query and body, so every send under the key names the same version. A version moves with an item's properties and type, never with its tags or state, so another device's tag or lifecycle change is not caught, and an extension write, whose operation takes no version, can land over newer work of its own kind. A tag write that replaces every tag names the tags it read instead (`queue-and-verdicts/replace-tags-names-read`).
 
 **Tests:** `device/resend-credential-live.test.ts › sends a tag the server never received again naming the version it was sent at, and blocks it as a conflict once the item has moved`.
 
@@ -604,6 +604,22 @@ When a caller releases an `undo_rows` write `blocked` `key_spent`, `conflict_unr
 
 An update names the version it was made against, and a delete names the version it removes, so the server can tell whether the item has moved since (`versions.md`).
 
+### `queue-and-verdicts/replace-tags-names-read`
+
+When a caller queues a tag replace of an item the copy holds, a device MUST carry in the write, as `read_tags`, the tags the copy held for the item when the write was queued, this device's own earlier tag writes included, so that every send of the write names them.
+
+**Reason:** a tag write leaves an item's version as it is (`versions/metadata-keeps-version`), so a version cannot show that another writer changed the tags since the copy read them. The server refuses a replace whose `read_tags` are not the tags it holds (`items/tags-replace-read-stale`), and a replace made behind this device's own tag writes names the tags they leave, so it does not conflict with them. The body is part of what the server fingerprints a key by, so every send under a key names the same tags.
+
+**Tests:** `device/tags-read-live.test.ts › sends a tag replace naming the tags it read, and blocks it as a conflict once another key has changed them`, `› sends a tag replace queued behind this device's own tag write, update and create on the tags those writes leave`, `› sends a tag replace of an item whose content another key changed since the read when its tags did not change`.
+
+### `queue-and-verdicts/replace-tags-released-unconditional`
+
+When a caller releases a tag replace blocked `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST send it under a fresh key with no `read_tags`.
+
+**Reason:** a released write is meant to land, and the tags the replace read may no longer be the item's, so it makes the tags what the copy holds, as it would with no `read_tags`; sent with them, the server would refuse it again for as long as the tags differ, and nothing could release the block.
+
+**Tests:** `device/tags-read-live.test.ts › sends a tag replace naming the tags it read, and blocks it as a conflict once another key has changed them`.
+
 ### `queue-and-verdicts/update-needs-version`
 
 If a caller queues an update that names no version, then a device MUST refuse it, queueing and sending nothing.
@@ -816,7 +832,7 @@ While the write a write follows has no verdict, or is `blocked` with the reason 
 
 ### `queue-and-verdicts/answer-frees-follower`
 
-When the write a write follows is answered `accepted`, `merged`, `conflicted` or `refused`, is `blocked` for a reason other than `awaiting_dependency` or `credential_refused`, or is `dead`, a device MUST NOT hold the later write for it.
+When the write a write follows is answered `accepted`, `merged`, `conflicted` or `refused`, is `blocked` for a reason other than `awaiting_dependency` or `credential_refused`, or is `dead`, a device MUST NOT hold the later write for it, other than a row write behind one queued under `device/restored-rows-kept` (`device/restored-rows-first`).
 
 **Reason:** `follows` orders writes and decides nothing else: an edit behind a refused or blocked edit of the same edge still goes, and the server judges it.
 
@@ -1680,7 +1696,7 @@ When the server answers a write `409 version_conflict`, a device MUST block it `
 
 **Reason:** the server resolves a colliding update in the same write (`versions/auto-resolved`) but for one that also moves the type (`versions/auto-type-move`), and refuses a delete of an item that has moved; a device cannot resolve it itself and the same request is refused the same way. A delete blocked so keeps the newer item intact.
 
-**Tests:** `device/classification.test.ts › blocks a conflict the server declined to resolve`, `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/versioned-deletes-live.test.ts › guards a queued delete through %s`, `device/queue.test.ts › blocks a move that collides with a write it did not read, keeping it`.
+**Tests:** `device/classification.test.ts › blocks a conflict the server declined to resolve`, `device/verdicts.test.ts › reports a conflict rather than resolving it`, `device/versioned-deletes-live.test.ts › guards a queued delete through %s`, `device/queue.test.ts › blocks a move that collides with a write it did not read, keeping it`, `device/tags-read-live.test.ts › sends a tag replace naming the tags it read, and blocks it as a conflict once another key has changed them`.
 
 ## A renewal a drain meets
 

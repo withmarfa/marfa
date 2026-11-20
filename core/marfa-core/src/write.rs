@@ -998,8 +998,9 @@ impl Core {
     pub fn add_tag(&self, id: &str, tag: &str) -> Result<QueuedWrite> {
         let payload = serde_json::to_string(&serde_json::json!({ "tags": [tag] }))?;
         let tags = [tag.to_string()];
-        self.tag_write(id, WriteKind::AddTag, Some(tag), &tags, &payload, |tx| {
-            store::add_tags(tx, id, &tags)
+        self.tag_write(id, WriteKind::AddTag, Some(tag), &tags, |tx| {
+            store::add_tags(tx, id, &tags)?;
+            Ok(payload)
         })
     }
 
@@ -1007,21 +1008,22 @@ impl Core {
     /// writes tags as recorded, so a row can hold one the bound refuses and
     /// must still be able to shed it.
     pub fn remove_tag(&self, id: &str, tag: &str) -> Result<QueuedWrite> {
-        self.tag_write(id, WriteKind::RemoveTag, Some(tag), &[], "{}", |tx| {
-            store::remove_tag(tx, id, tag)
+        self.tag_write(id, WriteKind::RemoveTag, Some(tag), &[], |tx| {
+            store::remove_tag(tx, id, tag)?;
+            Ok("{}".to_string())
         })
     }
 
     /// `admitted` are the tags the write adds, each held to the server's
-    /// bound before anything is saved or queued.
+    /// bound before anything is saved or queued. `apply` changes the copy and
+    /// answers the payload to queue.
     fn tag_write(
         &self,
         id: &str,
         kind: WriteKind,
         tag: Option<&str>,
         admitted: &[String],
-        payload: &str,
-        apply: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<()>,
+        apply: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<String>,
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         marfa_rules::validation::tags(admitted)?;
@@ -1039,7 +1041,7 @@ impl Core {
         let tx = conn.transaction()?;
         store::hold_beneath_item(&tx, id)?;
         let before = store::tag_count(&tx, id)?;
-        apply(&tx)?;
+        let payload = apply(&tx)?;
         marfa_rules::validation::tag_count(before, store::tag_count(&tx, id)?)?;
         // The index holds a row's tags, so a tag changed here is changed there.
         store::reindex_item(&tx, id)?;
@@ -1054,7 +1056,7 @@ impl Core {
                 tag,
                 blob: None,
                 base_version: None,
-                payload,
+                payload: &payload,
                 depends_on: &depends_on,
             },
         )?;
@@ -1063,17 +1065,14 @@ impl Core {
     }
 
     /// Only the tags land locally; an extension namespace is not part of the
-    /// copy and is its own write.
+    /// copy and is its own write. The replace names the tags the copy held,
+    /// this device's own earlier tag writes included.
     pub fn replace_tags(&self, id: &str, write: &TagsWrite) -> Result<QueuedWrite> {
-        let payload = write.payload()?;
-        self.tag_write(
-            id,
-            WriteKind::ReplaceTags,
-            None,
-            &write.tags,
-            &payload,
-            |tx| store::replace_tags(tx, id, &write.tags),
-        )
+        self.tag_write(id, WriteKind::ReplaceTags, None, &write.tags, |tx| {
+            let read = store::tags_held(tx, id)?;
+            store::replace_tags(tx, id, &write.tags)?;
+            write.payload(&read)
+        })
     }
 
     /// Queued and not applied: the copy holds no extension namespaces.

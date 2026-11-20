@@ -28,12 +28,13 @@ const HOUSEKEEPING: [&str; 12] = [
 const ACCESS_FAMILIES: [&str; 7] = [
     "auth", "owner", "key", "keys", "instance", "profile", "folder",
 ];
-const SETTINGS_FAMILIES: [&str; 5] = [
+const SETTINGS_FAMILIES: [&str; 6] = [
     "config",
     "webhook",
     "connector",
     "connector_state",
     "inbound_endpoint",
+    "backup_folder",
 ];
 const KINDS: [&str; 4] = ["access", "data", "settings", "housekeeping"];
 
@@ -322,6 +323,7 @@ mod tests {
             ("owner.claimed", "access"),
             ("keys.purged", "housekeeping"),
             ("config.update", "settings"),
+            ("backup_folder.adopt", "settings"),
             ("blob.purge", "housekeeping"),
             ("source.update", "data"),
             ("item.create", "data"),

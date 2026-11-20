@@ -14,6 +14,14 @@ pub enum UpdateCommand {
     /// Have the server update itself to the newest release it found, where it
     /// runs as the service `marfa server install` set up. Elsewhere it changes
     /// nothing and says the step to take on the host. Requires `instance.maintain`.
+    ///
+    /// Before Marfa 0.1, a newer release may not read an earlier release's
+    /// database. The server asks the newer release first, and when it cannot
+    /// read the database, the update ends with nothing changed: the server stays
+    /// on its release, and `marfa update status` gives the reason in `last`. The
+    /// way to move is then to export, make a new install of the newer release
+    /// and restore the archive there. A release that changes how the database is
+    /// laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
     Start,
 }
 

@@ -48,7 +48,7 @@ With --json a refusal is the last line of stderr, one JSON object, after any pla
 {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...,"request_id":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
-where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
+where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `sync_paused`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 
@@ -2210,7 +2210,7 @@ Preserves item and edge IDs, created_at and updated_at dates, current versions, 
 
 The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It holds no sign-in, keys, apps, webhooks, inbound endpoints, connector keys, addresses, name or logs, so set those up again after a restore; the command prints one line for each. Each setting, enforcement setting, type icon, source name, and connector state comes back only where this instance has none of its own. After a restore of another instance's archive, the command names where the backup destination keeps that instance's backups: delete them only once that instance no longer runs and nothing else restores from them. An archive holds the items in the bin only if its export did: `marfa export` carries them unless `--state` names other states.
 
-A build restores every archive version up to its own and refuses a later one, or one written before Marfa 0.1, naming the build that wrote it. An entry the build does not know, such as one a tar tool adds, is skipped, and the answer names it in `entries_skipped`, which the command also prints.
+A build restores every archive version up to its own and refuses a later one, or one whose `manifest.json` names no format or another format, as every release before 0.0.72 wrote, naming the build or the format. An entry the build does not know, such as one a tar tool adds, is skipped, and the answer names it in `entries_skipped`, which the command also prints.
 
 When the archive lacks blobs it names and this instance does not hold them either, the answer lists them in `blobs_missing`, and the command prints it and exits 1 with `blobs_missing`. Upload their bytes again with `blobs upload` to restore them.
 
@@ -2597,6 +2597,8 @@ marfa update status [OPTIONS]
 ### marfa update start
 
 Have the server update itself to the newest release it found, where it runs as the service `marfa server install` set up. Elsewhere it changes nothing and says the step to take on the host. Requires `instance.maintain`.
+
+Before Marfa 0.1, a newer release may not read an earlier release's database. The server asks the newer release first, and when it cannot read the database, the update ends with nothing changed: the server stays on its release, and `marfa update status` gives the reason in `last`. The way to move is then to export, make a new install of the newer release and restore the archive there. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
 
 ```text
 marfa update start [OPTIONS]
@@ -4451,7 +4453,7 @@ marfa folders add [OPTIONS] --folder <ID_OR_TITLE> <DIR>
 
 ### marfa folders list
 
-List the directories on this machine that follow a folder, as its registry holds them. The registry is the file MARFA_FOLDER_REGISTRY names, where it names one. With --json, each entry has `dir`, `folder`, and where the registry records them, `store` and `root`. `root` is an opaque value that identifies the directory as it was opened: compare it for equality and do not parse it.
+List the directories on this machine that follow a folder, as its registry holds them. The registry is the file MARFA_FOLDER_REGISTRY names, where it names one. With --json, each entry has `dir`, `folder`, `paused` (whether its sync is paused with `folders pause`), and where the registry records them, `store` and `root`. `root` is an opaque value that identifies the directory as it was opened: compare it for equality and do not parse it.
 
 ```text
 marfa folders list [OPTIONS]
@@ -4506,6 +4508,30 @@ marfa folders health [OPTIONS] <ID>
 | Argument | Description |
 | --- | --- |
 | `<ID>` | The folder's `system.folder` id. |
+
+### marfa folders pause
+
+Pause a directory's sync until `folders resume`. A watch, of one directory or of every one, skips a paused directory, and `folders push` and `folders pull` refuse it. The pause is kept in the directory's own state on this computer, so it lasts through a restart of the watch and of the computer, and nothing in the directory or in its saved state changes. A watch that holds the directory lets it go to this command. Pausing a directory that is paused changes nothing and says so.
+
+```text
+marfa folders pause [OPTIONS] <DIR>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<DIR>` | The directory. |
+
+### marfa folders resume
+
+Let a paused directory's sync go on. A watch picks the directory up again, and the next sync sends what changed in it and pulls what changed on the server, as a watch that starts again does; conflicts are handled as they are then. Resuming a directory that is not paused changes nothing and says so.
+
+```text
+marfa folders resume [OPTIONS] <DIR>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<DIR>` | The directory. |
 
 ### marfa folders confirm
 
@@ -4835,7 +4861,7 @@ marfa server install [OPTIONS]
 | `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
 | `--name <NAME>` | What this install is called: the service, the container and the data volume are named from it. The default is `marfa`. |
 | `--docker` | Run the server in Docker, from the release's image, in place of as a service of this machine. Needs Docker with Compose. An install keeps its runtime: to change it, export the data and restore it into a new install. |
-| `--release <VERSION>` | The release of the image to run, such as `0.0.22`, for `--docker`. The default is this binary's own version, and for a server already installed, the release it runs. A native server runs the release installed beside this `marfa`. |
+| `--release <VERSION>` | The release of the image to run, such as `0.0.22`, for `--docker`. The default is this binary's own version, and for a server already installed, the release it is on: another release is refused, and `marfa server upgrade` moves the install. A native server runs the release installed beside this `marfa`. |
 | `--access <ACCESS>` | How the server is reached. Asked when not given. `local`: only this machine, at `http://localhost`. `tailscale`: your tailnet, through Tailscale Serve, at this machine's `ts.net` name. `cloudflare`: a Cloudflare Tunnel on this machine, at your own address. `proxy`: another proxy on this machine, such as Caddy or nginx, at your own address. One of `local`, `tailscale`, `cloudflare`, `proxy`. |
 | `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. Needed for `cloudflare` and `proxy`; `tailscale` reads it from Tailscale. The server holds it, and a link to set up the server is at it. A run that gives neither this nor a different `--access` leaves an address the server already holds, and says so; `--access local` clears it. |
 | `--port <PORT>` | The port on this machine's loopback address. The default is 8600, or the next free port. |
@@ -4848,9 +4874,15 @@ marfa server install [OPTIONS]
 
 ### marfa server upgrade
 
-Move the server to the release now installed.
+Move the server to another release, newer or older.
 
-Before Marfa 0.1, a release does not promise to open the database of another release, so a newer release needs a new install, and this moves a server only between builds of one release. A native server runs the `marfa-server` installed beside this `marfa`. A Docker install moves to the release you name with `--release`, or to this binary's own. It refuses an older release than the one installed.
+A native server moves to the release of the `marfa-server` installed beside this `marfa`. A Docker install moves to the release you name with `--release`, or to this binary's own. This is the only command that changes the release an install is on: `install`, `start` and `restart` keep it there. A native install is on the release that last served its database, and a Docker install on the image `.env` names.
+
+Before Marfa 0.1, a release may not read another release's database. This command first asks the release it moves to, newer or older, whether it opens the install's database and settings, and changes nothing when it does not. When the programs the service runs were already replaced, the error says how to put back the release the install is on. When a release up to 0.0.85 last served the database, which names none, the error says the release cannot be told and gives the general way back. A release that could not be asked is started, and a Docker install whose new release then refuses the database starts its earlier release again. A Docker image before 0.0.76 cannot be asked, so it is refused. The way to move is then to export, make a new install of the other release and restore the archive there. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+
+To go back to an earlier release, install it the way you installed marfa and run this command with its `marfa`, or with `--release` for Docker.
+
+`marfa update start` has the server update itself to a release it found, with the same checks. This command moves an install to a release you have installed yourself.
 
 ```text
 marfa server upgrade [OPTIONS]
@@ -4859,7 +4891,7 @@ marfa server upgrade [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
-| `--release <VERSION>` | The release to move to, for a Docker install. The default is this binary's own version. A native server moves to the release installed. |
+| `--release <VERSION>` | The release to move to, newer or older, for a Docker install. The default is this binary's own version. A native server moves to the release installed beside this `marfa`. |
 | `--wait-seconds <SECONDS>` | How long to wait for the server to answer, in seconds. Default: `120`. |
 
 ### marfa server status
@@ -4881,6 +4913,8 @@ marfa server status [OPTIONS]
 ### marfa server start
 
 Start the server, if it is not running.
+
+A native install stays on the release that last served its database. A `marfa` of another release is refused, and so is a start after the programs the service runs were replaced in place, as Homebrew and the install script do, while an earlier release ran or after it stopped. `marfa server upgrade` moves the install. A `marfa` of the same release at another path is named there while the program the service runs is still in place; once that program is gone, `marfa server upgrade` names the new one. When a release up to 0.0.85 last served the database, which names none, the release the install is on cannot be told, and `marfa server upgrade` moves it.
 
 On a Mac with a Docker install, this starts Docker's engine first if it is down: it is what the login agent runs.
 
@@ -4909,7 +4943,7 @@ marfa server stop [OPTIONS]
 
 Stop the server and start it again, so that it reads `marfa.env` anew.
 
-It does what `stop` and then `start` do, and prints what each prints. It exits as `start` does, so a server that did not come back healthy is an error here too.
+It does what `stop` and then `start` do, and prints what each prints. It exits as `start` does, so a server that did not come back healthy is an error here too. A `marfa` that `start` refuses is refused before the server is stopped.
 
 ```text
 marfa server restart [OPTIONS]

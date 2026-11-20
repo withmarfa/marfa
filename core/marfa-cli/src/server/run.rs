@@ -22,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime};
 use marfa_rules::environment::INSTALL_DIR;
 use marfa_rules::update_record::{
     self as record, ASK_LIMIT, MARFA, Outcome, Pending, UNFINISHED_STARTS, Upgrade,
-    cannot_put_back, finish_swap, previous_of, put_back, release_of,
+    cannot_put_back, finish_swap, keep_served_release, previous_of, put_back, release_of,
 };
 
 #[cfg(target_os = "linux")]
@@ -31,11 +31,11 @@ use std::os::unix::process::ExitStatusExt;
 
 use crate::error::CliError;
 use crate::server::logs::{self, RotatingLog};
-use crate::server::{Folder, RunArgs, files, launchd, native};
+use crate::server::{Folder, RunArgs, files, launchd, native, shell_word};
 
 /// What the server's exit status says of its database: 78 is a refusal that
 /// a restart will not change.
-const REFUSED: i32 = 78;
+pub const REFUSED: i32 = 78;
 
 /// What the service says when the server refused its database, which
 /// `install` and `status` look for in the log.
@@ -66,7 +66,7 @@ const LOOK_EVERY: Duration = Duration::from_secs(2);
 
 const POLL: Duration = Duration::from_millis(100);
 
-const OWN: &str = env!("CARGO_PKG_VERSION");
+pub const OWN: &str = env!("CARGO_PKG_VERSION");
 
 static CHILD: AtomicI32 = AtomicI32::new(0);
 static STOP: AtomicBool = AtomicBool::new(false);
@@ -196,6 +196,41 @@ pub fn locate(dir: Option<&Path>) -> Result<PathBuf, CliError> {
     Ok(server)
 }
 
+/// Whether the install in `dir`, whose service runs `serviced`, is trying a new server of an
+/// update between `serviced` and this `marfa`'s release, which the service already names.
+pub fn trying_update(dir: &Path, serviced: &str) -> bool {
+    record_of(dir)
+        .pending()
+        .ok()
+        .flatten()
+        .is_some_and(|pending| {
+            let part = |release: &str| release == pending.from || release == pending.to;
+            part(serviced) && part(OWN)
+        })
+}
+
+/// What `server` says when it will not run on the install's settings and `database`, or `None`
+/// when it will, or when it could not be asked: a server asked to start judges both again.
+pub fn will_not_open(
+    server: &Path,
+    database: &Path,
+    environment: &[(String, String)],
+) -> Option<String> {
+    let mut command = Command::new(server);
+    command.arg("--can-open").arg(database);
+    // The server reads settings beyond its own, such as `OTEL_*`, and what this shell sets is
+    // not what the service starts it with.
+    command.env_clear();
+    for name in ["PATH", "HOME"] {
+        if let Some(value) = std::env::var_os(name) {
+            command.env(name, value);
+        }
+    }
+    command.envs(environment.iter().map(|(name, value)| (name, value)));
+    let ran = record::run_within(command, ASK_LIMIT).ok()?;
+    (ran.status.code() == Some(REFUSED)).then(|| ran.stderr.trim().to_string())
+}
+
 fn agree(server: &Path, theirs: &str, own: &str) -> Result<(), CliError> {
     if theirs != own {
         return Err(CliError::Install(format!(
@@ -287,6 +322,16 @@ impl Install {
         if let Err(error) = self.record.clear_pending() {
             sink.say(&format!(
                 "The update's record could not be cleared: {error}"
+            ));
+        }
+    }
+
+    /// Names `release` as the one on the database. A release put back may be one that keeps no
+    /// such record itself.
+    fn name_release(&self, sink: &Sink, release: &str) {
+        if let Err(error) = keep_served_release(&self.database, release) {
+            sink.say(&format!(
+                "Release {release} could not be named beside the database: {error}"
             ));
         }
     }
@@ -405,6 +450,7 @@ impl Install {
         }
         match put_back(programs, OWN == to.as_str()) {
             Ok(()) => {
+                self.name_release(sink, from);
                 self.clear(sink);
                 self.end(
                     sink,
@@ -475,6 +521,7 @@ impl Install {
             let restored = std::fs::rename(previous_of(programs, MARFA), programs.join(MARFA))
                 .and_then(|()| record::drop_next(programs))
                 .and_then(|()| record::sync_folder(programs));
+            self.name_release(sink, from);
             self.clear(sink);
             let (outcome, reason) = match restored {
                 Ok(()) => (
@@ -510,6 +557,9 @@ impl Install {
 }
 
 pub fn run(args: &RunArgs) -> Result<(), CliError> {
+    // A service manager may start this under a umask that opens what it makes to a group.
+    // SAFETY: `umask` takes a mask and cannot fail.
+    unsafe { libc::umask(0o077) };
     let dir = &args.dir;
     let server = beside()?;
     let mut command = Command::new(&server);
@@ -521,10 +571,7 @@ pub fn run(args: &RunArgs) -> Result<(), CliError> {
     if dir.dir.is_some() {
         let folder = Folder::new(dir)?;
         let (state, _) = folder.require_state()?;
-        folder_arg = format!(
-            " --dir '{}'",
-            folder.dir.display().to_string().replace('\'', "'\\''")
-        );
+        folder_arg = format!(" --dir {}", shell_word(&folder.dir));
         let settings = folder.read(files::SETTINGS)?.unwrap_or_default();
         let environment = native::environment(&folder.dir, state.port, &settings);
         command.envs(environment.iter().map(|(name, value)| (name, value)));

@@ -1005,6 +1005,7 @@ export type BindingFolderEvent =
         | "handedOver"
         | "takenBack"
         | "heldElsewhere"
+        | "paused"
         | "removed"
         | "unlisted";
     };
@@ -1047,6 +1048,14 @@ export class BindingFolder {
   }
   remove(): Call<void> {
     return this.device.folderCall("remove", this.dir);
+  }
+  /** Pauses the directory's sync; false where it was paused already (`folder-sync/pause-running-watch-stays`). */
+  pause(): Call<boolean> {
+    return this.device.folderCall("pause", this.dir);
+  }
+  /** Lets a paused directory's sync go on; false where it was not paused. */
+  resume(): Call<boolean> {
+    return this.device.folderCall("resume", this.dir);
   }
   testOpen(): Call<void> {
     return this.device.folderCall("testOpen", this.dir);

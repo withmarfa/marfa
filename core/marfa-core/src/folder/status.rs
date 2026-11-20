@@ -48,6 +48,12 @@ pub struct StatusReport {
     /// until it has.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub beneath_waiting: Option<String>,
+    /// The person paused the directory's sync. Read by `Folder::status_of`
+    /// alone.
+    pub sync_paused: bool,
+    /// How many directories a watch last found it could not watch, from the
+    /// last report of the folder's health. Read by `Folder::status_of` alone.
+    pub unwatched: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -394,6 +400,8 @@ impl Folder {
                 None
             },
             beneath_waiting: self.beneath_waiting(),
+            sync_paused: false,
+            unwatched: 0,
         })
     }
 
@@ -753,6 +761,7 @@ mod tests {
             last_reads: std::sync::Mutex::default(),
             inventory: std::sync::Mutex::default(),
             every_addition: std::sync::atomic::AtomicBool::new(false),
+            unwatched: std::sync::atomic::AtomicUsize::new(0),
             replaced: None,
             unflushed: Default::default(),
             writers: Default::default(),

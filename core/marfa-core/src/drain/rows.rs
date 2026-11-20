@@ -320,10 +320,29 @@ fn undo_answer(row: &QueuedWrite, body: &str) -> std::result::Result<(), String>
 
 /// `answer` is `None` where the server kept no answer to repeat.
 fn undone(core: &Core, row: &QueuedWrite, answer: Option<&Answer>) -> Result<Settled> {
+    // Read as `undo_answer` checked it.
+    let read = answer.and_then(|answer| answer_object(&answer.body).ok());
+    let batch = read
+        .as_ref()
+        .and_then(|read| answered_batch(read).ok().flatten());
+    let at = read
+        .as_ref()
+        .and_then(|read| read.get("last_activity_at"))
+        .and_then(Value::as_str);
+    let results = read
+        .as_ref()
+        .and_then(|read| read.get("results"))
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
     recorded(core, || {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         same_attempt(&tx, row)?;
+        if let (Some(batch), Some(at)) = (batch.as_deref(), at) {
+            let seen = crate::restored_rows::batch_seen(&tx, batch)?;
+            crate::restored_rows::keep_receipts(&tx, row, batch, at, results, seen)?;
+        }
+        crate::restored_rows::fold(&tx, row, at, results)?;
         store::record_verdict(
             &tx,
             &row.id,
@@ -432,7 +451,21 @@ fn taken(
             .zip(&shares)
             .map(|(write, results)| Taken { write, results })
             .collect();
+        let seen = match batch {
+            Some(batch) => crate::restored_rows::batch_seen(&tx, batch)?,
+            None => false,
+        };
         let conflicts = row_writes::taken(&tx, item, table, batch, &takens)?;
+        let at = read
+            .as_ref()
+            .and_then(|read| read.last_activity_at.as_ref())
+            .and_then(Value::as_str);
+        for (write, results) in writes.iter().zip(&shares) {
+            if let (Some(batch), Some(at)) = (batch, at) {
+                crate::restored_rows::keep_receipts(&tx, write, batch, at, results, seen)?;
+            }
+            crate::restored_rows::fold(&tx, write, at, results)?;
+        }
         let mut verdicts = Vec::with_capacity(writes.len());
         for ((write, results), conflicts) in writes.iter().zip(&shares).zip(conflicts) {
             if let Some(error) = store_fault(write) {

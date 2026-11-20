@@ -58,6 +58,7 @@ const UPDATE_FIELDS: [&str; 11] = [
     "edges",
 ];
 const TAG_FIELDS: [&str; 1] = ["tags"];
+const REPLACE_TAG_FIELDS: [&str; 2] = ["tags", "read_tags"];
 const BULK_GET_FIELDS: [&str; 2] = ["ids", "include"];
 const COUNT_FIELDS: [&str; 4] = ["ids", "backref", "edge", "table"];
 const TITLE_FIELDS: [&str; 1] = ["names"];
@@ -791,17 +792,22 @@ pub async fn set_tags(
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
         query::only(&uri, &[])?;
-        let sent = only_declared(body.object(Bag::Properties)?, &TAG_FIELDS)?;
+        let sent = only_declared(body.object(Bag::Properties)?, &REPLACE_TAG_FIELDS)?;
         check_item_id(&id)?;
         let tags = sent
             .get("tags")
             .map(tags_of)
             .transpose()?
             .unwrap_or_default();
+        // An archive restore can leave a tag the bound refuses, so `read_tags` is not held to it.
+        let read_tags = sent
+            .get("read_tags")
+            .map(|read| strings_of(read, "read_tags"))
+            .transpose()?;
         let change = Change::SetTags {
             id,
             tags,
-            version: None,
+            read_tags,
         };
         write::run(&door, &who, claim, change).await
     })

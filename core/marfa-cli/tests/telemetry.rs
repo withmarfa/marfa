@@ -1059,6 +1059,79 @@ fn posthog_settings_in_the_environment_send_nothing() {
     assert_eq!(receiver.root()["name"], "marfa items get");
 }
 
+/// The names a shell could carry that are not the one the binary reads for where traces go:
+/// the stored settings of an older release, the vendor's, and the standard ones for the other
+/// two signals and for everything about an export but its destination.
+fn everything_but_a_traces_destination(collector: &Collector) -> Vec<(String, String)> {
+    let url = collector.url.as_str();
+    [
+        ("MARFA_OTEL_EXPORTER_OTLP_ENDPOINT", url),
+        ("MARFA_OTEL_SAMPLE_RATIO", "1"),
+        ("MARFA_POSTHOG_HOST", url),
+        ("MARFA_POSTHOG_PROJECT_TOKEN", "phc_unused"),
+        ("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", url),
+        ("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", url),
+        ("OTEL_EXPORTER_OTLP_HEADERS", "authorization=unused"),
+        ("OTEL_EXPORTER_OTLP_TIMEOUT", "1000"),
+        ("OTEL_SERVICE_NAME", "unused"),
+        ("OTEL_RESOURCE_ATTRIBUTES", "team=unused"),
+        ("OTEL_TRACES_SAMPLER", "always_on"),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_string(), value.to_string()))
+    .collect()
+}
+
+#[test]
+fn with_no_traces_endpoint_the_binary_opens_no_connection_but_the_one_its_command_needs() {
+    let store = store();
+    let collector = Collector::open(Reply::Answer(200));
+    let owned = everything_but_a_traces_destination(&collector);
+    let planted: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+
+    // A command that needs no server: any connection is the binary's own report.
+    let offline = [
+        "--json",
+        "device",
+        "--db",
+        store.to_str().unwrap(),
+        "catch-up",
+    ];
+    run(&planted, &offline);
+    run(&planted, &["--json", "operations"]);
+    assert_eq!(collector.connections.load(Ordering::SeqCst), 0);
+
+    // A command that fails at a server: the one connection is its request, never a report.
+    let mut asking = planted.clone();
+    asking.push(("MARFA_API_URL", collector.url.as_str()));
+    let ran = run(&asking, &FAULT);
+    assert_ne!(ran.code, 0, "{}", ran.stderr);
+    let paths: Vec<String> = collector
+        .received()
+        .iter()
+        .map(|post| post.path().to_string())
+        .collect();
+    assert_eq!(paths.len(), 1, "{paths:?}");
+    assert!(paths[0].contains("an-id"), "{paths:?}");
+    assert_eq!(collector.connections.load(Ordering::SeqCst), 1);
+
+    // The witness: the same runs report when the standard variable names the collector.
+    let before = collector.received().len();
+    let mut reporting = planted.clone();
+    reporting.push(("OTEL_EXPORTER_OTLP_ENDPOINT", collector.url.as_str()));
+    run(&reporting, &offline);
+    let after: Vec<String> = collector
+        .received()
+        .iter()
+        .skip(before)
+        .map(|post| post.path().to_string())
+        .collect();
+    assert_eq!(after, ["/v1/traces"]);
+}
+
 #[test]
 fn a_panic_ends_the_trace_as_failed_with_the_exit_status_and_message_unchanged() {
     let collector = Collector::open(Reply::Answer(200));

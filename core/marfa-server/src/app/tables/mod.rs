@@ -41,6 +41,13 @@ pub use undo::undo;
 
 pub use marfa_rules::rows::{MAX_OPERATIONS, MAX_ROW_BYTES, Op};
 
+pub(crate) use store::Hosted;
+
+/// Each table the item hosts, whose rows a purge marks for clean-up.
+pub(crate) fn hosted(tx: &Transaction<'_>, seq: i64) -> Result<Vec<Hosted>> {
+    store::hosted(tx, seq)
+}
+
 fn refused(refused: rows::Refused) -> Refusal {
     match refused.operation {
         Some(index) => Refusal::validation(refused.sentence())

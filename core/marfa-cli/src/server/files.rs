@@ -30,9 +30,10 @@ pub const UNCONFIRMED_NOTE: &str = "\
 
 pub const COMPOSE_FILE: &str = "\
 # Written by `marfa server install`, and the same for every install. Change
-# the release, the port and the name in .env, and the server's own settings in
-# marfa.env. Without the command: `docker network create \"${MARFA_NAME}-net\"`
-# once, then `docker compose up -d` in this folder.
+# the port and the name in .env, and the server's own settings in marfa.env.
+# `marfa server upgrade` changes the release, once that release has said it
+# opens the database. Without the command: `docker network create
+# \"${MARFA_NAME}-net\"` once, then `docker compose up -d` in this folder.
 name: ${MARFA_NAME}
 
 services:
@@ -62,7 +63,8 @@ volumes:
 
 pub const DOTENV_HEADER: &str = "\
 # What `marfa server` records about this install; the server does not read
-# it. Change a value, then run `marfa server install` again.";
+# it. Change a value, then run `marfa server install` again. Only
+# `marfa server upgrade` changes the release.";
 
 pub const SETTINGS_HEADER: &str = "\
 # The server's settings: https://docs.marfa.so/run/settings
@@ -403,7 +405,7 @@ fn check_parents(dir: &Path, trusted: u32) -> Result<(), CliError> {
 pub fn prepare_root_folder(dir: &Path, account: Identity) -> Result<(), CliError> {
     check_parents(dir, 0)?;
     if let Some(parent) = dir.parent() {
-        fs::create_dir_all(parent)?;
+        marfa_acl::make_open_folders(parent)?;
     }
     match fs::DirBuilder::new().mode(0o750).create(dir) {
         Ok(()) => {}
@@ -788,8 +790,10 @@ mod tests {
             uid: 41_001,
             gid: 41_002,
         };
-        let dir = scratch("root-layout").join("marfa");
+        let above = scratch("root-layout").join("srv");
+        let dir = above.join("marfa");
         prepare_root_folder(&dir, account).unwrap();
+        assert_eq!(mode(&above), 0o755, "a folder made above is open to read");
         let folder = fs::metadata(&dir).unwrap();
         assert_eq!((folder.uid(), folder.gid()), (0, 41_002));
         assert_eq!(mode(&dir), 0o750);

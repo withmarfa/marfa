@@ -1,5 +1,6 @@
 //! Validates tool arguments and dispatches with the caller's credential.
 
+mod adopt_backup_folder;
 mod apps;
 mod audit;
 mod backups;
@@ -7,7 +8,9 @@ mod bulk;
 mod connectors;
 mod create;
 mod delete;
+mod delete_connector;
 mod docs;
+mod end_sign_in;
 mod files;
 mod find;
 mod get;
@@ -16,6 +19,9 @@ mod keys;
 mod maintain;
 mod moving;
 mod overview;
+mod purge;
+mod remove_file_copy;
+mod retire_endpoint;
 mod revoke;
 mod rows;
 mod settings;
@@ -35,6 +41,7 @@ use serde_json::{Map, Value};
 use super::results::{Outcome, Stop, check};
 use crate::app::App;
 use crate::app::access::{AdminTask, Caller};
+use crate::app::auth::Visit;
 use crate::app::refusal::Refusal;
 
 /// An MCP endpoint; each serves the items tools as well as its own.
@@ -102,19 +109,31 @@ fn definitions() -> Vec<(Home, Definition)> {
         (Home::Admin(Task::Settings), settings::read_definition()),
         (Home::Admin(Task::Settings), settings::change_definition()),
         (Home::Admin(Task::Trash), trash::definition()),
+        (Home::Admin(Task::Trash), purge::definition()),
         (Home::Admin(Task::Apps), apps::list_definition()),
         (Home::Admin(Task::Apps), apps::narrow_definition()),
         (Home::Admin(Task::Backups), backups::list_definition()),
         (Home::Admin(Task::Backups), backups::take_definition()),
+        (
+            Home::Admin(Task::Backups),
+            adopt_backup_folder::definition(),
+        ),
         (Home::Admin(Task::Maintain), maintain::definition()),
         (Home::Admin(Task::Connectors), connectors::list_definition()),
         (
             Home::Admin(Task::Connectors),
             connectors::endpoint_definition(),
         ),
+        (Home::Admin(Task::Connectors), retire_endpoint::definition()),
+        (
+            Home::Admin(Task::Connectors),
+            delete_connector::definition(),
+        ),
         (Home::Admin(Task::Files), files::definition()),
+        (Home::Admin(Task::Files), remove_file_copy::definition()),
         (Home::Admin(Task::SignIns), sign_ins::list_definition()),
         (Home::Admin(Task::SignIns), sign_ins::rename_definition()),
+        (Home::Admin(Task::EndSignIn), end_sign_in::definition()),
     ]
 }
 
@@ -201,6 +220,7 @@ pub async fn call(
     name: &str,
     arguments: Map<String, Value>,
     exact: Result<(), Refusal>,
+    visit: &Visit,
 ) -> Option<Outcome> {
     let (_, tool) = definitions().into_iter().find(|(home, tool)| {
         tool.name == name && served(group, *home) && offered(caller, *home, tool.name)
@@ -212,7 +232,7 @@ pub async fn call(
     let Value::Object(arguments) = arguments else {
         return None;
     };
-    Some(run(app, caller, tool.name, arguments, exact).await)
+    Some(run(app, caller, tool.name, arguments, exact, visit).await)
 }
 
 async fn run(
@@ -221,6 +241,7 @@ async fn run(
     name: &str,
     arguments: Map<String, Value>,
     exact: Result<(), Refusal>,
+    visit: &Visit,
 ) -> Outcome {
     if works_on_items(name) {
         caller.require_reach()?;
@@ -260,6 +281,7 @@ async fn run(
         settings::READ_NAME => settings::read(app, caller).await,
         settings::CHANGE_NAME => settings::change(app, caller, arguments).await,
         trash::NAME => trash::run(app, caller, arguments).await,
+        purge::NAME => purge::run(app, caller, arguments).await,
         apps::LIST_NAME => apps::list(app, caller).await,
         apps::NARROW_NAME => apps::narrow(app, caller, arguments).await,
         backups::LIST_NAME => backups::list(app, caller).await,
@@ -267,9 +289,14 @@ async fn run(
         maintain::NAME => maintain::run(app, caller, arguments).await,
         connectors::LIST_NAME => connectors::list(app, caller, arguments).await,
         connectors::ENDPOINT_NAME => connectors::make_endpoint(app, caller, arguments).await,
+        retire_endpoint::NAME => retire_endpoint::run(app, caller, arguments).await,
+        delete_connector::NAME => delete_connector::run(app, caller, arguments).await,
         files::NAME => files::run(app, caller, arguments).await,
+        remove_file_copy::NAME => remove_file_copy::run(app, caller, arguments).await,
+        adopt_backup_folder::NAME => adopt_backup_folder::run(app, caller, arguments).await,
         sign_ins::LIST_NAME => sign_ins::list(app, caller).await,
         sign_ins::RENAME_NAME => sign_ins::rename(app, caller, arguments).await,
+        end_sign_in::NAME => end_sign_in::run(app, caller, arguments, visit.clone()).await,
         _ => Err(Stop::invalid("No tool has this name.")),
     }
 }
