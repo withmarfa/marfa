@@ -4513,6 +4513,19 @@ impl Rig {
         .unwrap();
     }
 
+    /// What the install names as the release last served on its database.
+    fn served(&self) -> Option<String> {
+        fs::read_to_string(self.dir.join("data/marfa.db.release")).ok()
+    }
+
+    fn name_served(&self, release: &str) {
+        fs::write(
+            self.dir.join("data/marfa.db.release"),
+            format!("{release}\n"),
+        )
+        .unwrap();
+    }
+
     fn starts(&self) -> Option<u64> {
         let text = fs::read(self.update_record().join("pending.json")).ok()?;
         serde_json::from_slice::<serde_json::Value>(&text).unwrap()["starts"].as_u64()
@@ -4595,12 +4608,14 @@ fn a_new_release_that_ends_before_it_settles_is_put_back_after_two_starts() {
 fn a_new_release_that_refuses_its_database_is_put_back_at_once() {
     let rig = Rig::new("u-refused");
     rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    rig.name_served("0.0.1");
     let code = rig.started_once(&[NEW, ("FAKE_SERVER_EXIT", "78")]);
     assert_eq!(code, Some(75), "{}", rig.run_said());
     assert_eq!(
         rig.program("marfa-server"),
         old_server(OPENS_SCHEMA_1).as_bytes()
     );
+    assert_eq!(rig.served().as_deref(), Some("0.0.0\n"));
     let (outcome, reason) = rig.last();
     assert_eq!(outcome, "rolled_back");
     assert!(reason.contains("exit status 78"), "{reason}");
@@ -4711,6 +4726,7 @@ fn an_update_left_unfinished_is_ended_by_the_next_start() {
     // Putting back stopped between the two programs.
     let rig = Rig::new("u-between");
     rig.swapped("0.0.1", "0.0.0", 2, OPENS_SCHEMA_1);
+    rig.name_served("0.0.0");
     fs::write(
         rig.programs().join(".marfa.previous"),
         "release 0.0.1's marfa",
@@ -4719,6 +4735,7 @@ fn an_update_left_unfinished_is_ended_by_the_next_start() {
     assert_eq!(rig.started_once(&[NEW]), Some(75), "{}", rig.run_said());
     assert!(!rig.server_started());
     assert_eq!(rig.program("marfa"), b"release 0.0.1's marfa");
+    assert_eq!(rig.served().as_deref(), Some("0.0.1\n"));
     assert_eq!(rig.starts(), None);
     assert_eq!(rig.last().0, "rolled_back");
 

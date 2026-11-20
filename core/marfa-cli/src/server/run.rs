@@ -22,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime};
 use marfa_rules::environment::INSTALL_DIR;
 use marfa_rules::update_record::{
     self as record, ASK_LIMIT, MARFA, Outcome, Pending, UNFINISHED_STARTS, Upgrade,
-    cannot_put_back, finish_swap, previous_of, put_back, release_of,
+    cannot_put_back, finish_swap, keep_served_release, previous_of, put_back, release_of,
 };
 
 #[cfg(target_os = "linux")]
@@ -326,6 +326,16 @@ impl Install {
         }
     }
 
+    /// Names `release` as the one on the database. A release put back may be one that keeps no
+    /// such record itself.
+    fn name_release(&self, sink: &Sink, release: &str) {
+        if let Err(error) = keep_served_release(&self.database, release) {
+            sink.say(&format!(
+                "Release {release} could not be named beside the database: {error}"
+            ));
+        }
+    }
+
     /// Whether `pending`'s own attempt has an outcome already: a record kept after it ended lets
     /// the old `marfa` go on starting the new server, which is then no longer on trial.
     fn ended(&self, pending: &Pending) -> bool {
@@ -440,6 +450,7 @@ impl Install {
         }
         match put_back(programs, OWN == to.as_str()) {
             Ok(()) => {
+                self.name_release(sink, from);
                 self.clear(sink);
                 self.end(
                     sink,
@@ -510,6 +521,7 @@ impl Install {
             let restored = std::fs::rename(previous_of(programs, MARFA), programs.join(MARFA))
                 .and_then(|()| record::drop_next(programs))
                 .and_then(|()| record::sync_folder(programs));
+            self.name_release(sink, from);
             self.clear(sink);
             let (outcome, reason) = match restored {
                 Ok(()) => (
