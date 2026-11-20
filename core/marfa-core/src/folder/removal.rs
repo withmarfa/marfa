@@ -891,6 +891,106 @@ mod tests {
         assert!(items_deleted(&folder).is_empty());
     }
 
+    /// A folder of notes holding `note.md`, which the server has taken.
+    fn bound_note(id: &str) -> (tempfile::TempDir, Folder, String) {
+        let (dir, folder) = folder_with(
+            id,
+            serde_json::json!({ "query": { "types": ["core.note"] } }),
+            None,
+        );
+        std::fs::write(dir.path().join("note.md"), "the original words\n").unwrap();
+        assert_eq!(folder.scan().unwrap().created, 1);
+        let item = landed(&folder, "note.md");
+        folder.pull().unwrap();
+        (dir, folder, item)
+    }
+
+    /// Saves `name` as `sed -i.bak` does: the original is renamed to its name
+    /// plus `.bak` and the new words are written at its name.
+    fn saved_with_backup(dir: &std::path::Path, name: &str, bytes: &str) {
+        std::fs::rename(dir.join(name), dir.join(format!("{name}.bak"))).unwrap();
+        std::fs::write(dir.join(name), bytes).unwrap();
+    }
+
+    fn nothing_held(scanned: &super::super::ScanReport) -> bool {
+        scanned.carried == 0 && !scanned.flagged.iter().any(|file| file.flag == "waiting")
+    }
+
+    #[test]
+    fn each_save_that_keeps_a_backup_by_renaming_is_sent_as_the_items_edit() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder, item) = bound_note("01a00000-0000-7000-8000-00000000c620");
+        for save in 1..=3 {
+            saved_with_backup(dir.path(), "note.md", &format!("save {save}\n"));
+            let scanned = folder.scan().unwrap();
+            assert_eq!((scanned.created, scanned.updated), (0, 1), "{scanned:?}");
+            assert!(nothing_held(&scanned), "{scanned:?}");
+            assert_eq!(updates_queued(&folder, &item), save);
+            assert!(
+                state::journaled(&folder.core.conn().unwrap())
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        assert_eq!(bound_item(&folder, "note.md"), Some(item.clone()));
+        let status = folder.status().unwrap();
+        assert!(
+            status.files.iter().any(|file| file.path == "note.md"
+                && file.item_id.as_deref() == Some(item.as_str())
+                && file.flag.is_none()),
+            "{status:?}"
+        );
+        // The witness: a file of another name that carries the item still
+        // holds a new file at its path.
+        std::fs::rename(dir.path().join("note.md"), dir.path().join("note.bin")).unwrap();
+        std::fs::write(dir.path().join("note.md"), "a different note altogether\n").unwrap();
+        let held = folder.scan().unwrap();
+        assert_eq!((held.created, held.updated), (0, 0), "{held:?}");
+        assert!(waits_for(&held, "note.md", "note.bin"), "{held:?}");
+        assert!(items_deleted(&folder).is_empty());
+    }
+
+    #[test]
+    fn each_save_in_place_after_a_backup_made_once_by_renaming_is_sent() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder, item) = bound_note("01a00000-0000-7000-8000-00000000c621");
+        for suffix in ["orig", "old"] {
+            std::fs::copy(
+                dir.path().join("note.md"),
+                dir.path().join(format!("note.md.{suffix}")),
+            )
+            .unwrap();
+        }
+        saved_with_backup(dir.path(), "note.md", "saved once with a backup\n");
+        assert_eq!(folder.scan().unwrap().updated, 1);
+        for save in 1..=2 {
+            std::fs::write(
+                dir.path().join("note.md"),
+                format!("saved in place {save}\n"),
+            )
+            .unwrap();
+            let scanned = folder.scan().unwrap();
+            assert_eq!((scanned.created, scanned.updated), (0, 1), "{scanned:?}");
+            assert!(nothing_held(&scanned), "{scanned:?}");
+            assert_eq!(updates_queued(&folder, &item), save + 1);
+        }
+        assert!(items_deleted(&folder).is_empty());
+    }
+
+    #[test]
+    fn a_file_moved_to_its_backup_name_with_nothing_at_its_path_is_missing() {
+        let (_, _registry) = registry::tests::own_registry();
+        let (dir, folder, item) = bound_note("01a00000-0000-7000-8000-00000000c622");
+        std::fs::rename(dir.path().join("note.md"), dir.path().join("note.md.bak")).unwrap();
+        let moved = folder.scan().unwrap();
+        assert_eq!((moved.missing, moved.carried), (1, 0), "{moved:?}");
+        assert_eq!(super::super::tests::kept(&folder, "note.md"), None);
+        past_the_grace(&folder, "note.md");
+        let swept = folder.scan().unwrap();
+        assert_eq!(swept.trashed, ["note.md"], "{swept:?}");
+        assert_eq!(items_deleted(&folder), [item]);
+    }
+
     /// Saves `name` as an editor that writes a temporary file and renames it
     /// over the original does, which gives the file a new identity.
     fn saved_atomically(dir: &std::path::Path, name: &str, bytes: &str) {

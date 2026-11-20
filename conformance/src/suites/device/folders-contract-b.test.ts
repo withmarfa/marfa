@@ -1032,6 +1032,70 @@ it("holds a new file at the path of a file the folder does not send while that f
   expect(await itemWrites(harness)).toEqual([]);
 });
 
+it("sends each save that keeps a backup by renaming the file as the item's edit", async () => {
+  harness = await folderHarness("contract-b-backup-save", {
+    items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },
+    settings: {
+      query: { types: ["core.note"] },
+      removal_threshold: { files: 100, fraction: 1 },
+    },
+  });
+  scriptFolderWrites(harness);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  // A text note carries no ID line, so only its path and identity name it.
+  const note = join(harness.dir, "Kept.txt");
+  writeFileSync(note, "body\n");
+  const pushed = await harness.folder.push();
+  expect(pushed.ok && pushed.value.scan.created, JSON.stringify(pushed)).toBe(
+    1,
+  );
+  const bound = async () => {
+    const status = await harness!.folder.status();
+    return (status.ok ? status.value.files : []).find(
+      (file) => file.path === "Kept.txt",
+    );
+  };
+  const item = (await bound())?.item_id;
+  expect(item).toBeDefined();
+  for (const save of [1, 2, 3]) {
+    // `sed -i.bak` renames the file to `Kept.txt.bak` and writes anew.
+    await execute("sed", ["-i.bak", `s/^body.*/body, save ${save}/`, note]);
+    expect(readFileSync(`${note}.bak`, "utf8")).not.toContain(`save ${save}`);
+    const scanned = await harness.folder.scan();
+    expect(
+      scanned.ok && [
+        scanned.value.created,
+        scanned.value.updated,
+        scanned.value.carried,
+      ],
+      `save ${save}: ${JSON.stringify(scanned)}`,
+    ).toEqual([0, 1, 0]);
+    expect(
+      (scanned.ok ? scanned.value.flagged : []).filter(
+        (file) => file.flag === "waiting",
+      ),
+    ).toEqual([]);
+    const updates = (await itemWrites(harness))?.filter(
+      ([kind, id]) => kind === "update_item" && id === item,
+    );
+    expect(updates).toHaveLength(save);
+  }
+  expect((await bound())?.item_id).toBe(item);
+  // The witness: a file of another name that carries the item holds a new
+  // file at its path.
+  renameSync(note, join(harness.dir, "Kept.bin"));
+  writeFileSync(note, "a different note\n");
+  const held = await harness.folder.scan();
+  expect(
+    held.ok && [held.value.created, held.value.updated],
+    JSON.stringify(held),
+  ).toEqual([0, 0]);
+  const waits = (held.ok ? held.value.flagged : []).find(
+    (file) => file.path === "Kept.txt",
+  );
+  expect(waits?.reason).toContain("Kept.bin carries");
+});
+
 it("takes a new file at the path of a file the folder does not send as that file's edit once the other file is gone too", async () => {
   harness = await folderHarness("contract-b-carried-path-edit", {
     items: { "core.note": Array.from({ length: 6 }, (_, n) => row(n)) },

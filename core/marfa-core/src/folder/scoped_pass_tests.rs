@@ -889,3 +889,54 @@ fn a_quick_pass_keeps_the_item_of_a_file_moved_to_a_name_the_folder_does_not_sen
     assert_eq!(item("a.md"), None);
     assert_eq!(deletes_queued(&folder).len(), 2);
 }
+
+#[test]
+fn a_quick_pass_sends_a_save_that_keeps_a_backup_by_renaming_as_the_items_edit() {
+    let all = names(12);
+    let refs: Vec<&str> = all.iter().map(String::as_str).collect();
+    let (dir, folder, server, mut passes) = watched_notes_in(
+        serde_json::json!({ "query": { "types": ["core.note"] } }),
+        &refs,
+    );
+    for name in &all {
+        let id = state::bound_at(&folder.core.conn().unwrap(), name)
+            .unwrap()
+            .unwrap()
+            .item_id;
+        server.on(
+            &format!("/items/{id}"),
+            (0..8).map(|_| refusal(429, "rate_limited")).collect(),
+        );
+        aged(&dir.path().join(name));
+    }
+    passes.run(&folder, true).unwrap();
+    settle(&folder, &mut passes);
+    let item = state::bound_at(&folder.core.conn().unwrap(), "n001.md")
+        .unwrap()
+        .unwrap()
+        .item_id;
+    let created = |path: PathBuf| {
+        notify::Event::new(notify::EventKind::Create(notify::event::CreateKind::File))
+            .add_path(path)
+    };
+    for save in 1..=2 {
+        std::fs::rename(dir.path().join("n001.md"), dir.path().join("n001.md.bak")).unwrap();
+        std::fs::write(dir.path().join("n001.md"), format!("save {save}\n")).unwrap();
+        passes
+            .hearing(
+                &folder,
+                &[
+                    renamed(dir.path().join("n001.md"), dir.path().join("n001.md.bak")),
+                    created(dir.path().join("n001.md")),
+                ],
+            )
+            .unwrap();
+        assert_eq!(queued(&folder, "n001.md"), save, "save {save} was held");
+        assert_eq!(super::tests::kept(&folder, "n001.md"), None);
+    }
+    let bound = state::bound_at(&folder.core.conn().unwrap(), "n001.md")
+        .unwrap()
+        .unwrap();
+    assert_eq!(bound.item_id, item);
+    assert!(deletes_queued(&folder).is_empty());
+}

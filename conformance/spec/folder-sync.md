@@ -532,7 +532,7 @@ When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a 
 
 ### `folder-sync/pull-carried-flagged`
 
-While a file in the directory that the scan holds for a clash with another file's name, or does not send, carries a missing file's identity or the ID of its item, when a pull runs, a device MUST include the item's ID, the missing file's path, the flag `carried` and a reason that names the carrying file in the pull report's `flagged` entries.
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, and whose name is not the missing file's name followed by a suffix, carries the missing file's identity or the ID of its item, when a pull runs, a device MUST include the item's ID, the missing file's path, the flag `carried` and a reason that names the carrying file in the pull report's `flagged` entries.
 
 **Reason:** the pull writes no second file for the item, and a flag such as `unwritten` would count it as a pending download (`folder-sync/report-pending-downloads`) and as a held file.
 

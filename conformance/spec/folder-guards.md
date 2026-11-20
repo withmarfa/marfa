@@ -198,7 +198,7 @@ When a missing file returns to its directory under another name before its pause
 
 ### `folder-guards/confirm-carried-file`
 
-When a missing file returns to its folder before its paused removal is confirmed, under a name the folder holds for a clash with another file's name or under a name the folder does not send, a device MUST leave the file's item undeleted.
+When a missing file returns to its folder before its paused removal is confirmed, under a name the folder holds for a clash with another file's name or does not send, and that is not the file's own name followed by a suffix, a device MUST leave the file's item undeleted.
 
 **Reason:** a confirmation lets go only of what no file in the folder carries, so a returned file the scan does not read keeps its item, its history and its links.
 
