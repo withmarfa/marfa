@@ -485,6 +485,24 @@ mod tests {
     }
 
     #[test]
+    fn a_property_sent_back_in_another_key_order_or_number_form_is_as_held() {
+        let held = judged(
+            json!({"type": "number", "label": "L", "minimum": 1.5, "maximum": 5.0}),
+            Judging::Register,
+        )
+        .unwrap_or_default();
+        let stored: Obj =
+            serde_json::from_str(&Value::Object(held).to_string()).unwrap_or_default();
+        let sent: Value = serde_json::from_str(
+            r#"{"maximum": 5e0, "minimum": 15e-1, "label": "L", "type": "number"}"#,
+        )
+        .unwrap_or_default();
+        let kept = judged(sent.clone(), Judging::Evolve(&stored)).unwrap_or_default();
+        assert_eq!(kept["property_schema"]["p"], sent);
+        assert_eq!(kept["property_schema"], stored["property_schema"]);
+    }
+
+    #[test]
     fn every_property_that_breaks_a_rule_is_named() {
         let body = json!({"id": "user.cites", "cardinality": "many-to-many",
         "property_schema": {

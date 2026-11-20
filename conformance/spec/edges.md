@@ -1780,7 +1780,7 @@ If `POST /edge-types` names several properties that `edges/types-register-proper
 
 ### `edges/types-properties-kept`
 
-While a stored edge type holds a property that `edges/types-register-array-items`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind` refuses, the server MUST answer a read of the edge type with the property as stored.
+While a stored edge type holds a property that `edges/types-register-array-items`, `edges/types-register-enum-values`, `edges/types-register-enum-values-kind` or `edges/types-register-items-type` refuses, the server MUST answer a read of the edge type with the property as stored.
 
 **Reason:** preserving the stored property lets a client read the same definition the owner can export and restore (`archive/restore-compatible-types`).
 
@@ -1804,7 +1804,7 @@ If `POST /restore` carries an edge type with a property whose `type` is not a fi
 
 ### `edges/types-evolve-properties-kept`
 
-When `POST /edge-types` with `evolve_constraints` names a property exactly as the stored edge type holds it, the server MUST NOT refuse the change for that property under `edges/types-register-array-items`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind`.
+When `POST /edge-types` with `evolve_constraints` names a property exactly as the stored edge type holds it, the server MUST NOT refuse the change for that property under `edges/types-register-array-items`, `edges/types-register-enum-values`, `edges/types-register-enum-values-kind` or `edges/types-register-items-type`.
 
 **Reason:** a stored edge type that holds such a property could otherwise never have its endpoint constraints widened. "Exactly" means the definition as sent equals the stored one, not the form a registration would store it in.
 

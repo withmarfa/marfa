@@ -872,7 +872,7 @@ describe("null and format", () => {
         evolve_constraints: true,
       } as never);
 
-    // Both normalize to the stored property, and only the first is one a registration takes.
+    // An integer with a url format normalizes to the stored property too, but a registration refuses it.
     const refused = await evolve({ type: "integer", format: "url" }, [
       "core.note",
       "core.task",
