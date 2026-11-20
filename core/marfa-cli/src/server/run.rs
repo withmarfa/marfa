@@ -557,8 +557,7 @@ impl Install {
 }
 
 pub fn run(args: &RunArgs) -> Result<(), CliError> {
-    // A service manager may start this under a umask that opens new files and folders to a group,
-    // and the server refuses a folder on the way to its data that another account can write to.
+    // A service manager may start this under a umask that opens what it makes to a group.
     // SAFETY: `umask` takes a mask and cannot fail.
     unsafe { libc::umask(0o077) };
     let dir = &args.dir;
