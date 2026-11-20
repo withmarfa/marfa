@@ -744,6 +744,63 @@ describe("signing the owner in at the claim", () => {
   );
 
   it(
+    "creates the owner from the setup page's form with the optional email left blank, and shows a refused username on the page again",
+    async () => {
+      await withFreshInstance(async (instance) => {
+        const origin = instance.url;
+        const exchanged = await fetch(`${instance.url}/setup/exchange`, {
+          method: "POST",
+          headers: { "content-type": "application/json", origin },
+          body: JSON.stringify({ ticket: await instance.ticket() }),
+        });
+        expect(exchanged.status).toBe(200);
+        const cookie = cookieHeader(exchanged.headers.getSetCookie());
+        const form = (fields: Record<string, string>) =>
+          fetch(`${instance.url}/setup/claim`, {
+            method: "POST",
+            redirect: "manual",
+            headers: {
+              "content-type": "application/x-www-form-urlencoded",
+              accept: "text/html",
+              origin,
+              cookie,
+            },
+            body: new URLSearchParams(fields),
+          });
+        const refused = await form({
+          name: "",
+          username: "not a username",
+          password: OWNER.password,
+          email: "",
+        });
+        expect(refused.status).toBe(400);
+        const page = await refused.text();
+        expect(page).toContain('id="username-error"');
+        expect(page).toContain('value="not a username"');
+        expect(page).not.toContain(OWNER.password);
+        const claimed = await form({
+          name: "",
+          username: "Form.Owner",
+          password: OWNER.password,
+          email: "",
+        });
+        expect(claimed.status).toBe(303);
+        expect(claimed.headers.get("location")).toBe("/auth/sign-in");
+        const profile = await controlRequest(
+          instance.controlSocket,
+          "/profile",
+        );
+        expect(profile.body).toMatchObject({
+          username: "form.owner",
+          email: null,
+          name: "form.owner",
+        });
+      });
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "signs the owner in when the setup page claims through its setup session",
     async () => {
       await withFreshInstance(async (instance) => {

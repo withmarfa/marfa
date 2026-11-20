@@ -98,6 +98,14 @@ When valid setup proof claims an unclaimed instance with no `email`, the server 
 
 **Tests:** `compliance/owner.test.ts › answers the setup routes in snake_case and the claim as the public claim does`.
 
+### `instance-claim/owner-email-form-blank`
+
+When the setup page's form submits `email` left blank with valid owner details, the server MUST create the owner with `email` `null`.
+
+**Reason:** A browser sends an empty field for an optional input the person left alone.
+
+**Tests:** `compliance/owner.test.ts › creates the owner from the setup page's form with the optional email left blank, and shows a refused username on the page again`.
+
 ### `instance-claim/owner-name-default`
 
 When valid setup proof claims an unclaimed instance with no `name` or a blank one, the server MUST give the owner their username as `name`.

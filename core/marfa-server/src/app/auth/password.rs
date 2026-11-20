@@ -446,7 +446,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        for at in [None, Some("someone@example.test")] {
+        for at in [None, Some("someone")] {
             let budget = passwords.budget();
             assert_eq!(budget.subsec_micros() % 1_000, 0);
             let started = Instant::now();

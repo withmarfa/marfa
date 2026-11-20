@@ -123,7 +123,7 @@ describe("owner and delegated profile changes", () => {
       { avatar: "https://example.test/portrait.png" },
     ])
       expect((await owner(body)).status).toBe(400);
-    const before = await read();
+    const unchanged = await read();
     for (const username of [
       "has@sign",
       "inner space",
@@ -140,7 +140,7 @@ describe("owner and delegated profile changes", () => {
       expect(error.code).toBe("validation_error");
       expect(error.details.errors[0]?.path).toBe("username");
     }
-    expect(await read()).toEqual(before);
+    expect(await read()).toEqual(unchanged);
     const longest = "u".repeat(64);
     expect((await owner({ username: longest })).status).toBe(200);
     expect((await read()).username).toBe(longest);
@@ -149,6 +149,7 @@ describe("owner and delegated profile changes", () => {
     expect(invalid.status).toBe(400);
     expect((await owner({ name: "😀".repeat(200) })).status).toBe(200);
     const named = await mint("profile-name", { name: "write" });
+    const before = await read();
     for (const body of [
       { name: "No", avatar: null },
       { name: "No", email: "named@example.test" },

@@ -136,20 +136,23 @@ function rootPage(cookie?: string): Promise<Response> {
   });
 }
 
+/** How a signed-in page names the owner. */
+const NAMED = `<bdi>${TEST_OWNER.username}</bdi>`;
+
 describe("the root in a browser", () => {
   it("names the signed-in owner at the root, with the passkeys page and sign-out, and asks anyone else to sign in", async () => {
     const signedOut = await rootPage();
     expect(signedOut.status).toBe(200);
     const nobody = await signedOut.text();
     expect(nobody).toContain('href="/auth/sign-in"');
-    expect(nobody).not.toContain(TEST_OWNER.username);
+    expect(nobody).not.toContain(NAMED);
 
     const cookie = await signIn();
     const signedIn = await rootPage(cookie);
     expect(signedIn.status).toBe(200);
     expect(signedIn.headers.get("content-type")).toContain("text/html");
     const owner = await signedIn.text();
-    expect(owner).toContain(TEST_OWNER.username);
+    expect(owner).toContain(NAMED);
     expect(owner).toContain('href="/auth/owner/passkeys"');
     expect(owner).toMatch(/<form[^>]*action="\/auth\/sign-out"/);
     expect(owner).not.toContain('href="/auth/sign-in"');
@@ -161,7 +164,9 @@ describe("the root in a browser", () => {
     expect(described.status).toBe(200);
     const description = (await described.json()) as Record<string, unknown>;
     expect(description.name).toBeTypeOf("string");
-    expect(JSON.stringify(description)).not.toContain(TEST_OWNER.username);
+    expect(JSON.stringify(description)).not.toContain(
+      `"${TEST_OWNER.username}"`,
+    );
 
     const out = await fetch(`${server.apiUrl}/auth/sign-out`, {
       method: "POST",
@@ -170,7 +175,7 @@ describe("the root in a browser", () => {
     expect(out.status).toBe(200);
     const ended = await (await rootPage(cookie)).text();
     expect(ended).toContain('href="/auth/sign-in"');
-    expect(ended).not.toContain(TEST_OWNER.username);
+    expect(ended).not.toContain(NAMED);
   });
 
   it("sends a signed-in browser no cookie from the root", async () => {
@@ -179,7 +184,7 @@ describe("the root in a browser", () => {
     await server.advanceClock(2 * 60 * 1000);
     const page = await rootPage(cookie);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain(TEST_OWNER.username);
+    expect(await page.text()).toContain(NAMED);
     expect(page.headers.get("set-cookie")).toBeNull();
     expect(await lives(cookie)).toBe(true);
   });
