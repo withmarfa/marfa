@@ -6,7 +6,7 @@
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::mpsc;
@@ -33,6 +33,7 @@ const PENDING: &str = "pending.json";
 const LAST: &str = "last.json";
 const SUPERVISOR: &str = "supervisor.lock";
 const UPGRADE: &str = "upgrade.json";
+const PRIVATE_FILE: u32 = 0o600;
 
 pub fn previous_of(programs: &Path, name: &str) -> PathBuf {
     programs.join(format!(".{name}.previous"))
@@ -122,10 +123,24 @@ impl Folder {
         &self.0
     }
 
+    /// The folder holding the database is made here when the server has not made it yet, so it
+    /// is made as the server makes it.
+    fn make(&self) -> io::Result<()> {
+        marfa_acl::make_private_folders(&self.0)
+    }
+
     fn write(&self, name: &str, text: &str) -> io::Result<()> {
-        fs::create_dir_all(&self.0)?;
+        self.make()?;
         let temporary = self.0.join(format!("{name}.partial"));
-        let mut file = File::create(&temporary)?;
+        match fs::remove_file(&temporary) {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => return Err(error),
+            _ => {}
+        }
+        let mut file = File::options()
+            .write(true)
+            .create_new(true)
+            .mode(PRIVATE_FILE)
+            .open(&temporary)?;
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         fs::rename(&temporary, self.0.join(name))?;
@@ -212,11 +227,12 @@ impl Folder {
 
     /// The file a `marfa server run` locks while it supervises a try of the new release.
     pub fn supervisor_lock(&self) -> io::Result<File> {
-        fs::create_dir_all(&self.0)?;
+        self.make()?;
         File::options()
             .create(true)
             .truncate(false)
             .write(true)
+            .mode(PRIVATE_FILE)
             .open(self.0.join(SUPERVISOR))
     }
 }
@@ -488,6 +504,39 @@ mod tests {
             ("rolled_back", "0.0.75", AT)
         );
         assert!(last.ends(&kept));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_record_its_folders_and_its_lock_are_private_to_this_account() {
+        let (dir, record) = scratch("private");
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let _lock = record.supervisor_lock().unwrap();
+        record.keep_pending(&pending(&dir.join("bin"))).unwrap();
+        record.mark_upgrade(Upgrade::Began).unwrap();
+        record
+            .end(AT, Outcome::Succeeded, "0.0.75", None, None)
+            .unwrap();
+        let data = dir.join("data");
+        assert_eq!((mode(&data), mode(record.path())), (0o700, 0o700));
+        for file in [SUPERVISOR, PENDING, UPGRADE, LAST] {
+            assert_eq!(mode(&record.path().join(file)), 0o600, "{file}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_partial_write_left_behind_is_replaced_and_never_followed() {
+        let (dir, record) = scratch("partial");
+        fs::create_dir_all(record.path()).unwrap();
+        let elsewhere = dir.join("elsewhere");
+        fs::write(&elsewhere, "not the record's").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, record.path().join("last.json.partial")).unwrap();
+        record
+            .end(AT, Outcome::Failed, "0.0.75", None, None)
+            .unwrap();
+        assert_eq!(fs::read_to_string(&elsewhere).unwrap(), "not the record's");
+        assert_eq!(record.last().unwrap().unwrap().outcome, "failed");
         let _ = fs::remove_dir_all(&dir);
     }
 

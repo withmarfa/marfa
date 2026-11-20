@@ -23,5 +23,8 @@ icu_casemap = "2"
 url = "2"
 ryu = "1"
 
+[target.'cfg(unix)'.dependencies]
+marfa-acl.workspace = true
+
 [dev-dependencies]
 uuid.workspace = true

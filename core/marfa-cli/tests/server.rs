@@ -355,6 +355,8 @@ struct Rig {
     stop: Arc<AtomicBool>,
     health: Vec<JoinHandle<()>>,
     isolated: std::cell::Cell<bool>,
+    /// The umask `marfa` runs under, where a test sets one.
+    umask: std::cell::Cell<Option<libc::mode_t>>,
 }
 
 impl Rig {
@@ -387,6 +389,7 @@ impl Rig {
         };
         Rig {
             isolated: std::cell::Cell::new(false),
+            umask: std::cell::Cell::new(None),
             dir: root.join("install"),
             root,
             state,
@@ -411,11 +414,21 @@ impl Rig {
     }
 
     fn command(&self) -> Command {
-        if self.isolated.get() {
+        let mut command = if self.isolated.get() {
             quiet::quiet(Command::new(self.root.join("bin/marfa")))
         } else {
             quiet::marfa()
+        };
+        if let Some(mask) = self.umask.get() {
+            // SAFETY: `umask` is async-signal-safe and cannot fail.
+            unsafe {
+                command.pre_exec(move || {
+                    libc::umask(mask);
+                    Ok(())
+                });
+            }
         }
+        command
     }
 
     fn marfa_with(&self, args: &[&str], env: &[(&str, &Path)]) -> (i32, String, String) {
@@ -4479,6 +4492,35 @@ fn a_second_try_of_a_release_put_back_before_gets_an_outcome_of_its_own() {
     let (outcome, reason) = rig.last();
     assert_eq!(outcome, "rolled_back");
     assert!(reason.contains("did not finish"), "{reason}");
+}
+
+/// A service manager may start `marfa server run` under a umask that opens new folders to the
+/// account's group, and the server refuses a folder on the way to its data that another account
+/// can write to.
+#[test]
+fn an_install_and_a_run_under_an_open_umask_keep_the_folders_on_the_way_private() {
+    let rig = Rig::new("u-umask");
+    rig.isolate();
+    rig.umask.set(Some(0o002));
+    rig.native_installed(&["--access", "local"]);
+    let mut child = rig.run_server(&[]);
+    let status = ended(&mut child, 20).expect("run did not end");
+    assert_eq!(status.code(), Some(0), "{}", rig.run_said());
+    let mode = |path: &Path| {
+        format!(
+            "{:o}",
+            fs::metadata(path).unwrap().permissions().mode() & 0o777
+        )
+    };
+    assert_eq!(
+        mode(&rig.state.join("server-env")),
+        "664",
+        "the witness: the server started under the umask"
+    );
+    let record = rig.update_record();
+    let data = rig.dir.join("data");
+    let made = [&rig.dir, &data, &record, &record.join("supervisor.lock")].map(|path| mode(path));
+    assert_eq!(made, ["700", "700", "700", "600"]);
 }
 
 #[test]

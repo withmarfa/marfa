@@ -115,6 +115,49 @@ fn by_mode(link: bool, folder: bool, owner: u32, mode: u32, trusted: u32) -> Opt
     }
 }
 
+/// Makes `path` and each folder missing above it private to this process's account, whatever
+/// the umask: mode 0700, with no access control list entry taken from the folder it is made in.
+/// A folder already there is left as it is.
+pub fn make_private_folders(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
+    let mut missing = Vec::new();
+    let mut next = Some(path);
+    while let Some(folder) = next.filter(|folder| !folder.as_os_str().is_empty()) {
+        match std::fs::metadata(folder) {
+            Ok(found) if found.is_dir() => break,
+            Ok(_) => {
+                return Err(std::io::Error::new(
+                    ErrorKind::NotADirectory,
+                    format!("{} is not a folder", folder.display()),
+                ));
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => missing.push(folder),
+            Err(error) => return Err(error),
+        }
+        next = folder.parent();
+    }
+    // SAFETY: `geteuid` takes nothing and cannot fail.
+    let own = unsafe { libc::geteuid() };
+    for folder in missing.into_iter().rev() {
+        match std::fs::DirBuilder::new().mode(0o700).create(folder) {
+            Ok(()) => {}
+            // Made by another process meanwhile, so not this one's to change.
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+        let made = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(folder)?;
+        if reach(&made, own)? != Reach::default() {
+            clear(&made)?;
+        }
+        made.set_permissions(std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
 mod darwin {
     use std::ffi::{c_char, c_int, c_void};
@@ -977,6 +1020,36 @@ mod tests {
         clear(&opened(&at)).unwrap();
         assert_eq!(reach(&opened(&at), me()).unwrap(), Reach::default());
         assert_eq!(reach(&opened(&file), me()).unwrap(), Reach::default());
+    }
+
+    #[test]
+    fn private_folders_are_made_owner_only_and_take_no_entry_from_their_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        use testing::{Grant, let_another_account};
+        let shared = folder("private");
+        std::fs::set_permissions(&shared, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let inherits = let_another_account(&shared, Grant::InheritRead)
+            && let_another_account(&shared, Grant::InheritReadToFiles);
+        let (data, update) = (shared.join("data"), shared.join("data/update"));
+        make_private_folders(&update).unwrap();
+        let reach_of = |path: &Path| reach(&std::fs::File::open(path).unwrap(), me()).unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        for made in [&data, &update] {
+            assert_eq!(mode(made), 0o700, "{}", made.display());
+            assert_eq!(reach_of(made), Reach::default(), "{}", made.display());
+        }
+        assert_eq!(mode(&shared), 0o755, "a folder already there is left alone");
+        make_private_folders(&update).unwrap();
+        if inherits {
+            assert_ne!(reach_of(&shared), Reach::default(), "its entries stay");
+            // The witness: a folder made there by another hand inherits the entries.
+            let other = shared.join("other");
+            std::fs::create_dir(&other).unwrap();
+            assert_ne!(reach_of(&other), Reach::default());
+        }
+        std::fs::write(shared.join("file"), "").unwrap();
+        let error = make_private_folders(&shared.join("file/below")).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::NotADirectory, "{error}");
     }
 
     #[cfg(target_os = "macos")]
