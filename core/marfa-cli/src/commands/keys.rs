@@ -135,7 +135,7 @@ pub struct PermissionMapArgs {
     #[arg(long = "metadata-permission", value_name = "NAME=LEVEL")]
     pub metadata_permissions: Vec<String>,
     /// A profile field and its level, `name=write`, repeatable. Only
-    /// `email=write` lets the key change the email; `*=write` does not.
+    /// `username=write` lets the key change the username; `*=write` does not.
     #[arg(long = "profile-permission", value_name = "FIELD=LEVEL")]
     pub profile_permissions: Vec<String>,
     /// The enforcement override, as the JSON object the operation takes.
@@ -187,12 +187,14 @@ impl PermissionMapArgs {
                 let map = pairs(values, flag)?;
                 if key == "profile_permissions"
                     && map.iter().any(|(field, level)| {
-                        !matches!(field.as_str(), "*" | "name" | "email" | "avatar")
-                            || !matches!(level.as_str(), Some("read" | "write"))
+                        !matches!(
+                            field.as_str(),
+                            "*" | "name" | "username" | "email" | "avatar"
+                        ) || !matches!(level.as_str(), Some("read" | "write"))
                     })
                 {
                     return Err(CliError::Invalid(
-                        "profile permissions accept *, name, email, or avatar at read or write"
+                        "profile permissions accept *, name, username, email, or avatar at read or write"
                             .into(),
                     ));
                 }
@@ -846,17 +848,17 @@ mod profile_permission_tests {
     }
 
     #[test]
-    fn email_write_is_asked_for_by_name_and_an_unknown_field_or_level_is_refused() {
-        let body = applied(&["*=write", "email=write"]).unwrap();
+    fn username_write_is_asked_for_by_name_and_an_unknown_field_or_level_is_refused() {
+        let body = applied(&["*=write", "username=write"]).unwrap();
         assert_eq!(
             body["profile_permissions"],
-            json!({ "*": "write", "email": "write" })
+            json!({ "*": "write", "username": "write" })
         );
-        for wrong in ["age=read", "email=admin"] {
+        for wrong in ["age=read", "username=admin"] {
             match applied(&[wrong]) {
                 Err(CliError::Invalid(message)) => assert_eq!(
                     message,
-                    "profile permissions accept *, name, email, or avatar at read or write"
+                    "profile permissions accept *, name, username, email, or avatar at read or write"
                 ),
                 other => panic!("{wrong} gave {other:?}"),
             }

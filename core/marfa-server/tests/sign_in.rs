@@ -477,8 +477,7 @@ async fn a_claim_refuses_a_name_that_is_not_text() {
     let router = public(boot(&dir).await);
     for path in ["/setup/claim", "/owner"] {
         let claim = |name: Value| {
-            let body =
-                json!({ "username": USERNAME, "password": PASSWORD, "code": "000000", "name": name });
+            let body = json!({ "username": USERNAME, "password": PASSWORD, "code": "000000", "name": name });
             send(router.clone(), post(path, &body))
         };
         assert_eq!(

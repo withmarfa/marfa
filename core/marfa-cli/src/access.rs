@@ -13,7 +13,7 @@ pub const LEVELS: [(&str, &str); 3] = [
 ];
 
 /// The title of a row that is not one item type, by its pattern.
-pub const ROWS: [(&str, &str); 13] = [
+pub const ROWS: [(&str, &str); 14] = [
     ("*", "All your data"),
     ("content", "Your content"),
     ("user.*", "Your custom types"),
@@ -22,6 +22,7 @@ pub const ROWS: [(&str, &str); 13] = [
     ("edge.*", "Links between items"),
     ("profile", "Profile"),
     ("profile.name", "Name"),
+    ("profile.username", "Username"),
     ("profile.email", "Email address"),
     ("profile.avatar", "Avatar"),
     ("metadata", "Definitions on your server"),
@@ -269,7 +270,7 @@ mod tests {
             "extension_permissions": { "app.cursor": "write" },
             "edge_permissions": { "parent-of": "read", "*": "write" },
             "metadata_permissions": { "types": "write" },
-            "profile_permissions": { "name": "write", "email": "read" },
+            "profile_permissions": { "name": "write", "username": "read", "email": "read" },
         });
         assert_eq!(
             lines_for_key(&key),
@@ -281,6 +282,7 @@ mod tests {
                 "Links between items  Read and edit",
                 "Custom data types    Read and edit",
                 "Name                 Read and edit",
+                "Username             Read only",
                 "Email address        Read only",
                 "app.cursor           Read and edit",
                 "Powers: Make, see, edit and revoke keys; Read the activity log",

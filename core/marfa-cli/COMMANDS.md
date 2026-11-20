@@ -92,7 +92,7 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | Change the owner's password | `marfa owner password` |
 | Recover the owner's password | `marfa owner recover` |
 | Claim a new instance | `marfa setup status`, `marfa setup code`, `marfa setup open`, `marfa setup claim` |
-| Read and change the owner's email, name and avatar, or clear the avatar | `marfa profile show`, `marfa profile update`, `marfa profile avatar` |
+| Read and change the owner's username, email, name and avatar, or clear the email or the avatar | `marfa profile show`, `marfa profile update`, `marfa profile avatar` |
 | See connectors, their runs and their problems | `marfa connectors list`, `marfa connectors get`, `marfa connectors runs` |
 | Remove a connector, or only its state | `marfa connectors delete`, `marfa connectors state delete` |
 | Manage a connector's inbound endpoints and deliveries | `marfa connectors endpoints list`, `marfa connectors endpoints create`, `marfa connectors endpoints retire`, `marfa connectors deliveries list`, `marfa connectors deliveries body`, `marfa connectors deliveries handle` |
@@ -228,9 +228,10 @@ marfa setup claim [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--email <EMAIL>` | The owner's email address. Required when using terminal prompts. |
-| `--name <NAME>` | The owner's display name. |
-| `--stdin` | Read JSON containing email, password, optional name, and code for a remote claim. |
+| `--username <USERNAME>` | The username the owner signs in with. Required when using terminal prompts. |
+| `--email <EMAIL>` | The owner's email address. It plays no part in signing in. |
+| `--name <NAME>` | The owner's display name. It defaults to the username. |
+| `--stdin` | Read JSON containing username, password, optional email and name, and code for a remote claim. |
 | `--address <URL>` | The address devices sign in at, such as `https://marfa.example.com`. Private socket only. It is set on the server first, before the owner is made, so a claimed instance is never moved by it. |
 
 ## owner
@@ -325,7 +326,7 @@ marfa owner recover [OPTIONS]
 
 ## profile
 
-The owner's email address, name and avatar, with a key or an app's profile permissions.
+The owner's name, username, email address and avatar, with a key or an app's profile permissions.
 
 ### marfa profile
 
@@ -335,7 +336,7 @@ marfa profile [OPTIONS] <COMMAND>
 
 ### marfa profile show
 
-Show the owner's name, email address and avatar, as far as profile read permission reaches.
+Show the owner's name, username, email address and avatar, as far as profile read permission reaches.
 
 ```text
 marfa profile show [OPTIONS]
@@ -343,15 +344,17 @@ marfa profile show [OPTIONS]
 
 ### marfa profile update
 
-Change the owner's email address, name or avatar with profile write permission for each field.
+Change the owner's username, email address, name or avatar with profile write permission for each field.
 
 ```text
-marfa profile update [OPTIONS] <--email <EMAIL>|--name <NAME>|--avatar <FILE>|--clear-avatar>
+marfa profile update [OPTIONS] <--username <USERNAME>|--email <EMAIL>|--clear-email|--name <NAME>|--avatar <FILE>|--clear-avatar>
 ```
 
 | Option | Description |
 | --- | --- |
-| `--email <EMAIL>` | The email address the owner uses to sign in. |
+| `--username <USERNAME>` | The username the owner signs in with. Signing in with the old one stops at once. |
+| `--email <EMAIL>` | The owner's email address. It plays no part in signing in. |
+| `--clear-email` | Remove the owner's email address. |
 | `--name <NAME>` | The owner's new display name. |
 | `--avatar <FILE>` | A PNG, JPEG or WebP avatar file of 2 MiB or less. The server decides the kind from the bytes. |
 | `--clear-avatar` | Remove the owner's avatar. |
@@ -1916,7 +1919,7 @@ marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
 | `--extension-permission <NAMESPACE=LEVEL>` | An extension namespace and its level, `app.cursor=write`, repeatable. |
 | `--edge-permission <TYPE=LEVEL>` | An edge type and its level, `references=write`, repeatable. |
 | `--metadata-permission <NAME=LEVEL>` | A kind of registration and its level, `types=write` or `edge_types=write`, repeatable. |
-| `--profile-permission <FIELD=LEVEL>` | A profile field and its level, `name=write`, repeatable. Only `email=write` lets the key change the email; `*=write` does not. |
+| `--profile-permission <FIELD=LEVEL>` | A profile field and its level, `name=write`, repeatable. Only `username=write` lets the key change the username; `*=write` does not. |
 | `--enforcement-override <JSON>` | The enforcement override, as the JSON object the operation takes. |
 | `--claim <SOURCE>` | A source a write under the key may name, so its items are keyed by it. Repeatable. |
 | `--no-claims` | Claim no source besides the key's own, asked for out loud. On a mint naming no permission or map, naming the claims is naming what the key holds: it holds no map and no permission either. |
@@ -1964,7 +1967,7 @@ marfa keys update [OPTIONS] <ID>
 | `--extension-permission <NAMESPACE=LEVEL>` | An extension namespace and its level, `app.cursor=write`, repeatable. |
 | `--edge-permission <TYPE=LEVEL>` | An edge type and its level, `references=write`, repeatable. |
 | `--metadata-permission <NAME=LEVEL>` | A kind of registration and its level, `types=write` or `edge_types=write`, repeatable. |
-| `--profile-permission <FIELD=LEVEL>` | A profile field and its level, `name=write`, repeatable. Only `email=write` lets the key change the email; `*=write` does not. |
+| `--profile-permission <FIELD=LEVEL>` | A profile field and its level, `name=write`, repeatable. Only `username=write` lets the key change the username; `*=write` does not. |
 | `--enforcement-override <JSON>` | The enforcement override, as the JSON object the operation takes. |
 | `--no-type-permissions` | Empty the type permission map on this update. |
 | `--no-extension-permissions` | Empty the extension permission map on this update. |
