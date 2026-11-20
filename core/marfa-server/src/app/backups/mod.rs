@@ -1575,7 +1575,16 @@ impl App {
             (None, Some(Err(unsettled))) => Some(unsettled.to_string()),
             _ => None,
         };
-        let trouble = trouble.or(unusable.map(|error| (StoreFault::Unusable, error)));
+        // The store the destination holds is the one the store list reads its refusal from.
+        let refusal = match &destination {
+            Some(Destination::Bucket(s3)) => s3.refusal(),
+            _ => None,
+        };
+        let refused = refusal.is_some();
+        let trouble = refusal
+            .or(unusable)
+            .map(|error| (StoreFault::Unusable, error))
+            .or(trouble);
         let fault = trouble.as_ref().map(|(fault, _)| *fault);
         let store_error = trouble.map(|(_, error)| error);
         let run_in_store = state
@@ -1585,7 +1594,9 @@ impl App {
         let failing = state.as_ref().is_none_or(|state| state.failures > 0);
         let incomplete = files_waiting.is_some_and(|waiting| waiting > 0);
         let damage = damaged.is_some_and(|damaged| damaged > 0);
-        if destination.is_some() && turned_off {
+        if refused {
+            health.insert("reason".into(), "destination_unusable".into());
+        } else if destination.is_some() && turned_off {
             health.insert("reason".into(), "turned_off".into());
         }
         let status = match (&destination, turned_off, failing, &store_error) {

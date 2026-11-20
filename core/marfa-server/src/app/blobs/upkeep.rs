@@ -14,6 +14,7 @@ use crate::app::access::Caller;
 use crate::app::clock::Stamp;
 use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ, Lie, Volume};
 use crate::app::housekeeping::{Report, Run};
+use crate::app::outbound::store::Refused;
 use crate::app::refusal::Result;
 use crate::app::stored;
 use crate::db::Write;
@@ -343,6 +344,9 @@ pub async fn replicate_one(
 
 /// Why the object store failed, in words that name no address or key; the log has the rest.
 pub(crate) fn object_store_said(error: &io::Error) -> &'static str {
+    if let Some(refused) = Refused::in_chain(error) {
+        return refused.reason();
+    }
     match error.kind() {
         io::ErrorKind::TimedOut => "the object store did not answer in time",
         io::ErrorKind::NotFound => "the bucket or the file was not found",
@@ -449,6 +453,15 @@ async fn copy_missing(app: &Arc<App>, run: &Run) -> Result<Report> {
     let mut shared = None;
     let (mut copied, mut bytes) = (0u64, 0u64);
     let mut refused: BTreeMap<String, String> = BTreeMap::new();
+    if let Some(s3) = app.blobs.ask_refused().await
+        && let Some(why) = s3.refused()
+    {
+        unreachable.insert(s3.id().to_string());
+        refused.insert(
+            s3.id().to_string(),
+            refusal_to_copy(&Store::S3(s3.clone()), Some(why.reason())),
+        );
+    }
     for pair in missing {
         if !run.go_on().await {
             break;
@@ -693,7 +706,7 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
 /// copy where backups go stays.
 fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App, surveyed: bool) -> Result<Vec<Hash>> {
     let named = Wanted::of(&app.settings.candidate(&stored::rows(tx)?));
-    if !app.blobs.settled() || !app.blobs.follows(&named) {
+    if !app.blobs.settled() || !app.blobs.follows(&named) || app.blobs.refused().is_some() {
         return Ok(Vec::new());
     }
     let mut found = past_grace(tx, app)?;
@@ -745,6 +758,7 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     {
         tracing::warn!(%refused, "The stores in use could not be brought to the settings");
     }
+    app.blobs.ask_refused().await;
     let mut unreachable = BTreeSet::new();
     app.retry_deletions(&run, LEFTOVERS, true, &mut unreachable)
         .await?;

@@ -350,6 +350,7 @@ pub async fn stores(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> An
                 "locator": store.locator,
                 "attached_at": store.attached_at,
                 "detached_at": store.detached_at,
+                "error": store.error,
             })
         })
         .collect();

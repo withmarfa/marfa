@@ -25,7 +25,7 @@ use uuid::Uuid;
 use super::hash::Hash;
 use super::store::Answer;
 use crate::app::faults::Faults;
-use crate::app::outbound::store::PublicOnly;
+use crate::app::outbound::store::{Guarded, METADATA_ENDPOINT, PublicOnly, Refused};
 use crate::settings::Snapshot;
 use crate::settings::registry::{
     ALLOW_PRIVATE_ADDRESSES, OBJECT_STORE_ACCESS_KEY_ID, OBJECT_STORE_BUCKET,
@@ -125,6 +125,7 @@ pub struct S3 {
     locator: String,
     prefix: String,
     client: AmazonS3,
+    guarded: Arc<Guarded>,
 }
 
 /// An ETag as a listing and an upload's answer both give it, without the quotes some stores add.
@@ -364,6 +365,7 @@ impl S3 {
     fn builder(
         settings: &ObjectStoreSettings,
         faults: &Arc<Faults>,
+        guarded: &Arc<Guarded>,
     ) -> io::Result<AmazonS3Builder> {
         let retry = RetryConfig {
             backoff: BackoffConfig::default(),
@@ -376,6 +378,7 @@ impl S3 {
             .with_bucket_name(settings.bucket.replace(':', "%3A"))
             .with_region(&settings.region)
             .with_retry(retry)
+            .with_metadata_endpoint(METADATA_ENDPOINT)
             // Every call is bounded where it is made, credentials included, so a large transfer
             // can outlast any one request timeout.
             .with_client_options(
@@ -387,6 +390,7 @@ impl S3 {
             builder = builder.with_http_connector(PublicOnly {
                 connect_timeout,
                 faults: faults.clone(),
+                guarded: guarded.clone(),
             });
         }
         if let Some(endpoint) = &settings.endpoint {
@@ -409,17 +413,38 @@ impl S3 {
         Ok(builder)
     }
 
-    fn client(settings: &ObjectStoreSettings, faults: &Arc<Faults>) -> io::Result<AmazonS3> {
-        S3::builder(settings, faults)?.build().map_err(failed)
-    }
-
     /// The configured store, before its marker says which store it is.
     pub fn new(settings: &ObjectStoreSettings, id: String, faults: &Arc<Faults>) -> io::Result<S3> {
+        let guarded = Arc::<Guarded>::default();
         Ok(S3 {
             id,
             locator: settings.locator(),
             prefix: settings.prefix.clone(),
-            client: S3::client(settings, faults)?,
+            client: S3::builder(settings, faults, &guarded)?
+                .build()
+                .map_err(failed)?,
+            guarded,
+        })
+    }
+
+    /// The same store and client under the id its marker gave, so what the client met carries over.
+    pub fn named(self, id: String) -> S3 {
+        S3 { id, ..self }
+    }
+
+    /// The request the address rules refused when it was last made, while they still refuse it.
+    pub fn refused(&self) -> Option<Refused> {
+        self.guarded.refused()
+    }
+
+    /// Why the store cannot be used while the address rules refuse it, in the owner's words.
+    pub fn refusal(&self) -> Option<String> {
+        self.refused().map(|refused| {
+            format!(
+                "The object store cannot be used: {}. Until it can, no file is copied there, no \
+                 backup is taken and no file is purged.",
+                refused.reason()
+            )
         })
     }
 
@@ -814,7 +839,7 @@ mod tests {
     /// The address the marker is asked for at.
     async fn marker_address(settings: &ObjectStoreSettings) -> String {
         let recorded = Recorded::default();
-        let client = S3::builder(settings, &Arc::default())
+        let client = S3::builder(settings, &Arc::default(), &Arc::default())
             .unwrap()
             .with_http_connector(recorded.clone())
             .build()
@@ -824,6 +849,7 @@ mod tests {
             locator: settings.locator(),
             prefix: settings.prefix.clone(),
             client,
+            guarded: Arc::default(),
         };
         assert!(matches!(s3.marker().await, Marker::None));
         let sent = recorded.0.lock().unwrap().clone();
@@ -1099,6 +1125,7 @@ mod tests {
             locator: "s3://marfa/marfa".to_string(),
             prefix: "marfa".to_string(),
             client,
+            guarded: Arc::default(),
         };
         let limit = Duration::from_millis(50);
         let link = s3.link("a/b", Duration::from_secs(60), limit);

@@ -6527,6 +6527,14 @@
             ],
             "description": "When the instance's configuration stopped naming the store, in UTC, or `null` while it names it.",
             "example": "2026-10-03T09:30:00.000Z"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the attached object store cannot be used while `allow_private_addresses` refuses the requests to it, the same text as `backups.store_error` in `GET /health`, or `null`.",
+            "example": "The object store cannot be used: the object store's address is not public, and allow_private_addresses is false. Until it can, no file is copied there, no backup is taken and no file is purged."
           }
         },
         "required": [
@@ -6534,7 +6542,8 @@
           "kind",
           "locator",
           "attached_at",
-          "detached_at"
+          "detached_at",
+          "error"
         ],
         "description": "A store is a place a blob's bytes live: the disk beside the server, or an S3-compatible bucket."
       },
