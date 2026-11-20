@@ -18,7 +18,7 @@ use std::sync::atomic::AtomicBool;
 
 use serde::Deserialize;
 
-use super::address::{Readiness, Shape, ends_the_drain, readiness};
+use super::address::{Readiness, Shape, ends_the_drain, held_back, readiness};
 use super::classify::{
     Classified, classify, failure_of, limited_by_server, not_the_writes, put_verdict, rate_limited,
 };
@@ -262,7 +262,7 @@ fn candidates<'a>(
             &*standing.answers,
             &none,
             standing.landing,
-            super::create_edges::waits(&conn, row)?,
+            held_back(&conn, row)?,
         );
         let held = match ready {
             Readiness::Ready => false,

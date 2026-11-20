@@ -88,13 +88,21 @@ pub(super) enum Readiness {
     RefusedWith(String),
 }
 
+/// Whether the write waits on something the copy has yet to learn: an edge
+/// a create was shown with, whose id the copy made and no edge the server
+/// holds carries (`device/edge-write-waits-projected`), or table rows set
+/// aside to compare (`device/restored-rows-first`).
+pub(super) fn held_back(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<bool> {
+    Ok(super::create_edges::waits(conn, row)? || crate::restored_rows::holds_back(conn, row)?)
+}
+
 pub(super) fn readiness(
     row: &QueuedWrite,
     rows: &HashMap<&str, &QueuedWrite>,
     verdicts: &HashMap<String, Option<Verdict>>,
     waiting: &HashSet<String>,
     landing: &HashMap<String, String>,
-    owes_edge: bool,
+    held_back: bool,
 ) -> Readiness {
     // Ordering before dependencies, so a write that would be refused does
     // not let the writes behind it past the one ahead.
@@ -127,9 +135,7 @@ pub(super) fn readiness(
             _ => return Readiness::Held,
         }
     }
-    // An id the copy made for an edge a create was shown with names no edge
-    // the server holds (`device/edge-write-waits-projected`).
-    if owes_edge {
+    if held_back {
         return Readiness::Held;
     }
     if row.kind == WriteKind::DeleteItem && row.base_version.is_none_or(|version| version <= 0) {

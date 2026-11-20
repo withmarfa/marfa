@@ -36,7 +36,7 @@ const SPAN_GAP: i64 = 100;
 const REREAD_PAGE: i64 = 1000;
 
 const OWED: &str = "owed";
-const FILLING: &str = "filling";
+pub(crate) const FILLING: &str = "filling";
 pub(crate) const WHOLE: &str = "whole";
 const ONLINE: &str = "online";
 
@@ -196,6 +196,7 @@ fn drop_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
 }
 
 pub(crate) fn owe_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
+    crate::restored_rows::hold_named(conn, Some((item, table)))?;
     empty_rows(conn, item, table)?;
     set_state(conn, item, table, OWED, None)
 }
@@ -260,6 +261,7 @@ pub(crate) fn drop_item(conn: &Connection, item: &str) -> Result<()> {
 
 /// Owes every table again, for a copy that missed events.
 pub(crate) fn owe_again(conn: &Connection) -> Result<()> {
+    crate::restored_rows::hold_named(conn, None)?;
     crate::row_writes::forget_all(conn)?;
     conn.execute_batch(
         "DELETE FROM table_rows;

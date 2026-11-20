@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 
 use super::address::{
-    Door, Owned, Readiness, Sendable, Shape, address, ends_the_drain, readiness, send_uploads_as,
-    upload,
+    Door, Owned, Readiness, Sendable, Shape, address, ends_the_drain, held_back, readiness,
+    send_uploads_as, upload,
 };
 use super::classify::{
     Classified, ENVIRONMENTAL_STREAK, Phase, Role, STREAK_FLOOR_MILLIS, Standing, Suspect,
@@ -299,8 +299,8 @@ pub(super) fn send_queue(
             continue;
         }
 
-        let owes_edge = create_edges::waits(&*core.conn()?, row)?;
-        let ready = match readiness(row, &rows, &answers, &waiting, &landing, owes_edge) {
+        let waits = held_back(&*core.conn()?, row)?;
+        let ready = match readiness(row, &rows, &answers, &waiting, &landing, waits) {
             Readiness::Ready => match crate::body::rule::lost_body(&*core.conn()?, row)? {
                 Some(reason) => Readiness::RefusedWith(reason),
                 None => Readiness::Ready,

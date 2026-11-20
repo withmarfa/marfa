@@ -171,9 +171,6 @@ CREATE TABLE IF NOT EXISTS row_receipts (
   -- Milliseconds on the store's clock.
   answered_at INTEGER NOT NULL,
   seen INTEGER NOT NULL DEFAULT 0 CHECK (seen IN (0, 1)),
-  -- Answered before its table's rows were set aside: one answered since
-  -- names work the server took after the restore.
-  held INTEGER NOT NULL DEFAULT 0 CHECK (held IN (0, 1)),
   PRIMARY KEY (write_id, id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS row_receipts_batch ON row_receipts (batch);

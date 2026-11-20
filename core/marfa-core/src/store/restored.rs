@@ -285,7 +285,7 @@ pub(crate) fn receipts_seen(
     payload: &EventPayload,
 ) -> Result<(), CoreError> {
     if let Some(rows) = &payload.rows {
-        return crate::restored_rows::seen_by(conn, &rows.batch);
+        return crate::restored_rows::seen_by(conn, rows);
     }
     let (subject, carried) = match (&payload.item, &payload.edge) {
         (Some(item), _) => (

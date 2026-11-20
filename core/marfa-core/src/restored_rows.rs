@@ -10,9 +10,10 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 use crate::http::Http;
-use crate::model::QueuedWrite;
+use crate::model::{QueuedWrite, WriteKind};
 use crate::row_writes::{self, Op};
 use crate::store::{self, Cached, restored::RECEIPTS_KEPT_MILLIS};
+use crate::wire::RowsEvent;
 use crate::{Core, CoreError, Result};
 
 fn floor() -> i64 {
@@ -30,8 +31,9 @@ pub(crate) fn batch_seen(conn: &Connection, batch: &str) -> Result<bool> {
 }
 
 /// Keeps a receipt of each row `write` changed or removed in `batch`, at the
-/// server's time `at`. A change lets go of a removal of the same row kept
-/// before it, and is not kept where the batch's event came first.
+/// server's time `at`. Each lets go of the receipts of the same row kept
+/// before it that it supersedes: a change those of removals, a removal those
+/// of changes. A change is not kept where the batch's event came first.
 pub(crate) fn keep_receipts(
     conn: &Connection,
     write: &QueuedWrite,
@@ -55,23 +57,21 @@ pub(crate) fn keep_receipts(
             Some("created" | "replaced" | "patched") => false,
             _ => continue,
         };
-        if !removal {
-            conn.prepare_cached(
-                "DELETE FROM row_receipts
-                  WHERE item_id = ?1 AND name = ?2 AND id = ?3 AND removal = 1",
-            )?
-            .execute(params![item, table, id])?;
-            if seen {
-                continue;
-            }
+        conn.prepare_cached(
+            "DELETE FROM row_receipts
+              WHERE item_id = ?1 AND name = ?2 AND id = ?3 AND removal = ?4 AND write_id <> ?5",
+        )?
+        .execute(params![item, table, id, !removal, write.id])?;
+        if seen && !removal {
+            continue;
         }
         conn.prepare_cached(
             "INSERT INTO row_receipts
-               (write_id, item_id, name, id, batch, at, removal, answered_at, seen, held)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)
+               (write_id, item_id, name, id, batch, at, removal, answered_at, seen)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
              ON CONFLICT (write_id, id) DO UPDATE SET
                batch = excluded.batch, at = excluded.at, removal = excluded.removal,
-               answered_at = excluded.answered_at, seen = excluded.seen, held = 0",
+               answered_at = excluded.answered_at, seen = excluded.seen",
         )?
         .execute(params![
             write.id, item, table, id, batch, at, removal, now, seen
@@ -84,13 +84,147 @@ pub(crate) fn keep_receipts(
 }
 
 /// The batch's own event shows the server holds what it changed: a change
-/// is let go, and a removal kept as seen.
-pub(crate) fn seen_by(conn: &Connection, batch: &str) -> Result<()> {
-    conn.prepare_cached("DELETE FROM row_receipts WHERE batch = ?1 AND removal = 0")?
+/// is let go, and a removal kept as seen. An event that names no receipt may
+/// come before its answer, so it is kept as seen while a row write to the
+/// table awaits one, whatever the copy holds of the table. A row the event
+/// removes is not kept from the rows set aside: another writer removed it.
+pub(crate) fn seen_by(conn: &Connection, event: &RowsEvent) -> Result<()> {
+    let (item, table, batch) = (event.item.id.as_str(), event.table.as_str(), &event.batch);
+    let changes = conn
+        .prepare_cached("DELETE FROM row_receipts WHERE batch = ?1 AND removal = 0")?
         .execute([batch])?;
-    conn.prepare_cached("UPDATE row_receipts SET seen = 1 WHERE batch = ?1 AND removal = 1")?
+    let removals = conn
+        .prepare_cached("UPDATE row_receipts SET seen = 1 WHERE batch = ?1 AND removal = 1")?
         .execute([batch])?;
+    if changes + removals == 0 {
+        row_writes::seen_first(conn, item, table, batch)?;
+    }
+    for row in event.rows.iter().filter(|row| row.deleted) {
+        conn.prepare_cached("DELETE FROM held_rows WHERE item_id = ?1 AND name = ?2 AND id = ?3")?
+            .execute(params![item, table, row.id])?;
+    }
     Ok(())
+}
+
+/// Whether the table's rows are set aside to be compared.
+fn marked(conn: &Connection, item: &str, table: &str) -> Result<bool> {
+    Ok(conn
+        .query_row_cached(
+            "SELECT 1 FROM held_tables WHERE item_id = ?1 AND name = ?2",
+            params![item, table],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// Lays what the server took of `write` on the rows set aside of its table,
+/// so the comparison judges them as the server last answered them: each
+/// operation at the server's time `at` where it changed the row, and at the
+/// row's own time where it did not. A put the server held already lets the
+/// row go, as the server holds it. With no `results`, the operations are laid
+/// on the rows set aside only. An undo answers no values, so each row it
+/// changed is let go.
+pub(crate) fn fold(
+    conn: &Connection,
+    write: &QueuedWrite,
+    at: Option<&str>,
+    results: &[Value],
+) -> Result<()> {
+    let (Some(item), Some(table)) = (write.item_id.as_deref(), write.table.as_deref()) else {
+        return Ok(());
+    };
+    if !marked(conn, item, table)? {
+        return Ok(());
+    }
+    let held = |id: &str| -> Result<Option<row_writes::RowText>> {
+        Ok(conn
+            .query_row_cached(
+                "SELECT body, withheld, updated_at FROM held_rows
+                  WHERE item_id = ?1 AND name = ?2 AND id = ?3",
+                params![item, table, id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?)
+    };
+    let set = |id: &str, row: Option<row_writes::RowText>| -> Result<()> {
+        match row {
+            Some((body, withheld, updated_at)) => conn
+                .prepare_cached(
+                    "INSERT INTO held_rows (item_id, name, id, body, withheld, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT (item_id, name, id) DO UPDATE SET
+                       body = excluded.body, withheld = excluded.withheld,
+                       updated_at = excluded.updated_at",
+                )?
+                .execute(params![item, table, id, body, withheld, updated_at])?,
+            None => conn
+                .prepare_cached(
+                    "DELETE FROM held_rows WHERE item_id = ?1 AND name = ?2 AND id = ?3",
+                )?
+                .execute(params![item, table, id])?,
+        };
+        Ok(())
+    };
+    if write.kind == WriteKind::UndoRows {
+        for result in results {
+            let outcome = result.get("outcome").and_then(Value::as_str);
+            if let Some(id) = result.get("id").and_then(Value::as_str)
+                && outcome != Some("unchanged")
+            {
+                set(id, None)?;
+            }
+        }
+        return Ok(());
+    }
+    let ops = row_writes::queued_ops(&write.body)?;
+    if results.is_empty() {
+        let ids: BTreeSet<&str> = ops.iter().map(Op::id).collect();
+        for id in ids {
+            if let Some(row) = held(id)? {
+                set(id, row_writes::laid_on(Some(row), &ops, id, None)?)?;
+            }
+        }
+        return Ok(());
+    }
+    for (op, result) in ops.iter().zip(results) {
+        let id = op.id();
+        let row = match (op, result.get("outcome").and_then(Value::as_str)) {
+            (Op::Put { .. }, Some("unchanged")) => None,
+            (_, Some("created" | "replaced" | "patched" | "deleted")) => {
+                row_writes::laid_on(held(id)?, std::slice::from_ref(op), id, at)?
+            }
+            _ => row_writes::laid_on(held(id)?, std::slice::from_ref(op), id, None)?,
+        };
+        set(id, row)?;
+    }
+    Ok(())
+}
+
+/// Whether `write` is a row write not yet sent to a table whose rows are set
+/// aside, which waits until they are compared, so the kept writes go ahead
+/// of it (`device/restored-rows-first`). A table no fill reaches holds back
+/// nothing.
+pub(crate) fn holds_back(conn: &Connection, write: &QueuedWrite) -> Result<bool> {
+    if !write.kind.rows() {
+        return Ok(false);
+    }
+    let (Some(item), Some(table)) = (write.item_id.as_deref(), write.table.as_deref()) else {
+        return Ok(false);
+    };
+    let held = conn
+        .query_row_cached(
+            "SELECT 1 FROM held_tables h
+               JOIN item_tables t ON t.item_id = h.item_id AND t.name = h.name
+               JOIN items i ON i.id = h.item_id
+              WHERE h.item_id = ?1 AND h.name = ?2 AND t.state <> 'online'
+                AND i.state <> 'trashed'",
+            params![item, table],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    Ok(held && store::unsent(conn, &write.id)?)
 }
 
 struct Unseen {
@@ -164,8 +298,10 @@ pub(crate) fn lost(core: &Core, http: &Http, stop: &AtomicBool, before: i64) -> 
         );
         let conn = core.conn()?;
         let Some(read) = crate::restored::heard(read)? else {
-            conn.prepare_cached("DELETE FROM row_receipts WHERE item_id = ?1 AND name = ?2")?
-                .execute(params![item, table])?;
+            conn.prepare_cached(
+                "DELETE FROM row_receipts WHERE item_id = ?1 AND name = ?2 AND answered_at < ?3",
+            )?
+            .execute(params![item, table, before])?;
             continue;
         };
         let gone = !read;
@@ -213,17 +349,9 @@ pub(crate) fn release(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Marks the table for comparison. The first mark also marks every receipt
-/// of the table answered so far as answered before it.
 fn mark(conn: &Connection, item: &str, table: &str) -> Result<()> {
-    let first = conn
-        .prepare_cached("INSERT OR IGNORE INTO held_tables (item_id, name) VALUES (?1, ?2)")?
-        .execute(params![item, table])?
-        > 0;
-    if first {
-        conn.prepare_cached("UPDATE row_receipts SET held = 1 WHERE item_id = ?1 AND name = ?2")?
-            .execute(params![item, table])?;
-    }
+    conn.prepare_cached("INSERT OR IGNORE INTO held_tables (item_id, name) VALUES (?1, ?2)")?
+        .execute(params![item, table])?;
     Ok(())
 }
 
@@ -299,21 +427,21 @@ pub(crate) fn hold_copy(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// `hold_copy` for the rows the receipts no event has shown name, before a
-/// hydration of the same instance for another reason
-/// (`device/restored-checked-before-clear`). Each table they name is owed
-/// again, so a hydration in place still fills it from the server.
-pub(crate) fn hold_unseen(conn: &Connection) -> Result<()> {
+/// `hold_copy` for the rows the receipts no event has shown name, of the one
+/// table `only` names or of every table, so a clear of the copy's rows keeps
+/// what the server may have lost of them (`device/restored-checked-before-clear`).
+pub(crate) fn hold_named(conn: &Connection, only: Option<(&str, &str)>) -> Result<()> {
     let named: Vec<(String, String, String, bool)> = conn
-        .prepare(
+        .prepare_cached(
             "SELECT DISTINCT item_id, name, id, removal FROM row_receipts
-              WHERE seen = 0 AND answered_at >= ?1",
+              WHERE seen = 0 AND answered_at >= ?1
+                AND (?2 IS NULL OR (item_id = ?2 AND name = ?3))",
         )?
-        .query_map([floor()], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?
+        .query_map(
+            params![floor(), only.map(|only| only.0), only.map(|only| only.1)],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?
         .collect::<rusqlite::Result<_>>()?;
-    let mut owed = BTreeSet::new();
     for (item, table, id, removal) in named {
         let Some(rows) = holdable(conn, &item, &table)? else {
             continue;
@@ -322,10 +450,25 @@ pub(crate) fn hold_unseen(conn: &Connection) -> Result<()> {
         if rows && !removal {
             hold_row(conn, &item, &table, &id)?;
         }
-        owed.insert((item, table));
     }
-    for (item, table) in owed {
-        crate::tables::owe_table(conn, &item, &table)?;
+    Ok(())
+}
+
+/// Before a hydration of the same instance for another reason, owes again
+/// each table the receipts no event has shown name, which sets their rows
+/// aside, so a hydration in place still fills it from the server.
+pub(crate) fn hold_unseen(conn: &Connection) -> Result<()> {
+    let named: Vec<(String, String)> = conn
+        .prepare(
+            "SELECT DISTINCT item_id, name FROM row_receipts
+              WHERE seen = 0 AND answered_at >= ?1",
+        )?
+        .query_map([floor()], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (item, table) in named {
+        if holdable(conn, &item, &table)?.is_some() {
+            crate::tables::owe_table(conn, &item, &table)?;
+        }
     }
     Ok(())
 }
@@ -374,61 +517,61 @@ fn parsed(text: Option<&str>) -> Value {
 /// writes waiting on it are laid over them: queues, blocked, a put of each
 /// row set aside that the server lacks or holds behind it, and a delete of
 /// each row this device removed that the server holds from before the
-/// removal (`device/restored-rows-kept`). Nothing is kept of a row this
-/// device wrote since the rows were set aside.
+/// removal (`device/restored-rows-kept`). A row a write sent with no answer
+/// yet names is judged with that write laid on, by its values alone: the
+/// server may hold the write already, at a time of its own.
 pub(crate) fn keep_lost(conn: &Connection, item: &str, table: &str) -> Result<()> {
-    let marked = conn
-        .query_row_cached(
-            "SELECT 1 FROM held_tables WHERE item_id = ?1 AND name = ?2",
-            params![item, table],
-            |_| Ok(()),
-        )
-        .optional()?;
-    if marked.is_none() {
+    if !marked(conn, item, table)? {
         return Ok(());
     }
-    // Written since by this device, and taken.
-    let since = "EXISTS (SELECT 1 FROM row_receipts s
-                          WHERE s.item_id = ?1 AND s.name = ?2 AND s.id = {row} AND s.held = 0)";
     let mut ops = Vec::new();
     let mut set_aside: HashSet<String> = HashSet::new();
     {
-        let mut query = conn.prepare_cached(&format!(
-            "SELECT h.id, h.body, h.withheld, h.updated_at, r.body, r.withheld, r.updated_at,
-                    {}
+        let mut query = conn.prepare_cached(
+            "SELECT h.id, h.body, h.withheld, h.updated_at, r.body, r.withheld, r.updated_at
                FROM held_rows h
                LEFT JOIN table_rows r ON r.item_id = h.item_id AND r.name = h.name AND r.id = h.id
               WHERE h.item_id = ?1 AND h.name = ?2
               ORDER BY h.id",
-            since.replace("{row}", "h.id")
-        ))?;
+        )?;
         let rows = query.query_map(params![item, table], |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, String>(3)?,
+                (
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                ),
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, Option<String>>(6)?,
-                row.get::<_, bool>(7)?,
             ))
         })?;
         for row in rows {
-            let (id, body, withheld, at, server, server_withheld, server_at, written) = row?;
+            let (id, held, server, server_withheld, server_at) = row?;
             set_aside.insert(id.clone());
-            if written {
+            let unanswered = row_writes::unanswered_ops(conn, item, table, &id)?;
+            let in_flight = !unanswered.is_empty();
+            let held = if in_flight {
+                row_writes::laid_on(Some(held), &unanswered, &id, None)?
+            } else {
+                Some(held)
+            };
+            let Some((body, withheld, at)) = held else {
                 continue;
-            }
+            };
             let values = parsed(Some(&body));
-            let held = (&values, &parsed(withheld.as_deref()), at.as_str());
+            let withheld = parsed(withheld.as_deref());
             let server_values = parsed(server.as_deref());
             let server_withheld = parsed(server_withheld.as_deref());
-            let server = server_at
-                .as_deref()
-                .filter(|_| server.is_some())
-                .map(|at| (&server_values, &server_withheld, at));
-            if behind(held, server) {
+            let lost = match server_at.as_deref().filter(|_| server.is_some()) {
+                Some(_) if in_flight => values != server_values || withheld != server_withheld,
+                server_at => behind(
+                    (&values, &withheld, at.as_str()),
+                    server_at.map(|at| (&server_values, &server_withheld, at)),
+                ),
+            };
+            if lost {
                 let Value::Object(values) = values else {
                     continue;
                 };
@@ -437,15 +580,13 @@ pub(crate) fn keep_lost(conn: &Connection, item: &str, table: &str) -> Result<()
         }
     }
     {
-        let mut query = conn.prepare_cached(&format!(
+        let mut query = conn.prepare_cached(
             "SELECT k.id, MAX(k.at), r.updated_at FROM row_receipts k
                JOIN table_rows r ON r.item_id = k.item_id AND r.name = k.name AND r.id = k.id
-              WHERE k.item_id = ?1 AND k.name = ?2 AND k.removal = 1 AND k.held = 1
-                AND k.answered_at >= ?3 AND NOT ({})
+              WHERE k.item_id = ?1 AND k.name = ?2 AND k.removal = 1 AND k.answered_at >= ?3
               GROUP BY k.id
               ORDER BY k.id",
-            since.replace("{row}", "k.id")
-        ))?;
+        )?;
         let rows = query.query_map(params![item, table, floor()], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -571,6 +712,350 @@ mod tests {
         json!({ "op": "put", "id": id, "values": { "count": count } })
     }
 
+    /// A row id a queued write may name.
+    const R: &str = "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70";
+
+    fn noted(count: i64) -> Value {
+        json!([{ "op": "put", "id": R, "values": { "count": count, "note": "later" } }])
+    }
+
+    fn patch_note() -> Value {
+        json!([{ "op": "patch", "id": R, "values": { "note": "later" } }])
+    }
+
+    /// A row write of `ops`, laid over the copy as one waiting on its answer is.
+    fn queued(conn: &Connection, id: &str, seq: i64, ops: Value, sent: bool) -> QueuedWrite {
+        conn.execute(
+            "INSERT INTO queue (seq, id, kind, item_id, row_table, idempotency_key, payload, sent, queued_at)
+             VALUES (?1, ?2, 'write_rows', 'item', 'steps', ?2, ?3, ?4, 'at')",
+            params![seq, id, json!({ "operations": ops }).to_string(), sent],
+        )
+        .unwrap();
+        for op in ops.as_array().unwrap() {
+            conn.execute(
+                "INSERT INTO rows_laid (write_id, seq, item_id, name, id, ops, at)
+                 VALUES (?1, ?2, 'item', 'steps', ?3, ?4, 'at')",
+                params![id, seq, op["id"].as_str().unwrap(), json!([op]).to_string()],
+            )
+            .unwrap();
+        }
+        store::queued_write(conn, id).unwrap().unwrap()
+    }
+
+    /// What the server holds of a row once the table is filled again.
+    fn server_row(conn: &Connection, id: &str, values: Value, at: &str) {
+        crate::tables::hold_row(
+            conn,
+            "item",
+            "steps",
+            id,
+            values.as_object().unwrap(),
+            &[],
+            at,
+        )
+        .unwrap();
+    }
+
+    fn rows_event(batch: &str, rows: Value) -> crate::wire::EventPayload {
+        crate::wire::EventPayload {
+            event_type: "rows.changed".into(),
+            rows: Some(
+                serde_json::from_value(json!({
+                    "item": { "id": "item" },
+                    "table": "steps",
+                    "batch": batch,
+                    "last_activity_at": LATER,
+                    "rows": rows,
+                }))
+                .unwrap(),
+            ),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_write_the_server_took_while_its_table_waited_to_be_compared_is_laid_on_the_rows_set_aside()
+    {
+        let conn = copy();
+        row(&conn, R, 1, TEN);
+        hold_copy(&conn).unwrap();
+        // Sent before the rows were set aside, and taken by the restored
+        // server, which held the row as it was before the backup.
+        let write = queued(&conn, "w", 1, patch_note(), true);
+        let results = [json!({ "id": R, "outcome": "patched" })];
+        keep_receipts(&conn, &write, "batch", LATER, &results, false).unwrap();
+        fold(&conn, &write, Some(LATER), &results).unwrap();
+        conn.execute_batch(
+            "UPDATE queue SET verdict = 'accepted'; DELETE FROM rows_laid WHERE write_id = 'w';",
+        )
+        .unwrap();
+        // Restored again before the table was filled whole.
+        hold_copy(&conn).unwrap();
+
+        conn.execute("DELETE FROM table_rows", []).unwrap();
+        server_row(&conn, R, json!({ "count": 0, "note": "later" }), LATER);
+        keep_lost(&conn, "item", "steps").unwrap();
+        assert_eq!(
+            kept(&conn).first().map(|kept| kept.3.clone()),
+            Some(noted(1)),
+            "the values the restored server lost in the row's other columns were not kept"
+        );
+    }
+
+    #[test]
+    fn a_write_sent_and_unanswered_when_its_table_is_compared_is_laid_on_the_row_kept() {
+        for (label, server, at) in [
+            ("not yet taken", json!({ "count": 0 }), BEFORE),
+            (
+                "taken by the restored server",
+                json!({ "count": 0, "note": "later" }),
+                LATER,
+            ),
+        ] {
+            let conn = copy();
+            row(&conn, R, 1, TEN);
+            queued(&conn, "w", 1, patch_note(), true);
+            hold_copy(&conn).unwrap();
+            conn.execute("DELETE FROM table_rows", []).unwrap();
+            server_row(&conn, R, server, at);
+            keep_lost(&conn, "item", "steps").unwrap();
+            assert_eq!(
+                kept(&conn).first().map(|kept| kept.3.clone()),
+                Some(noted(1)),
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn rows_unseen_receipts_name_are_set_aside_before_an_expiry_clears_the_copy() {
+        let conn = copy();
+        row(&conn, "a", 1, TEN);
+        receipt(&conn, "a", TEN, false, false);
+        crate::reach::expire(&conn).unwrap();
+        hold_unseen(&conn).unwrap();
+        filled(&conn, &[("a", 0, BEFORE)]);
+        keep_lost(&conn, "item", "steps").unwrap();
+        assert_eq!(
+            kept(&conn).first().map(|kept| kept.3.clone()),
+            Some(json!([put("a", 1)]))
+        );
+    }
+
+    #[test]
+    fn a_removal_lets_go_of_the_changes_to_its_row_kept_before_it() {
+        let conn = copy();
+        let made = queued(&conn, "made", 1, json!([put(R, 1)]), true);
+        let created = [json!({ "id": R, "outcome": "created" })];
+        keep_receipts(&conn, &made, "one", TEN, &created, false).unwrap();
+        let removed = queued(
+            &conn,
+            "removed",
+            2,
+            json!([{ "op": "delete", "id": R }]),
+            true,
+        );
+        let deleted = [json!({ "id": R, "outcome": "deleted" })];
+        keep_receipts(&conn, &removed, "two", LATER, &deleted, false).unwrap();
+        let receipts: Vec<(String, bool)> = conn
+            .prepare("SELECT write_id, removal FROM row_receipts ORDER BY write_id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(receipts, vec![("removed".into(), true)]);
+    }
+
+    #[test]
+    fn an_event_that_comes_before_its_answer_is_seen_whatever_the_copy_holds_of_its_table() {
+        for state in ["online", "owed", "filling", "whole", "not held"] {
+            let conn = copy();
+            match state {
+                "not held" => conn.execute("DELETE FROM item_tables", []).unwrap(),
+                _ => conn
+                    .execute("UPDATE item_tables SET state = ?1", [state])
+                    .unwrap(),
+            };
+            let write = queued(&conn, "w", 1, json!([put(R, 1)]), true);
+            let event = rows_event("early", json!([{ "id": R, "values": { "count": 1 } }]));
+            store::restored::receipts_seen(&conn, "rows.changed", &event).unwrap();
+            let seen = batch_seen(&conn, "early").unwrap();
+            let created = [json!({ "id": R, "outcome": "created" })];
+            keep_receipts(&conn, &write, "early", LATER, &created, seen).unwrap();
+            let left: i64 = conn
+                .query_row("SELECT COUNT(*) FROM row_receipts", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(left, 0, "{state}");
+        }
+
+        // The witness: with no row write waiting on its answer, an event is
+        // another writer's, and nothing is taken as seen.
+        let conn = copy();
+        conn.execute("UPDATE item_tables SET state = 'online'", [])
+            .unwrap();
+        let event = rows_event("theirs", json!([{ "id": "a", "values": { "count": 1 } }]));
+        store::restored::receipts_seen(&conn, "rows.changed", &event).unwrap();
+        assert!(!batch_seen(&conn, "theirs").unwrap());
+    }
+
+    #[test]
+    fn a_row_another_writer_removes_after_the_rows_were_set_aside_is_not_kept() {
+        let conn = copy();
+        row(&conn, "a", 1, TEN);
+        row(&conn, "b", 2, TEN);
+        hold_copy(&conn).unwrap();
+        conn.execute("UPDATE item_tables SET state = 'owed'", [])
+            .unwrap();
+        let event = rows_event("theirs", json!([{ "id": "a", "deleted": true }]));
+        store::restored::receipts_seen(&conn, "rows.changed", &event).unwrap();
+        filled(&conn, &[]);
+        keep_lost(&conn, "item", "steps").unwrap();
+        assert_eq!(
+            kept(&conn).first().map(|kept| kept.3.clone()),
+            Some(json!([put("b", 2)]))
+        );
+    }
+
+    #[test]
+    fn a_write_taken_while_its_table_fills_is_laid_on_the_rows_set_aside() {
+        let conn = copy();
+        conn.execute("UPDATE item_tables SET state = 'filling'", [])
+            .unwrap();
+        row(&conn, R, 1, TEN);
+        let write = queued(&conn, "w", 1, patch_note(), true);
+        let results = [json!({ "id": R, "outcome": "patched" })];
+        row_writes::taken(
+            &conn,
+            "item",
+            "steps",
+            Some("batch"),
+            &[row_writes::Taken {
+                write: &write,
+                results: &results,
+            }],
+        )
+        .unwrap();
+        keep_receipts(&conn, &write, "batch", LATER, &results, false).unwrap();
+        conn.execute("UPDATE queue SET verdict = 'accepted'", [])
+            .unwrap();
+        hold_copy(&conn).unwrap();
+        conn.execute("DELETE FROM table_rows", []).unwrap();
+        server_row(&conn, R, json!({ "count": 0 }), BEFORE);
+        keep_lost(&conn, "item", "steps").unwrap();
+        assert_eq!(
+            kept(&conn).first().map(|kept| kept.3.clone()),
+            Some(noted(1))
+        );
+    }
+
+    #[test]
+    fn a_read_that_says_nothing_lets_go_only_of_the_receipts_answered_before_it() {
+        use crate::scripted::{Scripted, refusal};
+        let server = Scripted::start();
+        let core = crate::stop_tests::copy(&server);
+        let now = store::now_millis();
+        {
+            let conn = core.conn().unwrap();
+            store::upsert_item(
+                &conn,
+                &store::testing::note("item", "T", "", BEFORE),
+                None,
+                &marfa_rules::catalog::Indexing::default(),
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO item_tables (item_id, name, state) VALUES ('item', 'steps', 'whole')",
+                [],
+            )
+            .unwrap();
+            for (id, answered) in [("early", now - 1_000), ("late", now + 1_000)] {
+                conn.execute(
+                    "INSERT INTO row_receipts (write_id, item_id, name, id, batch, at, removal, answered_at)
+                     VALUES (?1, 'item', 'steps', ?1, ?1, ?2, 0, ?3)",
+                    params![id, TEN, answered],
+                )
+                .unwrap();
+            }
+        }
+        server.on(
+            "/items/item/tables/steps/rows",
+            vec![refusal(400, "validation_failed")],
+        );
+        let stop = AtomicBool::new(false);
+        assert!(!lost(&core, core.http().unwrap(), &stop, now).unwrap());
+        let left: Vec<String> = core
+            .conn()
+            .unwrap()
+            .prepare("SELECT id FROM row_receipts")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(left, vec!["late".to_string()]);
+    }
+
+    #[test]
+    fn a_row_write_to_a_table_waiting_to_be_compared_is_held_back_until_it_is() {
+        use crate::scripted::{Scripted, certified, json as answer};
+        let path = "/items/item/tables/steps/rows";
+        // Unmarked first: the witness that the same write is sent.
+        for marked in [false, true] {
+            let server = Scripted::start();
+            let core = crate::stop_tests::copy(&server);
+            {
+                let conn = core.conn().unwrap();
+                store::upsert_item(
+                    &conn,
+                    &store::testing::note("item", "T", "", BEFORE),
+                    None,
+                    &marfa_rules::catalog::Indexing::default(),
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO item_tables (item_id, name, state) VALUES ('item', 'steps', 'owed')",
+                    [],
+                )
+                .unwrap();
+                if marked {
+                    mark(&conn, "item", "steps").unwrap();
+                }
+                queued(&conn, "w", 1, json!([put(R, 1)]), false);
+            }
+            server.on(
+                path,
+                vec![certified(answer(
+                    200,
+                    &json!({
+                        "batch": "019a5b1e-9c33-7e5f-8a6b-7c8d9e0f1a2b",
+                        "last_activity_at": LATER,
+                        "results": [{ "id": R, "outcome": "created" }],
+                    })
+                    .to_string(),
+                ))],
+            );
+            let report = core.drain().unwrap();
+            assert_eq!(
+                server.seen(path).len(),
+                usize::from(!marked),
+                "marked {marked}: {report:?}"
+            );
+            let write = store::queued_write(&core.conn().unwrap(), "w")
+                .unwrap()
+                .unwrap();
+            if marked {
+                assert_eq!(
+                    (write.verdict, write.reason.as_deref()),
+                    (
+                        Some(crate::model::Verdict::Blocked),
+                        Some(crate::model::AWAITING_DEPENDENCY)
+                    )
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_row_is_behind_where_the_server_lacks_it_or_holds_it_earlier_or_otherwise_at_its_time() {
         let one = json!({ "count": 1 });
@@ -612,7 +1097,15 @@ mod tests {
             receipts(&conn),
             vec![("a".into(), false, false), ("b".into(), true, false)]
         );
-        seen_by(&conn, "batch").unwrap();
+        let event: RowsEvent = serde_json::from_value(json!({
+            "item": { "id": "item" },
+            "table": "steps",
+            "batch": "batch",
+            "last_activity_at": TEN,
+            "rows": [],
+        }))
+        .unwrap();
+        seen_by(&conn, &event).unwrap();
         assert_eq!(receipts(&conn), vec![("b".into(), true, true)]);
 
         // A row written again lets go of its removal.
@@ -783,15 +1276,31 @@ mod tests {
     }
 
     #[test]
-    fn a_row_this_device_wrote_since_the_rows_were_set_aside_is_not_kept() {
+    fn a_row_this_device_wrote_since_the_rows_were_set_aside_is_kept_as_the_server_took_it() {
         let conn = copy();
-        row(&conn, "written", 1, TEN);
+        row(&conn, R, 1, TEN);
         row(&conn, "lost", 2, TEN);
         hold_copy(&conn).unwrap();
-        receipt(&conn, "written", LATER, false, false);
-        filled(&conn, &[]);
+        let write = queued(&conn, "w", 1, json!([put(R, 5)]), true);
+        let results = [json!({ "id": R, "outcome": "replaced" })];
+        fold(&conn, &write, Some(LATER), &results).unwrap();
+        conn.execute_batch("UPDATE queue SET verdict = 'accepted'; DELETE FROM rows_laid;")
+            .unwrap();
+        filled(&conn, &[(R, 5, LATER)]);
         keep_lost(&conn, "item", "steps").unwrap();
         assert_eq!(kept(&conn)[0].3, json!([put("lost", 2)]));
+
+        // The witness: the server that lost the write is put back to it.
+        let conn = copy();
+        row(&conn, R, 1, TEN);
+        hold_copy(&conn).unwrap();
+        let write = queued(&conn, "w", 1, json!([put(R, 5)]), true);
+        fold(&conn, &write, Some(LATER), &results).unwrap();
+        conn.execute_batch("UPDATE queue SET verdict = 'accepted'; DELETE FROM rows_laid;")
+            .unwrap();
+        filled(&conn, &[(R, 1, TEN)]);
+        keep_lost(&conn, "item", "steps").unwrap();
+        assert_eq!(kept(&conn)[0].3, json!([put(R, 5)]));
     }
 
     #[test]

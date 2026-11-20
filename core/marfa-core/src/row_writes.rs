@@ -694,6 +694,55 @@ pub(crate) fn answered(
     Ok(body.map(|body| (body, withheld, updated_at.unwrap_or_default())))
 }
 
+/// A row as `(body, withheld, updated_at)`.
+pub(crate) type RowText = (String, Option<String>, String);
+
+/// `row` with the operations on it in `ops` laid over it at `at`, or at its
+/// own time where `at` is `None`. `None` where they leave no row.
+pub(crate) fn laid_on(
+    row: Option<RowText>,
+    ops: &[Op],
+    id: &str,
+    at: Option<&str>,
+) -> Result<Option<RowText>> {
+    let row = row
+        .map(|(body, withheld, updated_at)| read_held(&body, withheld.as_deref(), updated_at))
+        .transpose()?;
+    let at = at
+        .map(str::to_string)
+        .or_else(|| row.as_ref().map(|row| row.updated_at.clone()))
+        .unwrap_or_default();
+    let row = apply(row, ops, id, &at);
+    let (body, withheld, updated_at) = stored(row.as_ref())?;
+    Ok(body.map(|body| (body, withheld, updated_at.unwrap_or_default())))
+}
+
+/// The operations on the row of the row writes sent with no answer
+/// recorded, oldest first.
+pub(crate) fn unanswered_ops(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+    id: &str,
+) -> Result<Vec<Op>> {
+    let mut query = conn.prepare_cached(&format!(
+        "SELECT l.ops FROM rows_laid l JOIN queue q ON q.id = l.write_id
+          WHERE l.item_id = ?1 AND l.name = ?2 AND l.id = ?3 AND l.batch IS NULL
+            AND {UNANSWERED}
+          ORDER BY l.seq"
+    ))?;
+    let laid = query
+        .query_map(params![item, table, id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut ops = Vec::new();
+    for laid in laid {
+        ops.extend(queued_ops(
+            &json!({ "operations": serde_json::from_str::<Value>(&laid)? }),
+        )?);
+    }
+    Ok(ops)
+}
+
 /// The most a kept write carries, so the drain can join it to no other and
 /// still send it whole.
 const KEPT_BYTES: usize = crate::http::REQUEST_LIMIT / 2;
@@ -1000,6 +1049,28 @@ fn take_seen_beneath(conn: &Connection, batch: &str) -> Result<BTreeMap<String, 
     Ok(kept)
 }
 
+/// Keeps `batch` as seen while a sent row write to the table awaits its
+/// answer, which may be the batch's own.
+pub(crate) fn seen_first(conn: &Connection, item: &str, table: &str, batch: &str) -> Result<()> {
+    let waiting = conn
+        .prepare_cached(&format!(
+            "SELECT 1 FROM queue q WHERE q.kind = ?1 AND q.item_id = ?2 AND q.row_table = ?3
+               AND {UNANSWERED} LIMIT 1"
+        ))?
+        .query_row(params![WriteKind::WriteRows.as_str(), item, table], |_| {
+            Ok(())
+        })
+        .optional()?
+        .is_some();
+    if waiting {
+        conn.execute_cached(
+            "INSERT OR IGNORE INTO rows_seen (batch, item_id, name) VALUES (?1, ?2, ?3)",
+            params![batch, item, table],
+        )?;
+    }
+    Ok(())
+}
+
 /// A batch no laid write names is kept while a sent write awaits its answer.
 pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &str) -> Result<()> {
     let released: Vec<String> = {
@@ -1010,22 +1081,10 @@ pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &
         rows.collect::<rusqlite::Result<_>>()?
     };
     if released.is_empty() {
-        let waiting = conn
-            .prepare_cached(&format!(
-                "SELECT 1 FROM queue q WHERE q.kind = ?1 AND q.item_id = ?2 AND q.row_table = ?3
-                   AND {UNANSWERED} LIMIT 1"
-            ))?
-            .query_row(params![WriteKind::WriteRows.as_str(), item, table], |_| {
-                Ok(())
-            })
-            .optional()?
-            .is_some();
-        if waiting {
-            conn.execute_cached(
-                "INSERT OR IGNORE INTO rows_seen (batch, item_id, name) VALUES (?1, ?2, ?3)",
-                params![batch, item, table],
-            )?;
-        }
+        return seen_first(conn, item, table, batch);
+    }
+    // A table still filling takes the server's rows as they come.
+    if !whole(conn, item, table)? {
         return Ok(());
     }
     let ids: BTreeSet<String> = released.into_iter().collect();
@@ -1159,6 +1218,8 @@ pub(crate) fn taken(
         _ => None,
     };
     let laid = whole(conn, item, table)?;
+    // Kept until its event too, so rows set aside while the table fills hold it.
+    let filling = tables::state(conn, item, table)?.as_deref() == Some(tables::FILLING);
     let mut written = Vec::with_capacity(writes.len());
     let mut conflicts = Vec::with_capacity(writes.len());
     for taken in writes {
@@ -1186,7 +1247,7 @@ pub(crate) fn taken(
         let write = taken.write;
         let ids: BTreeSet<&str> = ops.iter().map(Op::id).collect();
         for id in ids {
-            let waits = laid && kept_whole && changed.contains(id) && !seen;
+            let waits = (laid || filling) && kept_whole && changed.contains(id) && !seen;
             if laid && kept_whole && !changed.contains(id) {
                 let under = beneath(conn, item, table, id)?.flatten();
                 let at = under.as_ref().map(|row| row.updated_at.clone());

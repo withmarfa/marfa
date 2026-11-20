@@ -2,10 +2,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::address::{Readiness, readiness};
+use super::address::{Readiness, held_back, readiness};
 use super::report::{DrainReport, DrainVerdict};
+use super::rows;
 use super::settle::{Settled, move_edits_back, verdict_of};
-use super::{create_edges, rows};
 use crate::error::CoreError;
 use crate::http::Answer;
 use crate::model::{BlockedReason, LastFailure, QueuedWrite, Refusal, Verdict, WriteKind};
@@ -121,7 +121,7 @@ pub(super) fn next_test(
                     standing.answers,
                     &ahead,
                     standing.landing,
-                    create_edges::waits(&*core.conn()?, candidate)?,
+                    held_back(&*core.conn()?, candidate)?,
                 ),
                 Readiness::Ready
             )
