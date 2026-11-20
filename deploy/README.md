@@ -47,7 +47,7 @@ The install lives in one folder: `~/marfa-server`, or `/var/lib/marfa-server` fo
 | Path                      | What it holds                                                                                                                                                                                                                                  |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `marfa.env`               | The server's settings, including its two secrets, `MARFA_KEY_SALT` and `MARFA_AUTH_SECRET`. Only you can read it. **Keep a copy outside the folder:** the server refuses its data without the salt, and rejects every key if the salt differs. |
-| `.env`                    | What the `marfa server` commands record about the install: its name, release, port and how you reach it. It holds no secret, and the server doesn't read it.                                                                                   |
+| `.env`                    | What the `marfa server` commands record about the install: its name, port, release and how you reach it. It holds no secret, and the server doesn't read it.                                                                                   |
 | `data/marfa.db`           | The database.                                                                                                                                                                                                                                  |
 | `data/blobs/`             | The files.                                                                                                                                                                                                                                     |
 | `data/control/marfa.sock` | The private socket that the claim and recovery commands use.                                                                                                                                                                                   |
@@ -80,7 +80,7 @@ An install keeps its runtime. To change it, export the data and restore it into 
 - `marfa server status` shows whether the server runs, its release and address, and whether it has an owner. When it isn't running, it shows its last log.
 - `marfa server start` starts the server, and `marfa server stop` stops it, keeping the service, the data and the settings.
 - `marfa server run` runs the server in the foreground. The service runs this.
-- `marfa server upgrade` moves the server to a newer release. Read [Upgrade](#upgrade) first: before Marfa 0.1, a newer release may not read the database.
+- `marfa server upgrade` moves the server to another release, newer or older. Read [Upgrade](#upgrade) first: before Marfa 0.1, a release may not read another release's database.
 - `marfa server uninstall` removes the service. See [Remove the server](#remove-the-server).
 
 Each takes `--dir` when the install isn't in the default folder, and `marfa server <command> --help` lists its options.
@@ -111,25 +111,36 @@ Recovery changes the owner's password and ends browser sessions. Keys and approv
 
 ## Upgrade
 
-Before Marfa 0.1, a newer release may not read an earlier release's database. An upgrade moves an install to a newer release when that release can read the database. When it can't, the install stays on its release and the database stays as it was. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+Before Marfa 0.1, a release may not read another release's database. `marfa server upgrade` is the only command that changes the release an install runs, newer or older. Before it changes anything, it asks the release it moves to whether it runs on the install's settings and database, and when that release says no, it changes nothing. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
 
-- **Native install:** install the newer programs, then run `marfa server upgrade`. Before it changes anything, the command asks the newer `marfa-server` whether it runs on the install's settings and database. When it doesn't, the service, `.env` and the database stay on the earlier release. The programs you installed are still the newer ones, so the server refuses to start the next time it starts. To keep the earlier release, install it again with `MARFA_VERSION`, as the command's message shows.
-- **Docker install:** run `marfa server upgrade`, which moves to the release of your `marfa`, or add `--release <version>`. When the newer image refuses the database, the command starts the earlier release again.
+An install runs the release of the `marfa-server` its service runs, or for Docker, the image that `.env` names. A native install's `.env` also names its release, because `marfa` up to 0.0.85 can't run the service without it.
+
+- **Native install:** install the other release's programs, then run `marfa server upgrade` with its `marfa`. When the release refuses the install's database, the service and the database stay as they were. If the programs the service runs were replaced in place, as Homebrew and the install script do, the server refuses to start the next time it starts, so the command's message says how to put the earlier release back.
+- **Docker install:** run `marfa server upgrade --release <version>`, or leave out `--release` to move to the release of your `marfa`. The command asks the image first. An image before 0.0.76 can't be asked; when it then refuses the database at start, the command starts the earlier release again.
 - **From the server:** `marfa update start` has the server update itself to the newest release it found, with the same check. When that release can't read the database, nothing changes, and `marfa update status` gives the reason.
 
-`marfa server start` and `marfa server restart` keep a native install on its release. Run with a `marfa` of another release, they change nothing and name the `marfa server upgrade` command that moves it.
+`marfa server install`, `marfa server start` and `marfa server restart` keep an install on the release it runs. Given another release, they change nothing and name the `marfa server upgrade` command that moves it.
+
+### Go back to an earlier release
+
+Going back is an upgrade to the earlier release, and the earlier release is asked first in the same way.
+
+- **Native install:** install the earlier release the way you installed `marfa`, then run `marfa server upgrade` with that release's `marfa`. The install script installs a release that `MARFA_VERSION` names, in the folder that `MARFA_INSTALL_DIR` names: `curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/install.sh | MARFA_VERSION=<version> sh`. Homebrew installs only its newest release, so with Homebrew, use the install script, which installs in `~/.local/bin`, and run `~/.local/bin/marfa server upgrade`.
+- **Docker install:** run `marfa server upgrade --release <version>`.
+
+The `marfa server upgrade` of releases up to 0.0.85 refuses to go back. To go back to one of them on a native install, install it the same way and run `marfa server restart` with its `marfa`. Its server refuses a database it can't read and changes nothing in it.
 
 Keep the release pinned, so that it changes only when you upgrade: don't use `latest`, and don't let anything update the image.
 
-When the newer release can't read the database, move by export and restore:
+When the release you want can't read the database, move by export and restore:
 
-1. While the earlier release runs, export the data with `marfa export --output marfa-export.tar`.
-2. Make a new install of the newer release in another `--dir`, with its own port.
+1. While the release the install runs is running, export the data with `marfa export --output marfa-export.tar`.
+2. Make a new install of the release you want in another `--dir`, with its own port.
 3. Restore the archive into the new install with `marfa restore marfa-export.tar`, pointed at that install, such as through its private socket with `--socket` (see [Claim the server](#claim-the-server)).
 
 A restore reads every archive version up to its own. It refuses an archive that a release before 0.0.72 wrote: its `manifest.json` names no format, or a format other than `marfa-archive`.
 
-A release that refuses a database changes nothing in it, says in its log why it refused, and exits with status 78. `marfa server run` then stays up and idle, so nothing starts the server again into the same refusal. Read the reason with `marfa server status`, or `docker logs <name>`. To go back, install the release that wrote the database again, then run `marfa server restart`. [Railway](railway.md#choose-a-release) pins its image the same way.
+A release that refuses a database changes nothing in it, says in its log why it refused, and exits with status 78. `marfa server run` then stays up and idle, so nothing starts the server again into the same refusal. Read the reason with `marfa server status`, or `docker logs <name>`. To go back, install the release that wrote the database again, then run `marfa server upgrade` with that release's `marfa`, as [Go back to an earlier release](#go-back-to-an-earlier-release) says. [Railway](railway.md#choose-a-release) pins its image the same way.
 
 ## Remove the server
 
