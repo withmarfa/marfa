@@ -19,10 +19,10 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \
                            restore the archive there. A restore reads archive versions from 1 \
                            through its own. It refuses an archive at a later version, and one \
-                           whose manifest.json names no format, which only releases before \
-                           0.0.72 wrote, and names the build that wrote it. Within a version, \
-                           a restore skips a field or a kind of line it does not know, and \
-                           names each kind it skips.";
+                           whose manifest.json names no format or another format, as every \
+                           release before 0.0.72 wrote, and says which build or format it \
+                           found. Within a version, a restore skips a field or a kind of line \
+                           it does not know, and names each kind it skips.";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Standing {
