@@ -138,6 +138,14 @@ Where `backup_path` is set and `<backup_path>/files/<instance id>/` is on a netw
 
 **Tests:** waiting on #3116.
 
+### `instance/attention-backup-claim-kept`
+
+Where `backup_path` is set, while `<backup_path>/files/<instance id>/` holds a claim the server kept under `instance/backup-folder-unlocked-claim-kept`, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `folder_claim_kept`, whose description names the claim's file.
+
+**Reason:** another server may be using the backup folder. The owner stops it, or removes the claim once no other server uses the folder.
+
+**Tests:** waiting on #3116.
+
 ### `instance/attention-backup-parts-damaged`
 
 While `instance/backup-health-parts-damaged` holds, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `parts_damaged`, whose description says how many parts are damaged.
@@ -148,7 +156,7 @@ While `instance/backup-health-parts-damaged` holds, when `GET /attention` comple
 
 ### `instance/attention-backup-quiet`
 
-Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the copy record holds a copy in the destination of each file the last backup put names, `backup_interval_seconds` is above 0, `instance/backup-health-parts-damaged` does not hold and no entry is listed under `instance/attention-backup-unlocked`, `instance/attention-backup-lock-lost`, `instance/attention-backup-lock-restored` or `instance/attention-backup-shared`, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
+Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the copy record holds a copy in the destination of each file the last backup put names, `backup_interval_seconds` is above 0, `instance/backup-health-parts-damaged` does not hold and no entry is listed under `instance/attention-backup-unlocked`, `instance/attention-backup-lock-lost`, `instance/attention-backup-lock-restored`, `instance/attention-backup-shared` or `instance/attention-backup-claim-kept`, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
 
 **Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`, `cli/attention.test.ts › shares attention with the private socket and a key holding instance.read, keeps known concerns, and refuses every other credential`.
 
@@ -854,11 +862,27 @@ When a caller holding `backups.manage` sends `POST /backups/folder/adopt` again 
 
 ### `instance/backup-folder-adopt-interrupted`
 
-If the server ends after it recorded an adopt and before `<backup_path>/files/<instance id>/` took the new store's marker, then the server MUST give that files folder the marker of the store the record names there when it next starts.
+If the server ends after it recorded an adopt and before `<backup_path>/files/<instance id>/` took the new store's marker, and that files folder is there when the server next starts, then the server MUST give it the marker of the store the record names there as it starts.
 
 **Reason:** the adopt leaves its claim beside the marker until the marker is written, and the next start settles the claim against the record, so the folder and the record never name different stores.
 
 **Tests:** `compliance/backup-folder.test.ts › gives the files folder the store an adopt recorded when the server ended before the folder took its marker`.
+
+### `instance/backup-folder-adopt-marker-waits`
+
+If `<backup_path>/files/<instance id>/` did not take the marker of the store an adopt recorded there, then the server MUST give that files folder the marker before it writes a backup to it.
+
+**Reason:** the folder may have refused the write, not answered in time, or been on a disk that was not there when the adopt or the next start reached it. The adopt's claim stays beside the marker, so the server takes it as the marker under the folder's lock once the folder is there and writable, and backups go to the store the record names. Until then each backup fails.
+
+**Tests:** `compliance/backup-folder.test.ts › gives the files folder the store an adopt recorded once its disk is back, when the server ended before the folder took its marker and started without it`.
+
+### `instance/backup-folder-unlocked-claim-kept`
+
+Where the file system that holds `<backup_path>/files/<instance id>/` takes no file locks, if that files folder holds the claim of an adopt for a store other than the one the server recorded there, then the server MUST NOT remove that claim.
+
+**Reason:** without a lock the server cannot tell the claim of its own adopt that did not finish from the claim of an adopt another server is running on the same folder. Removing the other server's claim would leave that server's record naming a folder that never takes its marker. The owner learns of the claim under `instance/attention-backup-claim-kept`.
+
+**Tests:** waiting on #3116.
 
 ### `instance/backup-folder-missing-unusable`
 

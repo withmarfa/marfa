@@ -1080,6 +1080,43 @@ describe("a backup folder that lacks a file or its disk", () => {
     });
   });
 
+  it("gives the files folder the store an adopt recorded once its disk is back, when the server ended before the folder took its marker and started without it", async () => {
+    await withFolder("backup-folder-adopt-ended-away", async (server, root) => {
+      const id = await instanceIdOf(server);
+      const area = join(root, "files", id);
+      const away = join(root, "away");
+      renameSync(area, join(root, "old files"));
+
+      await server.setFault("hold:folder-marker");
+      const adopting = ownerOf(server).adoptBackupFolder();
+      await server.waitForHold("hold:folder-marker");
+      await server.restart({
+        signal: "SIGKILL",
+        whileStopped: () => renameSync(area, away),
+      });
+      await adopting.catch(() => undefined);
+
+      const recorded = (await storesOf(server)).filter(
+        (store) => store.locator === area && !store.detached,
+      );
+      expect(recorded).toHaveLength(1);
+      const waiting = await ownerOf(server).runBackup();
+      expect(waiting.status).toBe(503);
+      expect(existsSync(join(away, ".marfa-store"))).toBe(false);
+      expect(
+        readFileSync(join(away, ".marfa-store.pending"), "utf8").trim(),
+      ).toBe(recorded[0]!.id);
+
+      renameSync(away, area);
+      const next = await ownerOf(server).runBackup();
+      expect(next.status, JSON.stringify(next.error)).toBe(200);
+      expect(readFileSync(join(area, ".marfa-store"), "utf8").trim()).toBe(
+        recorded[0]!.id,
+      );
+      expect(existsSync(join(area, ".marfa-store.pending"))).toBe(false);
+    });
+  });
+
   it("lists in attention a files folder put in place of the one the server took, copies no file into it, and copies again once that folder is back", async () => {
     await withFolder("backup-folder-replaced", async (server, root) => {
       const id = await instanceIdOf(server);
