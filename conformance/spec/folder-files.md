@@ -252,6 +252,14 @@ When an item has an `in-folder` edge to the folder, a device MUST place its file
 
 **Tests:** `device/folders-placement.test.ts › places an item where its in-folder edge says, on every Mac`.
 
+### `folder-files/placement-existing-name`
+
+When a file item's `in-folder` edge names a path, a device MUST keep the item's file at that path, whether or not the name ends in the extension `folder-documents/file-extension-added` would add.
+
+**Reason:** a file an earlier build named with no extension keeps that name, so no app loses track of it. Only a file named for the first time gets the extension.
+
+**Tests:** `device/folders-placement.test.ts › keeps the name of a file an older build wrote with no extension`.
+
 ### `folder-files/placement-edge-type`
 
 When another edge points to the folder's item, a device MUST NOT treat it as placement.
@@ -1518,7 +1526,7 @@ When a bound file item's file is renamed from the name `folder-documents/file-ex
 
 ### `folder-files/binary-title-preserved`
 
-When a bound file item is renamed and its title differs from its old file name, a device MUST retain the item’s title.
+When a bound file item is renamed and its title differs from its old file name, and from the name `folder-documents/file-extension-added` makes from its title, a device MUST retain the item’s title.
 
 **Tests:** `device/folders-placement.test.ts › keeps a title somebody set when the file moves`.
 

@@ -6412,6 +6412,55 @@ describe("a file that is not a document", () => {
     );
   });
 
+  it("keeps the name of a file an older build wrote with no extension", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000eb";
+    const row = fileRow(id, "Boiler receipt", "application/pdf");
+    const edges = new EdgeDoor();
+    harness = await folderHarness("folder-file-extension-older", {
+      settings,
+      items: { "core.file": [{ item: row }] },
+      hydrate: false,
+      events: [edges.stream()],
+    });
+    // The edge an older build wrote, naming the file with no extension.
+    const edge: WireEdgeOptions = {
+      id: randomUUID(),
+      from_id: id,
+      to_id: harness.settings.id,
+      edge_type: "in-folder",
+      properties: { path: "Boiler receipt" },
+    };
+    edges.hold(edge);
+    (row as WireItemOptions).edges = {
+      "in-folder": {
+        data: [wireEdge(edges.edges.get(edge.id)!)],
+        next_cursor: null,
+      },
+    };
+    scriptBlob(harness.server, receipt);
+    scriptFolderWrites(harness, { edges });
+    expect((await harness.folder.hydrate()).ok).toBe(true);
+    writeFileSync(join(harness.dir, "Boiler receipt"), receipt);
+
+    for (let round = 0; round < 2; round += 1) {
+      expect((await harness.folder.pull()).ok).toBe(true);
+      expect((await harness.folder.push()).ok).toBe(true);
+    }
+    expect(
+      readdirSync(harness.dir).filter((name) => !name.startsWith(".")),
+      "a file an older build named with no extension was renamed",
+    ).toEqual(["Boiler receipt"]);
+    expect(readFileSync(join(harness.dir, "Boiler receipt"))).toEqual(receipt);
+    expect(
+      edges.placements(harness.settings.id).get(id),
+      "the placement of an existing file changed",
+    ).toBe("Boiler receipt");
+    expect(sentUpdates(harness), "an existing file was retitled").toEqual([]);
+    expect(sentCreates(harness), "an existing file was created again").toEqual(
+      [],
+    );
+  });
+
   it("keeps the file of an item whose new bytes cannot be had", async () => {
     const hash = hashOf(photo);
     const later = Buffer.concat([photo, Buffer.from("later")]);

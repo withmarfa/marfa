@@ -258,7 +258,7 @@ When a generated file name has more than 32 bytes from its last dot to its end, 
 
 ### `folder-documents/file-extension-added`
 
-When a device makes a file name from the title of a file item whose title, made into a name, has no ending of at most 32 bytes from its last dot to its end, a device MUST end the name with the extension its MIME type is known by.
+When a device makes a file name from the title of a file item whose title, made into a name, has no ending of at most 32 bytes from its last dot to its end, a device MUST end the name with the extension its MIME type is known by, unless `folder-documents/file-extension-document` applies.
 
 **Reason:** a file item saved from the command line or an app keeps a readable title, and another app opens the file by its extension. Every device derives the extension from the item's MIME type alone, so two devices name one item alike.
 
