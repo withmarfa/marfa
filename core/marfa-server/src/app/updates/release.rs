@@ -56,6 +56,14 @@ pub fn checksums_name(version: &str) -> String {
     format!("marfa-{version}-checksums.txt")
 }
 
+/// Where GitHub serves Marfa's releases from.
+pub const DOWNLOADS: &str = "https://github.com";
+
+/// The one address a release's file is fetched from, under `origin`.
+pub fn download_url(origin: &str, version: &str, name: &str) -> String {
+    format!("{origin}/withmarfa/marfa/releases/download/v{version}/{name}")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Asset {
     pub url: String,
@@ -76,18 +84,36 @@ impl Latest {
     }
 }
 
-fn asset_named(assets: &[Value], name: &str) -> Option<Asset> {
-    let found = assets
+/// The file `name`, refused when GitHub names it anywhere but `wanted`.
+fn asset_named(assets: &[Value], name: &str, wanted: &str) -> Result<Option<Asset>, &'static str> {
+    let Some(found) = assets
         .iter()
-        .find(|asset| asset.get("name").and_then(Value::as_str) == Some(name))?;
-    Some(Asset {
-        url: found.get("browser_download_url")?.as_str()?.to_string(),
-        bytes: found.get("size")?.as_u64()?,
-    })
+        .find(|asset| asset.get("name").and_then(Value::as_str) == Some(name))
+    else {
+        return Ok(None);
+    };
+    let (Some(url), Some(bytes)) = (
+        found.get("browser_download_url").and_then(Value::as_str),
+        found.get("size").and_then(Value::as_u64),
+    ) else {
+        return Ok(None);
+    };
+    if url != wanted {
+        return Err("GitHub's newest release names a file at an address that is not Marfa's own");
+    }
+    Ok(Some(Asset {
+        url: url.to_string(),
+        bytes,
+    }))
 }
 
-/// Reads GitHub's latest release, refusing a draft, a prerelease and anything untidy.
-pub fn read_latest(body: &[u8], platform: Option<&str>) -> Result<Latest, &'static str> {
+/// Reads GitHub's latest release, refusing a draft, a prerelease, anything untidy and a file
+/// anywhere but `origin`'s address for it.
+pub fn read_latest(
+    body: &[u8],
+    platform: Option<&str>,
+    origin: &str,
+) -> Result<Latest, &'static str> {
     let untidy = "GitHub's answer was not a release this server can read";
     let release: Value = serde_json::from_slice(body).map_err(|_| untidy)?;
     let flag = |name: &str| release.get(name).and_then(Value::as_bool).ok_or(untidy);
@@ -112,10 +138,13 @@ pub fn read_latest(body: &[u8], platform: Option<&str>) -> Result<Latest, &'stat
         .and_then(Value::as_array)
         .ok_or(untidy)?;
     let version = version.to_string();
+    let named = |name: String| asset_named(assets, &name, &download_url(origin, &version, &name));
     Ok(Latest {
-        archive: platform
-            .and_then(|platform| asset_named(assets, &archive_name(&version, platform))),
-        checksums: asset_named(assets, &checksums_name(&version)),
+        archive: match platform {
+            Some(platform) => named(archive_name(&version, platform))?,
+            None => None,
+        },
+        checksums: named(checksums_name(&version))?,
         version,
         published_at,
     })
@@ -127,6 +156,8 @@ mod tests {
 
     use super::*;
 
+    const AT: &str = "https://github.com/withmarfa/marfa/releases/download/v0.0.75";
+
     fn release(extra: Value) -> Vec<u8> {
         let mut body = json!({
             "tag_name": "v0.0.75",
@@ -134,8 +165,8 @@ mod tests {
             "prerelease": false,
             "published_at": "2026-11-16T09:30:00Z",
             "assets": [
-                {"name": "marfa-0.0.75-linux-x86_64.tar.gz", "browser_download_url": "https://example.com/a.tar.gz", "size": 1234},
-                {"name": "marfa-0.0.75-checksums.txt", "browser_download_url": "https://example.com/sums", "size": 99},
+                {"name": "marfa-0.0.75-linux-x86_64.tar.gz", "browser_download_url": format!("{AT}/marfa-0.0.75-linux-x86_64.tar.gz"), "size": 1234},
+                {"name": "marfa-0.0.75-checksums.txt", "browser_download_url": format!("{AT}/marfa-0.0.75-checksums.txt"), "size": 99},
             ],
         });
         if let (Some(base), Some(over)) = (body.as_object_mut(), extra.as_object()) {
@@ -144,26 +175,28 @@ mod tests {
         body.to_string().into_bytes()
     }
 
+    fn read(body: &[u8], platform: Option<&str>) -> Result<Latest, &'static str> {
+        read_latest(body, platform, DOWNLOADS)
+    }
+
     #[test]
     fn a_release_reads_with_its_archive_for_this_platform_and_its_checksums() {
-        let latest = read_latest(&release(json!({})), Some("linux-x86_64")).unwrap();
+        let latest = read(&release(json!({})), Some("linux-x86_64")).unwrap();
         assert_eq!(latest.version, "0.0.75");
         assert_eq!(latest.published_at, "2026-11-16T09:30:00.000Z");
         assert_eq!(latest.archive.unwrap().bytes, 1234);
-        assert_eq!(latest.checksums.unwrap().url, "https://example.com/sums");
+        assert_eq!(
+            latest.checksums.unwrap().url,
+            format!("{AT}/marfa-0.0.75-checksums.txt")
+        );
     }
 
     #[test]
     fn a_platform_the_release_has_no_archive_for_reads_with_none() {
-        let latest = read_latest(&release(json!({})), Some("darwin-arm64")).unwrap();
+        let latest = read(&release(json!({})), Some("darwin-arm64")).unwrap();
         assert!(latest.archive.is_none());
         assert!(latest.checksums.is_some());
-        assert!(
-            read_latest(&release(json!({})), None)
-                .unwrap()
-                .archive
-                .is_none()
-        );
+        assert!(read(&release(json!({})), None).unwrap().archive.is_none());
     }
 
     #[test]
@@ -180,8 +213,47 @@ mod tests {
             b"<html>rate limited</html>".to_vec(),
             b"[]".to_vec(),
         ] {
-            assert!(read_latest(&body, Some("linux-x86_64")).is_err());
+            assert!(read(&body, Some("linux-x86_64")).is_err());
         }
+    }
+
+    #[test]
+    fn a_file_anywhere_but_marfas_release_address_refuses_the_release() {
+        let archive = "marfa-0.0.75-linux-x86_64.tar.gz";
+        let sums = "marfa-0.0.75-checksums.txt";
+        let elsewhere = [
+            "https://github.com/other/marfa/releases/download/v0.0.75/NAME",
+            "https://github.com/withmarfa/other/releases/download/v0.0.75/NAME",
+            "https://github.com/withmarfa/marfa/releases/download/v0.0.74/NAME",
+            "https://github.com/withmarfa/marfa/releases/download/v0.0.75/marfa-0.0.75-linux-aarch64.tar.gz",
+            "https://github.com/withmarfa/marfa/releases/download/v0.0.75/NAME?x=1",
+            "https://github.com/withmarfa/marfa/releases/download/v0.0.75/../v0.0.75/NAME",
+            "https://github.com:443/withmarfa/marfa/releases/download/v0.0.75/NAME",
+            "http://github.com/withmarfa/marfa/releases/download/v0.0.75/NAME",
+            "https://objects.githubusercontent.com/withmarfa/marfa/releases/download/v0.0.75/NAME",
+            "https://example.com/withmarfa/marfa/releases/download/v0.0.75/NAME",
+        ];
+        for (name, other) in [(archive, sums), (sums, archive)] {
+            for url in elsewhere {
+                let url = url.replace("NAME", name);
+                let body = release(json!({"assets": [
+                    {"name": name, "browser_download_url": url, "size": 10},
+                    {"name": other, "browser_download_url": format!("{AT}/{other}"), "size": 10},
+                ]}));
+                assert!(read(&body, Some("linux-x86_64")).is_err(), "{url}");
+            }
+        }
+        let on_the_stand_in = release(json!({"assets": [
+            {"name": sums, "browser_download_url": format!("http://127.0.0.1:9/withmarfa/marfa/releases/download/v0.0.75/{sums}"), "size": 10},
+        ]}));
+        assert!(read(&on_the_stand_in, Some("linux-x86_64")).is_err());
+        assert!(
+            read_latest(&on_the_stand_in, Some("linux-x86_64"), "http://127.0.0.1:9")
+                .unwrap()
+                .checksums
+                .is_some(),
+            "the witness: under the origin a fault names, the same path reads"
+        );
     }
 
     #[test]
@@ -200,10 +272,10 @@ mod tests {
     #[test]
     fn an_asset_without_a_size_or_link_is_no_asset() {
         let body = release(json!({"assets": [
-            {"name": "marfa-0.0.75-linux-x86_64.tar.gz", "browser_download_url": "https://example.com/a"},
+            {"name": "marfa-0.0.75-linux-x86_64.tar.gz", "browser_download_url": format!("{AT}/marfa-0.0.75-linux-x86_64.tar.gz")},
             {"name": "marfa-0.0.75-checksums.txt", "size": 5},
         ]}));
-        let latest = read_latest(&body, Some("linux-x86_64")).unwrap();
+        let latest = read(&body, Some("linux-x86_64")).unwrap();
         assert!(latest.archive.is_none() && latest.checksums.is_none());
     }
 }

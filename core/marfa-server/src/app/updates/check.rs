@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use tokio::sync::oneshot;
 use url::Url;
 
-use super::feed::Feed;
+use super::feed::{CHECK_HOSTS, Feed};
 use super::release::{self, Asset, Latest};
 use crate::app::App;
 use crate::app::faults::ReleaseFeed;
@@ -71,23 +71,23 @@ impl Kept {
     }
 }
 
-pub async fn kept(app: &App) -> Result<Kept> {
-    let last = app
-        .db
-        .read(|tx| housekeeping::last_run(tx, JOB))
-        .await?
-        .and_then(|last| last.result);
+pub fn kept_in(tx: &rusqlite::Transaction<'_>) -> Result<Kept> {
+    let last = housekeeping::last_run(tx, JOB)?.and_then(|last| last.result);
     Ok(last
         .and_then(|result| serde_json::from_value(result).ok())
         .unwrap_or_default())
 }
 
+pub async fn kept(app: &App) -> Result<Kept> {
+    app.db.read(kept_in).await
+}
+
 fn ask(feed: &Feed, address: &str) -> std::result::Result<Latest, String> {
     let url = Url::parse(address).map_err(|_| "the release address does not read".to_string())?;
     let body = feed
-        .document(&url, ANSWER_BYTES, TIME, None)
+        .document(&url, ANSWER_BYTES, TIME, &CHECK_HOSTS)
         .map_err(|failed| failed.words())?;
-    release::read_latest(&body, release::platform()).map_err(str::to_string)
+    release::read_latest(&body, release::platform(), &feed.downloads()).map_err(str::to_string)
 }
 
 fn result(kept: &Kept) -> Value {

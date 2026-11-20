@@ -9,18 +9,23 @@ mod release;
 #[cfg(test)]
 mod tests;
 
+use std::future::Future;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
+use rusqlite::Transaction;
 use serde_json::{Value, json};
 use tokio::sync::Notify;
 
 pub use check::{JOB as CHECK_JOB, enabled as checking, job as check};
 
+use super::access::{Caller, Permission};
+use super::faults::HOLD_UPDATE_START;
 use super::refusal::{Code, Refusal, Result};
 use super::{App, health};
-use crate::db::{self, migrate::MIGRATIONS};
+use crate::db::{self, Db, Write, migrate::MIGRATIONS};
 use crate::failure::Failure;
 use crate::settings::DatabasePath;
 use feed::Feed;
@@ -291,12 +296,59 @@ pub async fn status(app: &App) -> Result<Value> {
     }))
 }
 
-pub async fn start(app: &Arc<App>) -> Result<Value> {
-    let kept = if check::enabled(app) {
-        check::kept(app).await?
-    } else {
-        check::Kept::default()
-    };
+/// Decided as the writer admits it, so no change to the caller's access commits between the
+/// decision and the start.
+pub async fn start(app: &Arc<App>, caller: &Caller) -> Result<Value> {
+    app.faults.hold(HOLD_UPDATE_START, None).await;
+    let (deciding, caller) = (app.clone(), caller.clone());
+    begin_on_writer(&app.db, move |tx| {
+        caller
+            .current(tx, &deciding.clock.stamp())?
+            .require(Permission::InstanceMaintain)?;
+        let kept = if check::enabled(&deciding) {
+            check::kept_in(tx)?
+        } else {
+            check::Kept::default()
+        };
+        let job = decide(&deciding, kept)?;
+        Ok(deciding
+            .updates
+            .begin(&job.version)
+            .then(|| run(deciding.clone(), job)))
+    })
+    .await?;
+    status(app).await
+}
+
+/// Runs `decide` on the writer and starts what it begins from there, so begun work runs even if
+/// the request is gone by the time the writer reaches it.
+async fn begin_on_writer<W>(
+    db: &Db,
+    decide: impl FnOnce(&Transaction<'_>) -> Result<Option<W>> + Send + 'static,
+) -> Result<()>
+where
+    W: Future<Output = ()> + Send + 'static,
+{
+    let runtime = tokio::runtime::Handle::current();
+    let begun = Arc::new(AtomicBool::new(false));
+    let marked = begun.clone();
+    let decided = db
+        .write(Write::own().unsynced(), move |tx| {
+            if let Some(work) = decide(tx)? {
+                marked.store(true, Ordering::SeqCst);
+                runtime.spawn(work);
+            }
+            Ok(())
+        })
+        .await;
+    // Begun work runs even if the commit after the decision failed.
+    if begun.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    decided
+}
+
+fn decide(app: &App, kept: check::Kept) -> Result<apply::Job> {
     let Some(latest) = latest_newer(kept.latest()) else {
         return Err(Refusal::new(
             Code::UpdateNotReady,
@@ -330,59 +382,52 @@ pub async fn start(app: &Arc<App>) -> Result<Value> {
             "an installed service has no record folder",
         ));
     };
-    if app.updates.begin(&latest.version) {
-        let job = apply::Job {
-            from: Version::running().to_string(),
-            archive_name: release::archive_name(&latest.version, platform),
-            version: latest.version,
-            archive,
-            checksums,
-            programs: programs.clone(),
-            dir: dir.clone(),
-            database: file,
-            record,
-            attempt: uuid::Uuid::now_v7().to_string(),
-        };
-        run(app.clone(), job);
-    }
-    status(app).await
+    Ok(apply::Job {
+        from: Version::running().to_string(),
+        archive_name: release::archive_name(&latest.version, platform),
+        version: latest.version,
+        archive,
+        checksums,
+        programs: programs.clone(),
+        dir: dir.clone(),
+        database: file,
+        record,
+        attempt: uuid::Uuid::now_v7().to_string(),
+    })
 }
 
-fn run(app: Arc<App>, job: apply::Job) {
+async fn run(app: Arc<App>, job: apply::Job) {
     let feed = Feed::new(app.faults.clone());
-    tokio::spawn(async move {
-        let version = job.version.clone();
-        let record = job.record.clone();
-        let attempt = job.attempt.clone();
-        let stages = app.clone();
-        let done = tokio::task::spawn_blocking(move || {
-            apply::run(&feed, &job, &|stage| stages.updates.stage(stage))
-        })
-        .await
-        .unwrap_or_else(|_| Err("The update stopped without an answer.".to_string()));
-        match done {
-            Ok(()) => {
-                tracing::info!("Release {version} is in place, and the server ends to start it");
-                app.updates.set(State::Restarting { version });
-                app.updates.restart.notify_one();
-            }
-            Err(reason) => {
-                tracing::warn!("The update to release {version} did not go ahead: {reason}");
-                let record = record.clone();
-                let at = app.clock.stamp();
-                let _ = tokio::task::spawn_blocking(move || {
-                    pending::end(
-                        &record,
-                        &at,
-                        Outcome::Failed,
-                        &version,
-                        Some(reason),
-                        Some(&attempt),
-                    );
-                })
-                .await;
-                app.updates.set(State::Idle);
-            }
+    let version = job.version.clone();
+    let record = job.record.clone();
+    let attempt = job.attempt.clone();
+    let stages = app.clone();
+    let done = tokio::task::spawn_blocking(move || {
+        apply::run(&feed, &job, &|stage| stages.updates.stage(stage))
+    })
+    .await
+    .unwrap_or_else(|_| Err("The update stopped without an answer.".to_string()));
+    match done {
+        Ok(()) => {
+            tracing::info!("Release {version} is in place, and the server ends to start it");
+            app.updates.set(State::Restarting { version });
+            app.updates.restart.notify_one();
         }
-    });
+        Err(reason) => {
+            tracing::warn!("The update to release {version} did not go ahead: {reason}");
+            let at = app.clock.stamp();
+            let _ = tokio::task::spawn_blocking(move || {
+                pending::end(
+                    &record,
+                    &at,
+                    Outcome::Failed,
+                    &version,
+                    Some(reason),
+                    Some(&attempt),
+                );
+            })
+            .await;
+            app.updates.set(State::Idle);
+        }
+    }
 }
