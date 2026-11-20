@@ -197,16 +197,20 @@ pub(super) fn stale(message: &str, body: Option<Map<String, Value>>) -> Stop {
     stop
 }
 
-/// What a confirmed call stopped by `refused` answers: the refusal itself where it is about the
-/// caller or the server, or where the outcome is unknown; otherwise stale, saying why, with
-/// `preview` where one could be made.
-pub(super) fn refused_stale(refused: Refusal, preview: Option<Map<String, Value>>) -> Stop {
-    if refused.commit_failed
+/// Whether a confirmed call stopped by `refused` answers the refusal itself: it is about the
+/// caller or the server, or the outcome is unknown.
+pub(super) fn stands(refused: &Refusal) -> bool {
+    refused.commit_failed
         || matches!(
             refused.code,
             Code::Forbidden | Code::Unauthorized | Code::InternalError
         )
-    {
+}
+
+/// What a confirmed call stopped by `refused` answers: stale, saying why, with `preview` where
+/// one could be made, unless the refusal [`stands`].
+pub(super) fn refused_stale(refused: Refusal, preview: Option<Map<String, Value>>) -> Stop {
+    if stands(&refused) {
         return refused.into();
     }
     let next = match preview {
@@ -218,15 +222,15 @@ pub(super) fn refused_stale(refused: Refusal, preview: Option<Map<String, Value>
 
 /// What a confirmation whose target changed answers where the new preview was refused.
 pub(super) fn changed_unpreviewable(refused: Refusal) -> Stop {
-    let message = format!(
-        "What the preview showed has changed, and it cannot be previewed again: {}",
-        refused.message
-    );
-    refused_stale(
-        Refusal {
-            message: message.into(),
-            ..refused
-        },
+    if stands(&refused) {
+        return refused.into();
+    }
+    stale(
+        &format!(
+            "What the preview showed has changed, and it cannot be previewed again: {} This call \
+             changed nothing.",
+            refused.message
+        ),
         None,
     )
 }

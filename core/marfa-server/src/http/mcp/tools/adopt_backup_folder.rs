@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::delete_connector::{CHANGED, changed_unpreviewable, refused_stale, stale};
+use super::delete_connector::{CHANGED, changed_unpreviewable, refused_stale, stale, stands};
 use super::{Definition, text};
 use crate::app::App;
 use crate::app::access::Caller;
@@ -172,7 +172,7 @@ async fn halted(app: &Arc<App>, caller: &Caller, halt: Halt) -> Outcome {
 /// What a confirmed adopt the server refused answers, judged by the token as it stands now:
 /// another call may have spent it on the folder since this one first judged it.
 async fn refused(app: &Arc<App>, caller: &Caller, guard: &Guard, refused: Refusal) -> Outcome {
-    if refused.commit_failed {
+    if stands(&refused) {
         return Err(refused.into());
     }
     match app.peek_adoption(guard).await? {

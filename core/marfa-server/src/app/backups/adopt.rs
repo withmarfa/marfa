@@ -522,8 +522,7 @@ impl App {
         };
         self.faults.hold(HOLD_STORES_SWAP, None).await;
         let faults = self.faults.clone();
-        // Read before the new store is in use, so nothing the server writes to it counts as a
-        // change.
+        // Read before the new store is in use, so the server's own writes are no change.
         let promoted = folder
             .within(
                 self.blobs.check(),
