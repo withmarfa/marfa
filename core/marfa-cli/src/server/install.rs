@@ -17,8 +17,8 @@ use super::systemd::Linger;
 use super::{
     AGENT_HINT, Access, DEFAULT_PORT, Folder, IMAGE, InstallArgs, OPTIONS_HINT, Runtime, State,
     Steps, account, address, checked_release, external_problems, files, free_port, health_url,
-    http_agent, launchd, local_address, names, native, own_release, port_is_free, proxy_trust,
-    public_address, refuse_older, tailscale, valid_name,
+    http_agent, keep_release, launchd, local_address, names, native, own_release, port_is_free,
+    proxy_trust, public_address, refuse_older, tailscale, valid_name,
 };
 use crate::error::CliError;
 use crate::output::Printer;
@@ -76,7 +76,11 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     };
 
     let release = match runtime {
-        Runtime::Native => native_release(&args, existing.as_ref().map(|(state, _)| state))?,
+        Runtime::Native => native_release(
+            &args,
+            existing.as_ref().map(|(state, _)| state),
+            &folder.dir,
+        )?,
         Runtime::Docker => match (&args.release, &existing) {
             (Some(release), Some((state, _))) => {
                 let release = checked_release(release)?;
@@ -751,21 +755,19 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
 
 /// A native server runs the release installed. Another release than the one
 /// the install runs is moved to with `upgrade`.
-fn native_release(args: &InstallArgs, existing: Option<&State>) -> Result<String, CliError> {
+fn native_release(
+    args: &InstallArgs,
+    existing: Option<&State>,
+    dir: &Path,
+) -> Result<String, CliError> {
     if args.release.is_some() {
         return Err(CliError::Usage(
             "--release is for --docker: a native server runs the release installed beside this marfa. Install the release you want (with Homebrew, or scripts/install.sh) and run `marfa server upgrade`".into(),
         ));
     }
     let own = env!("CARGO_PKG_VERSION").to_string();
-    if let Some(state) = existing
-        && state.release != own
-    {
-        refuse_older(&state.release, &own)?;
-        return Err(CliError::Usage(format!(
-            "this install runs {} and the installed marfa is {own}: `marfa server upgrade` moves it",
-            state.release
-        )));
+    if let Some(state) = existing {
+        keep_release(&state.release, &own, dir)?;
     }
     Ok(own)
 }

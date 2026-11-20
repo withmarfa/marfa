@@ -31,7 +31,7 @@ use std::os::unix::process::ExitStatusExt;
 
 use crate::error::CliError;
 use crate::server::logs::{self, RotatingLog};
-use crate::server::{Folder, RunArgs, files, launchd, native};
+use crate::server::{Folder, RunArgs, files, launchd, native, shell_word};
 
 /// What the server's exit status says of its database: 78 is a refusal that
 /// a restart will not change.
@@ -194,6 +194,35 @@ pub fn locate(dir: Option<&Path>) -> Result<PathBuf, CliError> {
     }
     agree(&server, &theirs, OWN)?;
     Ok(server)
+}
+
+/// Whether the install in `dir`, which records `recorded`, is trying a new server of an update
+/// between `recorded` and this `marfa`'s release, which the service already names.
+pub fn trying_update(dir: &Path, recorded: &str) -> bool {
+    record_of(dir).pending().ok().flatten().is_some_and(|pending| {
+        let part = |release: &str| release == pending.from || release == pending.to;
+        part(recorded) && part(OWN)
+    })
+}
+
+/// What `server` says when it will not run on the install's settings and `database`, or `None`
+/// when it will, or when it could not be asked: a server asked to start judges both again.
+pub fn will_not_open(
+    server: &Path,
+    database: &Path,
+    environment: &[(String, String)],
+) -> Option<String> {
+    let mut command = Command::new(server);
+    command.arg("--can-open").arg(database);
+    // A setting in this shell is not one the service starts the server with.
+    for (name, _) in std::env::vars_os() {
+        if name.to_string_lossy().starts_with("MARFA_") {
+            command.env_remove(name);
+        }
+    }
+    command.envs(environment.iter().map(|(name, value)| (name, value)));
+    let ran = record::run_within(command, ASK_LIMIT).ok()?;
+    (ran.status.code() == Some(REFUSED)).then(|| ran.stderr.trim().to_string())
 }
 
 fn agree(server: &Path, theirs: &str, own: &str) -> Result<(), CliError> {
@@ -521,10 +550,7 @@ pub fn run(args: &RunArgs) -> Result<(), CliError> {
     if dir.dir.is_some() {
         let folder = Folder::new(dir)?;
         let (state, _) = folder.require_state()?;
-        folder_arg = format!(
-            " --dir '{}'",
-            folder.dir.display().to_string().replace('\'', "'\\''")
-        );
+        folder_arg = format!(" --dir {}", shell_word(&folder.dir));
         let settings = folder.read(files::SETTINGS)?.unwrap_or_default();
         let environment = native::environment(&folder.dir, state.port, &settings);
         command.envs(environment.iter().map(|(name, value)| (name, value)));

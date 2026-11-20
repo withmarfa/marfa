@@ -15,8 +15,8 @@ use super::run::{self, REFUSED_DATABASE};
 use super::service::{Control, Manager, Service};
 use super::{
     Access, DirArgs, Folder, IMAGE, PrivateCommand, Runtime, StartArgs, State, Steps,
-    UninstallArgs, UpgradeArgs, checked_release, files, health_url, http_agent, launchd, native,
-    own_release, refuse_older, tailscale,
+    UninstallArgs, UpgradeArgs, checked_release, files, health_url, http_agent, keep_release,
+    launchd, native, own_release, refuse_older, shell_word, tailscale,
 };
 use crate::error::CliError;
 use crate::output::Printer;
@@ -80,6 +80,17 @@ fn upgrade_native(
     let binary = native::stable_binary_of_this()?;
     let unchanged = target == state.release;
     if !unchanged {
+        let settings = folder.read(files::SETTINGS)?.unwrap_or_default();
+        let environment = native::environment(&folder.dir, state.port, &settings);
+        let database = native::Layout::new(&folder.dir).database();
+        if let Some(said) = run::will_not_open(&server, &database, &environment) {
+            return Err(CliError::Install(cannot_open(
+                &target,
+                &state.release,
+                &said,
+                &server,
+            )));
+        }
         steps.say(&format!(
             "If {target} has a newer database schema, the server copies the database beside it, when it holds data, and then updates it in place."
         ));
@@ -134,6 +145,21 @@ fn upgrade_native(
             None => moved,
         }
     })
+}
+
+/// The programs installed in place are already `target`'s, so only installing `from` again keeps
+/// a start of the service on it.
+fn cannot_open(target: &str, from: &str, said: &str, server: &Path) -> String {
+    let programs = server.parent().unwrap_or(server);
+    let said = match said.is_empty() {
+        true => String::new(),
+        false => format!(" It says: {said}"),
+    };
+    format!(
+        "{target} will not run on this install's settings and database, so nothing was changed: the service, .env and the database stay on {from}.{said}\n\nThe marfa-server installed beside this marfa is {target}, so the server will refuse to start the next time it starts, such as when this machine restarts. To keep {from}, install it again in {programs}: `curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/install.sh | MARFA_VERSION={from} MARFA_INSTALL_DIR={folder} sh`. To move to {target}, export the data with `marfa export` while {from} runs, make a new install of {target} in another --dir, and restore the archive there with `marfa restore`.",
+        programs = programs.display(),
+        folder = shell_word(programs),
+    )
 }
 
 /// What a native start's log says of the database update. `MARFA_RELEASE` is written only once the
@@ -212,11 +238,18 @@ fn upgrade_docker(
             (false, Some(refusal)) => refusal,
             _ => return Err(error),
         };
+        let from = &state.release;
+        let back = put_back_docker(&docker, folder, state, dotenv, steps, args.wait);
+        let back = match back {
+            Ok(()) => format!("so {from} was put back and runs"),
+            Err(failed) => format!(
+                "so {from} still reads it, but putting {from} back failed: {failed}. Set MARFA_RELEASE={from} in {} and run `marfa server start`",
+                folder.path(files::DOTENV).display()
+            ),
+        };
         return Err(CliError::Install(format!(
-            "{error}\n\n{target} {} A refused update leaves the database as it was, so {from} still reads it: to go back, set MARFA_RELEASE={from} in {env} and run `marfa server start`.",
+            "{error}\n\n{target} {} A refused update leaves the database as it was, {back}. To move to {target}, export the data with `marfa export`, make a new install with `--release {target}` in another --dir, and restore the archive there with `marfa restore`.",
             refusal.words(),
-            from = state.release,
-            env = folder.path(files::DOTENV).display(),
         )));
     }
     // A retry finds the env file already on the target and the container running, though the
@@ -252,6 +285,33 @@ fn upgrade_docker(
             None => moved,
         }
     })
+}
+
+/// Starts the release the install ran before an upgrade the new release refused.
+fn put_back_docker(
+    docker: &Docker,
+    folder: &Folder,
+    state: &State,
+    dotenv: &mut super::envfile::EnvFile,
+    steps: &Steps,
+    wait: u64,
+) -> Result<(), CliError> {
+    dotenv.set("MARFA_RELEASE", &state.release)?;
+    files::write_if_changed(
+        &folder.path(files::DOTENV),
+        &dotenv.render(),
+        files::Perms::READABLE,
+    )?;
+    write_compose(folder, steps)?;
+    super::install::start(docker, &folder.dir, &state.name, &state.release, steps)?;
+    wait_until_healthy(
+        &Watch::Container {
+            docker,
+            name: &state.name,
+        },
+        state.port,
+        wait,
+    )
 }
 
 /// What the server's log says of the update it made to the database.
@@ -364,7 +424,7 @@ impl Refusal {
 
     // The idle supervisor must stop before the earlier release can start.
     fn note(&self, target: &str, from: &str, dir: &Path) -> String {
-        let dir = format!("'{}'", dir.display().to_string().replace('\'', "'\\''"));
+        let dir = shell_word(dir);
         let after = match self {
             Refusal::Database => "The service stays up and idle after a refusal".to_string(),
             Refusal::Upgrade(_) => format!("The service keeps trying to start {target}"),
@@ -397,6 +457,7 @@ fn started(args: StartArgs, out: &Printer) -> Result<(Value, String), CliError> 
                 )));
             }
             let server = run::locate(Some(&folder.dir))?;
+            keeps_release(&folder, &state)?;
             let binary = native::stable_binary_of_this()?;
             steps.say(&format!("Starting {}...", state.name));
             let mark = service.mark();
@@ -485,8 +546,19 @@ fn stopped(args: DirArgs, out: &Printer) -> Result<(Value, String), CliError> {
     ))
 }
 
+/// A native start names this `marfa` in the service, so another release would move the install.
+fn keeps_release(folder: &Folder, state: &State) -> Result<(), CliError> {
+    if state.runtime == Runtime::Docker || run::trying_update(&folder.dir, &state.release) {
+        return Ok(());
+    }
+    keep_release(&state.release, env!("CARGO_PKG_VERSION"), &folder.dir)
+}
+
 /// One document in JSON, `stopped` and `started`, so a strict parser reads it.
 pub fn restart(args: StartArgs, out: &Printer) -> Result<(), CliError> {
+    let folder = Folder::new(&args.dir)?;
+    let (state, _) = folder.require_state()?;
+    keeps_release(&folder, &state)?;
     let (stopped, said) = stopped(
         DirArgs {
             dir: args.dir.dir.clone(),
