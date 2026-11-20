@@ -2017,8 +2017,8 @@ mod dispatch {
             ),
         ] {
             let door = Door::open(vec![
-                current,
                 Answer::json("200 OK", &root),
+                current,
                 Answer::json("201 Created", minted),
             ]);
             keys::run(
@@ -2037,7 +2037,7 @@ mod dispatch {
                 .iter()
                 .map(|r| format!("{} {}", r.method(), r.path()))
                 .collect();
-            assert_eq!(asked, ["GET /keys/current", "GET /", "POST /keys"]);
+            assert_eq!(asked, ["GET /", "GET /keys/current", "POST /keys"]);
             let sent: serde_json::Value = serde_json::from_str(&received[2].body).unwrap();
             assert_eq!(
                 sent.get("owner_key"),

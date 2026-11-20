@@ -496,8 +496,6 @@ fn reaches_every_key(remote: &Remote) -> Result<bool, CliError> {
             .split_whitespace()
             .any(|scope| scope == "keys.manage"));
     }
-    // The mint's own root check would come too late: this read is sent first.
-    remote.hold_root()?;
     match remote.json(&current_request()) {
         Ok(key) => Ok(key
             .get("permissions")
@@ -561,11 +559,18 @@ pub fn run(
 ) -> Result<(), CliError> {
     let request = match &command {
         KeysCommand::Create(args) => {
-            let request = create_request(args, remote.is_local())?;
-            if !remote.is_local() && reaches_every_key(remote)? {
-                owners(request)
-            } else {
+            let mut request = create_request(args, remote.is_local())?;
+            if remote.is_local() {
                 request
+            } else {
+                // The root is held before the read that decides the body, so the mint need not hold it again.
+                remote.hold_root()?;
+                request.mints = false;
+                if reaches_every_key(remote)? {
+                    owners(request)
+                } else {
+                    request
+                }
             }
         }
         KeysCommand::List => list_request(),
