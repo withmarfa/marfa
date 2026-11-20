@@ -475,6 +475,52 @@ pub(crate) fn displaced(conn: &Connection) -> Result<Vec<Result<Displaced, Strin
         .collect())
 }
 
+const RETAINED: &str = "folder_retained:";
+
+/// A file read and moved out of its path that a program may still write to,
+/// kept under its reserved name for each pass to settle. `dir` and `aside`
+/// are as in [`Displaced`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Retained {
+    pub(crate) dir: String,
+    pub(crate) dir_at: (u64, u64),
+    pub(crate) aside: String,
+    pub(crate) aside_at: (u64, u64),
+    pub(crate) retained: super::landing::Retained,
+}
+
+pub(crate) fn set_retained(conn: &Connection, retained: &Retained) -> Result<(), CoreError> {
+    let value =
+        serde_json::to_string(retained).map_err(|error| CoreError::Store(error.to_string()))?;
+    crate::store::meta_set(conn, &format!("{RETAINED}{}", retained.retained.id), &value)
+}
+
+pub(crate) fn clear_retained(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    crate::store::meta_delete(conn, &format!("{RETAINED}{id}"))
+}
+
+/// Every file kept for a pass to settle. A row that does not read is
+/// answered as its id alone.
+pub(crate) fn retained(conn: &Connection) -> Result<Vec<Result<Retained, String>>, CoreError> {
+    Ok(under(conn, RETAINED)?
+        .into_iter()
+        .map(|(id, value)| serde_json::from_str(&value).map_err(|_| id))
+        .collect())
+}
+
+/// Whether any file is kept for a pass to settle.
+pub(crate) fn any_retained(conn: &Connection) -> Result<bool, CoreError> {
+    let above = format!("{}{}", &RETAINED[..RETAINED.len() - 1], ';');
+    Ok(conn
+        .query_row_cached(
+            "SELECT 1 FROM meta WHERE key >= ?1 AND key < ?2 LIMIT 1",
+            params![RETAINED, above],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
 const KEPT: &str = "folder_kept:";
 
 /// A person's file a write or a removal kept beside its path, or could not
@@ -1059,6 +1105,13 @@ pub fn stat_of(conn: &Connection, path: &str) -> Result<Option<String>, CoreErro
             |row| row.get(0),
         )
         .optional()?)
+}
+
+/// Forgets the file metadata recorded at `path`, so the next scan reads the
+/// file there.
+pub(crate) fn forget_stat(conn: &Connection, path: &str) -> Result<(), CoreError> {
+    conn.execute_cached("DELETE FROM folder_stats WHERE path = ?1", [path])?;
+    Ok(())
 }
 
 /// With `whole`, every row is replaced, so a row outlives its file only

@@ -119,6 +119,8 @@ impl Peer {
                 store_mark: state_dir.entry_identity(Path::new("core.sqlite")).ok()?,
                 state_dir,
                 unflushed: Default::default(),
+                writers: Default::default(),
+                writer_wait: Default::default(),
                 folder,
                 core,
                 key: std::sync::Mutex::new(None),

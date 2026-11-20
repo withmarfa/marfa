@@ -755,6 +755,8 @@ mod tests {
             every_addition: std::sync::atomic::AtomicBool::new(false),
             replaced: None,
             unflushed: Default::default(),
+            writers: Default::default(),
+            writer_wait: Default::default(),
             root_dir: crate::directory::Directory::open(&dir.path().canonicalize().unwrap())
                 .unwrap(),
             store_mark: crate::directory::Directory::open(&state_dir.canonicalize().unwrap())

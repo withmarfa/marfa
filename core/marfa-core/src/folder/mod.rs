@@ -44,6 +44,7 @@ mod transfer;
 mod watch;
 mod watch_record;
 mod watched;
+mod writers;
 pub use every::{
     Every, EveryFolder, HANDED_OVER, MISSING, RETRY_HANDED, Unwatched, follows, watch_every,
 };
@@ -204,6 +205,11 @@ pub struct Folder {
     store_mark: (u64, u64),
     /// Files this folder's pulls landed with an ordering flush only.
     unflushed: landing::Unflushed,
+    /// What tells whether a program holds a file open for writing.
+    writers: writers::Census,
+    /// Whether the last settling kept a file a program held open for
+    /// writing, which a watch at rest looks at again soon.
+    writer_wait: AtomicBool,
     folder: String,
     core: Core,
     key: std::sync::Mutex<Option<placement::KeyRead>>,
@@ -491,6 +497,8 @@ impl Folder {
                 .map_err(io_error)?,
             state_dir,
             unflushed: landing::Unflushed::default(),
+            writers: writers::Census::default(),
+            writer_wait: AtomicBool::new(false),
             folder: folder.to_string(),
             core,
             key: std::sync::Mutex::new(None),
@@ -625,6 +633,8 @@ impl Folder {
                 .map_err(io_error)?,
             state_dir,
             unflushed: landing::Unflushed::default(),
+            writers: writers::Census::default(),
+            writer_wait: AtomicBool::new(false),
             folder,
             core,
             key: std::sync::Mutex::new(None),
@@ -675,6 +685,8 @@ impl Folder {
                 .map_err(io_error)?,
             state_dir,
             unflushed: landing::Unflushed::default(),
+            writers: writers::Census::default(),
+            writer_wait: AtomicBool::new(false),
             folder,
             core,
             key: std::sync::Mutex::new(None),
@@ -1186,6 +1198,7 @@ struct Guarded<'a> {
     name: std::ffi::OsString,
     aside: Directory,
     rows: Rows<'a>,
+    writers: &'a writers::Census,
 }
 
 impl Guarded<'_> {
@@ -1194,6 +1207,7 @@ impl Guarded<'_> {
             aside: &self.aside,
             ledger: &self.rows,
             beside: !in_state(&self.rows.dir),
+            writers: self.writers,
         }
     }
 }
@@ -1315,6 +1329,20 @@ impl landing::Ledger for Rows<'_> {
         };
     }
 
+    fn retain(&self, retained: &landing::Retained) -> std::io::Result<()> {
+        state::set_retained(
+            self.conn,
+            &state::Retained {
+                dir: self.dir.clone(),
+                dir_at: self.dir_at,
+                aside: self.aside.clone(),
+                aside_at: self.aside_at,
+                retained: retained.clone(),
+            },
+        )
+        .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+
     fn kept(&self, name: &Path, aside: bool, reason: String) {
         // The file is kept whether or not the report can name it.
         let _ = state::put_kept(
@@ -1350,6 +1378,7 @@ fn settle_row(
     (dir, dir_place): (&Directory, &str),
     (aside, aside_place): (&Directory, &str),
     root_device: Option<u64>,
+    writers: &writers::Census,
 ) -> Result<()> {
     let target = Path::new(&row.displacement.target);
     let rows = Rows {
@@ -1368,6 +1397,7 @@ fn settle_row(
         aside,
         ledger: &rows,
         beside: !in_state(dir_place),
+        writers,
     };
     let displacement = remounted(row, dir, root_device);
     if let Err(error) = landing::settle(dir, guard, &displacement) {
@@ -1503,6 +1533,7 @@ impl Folder {
             directory,
             name,
             aside,
+            writers: &self.writers,
         })
     }
 
@@ -1520,6 +1551,7 @@ impl Folder {
             directory: entry.directory.clone(),
             name: entry.name.clone().into_os_string(),
             aside: entry.directory.clone(),
+            writers: &self.writers,
             rows: Rows {
                 conn,
                 dir: dir.clone(),
@@ -1615,6 +1647,7 @@ impl Folder {
                     (&dir, &row.dir),
                     (&aside, &row.aside),
                     root_device,
+                    &self.writers,
                 )?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => state::put_kept(
@@ -1654,7 +1687,14 @@ impl Folder {
                 .parent()
                 .map(|parent| parent.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            settle_row(&conn, &row, (&dir, &place), (&dir, &place), root_device)?;
+            settle_row(
+                &conn,
+                &row,
+                (&dir, &place),
+                (&dir, &place),
+                root_device,
+                &self.writers,
+            )?;
             settled = true;
         }
         Ok(settled)

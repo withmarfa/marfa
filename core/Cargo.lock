@@ -2772,6 +2772,7 @@ dependencies = [
  "jiff 1.0.1",
  "libc",
  "libsqlite3-sys",
+ "marfa-acl",
  "marfa-rules",
  "marfa-telemetry",
  "notify",

@@ -1630,6 +1630,8 @@ pub(in crate::folder) mod tests {
             state_dir,
             store_mark,
             unflushed: Default::default(),
+            writers: Default::default(),
+            writer_wait: Default::default(),
         };
         (dir, folder)
     }
