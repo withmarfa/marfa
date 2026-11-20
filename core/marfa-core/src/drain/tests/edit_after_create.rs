@@ -224,8 +224,275 @@ fn an_edit_queued_while_its_create_waits_goes_on_the_create_s_answer() {
 fn the_record_of_a_create_goes_with_its_row() {
     let server = crate::scripted::Scripted::start();
     let (_dir, core, id) = made_and_taken(&server, 1);
+    {
+        let conn = core.conn().unwrap();
+        assert_eq!(store::made_version(&conn, &id).unwrap(), Some(1));
+        store::evict_item(&conn, &id, &[]).unwrap();
+        assert_eq!(store::made_version(&conn, &id).unwrap(), None);
+    }
+    // Back in the copy, nothing ties a read at 0 to this device's create.
+    caught_up(&core, &server_row(&id, 1, "made here"));
+    assert!(matches!(
+        core.update_item_as_read(&id, &typed(0)),
+        Err(CoreError::Invalid(_))
+    ));
+    assert!(core.queue().unwrap().is_empty());
+}
+
+fn made_here(core: &Core) -> (QueuedWrite, String) {
+    let made = core
+        .create_item(&crate::model::Draft {
+            r#type: "core.note".into(),
+            properties: json!({ "title": "made here" }).as_object().unwrap().clone(),
+            ..Default::default()
+        })
+        .unwrap();
+    let id = made.item_id.clone().unwrap();
+    (made, id)
+}
+
+/// What a catch-up takes in for `item` while this device's writes wait.
+fn caught_up(core: &Core, item: &serde_json::Value) {
+    let conn = core.conn().unwrap();
+    let item: crate::wire::WireItem = serde_json::from_value(item.clone()).unwrap();
+    let catalog = crate::catalog::load(&conn).unwrap();
+    assert!(store::take_server_item(&conn, &item, None, &catalog).unwrap());
+}
+
+fn versions_sent(server: &crate::scripted::Scripted, id: &str) -> Vec<serde_json::Value> {
+    server
+        .seen(&format!("/items/{id}"))
+        .iter()
+        .filter(|seen| !seen.body.is_empty())
+        .map(|seen| {
+            serde_json::from_slice::<serde_json::Value>(&seen.body).unwrap()["version"].clone()
+        })
+        .collect()
+}
+
+/// The edit goes out, and the server merges it onto `onto`.
+fn edit_lands(server: &crate::scripted::Scripted, id: &str, onto: &serde_json::Value) {
+    let mut merged = onto.clone();
+    merged["version"] = json!(onto["version"].as_i64().unwrap() + 1);
+    merged["properties"]["body"] = json!("typed");
+    server.on(
+        &format!("/items/{id}"),
+        vec![
+            read_answer(onto),
+            crate::scripted::json(
+                200,
+                &json!({ "item": merged, "acknowledged": false }).to_string(),
+            ),
+            read_answer(&merged),
+        ],
+    );
+}
+
+#[test]
+fn an_edit_read_at_version_0_waits_for_a_create_a_catch_up_answered_first() {
+    // The catch-up brings the create at 1, or another device's write at 2 on
+    // top of it; the create's own answer is at 1, or acknowledged as a repeat
+    // with the row as it stands.
+    for (caught, acknowledged) in [(1, false), (2, false), (2, true)] {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let (made, id) = made_here(&core);
+        // Sent, then the answer is lost.
+        server.on("/items", vec![crate::scripted::refusal(503, "unavailable")]);
+        core.drain().unwrap();
+        assert_eq!(core.queue().unwrap()[0].verdict, None);
+
+        let created = server_row(&id, 1, "made here");
+        let mut theirs = server_row(&id, caught, "made here");
+        if caught > 1 {
+            theirs["properties"]["title"] = json!("retitled elsewhere");
+        }
+        caught_up(&core, &theirs);
+        assert_eq!(core.get(&id).unwrap().unwrap().version, caught);
+        // The witness: an edit not said to be read is refused.
+        assert!(matches!(
+            core.update_item(&id, &typed(0)),
+            Err(CoreError::Invalid(_))
+        ));
+        let queued = core
+            .update_item_as_read(&id, &typed(0))
+            .unwrap_or_else(|error| {
+                panic!("an edit read at version 0 of a create still waiting was refused: {error}")
+            });
+        assert_eq!(queued.base_version, Some(0));
+        assert_eq!(queued.depends_on, vec![made.id.clone()]);
+        let held = core.get(&id).unwrap().unwrap();
+        assert_eq!(
+            held.version, caught,
+            "the copy moved its version before an answer"
+        );
+        assert_eq!(held.properties["body"], json!("typed"));
+
+        let answered = if acknowledged { &theirs } else { &created };
+        server.on(
+            "/items",
+            vec![crate::scripted::json(
+                200,
+                &json!({ "item": answered, "acknowledged": acknowledged }).to_string(),
+            )],
+        );
+        edit_lands(&server, &id, &theirs);
+        core.drain().unwrap();
+        assert_eq!(
+            versions_sent(&server, &id),
+            vec![json!(1)],
+            "caught up to {caught}, acknowledged {acknowledged}: the edit went out on a version other than the one its create made"
+        );
+        let held = core.get(&id).unwrap().unwrap();
+        assert_eq!(held.properties["title"], theirs["properties"]["title"]);
+        assert_eq!(held.properties["body"], json!("typed"));
+    }
+}
+
+#[test]
+fn an_edit_read_at_version_0_waits_for_a_create_whose_read_back_is_owed() {
+    for caught in [1, 2] {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let (made, id) = made_here(&core);
+        let created = server_row(&id, 1, "made here");
+        server.on(
+            "/items",
+            vec![crate::scripted::json(
+                200,
+                &json!({ "item": created, "acknowledged": false }).to_string(),
+            )],
+        );
+        server.on(
+            &format!("/items/{id}"),
+            vec![crate::scripted::refusal(503, "unavailable")],
+        );
+        core.drain().unwrap();
+        {
+            let conn = core.conn().unwrap();
+            assert!(
+                store::meta_get(&conn, &receipt_key(&made.id))
+                    .unwrap()
+                    .is_some()
+            );
+            assert_eq!(store::made_version(&conn, &id).unwrap(), None);
+            assert!(
+                store::untaken_creates_for_item(&conn, &id)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+
+        let mut theirs = server_row(&id, caught, "made here");
+        if caught > 1 {
+            theirs["properties"]["title"] = json!("retitled elsewhere");
+        }
+        caught_up(&core, &theirs);
+        assert_eq!(core.get(&id).unwrap().unwrap().version, caught);
+        let queued = core
+            .update_item_as_read(&id, &typed(0))
+            .unwrap_or_else(|error| {
+                panic!(
+                    "an edit read at version 0 of a create whose read was owed was refused: {error}"
+                )
+            });
+        assert_eq!(queued.base_version, Some(0));
+
+        edit_lands(&server, &id, &theirs);
+        core.drain().unwrap();
+        assert_eq!(
+            versions_sent(&server, &id),
+            vec![json!(1)],
+            "caught up to {caught}: the edit went out on a version other than the one its create made"
+        );
+        assert_eq!(
+            store::made_version(&core.conn().unwrap(), &id).unwrap(),
+            Some(1)
+        );
+    }
+}
+
+#[test]
+fn a_create_that_lands_on_a_row_made_elsewhere_records_no_version_made_here() {
+    let server = crate::scripted::Scripted::start();
+    let (_dir, core) = deleting(&server, &[]);
+    let made = core
+        .create_item(&crate::model::Draft {
+            r#type: "core.note".into(),
+            properties: json!({ "title": "made here" }).as_object().unwrap().clone(),
+            source_id: Some("keyed.md".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(made.base_version, None);
+    let mut theirs = server_row("theirs", 5, "made elsewhere");
+    theirs["source_id"] = json!("keyed.md");
+    server.on(
+        "/items",
+        vec![crate::scripted::json(
+            200,
+            &json!({ "item": theirs, "acknowledged": false }).to_string(),
+        )],
+    );
+    server.on("/items/theirs", vec![read_answer(&theirs)]);
+    core.drain().unwrap();
+    core.take_answered().unwrap();
+    assert!(core.queue().unwrap().is_empty());
+    // The witness: the copy holds the row the create landed on.
+    assert_eq!(core.get("theirs").unwrap().unwrap().version, 5);
+    assert_eq!(
+        store::made_version(&core.conn().unwrap(), "theirs").unwrap(),
+        None
+    );
+    assert!(matches!(
+        core.update_item_as_read("theirs", &typed(0)),
+        Err(CoreError::Invalid(_))
+    ));
+}
+
+#[test]
+fn clearing_the_slice_forgets_the_record_of_a_create() {
+    let server = crate::scripted::Scripted::start();
+    let (_dir, core, id) = made_and_taken(&server, 1);
     let conn = core.conn().unwrap();
     assert_eq!(store::made_version(&conn, &id).unwrap(), Some(1));
-    store::evict_item(&conn, &id, &[]).unwrap();
+    store::clear_slice(&conn).unwrap();
     assert_eq!(store::made_version(&conn, &id).unwrap(), None);
+}
+
+#[test]
+fn a_create_let_go_of_while_its_read_back_is_owed_records_nothing() {
+    for evicted in [false, true] {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let (_made, id) = made_here(&core);
+        let created = server_row(&id, 1, "made here");
+        server.on(
+            "/items",
+            vec![crate::scripted::json(
+                200,
+                &json!({ "item": created, "acknowledged": false }).to_string(),
+            )],
+        );
+        server.on(
+            &format!("/items/{id}"),
+            vec![crate::scripted::refusal(503, "unavailable")],
+        );
+        core.drain().unwrap();
+        if evicted {
+            assert!(store::evict_item(&core.conn().unwrap(), &id, &[]).unwrap());
+        }
+        server.on(&format!("/items/{id}"), vec![read_answer(&created)]);
+        core.drain().unwrap();
+        let conn = core.conn().unwrap();
+        assert!(
+            store::owed_read_backs(&conn).unwrap().is_empty(),
+            "the owed read was not settled"
+        );
+        assert_eq!(
+            store::made_version(&conn, &id).unwrap(),
+            (!evicted).then_some(1),
+            "evicted {evicted}"
+        );
+    }
 }
