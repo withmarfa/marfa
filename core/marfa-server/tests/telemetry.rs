@@ -17,8 +17,8 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use tower::ServiceExt;
 
-/// The path, the head and the body of each request.
-type Received = Arc<Mutex<Vec<(String, String, String)>>>;
+/// The path, the head and the body of each request, and when its connection was accepted.
+type Received = Arc<Mutex<Vec<(String, String, String, Instant)>>>;
 
 fn receiver(silent: bool) -> (String, Received) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -32,14 +32,15 @@ fn receiver(silent: bool) -> (String, Received) {
                 held.push(stream);
                 continue;
             }
+            let accepted = Instant::now();
             let sink = sink.clone();
-            thread::spawn(move || answer(stream, &sink));
+            thread::spawn(move || answer(stream, &sink, accepted));
         }
     });
     (address, received)
 }
 
-fn answer(mut stream: TcpStream, sink: &Received) {
+fn answer(mut stream: TcpStream, sink: &Received, accepted: Instant) {
     let mut bytes = Vec::new();
     let mut chunk = [0u8; 8192];
     let (head_end, length) = loop {
@@ -69,7 +70,7 @@ fn answer(mut stream: TcpStream, sink: &Received) {
     let head = String::from_utf8_lossy(&bytes[..head_end]).into_owned();
     let path = head.split_whitespace().nth(1).unwrap_or("").to_string();
     let body = String::from_utf8_lossy(&bytes[head_end..head_end + length]).into_owned();
-    sink.lock().unwrap().push((path, head, body));
+    sink.lock().unwrap().push((path, head, body, accepted));
     let _ = stream.write_all(
         b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\
           Connection: close\r\n\r\n{}",
@@ -78,13 +79,17 @@ fn answer(mut stream: TcpStream, sink: &Received) {
 
 const EVENTS: &str = "/i/v1/analytics/events";
 
+/// How long a stop waits for an exception report: the first stack resolution in a large debug
+/// binary can be slow under load. The stop returns as soon as the report is sent.
+const REPORT_BUDGET: Duration = Duration::from_secs(20);
+
 fn posted(received: &Received, prefix: &str) -> Vec<Value> {
     received
         .lock()
         .unwrap()
         .iter()
-        .filter(|(path, _, _)| path.starts_with(prefix))
-        .map(|(_, _, body)| serde_json::from_str(body).unwrap())
+        .filter(|(path, ..)| path.starts_with(prefix))
+        .map(|(_, _, body, _)| serde_json::from_str(body).unwrap())
         .collect()
 }
 
@@ -94,8 +99,8 @@ fn heads(received: &Received, prefix: &str) -> Vec<Vec<(String, String)>> {
         .lock()
         .unwrap()
         .iter()
-        .filter(|(path, _, _)| path.starts_with(prefix))
-        .map(|(_, head, _)| {
+        .filter(|(path, ..)| path.starts_with(prefix))
+        .map(|(_, head, ..)| {
             head.lines()
                 .skip(1)
                 .filter_map(|line| line.split_once(':'))
@@ -301,7 +306,7 @@ async fn a_fault_after_the_posthog_settings_are_written_is_one_exception_sent_as
         instance.write_note("the-fault").await,
         StatusCode::INTERNAL_SERVER_ERROR
     );
-    guard.stop(Duration::from_secs(5));
+    guard.stop(REPORT_BUDGET);
 
     let events = exceptions(&received);
     assert_eq!(ids(&events, "request_id"), ["the-fault"], "{events:?}");
@@ -382,7 +387,7 @@ async fn a_posthog_host_that_leads_to_this_machine_is_sent_nothing_until_private
         let (instance, guard) = Instance::start(&borrowed(&pairs)).await;
         instance.break_writes();
         instance.write_note(&format!("allowed-{allowed}")).await;
-        guard.stop(Duration::from_secs(5));
+        guard.stop(REPORT_BUDGET);
     }
     assert_eq!(ids(&exceptions(&received), "request_id"), ["allowed-true"]);
 }
@@ -425,7 +430,7 @@ async fn the_preference_is_read_for_each_fault() {
     instance.write_note("while-off").await;
     store("true");
     instance.write_note("while-on").await;
-    guard.stop(Duration::from_secs(5));
+    guard.stop(REPORT_BUDGET);
 
     assert_eq!(ids(&exceptions(&received), "request_id"), ["while-on"]);
 }
@@ -475,7 +480,7 @@ async fn a_receiver_that_never_answers_changes_nothing_for_a_request() {
 /// Each trace or log post's request ids among `ids`, with the header `name` it carried.
 fn sent_with(received: &Received, prefix: &str, ids: &[&str], name: &str) -> Vec<(String, String)> {
     let mut found = Vec::new();
-    for (path, head, body) in received.lock().unwrap().iter() {
+    for (path, head, body, _) in received.lock().unwrap().iter() {
         if !path.starts_with(prefix) {
             continue;
         }
@@ -500,14 +505,22 @@ fn pair(id: &str, header: &str) -> (String, String) {
     (id.to_string(), header.to_string())
 }
 
-/// How many requests the receiver has taken so far.
-fn mark(received: &Received) -> usize {
-    received.lock().unwrap().len()
+/// The moment after which a request counts as late.
+fn mark() -> Instant {
+    Instant::now()
 }
 
-/// What the receiver took from `from` on.
-fn since(received: &Received, from: usize) -> Received {
-    Arc::new(Mutex::new(received.lock().unwrap()[from..].to_vec()))
+/// What the receiver took on connections accepted after `from`: a post already past the
+/// exporter's halt check may still arrive after a change is answered, and the statement allows it.
+fn since(received: &Received, from: Instant) -> Received {
+    let late = received
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(.., accepted)| *accepted > from)
+        .cloned()
+        .collect();
+    Arc::new(Mutex::new(late))
 }
 
 #[tokio::test]
@@ -532,7 +545,7 @@ async fn a_change_to_the_endpoint_headers_or_switch_is_followed_with_no_restart_
         .configure(json!({ "telemetry_enabled": false }))
         .await;
     // Counted once the change is answered: a batch may leave on its own before it.
-    let switched = mark(&received);
+    let switched = mark();
     instance.write_note("switched-off").await;
     instance
         .configure(json!({ "telemetry_enabled": true }))
@@ -546,7 +559,7 @@ async fn a_change_to_the_endpoint_headers_or_switch_is_followed_with_no_restart_
         )
         .await;
     assert_eq!(swapped, StatusCode::OK);
-    let changed = mark(&received);
+    let changed = mark();
     instance.write_note("second").await;
     let (status, answer) = instance
         .configure(json!({ "trash_retention_days": 7 }))
@@ -616,20 +629,20 @@ async fn a_report_queued_before_reporting_is_switched_off_or_moved_is_dropped() 
     instance
         .configure(json!({ "telemetry_enabled": false }))
         .await;
-    let switched = mark(&received);
+    let switched = mark();
     instance
         .configure(json!({ "telemetry_enabled": true }))
         .await;
     instance.fail_note("before-the-move").await;
     let (status, answer) = instance.configure(json!({ "posthog_host": other })).await;
     assert_eq!(status, StatusCode::OK, "{answer}");
-    let changed = mark(&received);
+    let changed = mark();
     instance.fail_note("kept").await;
     let (status, answer) = instance
         .configure(json!({ "trash_retention_days": 7 }))
         .await;
     assert_eq!(status, StatusCode::OK, "{answer}");
-    guard.stop(Duration::from_secs(5));
+    guard.stop(REPORT_BUDGET);
 
     // The witness: a report queued across a change of another setting is sent.
     assert_eq!(ids(&exceptions(&moved), "request_id"), ["kept"]);
@@ -827,7 +840,7 @@ fn a_platform_variable_never_overrides_the_stored_settings() {
         .lock()
         .unwrap()
         .iter()
-        .map(|(_, head, body)| format!("{head}{body}"))
+        .map(|(_, head, body, _)| format!("{head}{body}"))
         .collect();
     assert!(!everything.contains("planted\""), "{everything}");
     assert!(!everything.contains("deployment.environment"));

@@ -31,11 +31,18 @@ export interface FaultSinks {
   readonly elsewhere: Record<string, unknown>[];
   /** The headers of each batch the server posted to capture v1, in order. */
   readonly trackedHeaders: Record<string, string | string[] | undefined>[];
+  /**
+   * When each batch the server posted to capture v1 reached the receiver, as
+   * `performance.now()` read on the request, parallel to `trackedErrors`.
+   */
+  readonly trackedArrivals: number[];
   /** Each OTLP post, traces and log records alike, with its headers, in order. */
   readonly exports: {
     signal: "traces" | "logs";
     headers: Record<string, string | string[] | undefined>;
     body: Record<string, unknown>;
+    /** `performance.now()` when the request reached the receiver, before its body was read. */
+    arrivedAt: number;
   }[];
   sentLogRecords(): {
     body: unknown;
@@ -106,8 +113,10 @@ export async function startFaultSinks(): Promise<FaultSinks> {
   const trackedErrors: Record<string, unknown>[] = [];
   const elsewhere: Record<string, unknown>[] = [];
   const trackedHeaders: FaultSinks["trackedHeaders"][number][] = [];
+  const trackedArrivals: number[] = [];
   const exports: FaultSinks["exports"][number][] = [];
   const receiver: Server = createServer((request, response) => {
+    const arrivedAt = performance.now();
     const chunks: Buffer[] = [];
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
@@ -126,6 +135,7 @@ export async function startFaultSinks(): Promise<FaultSinks> {
             signal: "traces",
             headers: { ...request.headers },
             body: parsed,
+            arrivedAt,
           });
         } else if (path.startsWith("/v1/logs")) {
           logRecords.push(parsed);
@@ -133,10 +143,12 @@ export async function startFaultSinks(): Promise<FaultSinks> {
             signal: "logs",
             headers: { ...request.headers },
             body: parsed,
+            arrivedAt,
           });
         } else if (path.startsWith(CAPTURE_V1)) {
           trackedErrors.push(parsed);
           trackedHeaders.push({ ...request.headers });
+          trackedArrivals.push(arrivedAt);
         } else elsewhere.push(parsed);
       } finally {
         response
@@ -170,6 +182,7 @@ export async function startFaultSinks(): Promise<FaultSinks> {
     trackedErrors,
     elsewhere,
     trackedHeaders,
+    trackedArrivals,
     exports,
     sentLogRecords() {
       type Batch = {

@@ -19,8 +19,10 @@ import { clientsFor, everythingClient } from "../../utils/own-blob-server.js";
  * **A server of its own for each case, with a receiver the fixture runs.** A
  * stop sends what the server holds under settings that did not change, so
  * each case reads what arrived once the server has stopped. A change drops
- * what was queued before it, so a case notes how much had arrived when it
- * made the change.
+ * what was queued before it, so a case notes the moment its change was
+ * answered and counts only what reached the receiver after. A post already
+ * past the exporter's check may still arrive after that moment, and the
+ * statement allows it.
  */
 const started: { stop(): Promise<void> }[] = [];
 
@@ -105,19 +107,19 @@ async function fault(server: FreshServer, requestId: string): Promise<void> {
 
 /**
  * The value of header `name` on each OTLP post of `signal` that names
- * `requestId`, from the post numbered `from` on.
+ * `requestId`, that reached the receiver after `after`.
  */
 function carried(
   sinks: FaultSinks,
   signal: "traces" | "logs",
   requestId: string,
   name: string,
-  from = 0,
+  after = -Infinity,
 ): (string | undefined)[] {
   return sinks.exports
-    .slice(from)
     .filter(
       (post) =>
+        post.arrivedAt > after &&
         post.signal === signal &&
         JSON.stringify(post.body).includes(`"${requestId}"`),
     )
@@ -127,10 +129,15 @@ function carried(
     });
 }
 
-/** Whether a batch from the one numbered `from` on reported `requestId`. */
-function exceptionOf(sinks: FaultSinks, requestId: string, from = 0): boolean {
+/** Whether a batch that reached the receiver after `after` reported `requestId`. */
+function exceptionOf(
+  sinks: FaultSinks,
+  requestId: string,
+  after = -Infinity,
+): boolean {
   type Batch = { batch: { properties?: { request_id?: unknown } }[] };
-  return (sinks.trackedErrors.slice(from) as Batch[])
+  return (sinks.trackedErrors as Batch[])
+    .filter((_, at) => sinks.trackedArrivals[at]! > after)
     .flatMap((post) => post.batch)
     .some((event) => event.properties?.request_id === requestId);
 }
@@ -154,9 +161,9 @@ describe("the telemetry settings", () => {
       await configured(server, {
         otel_exporter_otlp_headers: "authorization=Bearer%20two,x-team=core",
       });
-      // Counted once the change is answered: a batch may leave on its own
+      // Taken once the change is answered: a batch may leave on its own
       // before it.
-      const changed = sinks.exports.length;
+      const changed = performance.now();
       const second = `second-${randomUUID()}`;
       await write(server, second);
       await server.stop();
@@ -192,8 +199,7 @@ describe("the telemetry settings", () => {
       const queued = `queued-${randomUUID()}`;
       await fault(server, queued);
       await configured(server, { telemetry_enabled: false });
-      const exported = sinks.exports.length;
-      const tracked = sinks.trackedErrors.length;
+      const switched = performance.now();
       const off = `switched-off-${randomUUID()}`;
       await fault(server, off);
       await configured(server, { telemetry_enabled: true });
@@ -212,10 +218,10 @@ describe("the telemetry settings", () => {
       // whatever of it arrived went before the switch.
       for (const signal of ["traces", "logs"] as const) {
         expect(
-          carried(sinks, signal, queued, "content-type", exported),
+          carried(sinks, signal, queued, "content-type", switched),
         ).toEqual([]);
       }
-      expect(exceptionOf(sinks, queued, tracked)).toBe(false);
+      expect(exceptionOf(sinks, queued, switched)).toBe(false);
     },
     BUDGET,
   );

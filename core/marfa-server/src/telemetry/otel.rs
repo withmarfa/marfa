@@ -74,9 +74,6 @@ impl HttpClient for Blocking {
         'a: 'b,
         Self: 'b,
     {
-        if self.halt.is_set() {
-            return Box::pin(async { Err(HttpError::from("the exporter was replaced")) });
-        }
         let (mut parts, body) = request.into_parts();
         parts.headers.clear();
         parts
@@ -94,7 +91,13 @@ impl HttpClient for Blocking {
         );
         let sent = agent
             .ok_or_else(|| HttpError::from("the address is not public"))
-            .and_then(|agent| agent.run(request).map_err(HttpError::from));
+            .and_then(|agent| {
+                // Checked last so nothing slow sits between the check and the connect.
+                if self.halt.is_set() {
+                    return Err(HttpError::from("the exporter was replaced"));
+                }
+                agent.run(request).map_err(HttpError::from)
+            });
         Box::pin(async move {
             let mut response = sent?;
             let status = response.status();
