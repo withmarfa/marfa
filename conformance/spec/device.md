@@ -4906,6 +4906,14 @@ If an item's name is taken from the property its preview is computed from, then 
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
+### `device/item-preview-frontmatter`
+
+When computing a preview of a text whose first line holds only `---`, whose second line is not empty and of which a later line holds only `---`, a device MUST leave out every line up to and including the first such later line, a leading U+FEFF not counting as part of the first line.
+
+**Reason:** Front matter holds a note's properties, which a reader does not read as text. An opening `---` followed by an empty line, or one that no later `---` closes, is not front matter, so its lines are read by the rules below.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
 ### `device/item-preview-fence`
 
 When computing a preview, a device MUST remove each line that opens or closes a fence and keep the lines inside it as written, where a fence opens at a line that begins, after any leading whitespace, with three or more backticks or tildes, closes at a line that holds only the same character at least as many times, and runs to the end of the text where nothing closes it.
@@ -4922,11 +4930,43 @@ When computing a preview, a device MUST remove each line outside a fence that is
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
+### `device/item-preview-footnotes`
+
+When computing a preview, a device MUST remove each footnote definition outside a fence, a line that opens with `[^label]:` and the lines after it that are empty or begin with four spaces or a tab.
+
+**Reason:** A footnote's text is read at the foot of a page, not in the line it is cited from.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-tables`
+
+When computing a preview, a device MUST replace a table outside a fence with the text of its cells in reading order, read by these rules again and separated by spaces, where a table is a header row that holds a pipe, a delimiter row of as many cells as the header row, each of dashes with an optional colon at either end, and the rows after it that hold a pipe.
+
+**Reason:** A reader reads a table's cells, not its pipes or its delimiter row. A row's cells are the text between its pipes, with a pipe at either end left out, and a table may omit the pipes at both ends of every row.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-cell-pipes`
+
+When computing a preview, a device MUST read a pipe in a table row as the text of its cell where a backslash escapes it or a code span holds it, and an escaped pipe as a pipe.
+
+**Reason:** A pipe the person escaped or wrote in code is text they meant, so it neither splits a cell nor shows its backslash.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
 ### `device/item-preview-prefixes`
 
 When computing a preview, a device MUST remove from the start of every other line outside a fence, until none is left, leading whitespace, `>`, a list marker (`-`, `*`, `+`, or one to nine digits and then `.` or `)`, followed by whitespace or the line's end) with any task box `[ ]`, `[x]` or `[X]` after it, and a heading marker (one to six `#` followed by whitespace or the line's end) with its closing run of `#`.
 
 **Reason:** Quotes and lists nest, so a line can open with several markers.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-callouts`
+
+When computing a preview, a device MUST remove from a line that opens with a quote marker `>` the callout marker that follows the markers before it, `[!type]` with an optional `+` or `-` after it, where `type` is one or more letters, digits, hyphens or underscores and whitespace or the end of the line follows it.
+
+**Reason:** A callout's marker names the box it is drawn as, which a reader sees as its colour and icon, so its title and text are what is left to read. The same text outside a quote is text.
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
@@ -4944,6 +4984,30 @@ When computing a preview, a device MUST replace a code span, a run of backticks 
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
+### `device/item-preview-references`
+
+When computing a preview, a device MUST replace each character reference outside a code span and a fence, `&name;`, `&#digits;` or `&#xhex;`, with the character or characters it stands for, as CommonMark reads references.
+
+**Reason:** A body written by an editor holds `&#x20;` and `&amp;` where a reader reads a space and an ampersand.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-reference-unknown`
+
+If a character reference names no character, as `&unknown;`, `&#xZZ;`, `&#;` or `&amp` with no semicolon do not, then a device MUST keep it in the preview as written.
+
+**Reason:** A reference that stands for nothing is text the person wrote.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-reference-text`
+
+When a device replaces a character reference, a device MUST NOT read the character it gives as Markdown.
+
+**Reason:** `&#42;` is an asterisk the person asked for, not the start of emphasis.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
 ### `device/item-preview-images`
 
 When computing a preview, a device MUST remove an embed (`![[target]]`) and an image (`![alt](destination)` or `![alt][label]`).
@@ -4958,11 +5022,27 @@ When computing a preview, a device MUST replace a wiki link with its label (`[[t
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
+### `device/item-preview-footnote-refs`
+
+When computing a preview, a device MUST remove each footnote reference `[^label]` outside a code span whose label a footnote definition of the same text gives, comparing labels without regard to case.
+
+**Reason:** A reference no definition gives is text the person wrote, so `[^0-9]` in a pattern stays.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
 ### `device/item-preview-emphasis`
 
 When computing a preview, a device MUST remove each run of two or more `*`, `_` or `~`, and each single `*` or `_` with a letter or digit on exactly one side of it.
 
 **Reason:** `snake_case` and `2 * 3` keep their characters, because neither is emphasis.
+
+**Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
+
+### `device/item-preview-highlights`
+
+When computing a preview, a device MUST remove the `==` on either side of a highlight and keep its text, read by these rules again, where a highlight opens at a run of exactly two `=` that text not beginning with whitespace follows and closes at the next run of exactly two `=` on the line that whitespace does not precede, a code span between them not closing it.
+
+**Reason:** A reader sees a highlighted passage as text. A spaced `==`, as in `x == y`, is no highlight.
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
