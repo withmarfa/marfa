@@ -324,7 +324,7 @@ If the new release has stayed up for 20 seconds, the old release cannot be put b
 
 ### `updates/settle-after-ended`
 
-If an update has already ended as `failed` with its record kept, then the server MUST NOT put the old programs back when the new release has stayed up for 20 seconds.
+If an update has already ended as `failed` with its record kept, then the server MUST NOT put the old server back when the new release has stayed up for 20 seconds.
 
 **Reason:** the update ended because the old release could not come back, and a put-back would leave a server that refuses the database.
 

@@ -353,13 +353,8 @@ impl Install {
                     sink,
                     &pending,
                     &format!(
-                        "Release {to} ended {} times before it settled{}",
-                        pending.starts,
-                        pending
-                            .limit_ended
-                            .as_ref()
-                            .map(|why| format!(", and a start was ended because it {why}"))
-                            .unwrap_or_default()
+                        "Release {to} ended {} times before it settled",
+                        pending.starts
                     ),
                 ),
             }
@@ -396,6 +391,10 @@ impl Install {
     /// start runs one release whole. Ends the process for the service to start again.
     fn roll_back(&self, sink: &Sink, pending: &Pending, why: &str) -> ! {
         let (from, to, programs) = (&pending.from, &pending.to, &pending.programs);
+        let why = &match &pending.limit_ended {
+            Some(limit) => format!("{why}, and a start was ended because it {limit}"),
+            None => why.to_string(),
+        };
         if let Some(cannot) = cannot_put_back(pending, &self.database, &self.environment) {
             self.finish_forward(
                 sink,
