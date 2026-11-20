@@ -423,6 +423,73 @@ describe("a copy whose cursor aged out", () => {
     });
   });
 
+  /**
+   * A copy holding `a` at version 5 whose refill in place lists it at
+   * version 2, with a read of `a` by id answering `read`. Answers how many
+   * times the refill read `a`.
+   */
+  async function refilledOverEarlier(
+    label: string,
+    read: WireItemOptions,
+  ): Promise<{ h: Harness; reads: number }> {
+    const rows: Rows = {
+      "core.note": [
+        { item: { id: "a", version: 5, properties: { title: "a at 5" } } },
+      ],
+    };
+    const { h } = await agedOut(label, rows);
+    rows["core.note"] = [
+      { item: { id: "a", version: 2, properties: { title: "a at 2" } } },
+    ];
+    h.server.copyAnswer("GET", "/items/a", answers.updated(wireItem(read)));
+    const asked = h.server.requests.length;
+    const refilled = await h.device.hydrate(["core.note"], "library");
+    expect(refilled.ok, JSON.stringify(refilled)).toBe(true);
+    expect(refilled.ok && refilled.value.in_place).toBe(true);
+    const reads = h.server.requests
+      .slice(asked)
+      .filter(
+        (request) =>
+          request.method === "GET" && request.pathname === "/items/a",
+      ).length;
+    return { h, reads };
+  }
+
+  it("puts back the item a refill in place lists at an earlier version than the copy held where the server holds it there", async () => {
+    const { h, reads } = await refilledOverEarlier("refill-earlier-kept", {
+      id: "a",
+      version: 2,
+      properties: { title: "a at 2" },
+    });
+    expect(
+      reads,
+      "the item the refill listed at an earlier version was not read",
+    ).toBe(1);
+    expect(await keptBlocked(h)).toEqual([["update_item", "a"]]);
+    const held = await h.device.get("a");
+    expect(held.ok && held.value.properties.title).toBe("a at 5");
+  });
+
+  it("takes the item a refill in place lists at an earlier version than the copy held where the server holds it later, keeping nothing", async () => {
+    // The listing page was read before a write moved `a` on, so a read by id
+    // finds it past the copy's version.
+    const { h, reads } = await refilledOverEarlier("refill-earlier-later", {
+      id: "a",
+      version: 6,
+      properties: { title: "a at 6" },
+      updated_at: "2026-09-19T00:00:00.000Z",
+    });
+    expect(
+      reads,
+      "the item the refill listed at an earlier version was not read",
+    ).toBe(1);
+    expect(await keptBlocked(h)).toEqual([]);
+    const held = await h.device.get("a");
+    expect(
+      held.ok && [held.value.version, held.value.properties.title],
+    ).toEqual([6, "a at 6"]);
+  });
+
   it("ends the stale copy when its refill reads another instance", async () => {
     const rows: Rows = {
       "core.note": [{ item: { id: "a" } }, { item: { id: "b" } }],

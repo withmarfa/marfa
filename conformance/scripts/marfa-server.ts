@@ -1173,7 +1173,7 @@ async function hook(
 }
 
 /** Moves the clock forward and keeps the offset for the next boot. */
-async function advanceClock(state: string, ms: number): Promise<void> {
+export async function advanceClock(state: string, ms: number): Promise<void> {
   const moved = await hook(state, "/_control/test/clock", {
     method: "POST",
     body: { advance_ms: ms },

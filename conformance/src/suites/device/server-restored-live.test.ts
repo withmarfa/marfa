@@ -20,7 +20,13 @@ import {
 } from "../../utils/fresh-server.js";
 import { parseEnvFile } from "../../utils/target.js";
 import { tempFolder } from "../../utils/temp-folder.js";
-import { bootServer, stopServer } from "../../../scripts/marfa-server.js";
+import {
+  advanceClock,
+  bootServer,
+  stopServer,
+} from "../../../scripts/marfa-server.js";
+import { DAY_MS } from "../../utils/moved-clock.js";
+import { collectUntil, withStream } from "../../utils/stream.js";
 import { requireBinary } from "./harness.js";
 
 /**
@@ -61,6 +67,10 @@ interface World {
   device: CliDevice;
   /** A client of the server the proxy reaches now. */
   client(): MarfaClient;
+  /** An operator client of the server the proxy reaches now. */
+  operator(): MarfaClient;
+  /** The address of the server the proxy reaches now. */
+  upstream(): string;
   /** The requests the device sent, as `METHOD /path`, oldest first. */
   sent: string[];
   /** Stops the original and puts the server booted from `image` in its place. */
@@ -143,6 +153,9 @@ async function world(
     sent,
     client: () =>
       new MarfaClient({ baseUrl: upstream, apiKey: original.workingKey }),
+    operator: () =>
+      new MarfaClient({ baseUrl: upstream, apiKey: original.managementKey }),
+    upstream: () => upstream,
     async restore(image) {
       await original.stop();
       restoredStates.push(image);
@@ -370,6 +383,96 @@ describe("a server restored behind work this device sent it", () => {
       expect(await title(w.client(), held.id)).toBe("after the backup");
     },
     TIMEOUT,
+  );
+
+  // The restored server's clock moves on and its log loses events, which a
+  // second run against the same image could not undo.
+  it(
+    "puts back an edit the stream showed where the restored server's log has aged past the copy's cursor",
+    { retry: 0, timeout: TIMEOUT },
+    async ({ signal }) => {
+      const w = await world("restored-aged");
+      const held = await note(w.client(), "before the backup");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      value(
+        await w.device.update(held.id, {
+          properties: { title: "after the backup" },
+          version: held.version,
+        }),
+      );
+      expect((await sent(w.device)).answered).toBe(1);
+      // The stream shows the edit, so no receipt of it is left unseen.
+      const cursor = value(await w.device.catchUp()).cursor;
+
+      await w.restore(image);
+      expect(await title(w.client(), held.id)).toBe("before the backup");
+      const config = (await w.operator().getConfig()).data as Record<
+        string,
+        unknown
+      >;
+      const set = await w.operator().updateConfig({
+        ...config,
+        event_log_retention_days: 1,
+      });
+      expect(set.status, JSON.stringify(set.error)).toBe(200);
+      for (const n of [1, 2, 3]) {
+        await note(w.client(), `written after the restore ${String(n)}`);
+      }
+      await advanceClock(image, 2 * DAY_MS);
+      await note(w.client(), "written a day past the retention");
+      await note(w.client(), "and again");
+      // Until the sweep retires the events after the copy's cursor, and with
+      // them the event the copy took last.
+      for (;;) {
+        const run = await w.operator().runHousekeeping("event-log-cleanup");
+        expect(
+          [200, 409],
+          `event-log-cleanup: ${JSON.stringify(run.error)}`,
+        ).toContain(run.status);
+        const ending = await withStream(
+          w.upstream(),
+          w.original.workingKey,
+          { lastEventId: cursor },
+          async (stream) => {
+            const { events } = await collectUntil(
+              stream,
+              (seen) =>
+                seen.some((e) =>
+                  ["catchup_too_old", "stream_live", "cursor_ahead"].includes(
+                    e.event,
+                  ),
+                ),
+              `the end of a replay from ${cursor}`,
+              signal,
+            );
+            return events.find((e) => e.event !== "stream_cursor")?.event;
+          },
+        );
+        expect(
+          ending,
+          "the restored log ends behind the copy's cursor",
+        ).not.toBe("cursor_ahead");
+        if (ending === "catchup_too_old") break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      const filled = value(await w.device.hydrate(["core.note"], "library"));
+      expect(
+        filled.in_place,
+        "the copy took the log as aged out, not as a server restored to an earlier point",
+      ).toBe(true);
+
+      expect(await keptBlocked(w.device)).toEqual([["update_item", held.id]]);
+      expect(value(await w.device.get(held.id)).properties.title).toBe(
+        "after the backup",
+      );
+
+      value(await w.device.release({ reason: "server_restored" }));
+      value(await w.device.drain());
+      expect(await title(w.client(), held.id)).toBe("after the backup");
+    },
   );
 
   it(
