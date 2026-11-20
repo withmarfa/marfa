@@ -4,10 +4,16 @@
 /// manager restarts it when it exits with a failure: `launchd` or `systemd`.
 pub const SERVICE: &str = "MARFA_SERVICE";
 
+/// The install folder, which `marfa server run --dir` sets for the server it starts. Only that
+/// command counts the starts of a release an update has not settled, so a server swaps its own
+/// programs only where this is set.
+pub const INSTALL_DIR: &str = "MARFA_INSTALL_DIR";
+
 /// Names the `marfa` command reads from a shell, and `marfa server run` hands on, and the one
 /// a service unit sets, so a server that finds one in its environment has no setting to warn of.
-pub const COMMAND_LINE: [&str; 13] = [
+pub const COMMAND_LINE: [&str; 14] = [
     SERVICE,
+    INSTALL_DIR,
     "MARFA_API_URL",
     "MARFA_API_KEY",
     "MARFA_PROFILE",

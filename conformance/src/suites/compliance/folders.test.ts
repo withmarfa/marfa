@@ -41,6 +41,23 @@ interface Refusal {
   conflicting_fields?: string[];
 }
 
+/** Paths that name no file inside a folder, each a refused `query.beneath`. */
+const REFUSED_BENEATH_PATHS = [
+  "../Alpha.md",
+  "/Projects/Alpha.md",
+  "Projects//Alpha.md",
+  "Projects/./Alpha.md",
+  ".marfa/folder.yaml",
+  "Projects/",
+  "Projects/Alpha",
+  "Projects\\Alpha.md",
+  "Alpha\u0000.md",
+].map((beneath): [Record<string, unknown>, string, string] => [
+  { query: { beneath } },
+  "validation_error",
+  "query.beneath",
+]);
+
 async function keyWith(
   label: string,
   type_permissions: Record<string, string>,
@@ -126,6 +143,24 @@ describe("the folder door", () => {
       expect(changed.data.item.properties.query).toEqual({ tier });
     },
   );
+
+  it("takes the path of a file in query.beneath and reads it back", async () => {
+    const query = { types: ["core.note"], beneath: "Projects/Alpha.md" };
+    const { id } = await folder({ query });
+    expect((await client.getItem(id)).data.item.properties.query).toEqual(
+      query,
+    );
+    const item = "01920000-0000-7000-8000-0000000000aa";
+    const changed = await client.updateFolder(id, {
+      version: 1,
+      query: { ...query, beneath: item },
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    expect(changed.data.item.properties.query).toEqual({
+      ...query,
+      beneath: item,
+    });
+  });
 
   it("refuses search as an unknown folder setting", async () => {
     const { id } = await folder({ query: { tier: "library" } });
@@ -327,6 +362,9 @@ describe("the folder door", () => {
     [{ query: { types: ["Not A Type"] } }, "validation_error", "query.types.0"],
     [{ query: { filter: "tags eq" } }, "validation_error", "query.filter"],
     [{ query: { beneath: "not-an-id" } }, "validation_error", "query.beneath"],
+    ...REFUSED_BENEATH_PATHS,
+    [{ query: { beneath: 7 } }, "validation_error", "query.beneath"],
+    [{ query: { beneath: "" } }, "validation_error", "query.beneath"],
     [{ query: { state: ["trashed"] } }, "validation_error", "query.state.0"],
     [
       { defaults: { type: "core.no-such-type" } },

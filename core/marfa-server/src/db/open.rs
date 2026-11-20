@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use marfa_rules::server_log::{UpgradeRefusal, upgraded};
+use marfa_rules::update_record::{Folder as UpdateRecord, Upgrade};
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension};
 
 use super::migrate::{self, Migration, Standing};
@@ -30,6 +31,9 @@ pub struct Options {
     pub migrations: &'static [Migration],
     /// The free space a copy before an upgrade must leave, unless the file stores its own.
     pub reserve: u64,
+    /// Where an upgrade marks that it began and ended, for the `marfa server run` that times a
+    /// start of a new release.
+    pub upgrade_marks: Option<UpdateRecord>,
 }
 
 /// The suffix of the copy kept beside the database from before its last upgrade.
@@ -347,6 +351,15 @@ fn copy_before_upgrade(
     Ok(copy)
 }
 
+/// A mark that cannot be kept leaves the upgrade timed as an ordinary start, which is logged.
+fn mark(options: &Options, upgrade: Upgrade) {
+    if let Some(record) = &options.upgrade_marks
+        && let Err(error) = record.mark_upgrade(upgrade)
+    {
+        tracing::warn!(error = %error, "The database upgrade could not be marked for marfa server run");
+    }
+}
+
 /// On macOS only the full flush gets past the drive's cache.
 fn make_durable(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "synchronous", "FULL")?;
@@ -474,6 +487,9 @@ pub fn open(options: &Options, lock: Lock, faults: &Faults) -> Result<Opened, Fa
     writer.busy_timeout(options.write_wait).map_err(refused)?;
     keep_log(&writer, &label, file.is_some())?;
     prepare_writer(&writer).map_err(refused)?;
+    if matches!(standing, Standing::Behind(_)) {
+        mark(options, Upgrade::Began);
+    }
     let mut copy = None;
     if let (Standing::Behind(from), true, Target::File(path)) = (&standing, judged.copy, &target) {
         copy = Some(copy_before_upgrade(
@@ -491,6 +507,7 @@ pub fn open(options: &Options, lock: Lock, faults: &Faults) -> Result<Opened, Fa
             migrate::upgrade(&mut writer, options.migrations, from)
                 .map_err(|error| unapplied(Some(from), error))?;
             move_schema_into_file(&writer);
+            mark(options, Upgrade::Ended);
             tracing::info!(
                 { upgraded::SCHEMA_FROM } = from,
                 { upgraded::SCHEMA_TO } = migrate::latest(options.migrations),

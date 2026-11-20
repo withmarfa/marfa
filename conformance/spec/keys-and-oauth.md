@@ -17,7 +17,7 @@ A credential holds any of these permissions, each a row of the table below, whic
 | `instance.maintain` | Running housekeeping, canceling bulk jobs, updating the server and confirming the server's clock.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `instance.read`     | Reading detailed health, what needs the owner's attention, metrics, housekeeping status, blob storage diagnostics and bulk job status.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `items.purge`       | Destroying a trashed item irrecoverably, through the single-item operation and the bulk one alike, and listing and emptying the trash.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `keys.manage`       | Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `keys.manage`       | Listing and revoking keys across the instance, changing their metadata or narrowing access, granting any source as a claim, and setting the name and mark of any source.                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `keys.mint`         | Minting keys within the caller's current access, and listing, changing and revoking keys within that access.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `schema.write`      | Removing type and edge type definitions that already exist, and replacing them, only those the credential's type or edge map grants write on.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `sign_ins.manage`   | Listing, renaming and ending the owner's sign-ins, listing, renaming and removing the owner's passkeys, getting the link that adds one and changing the owner's password.                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -275,6 +275,42 @@ If a caller holding neither `keys.mint` nor local authority sends `POST /keys`, 
 
 **Tests:** `compliance/key-management.test.ts › minting requires keys.mint`.
 
+### `keys-and-oauth/owner-key-mint`
+
+When an app's access token, or a key that carries `oauth_client_id`, holds `keys.manage` and mints a key with `owner_key: true`, the server MUST mint a key that carries no `oauth_client_id`.
+
+**Reason:** An owner signed in through an app reaches every key, and a key that person makes for a connector or a script must outlast that app's sign-in, as a key the local command makes does.
+
+**Tests:** `compliance/owner-keys.test.ts › mints an owner's key from an app that holds keys.manage, and an app's key without owner_key`, `› mints an owner's key from a key an app made that holds keys.manage`, `› makes an owner's key through an app that holds keys.mint and keys.manage, and an app's key without owner_key`.
+
+### `keys-and-oauth/owner-key-manage`
+
+If an app's access token, or a key that carries `oauth_client_id`, that does not hold `keys.manage` sends `POST /keys` with `owner_key: true`, then the server MUST answer `403 forbidden` with `details.required_scope` naming `keys.manage` and mint no key.
+
+**Reason:** A key that no change to the app's access ends is a key the app's grant no longer bounds, which only a caller that reaches every key may make.
+
+**Tests:** `compliance/owner-keys.test.ts › refuses owner_key from an app, or a key an app made, that does not hold keys.manage`, `› decides owner_key on the caller's access when it mints, not when it was read`.
+
+### `keys-and-oauth/owner-key-direct`
+
+When local authority, or a key that carries no `oauth_client_id`, sends `POST /keys` with `owner_key: true`, the server MUST mint the key as it would without `owner_key`, whether or not the caller holds `keys.manage`.
+
+**Reason:** Such a caller mints only owner's keys already, so a client can send `owner_key` without first finding out what kind of credential it holds.
+
+**Tests:** `compliance/owner-keys.test.ts › accepts owner_key from a caller no app made and mints the key it would without it`.
+
+### `keys-and-oauth/owner-key-value`
+
+If `POST /keys` names `owner_key` with a value other than `true` or `false`, then the server MUST answer `400 validation_error` with `details.field` naming `owner_key`.
+
+**Tests:** `compliance/owner-keys.test.ts › refuses an owner_key that is not true or false, naming it`.
+
+### `keys-and-oauth/owner-key-audited`
+
+When `POST /keys` mints a key with `owner_key: true`, the server MUST record `owner_key: true` in the `details` of the mint's `key.create` audit entry.
+
+**Tests:** `compliance/owner-keys.test.ts › records owner_key in the audit entry of the mint`.
+
 ### `keys-and-oauth/key-operations-permission`
 
 If a caller holding none of `keys.mint`, `keys.manage` and local authority lists, updates or revokes keys, then the server MUST answer `403 forbidden` with `details.required_scope` naming `keys.mint`.
@@ -325,11 +361,35 @@ If a working key's update gives a key a permission, or a type, edge, metadata or
 
 ### `keys-and-oauth/manage-narrows-only`
 
-If a caller holding `keys.manage`, and not local authority, updates a key to hold a permission, map entry or claimed source the key does not already hold, then the server MUST answer `403 forbidden`.
+If a caller holding `keys.manage`, and neither `keys.mint` nor local authority, updates a key to hold a permission, map entry or claimed source the key does not already hold, then the server MUST answer `403 forbidden`.
 
 **Reason:** `keys.manage` reaches every key so that it can take access away, and a power to add access to any key would be a power to mint.
 
-**Tests:** `compliance/keys-update.test.ts › only narrows a key for a caller acting through keys.manage`.
+**Tests:** `compliance/keys-update.test.ts › only narrows a key for a caller acting through keys.manage`, `compliance/owner-keys.test.ts › narrows a key through keys.manage alone, and says the key does not hold what a widening adds`, `› narrows only, through an app that holds keys.manage and not keys.mint`.
+
+### `keys-and-oauth/manage-narrows-says-why`
+
+If `keys-and-oauth/manage-narrows-only` refuses an update, then the server MUST answer with `details.required_scope` naming the first permission or map entry the update adds, or `details.source` naming the first claimed source, and a message saying that the key does not hold it and that widening a key needs `keys.mint`.
+
+**Reason:** The caller may hold what it asked to add, so a refusal that said the caller lacks it would send the caller looking for access it already has.
+
+**Tests:** `compliance/owner-keys.test.ts › narrows a key through keys.manage alone, and says the key does not hold what a widening adds`.
+
+### `keys-and-oauth/mint-and-manage-widens`
+
+When a caller holding both `keys.mint` and `keys.manage` widens a key that no app made and that expires no later than the caller, without `narrow_only`, so that the key holds only permissions and map entries the caller holds and claims only sources the caller may grant, the server MUST update the key.
+
+**Reason:** `keys.mint` gives access within the caller's own and `keys.manage` reaches every key, so a caller holding both does at least what either allows.
+
+**Tests:** `compliance/owner-keys.test.ts › widens a key within its caller through keys.mint, with keys.manage or without it`, `› widens a key through an app that holds keys.mint and keys.manage`.
+
+### `keys-and-oauth/mint-and-manage-ceiling`
+
+If a caller holding both `keys.mint` and `keys.manage`, and not local authority, widens a key so that it would hold a permission or map entry the caller does not hold, then the server MUST answer `403 forbidden` with `details.required_scope` naming the first one, and leave the key as it was.
+
+**Reason:** A widening gives a key what a mint would, within the caller's own access. Holding `keys.manage` as well lets a caller reach every key, not give a key more than the caller holds.
+
+**Tests:** `compliance/owner-keys.test.ts › holds a widening by keys.mint and keys.manage to the caller's own access`.
 
 ### `keys-and-oauth/app-key-narrows-only`
 
@@ -337,7 +397,7 @@ If an update would give a key an app made a permission, map entry or claimed sou
 
 **Reason:** The consent screen tells a person that a key an app makes holds what the app held and never more, and that promise is worth something only if no credential can lift it.
 
-**Tests:** `compliance/key-reach.test.ts › a signed-in app gives a key within its reach a permission its grant holds, and no other`, `compliance/claimed-sources.test.ts › never widens a key an app made to a new source`.
+**Tests:** `compliance/key-reach.test.ts › a signed-in app gives a key within its reach a permission its grant holds, and no other`, `compliance/claimed-sources.test.ts › never widens a key an app made to a new source`, `compliance/owner-keys.test.ts › never widens a key an app made, whoever holds keys.mint and keys.manage`.
 
 ### `keys-and-oauth/update-narrow-only`
 
@@ -563,21 +623,29 @@ If a key that has an `expires_at` sends `POST /keys` naming an `expires_at` late
 
 If a key that has an `expires_at` and does not hold `keys.manage` sends `PATCH /keys/{id}` naming an `expires_at` later than its own, or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
 
-**Reason:** A key that could move its own expiry, or the expiry of a key it made, would hold the bound only until it chose not to. A caller holding `keys.manage` is held to the expiry of the key it changes instead (`keys-and-oauth/expiry-manage-narrows`).
+**Reason:** A key that could move its own expiry, or the expiry of a key it made, would hold the bound only until it chose not to. A caller holding `keys.manage` narrows any key, so it is held to the expiry of the key it changes instead (`keys-and-oauth/expiry-manage-narrows`), and to its own only when it also holds `keys.mint` (`keys-and-oauth/expiry-manage-mint-ceiling`).
 
 **Tests:** `compliance/key-expiry.test.ts › neither lengthens nor clears the expiry of a key, its own included, and leaves the key as it was`.
 
+### `keys-and-oauth/expiry-manage-mint-ceiling`
+
+If a key that has an `expires_at` and holds both `keys.mint` and `keys.manage` sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than both its own and that key's, or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
+
+**Reason:** `keys.manage` narrows any key, including to an expiry past the caller's own. A caller that also holds `keys.mint` can lengthen a key, and what it gives a key ends when its own life does.
+
+**Tests:** `compliance/owner-keys.test.ts › holds a widening by keys.mint and keys.manage to the caller's own expiry`.
+
 ### `keys-and-oauth/expiry-widen-ceiling`
 
-If a key that has an `expires_at` and does not hold `keys.manage` sends `PATCH /keys/{id}` naming no `expires_at`, to give a key whose `expires_at` is later than its own, or `null`, a permission, map entry or claimed source that key does not already hold, then the server MUST answer `403 forbidden` and leave the key as it was.
+If a key that has an `expires_at` sends `PATCH /keys/{id}` naming no `expires_at`, to give a key whose `expires_at` is later than its own, or `null`, a permission, map entry or claimed source that key does not already hold, then the server MUST answer `403 forbidden` and leave the key as it was.
 
 **Reason:** What a key that expires gives another key ends when it does. An update that only narrows a key, or changes its label or tier, gives it nothing, and an update naming an `expires_at` is held by `keys-and-oauth/expiry-update-ceiling`. A change to `enforcement_override` is held to `config.manage` instead (`keys-and-oauth/levers-permission`), which already changes the instance's own levers for good.
 
-**Tests:** `compliance/key-expiry.test.ts › gives a key that outlives it nothing more, unless the update names an expires_at no later than its own, and still narrows or relabels it`, `› widens a key that expires no later than it, and a key that never expires widens any key it reaches`, `compliance/stored-times.test.ts › answers 500 internal_error to an update that widens a key whose stored expiry does not read, and leaves the key as it was`.
+**Tests:** `compliance/key-expiry.test.ts › gives a key that outlives it nothing more, unless the update names an expires_at no later than its own, and still narrows or relabels it`, `› widens a key that expires no later than it, and a key that never expires widens any key it reaches`, `compliance/stored-times.test.ts › answers 500 internal_error to an update that widens a key whose stored expiry does not read, and leaves the key as it was`, `compliance/owner-keys.test.ts › holds a widening by keys.mint and keys.manage to the caller's own expiry`.
 
 ### `keys-and-oauth/expiry-manage-narrows`
 
-If a caller holding `keys.manage`, and not local authority, sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden`.
+If a caller holding `keys.manage`, and neither `keys.mint` nor local authority, sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden`.
 
 **Reason:** `keys-and-oauth/manage-narrows-only` holds for a key's life as for its reach: a longer life is more access.
 
@@ -675,7 +743,7 @@ The server MUST carry `expires_at` on `POST /keys`, `GET /keys`, `GET /keys/curr
 
 ### `keys-and-oauth/app-key-origin`
 
-The server MUST carry `oauth_client_id`, naming the app's `client_id`, on every answer that holds a key an app minted or a key minted by such a key.
+The server MUST carry `oauth_client_id`, naming the app's `client_id`, on every answer that holds a key an app minted, or a key minted by such a key, without `owner_key: true`.
 
 **Reason:** A client that must not run on an app's key tells one by this field, and minting another key from an app's key does not shed the app's ceiling.
 
@@ -683,9 +751,9 @@ The server MUST carry `oauth_client_id`, naming the app's `client_id`, on every 
 
 ### `keys-and-oauth/app-key-origin-absent`
 
-The server MUST leave `oauth_client_id` out of every answer that holds a key no app minted.
+The server MUST leave `oauth_client_id` out of every answer that holds a key no app minted, or a key minted with `owner_key: true`.
 
-**Tests:** `compliance/key-oauth-client.test.ts › is absent from a key no app minted, on every door that answers a key`.
+**Tests:** `compliance/key-oauth-client.test.ts › is absent from a key no app minted, on every door that answers a key`, `compliance/owner-keys.test.ts › mints an owner's key from an app that holds keys.manage, and an app's key without owner_key`.
 
 ## A key's own levers
 
@@ -751,6 +819,8 @@ The server MUST answer a key's levers under `enforcement_override` on the mint, 
 
 A key may claim sources besides its own, and a write may name one it claims (`items/source-claimed`).
 
+Who may grant a claim depends on the caller: local authority (`keys-and-oauth/claims-direct`), a working key or an app holding `keys.manage` and `keys.mint` (`keys-and-oauth/claims-manage`), and any other working key or app (`keys-and-oauth/claims-ceiling`). A browser session mints and updates no key.
+
 ### `keys-and-oauth/claims-answered`
 
 The server MUST take `sources` on `POST /keys` and `PATCH /keys/{id}`, and answer it on the mint, the listing and the update.
@@ -789,9 +859,17 @@ When a mint names a claim with spaces around it, the server MUST store the claim
 
 ### `keys-and-oauth/claims-ceiling`
 
-If a working key's mint or update claims a source other than the caller's own `source` and its own claims, then the server MUST answer `403 forbidden` with `details.source` naming the first such source.
+If a working key or an app that does not hold `keys.manage` mints or updates a key to claim a source other than the caller's own `source` and its own claims, then the server MUST answer `403 forbidden` with `details.source` naming the first such source.
 
-**Tests:** `compliance/claimed-sources.test.ts › refuses a mint or an update claiming a source its caller does not hold`.
+**Tests:** `compliance/claimed-sources.test.ts › refuses a mint or an update claiming a source its caller does not hold`, `compliance/owner-keys.test.ts › grants any source as a claim through keys.manage, on a mint and on an update`, `› grants a claim through an app that holds keys.manage, and refuses it to one that does not`.
+
+### `keys-and-oauth/claims-manage`
+
+When a working key or an app holding `keys.manage` and `keys.mint` mints a key, or updates a key no app made without `narrow_only`, to claim any source outside the reserved prefixes, the server MUST grant it.
+
+**Reason:** `keys.manage` reaches every key and every source's name and mark, so it decides which keys share a source, as local authority does.
+
+**Tests:** `compliance/owner-keys.test.ts › grants any source as a claim through keys.manage, on a mint and on an update`, `› grants any source as a claim through an app that holds keys.manage`, `› grants a claim through an app that holds keys.manage, and refuses it to one that does not`.
 
 ### `keys-and-oauth/claims-direct`
 
@@ -805,7 +883,7 @@ If a mint names as the new key's own `source` one another key claims, and the ca
 
 **Reason:** A key writes under its own source as surely as under a claim, so naming it as the source would take a claim the caller was refused.
 
-**Tests:** `compliance/claimed-sources.test.ts › refuses a key whose own source another key claims, unless its caller could grant it`.
+**Tests:** `compliance/claimed-sources.test.ts › refuses a key whose own source another key claims, unless its caller could grant it`, `compliance/owner-keys.test.ts › takes as a key's own source one another key claims, through keys.manage`.
 
 ### `keys-and-oauth/claims-reserved`
 
@@ -813,7 +891,7 @@ If a mint or an update names a claim or an own `source` that, after trimming whi
 
 **Reason:** An OAuth source names an app's identity, which no key earns by naming it. A restored source records history without granting any credential authority over it.
 
-**Tests:** `compliance/claimed-sources.test.ts › refuses a reserved prefix, even to the owner`.
+**Tests:** `compliance/claimed-sources.test.ts › refuses a reserved prefix, even to the owner`, `compliance/owner-keys.test.ts › refuses a reserved prefix through keys.manage`.
 
 ### `keys-and-oauth/claims-case`
 
@@ -2357,7 +2435,7 @@ When `PATCH /grants/{id}` reduces a grant, the server MUST end access tokens and
 
 ### `keys-and-oauth/grant-narrow-keys`
 
-When `PATCH /grants/{id}` reduces a grant, the server MUST revoke in the same write every live key the app minted, and every live key those keys minted, whose permissions or type, link, metadata or profile access reach beyond what the resulting scopes grant.
+When `PATCH /grants/{id}` reduces a grant, the server MUST revoke in the same write every live key whose `oauth_client_id` names the app and whose permissions or type, link, metadata or profile access reach beyond what the resulting scopes grant.
 
 **Reason:** A key an app made holds no more than the app's access when it was made, so the owner who reduces that access takes it from the app's keys as from its tokens (`keys-and-oauth/grant-narrow-tokens`). A key is judged by what it reaches, as a token's scopes are.
 
@@ -2370,6 +2448,14 @@ When `PATCH /grants/{id}` reduces a grant, the server MUST leave working every k
 **Reason:** Such a key holds nothing the owner took away. A key minted by a key is judged by its own access, as `keys-and-oauth/grant-revoke-keys` takes a descendant by the app rather than by its maker.
 
 **Tests:** `compliance/auth-grants.test.ts › revokes the keys an app made that hold more than its narrowed access, a key's descendant included, and keeps the rest`, `› judges an app's keys by the access each reaches, as its tokens are judged`, `› revokes no key when the narrowing names the scopes the grant holds`.
+
+### `keys-and-oauth/grant-narrow-owner-key`
+
+When `PATCH /grants/{id}` reduces a grant, the server MUST leave working every key the app minted with `owner_key: true`, whatever it holds.
+
+**Reason:** An owner's key is the owner's, not the app's, so taking access from the app takes none from it.
+
+**Tests:** `compliance/owner-keys.test.ts › keeps an owner's key working when its app's grant is narrowed, and then revoked with its keys`.
 
 ### `keys-and-oauth/grant-narrow-keys-audit`
 
@@ -2463,11 +2549,17 @@ When the inactivity retirement retires a grant, the server MUST leave every key 
 
 ### `keys-and-oauth/grant-revoke-keys`
 
-When a grant is revoked with `revoke_keys` set to `true`, the server MUST revoke in the same write every key the app minted and every key those keys minted, whatever the caller's reach.
+When a grant is revoked with `revoke_keys` set to `true`, the server MUST revoke in the same write every key whose `oauth_client_id` names the app, whatever the caller's reach.
 
 **Reason:** A key an app minted is held to the app's grant, so taking those keys with the grant reaches no further than revoking the grant does.
 
-**Tests:** `compliance/auth-grants.test.ts › with revoke_keys=true also revokes every key the app minted, a key's descendant included`.
+**Tests:** `compliance/auth-grants.test.ts › with revoke_keys=true also revokes every key the app minted, a key's descendant included`, `compliance/owner-keys.test.ts › keeps an owner's key working when its app's grant is narrowed, and then revoked with its keys`.
+
+### `keys-and-oauth/grant-revoke-owner-key`
+
+When a grant is revoked with `revoke_keys` set to `true`, the server MUST leave working every key the app minted with `owner_key: true`.
+
+**Tests:** `compliance/owner-keys.test.ts › keeps an owner's key working when its app's grant is narrowed, and then revoked with its keys`.
 
 ### `keys-and-oauth/revoke-keys-unreadable`
 
@@ -3395,7 +3487,7 @@ If the name a sign-in would be listed by at `GET /owner/sign-ins` holds a contro
 
 ### `keys-and-oauth/sign-ins-minted-by`
 
-When `GET /owner/sign-ins` lists a key that an app minted while that app is a live sign-in of the owner, the server MUST give the key a `minted_by` of the app's sign-in `id`, and every other sign-in a `minted_by` of `null`.
+When `GET /owner/sign-ins` lists a key whose `oauth_client_id` names an app while that app is a live sign-in of the owner, the server MUST give the key a `minted_by` of the app's sign-in `id`, and every other sign-in a `minted_by` of `null`.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › names the app that minted a key while the app is signed in`.
 
@@ -3471,7 +3563,7 @@ When `DELETE /owner/sign-ins/{id}` ends an app without `revoke_keys` set to `tru
 
 ### `keys-and-oauth/sign-in-end-app-revoke-keys`
 
-When `DELETE /owner/sign-ins/{id}` with `revoke_keys` set to `true` ends an app, the server MUST answer `401` to the next request that carries a key that app minted or a key that such a key minted.
+When `DELETE /owner/sign-ins/{id}` with `revoke_keys` set to `true` ends an app, the server MUST answer `401` to the next request that carries a key whose `oauth_client_id` names that app.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › end with the app when revoke_keys is true, a key's descendant included, and no other key does`.
 

@@ -10,3 +10,16 @@ pub const DURATION: &str = "duration";
 /// Every name above, for the test that ties the triggers to them.
 #[cfg(test)]
 pub const ALL: [&str; 6] = [BLOB_REF, MIME_TYPE, EXTRACTED_TEXT, WIDTH, HEIGHT, DURATION];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_names_a_reading_of_the_bytes_sets_are_the_rules_list() {
+        assert_eq!(
+            marfa_rules::conflict::READ_FROM_BYTES,
+            [EXTRACTED_TEXT, WIDTH, HEIGHT, DURATION]
+        );
+    }
+}

@@ -417,7 +417,7 @@ marfa apps revoke [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--revoke-keys` | Also revoke every key the app minted, and every key those keys minted. |
+| `--revoke-keys` | Also revoke every key the app minted, and every key those keys minted, but an owner's key. |
 
 ## sign-ins
 
@@ -464,7 +464,7 @@ marfa sign-ins end [OPTIONS] <ID>
 
 | Option | Description |
 | --- | --- |
-| `--revoke-keys` | For an app, also revoke every key it minted, and every key those keys minted. Refused for a browser or a key. |
+| `--revoke-keys` | For an app, also revoke every key it minted, and every key those keys minted, but an owner's key. Refused for a browser or a key. |
 
 ### marfa sign-ins end-all
 
@@ -1901,6 +1901,8 @@ Mint a key. Needs `keys.mint` or local authority.
 
 The key holds exactly what the flags name. A permission, a map entry or a claim each names a part of what it holds, and a part left unnamed is held as nothing. `--all-access` names every permission and every map at its widest. With none named, a key sent to a server takes the caller's whole set, and through `--socket` the command is refused, since the socket's authority has no limit to take.
 
+A key made through a sign-in or a key that holds `keys.manage`, as `marfa login`'s does, is the owner's: it carries no app, so it keeps working when the app sign-in that made it is disconnected or narrowed. An app's access token passed with `--key` or `MARFA_API_KEY` makes an app's key. With `keys.manage`, `--claim` can name any source but one starting `oauth:` or `restored:`.
+
 ```text
 marfa keys create [OPTIONS] --label <LABEL> --source <SOURCE>
 ```
@@ -1943,6 +1945,8 @@ marfa keys current [OPTIONS]
 ### marfa keys update
 
 Change a key's label, tier, expiry or permission maps. Needs `keys.manage`, `keys.mint` (a key within the caller's reach) or local authority.
+
+`keys.mint` widens a key within what the caller holds and no later than the caller's own expiry. `keys.manage` without `keys.mint` only narrows a key and never moves its expiry later. A key an app made only narrows, whoever changes it.
 
 ```text
 marfa keys update [OPTIONS] <ID>
@@ -3503,7 +3507,7 @@ marfa device folders create [OPTIONS]
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`, an item ID or the path of one of the folder's own files, which the first sync replaces with its item's ID. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
@@ -3534,7 +3538,7 @@ marfa device folders update [OPTIONS] --version <VERSION> <ID>
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`, an item ID or the path of one of the folder's own files, which the first sync replaces with its item's ID. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
@@ -4607,7 +4611,7 @@ marfa folders create [OPTIONS]
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`, an item ID or the path of one of the folder's own files, which the first sync replaces with its item's ID. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
@@ -4636,7 +4640,7 @@ marfa folders update [OPTIONS] --version <VERSION> <ID>
 | `--file <PATH>` | A file holding the settings as a JSON object; `-` reads stdin. |
 | `--body <JSON>` | The settings as a JSON object, inline. |
 | `--title <TITLE>` | The folder's name. |
-| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
+| `--query <JSON>` | Which items the folder holds, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`, an item ID or the path of one of the folder's own files, which the first sync replaces with its item's ID. |
 | `--defaults <JSON>` | What a new file takes where it leaves a blank, as a JSON object: `type`, `tier`, `properties`, `tags` and `edges`. |
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
@@ -4902,6 +4906,8 @@ Run the server in the foreground. This is what the service runs.
 
 It starts the `marfa-server` of the same release as this `marfa`, with the settings in `--dir` (the data below it, and the port from `.env`); without `--dir` it uses the settings in its own environment, as the container does. It passes a stop on to the server and ends with its status. On a Mac it keeps the server's output in `~/Library/Logs/Marfa`. A server that refuses its database is not started again: this command says so and waits until it is stopped.
 
+After a self-update, this command tries the new `marfa-server` before the new `marfa` takes its place. It counts each start of the new release that ends before the release settles, and does not count one that a stop ended. After two such starts, or when the new release refuses its database, it puts the old release back when that release can still open the database, and otherwise keeps the new one. `marfa update status` shows what happened.
+
 ```text
 marfa server run [OPTIONS]
 ```
@@ -4909,6 +4915,7 @@ marfa server run [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
+| `--check` | Check that this `marfa` can run the install, with the `marfa-server` beside it, and end without starting the server. A self-update runs this with the new release's `marfa` before it swaps the programs. |
 
 ### marfa server uninstall
 

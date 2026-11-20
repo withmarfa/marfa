@@ -394,13 +394,14 @@ fn shape(
         } else {
             Cow::Borrowed(properties)
         };
-        rules.validate_merged(type_id, properties, true, &written)
+        rules.validate_merged(type_id, properties, true, &written, properties)
     } else if rules.known(type_id) {
         rules.judge_schedule(type_id, properties)
     } else {
         Ok(())
     };
-    let judged = judged.and_then(|()| rules.judge_kept_columns(type_id, properties, Naming::Any));
+    let judged = judged
+        .and_then(|()| rules.judge_kept_columns(type_id, properties, properties, Naming::Any));
     judged.map_err(|error| {
         let field = error.fields.first().map(|field| {
             if field.path.starts_with('_') {

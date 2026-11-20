@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { MarfaClient } from "../../client/api.js";
@@ -118,6 +119,60 @@ describe("a device finds a file by its extracted text", () => {
     expect(await local("zorblaxian")).toEqual(await served("zorblaxian"));
     expect(await local("pear")).toEqual(await served("pear"));
     expect(await local("pear")).toContain(none);
+  }, 120_000);
+
+  it("stops matching a file by the words of bytes an edit replaces, before the server answers", async () => {
+    const stamp = randomUUID().replaceAll("-", "");
+    const first = `quillfeather${stamp}`;
+    const second = `marblethorn${stamp}`;
+    const id = await textFile(first);
+    const replacement = await client.uploadBlob(
+      Buffer.from(second),
+      "text/plain",
+    );
+    expect(replacement.status).toBe(201);
+    value(await device.catchUp());
+    expect((await operator.runHousekeeping("enrichment-sweep")).status).toBe(
+      200,
+    );
+    value(await device.catchUp());
+    // The witness: the copy matches the file by the words it holds.
+    expect(await local(first)).toEqual([id]);
+    const held = value(await device.get(id));
+
+    // An edit that leaves the bytes alone keeps the match.
+    value(
+      await device.update(id, {
+        properties: { title: "renamed" },
+        version: held.version,
+      }),
+    );
+    expect(await local(first)).toEqual([id]);
+
+    const edited = value(await device.get(id));
+    value(
+      await device.update(id, {
+        properties: { blob_ref: replacement.data.hash },
+        version: edited.version,
+      }),
+    );
+    expect(await local(first)).toEqual([]);
+    expect(value(await device.get(id)).properties.extracted_text).toBe(
+      undefined,
+    );
+
+    const drained = value(await device.drain());
+    expect(
+      drained.verdicts.map((entry) => entry.verdict),
+      JSON.stringify(drained),
+    ).not.toContain("refused");
+    expect((await operator.runHousekeeping("enrichment-sweep")).status).toBe(
+      200,
+    );
+    value(await device.catchUp());
+    expect(await served(second)).toEqual([id]);
+    expect(await local(second)).toEqual([id]);
+    expect(await local(first)).toEqual([]);
   }, 120_000);
 
   it("leaves a file in the bin unmatched, as the server does", async () => {

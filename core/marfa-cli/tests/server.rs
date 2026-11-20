@@ -303,10 +303,19 @@ exit 0
 /// What `marfa-server --version` prints and a server that does nothing.
 const FAKE_SERVER: &str = r#"#!/bin/sh
 case "$1" in
-  --version) echo "marfa-server ${FAKE_SERVER_VERSION:-0.0.0}"; exit 0 ;;
+  --version)
+    if [ -n "$FAKE_VERSION_HANG" ]; then exec sleep 60; fi
+    if [ -n "$FAKE_VERSION_EXIT" ]; then exit "$FAKE_VERSION_EXIT"; fi
+    echo "marfa-server ${FAKE_SERVER_VERSION:-0.0.0}"; exit 0 ;;
 esac
 env > "$FAKE_DOCKER_STATE/server-env"
 echo $$ > "$FAKE_DOCKER_STATE/server-pid"
+if [ -n "$FAKE_SERVER_UPGRADE" ]; then
+  echo '"began"' > "$MARFA_INSTALL_DIR/data/update/upgrade.json"
+  i=0; while [ "$i" -lt "$FAKE_SERVER_UPGRADE" ]; do sleep 0.1; i=$((i + 1)); done
+  echo '"ended"' > "$MARFA_INSTALL_DIR/data/update/upgrade.json"
+fi
+if [ -n "$FAKE_SERVER_SETTLES" ]; then rm -f "$MARFA_INSTALL_DIR/data/update/pending.json"; fi
 if [ -n "$FAKE_SERVER_SAYS" ]; then echo "$FAKE_SERVER_SAYS"; fi
 if [ -n "$FAKE_SERVER_HANG" ]; then
   touch "$FAKE_DOCKER_STATE/ready"
@@ -3302,7 +3311,7 @@ fn a_user_service_asks_for_lingering_and_says_the_one_line_when_it_is_refused() 
 
 impl Rig {
     /// `marfa server run` as a child process that outlives the call.
-    fn run_server(&self, env: &[(&str, &str)]) -> std::process::Child {
+    fn run_server(&self, env: &[(&str, &str)]) -> Run {
         self.isolate();
         let mut command = self.command();
         command
@@ -3319,7 +3328,7 @@ impl Rig {
             command.env(name, value);
         }
         let _held = SOCKETS.lock().unwrap();
-        command.spawn().unwrap()
+        Run(command.spawn().unwrap())
     }
 
     fn run_said(&self) -> String {
@@ -3327,7 +3336,43 @@ impl Rig {
     }
 }
 
-/// Waits for the child to end, and gives up (stopping it by its process ID)
+/// A `marfa server run` that leads its own process group. A test that fails
+/// before the run ends would otherwise leave the run and its stand-in server
+/// running after the test process exits.
+struct Run(std::process::Child);
+
+impl std::ops::Deref for Run {
+    type Target = std::process::Child;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Run {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+impl Drop for Run {
+    fn drop(&mut self) {
+        if let Ok(None) = self.0.try_wait() {
+            stop_group(&mut self.0);
+        }
+    }
+}
+
+/// Kills the group a run leads. The run is not yet reaped, so its process ID
+/// still names that group and no other.
+fn stop_group(child: &mut std::process::Child) {
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{}", child.id())])
+        .status();
+    let _ = child.wait();
+}
+
+/// Waits for the child to end, and gives up (stopping its process group)
 /// after `seconds`.
 fn ended(child: &mut std::process::Child, seconds: u64) -> Option<std::process::ExitStatus> {
     let until = std::time::Instant::now() + Duration::from_secs(seconds);
@@ -3337,11 +3382,7 @@ fn ended(child: &mut std::process::Child, seconds: u64) -> Option<std::process::
         }
         std::thread::sleep(Duration::from_millis(20));
     }
-    let _ = Command::new("kill")
-        .arg("-KILL")
-        .arg(child.id().to_string())
-        .status();
-    let _ = child.wait();
+    stop_group(child);
     None
 }
 
@@ -3798,4 +3839,666 @@ fn the_address_for_setup_is_set_only_through_the_private_socket() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+// ---- `marfa server run` trying the new server of an update --------------
+
+/// The release an update kept aside: it says whether it opens the database as `can_open` says,
+/// once it is asked about the database the server uses.
+fn old_server(can_open: &str) -> String {
+    format!(
+        r#"#!/bin/sh
+case "$1" in
+  --version) echo "marfa-server 0.0.0"; exit 0 ;;
+  --can-open)
+    [ "$2" = "$MARFA_DATABASE_PATH" ] || {{ echo "asked about $2" >&2; exit 9; }}
+    {can_open} ;;
+  *) touch "$FAKE_DOCKER_STATE/old-ran"; exit 0 ;;
+esac
+"#
+    )
+}
+
+const OPENS_SCHEMA_1: &str = r#"echo '{"schema":1,"standing":"current"}'"#;
+
+impl Rig {
+    fn programs(&self) -> PathBuf {
+        self.root.join("bin")
+    }
+
+    fn update_record(&self) -> PathBuf {
+        self.dir.join("data/update")
+    }
+
+    /// An installed server that swapped in release `to`'s server, with release `from`'s kept
+    /// aside and release `to`'s `marfa` waiting.
+    fn swapped(&self, from: &str, to: &str, starts: u64, can_open: &str) {
+        self.native_installed(&["--access", "local"]);
+        self.isolate();
+        let bin = self.programs();
+        script(&bin.join(".marfa-server.previous"), &old_server(can_open));
+        fs::write(bin.join(".marfa.next"), "the new marfa").unwrap();
+        self.keep_pending(from, to, starts);
+    }
+
+    fn keep_pending(&self, from: &str, to: &str, starts: u64) {
+        fs::create_dir_all(self.update_record()).unwrap();
+        let pending = serde_json::json!({
+            "from": from,
+            "to": to,
+            "schema": 1,
+            "starts": starts,
+            "programs": self.programs(),
+            "attempt": ATTEMPT,
+        });
+        fs::write(
+            self.update_record().join("pending.json"),
+            pending.to_string(),
+        )
+        .unwrap();
+    }
+
+    fn starts(&self) -> Option<u64> {
+        let text = fs::read(self.update_record().join("pending.json")).ok()?;
+        serde_json::from_slice::<serde_json::Value>(&text).unwrap()["starts"].as_u64()
+    }
+
+    /// The outcome and the reason of the last update.
+    fn last(&self) -> (String, String) {
+        let text = fs::read_to_string(self.update_record().join("last.json")).unwrap();
+        let last: serde_json::Value = serde_json::from_str(&text).unwrap();
+        (
+            last["outcome"].as_str().unwrap().to_string(),
+            last["reason"].as_str().unwrap_or_default().to_string(),
+        )
+    }
+
+    /// One start by the service manager, which ends within `seconds`.
+    fn started_once(&self, env: &[(&str, &str)]) -> Option<i32> {
+        let _ = fs::remove_file(self.state.join("server-env"));
+        let mut child = self.run_server(env);
+        ended(&mut child, 30).expect("run did not end").code()
+    }
+
+    fn server_started(&self) -> bool {
+        self.state.join("server-env").exists()
+    }
+
+    fn program(&self, name: &str) -> Vec<u8> {
+        fs::read(self.programs().join(name)).unwrap()
+    }
+}
+
+const NEW: (&str, &str) = ("FAKE_SERVER_VERSION", "0.0.1");
+
+#[test]
+fn a_new_release_that_ends_before_it_settles_is_put_back_after_two_starts() {
+    let rig = Rig::new("u-twice");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    let new_server = rig.program("marfa-server");
+    for (round, exit) in [(1, "1"), (2, "0")] {
+        let code = rig.started_once(&[NEW, ("FAKE_SERVER_EXIT", exit)]);
+        assert_eq!(code, Some(75), "round {round}: {}", rig.run_said());
+        assert!(rig.server_started(), "round {round}");
+        assert_eq!(rig.starts(), Some(round), "round {round}");
+    }
+    let env = fs::read_to_string(rig.state.join("server-env")).unwrap();
+    assert!(
+        env.lines()
+            .any(|line| line == format!("MARFA_INSTALL_DIR={}", rig.real_dir().display())),
+        "{env}"
+    );
+    assert_eq!(rig.program("marfa-server"), new_server, "the witness");
+
+    let code = rig.started_once(&[NEW]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert!(
+        !rig.server_started(),
+        "the new release was not run a third time"
+    );
+    assert_eq!(
+        rig.program("marfa-server"),
+        old_server(OPENS_SCHEMA_1).as_bytes()
+    );
+    assert!(!rig.programs().join(".marfa.next").exists());
+    assert_eq!(rig.starts(), None);
+    let (outcome, reason) = rig.last();
+    assert_eq!(outcome, "rolled_back");
+    assert!(
+        reason.contains("0.0.1 ended 2 times") && reason.contains("0.0.0 was put back"),
+        "{reason}"
+    );
+
+    assert_eq!(rig.started_once(&[]), Some(0), "{}", rig.run_said());
+    assert!(
+        rig.state.join("old-ran").exists(),
+        "the next start runs the old release"
+    );
+}
+
+#[test]
+fn a_new_release_that_refuses_its_database_is_put_back_at_once() {
+    let rig = Rig::new("u-refused");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    let code = rig.started_once(&[NEW, ("FAKE_SERVER_EXIT", "78")]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert_eq!(
+        rig.program("marfa-server"),
+        old_server(OPENS_SCHEMA_1).as_bytes()
+    );
+    let (outcome, reason) = rig.last();
+    assert_eq!(outcome, "rolled_back");
+    assert!(reason.contains("exit status 78"), "{reason}");
+}
+
+#[test]
+fn a_stop_of_the_new_release_is_not_counted_as_a_failed_start() {
+    let rig = Rig::new("u-stop");
+    rig.swapped("0.0.0", "0.0.1", 1, OPENS_SCHEMA_1);
+    let mut child = rig.run_server(&[NEW, ("FAKE_SERVER_TRAP", "0")]);
+    wait_for(&rig.state.join("ready"));
+    assert_eq!(rig.starts(), Some(2), "the witness: the start was counted");
+    signal(&child, "TERM");
+    let status = ended(&mut child, 20).expect("run did not end");
+    assert_eq!(status.code(), Some(0), "{}", rig.run_said());
+    assert_eq!(rig.starts(), Some(1), "the stop was taken off");
+    assert_ne!(
+        rig.program("marfa-server"),
+        old_server(OPENS_SCHEMA_1).as_bytes(),
+        "nothing was put back"
+    );
+}
+
+#[test]
+fn a_second_run_of_the_same_install_counts_no_start() {
+    let rig = Rig::new("u-second");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    let mut first = rig.run_server(&[NEW, ("FAKE_SERVER_TRAP", "0")]);
+    wait_for(&rig.state.join("ready"));
+    assert_eq!(rig.starts(), Some(1));
+    let mut second = rig.run_server(&[NEW, ("FAKE_SERVER_EXIT", "1")]);
+    let status = ended(&mut second, 20).expect("the second run did not end");
+    assert_eq!(status.code(), Some(1), "{}", rig.run_said());
+    assert_eq!(rig.starts(), Some(1));
+    signal(&first, "TERM");
+    ended(&mut first, 20).expect("run did not end");
+    assert_eq!(rig.starts(), Some(0));
+}
+
+#[test]
+fn a_new_release_that_changed_the_database_is_kept_and_the_update_says_it_failed() {
+    for (name, can_open, said) in [
+        (
+            "u-moved",
+            r#"echo '{"schema":2,"standing":"current"}'"#,
+            "schema from 1 to 2",
+        ),
+        (
+            "u-newer",
+            "echo 'the database is newer than this release' >&2; exit 78",
+            "the database is newer than this release",
+        ),
+    ] {
+        let rig = Rig::new(name);
+        rig.swapped("0.0.0", "0.0.1", 2, can_open);
+        let new_server = rig.program("marfa-server");
+        let code = rig.started_once(&[NEW]);
+        assert_eq!(code, Some(75), "{name}: {}", rig.run_said());
+        assert_eq!(rig.program("marfa-server"), new_server, "{name}");
+        assert_eq!(
+            rig.program("marfa"),
+            b"the new marfa",
+            "{name}: the swap was finished"
+        );
+        assert_eq!(rig.starts(), None, "{name}");
+        let (outcome, reason) = rig.last();
+        assert_eq!(outcome, "failed", "{name}");
+        assert!(
+            reason.contains("0.0.0 cannot be put back") && reason.contains(said),
+            "{name}: {reason}"
+        );
+    }
+}
+
+#[test]
+fn an_update_made_by_a_release_that_swapped_both_programs_is_put_back_whole() {
+    let rig = Rig::new("u-both");
+    rig.swapped("0.0.9", "0.0.0", 2, OPENS_SCHEMA_1);
+    fs::remove_file(rig.programs().join(".marfa.next")).unwrap();
+    fs::write(
+        rig.programs().join(".marfa.previous"),
+        "release 0.0.9's marfa",
+    )
+    .unwrap();
+    let code = rig.started_once(&[]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert_eq!(rig.program("marfa"), b"release 0.0.9's marfa");
+    assert_eq!(
+        rig.program("marfa-server"),
+        old_server(OPENS_SCHEMA_1).as_bytes()
+    );
+    assert_eq!(rig.last().0, "rolled_back");
+}
+
+#[test]
+fn an_update_left_unfinished_is_ended_by_the_next_start() {
+    // The old server is back but the record was not cleared.
+    let rig = Rig::new("u-stale");
+    rig.swapped("0.0.0", "0.0.1", 1, OPENS_SCHEMA_1);
+    assert_eq!(rig.started_once(&[]), Some(0), "{}", rig.run_said());
+    assert!(rig.server_started());
+    assert_eq!(rig.starts(), None);
+    assert!(!rig.programs().join(".marfa.next").exists());
+    let (outcome, reason) = rig.last();
+    assert_eq!(outcome, "rolled_back");
+    assert!(reason.contains("did not finish"), "{reason}");
+
+    // Putting back stopped between the two programs.
+    let rig = Rig::new("u-between");
+    rig.swapped("0.0.1", "0.0.0", 2, OPENS_SCHEMA_1);
+    fs::write(
+        rig.programs().join(".marfa.previous"),
+        "release 0.0.1's marfa",
+    )
+    .unwrap();
+    assert_eq!(rig.started_once(&[NEW]), Some(75), "{}", rig.run_said());
+    assert!(!rig.server_started());
+    assert_eq!(rig.program("marfa"), b"release 0.0.1's marfa");
+    assert_eq!(rig.starts(), None);
+    assert_eq!(rig.last().0, "rolled_back");
+
+    // Replaced by hand with a third release.
+    let rig = Rig::new("u-by-hand");
+    rig.swapped("0.0.0", "0.0.1", 1, OPENS_SCHEMA_1);
+    let code = rig.started_once(&[("FAKE_SERVER_VERSION", "0.0.2")]);
+    assert_eq!(code, Some(3), "the releases still have to agree");
+    assert!(rig.run_said().contains("0.0.2"), "{}", rig.run_said());
+    assert_eq!(rig.starts(), None);
+    let (outcome, reason) = rig.last();
+    assert_eq!(outcome, "failed");
+    assert!(reason.contains("replaced with release 0.0.2"), "{reason}");
+}
+
+#[test]
+fn run_check_checks_the_install_and_starts_nothing() {
+    let rig = Rig::new("u-check");
+    rig.native_installed(&["--access", "local"]);
+    rig.isolate();
+    let check = |env: &[(&str, &str)]| {
+        let mut command = rig.command();
+        command
+            .args(["server", "run", "--check", "--dir"])
+            .arg(&rig.dir)
+            .env("FAKE_DOCKER_STATE", &rig.state)
+            .env("MARFA_AUTOSTART_ROOT", rig.home())
+            .env("PATH", rig.path());
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        let output = command.output().unwrap();
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        )
+    };
+    assert_eq!(check(&[]).0, Some(0));
+    let (code, said) = check(&[NEW]);
+    assert_eq!(code, Some(3));
+    assert!(said.contains("0.0.1"), "{said}");
+    rig.keep_pending("0.0.0", "0.0.1", 0);
+    assert_eq!(
+        check(&[NEW]).0,
+        Some(0),
+        "an unsettled update's server is accepted"
+    );
+    assert!(!rig.server_started());
+    assert_eq!(rig.starts(), Some(0), "a check counts no start");
+}
+
+const ATTEMPT: &str = "01990000-0000-7000-8000-000000000001";
+
+/// A trial limit short enough for a test; release builds read no such knob.
+const TRIAL_LIMIT: (&str, &str) = ("MARFA_TEST_TRIAL_LIMIT_MS", "1500");
+
+impl Rig {
+    fn server_pid(&self) -> String {
+        fs::read_to_string(self.state.join("server-pid"))
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    fn keep_last(&self, last: serde_json::Value) {
+        fs::create_dir_all(self.update_record()).unwrap();
+        fs::write(self.update_record().join("last.json"), last.to_string()).unwrap();
+    }
+}
+
+#[test]
+fn a_new_release_that_never_settles_is_ended_at_the_limit_counted_and_then_put_back() {
+    let rig = Rig::new("u-hung");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    for round in 1..=2 {
+        let _ = fs::remove_file(rig.state.join("ready"));
+        let code = rig.started_once(&[NEW, ("FAKE_SERVER_HANG", "1"), TRIAL_LIMIT]);
+        assert_eq!(code, Some(75), "round {round}: {}", rig.run_said());
+        assert!(rig.state.join("ready").exists(), "round {round}");
+        assert!(
+            gone(&rig.server_pid()),
+            "round {round}: the server was ended"
+        );
+        assert_eq!(rig.starts(), Some(round), "round {round}");
+        assert!(
+            rig.run_said().contains("did not settle within"),
+            "round {round}: {}",
+            rig.run_said()
+        );
+    }
+    let code = rig.started_once(&[NEW, ("FAKE_SERVER_HANG", "1"), TRIAL_LIMIT]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert!(!rig.server_started());
+    assert_eq!(
+        rig.program("marfa-server"),
+        old_server(OPENS_SCHEMA_1).as_bytes()
+    );
+    assert_eq!(rig.last().0, "rolled_back");
+}
+
+#[test]
+fn a_new_release_that_settles_is_not_ended_by_the_limit() {
+    let rig = Rig::new("u-settles");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    let mut child = rig.run_server(&[
+        NEW,
+        ("FAKE_SERVER_SETTLES", "1"),
+        ("FAKE_SERVER_TRAP", "0"),
+        TRIAL_LIMIT,
+    ]);
+    wait_for(&rig.state.join("ready"));
+    std::thread::sleep(Duration::from_millis(4000));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "a settled release runs past the limit: {}",
+        rig.run_said()
+    );
+    assert!(alive(&rig.server_pid()));
+    signal(&child, "TERM");
+    let status = ended(&mut child, 20).expect("run did not end");
+    assert_eq!(status.code(), Some(0), "{}", rig.run_said());
+}
+
+/// An upgrade limit short enough for a test; release builds read no such knob.
+const UPGRADE_LIMIT: (&str, &str) = ("MARFA_TEST_UPGRADE_LIMIT_MS", "3000");
+
+#[test]
+fn a_database_upgrade_longer_than_the_limit_is_not_ended_and_the_release_settles() {
+    let rig = Rig::new("u-upgrade-long");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    let mut child = rig.run_server(&[
+        NEW,
+        ("FAKE_SERVER_UPGRADE", "40"),
+        ("FAKE_SERVER_SETTLES", "1"),
+        ("FAKE_SERVER_TRAP", "0"),
+        TRIAL_LIMIT,
+        ("MARFA_TEST_UPGRADE_LIMIT_MS", "60000"),
+    ]);
+    wait_for(&rig.state.join("ready"));
+    std::thread::sleep(Duration::from_millis(2000));
+    assert!(
+        child.try_wait().unwrap().is_none(),
+        "an upgrade is not timed by the settle limit: {}",
+        rig.run_said()
+    );
+    assert!(alive(&rig.server_pid()));
+    assert_eq!(rig.starts(), None, "it settled");
+    signal(&child, "TERM");
+    let status = ended(&mut child, 20).expect("run did not end");
+    assert_eq!(status.code(), Some(0), "{}", rig.run_said());
+}
+
+#[test]
+fn an_upgrade_that_never_ends_and_a_start_that_never_settles_after_one_are_each_ended() {
+    let rig = Rig::new("u-upgrade-hung");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    let upgrading = "did not finish upgrading the database within 3 seconds";
+    let upgraded = "did not settle within 1500 ms of upgrading the database";
+    for (round, tenths, said) in [(1, "600", upgrading), (2, "5", upgraded)] {
+        let _ = fs::remove_file(rig.state.join("ready"));
+        let code = rig.started_once(&[
+            NEW,
+            ("FAKE_SERVER_UPGRADE", tenths),
+            ("FAKE_SERVER_HANG", "1"),
+            TRIAL_LIMIT,
+            UPGRADE_LIMIT,
+        ]);
+        assert_eq!(code, Some(75), "round {round}: {}", rig.run_said());
+        assert!(
+            rig.run_said().contains(said),
+            "round {round}: {}",
+            rig.run_said()
+        );
+        assert!(gone(&rig.server_pid()), "round {round}");
+        assert_eq!(rig.starts(), Some(round), "round {round}");
+    }
+    let code = rig.started_once(&[NEW]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert!(!rig.server_started());
+    assert_eq!(
+        rig.program("marfa-server"),
+        old_server(OPENS_SCHEMA_1).as_bytes()
+    );
+    let (outcome, reason) = rig.last();
+    assert_eq!(outcome, "rolled_back");
+    assert!(
+        reason.contains("0.0.1 ended 2 times") && reason.contains(upgraded),
+        "the reason names the limit: {reason}"
+    );
+}
+
+#[test]
+fn a_mark_left_by_an_earlier_start_does_not_lengthen_the_limit() {
+    let rig = Rig::new("u-upgrade-stale");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    fs::write(rig.update_record().join("upgrade.json"), "\"began\"").unwrap();
+    let code = rig.started_once(&[
+        NEW,
+        ("FAKE_SERVER_HANG", "1"),
+        TRIAL_LIMIT,
+        ("MARFA_TEST_UPGRADE_LIMIT_MS", "60000"),
+    ]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert!(
+        rig.run_said()
+            .contains("did not settle within 1500 ms of starting"),
+        "{}",
+        rig.run_said()
+    );
+    assert_eq!(rig.starts(), Some(1));
+}
+
+#[test]
+fn a_new_server_that_does_not_say_its_release_is_counted_and_then_put_back() {
+    let rig = Rig::new("u-silent");
+    rig.swapped("0.0.0", "0.0.1", 0, OPENS_SCHEMA_1);
+    for (round, fault) in [
+        (1, ("FAKE_VERSION_EXIT", "1")),
+        (2, ("FAKE_VERSION_HANG", "1")),
+    ] {
+        let code = rig.started_once(&[NEW, fault]);
+        assert_eq!(code, Some(75), "round {round}: {}", rig.run_said());
+        assert!(!rig.server_started(), "round {round}");
+        assert_eq!(rig.starts(), Some(round), "round {round}");
+    }
+    let code = rig.started_once(&[NEW, ("FAKE_VERSION_EXIT", "1")]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert_eq!(
+        rig.program("marfa-server"),
+        old_server(OPENS_SCHEMA_1).as_bytes()
+    );
+    let (outcome, reason) = rig.last();
+    assert_eq!(outcome, "rolled_back");
+    assert!(reason.contains("0.0.0 was put back"), "{reason}");
+}
+
+#[test]
+fn a_start_waits_for_the_last_server_to_let_go_and_counts_nothing_while_it_holds_on() {
+    let rig = Rig::new("u-held");
+    rig.swapped("0.0.0", "0.0.1", 1, OPENS_SCHEMA_1);
+    let control = rig.dir.join("data/control");
+    fs::create_dir_all(&control).unwrap();
+    let lock = fs::File::create(control.join("marfa.sock.lock")).unwrap();
+    lock.try_lock().unwrap();
+    let wait = ("MARFA_TEST_LET_GO_MS", "1000");
+    let code = rig.started_once(&[NEW, ("FAKE_SERVER_EXIT", "1"), wait]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert!(!rig.server_started());
+    assert_eq!(
+        rig.starts(),
+        Some(1),
+        "a start that never ran is not counted"
+    );
+    assert!(rig.run_said().contains("still holds"), "{}", rig.run_said());
+
+    let letting_go = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(700));
+        drop(lock);
+    });
+    let wait = ("MARFA_TEST_LET_GO_MS", "10000");
+    let code = rig.started_once(&[NEW, ("FAKE_SERVER_EXIT", "1"), wait]);
+    letting_go.join().unwrap();
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert!(
+        rig.server_started(),
+        "the witness: once it lets go, the start runs"
+    );
+    assert_eq!(rig.starts(), Some(2));
+}
+
+#[test]
+fn nothing_is_put_back_while_the_last_server_still_holds_the_database() {
+    let rig = Rig::new("u-held-back");
+    rig.swapped("0.0.0", "0.0.1", 2, OPENS_SCHEMA_1);
+    let new_server = rig.program("marfa-server");
+    let old_marfa = rig.program("marfa");
+    let lock = fs::File::create(rig.dir.join("data/marfa.db.server-lock")).unwrap();
+    lock.try_lock().unwrap();
+    let wait = ("MARFA_TEST_LET_GO_MS", "1000");
+    let code = rig.started_once(&[NEW, wait]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert!(rig.run_said().contains("still holds"), "{}", rig.run_said());
+    assert_eq!(rig.program("marfa-server"), new_server, "nothing was moved");
+    assert_eq!(rig.program("marfa"), old_marfa);
+    assert!(rig.programs().join(".marfa.next").exists());
+    assert_eq!(rig.starts(), Some(2));
+    assert!(!rig.update_record().join("last.json").exists());
+
+    drop(lock);
+    let code = rig.started_once(&[NEW, wait]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert_eq!(
+        rig.program("marfa-server"),
+        old_server(OPENS_SCHEMA_1).as_bytes(),
+        "the witness: once it lets go, the old release is put back"
+    );
+    assert_eq!(rig.last().0, "rolled_back");
+}
+
+#[test]
+fn a_put_back_that_cannot_rename_ends_the_update_and_runs_the_new_release_again() {
+    let rig = Rig::new("u-no-rename");
+    rig.swapped("0.0.0", "0.0.1", 2, OPENS_SCHEMA_1);
+    let new_server = rig.program("marfa-server");
+    let _locked = marfa_acl::testing::locked(rig.programs(), 0o555);
+    let code = rig.started_once(&[NEW]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    assert!(rig.program("marfa-server") == new_server);
+    let (outcome, reason) = rig.last();
+    assert_eq!(outcome, "failed");
+    assert!(
+        reason.contains("0.0.0 could not be put back") && reason.contains("Install release"),
+        "{reason}"
+    );
+    for round in 1..=2 {
+        let code = rig.started_once(&[NEW, ("FAKE_SERVER_EXIT", "0")]);
+        assert_eq!(code, Some(0), "round {round}: {}", rig.run_said());
+        assert!(rig.server_started(), "round {round}: the new release runs");
+    }
+    assert_eq!(rig.last(), (outcome, reason), "the outcome stays as it was");
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_put_back_that_cannot_replace_the_server_finishes_the_swap_instead() {
+    struct Unchangeable(PathBuf);
+    impl Drop for Unchangeable {
+        fn drop(&mut self) {
+            let _ = Command::new("chflags").arg("nouchg").arg(&self.0).status();
+        }
+    }
+    let rig = Rig::new("u-uchg");
+    rig.swapped("0.0.0", "0.0.1", 2, OPENS_SCHEMA_1);
+    let new_server = rig.program("marfa-server");
+    let held = Unchangeable(rig.programs().join("marfa-server"));
+    assert!(
+        Command::new("chflags")
+            .arg("uchg")
+            .arg(&held.0)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let code = rig.started_once(&[NEW]);
+    assert_eq!(code, Some(75), "{}", rig.run_said());
+    drop(held);
+    assert!(rig.program("marfa-server") == new_server);
+    assert!(
+        rig.program("marfa") == b"the new marfa",
+        "the swap was finished: {}",
+        rig.run_said()
+    );
+    assert_eq!(rig.starts(), None);
+    let (outcome, reason) = rig.last();
+    assert_eq!(outcome, "failed");
+    assert!(reason.contains("0.0.0 could not be put back"), "{reason}");
+}
+
+#[test]
+fn a_second_try_of_a_release_put_back_before_gets_an_outcome_of_its_own() {
+    let rig = Rig::new("u-again");
+    rig.swapped("0.0.0", "0.0.1", 1, OPENS_SCHEMA_1);
+    rig.keep_last(serde_json::json!({
+        "outcome": "rolled_back",
+        "release": "0.0.1",
+        "finished_at": "2030-01-01T00:00:00.000Z",
+        "reason": "the first try",
+        "attempt": "01990000-0000-7000-8000-000000000000",
+    }));
+    // The old server is back in place, and the second try's record was never cleared.
+    assert_eq!(rig.started_once(&[]), Some(0), "{}", rig.run_said());
+    assert_eq!(rig.starts(), None);
+    let (outcome, reason) = rig.last();
+    assert_eq!(outcome, "rolled_back");
+    assert!(reason.contains("did not finish"), "{reason}");
+}
+
+#[test]
+fn only_the_run_that_holds_the_lock_tells_the_server_it_may_update_itself() {
+    let rig = Rig::new("u-fresh");
+    rig.native_installed(&["--access", "local"]);
+    assert!(!rig.update_record().exists(), "no update has run here");
+    let mut first = rig.run_server(&[("FAKE_SERVER_TRAP", "0")]);
+    wait_for(&rig.state.join("ready"));
+    let marked = |env: &str| {
+        env.lines()
+            .any(|line| line.starts_with("MARFA_INSTALL_DIR="))
+    };
+    let env = fs::read_to_string(rig.state.join("server-env")).unwrap();
+    assert!(marked(&env), "the witness: {env}");
+    fs::remove_file(rig.state.join("server-env")).unwrap();
+    let mut second = rig.run_server(&[("FAKE_SERVER_EXIT", "1")]);
+    ended(&mut second, 20).expect("the second run did not end");
+    let env = fs::read_to_string(rig.state.join("server-env")).unwrap();
+    assert!(!marked(&env), "{env}");
+    signal(&first, "TERM");
+    ended(&mut first, 20).expect("run did not end");
 }

@@ -44,6 +44,14 @@ const CLASSES: { name: string; input: unknown; atField: string }[] = [
     atField: "fields.stage.enum_values",
   },
   {
+    name: "enum_values on a string field",
+    input: {
+      id: "acme.b2",
+      fields: { stage: { type: "string", enum_values: ["a"] } },
+    },
+    atField: "fields.stage.enum_values",
+  },
+  {
     name: "array without items_type",
     input: { id: "acme.c", fields: { tags: { type: "array" } } },
     atField: "fields.tags.items_type",

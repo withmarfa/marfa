@@ -538,13 +538,25 @@ describe("a key that expires", () => {
 describe("a key changed through keys.manage", () => {
   it("is given an expiry or has it shortened, and is refused a later expiry or none", async () => {
     const open = await mint("managed");
-    const given = await management.updateKey(open.id, { expires_at: LATER });
+    // keys.manage without keys.mint, which would lengthen within its own life.
+    const name = unique("manager");
+    const made = await management.createKey({
+      label: name,
+      source: name,
+      permissions: ["keys.manage"],
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const manager = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: made.data.key,
+    });
+    const given = await manager.updateKey(open.id, { expires_at: LATER });
     expect(given.status).toBe(200);
-    const shorter = await management.updateKey(open.id, { expires_at: SOON });
+    const shorter = await manager.updateKey(open.id, { expires_at: SOON });
     expect(shorter.status).toBe(200);
 
     for (const bad of [LATER, null]) {
-      const refused = await management.updateKey(open.id, {
+      const refused = await manager.updateKey(open.id, {
         expires_at: bad,
       });
       expect(refused.status, String(bad)).toBe(403);

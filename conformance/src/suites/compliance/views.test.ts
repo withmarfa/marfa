@@ -526,6 +526,12 @@ describe("the view door", () => {
     [{ query: { tier: "trash" } }, "validation_error", "query.tier"],
     [{ query: { state: ["trashed"] } }, "validation_error", "query.state.0"],
     [{ query: { beneath: "not-an-id" } }, "validation_error", "query.beneath"],
+    // A path names a file of a folder, which a view has none of.
+    [
+      { query: { beneath: "Projects/Alpha.md" } },
+      "validation_error",
+      "query.beneath",
+    ],
   ])(
     "refuses a malformed setting %j with %s naming %s, on a create and on a change",
     async (settings, code, path) => {

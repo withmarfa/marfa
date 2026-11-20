@@ -4,7 +4,8 @@ use std::time::Duration;
 use super::elsewhere;
 use super::registry::{self, Reached, Registered};
 use super::{
-    CaughtUp, Drained, Folder, PullReport, STATE_DIR, ScanReport, SettingsFileReport, Synced,
+    BeneathReport, CaughtUp, Drained, Folder, PullReport, STATE_DIR, ScanReport,
+    SettingsFileReport, Synced,
 };
 use crate::Result;
 use crate::directory::Directory;
@@ -22,6 +23,9 @@ pub struct SyncReport {
     /// Every write the sync sent, those the pull queued after the first
     /// drain included.
     pub drain: Drained,
+    /// What the sync did to name the item the query narrows beneath, where
+    /// the query named the path of a file; `None` where it named none.
+    pub beneath: Option<BeneathReport>,
     /// The hydration the drain took where the server said the copy's read
     /// reach had changed, before it sent the writes still waiting.
     pub rebuilt: Option<HydrateReport>,
@@ -69,6 +73,10 @@ impl Folder {
                     && report.drain.report.held == 0
                     && report.drain.report.unmade == 0
                     && report.scan.root_gone.is_none()
+                    && report
+                        .beneath
+                        .as_ref()
+                        .is_none_or(|beneath| beneath.waiting.is_none())
                     && !report
                         .scan
                         .directories
@@ -158,9 +166,19 @@ impl Folder {
         let hydrated = self.resume()?;
         // First, so the rest of the sync works on the new settings.
         let settings = self.send_settings_edit()?;
-        let scan = self.scan()?;
+        // After the edit, so a person can mend a bad path in the settings file.
+        self.check_beneath_file()?;
+        let mut scan = self.scan()?;
         let mut rebuilt = None;
         let mut drain = self.drain_rebuilding(&mut rebuilt)?;
+        // After the file is sent, and before the catch-up reads the copy
+        // under the id.
+        let beneath = self.resolve_beneath()?;
+        // The files held while the path had no item can be judged now.
+        if scan.held_outside > 0 && beneath.as_ref().is_some_and(|said| said.resolved.is_some()) {
+            scan.absorb_rescan(self.scan()?);
+            drain.absorb(self.drain_rebuilding(&mut rebuilt)?);
+        }
         let catch_up = match self.catch_up() {
             Ok(caught) => Ok(caught),
             Err(error) if error.is_environmental() => Err(error),
@@ -197,6 +215,7 @@ impl Folder {
             settings,
             scan,
             drain,
+            beneath,
             rebuilt,
             catch_up,
             pull,

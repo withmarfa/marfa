@@ -85,6 +85,7 @@ fn options(file: &Path, migrations: &'static [Migration]) -> Options {
         readers: 2,
         migrations,
         reserve: 0,
+        upgrade_marks: None,
     }
 }
 
@@ -1446,6 +1447,37 @@ async fn a_rebuild_that_leaves_a_reference_to_a_missing_row_is_refused_and_chang
     assert!(columns_of(&place.file, "notes_old").is_empty());
 
     opened(&place.file, KIN_ONE, Arc::default()).close().await;
+}
+
+#[tokio::test]
+async fn an_upgrade_marks_when_it_began_and_when_it_ended_for_the_run_that_times_the_start() {
+    use marfa_rules::update_record::{Folder as Record, Upgrade};
+    let open_marked = |file: &Path, migrations: &'static [Migration]| {
+        let record = Record::beside(file);
+        let options = Options {
+            upgrade_marks: Some(record.clone()),
+            ..options(file, migrations)
+        };
+        (db_open(&options, Arc::default()), record)
+    };
+
+    let fresh = folder();
+    let (db, record) = open_marked(&fresh.file, KIN_ONE);
+    db.map_err(|f| f.message).unwrap().close().await;
+    assert_eq!(
+        record.upgrade().unwrap(),
+        None,
+        "a new file is not upgraded"
+    );
+
+    let place = folder();
+    kin_with_rows(&place.file).await;
+    let (refused, record) = open_marked(&place.file, KIN_FAILING);
+    assert!(refused.is_err());
+    assert_eq!(record.upgrade().unwrap(), Some(Upgrade::Began));
+    let (db, record) = open_marked(&place.file, KIN_REBUILT);
+    db.map_err(|f| f.message).unwrap().close().await;
+    assert_eq!(record.upgrade().unwrap(), Some(Upgrade::Ended));
 }
 
 #[tokio::test]

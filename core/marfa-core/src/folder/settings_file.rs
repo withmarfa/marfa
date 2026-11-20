@@ -333,10 +333,21 @@ impl Folder {
         let mut merged = base.clone();
         merged.retain(|key, _| setting(key));
         merged.extend(changed.clone());
-        let checked = Settings::read(&self.folder, FOLDER_TYPE, "active", &merged)
-            .and_then(|settings| settings.check_types(&crate::catalog::load(&*self.core.conn()?)?));
-        if let Err(error) = checked {
-            return self.flag(&text, error.to_string());
+        let checked =
+            Settings::read(&self.folder, FOLDER_TYPE, "active", &merged).and_then(|settings| {
+                settings.check_types(&crate::catalog::load(&*self.core.conn()?)?)?;
+                Ok(settings)
+            });
+        let edited_settings = match checked {
+            Ok(settings) => settings,
+            Err(error) => return self.flag(&text, error.to_string()),
+        };
+        // A path naming no file the folder could send would be held by the
+        // server for every device, and the pass would then refuse it.
+        if changed.contains_key("query")
+            && let Some(refusal) = self.beneath_refusal(&edited_settings)?
+        {
+            return self.flag(&text, refusal);
         }
         let mut body = changed;
         body.insert(VERSION_KEY.into(), Value::from(version));

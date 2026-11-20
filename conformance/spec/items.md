@@ -2466,7 +2466,7 @@ If `query.types`, `defaults.type` or a `first_placement` key names a well-formed
 
 ### `items/folder-setting-invalid`
 
-If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` or an ID an edge points to that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 to items for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute or carries a backslash or NUL, a `removal_threshold` or `addition_threshold` with `files` other than a whole number from 0 to 9007199254740991 or a `fraction` outside 0 to 1, a `removal_threshold.ceiling` other than a whole number from 0 to 9007199254740991, a `full_pass_interval_seconds` that is not a whole number from 60 to 86400, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, or an `outside_query` other than `send` or `hold`, then the server MUST answer `400 validation_error`.
+If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `query.beneath` that is neither an item id nor the path of a file inside the folder (`items/folder-query-beneath-file`), an ID an edge points to that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 to items for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute or carries a backslash or NUL, a `removal_threshold` or `addition_threshold` with `files` other than a whole number from 0 to 9007199254740991 or a `fraction` outside 0 to 1, a `removal_threshold.ceiling` other than a whole number from 0 to 9007199254740991, a `full_pass_interval_seconds` that is not a whole number from 60 to 86400, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, or an `outside_query` other than `send` or `hold`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 to items for each`.
 
@@ -2525,6 +2525,14 @@ If an `include` or an `ignore` list compiles to more than 1 MiB for a device to 
 **Reason:** a few hundred lines of wildcards can need far more memory and time to compile than their text suggests, and a folder whose list a device cannot afford to compile would be stuck on every device. The server judges the lists before it queues the write, so a slow or refused list holds up no other write.
 
 **Tests:** `compliance/folders.test.ts › refuses a list that compiles past the bound with its list named, on a create and on a change`.
+
+### `items/folder-query-beneath-file`
+
+When `POST /folders` or `PATCH /folders/{id}` names `query.beneath` as the path of a file inside the folder, relative to its root, with `/` between names, no empty, `.` or `..` name, no control character and no first name `.marfa`, ending in a file name with an extension, the server MUST store the path as sent.
+
+**Reason:** a folder can hold what lies beneath a project whose file it holds before that file has an item: the device sends the file and then replaces the path with the item's id (`folder-setup/beneath-file-one-pass`). Whether the folder's lists and types take the file is for the device, which has the file. A `beneath` that is neither an item id nor such a path is refused (`items/folder-setting-invalid`).
+
+**Tests:** `compliance/folders.test.ts › takes the path of a file in query.beneath and reads it back`, `› refuses a malformed setting %j with %s naming %s, on a create and on a change`.
 
 ### `items/folder-query-every-type`
 

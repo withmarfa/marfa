@@ -1,4 +1,5 @@
 mod answered;
+mod beneath;
 mod default_edges;
 pub mod document;
 pub mod edge_types;
@@ -26,6 +27,7 @@ mod scan;
 mod scoped;
 mod selective;
 mod unmatched;
+pub use beneath::BeneathReport;
 pub(crate) use first::waiting;
 pub use first::{FirstSync, Synced};
 pub use pull::{PullReport, copy_changed};
@@ -287,6 +289,20 @@ pub struct ScanReport {
     /// it found under no name in it.
     #[serde(skip)]
     pub swept: bool,
+}
+
+impl ScanReport {
+    /// A rescan of the same sync: what it made is added, and what it holds
+    /// back is what it reports.
+    pub(super) fn absorb_rescan(&mut self, later: ScanReport) {
+        self.created += later.created;
+        self.updated += later.updated;
+        self.renamed += later.renamed;
+        self.requeued += later.requeued;
+        self.flagged = merged_flagged(&self.flagged, &later.flagged);
+        self.held_outside = later.held_outside;
+        self.paused_additions = later.paused_additions;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

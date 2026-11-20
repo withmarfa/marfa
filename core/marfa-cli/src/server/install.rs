@@ -124,7 +124,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             if manager == Some(Manager::SystemdUser) {
                 super::systemd::user_session()?;
             }
-            Some(run::locate()?)
+            Some(run::locate(Some(&folder.dir))?)
         }
     };
 

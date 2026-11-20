@@ -1,7 +1,6 @@
 import {
   appendFileSync,
   chmodSync,
-  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -12,7 +11,6 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
@@ -59,6 +57,7 @@ import type {
 import {
   EdgeDoor,
   isContentWrite,
+  onCaseSensitiveVolume,
   idIn,
   itemVerdicts,
   put,
@@ -69,7 +68,7 @@ import {
   sentUpdates,
   withFault,
 } from "./folders.shared.js";
-import { detachImageAtCleanup, tempFolder } from "../../utils/temp-folder.js";
+import { tempFolder } from "../../utils/temp-folder.js";
 
 /** Document names in the three extensions and more than one letter case. */
 const DOC_NAMES = ["notes.md", "NOTES.MD", "Notes.Markdown", "Notes.TXT"];
@@ -88,56 +87,6 @@ afterEach(async () => {
   harness = undefined;
   second = undefined;
 });
-
-/**
- * Moves the folder onto a volume that keeps names differing only in case
- * apart: a case-sensitive APFS image on a Mac, the temporary folder's own
- * file system elsewhere.
- */
-async function onCaseSensitiveVolume(moved: FolderHarness): Promise<void> {
-  const scratch = tempFolder("marfa-case-sensitive-");
-  const mount = join(scratch, "volume");
-  mkdirSync(mount);
-  if (process.platform === "darwin") {
-    const image = join(scratch, "case.sparseimage");
-    const made = spawnSync("hdiutil", [
-      "create",
-      "-size",
-      "256m",
-      "-type",
-      "SPARSE",
-      "-fs",
-      "Case-sensitive APFS",
-      "-volname",
-      "conformance",
-      image,
-    ]);
-    expect(made.status, String(made.stderr)).toBe(0);
-    const attached = spawnSync("hdiutil", [
-      "attach",
-      image,
-      "-mountpoint",
-      mount,
-      "-nobrowse",
-      "-noautoopen",
-    ]);
-    expect(attached.status, String(attached.stderr)).toBe(0);
-    detachImageAtCleanup(mount);
-  }
-  const dir = join(mount, "notes");
-  cpSync(moved.dir, dir, { recursive: true });
-  rmSync(moved.dir, { recursive: true });
-  moved.dir = dir;
-  moved.folder = new CliFolder(dir, {
-    binary: requireBinary(),
-    url: moved.server.url,
-    key: KEY,
-    registry: moved.registry,
-  });
-  writeFileSync(join(dir, "case.probe"), "");
-  expect(existsSync(join(dir, "CASE.probe"))).toBe(false);
-  rmSync(join(dir, "case.probe"));
-}
 
 describe("where a file sits", () => {
   /** An item the server holds, a note unless typed, placed in the folder at

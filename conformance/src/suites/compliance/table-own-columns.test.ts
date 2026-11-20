@@ -119,6 +119,79 @@ describe("a table a person keeps", () => {
     await made(EVERY_KIND, child);
   });
 
+  it("refuses enum_values on a column that is new or changed and not an enum, and takes the columns an item keeps", async () => {
+    const listed = { type: "string", enum_values: ["a"] };
+    // The witness: a new item is refused the list.
+    const refusedNew = await create({ a: listed });
+    expect(refusedNew.status).toBe(400);
+    expect(errorFields(refusedNew)).toEqual(["columns.a.enum_values"]);
+
+    // An item holds one only from before the rule: a type below core.table
+    // that took an item already holding columns.
+    const type = `user.own-columns-held-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: type,
+      fields: { owner: { type: "string" } },
+    } as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    trackType(ctx, type);
+    const item = await client.createItem({
+      type,
+      source: ctx.source,
+      properties: { title: "Held", columns: { a: listed } },
+    } as never);
+    expect(item.status, JSON.stringify(item.error)).toBe(201);
+    trackItem(ctx, item.data.item.id);
+    const below = await client.replaceType(type, {
+      id: type,
+      parent: "core.table",
+      fields: { owner: { type: "string" } },
+    } as never);
+    expect(below.status, JSON.stringify(below.error)).toBe(200);
+    const id = item.data.item.id;
+
+    const kept = await change(client, id, {
+      properties: { title: "Renamed", columns: { a: listed } },
+    });
+    expect(kept.status, JSON.stringify(kept.error)).toBe(200);
+    const beside = await change(client, id, {
+      properties: { columns: { a: listed, b: { type: "number" } } },
+    });
+    expect(beside.status, JSON.stringify(beside.error)).toBe(200);
+
+    for (const [what, columns, fields] of [
+      [
+        "a column added with a list",
+        { a: listed, b: { type: "number" }, c: listed },
+        ["columns.c.enum_values"],
+      ],
+      [
+        "a column whose list changes",
+        {
+          a: { type: "string", enum_values: ["a", "b"] },
+          b: { type: "number" },
+        },
+        ["columns.a.enum_values"],
+      ],
+      [
+        "a column whose kind changes",
+        { a: { type: "number", enum_values: ["a"] }, b: { type: "number" } },
+        ["columns.a.enum_values"],
+      ],
+    ] as const) {
+      const refused = await change(client, id, {
+        properties: { columns },
+      });
+      expect(refused.status, what).toBe(400);
+      expect(errorFields(refused), what).toEqual(fields);
+    }
+    const unchanged = await client.getItem(id);
+    expect(columnsOf(unchanged.data.item)).toEqual({
+      a: listed,
+      b: { type: "number" },
+    });
+  });
+
   it("takes 64 columns and refuses a 65th", async () => {
     const wide = (count: number) =>
       Object.fromEntries(

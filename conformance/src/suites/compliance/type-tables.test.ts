@@ -237,6 +237,7 @@ describe("a table the server refuses", () => {
             count: { type: "integer", minimum: 5, maximum: 1 },
             name: { type: "boolean", max_length: 3 },
             need: { type: "string", required: "yes" },
+            listed: { type: "string", enum_values: ["a"] },
           },
         },
       },
@@ -245,6 +246,7 @@ describe("a table the server refuses", () => {
         "tables.lines.columns.count.minimum",
         "tables.lines.columns.name.max_length",
         "tables.lines.columns.need.required",
+        "tables.lines.columns.listed.enum_values",
       ],
     );
   });

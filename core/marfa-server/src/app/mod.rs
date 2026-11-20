@@ -171,15 +171,22 @@ impl App {
             reserve: settings
                 .live()
                 .get(crate::settings::registry::DISK_RESERVE_BYTES),
+            upgrade_marks: None,
         };
         let opening = faults.clone();
         let Held {
             database: database_lock,
             blobs: blob_lock,
         } = held;
-        let db = tokio::task::spawn_blocking(move || Db::open(&options, database_lock, opening))
-            .await
-            .map_err(|error| Failure::start(format!("The database did not open: {error}")))??;
+        let db = tokio::task::spawn_blocking(move || {
+            let options = Options {
+                upgrade_marks: updates::upgrade_marks(&options.path),
+                ..options
+            };
+            Db::open(&options, database_lock, opening)
+        })
+        .await
+        .map_err(|error| Failure::start(format!("The database did not open: {error}")))??;
         let unreadable = |error| Failure::start(format!("The database could not be read: {error}"));
         let rows = db.read(stored::rows).await.map_err(unreadable)?;
         settings.apply_stored(&rows);

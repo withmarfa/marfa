@@ -21,11 +21,12 @@ struct Feed {
 }
 
 impl Feed {
-    fn start(status: u16, body: String) -> Feed {
+    /// A stand-in answering with `version` as GitHub's newest release.
+    fn releasing(version: &str) -> Feed {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let hits = Arc::new(AtomicUsize::new(0));
-        let reply = Arc::new(Mutex::new((status, body)));
+        let reply = Arc::new(Mutex::new((200, String::new())));
         let (counted, held) = (hits.clone(), reply.clone());
         std::thread::spawn(move || {
             for mut stream in listener.incoming().flatten() {
@@ -42,7 +43,39 @@ impl Feed {
                 );
             }
         });
-        Feed { port, hits, reply }
+        let feed = Feed { port, hits, reply };
+        feed.says(200, feed.release(version));
+        feed
+    }
+
+    /// GitHub's newest-release answer for `version`, its files at Marfa's address on this stand-in.
+    fn release(&self, version: &str) -> String {
+        let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
+            ("macos", _) => "darwin-arm64",
+            (_, "aarch64") => "linux-aarch64",
+            _ => "linux-x86_64",
+        };
+        let at = |name: &str| {
+            format!(
+                "http://127.0.0.1:{}/withmarfa/marfa/releases/download/v{version}/{name}",
+                self.port
+            )
+        };
+        let (archive, sums) = (
+            format!("marfa-{version}-{platform}.tar.gz"),
+            format!("marfa-{version}-checksums.txt"),
+        );
+        json!({
+            "tag_name": format!("v{version}"),
+            "draft": false,
+            "prerelease": false,
+            "published_at": "2026-11-16T09:30:00Z",
+            "assets": [
+                { "name": archive, "browser_download_url": at(&archive), "size": 10 },
+                { "name": sums, "browser_download_url": at(&sums), "size": 10 },
+            ],
+        })
+        .to_string()
     }
 
     fn address(&self) -> String {
@@ -56,25 +89,6 @@ impl Feed {
     fn asked(&self) -> usize {
         self.hits.load(Ordering::SeqCst)
     }
-}
-
-fn release(version: &str) -> String {
-    let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("macos", _) => "darwin-arm64",
-        (_, "aarch64") => "linux-aarch64",
-        _ => "linux-x86_64",
-    };
-    json!({
-        "tag_name": format!("v{version}"),
-        "draft": false,
-        "prerelease": false,
-        "published_at": "2026-11-16T09:30:00Z",
-        "assets": [
-            { "name": format!("marfa-{version}-{platform}.tar.gz"), "browser_download_url": "http://127.0.0.1:9/a", "size": 10 },
-            { "name": format!("marfa-{version}-checksums.txt"), "browser_download_url": "http://127.0.0.1:9/s", "size": 10 },
-        ],
-    })
-    .to_string()
 }
 
 struct Instance {
@@ -149,7 +163,7 @@ impl Instance {
 
 #[tokio::test]
 async fn a_found_release_is_read_as_available_with_the_step_a_server_that_cannot_swap_names() {
-    let feed = Feed::start(200, release("0.0.75"));
+    let feed = Feed::releasing("0.0.75");
     let instance = Instance::start().await;
     instance.point_at(&feed);
     instance.check().await;
@@ -172,7 +186,7 @@ async fn a_found_release_is_read_as_available_with_the_step_a_server_that_cannot
 
 #[tokio::test]
 async fn a_server_that_cannot_swap_refuses_an_update_with_the_step_and_changes_nothing() {
-    let feed = Feed::start(200, release("0.0.75"));
+    let feed = Feed::releasing("0.0.75");
     let instance = Instance::start().await;
     let (status, refused) = instance.local(Method::POST, "/update", json!({})).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
@@ -195,7 +209,7 @@ async fn a_server_that_cannot_swap_refuses_an_update_with_the_step_and_changes_n
 
 #[tokio::test]
 async fn a_release_that_is_not_newer_is_not_available_and_not_offered() {
-    let feed = Feed::start(200, release("0.0.0"));
+    let feed = Feed::releasing("0.0.0");
     let instance = Instance::start().await;
     instance.point_at(&feed);
     instance.check().await;
@@ -210,14 +224,14 @@ async fn a_release_that_is_not_newer_is_not_available_and_not_offered() {
 
 #[tokio::test]
 async fn a_failed_check_keeps_the_last_release_found_and_says_why() {
-    let feed = Feed::start(200, release("0.0.75"));
+    let feed = Feed::releasing("0.0.75");
     let instance = Instance::start().await;
     instance.point_at(&feed);
     instance.check().await;
     let found_at = instance.update().await["checked_at"].clone();
 
     let prerelease = json!({ "prerelease": true });
-    let mut draft: Value = serde_json::from_str(&release("0.0.99")).unwrap();
+    let mut draft: Value = serde_json::from_str(&feed.release("0.0.99")).unwrap();
     draft
         .as_object_mut()
         .unwrap()
@@ -241,7 +255,7 @@ async fn a_failed_check_keeps_the_last_release_found_and_says_why() {
         assert_eq!(update["available"], true);
     }
 
-    feed.says(200, release("0.0.80"));
+    feed.says(200, feed.release("0.0.80"));
     instance.check().await;
     let update = instance.update().await;
     assert_eq!(update["latest"]["release"], "0.0.80");
@@ -250,7 +264,7 @@ async fn a_failed_check_keeps_the_last_release_found_and_says_why() {
 
 #[tokio::test]
 async fn an_absent_github_leaves_the_last_release_and_never_fails_a_request() {
-    let feed = Feed::start(200, release("0.0.75"));
+    let feed = Feed::releasing("0.0.75");
     let instance = Instance::start().await;
     instance.point_at(&feed);
     instance.check().await;
@@ -274,7 +288,7 @@ async fn a_server_with_test_hooks_asks_nobody_until_a_fault_names_an_address() {
     assert_eq!(update["checked_at"], Value::Null);
     assert_eq!(update["available"], false);
 
-    let feed = Feed::start(200, release("0.0.75"));
+    let feed = Feed::releasing("0.0.75");
     instance.point_at(&feed);
     instance.check().await;
     assert_eq!(
@@ -286,7 +300,7 @@ async fn a_server_with_test_hooks_asks_nobody_until_a_fault_names_an_address() {
 
 #[tokio::test]
 async fn turning_the_check_off_makes_no_request_and_reports_no_release() {
-    let feed = Feed::start(200, release("0.0.75"));
+    let feed = Feed::releasing("0.0.75");
     let instance = Instance::start().await;
     instance.point_at(&feed);
     instance.check().await;

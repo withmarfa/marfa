@@ -351,7 +351,7 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
             }
             Need::CascadeTo { name } => caller.require_cascade_to(&name)?,
             Need::Source { name, disclosed } => {
-                if caller.may_grant(&name) {
+                if caller.writes_under(&name) {
                     continue;
                 }
                 let refusal = if disclosed {

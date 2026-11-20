@@ -43,6 +43,11 @@ pub struct StatusReport {
     /// folder said it will do; `plan` is empty until a read has.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub first_sync: Option<FirstSyncStatus>,
+    /// The path of the file the folder's query narrows beneath while that
+    /// file has no item to name; the folder holds nothing from the server
+    /// until it has.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub beneath_waiting: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
@@ -370,6 +375,7 @@ impl Folder {
             } else {
                 None
             },
+            beneath_waiting: self.beneath_waiting(),
         })
     }
 
