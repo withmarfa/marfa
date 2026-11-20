@@ -2102,7 +2102,7 @@ When two folder queries both hold an item and each directory has its own bound f
 
 ### `folder-files/missing-file-trashed`
 
-When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
+When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or, under a name other than the missing file's name followed by a suffix, carries the missing file's identity or its item's ID, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
 
 **Reason:** the files of one sweep are decided before any of them is trashed, so files deleted together are all trashed, whichever the sweep reaches first and whether they link one another. A link line in a file shows the note it names by title, and a note already trashed by the same sweep would otherwise read as a change made elsewhere.
 
@@ -2110,9 +2110,73 @@ When a missing file’s deletion grace expires, no other directory holds the mov
 
 ### `folder-files/missing-file-trashed-path-reported`
 
-When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
+When a missing file’s deletion grace expires, no other directory holds the moved file, no other file present in the same directory is bound to its item or, under a name other than the missing file's name followed by a suffix, carries the missing file's identity or its item's ID, and `folder-files/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
 
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
+
+### `folder-files/missing-file-carried`
+
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, and whose name is not the missing file's name followed by a suffix, carries the missing file's identity or the ID of its item, a device MUST NOT queue deletion of the missing file's item.
+
+**Reason:** a file the scan does not read is still in the folder, and its item's history and links would otherwise point at the bin. The device follows the file once it can read it, and lets the item go once no file carries it.
+
+**Tests:** `device/folders-contract-b.test.ts › trashes no item whose file moved to a name the folder does not send`, `› keeps the item of a paused removal's file that returned under a name another file holds`.
+
+### `folder-files/missing-file-carried-count`
+
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, and whose name is not the missing file's name followed by a suffix, carries the missing file's identity or the ID of its item, a device MUST count the missing file as `carried` in the scan report.
+
+**Reason:** the item is kept because another file carries it, not because the walk did not reach it, so `unreached` and its reason would mislead.
+
+**Tests:** `device/folders-contract-b.test.ts › trashes no item whose file moved to a name the folder does not send`.
+
+### `folder-files/missing-file-carried-quick-pass`
+
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, and whose name is not the missing file's name followed by a suffix, carries the missing file's identity or the ID of its item, when a folder watch runs a pass that looks only at the paths its events named, a device MUST NOT queue deletion of the missing file's item.
+
+**Reason:** a quick pass reads only the files its events named, so it cannot see that a file it did not look at carries the item. It keeps what the last full look found, and walks the directory before it journals a missing file that no journal entry covers.
+
+**Tests:** `device/folders-contract-b.test.ts › trashes no item a watch's quick passes meet while a file the folder does not send carries it`.
+
+### `folder-files/backup-name-carries-nothing`
+
+A device MUST NOT treat a file whose name is a bound file's name followed by a suffix, in the bound file's directory, as carrying the bound file's item.
+
+**Reason:** `sed -i.bak`, `perl -pi.bak` and many editors save a file by renaming it to such a backup name and writing the new content at its name. The new file is the item's edit, as `folder-files/atomic-editor-save` says, and a backup that kept the item would hold every later save.
+
+**Tests:** `device/folders-contract-b.test.ts › sends each save that keeps a backup by renaming the file as the item's edit`.
+
+### `folder-files/carried-path-new-file-held`
+
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, and whose name is not the missing file's name followed by a suffix, carries the missing file's identity or the ID of its item, when a new file that carries neither appears at the missing file's path, a device MUST NOT send the new file.
+
+**Reason:** sent as a new item, the new file would take the path, and the carried item would lose its binding, its identity and what the device last agreed with the server, so the device could no longer follow the carrying file or tell a change made elsewhere. Sent as an edit, it would replace the carried item's words.
+
+**Tests:** `device/folders-contract-b.test.ts › holds a new file at the path of a file the folder does not send, and sends it once that file has a name the folder sends`, `› holds a new file at the path of a file the folder does not send while that file is renamed again, and trashes nothing`, `› holds a new file a watch finds at the path of a file the folder does not send, and sends it as that file's edit once the other file is deleted`, `› holds a new file written in the same scan as its path's file moved to a name the folder does not send`, `› holds a new file at the path of a file the folder does not send while that file is saved by a rename over it`.
+
+### `folder-files/carried-path-new-file-flagged`
+
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, and whose name is not the missing file's name followed by a suffix, carries the missing file's identity or the ID of its item, when a new file that carries neither stands at the missing file's path, a device MUST include the new file's path, the flag `waiting` and a reason that names the carrying file in the scan report's `flagged` entries.
+
+**Reason:** the person sees why the file is not sent and what to change: give the carrying file a name the folder sends, or delete it.
+
+**Tests:** `device/folders-contract-b.test.ts › holds a new file at the path of a file the folder does not send, and sends it once that file has a name the folder sends`, `› holds a new file at the path of a file the folder does not send while that file is renamed again, and trashes nothing`, `› holds a new file written in the same scan as its path's file moved to a name the folder does not send`.
+
+### `folder-files/carried-path-carrier-named`
+
+When a file that carries a missing file's identity or the ID of its item takes a name the scan reads while a new file waits at the missing file's path, a device MUST send the waiting file as a new item.
+
+**Reason:** the item's binding follows its file to the new name, so the path is free and the waiting file is another note.
+
+**Tests:** `device/folders-contract-b.test.ts › holds a new file at the path of a file the folder does not send, and sends it once that file has a name the folder sends`.
+
+### `folder-files/carried-path-carrier-gone`
+
+When no file in the directory carries a missing file's identity or the ID of its item any longer, and no file that the scan holds for a clash with another file's name, or does not send, stands at the path where the device last found the item carried, a device MUST treat the changed content of a new file at the missing file's path as an edit of the missing file's item.
+
+**Reason:** with no other file left for the item, a file at its path is the item's file saved anew, as `folder-files/atomic-editor-save` says. A save that replaces the carrying file gives it a new identity, so a file still at the path the device last found carrying the item carries it until it moves or goes. With no file at the path, the item's grace starts again, and `folder-files/missing-file-changed-revives` still writes a changed item back.
+
+**Tests:** `device/folders-contract-b.test.ts › takes a new file at the path of a file the folder does not send as that file's edit once the other file is gone too`, `› holds a new file a watch finds at the path of a file the folder does not send, and sends it as that file's edit once the other file is deleted`, `› holds a new file at the path of a file the folder does not send while that file is saved by a rename over it`.
 
 ### `folder-files/missing-file-changed-revives`
 

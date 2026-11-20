@@ -13,7 +13,7 @@ use std::path::Path;
 pub const SCHEMA: &str = include_str!("../schema.sql");
 
 /// SQLite's `user_version`; a shape change increments it and appends to `SHAPES`.
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 
 /// Moves with `SCHEMA_VERSION` until the first compatible release, then stays fixed.
 pub(super) const OLDEST_UPGRADED: i64 = SCHEMA_VERSION;
@@ -131,18 +131,19 @@ fn folder_store(conn: &Connection) -> Result<crate::FolderStore, CoreError> {
     })
 }
 
-/// The first of the folder's tables that `conn`'s store holds in a shape
-/// other than this build's, which a replacement cannot carry: its statement,
-/// or for `folder_files` also a file's record this build does not read.
+/// The first of the folder's tables that `conn`'s store holds with columns
+/// other than this build's, which a replacement cannot carry, or for
+/// `folder_files` with a file's record this build does not read. A change
+/// of a table's checks alone is carried: a row the new check refuses fails
+/// the copy, and the replacement with it.
 #[cfg(unix)]
 fn uncarried(conn: &Connection) -> Result<Option<&'static str>, CoreError> {
     let held = held_shape(conn)?;
-    let built = built_shape()?;
-    if let Some(table) = FOLDER_TABLES.into_iter().find(|table| {
-        held.get(*table)
-            .is_some_and(|statement| built.get(*table) != Some(statement))
-    }) {
-        return Ok(Some(table));
+    let built = built_columns()?;
+    for table in FOLDER_TABLES {
+        if held.contains_key(table) && built.get(table) != Some(&columns(conn, table)?) {
+            return Ok(Some(table));
+        }
     }
     if held.contains_key("folder_files") && crate::folder::state::unreadable_record(conn)?.is_some()
     {
@@ -1030,16 +1031,43 @@ fn held_statements(conn: &Connection, kind: &str) -> rusqlite::Result<Shape> {
     rows.collect()
 }
 
-/// The tables this build makes, read from SQLite rather than from the file
-/// so they are compared as SQLite records them.
+/// A table's columns as SQLite records them: name, declared type, `NOT
+/// NULL`, default, place in the primary key and whether hidden.
 #[cfg(unix)]
-fn built_shape() -> Result<&'static Shape, CoreError> {
-    static BUILT: std::sync::OnceLock<Shape> = std::sync::OnceLock::new();
+type Columns = Vec<(String, String, bool, Option<String>, i64, i64)>;
+
+#[cfg(unix)]
+fn columns(conn: &Connection, table: &str) -> rusqlite::Result<Columns> {
+    let mut query = conn.prepare(
+        "SELECT lower(name), upper(type), \"notnull\", dflt_value, pk, hidden
+         FROM pragma_table_xinfo(?1) ORDER BY cid",
+    )?;
+    let rows = query.query_map([table], |row| {
+        Ok((
+            row.get(0)?,
+            row.get(1)?,
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+            row.get(5)?,
+        ))
+    })?;
+    rows.collect()
+}
+
+/// The columns of each folder table this build makes, read from SQLite
+/// rather than from the file so they are compared as SQLite records them.
+#[cfg(unix)]
+fn built_columns() -> Result<&'static HashMap<&'static str, Columns>, CoreError> {
+    static BUILT: std::sync::OnceLock<HashMap<&'static str, Columns>> = std::sync::OnceLock::new();
     if let Some(built) = BUILT.get() {
         return Ok(built);
     }
     let conn = Connection::open_in_memory()?;
     conn.execute_batch(SCHEMA)?;
-    let built = held_shape(&conn)?;
+    let built = FOLDER_TABLES
+        .into_iter()
+        .map(|table| Ok((table, columns(&conn, table)?)))
+        .collect::<rusqlite::Result<_>>()?;
     Ok(BUILT.get_or_init(|| built))
 }

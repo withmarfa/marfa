@@ -279,6 +279,9 @@ pub struct ScanReport {
     pub flagged: Vec<Flagged>,
     pub embeds: Vec<Flagged>,
     pub unreached: usize,
+    /// Bound files gone from their paths whose items a file the scan holds
+    /// for its name, or does not send, carries, so kept.
+    pub carried: usize,
     pub directories: Vec<Flagged>,
     pub secrets: Vec<String>,
     pub paused: usize,
@@ -306,6 +309,16 @@ pub struct ScanReport {
 }
 
 impl ScanReport {
+    /// The walk a quick pass handed its sweep to: what the quick pass sent
+    /// is added, and the walk reports the rest.
+    pub(super) fn absorb_quick(&mut self, quick: ScanReport) {
+        self.created += quick.created;
+        self.updated += quick.updated;
+        self.renamed += quick.renamed;
+        self.requeued += quick.requeued;
+        self.flagged = merged_flagged(&self.flagged, &quick.flagged);
+    }
+
     /// A rescan of the same sync: what it made is added, and what it holds
     /// back is what it reports.
     pub(super) fn absorb_rescan(&mut self, later: ScanReport) {
@@ -2403,6 +2416,104 @@ fn one_per_name(
         }
     }
     kept
+}
+
+/// The files a pass found but does not read, by what each carries: such a
+/// file keeps its item.
+#[derive(Default)]
+struct Carriers {
+    by_mark: HashMap<String, String>,
+    by_id: HashMap<String, Vec<String>>,
+    /// Each such file's identity and id line, by path.
+    at: HashMap<String, (Option<String>, Option<String>)>,
+}
+
+/// The file that carries a binding, and the identity to record for it where
+/// only its path named it.
+struct Carrying<'a> {
+    key: &'a str,
+    identity: Option<&'a str>,
+}
+
+impl Carriers {
+    /// The file that cannot be read and why, since it may carry any item.
+    fn of<'a>(
+        walked: &Walked,
+        files: impl IntoIterator<Item = (&'a Path, &'a str, bool)>,
+    ) -> std::result::Result<Carriers, (String, std::io::Error)> {
+        let mut carriers = Carriers::default();
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-sweep-carriers");
+        for (path, key, read_id) in files {
+            let captured = walked.opened.get(path);
+            let mark = captured
+                .and_then(|captured| identity::of(&captured.metadata.borrow()))
+                .or_else(|| walked.unread.get(path).copied())
+                .map(|mark| mark.key());
+            if let Some(mark) = &mark {
+                carriers.by_mark.insert(mark.clone(), key.to_string());
+            }
+            let mut id = None;
+            if read_id && carries_frontmatter(path) {
+                let bytes = captured
+                    .ok_or_else(|| std::io::Error::other("the walk could not open it"))
+                    .and_then(Captured::read)
+                    .map_err(|error| (key.to_string(), error))?;
+                id = document::id_line_of(&bytes);
+                if let Some(id) = &id {
+                    carriers
+                        .by_id
+                        .entry(id.clone())
+                        .or_default()
+                        .push(key.to_string());
+                }
+            }
+            carriers.at.insert(key.to_string(), (mark, id));
+        }
+        Ok(carriers)
+    }
+
+    /// By identity, then the item's id line, then a file still at the path
+    /// last `recorded` as carrying it that names no other item, since a save
+    /// that replaces a file gives it a new identity. A backup of the bound
+    /// file carries nothing (`backup_of`).
+    fn carrying(&self, bound: &state::Bound, recorded: Option<&str>) -> Option<Carrying<'_>> {
+        let carries = |key: &&String| !backup_of(&bound.path, key);
+        let found = bound
+            .identity
+            .as_deref()
+            .and_then(|mark| self.by_mark.get(mark))
+            .filter(carries)
+            .or_else(|| {
+                self.by_id
+                    .get(&bound.item_id)
+                    .and_then(|keys| keys.iter().find(carries))
+            });
+        if let Some(key) = found {
+            return Some(Carrying {
+                key,
+                identity: None,
+            });
+        }
+        let (key, (mark, id)) = self.at.get_key_value(recorded?)?;
+        if !carries(&key) || id.as_ref().is_some_and(|id| *id != bound.item_id) {
+            return None;
+        }
+        Some(Carrying {
+            key,
+            identity: mark
+                .as_deref()
+                .filter(|mark| bound.identity.as_deref() != Some(*mark)),
+        })
+    }
+}
+
+/// Whether `key` is the file bound at `bound` with a suffix added, in its
+/// directory: the backup `sed -i.bak` and many editors leave beside a file
+/// they save by renaming the original away.
+fn backup_of(bound: &str, key: &str) -> bool {
+    key.strip_prefix(bound)
+        .is_some_and(|suffix| !suffix.is_empty() && !suffix.contains('/'))
 }
 
 struct Scanned {

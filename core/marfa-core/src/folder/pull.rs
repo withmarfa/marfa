@@ -674,13 +674,25 @@ impl Folder {
             }
             // A missing file the sweep kept bound is another folder's to take,
             // or a full pass's to tell; written anew it would read there as a
-            // copy.
+            // copy. A file at a carried item's path is another, held file.
             if let Some(bound) = &bound
                 && let Some((kept_for, why)) = kept.get(&bound.path)
                 && *kept_for == item.id
-                && !self.exists(self.root.join(&bound.path))
+                && (matches!(why, state::Kept::Carried(_))
+                    || !self.exists(self.root.join(&bound.path)))
             {
-                report.elsewhere += usize::from(*why == state::Kept::Arriving);
+                match why {
+                    state::Kept::Arriving => report.elsewhere += 1,
+                    state::Kept::Carried(carrier) => report.flagged.push(Flagged {
+                        path: bound.path.clone(),
+                        flag: "carried",
+                        reason: format!(
+                            "its file is now {carrier}, which the folder holds for its name or does not send, so the pull writes no second file"
+                        ),
+                        item: Some(item.id.clone()),
+                    }),
+                    state::Kept::Unsure(_) => {}
+                }
                 continue;
             }
             // Moved to another folder here and not yet taken there, written

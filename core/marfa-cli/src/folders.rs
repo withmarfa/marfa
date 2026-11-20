@@ -1264,6 +1264,15 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
                 printable(&file.path),
                 printable(&file.reason)
             ),
+            "carried" => format!(
+                "{} is kept{}: {}",
+                printable(&file.path),
+                file.item
+                    .as_ref()
+                    .map(|item| format!(" (item {})", printable(item)))
+                    .unwrap_or_default(),
+                printable(&file.reason)
+            ),
             "unwritten" | "outside" | "unsuited" | "absent" => {
                 let item = file
                     .item
@@ -1761,6 +1770,10 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
             (
                 report.unreached,
                 "bound but not reached, where the lists no longer take them or a package or an unreadable directory holds them, so held rather than deleted",
+            ),
+            (
+                report.carried,
+                "gone from their paths but kept, because a file the folder holds for its name or does not send carries them",
             ),
         ]
         .into_iter()

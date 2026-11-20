@@ -214,6 +214,83 @@ mod tests {
         );
     }
 
+    /// `folder_journal` as schema version 10 made it, before `carried`.
+    const JOURNAL_V10: &str = "
+        DROP TABLE folder_journal;
+        CREATE TABLE folder_journal (
+          path TEXT PRIMARY KEY,
+          item_id TEXT NOT NULL,
+          missing_since TEXT NOT NULL,
+          kept TEXT CHECK (kept IN ('arriving', 'unsure')),
+          reason TEXT
+        ) WITHOUT ROWID;
+    ";
+
+    #[test]
+    fn a_folder_store_whose_record_differs_only_in_its_checks_is_replaced_keeping_it() {
+        let (dir, path) = refused_folder(
+            true,
+            &format!(
+                "{JOURNAL_V10} {RECORD}
+                 INSERT INTO folder_journal (path, item_id, missing_since, kept, reason)
+                   VALUES ('Unsure.md', 'unsure', '2026-01-01T00:00:00Z', 'unsure', 'offline');"
+            ),
+        );
+        rusqlite::Connection::open(&path)
+            .unwrap()
+            .execute_batch("PRAGMA user_version = 10")
+            .unwrap();
+        let journal = "SELECT path || ' ' || item_id || ' ' || kept || ' ' || ifnull(reason, '') FROM folder_journal";
+        let record = read(&path, journal);
+        assert_eq!(record.len(), 2, "{record:?}");
+
+        let folder = Folder::open(dir.path(), None).unwrap();
+        assert!(folder.replaced_store().is_some());
+        drop(folder);
+        assert!(!left_refused(&path));
+        assert_eq!(read(&path, journal), record, "the journal was not kept");
+        assert!(
+            Folder::open(dir.path(), None)
+                .unwrap()
+                .replaced_store()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_folder_store_whose_rows_break_a_check_of_this_build_is_left_alone() {
+        let (dir, path) = refused_folder(
+            true,
+            &format!(
+                "{RECORD} DROP TABLE folder_journal;
+                 CREATE TABLE folder_journal (
+                   path TEXT PRIMARY KEY,
+                   item_id TEXT NOT NULL,
+                   missing_since TEXT NOT NULL,
+                   kept TEXT,
+                   reason TEXT
+                 ) WITHOUT ROWID;
+                 INSERT INTO folder_journal (path, item_id, missing_since, kept)
+                   VALUES ('Gone.md', 'gone', '2026-01-01T00:00:00Z', 'since_build');"
+            ),
+        );
+        let failed = Folder::open(dir.path(), None).err().unwrap();
+        assert!(
+            matches!(&failed, CoreError::Store(reason) if reason.contains("cannot be replaced")),
+            "{failed:?}"
+        );
+        assert!(left_refused(&path));
+        assert_eq!(
+            read(&path, "SELECT path || ' ' || kept FROM folder_journal"),
+            ["Gone.md since_build"]
+        );
+        assert!(
+            made_left(dir.path()).is_empty(),
+            "{:?}",
+            made_left(dir.path())
+        );
+    }
+
     #[cfg(debug_assertions)]
     #[test]
     fn a_folder_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {

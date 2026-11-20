@@ -530,6 +530,14 @@ When a pull counts an item as `unwritten`, `outside`, `unsuited` or `absent`, a 
 
 **Tests:** `device/folders.test.ts › takes only what its include list names`, `device/folders.test.ts › refuses to write a file outside the folder`, `device/folders.test.ts › does not write over a file it never wrote`, `device/folders-placement.test.ts › skips a placement the filesystem refuses, and keeps the file where it was`, `device/folders-placement.test.ts › writes no file where its placement would make it another kind of file`, `device/folders-placement.test.ts › writes a file item's bytes as its file, and reports them absent where it cannot fetch them`, `device/folders-one-mac.test.ts › takes in a readable source and preserves denied-removal ownership ($mode, $later)`.
 
+### `folder-sync/pull-carried-flagged`
+
+While a file in the directory that the scan holds for a clash with another file's name, or does not send, and whose name is not the missing file's name followed by a suffix, carries the missing file's identity or the ID of its item, when a pull runs, a device MUST include the item's ID, the missing file's path, the flag `carried` and a reason that names the carrying file in the pull report's `flagged` entries.
+
+**Reason:** the pull writes no second file for the item, and a flag such as `unwritten` would count it as a pending download (`folder-sync/report-pending-downloads`) and as a held file.
+
+**Tests:** `device/folders-contract-b.test.ts › flags a pull's item with the file that carries it, as no download`, `› holds a new file at the path of a file the folder does not send, and sends it once that file has a name the folder sends`.
+
 ### `folder-sync/report-distinct-items`
 
 When `folders push` or `folders watch` reports items held back by a pull, the CLI MUST report each item once, including separate entries for different items at the same path.
