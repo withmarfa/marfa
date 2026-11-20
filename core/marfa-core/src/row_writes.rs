@@ -870,8 +870,9 @@ pub(crate) fn keep(conn: &Connection, item: &str, table: &str, ops: &[Op]) -> Re
 }
 
 /// Gives the kept writes the places in the queue of the unsent row writes to
-/// their table, which move behind them: a drain walks the queue in `seq`
-/// order and sends the row writes behind one it sends in the same request.
+/// their table, which move behind them, laid at their new places: a drain
+/// walks the queue in `seq` order and sends the row writes behind one it
+/// sends in the same request.
 fn put_ahead(conn: &Connection, kept: &[String], behind: &[String]) -> Result<()> {
     if behind.is_empty() {
         return Ok(());
@@ -890,8 +891,16 @@ fn put_ahead(conn: &Connection, kept: &[String], behind: &[String]) -> Result<()
     for id in &order {
         conn.execute_cached("UPDATE queue SET seq = -seq WHERE id = ?1", [id])?;
     }
-    for (id, seq) in order.iter().zip(places) {
+    for (at, (id, seq)) in order.iter().zip(places).enumerate() {
         conn.execute_cached("UPDATE queue SET seq = ?2 WHERE id = ?1", params![id, seq])?;
+        // `clashes` reads a write's own operations by this place. The kept
+        // writes stay laid beneath every write to the table.
+        if at >= kept.len() {
+            conn.execute_cached(
+                "UPDATE rows_laid SET seq = ?2 WHERE write_id = ?1",
+                params![id, seq],
+            )?;
+        }
     }
     Ok(())
 }
@@ -1716,6 +1725,68 @@ mod tests {
     fn seen(conn: &Connection, batch: &str, row: &str) {
         before_batch(conn, "item", "steps", batch, [row]).unwrap();
         applied_batch(conn, "item", "steps", batch).unwrap();
+    }
+
+    #[test]
+    fn a_write_moved_behind_kept_rows_still_finds_the_change_it_did_not_see() {
+        const A: &str = "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f70";
+        const B: &str = "019a5b1e-7c41-7d2e-9f3a-5b8c2d4e6f71";
+        // Unkept first: the witness that the same write conflicts.
+        for kept in [false, true] {
+            let conn = store::testing::conn();
+            conn.execute(
+                "INSERT INTO item_tables (item_id, name, state) VALUES ('item', 'steps', 'whole')",
+                [],
+            )
+            .unwrap();
+            // Another writer moved the count on after the person read it.
+            let theirs = Held {
+                values: values(json!({ "count": 5 })),
+                withheld: Vec::new(),
+                updated_at: "2026-11-19T10:00:00.000Z".into(),
+            };
+            set_beneath(&conn, "item", "steps", A, Some(&theirs)).unwrap();
+            let ops = json!([{ "op": "patch", "id": A, "values": { "count": 2 } }]);
+            conn.execute(
+                "INSERT INTO queue (seq, id, kind, item_id, row_table, idempotency_key, payload, sent, queued_at, read)
+                 VALUES (1, 'w', 'write_rows', 'item', 'steps', 'w', ?1, 0, 'at', ?2)",
+                params![
+                    json!({ "operations": ops }).to_string(),
+                    json!({ "rows": { A: { "count": 1 } } }).to_string()
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO rows_laid (write_id, seq, item_id, name, id, ops, at)
+                 VALUES ('w', 1, 'item', 'steps', ?1, ?2, 'at')",
+                [A, &ops.to_string()],
+            )
+            .unwrap();
+            if kept {
+                keep(&conn, "item", "steps", &[Op::Delete { id: B.into() }]).unwrap();
+            }
+            let write = store::queued_write(&conn, "w").unwrap().unwrap();
+            let results = [json!({ "id": A, "outcome": "patched" })];
+            let conflicts = taken(
+                &conn,
+                "item",
+                "steps",
+                None,
+                &[Taken {
+                    write: &write,
+                    results: &results,
+                }],
+            )
+            .unwrap();
+            assert_eq!(
+                conflicts,
+                vec![vec![RowConflict {
+                    row: A.into(),
+                    column: "count".into(),
+                }]],
+                "kept {kept}"
+            );
+        }
     }
 
     #[test]
