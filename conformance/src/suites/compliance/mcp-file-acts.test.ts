@@ -1066,10 +1066,13 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
     expect((await folderStore()).id).toBe(old.id);
 
     // The witness: once the folder takes the claim back, a new preview adopts.
-    const again = await waitFor("a preview once the claim is gone", async () => {
-      const looked = await callTool(backupsAdmin, ADOPT, {});
-      return looked.isError ? undefined : toolResult(looked);
-    });
+    const again = await waitFor(
+      "a preview once the claim is gone",
+      async () => {
+        const looked = await callTool(backupsAdmin, ADOPT, {});
+        return looked.isError ? undefined : toolResult(looked);
+      },
+    );
     expect(existsSync(pending)).toBe(false);
     const adopted = await call(backupsAdmin, ADOPT, { confirm: again.confirm });
     expect(adopted).toMatchObject({ adopted: true, marked: true });
