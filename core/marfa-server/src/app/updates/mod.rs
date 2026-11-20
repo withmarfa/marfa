@@ -415,7 +415,6 @@ async fn run(app: Arc<App>, job: apply::Job) {
         }
         Err(reason) => {
             tracing::warn!("The update to release {version} did not go ahead: {reason}");
-            let record = record.clone();
             let at = app.clock.stamp();
             let _ = tokio::task::spawn_blocking(move || {
                 pending::end(
