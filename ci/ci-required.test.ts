@@ -278,6 +278,8 @@ describe("what a change runs", () => {
         "quick-checks",
         "version-fields",
         "workspace",
+        "types-freshness",
+        "clients-freshness",
       ],
     ],
     [
@@ -295,6 +297,8 @@ describe("what a change runs", () => {
         "image",
         "quick-checks",
         "version-fields",
+        "types-freshness",
+        "clients-freshness",
       ],
     ],
     [
@@ -738,6 +742,38 @@ describe("what a change runs", () => {
         ...RUST_SERVER,
         "version-fields",
       ],
+    ],
+    [
+      "the rules crate's source, which writes the catalog and the shapes' digest from the shipped definitions",
+      ["core/marfa-rules/src/builtin/catalog_file.rs"],
+      [
+        ...RUST_LINUX,
+        "core",
+        "types-freshness",
+        "clients-freshness",
+        "quick-checks",
+      ],
+    ],
+    [
+      "the example that writes the icon sets, and the rules crate's manifest",
+      ["core/marfa-rules/examples/icon_set.rs", "core/marfa-rules/Cargo.toml"],
+      [
+        ...RUST,
+        "core-deny",
+        "types-freshness",
+        "clients-freshness",
+        "quick-checks",
+        "version-fields",
+      ],
+    ],
+    [
+      "the icon sets' pins, writer and test, which the types freshness job runs",
+      [
+        "scripts/icon-sets.txt",
+        "scripts/icon-sets.sh",
+        "scripts/icon-sets.test.sh",
+      ],
+      ["quick-checks", "workspace", "types-freshness"],
     ],
     [
       "an icon set the rules crate embeds",
