@@ -217,7 +217,8 @@ begin() {
   prog=$(awk '/<key>ProgramArguments<\/key>/{getline; getline; gsub(/.*<string>|<\/string>.*/, ""); print; exit}' "$plist")
   "$(dirname "$prog")/marfa-server" --version | awk '{print $NF}' > "$S/version-$port"
   # A server that serves names its release beside the database, as releases up to 0.0.85 do not.
-  [ -e "$S/no-release-record" ] || { mkdir -p "$dir/data"; cp "$S/version-$port" "$dir/data/marfa.db.release"; }
+  # The server makes its data folder 0700 whatever the umask.
+  [ -e "$S/no-release-record" ] || { mkdir -p -m 700 "$dir/data"; cp "$S/version-$port" "$dir/data/marfa.db.release"; }
   touch "$S/go-$port"
 }
 case "$1" in
@@ -271,7 +272,8 @@ begin() {
   prog=$(sed -n 's/^ExecStart="\{0,1\}\([^" ]*\).*/\1/p' "$f")
   "$(dirname "$prog")/marfa-server" --version | awk '{print $NF}' > "$S/version-$port"
   # A server that serves names its release beside the database, as releases up to 0.0.85 do not.
-  [ -e "$S/no-release-record" ] || { mkdir -p "$dir/data"; cp "$S/version-$port" "$dir/data/marfa.db.release"; }
+  # The server makes its data folder 0700 whatever the umask.
+  [ -e "$S/no-release-record" ] || { mkdir -p -m 700 "$dir/data"; cp "$S/version-$port" "$dir/data/marfa.db.release"; }
   touch "$S/go-$port"
 }
 case "$cmd" in
