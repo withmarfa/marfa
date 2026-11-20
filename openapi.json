@@ -8973,7 +8973,7 @@
           },
           "telemetry_enabled": {
             "type": "boolean",
-            "description": "`true` if Marfa sends telemetry about itself: traces and log records to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.",
+            "description": "`true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.",
             "default": true
           },
           "otel_sample_ratio": {
@@ -60001,13 +60001,13 @@
                   },
                   "telemetry_enabled": {
                     "type": "boolean",
-                    "description": "`true` if Marfa sends telemetry about itself: traces and log records to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.",
+                    "description": "`true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`.",
                     "default": true
                   },
                   "otel_exporter_otlp_endpoint": {
                     "type": "string",
                     "format": "uri",
-                    "description": "The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, and log records to, under `v1/logs`, keeping its query. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "description": "The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, log records to, under `v1/logs`, and metrics to, under `v1/metrics`, keeping its query. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
                     "writeOnly": true,
                     "example": "https://collector.example:4318"
                   },
@@ -60021,6 +60021,12 @@
                     "type": "string",
                     "format": "uri",
                     "description": "The URL Marfa posts log records to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_metrics_endpoint": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "The URL Marfa posts metrics to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
                     "writeOnly": true
                   },
                   "otel_exporter_otlp_headers": {
@@ -60040,6 +60046,12 @@
                     "type": "string",
                     "maxLength": 8192,
                     "description": "The headers Marfa sends with log exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_metrics_headers": {
+                    "type": "string",
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with metric exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. A `PUT` that leaves it out keeps it; `PATCH` with `null` removes it.",
                     "writeOnly": true
                   },
                   "otel_sample_ratio": {
@@ -60910,7 +60922,7 @@
                       "boolean",
                       "null"
                     ],
-                    "description": "`true` if Marfa sends telemetry about itself: traces and log records to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`. `null` removes it, so the server's default applies.",
+                    "description": "`true` if Marfa sends telemetry about itself: traces, log records and metrics to the OTLP endpoints, and exception reports to `posthog_host`. `false` sends none of them and keeps every telemetry setting. Absent: `true`. `null` removes it, so the server's default applies.",
                     "default": true
                   },
                   "otel_exporter_otlp_endpoint": {
@@ -60919,7 +60931,7 @@
                       "null"
                     ],
                     "format": "uri",
-                    "description": "The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, and log records to, under `v1/logs`, keeping its query. Marfa never returns it. `null` or an empty string removes it.",
+                    "description": "The base URL of the OTLP receiver Marfa exports traces to, under `v1/traces`, log records to, under `v1/logs`, and metrics to, under `v1/metrics`, keeping its query. Marfa never returns it. `null` or an empty string removes it.",
                     "writeOnly": true,
                     "example": "https://collector.example:4318"
                   },
@@ -60939,6 +60951,15 @@
                     ],
                     "format": "uri",
                     "description": "The URL Marfa posts log records to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_metrics_endpoint": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "format": "uri",
+                    "description": "The URL Marfa posts metrics to, used as written, in place of the one under `otel_exporter_otlp_endpoint`, which must also be set. Marfa never returns it. `null` or an empty string removes it.",
                     "writeOnly": true
                   },
                   "otel_exporter_otlp_headers": {
@@ -60967,6 +60988,15 @@
                     ],
                     "maxLength": 8192,
                     "description": "The headers Marfa sends with log exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it.",
+                    "writeOnly": true
+                  },
+                  "otel_exporter_otlp_metrics_headers": {
+                    "type": [
+                      "string",
+                      "null"
+                    ],
+                    "maxLength": 8192,
+                    "description": "The headers Marfa sends with metric exports, as comma-separated `key=value` pairs with percent-encoded values. One here replaces the one of the same name in `otel_exporter_otlp_headers`. Marfa never returns it. `null` or an empty string removes it.",
                     "writeOnly": true
                   },
                   "otel_sample_ratio": {

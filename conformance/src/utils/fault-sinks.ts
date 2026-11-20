@@ -4,7 +4,7 @@ import { expect } from "vitest";
 
 /**
  * Where a server or the command line under test reports an unhandled fault,
- * in the places a fixture can read: the log records and spans it exports over
+ * in the places a fixture can read: the log records, spans and metrics it exports over
  * OTLP, and the exceptions the server sends to error tracking. One receiver on
  * the loopback address is all three, so a fixture boots its server with
  * {@link FaultSinks.serverEnv}, or runs the command line with
@@ -23,9 +23,10 @@ export interface FaultSinks {
    * reports at the receiver.
    */
   serverEnv(): Record<string, string>;
-  /** What it was sent as OTLP traces, as OTLP log records and as error tracking's events. */
+  /** What it was sent as OTLP traces, as OTLP log records, as OTLP metrics and as error tracking's events. */
   readonly traces: Record<string, unknown>[];
   readonly logRecords: Record<string, unknown>[];
+  readonly metrics: Record<string, unknown>[];
   readonly trackedErrors: Record<string, unknown>[];
   /** Bodies posted to any other path, so a fixture can show nothing else was sent. */
   readonly elsewhere: Record<string, unknown>[];
@@ -36,9 +37,9 @@ export interface FaultSinks {
    * `performance.now()` read on the request, parallel to `trackedErrors`.
    */
   readonly trackedArrivals: number[];
-  /** Each OTLP post, traces and log records alike, with its headers, in order. */
+  /** Each OTLP post, of any signal, with its headers, in order. */
   readonly exports: {
-    signal: "traces" | "logs";
+    signal: "traces" | "logs" | "metrics";
     headers: Record<string, string | string[] | undefined>;
     body: Record<string, unknown>;
     /** `performance.now()` when the request reached the receiver, before its body was read. */
@@ -110,6 +111,7 @@ function attributesOf(
 export async function startFaultSinks(): Promise<FaultSinks> {
   const traces: Record<string, unknown>[] = [];
   const logRecords: Record<string, unknown>[] = [];
+  const metrics: Record<string, unknown>[] = [];
   const trackedErrors: Record<string, unknown>[] = [];
   const elsewhere: Record<string, unknown>[] = [];
   const trackedHeaders: FaultSinks["trackedHeaders"][number][] = [];
@@ -133,6 +135,14 @@ export async function startFaultSinks(): Promise<FaultSinks> {
           traces.push(parsed);
           exports.push({
             signal: "traces",
+            headers: { ...request.headers },
+            body: parsed,
+            arrivedAt,
+          });
+        } else if (path.startsWith("/v1/metrics")) {
+          metrics.push(parsed);
+          exports.push({
+            signal: "metrics",
             headers: { ...request.headers },
             body: parsed,
             arrivedAt,
@@ -179,6 +189,7 @@ export async function startFaultSinks(): Promise<FaultSinks> {
     }),
     traces,
     logRecords,
+    metrics,
     trackedErrors,
     elsewhere,
     trackedHeaders,

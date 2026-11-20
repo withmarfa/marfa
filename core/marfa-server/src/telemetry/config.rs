@@ -7,6 +7,7 @@ use crate::settings::Snapshot;
 use crate::settings::registry::{
     ALLOW_PRIVATE_ADDRESSES, OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS,
     OTEL_EXPORTER_OTLP_LOGS_ENDPOINT, OTEL_EXPORTER_OTLP_LOGS_HEADERS,
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, OTEL_EXPORTER_OTLP_METRICS_HEADERS,
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, OTEL_EXPORTER_OTLP_TRACES_HEADERS,
     OTEL_RESOURCE_ATTRIBUTES, OTEL_SAMPLE_RATIO, OTEL_SERVICE_NAME, TELEMETRY_ENABLED,
 };
@@ -26,11 +27,12 @@ pub struct Export {
 /// rebuilds nothing.
 #[derive(Clone, PartialEq)]
 pub struct Wanted {
-    /// The resource attributes of every span and log record, and the properties of every
+    /// The resource attributes of every span, log record and metric, and the properties of every
     /// exception.
     pub pairs: Vec<(String, String)>,
     pub traces: Option<Export>,
     pub logs: Option<Export>,
+    pub metrics: Option<Export>,
     pub ratio: f64,
 }
 
@@ -48,6 +50,10 @@ pub fn wanted(settings: &Snapshot, instance_id: &str) -> Wanted {
             Signal::Logs => (
                 settings.get(OTEL_EXPORTER_OTLP_LOGS_ENDPOINT),
                 settings.get(OTEL_EXPORTER_OTLP_LOGS_HEADERS),
+            ),
+            Signal::Metrics => (
+                settings.get(OTEL_EXPORTER_OTLP_METRICS_ENDPOINT),
+                settings.get(OTEL_EXPORTER_OTLP_METRICS_HEADERS),
             ),
         };
         // A signal's own address counts only beside the base, as the settings' rule has it.
@@ -71,6 +77,7 @@ pub fn wanted(settings: &Snapshot, instance_id: &str) -> Wanted {
         pairs: pairs(settings, instance_id),
         traces: on.then(|| export(Signal::Traces)).flatten(),
         logs: on.then(|| export(Signal::Logs)).flatten(),
+        metrics: on.then(|| export(Signal::Metrics)).flatten(),
         ratio: settings.get(OTEL_SAMPLE_RATIO),
     }
 }
@@ -130,7 +137,7 @@ mod tests {
     #[test]
     fn nothing_is_sent_when_nothing_is_set() {
         let wanted = wanted(&snapshot(&[], &[]), "id");
-        assert!(wanted.traces.is_none() && wanted.logs.is_none());
+        assert!(wanted.traces.is_none() && wanted.logs.is_none() && wanted.metrics.is_none());
         assert_eq!(wanted.ratio, 0.05);
         assert_eq!(
             wanted.pairs[0],
@@ -139,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn the_base_sends_both_signals_under_their_paths_with_merged_headers() {
+    fn the_base_sends_every_signal_under_its_path_with_merged_headers() {
         let wanted = wanted(
             &snapshot(
                 &[],
@@ -147,6 +154,7 @@ mod tests {
                     ("otel_exporter_otlp_endpoint", "http://collector:4318/?t=1"),
                     ("otel_exporter_otlp_headers", "a=1,b=2"),
                     ("otel_exporter_otlp_logs_headers", "B=3"),
+                    ("otel_exporter_otlp_metrics_headers", "a=9"),
                     (
                         "otel_exporter_otlp_traces_endpoint",
                         "https://traces.example/in",
@@ -157,35 +165,40 @@ mod tests {
         );
         let traces = wanted.traces.expect("traces");
         let logs = wanted.logs.expect("logs");
+        let metrics = wanted.metrics.expect("metrics");
         assert_eq!(traces.url, "https://traces.example/in");
         assert_eq!(logs.url, "http://collector:4318/v1/logs?t=1");
+        assert_eq!(metrics.url, "http://collector:4318/v1/metrics?t=1");
         let pair = |key: &str, value: &str| (key.to_string(), value.to_string());
         assert_eq!(traces.headers, [pair("a", "1"), pair("b", "2")]);
         assert_eq!(logs.headers, [pair("a", "1"), pair("B", "3")]);
+        assert_eq!(metrics.headers, [pair("b", "2"), pair("a", "9")]);
     }
 
     #[test]
     fn a_signal_endpoint_without_the_base_sends_nothing() {
-        let wanted = wanted(
-            &snapshot(
-                &[],
-                &[(
-                    "otel_exporter_otlp_traces_endpoint",
-                    "https://traces.example/in",
-                )],
+        for (key, url) in [
+            (
+                "otel_exporter_otlp_traces_endpoint",
+                "https://traces.example/in",
             ),
-            "id",
-        );
-        assert!(wanted.traces.is_none() && wanted.logs.is_none());
+            (
+                "otel_exporter_otlp_metrics_endpoint",
+                "https://metrics.example/in",
+            ),
+        ] {
+            let alone = wanted(&snapshot(&[], &[(key, url)]), "id");
+            assert!(alone.traces.is_none() && alone.logs.is_none() && alone.metrics.is_none());
+        }
     }
 
     #[test]
-    fn the_switch_stops_both_signals_and_keeps_everything_else() {
+    fn the_switch_stops_every_signal_and_keeps_everything_else() {
         let base = [("otel_exporter_otlp_endpoint", "http://collector:4318")];
         let on = wanted(&snapshot(&[], &base), "id");
-        assert!(on.traces.is_some() && on.logs.is_some());
+        assert!(on.traces.is_some() && on.logs.is_some() && on.metrics.is_some());
         let off = wanted(&snapshot(&[("telemetry_enabled", "false")], &base), "id");
-        assert!(off.traces.is_none() && off.logs.is_none());
+        assert!(off.traces.is_none() && off.logs.is_none() && off.metrics.is_none());
         assert_eq!(off.pairs, on.pairs);
     }
 

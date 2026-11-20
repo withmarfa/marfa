@@ -4,6 +4,7 @@ pub mod config;
 mod fault;
 mod lane;
 mod logs;
+mod metrics;
 mod otel;
 mod sinks;
 
@@ -24,9 +25,11 @@ use opentelemetry_sdk::trace::{SdkTracer, SdkTracerProvider, Span};
 
 pub use fault::{Fault, Kind, caught, install_panic_hook};
 pub use logs::{Logs, REQUEST_TARGET};
+pub use metrics::Served;
 
 use config::Wanted;
 use lane::Lane;
+use metrics::Meters;
 use otel::{Leg, Loggers, Relay};
 use sinks::{Failed, Raised, Report, Route, Tracked};
 
@@ -61,6 +64,7 @@ pub struct Finished<'a> {
 enum Retired {
     Traces(Arc<Leg>),
     Logs(Loggers),
+    Metrics(Arc<Meters>),
     Drained(mpsc::SyncSender<()>),
 }
 
@@ -68,6 +72,8 @@ enum Retired {
 struct Started {
     instance_id: String,
     relay: Relay,
+    /// Where requests are recorded now; `None` while no metrics are sent.
+    meters: ArcSwapOption<Meters>,
     tracer: SdkTracer,
     tracers: SdkTracerProvider,
     exceptions: Lane<Tracked>,
@@ -89,7 +95,7 @@ struct Inner {
     applied: Mutex<Applied>,
 }
 
-/// Traces, log records and exception reports, rebuilt when their settings change.
+/// Traces, log records, metrics and exception reports, rebuilt when their settings change.
 #[derive(Clone, Default)]
 pub struct Telemetry {
     inner: Arc<Inner>,
@@ -130,6 +136,9 @@ fn retirer() -> Sender<Retired> {
                 Retired::Logs(loggers) => {
                     let _ = loggers.provider.shutdown_with_timeout(RETIRE_WITHIN);
                 }
+                Retired::Metrics(meters) => {
+                    let _ = meters.shutdown_with_timeout(RETIRE_WITHIN);
+                }
                 Retired::Drained(done) => {
                     let _ = done.send(());
                 }
@@ -153,6 +162,7 @@ impl Telemetry {
             instance_id: instance_id.to_string(),
             tracer: tracers.tracer("marfa-server"),
             relay,
+            meters: ArcSwapOption::empty(),
             tracers,
             exceptions: sinks::exceptions(route.clone()),
             route,
@@ -217,6 +227,9 @@ impl Telemetry {
                 let _ = started.retire.send(Retired::Traces(old));
             }
         }
+        let metrics_same = before
+            .as_ref()
+            .is_some_and(|held| held.metrics == wanted.metrics && held.pairs == wanted.pairs);
         if !logs_same {
             let loggers = wanted.logs.as_ref().and_then(|export| {
                 otel::logger_provider(export, &wanted.pairs)
@@ -230,6 +243,17 @@ impl Telemetry {
             if let Some(old) = std::mem::replace(&mut applied.loggers, loggers) {
                 old.halt.set();
                 let _ = started.retire.send(Retired::Logs(old));
+            }
+        }
+        if !metrics_same {
+            let meters = wanted.metrics.as_ref().and_then(|export| {
+                metrics::metrics_leg(export, &wanted.pairs)
+                    .map_err(|error| tracing::error!(%error, "Metrics could not be set up"))
+                    .ok()
+            });
+            if let Some(old) = started.meters.swap(meters.map(Arc::new)) {
+                old.halt.set();
+                let _ = started.retire.send(Retired::Metrics(old));
             }
         }
         applied.wanted = Some(wanted);
@@ -249,6 +273,19 @@ impl Telemetry {
             RequestSpan(span)
         }))
         .ok()
+    }
+
+    /// Records one answered request, where metrics are sent. Nothing that fails in here reaches
+    /// the request.
+    pub fn record_request(&self, served: &Served<'_>) {
+        let Some(started) = self.inner.started.get() else {
+            return;
+        };
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            if let Some(meters) = started.meters.load().as_ref() {
+                meters.record(served);
+            }
+        }));
     }
 
     /// Nothing that fails in here reaches the request.
@@ -340,6 +377,9 @@ impl Telemetry {
         let deadline = Instant::now() + within;
         let left = || deadline.saturating_duration_since(Instant::now());
         let _ = started.tracers.shutdown_with_timeout(left());
+        if let Some(meters) = started.meters.swap(None) {
+            let _ = meters.shutdown_with_timeout(left());
+        }
         crate::log::logs().disconnect();
         if let Some(loggers) = loggers {
             let _ = loggers.provider.shutdown_with_timeout(left());
