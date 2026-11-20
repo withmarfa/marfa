@@ -732,6 +732,8 @@ impl Document {
 /// a command whose first request is another door's, and a command not driven,
 /// do not reach theirs.
 const MISSED: &[&str] = &[
+    // `keys create` reads the key it bears before it mints.
+    "createKey",
     // `folders push`: needs a bound working copy, exercised by the
     // `device/folder-health.test.ts` fixtures.
     "reportFolderStatus",

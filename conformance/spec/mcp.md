@@ -442,6 +442,34 @@ If a `marfa_revoke_key` call carries a `confirm` token a preview gave another cr
 
 **Tests:** `compliance/mcp.test.ts › refuses a revoke confirmation another credential got`.
 
+## Making a key
+
+`marfa_manage_key` makes a key or narrows one.
+
+### `mcp/key-made-owner-key`
+
+When an app's access token holding `keys.mint` and `keys.manage` calls `marfa_manage_key` to make a key with `owner_key: true`, the server MUST make a key that carries no `oauth_client_id`.
+
+**Reason:** The same call without `owner_key` makes a key that carries the app's `oauth_client_id`, so an app reaches the same choice through MCP as through `POST /keys` (`keys-and-oauth/owner-key-mint`).
+
+**Tests:** `compliance/owner-keys.test.ts › makes an owner's key through an app that holds keys.mint and keys.manage, and an app's key without owner_key`.
+
+### `mcp/key-made-claims`
+
+When an app's access token holding `keys.mint` and `keys.manage` calls `marfa_manage_key` to make a key naming `sources`, the server MUST make a key that claims them.
+
+**Reason:** A claim `keys-and-oauth/claims-manage` lets an app grant through `POST /keys` is granted through MCP the same way.
+
+**Tests:** `compliance/owner-keys.test.ts › grants a claim through an app that holds keys.manage, and refuses it to one that does not`.
+
+### `mcp/key-narrow-fields`
+
+If a `marfa_manage_key` call with `action: "narrow"` names `owner_key` or `sources`, then the server MUST answer it with a tool error carrying `validation_error`.
+
+**Reason:** Making a key is where its maker and its claims are chosen, so a narrowing that names them would otherwise be ignored without a word.
+
+**Tests:** `compliance/owner-keys.test.ts › refuses owner_key through an app that does not hold keys.manage, and both fields where a key is narrowed`.
+
 ## Managing a webhook
 
 `marfa_manage_webhook` makes, changes and deletes webhooks. Making a webhook, or changing its `url`, `events` or `type_filter`, takes two calls, as `marfa_delete` trashes: a preview of where the webhook would post and what it would send, with a `confirm` token, and a call with that token. A token is refused, as `marfa_delete`'s is, when five minutes have passed, and a token to make a webhook is refused once a webhook the credential can read, the one it made included, has been made or deleted since the preview. A new webhook starts active. Pausing, resuming or deleting a webhook takes one call.
