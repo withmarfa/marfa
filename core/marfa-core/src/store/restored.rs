@@ -536,9 +536,13 @@ pub(crate) fn restore_held(conn: &Connection) -> Result<bool, CoreError> {
 }
 
 /// Whether a hydration has a comparison to run: after a restore was found,
-/// or over what `hold_unseen` named.
+/// over what `hold_unseen` named, or over a row the fill refused as older
+/// than the copy's.
 pub(crate) fn comparing(conn: &Connection) -> Result<bool, CoreError> {
-    Ok(restore_held(conn)? || holds_back(conn)? || super::meta_get(conn, META_CHECKING)?.is_some())
+    Ok(restore_held(conn)?
+        || holds_back(conn)?
+        || super::meta_get(conn, META_CHECKING)?.is_some()
+        || !super::reach::refused_older_rows(conn)?.is_empty())
 }
 
 fn hold_named(conn: &Connection, named: &[(Subject, String)]) -> Result<(), CoreError> {

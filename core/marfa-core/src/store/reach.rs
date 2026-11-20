@@ -144,6 +144,19 @@ pub fn refused_older(conn: &Connection, subject: Subject, id: &str) -> Result<bo
     Ok(meta_get(conn, &refused_older_key(subject, id))?.is_some())
 }
 
+/// Every row the hydration under way kept over an earlier one the server
+/// gave.
+pub(crate) fn refused_older_rows(conn: &Connection) -> Result<Vec<(Subject, String)>, CoreError> {
+    Ok(super::meta::meta_under(conn, REFUSED_OLDER)?
+        .into_iter()
+        .filter_map(|(key, _)| match key.split_once('/') {
+            Some(("item", id)) => Some((Subject::Item, id.to_string())),
+            Some(("edge", id)) => Some((Subject::Edge, id.to_string())),
+            _ => None,
+        })
+        .collect())
+}
+
 pub(crate) fn forget_refused_older(conn: &Connection) -> Result<(), CoreError> {
     meta_delete_under(conn, REFUSED_OLDER)
 }

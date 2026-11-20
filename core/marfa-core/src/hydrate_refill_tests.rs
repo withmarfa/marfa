@@ -1525,6 +1525,162 @@ fn a_refill_in_place_puts_back_in_the_bin_an_item_the_server_holds_out_of_it() {
 }
 
 #[test]
+fn a_refill_in_place_puts_back_an_edit_the_stream_showed_that_the_server_holds_at_an_earlier_version()
+ {
+    let server = Scripted::start();
+    // The stream showed this device's edit, so its receipt is seen and names
+    // nothing to set aside; the server was then restored to version 1 and
+    // written past the copy's cursor and anchor.
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(
+            core,
+            &[row_as(
+                "kept",
+                2,
+                "kept, edited",
+                "active",
+                "2026-01-01T00:00:00Z",
+            )],
+        );
+    });
+    receipt(&core, "kept", 2, false, true);
+    server.on(
+        "/items/kept",
+        vec![scripted::certified(scripted::json(
+            200,
+            &row("kept", 1, &[]).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("UpdateItem".to_string(), "kept".to_string())],
+        "the copy kept its later row over the server's with nothing queued"
+    );
+    assert_eq!(server.seen("/items/kept").len(), 1);
+    assert_eq!(
+        core.get("kept").unwrap().unwrap().properties["title"],
+        "kept, edited"
+    );
+    assert_eq!(
+        beneath_version(&core, crate::model::Subject::Item, "kept"),
+        Some(1)
+    );
+}
+
+#[test]
+fn a_refill_in_place_puts_back_an_edge_edit_the_stream_showed_that_the_server_holds_at_an_earlier_version()
+ {
+    let server = Scripted::start();
+    let core = aged_out_after(&server, copy(&server), |core| {
+        let mut edge = edge_of("stays", "kept", "changed");
+        edge["version"] = 2.into();
+        edge["properties"] = json!({"note": "edited"});
+        let edge: crate::wire::WireEdge = serde_json::from_value(edge).unwrap();
+        store::put_server_edge(&core.conn().unwrap(), &edge).unwrap();
+    });
+    receipt_of(&core, "edge", "stays", 2, false, true);
+    server.on(
+        "/edges/stays",
+        vec![scripted::certified(scripted::json(
+            200,
+            &json!({"edge": edge_of("stays", "kept", "changed")}).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("UpdateEdge".to_string(), "stays".to_string())],
+        "the copy kept its later edge over the server's with nothing queued"
+    );
+    assert_eq!(server.seen("/edges/stays").len(), 1);
+    assert_eq!(
+        beneath_version(&core, crate::model::Subject::Edge, "stays"),
+        Some(1)
+    );
+}
+
+/// A copy that took `kept` at version 2 from a write's answer while the
+/// refill's page still listed version 1, and a server that now holds
+/// `server_row`.
+fn answered_while_listed(server_row: Value) -> (Scripted, Arc<Core>) {
+    let server = Scripted::start();
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(
+            core,
+            &[row_as(
+                "kept",
+                2,
+                "kept, edited",
+                "active",
+                "2026-01-02T00:00:00Z",
+            )],
+        );
+    });
+    server.on(
+        "/items/kept",
+        vec![scripted::certified(scripted::json(
+            200,
+            &server_row.to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    (server, core)
+}
+
+#[test]
+fn a_write_answered_while_a_refill_lists_its_row_keeps_nothing_where_the_server_holds_it() {
+    let (server, core) = answered_while_listed(row_as(
+        "kept",
+        2,
+        "kept, edited",
+        "active",
+        "2026-01-02T00:00:00Z",
+    ));
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        server.seen("/items/kept").len(),
+        1,
+        "the row refused as older was not read"
+    );
+    assert!(core.queue().unwrap().is_empty());
+    assert_eq!(core.get("kept").unwrap().unwrap().version, 2);
+}
+
+#[test]
+fn a_write_answered_while_a_refill_lists_its_row_takes_the_later_row_the_server_holds() {
+    let (server, core) = answered_while_listed(row_as(
+        "kept",
+        3,
+        "kept, later",
+        "active",
+        "2026-01-03T00:00:00Z",
+    ));
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(server.seen("/items/kept").len(), 1);
+    assert!(core.queue().unwrap().is_empty());
+    let held = core.get("kept").unwrap().unwrap();
+    assert_eq!(
+        (held.version, held.properties["title"].clone()),
+        (3, json!("kept, later")),
+        "the copy kept its row over the later one the server holds"
+    );
+}
+
+#[test]
 fn a_restore_found_in_a_copy_with_nothing_to_set_aside_still_puts_back_a_removal() {
     let server = Scripted::start();
     // Every item the copy holds is read only, so nothing is set aside.

@@ -338,6 +338,10 @@ pub(crate) struct Lost {
     edges: Vec<LostEdge>,
     /// The bytes a kept row names that the cache holds, with their type.
     uploads: Vec<(String, String)>,
+    /// Rows the fill refused as older than the copy's that the server holds
+    /// as the copy does or later, which the copy takes.
+    taken_items: Vec<Item>,
+    taken_edges: Vec<Edge>,
 }
 
 /// The server's row the filled copy holds: the one beneath any writes
@@ -375,6 +379,10 @@ fn server_item(core: &Core, http: &Http, stop: &AtomicBool, id: &str) -> Result<
     if let Some(item) = filled_item(&*core.conn()?, id)? {
         return Ok(Some(item));
     }
+    read_server_item(http, stop, id)
+}
+
+fn read_server_item(http: &Http, stop: &AtomicBool, id: &str) -> Result<Option<Item>> {
     match read_item(http, stop, id)? {
         Some(row) => Ok(Some(Item::from_wire(row.item, row.metadata.tags)?)),
         None => Ok(None),
@@ -385,6 +393,10 @@ fn server_edge(core: &Core, http: &Http, stop: &AtomicBool, id: &str) -> Result<
     if let Some(edge) = filled_edge(&*core.conn()?, id)? {
         return Ok(Some(edge));
     }
+    read_server_edge(http, stop, id)
+}
+
+fn read_server_edge(http: &Http, stop: &AtomicBool, id: &str) -> Result<Option<Edge>> {
     Ok(read_edge(http, stop, id)?.map(|edge| Edge {
         id: edge.id,
         from_id: edge.from_id,
@@ -397,12 +409,85 @@ fn server_edge(core: &Core, http: &Http, stop: &AtomicBool, id: &str) -> Result<
     }))
 }
 
+/// The copy's own row of an item the fill refused as older, as `hold_copy`
+/// would set it aside: `None` where it holds none, a create of it waits, or
+/// the row is read only or `system.*`.
+fn copy_item(conn: &Connection, id: &str) -> Result<Option<Item>> {
+    if !store::untaken_creates_for_item(conn, id)?.is_empty() {
+        return Ok(None);
+    }
+    let Some(held) = store::items_by_ids(conn, std::slice::from_ref(&id.to_string()))?.pop() else {
+        return Ok(None);
+    };
+    if held.read_only || held.r#type.starts_with("system.") {
+        return Ok(None);
+    }
+    Ok(Some(store::beneath_item(conn, id)?.unwrap_or(held)))
+}
+
+/// `copy_item` for an edge.
+fn copy_edge(conn: &Connection, id: &str) -> Result<Option<Edge>> {
+    let Some(held) = store::edge_by_id(conn, id)? else {
+        return Ok(None);
+    };
+    if !store::untaken_create_for_edge(conn, id)?.is_empty()
+        || !store::untaken_creates_for_item(conn, &held.from_id)?.is_empty()
+        || !store::untaken_creates_for_item(conn, &held.to_id)?.is_empty()
+    {
+        return Ok(None);
+    }
+    Ok(Some(store::beneath_edge(conn, id)?.unwrap_or(held)))
+}
+
+fn item_against(held: &Item, server: Option<&Item>) -> Against {
+    against(
+        (held.version, &held.updated_at),
+        server.map(|server| (server.version, server.updated_at.as_str())),
+        server.is_some_and(|server| same_item_fields(held, server)),
+    )
+}
+
+fn edge_against(held: &Edge, server: Option<&Edge>) -> Against {
+    against(
+        (held.version, &held.updated_at),
+        server.map(|server| (server.version, server.updated_at.as_str())),
+        server.is_some_and(|server| same_edge_fields(held, server)),
+    )
+}
+
+/// What the server lost of an item the copy holds, by `against`, where no
+/// create could make `held` again in the bin or `revoked`.
+fn lost_item(lost: &mut Lost, held: Item, server: Option<Item>) {
+    match (item_against(&held, server.as_ref()), server) {
+        (Against::Gone, _) if matches!(held.state, ItemState::Active | ItemState::Archived) => {
+            lost.items.push(LostItem::Create(held));
+        }
+        (Against::Behind, Some(server)) => lost.items.push(LostItem::Update {
+            held,
+            server: Box::new(server),
+        }),
+        _ => {}
+    }
+}
+
+fn lost_edge(lost: &mut Lost, held: Edge, server: Option<Edge>) {
+    match (edge_against(&held, server.as_ref()), server) {
+        (Against::Gone, _) => lost.edges.push(LostEdge::Create(held)),
+        (Against::Behind, Some(server)) => lost.edges.push(LostEdge::Update {
+            held,
+            server: Box::new(server),
+        }),
+        _ => {}
+    }
+}
+
 /// Compares the rows set aside with the filled copy, reading the server for
-/// a row the copy does not hold, and the removals the receipts keep with the
-/// server: every one after a restore, otherwise those no event has shown.
-/// A row whose read says nothing of it (`heard`) is set aside: nothing of
-/// it is kept, and no later comparison reads it. `None` where no restore was
-/// found and no hydration set rows aside to compare.
+/// a row the copy does not hold; each row the fill refused as older with the
+/// server; and the removals the receipts keep with the server: every one
+/// after a restore, otherwise those no event has shown. A row whose read
+/// says nothing of it (`heard`) is set aside: nothing of it is kept, and no
+/// later comparison reads it. `None` where no restore was found, no
+/// hydration set rows aside to compare and the fill refused no row.
 pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Option<Lost>> {
     let (held_items, held_edges, removals, restored) = {
         let conn = core.conn()?;
@@ -421,6 +506,8 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
         items: Vec::new(),
         edges: Vec::new(),
         uploads: Vec::new(),
+        taken_items: Vec::new(),
+        taken_edges: Vec::new(),
     };
     let unheard = |subject: Subject, id: &str| -> Result<()> {
         store::restored::set_aside(&*core.conn()?, subject, id)
@@ -435,37 +522,20 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
             unheard(Subject::Item, &held.id)?;
             continue;
         };
-        let at = server
-            .as_ref()
-            .map(|server| (server.version, server.updated_at.as_str()));
-        let same_fields = server
-            .as_ref()
-            .is_some_and(|server| same_item_fields(&held, server));
-        match against((held.version, &held.updated_at), at, same_fields) {
-            Against::Same => {
-                if let Some(server) = server
-                    && kept_tags(&held) != kept_tags(&server)
-                {
-                    lost.items.push(LostItem::Update {
-                        held,
-                        server: Box::new(server),
-                    });
-                }
-            }
-            Against::Later => {}
-            // Out of the bin and out of `revoked` alone: no create makes a
-            // row in either.
-            Against::Gone if matches!(held.state, ItemState::Active | ItemState::Archived) => {
-                lost.items.push(LostItem::Create(held));
-            }
-            Against::Gone => {}
-            Against::Behind => {
-                let Some(server) = server else { continue };
+        match (item_against(&held, server.as_ref()), server) {
+            (Against::Same, Some(server)) if kept_tags(&held) != kept_tags(&server) => {
                 lost.items.push(LostItem::Update {
                     held,
                     server: Box::new(server),
                 });
             }
+            (Against::Later, Some(server))
+                if store::refused_older(&*core.conn()?, Subject::Item, &held.id)? =>
+            {
+                lost.taken_items.push(server);
+            }
+            (Against::Same | Against::Later, _) => {}
+            (_, server) => lost_item(&mut lost, held, server),
         }
     }
     for held in held_edges {
@@ -477,26 +547,59 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
             unheard(Subject::Edge, &held.id)?;
             continue;
         };
-        let at = server
-            .as_ref()
-            .map(|server| (server.version, server.updated_at.as_str()));
-        let same_fields = server
-            .as_ref()
-            .is_some_and(|server| same_edge_fields(&held, server));
-        match against((held.version, &held.updated_at), at, same_fields) {
-            Against::Same | Against::Later => {}
-            Against::Gone => lost.edges.push(LostEdge::Create(held)),
-            Against::Behind => {
-                let Some(server) = server else { continue };
-                lost.edges.push(LostEdge::Update {
-                    held,
-                    server: Box::new(server),
-                });
+        match (edge_against(&held, server.as_ref()), server) {
+            (Against::Later, Some(server))
+                if store::refused_older(&*core.conn()?, Subject::Edge, &held.id)? =>
+            {
+                lost.taken_edges.push(server);
+            }
+            (Against::Same | Against::Later, _) => {}
+            (_, server) => lost_edge(&mut lost, held, server),
+        }
+    }
+    // A row the fill refused as older than the copy's is judged by the
+    // copy's own row, set aside or not: the stream may have shown the write
+    // that made it before the server went back.
+    let refused = store::refused_older_rows(&*core.conn()?)?;
+    for (subject, id) in refused {
+        if !named.insert((subject, id.clone())) {
+            continue;
+        }
+        match subject {
+            Subject::Item => {
+                let Some(held) = copy_item(&*core.conn()?, &id)? else {
+                    continue;
+                };
+                let Some(server) = heard(read_server_item(http, stop, &id))? else {
+                    unheard(Subject::Item, &id)?;
+                    continue;
+                };
+                match (item_against(&held, server.as_ref()), server) {
+                    (Against::Same | Against::Later, Some(server)) => {
+                        lost.taken_items.push(server);
+                    }
+                    (_, server) => lost_item(&mut lost, held, server),
+                }
+            }
+            Subject::Edge => {
+                let Some(held) = copy_edge(&*core.conn()?, &id)? else {
+                    continue;
+                };
+                let Some(server) = heard(read_server_edge(http, stop, &id))? else {
+                    unheard(Subject::Edge, &id)?;
+                    continue;
+                };
+                match (edge_against(&held, server.as_ref()), server) {
+                    (Against::Same | Against::Later, Some(server)) => {
+                        lost.taken_edges.push(server);
+                    }
+                    (_, server) => lost_edge(&mut lost, held, server),
+                }
             }
         }
     }
-    // A row set aside that the server lost shows a restore, so every removal
-    // is read, as after one found by the stream.
+    // A row the server lost shows a restore, so every removal is read, as
+    // after one found by the stream.
     let went_back = restored || !lost.items.is_empty() || !lost.edges.is_empty();
     for receipt in removals {
         if (receipt.seen && !went_back) || !named.insert((receipt.subject, receipt.id.clone())) {
@@ -596,6 +699,12 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
         store::forget_refused_older(tx)?;
         return store::restored::forget_change_receipts(tx);
     };
+    for item in &lost.taken_items {
+        store::take_server_item(tx, &item.as_wire(), Some(&item.tags), catalog)?;
+    }
+    for edge in &lost.taken_edges {
+        store::take_server_edge(tx, &edge.as_wire())?;
+    }
     let mut kept: Vec<String> = Vec::new();
     let mut uploads: HashMap<String, String> = HashMap::new();
     for (hash, mime_type) in &lost.uploads {
