@@ -238,9 +238,9 @@ When `marfa_change_settings` refuses an app with `insufficient_user_authenticati
 
 ### `mcp/open-world-hint`
 
-When the server lists its tools, the server MUST annotate `marfa_create`, `marfa_manage_webhook`, `marfa_take_backup`, `marfa_maintain`, `marfa_change_settings` and `marfa_update_server` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
+When the server lists its tools, the server MUST annotate `marfa_create`, `marfa_manage_webhook`, `marfa_take_backup`, `marfa_maintain`, `marfa_change_settings`, `marfa_update_server` and `marfa_remove_file_copy` with `openWorldHint` `true` and every other tool with `openWorldHint` `false`.
 
-**Reason:** `marfa_create` fetches a file from a web address the agent gives it, `marfa_manage_webhook` has the instance send events to one, `marfa_take_backup` can upload a backup to an object store, `marfa_maintain` can send the heartbeat, `marfa_change_settings` can set where errors are sent, and `marfa_update_server` downloads a release; a client asks the person differently before a tool that reaches outside the instance.
+**Reason:** `marfa_create` fetches a file from a web address the agent gives it, `marfa_manage_webhook` has the instance send events to one, `marfa_take_backup` can upload a backup to an object store, `marfa_remove_file_copy` asks the other stores for their copies and can delete one from an object store, `marfa_maintain` can send the heartbeat, `marfa_change_settings` can set where errors are sent, and `marfa_update_server` downloads a release; a client asks the person differently before a tool that reaches outside the instance.
 
 **Tests:** `compliance/mcp.test.ts › marks marfa_create as reaching outside the instance and no other tool`, `› marks each tool that can send something outside the instance as reaching outside it, and no other tool`.
 
