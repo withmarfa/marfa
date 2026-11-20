@@ -166,6 +166,7 @@ pub(super) fn stand(
                 updated_at: now,
                 last_used_at: None,
                 withdrawn_at: None,
+                login_after: None,
             },
         )?;
         store::approve_destinations(tx, client, owner_id)?;

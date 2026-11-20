@@ -675,6 +675,8 @@ CREATE TABLE IF NOT EXISTS oauth_consents (
     updated_at TEXT NOT NULL,
     last_used_at TEXT,
     withdrawn_at TEXT,
+    -- A browser session begun before this is too old to authorize the app.
+    login_after TEXT,
     PRIMARY KEY (client_id, owner_id)
 ) STRICT, WITHOUT ROWID;
 

@@ -195,7 +195,8 @@ pub async fn begin(
         let standing = stands_for(app, owner.as_ref(), &asked).await?;
         return Ok(Ok(asked.refused(standing, &problem)));
     }
-    let too_old = reprompt::signed_in_too_long_ago(app, only(&pairs, "max_age"), session);
+    let too_old = reprompt::signed_in_too_long_ago(app, only(&pairs, "max_age"), session)
+        || reprompt::began_before_asked(app, &client.id, session).await?;
     if too_old && reprompt::asks_none(asked.prompt.as_deref()) {
         let standing = stands_for(app, owner.as_ref(), &asked).await?;
         return Ok(Ok(asked.refused(

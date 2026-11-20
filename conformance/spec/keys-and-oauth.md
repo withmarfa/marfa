@@ -3859,9 +3859,9 @@ When an app's access token that holds the permission an act in this section take
 
 ### `keys-and-oauth/step-up-challenge`
 
-If an app's access token that holds the permission an act in this section takes, and whose browser session began more than 900 seconds before the request or after it, sends that act, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `900`.
+If an app's access token that holds the permission an act in this section takes, and whose browser session began more than 900 seconds before the request or after it, sends that act to its API operation, then the server MUST answer `401 insufficient_user_authentication` with `details.max_age` set to `900`.
 
-**Reason:** RFC 9470 section 3: the app sends the person through the authorization endpoint with `max_age`, or asks for a device code with `max_age` (`keys-and-oauth/device-max-age-sign-in`), and asks again with the new token. A session dated after the request is one the server's clock cannot place, so it is not taken as recent.
+**Reason:** RFC 9470 section 3: the app sends the person through the authorization endpoint with `max_age`, or asks for a device code with `max_age` (`keys-and-oauth/device-max-age-sign-in`), and asks again with the new token. A session dated after the request is one the server's clock cannot place, so it is not taken as recent. Through MCP the refusal is a tool error instead (`mcp/settings-step-up-refused`).
 
 **Tests:** `compliance/step-up.test.ts › is challenged at each of the four acts with 401 insufficient_user_authentication and max_age once its owner signed in more than fifteen minutes ago, and changes nothing`, `› acts at exactly fifteen minutes after its owner signed in and is challenged one millisecond later`, `compliance/destination-step-up.test.ts › changes where files and backups go when its owner signed in within fifteen minutes, and is challenged with 401 insufficient_user_authentication and max_age once that was longer ago, changing nothing`.
 

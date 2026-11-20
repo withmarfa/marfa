@@ -231,6 +231,8 @@ pub struct Consent {
     pub updated_at: Stamp,
     pub last_used_at: Option<Stamp>,
     pub withdrawn_at: Option<Stamp>,
+    /// A browser session begun before this is too old to authorize the app.
+    pub login_after: Option<Stamp>,
 }
 
 impl Consent {
@@ -249,7 +251,25 @@ fn consent_of(row: &Row<'_>) -> rusqlite::Result<Consent> {
         updated_at: row.get("updated_at")?,
         last_used_at: row.get("last_used_at")?,
         withdrawn_at: row.get("withdrawn_at")?,
+        login_after: row.get("login_after")?,
     })
+}
+
+/// Has the app's next authorization ask for a browser session begun at or after `at`.
+pub fn ask_login_after(tx: &Connection, client_id: &str, owner_id: &str, at: Stamp) -> Result<()> {
+    tx.execute(
+        "UPDATE oauth_consents SET login_after = ?3 \
+         WHERE client_id = ?1 AND owner_id = ?2 AND withdrawn_at IS NULL",
+        params![client_id, owner_id, at],
+    )?;
+    Ok(())
+}
+
+/// The time a browser session must have begun at or after to authorize the app, if any.
+pub fn login_after(tx: &Connection, client_id: &str, owner_id: &str) -> Result<Option<Stamp>> {
+    Ok(consent(tx, client_id, owner_id)?
+        .filter(Consent::stands)
+        .and_then(|consent| consent.login_after))
 }
 
 pub fn consent(tx: &Connection, client_id: &str, owner_id: &str) -> Result<Option<Consent>> {

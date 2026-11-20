@@ -152,17 +152,57 @@ The server MUST NOT list at any MCP endpoint a tool that revokes an app, ends a 
 
 ### `mcp/settings-step-up-withheld`
 
-If a `marfa_change_settings` call names `sign_in_address`, `allow_private_addresses`, `object_store_bucket`, `object_store_endpoint`, `object_store_region`, `object_store_path_style`, `object_store_prefix` or `backup_path`, then the server MUST answer the call with the tool error code `app_sign_in_required`.
+If a `marfa_change_settings` call names `sign_in_address`, then the server MUST answer the call with the tool error code `app_sign_in_required`, whatever the credential.
 
-**Reason:** the owner changes where people sign in, whether the server reaches private addresses and where it keeps files and backups from the command line or after a recent sign-in, never on a key's say-so. A setting that is not one of these changes through the tool as it does through `PATCH /config`.
+**Reason:** moving the sign-in address ends every browser sign-in and every app's sign-in, the calling agent's own connection included, and a passkey belongs to the address it was made at. The owner moves it from the command line or from an app, then signs in again at the new address.
 
-**Tests:** `compliance/owner-tasks.test.ts › refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes`.
+**Tests:** `compliance/mcp-step-up.test.ts › refuses sign_in_address to an app whose owner signed in just now with app_sign_in_required, and changes nothing`, `compliance/owner-tasks.test.ts › refuses a key each setting that needs a recent sign-in in the settings tool with app_sign_in_required, as the API does, and changes nothing, where a setting that is not one changes`.
 
 ### `mcp/settings-step-up-unchanged`
 
-If a `marfa_change_settings` call names a setting that `mcp/settings-step-up-withheld` lists, then the server MUST NOT change any setting.
+If a `marfa_change_settings` call names `sign_in_address`, then the server MUST NOT change any setting.
 
-**Tests:** `compliance/owner-tasks.test.ts › refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes`.
+**Tests:** `compliance/mcp-step-up.test.ts › refuses sign_in_address to an app whose owner signed in just now with app_sign_in_required, and changes nothing`.
+
+### `mcp/settings-step-up-recent`
+
+When an app's access token whose browser session began within the recent sign-in window of `keys-and-oauth/step-up-recent` calls `marfa_change_settings` to change `allow_private_addresses`, `backup_path` or an `object_store_` setting that says where files go, the server MUST make the change as `PATCH /config` makes it.
+
+**Reason:** the tool is another door to `PATCH /config`, so the same credential may do through it what it may do there.
+
+**Tests:** `compliance/mcp-step-up.test.ts › changes allow_private_addresses and backup_path for an app whose owner signed in within the recent sign-in window`.
+
+### `mcp/settings-step-up-refused`
+
+If an app's access token whose browser session began more than 900 seconds before the call calls `marfa_change_settings` to change `allow_private_addresses`, `backup_path` or an `object_store_` setting that says where files go, then the server MUST answer the tool error code `insufficient_user_authentication` with `details.max_age` set to `900` and change no setting.
+
+**Reason:** the tool answers inside a successful MCP response, so the refusal is a tool error rather than the `401` challenge of `keys-and-oauth/step-up-challenge`, and the agent asks the person to reconnect the app.
+
+**Tests:** `compliance/mcp-step-up.test.ts › refuses an app whose owner signed in longer ago than the recent sign-in window with insufficient_user_authentication and max_age, as the API does, and changes nothing`.
+
+### `mcp/settings-step-up-key`
+
+If an API key calls `marfa_change_settings` to change `allow_private_addresses`, `backup_path` or an `object_store_` setting that says where files go, then the server MUST answer the tool error code `app_sign_in_required` and change no setting.
+
+**Reason:** a key has no sign-in to renew (`keys-and-oauth/step-up-key-refused`).
+
+**Tests:** `compliance/owner-tasks.test.ts › refuses a key each setting that needs a recent sign-in in the settings tool with app_sign_in_required, as the API does, and changes nothing, where a setting that is not one changes`.
+
+### `mcp/settings-step-up-renewal`
+
+When `marfa_change_settings` refuses an app with `insufficient_user_authentication`, the server MUST send to sign in again, before it issues a code or approves a device code for that app, any browser session that began before the refusal.
+
+**Reason:** an MCP client cannot send the person through the authorization endpoint with `max_age`, so the app's own next authorization asks for the new sign-in instead, and the token that follows passes. Nothing clears the mark: a browser session begun after the refusal satisfies it at every endpoint.
+
+**Tests:** `compliance/mcp-step-up.test.ts › sends the browser to sign in again when the refused app reconnects, and the token it then gets changes the setting`, `› sends the browser to sign in again before it approves a device code for the refused app, and the token the code then issues changes the setting`.
+
+### `mcp/settings-step-up-renewal-own`
+
+When `marfa_change_settings` refuses an app with `insufficient_user_authentication`, the server MUST answer another app's authorization as it would have before the refusal.
+
+**Reason:** the refusal marks only the calling app's own consent.
+
+**Tests:** `compliance/mcp-step-up.test.ts › sends the browser to sign in again when the refused app reconnects, and the token it then gets changes the setting`.
 
 ### `mcp/open-world-hint`
 

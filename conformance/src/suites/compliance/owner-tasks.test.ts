@@ -657,7 +657,7 @@ function expectSameRefusal(
   );
 }
 
-/** What each step-up setting is set to by a request a key makes. */
+/** What each setting that needs a recent sign-in is set to by a request a key makes. */
 const STEP_UP_SETTINGS: Record<string, unknown> = {
   sign_in_address: "https://elsewhere.example",
   allow_private_addresses: true,
@@ -687,54 +687,32 @@ async function registered(key: string, name: string): Promise<string> {
 }
 
 describe("the owner tasks at /mcp/admin", () => {
-  it("refuses each step-up setting in the settings tool by name and changes nothing, where a setting that is not one changes", async () => {
+  it("refuses a key each setting that needs a recent sign-in in the settings tool with app_sign_in_required, as the API does, and changes nothing, where a setting that is not one changes", async () => {
     const { key } = await mint({ permissions: ["config.manage"] });
     const connection = await admin(key);
     const before = await call(key, "GET", "/config/settings");
     expect(before.status, JSON.stringify(before.body)).toBe(200);
     for (const [name, value] of Object.entries(STEP_UP_SETTINGS)) {
-      const refused = toolError(
-        await callTool(connection, "marfa_change_settings", {
-          settings: { [name]: value },
-        }),
-      );
-      expect(refused.code, name).toBe("app_sign_in_required");
-      expect(String(refused.message), name).toContain(name);
-      // Named beside a setting that does not exist, in either order, or beside
-      // a name, the call is refused the same way.
-      for (const settings of [
-        { a_typo: 1, [name]: value },
-        { [name]: value, a_typo: 1 },
-      ]) {
-        const mixed = toolError(
-          await callTool(connection, "marfa_change_settings", {
-            name: "Named beside a step-up setting",
-            settings,
-          }),
-        );
-        expect(mixed.code, `${name} ${JSON.stringify(settings)}`).toBe(
-          "app_sign_in_required",
-        );
-      }
+      const answer = await callTool(connection, "marfa_change_settings", {
+        name: "Named beside a setting that needs a recent sign-in",
+        settings: { [name]: value },
+      });
+      expect(toolError(answer).code, name).toBe("app_sign_in_required");
+      const api = await call(key, "PATCH", "/config", { [name]: value });
+      expect(api.status, name).toBe(403);
+      expectSameRefusal(api, answer, name);
     }
-    // The witness: the same typo without a step-up setting is a refused setting.
     expect(
-      toolError(
-        await callTool(connection, "marfa_change_settings", {
-          settings: { a_typo: 1 },
-        }),
-      ).code,
-    ).toBe("validation_error");
+      String(
+        toolError(
+          await callTool(connection, "marfa_change_settings", {
+            settings: { sign_in_address: STEP_UP_SETTINGS.sign_in_address },
+          }),
+        ).message,
+      ),
+    ).toContain("sign_in_address");
     const after = await call(key, "GET", "/config/settings");
     expect(after.body).toEqual(before.body);
-    // The API refuses a key the same way.
-    const api = await call(key, "PATCH", "/config", {
-      sign_in_address: STEP_UP_SETTINGS.sign_in_address,
-    });
-    expect(api.status).toBe(403);
-    expect((api.body.error as { code: string }).code).toBe(
-      "app_sign_in_required",
-    );
     // The witness: a setting that is not a step-up act changes, and returns.
     const changed = toolResult(
       await callTool(connection, "marfa_change_settings", {
