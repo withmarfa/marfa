@@ -91,7 +91,7 @@ it("sends a tag replace on the version it read, and blocks it as a conflict once
     ).toMatchObject({ verdict: "blocked", reason: "conflict_unresolved" });
     expect(await serverTags(quiet.id)).toEqual(["mine"]);
     expect(await serverTags(stale.id)).toEqual(["theirs"]);
-    // The copy keeps what the person wrote, ready to be released.
+    // The copy keeps what the person wrote while the write is blocked.
     expect(value(await device.get(stale.id)).tags).toEqual(["mine"]);
   } finally {
     clear();

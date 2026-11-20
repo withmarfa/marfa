@@ -1014,8 +1014,7 @@ impl Core {
 
     /// `admitted` are the tags the write adds, each held to the server's
     /// bound before anything is saved or queued. A tag replace is based on
-    /// the version of the row as read, with the row recorded, so the server
-    /// refuses it where another writer has changed the item since.
+    /// the version of the row as read, which is recorded with it.
     fn tag_write(
         &self,
         id: &str,

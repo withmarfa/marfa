@@ -109,10 +109,8 @@ pub(super) fn move_edits_behind(
     Ok(())
 }
 
-/// A delete or a tag replace behind `row` is based on the version it read of
-/// the row, and the server refuses it where another writer has moved the row
-/// on. Behind this device's own answered write it moves on to the version
-/// that write made, only where the answer holds all the write read.
+/// A delete or tag replace behind this device's own answered write moves on to
+/// the version that write made, only where the answer holds all it read.
 fn move_versioned_behind(
     conn: &rusqlite::Connection,
     row: &QueuedWrite,

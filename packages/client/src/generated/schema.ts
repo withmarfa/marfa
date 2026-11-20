@@ -14010,7 +14010,10 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTimeoutRefusal"];
                 };
             };
-            /** @description `version_conflict`: `version` differs from the item. `current` is the item now; no tag changed. */
+            /**
+             * @description - `version_conflict`: `version` differs from the item. `current` is the item now; no tag changed.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
