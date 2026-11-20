@@ -672,13 +672,13 @@ When a device writes a document its directory does not hold and the item's `in-f
 
 ### `folder-files/form-empty`
 
-When a device writes a document its directory does not hold, a device MUST write each key that the item's `form` holds as empty, and that the item holds no value for, as an empty key.
+When a device writes a document its directory does not hold, a device MUST write each key that the `form` of the item's `in-folder` edge holds as empty, and that the item holds no value for, as an empty key.
 
 **Tests:** `device/folders-form-live.test.ts › writes each file new to a second directory as the directory that made it wrote it`.
 
 ### `folder-files/form-day`
 
-If the item's `form` writes a date as a day and the item's value is not exactly midnight UTC, then a device MUST write the value's full time.
+If the `form` of the item's `in-folder` edge writes a date as a day, and the item's value is not exactly midnight UTC, then a device MUST write the value's full time.
 
 **Reason:** a day alone is read back as midnight UTC, so writing a later time as a day would change it.
 
