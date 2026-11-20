@@ -1214,6 +1214,7 @@ mod tests {
             code: "x".into(),
             message: String::new(),
             details: None,
+            request_id: None,
         };
         assert!(says_nothing(&CoreError::Decoding("x".into())));
         assert!(says_nothing(&CoreError::Forbidden {
