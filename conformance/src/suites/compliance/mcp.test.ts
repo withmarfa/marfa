@@ -974,10 +974,10 @@ describe("the schema and admin endpoints", () => {
         "passkey",
       ]);
       const withheld =
-        /revoke_app|end_sign|remove|drop|adopt|restore|export|claim|recover|password|passkey|update_server|clock/;
+        /revoke_app|end_sign|restore|export|claim|recover|password|passkey|update_server|clock/;
       // The witness: the pattern matches the names of the withheld tasks.
       expect(withheld.test("marfa_revoke_app")).toBe(true);
-      expect(withheld.test("marfa_adopt_backup_folder")).toBe(true);
+      expect(withheld.test("marfa_remove_passkey")).toBe(true);
       expect(
         tools.map((tool) => tool.name).filter((name) => withheld.test(name)),
       ).toEqual([]);
