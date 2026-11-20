@@ -734,6 +734,37 @@ mod tests {
     }
 
     #[test]
+    fn rows_set_aside_outlast_an_interrupted_fill_and_a_second_hold_and_are_kept_once_whole() {
+        let conn = copy();
+        row(&conn, "a", 1, TEN);
+        row(&conn, "b", 2, TEN);
+        hold_copy(&conn).unwrap();
+        let held = |conn: &Connection| -> Vec<(String, String)> {
+            conn.prepare("SELECT id, body FROM held_rows ORDER BY id")
+                .unwrap()
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap()
+        };
+        let first = held(&conn);
+        assert_eq!(first.len(), 2);
+
+        // A fill that read one page of the server's rows, then stopped.
+        filled(&conn, &[("a", 0, BEFORE)]);
+        conn.execute("UPDATE item_tables SET state = 'filling'", [])
+            .unwrap();
+        let_go_unheld(&conn).unwrap();
+        hold_copy(&conn).unwrap();
+        assert_eq!(held(&conn), first);
+        assert!(kept(&conn).is_empty());
+
+        filled(&conn, &[("a", 0, BEFORE)]);
+        keep_lost(&conn, "item", "steps").unwrap();
+        assert_eq!(kept(&conn)[0].3, json!([put("a", 1), put("b", 2)]));
+    }
+
+    #[test]
     fn a_table_the_server_holds_whole_keeps_nothing() {
         let conn = copy();
         row(&conn, "a", 1, TEN);
