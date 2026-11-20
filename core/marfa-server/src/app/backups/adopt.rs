@@ -78,6 +78,8 @@ pub struct Adopted {
 pub enum Adopting {
     Done(Adopted),
     Halted(Halt),
+    /// Nothing was adopted, but the folder keeps this adopt's claim, as the refusal says.
+    ClaimKept(Refusal),
 }
 
 /// The backup folder now, and whether its files area holds the marker of the store recorded there.
@@ -321,6 +323,7 @@ impl App {
             Adopting::Halted(_) => {
                 return Err(Refusal::internal("an adopt with no confirmation halted"));
             }
+            Adopting::ClaimKept(refusal) => return Err(refusal),
         };
         let forgot = forgot(adopted.backups, adopted.copies);
         let root = &adopted.folder;
@@ -420,7 +423,7 @@ impl App {
             Some(Ok((claim, Ok(fingerprint)))) => (claim, fingerprint),
             Some(Ok((claim, Err(error)))) => {
                 let kept = self.give_up_claim(&folder, claim).await;
-                return Err(with_claim(looked_at_failed(&root, &error), kept));
+                return with_claim(looked_at_failed(&root, &error), kept);
             }
             Some(Err(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 return Err(Refusal::new(
@@ -502,10 +505,10 @@ impl App {
                 let Some(kept) = self.give_up_claim(&folder, claim).await else {
                     return Ok(Adopting::Halted(halt));
                 };
-                return Err(Refusal::new(
+                return Ok(Adopting::ClaimKept(Refusal::new(
                     Code::BlobStoreUnavailable,
-                    format!("What the preview showed has changed, so nothing was adopted. {kept}"),
-                ));
+                    format!("What the preview showed has changed. {kept}"),
+                )));
             }
             Err(refusal) if refusal.commit_failed => {
                 // The record may name the new store or the old: the claim is settled against it.
@@ -517,7 +520,7 @@ impl App {
             }
             Err(refusal) => {
                 let kept = self.give_up_claim(&folder, claim).await;
-                return Err(with_claim(refusal, kept));
+                return with_claim(refusal, kept);
             }
         };
         self.faults.hold(HOLD_STORES_SWAP, None).await;
@@ -608,14 +611,14 @@ impl App {
     }
 }
 
-/// `refusal`, saying what the folder keeps of the adopt's claim.
-fn with_claim(refusal: Refusal, kept: Option<String>) -> Refusal {
+/// `refusal`, or where the folder keeps the adopt's claim, the refusal saying so.
+fn with_claim(refusal: Refusal, kept: Option<String>) -> Result<Adopting> {
     match kept {
-        None => refusal,
-        Some(kept) => Refusal {
+        None => Err(refusal),
+        Some(kept) => Ok(Adopting::ClaimKept(Refusal {
             message: format!("{} {kept}", refusal.message).into(),
             ..refusal
-        },
+        })),
     }
 }
 

@@ -1034,6 +1034,47 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
     expect(adopted).toMatchObject({ adopted: true, marked: true });
   });
 
+  it("answers the refusal, not a stale confirmation, when a confirmation that no longer holds leaves its claim in the folder", async () => {
+    await marked();
+    const file = await fileItem(folder, `left by a claim ${randomUUID()}`);
+    const backup = await ownerOf(folder).runBackup();
+    expect(backup.status, JSON.stringify(backup.error)).toBe(200);
+    const old = await folderStore();
+    await loseTheDisk();
+    const shown = await call(backupsAdmin, ADOPT, {});
+    await folder.setFault("hold:stores-record");
+    const adopting = callTool(backupsAdmin, ADOPT, { confirm: shown.confirm });
+    await folder.waitForHold("hold:stores-record");
+    // What the preview showed changes, and the claim cannot be taken out of the folder.
+    const everything = await everythingClient(folder);
+    const trashed = await everything.deleteItem(file.id);
+    expect(trashed.status, JSON.stringify(trashed.error)).toBe(200);
+    const purged = await everything.purgeItem(file.id);
+    expect(purged.status, JSON.stringify(purged.error)).toBe(200);
+    const pending = join(area(), ".marfa-store.pending");
+    expect(existsSync(pending)).toBe(true);
+    chmodSync(area(), 0o555);
+    let refused: Record<string, unknown>;
+    try {
+      await folder.clearFault("hold:stores-record");
+      refused = toolError(await adopting);
+    } finally {
+      chmodSync(area(), 0o755);
+    }
+    expect(refused.code).not.toBe("confirmation_stale");
+    expect(String(refused.message)).toContain("keeps this adopt's claim");
+    expect((await folderStore()).id).toBe(old.id);
+
+    // The witness: once the folder takes the claim back, a new preview adopts.
+    const again = await waitFor("a preview once the claim is gone", async () => {
+      const looked = await callTool(backupsAdmin, ADOPT, {});
+      return looked.isError ? undefined : toolResult(looked);
+    });
+    expect(existsSync(pending)).toBe(false);
+    const adopted = await call(backupsAdmin, ADOPT, { confirm: again.confirm });
+    expect(adopted).toMatchObject({ adopted: true, marked: true });
+  });
+
   it("answers already done to a call with a confirmation that another call spent while it waited", async () => {
     await marked();
     await loseTheDisk();

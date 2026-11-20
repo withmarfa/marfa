@@ -938,11 +938,19 @@ If the number of file copies, of queued deletions or of failed copies the replac
 
 ### `mcp/adopt-refused-stale`
 
-If a call to `marfa_adopt_backup_folder` carries a `confirm` token that holds and the server refuses the adopt for what the folder or the record holds now, with an outcome it knows, then the server MUST answer the tool error code `confirmation_stale`, with a new preview where the folder can be previewed.
+If a call to `marfa_adopt_backup_folder` carries a `confirm` token that holds and the server refuses the adopt for what the folder or the record holds now, with an outcome it knows and with no claim of the call left in the folder, then the server MUST answer the tool error code `confirmation_stale`, with a new preview where the folder can be previewed.
 
 **Reason:** the stale answer tells the client that this call adopted nothing and that it needs the person to agree to what a new preview shows.
 
 **Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once another store's marker appeared in the files folder since the preview, without a new preview`.
+
+### `mcp/adopt-claim-kept`
+
+If a call to `marfa_adopt_backup_folder` that carries a `confirm` token adopts nothing and leaves the claim it made in the backup folder, then the server MUST answer a tool error code other than `confirmation_stale`, with a message that says the folder keeps the claim.
+
+**Reason:** `confirmation_stale` tells the client that the call changed nothing, and a claim left in the folder is a change the person may need to clear.
+
+**Tests:** `compliance/mcp-file-acts.test.ts › answers the refusal, not a stale confirmation, when a confirmation that no longer holds leaves its claim in the folder`.
 
 ### `mcp/adopt-repeated`
 

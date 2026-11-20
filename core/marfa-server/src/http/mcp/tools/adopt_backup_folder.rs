@@ -227,6 +227,8 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
     match app.adopt_folder(caller, Some(guard.clone())).await {
         Ok(Adopting::Done(adopted)) => Ok(answer(adopted)),
         Ok(Adopting::Halted(halt)) => halted(app, caller, halt).await,
+        // Not stale: this call left its claim in the folder.
+        Ok(Adopting::ClaimKept(refusal)) => Err(refusal.into()),
         Err(refusal) => refused(app, caller, &guard, refusal).await,
     }
 }
