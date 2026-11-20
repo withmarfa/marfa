@@ -5,7 +5,7 @@
 //! any process holds the file open for writing. macOS has no such lease for
 //! an application, so it answers from one look at the open files of every
 //! process this user runs. Processes of root and of other accounts are
-//! outside the look, so a file another account may write answers unknown.
+//! outside the look.
 
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -17,7 +17,7 @@ pub(crate) enum Writers {
     None,
     /// A program holds it open for writing.
     Open,
-    /// The platform, the volume or the file's permissions leave it unknown.
+    /// The platform or the volume leaves it unknown.
     Unknown,
 }
 
@@ -219,12 +219,7 @@ mod darwin {
         if snapshot.writing.contains(&vnode) {
             return Writers::Open;
         }
-        // SAFETY: `geteuid` has no preconditions.
-        let me = unsafe { libc::geteuid() };
-        let others_may_write = metadata.mode() & 0o022 != 0
-            || metadata.uid() != me
-            || marfa_acl::others_may_write_file(file, me).unwrap_or(true);
-        if !snapshot.whole || !snapshot.held.contains(&vnode) || others_may_write || !local(file) {
+        if !snapshot.whole || !snapshot.held.contains(&vnode) || !local(file) {
             return Writers::Unknown;
         }
         Writers::None
@@ -438,14 +433,24 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn a_file_another_account_may_write_answers_unknown() {
+    fn a_file_other_accounts_may_write_answers_none_with_no_writer() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("note.md");
         std::fs::write(&path, "first\n").unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664)).unwrap();
         let read = File::open(&path).unwrap();
-        assert_eq!(Census::default().of(&read), Writers::Unknown);
+        let census = Census::default();
+        assert_eq!(census.of(&read), Writers::None);
+
+        // Witness: the same file, held open for writing, answers open.
+        let writer = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        census.fresh();
+        assert_eq!(census.of(&read), Writers::Open);
+        drop(writer);
     }
 
     #[cfg(target_os = "linux")]
