@@ -1430,10 +1430,14 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
         ));
     }
     if let Some(path) = &report.beneath_waiting {
-        lines.push(format!(
+        let mut line = format!(
             "the folder holds nothing from the server until {} has an item",
             printable(path)
-        ));
+        );
+        if let Some(why) = &report.beneath_waiting_reason {
+            line.push_str(&format!(": {}", printable(why)));
+        }
+        lines.push(line);
     }
     if report.paused.disk + report.paused.pull > 0 {
         lines.push(format!(

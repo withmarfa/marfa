@@ -3061,13 +3061,22 @@ impl Folder {
     }
 
     /// The pass includes pinned members that the credential's source filter hides from listings.
+    /// Beneath a path with no item named yet, only the item of the file the
+    /// path names.
     fn members(&self, settings: &Settings) -> Result<HashSet<String>> {
-        Ok(self
-            .core
-            .held_by(settings)?
-            .into_iter()
-            .map(|item| item.id)
-            .collect())
+        match self.pending_beneath_of(settings)? {
+            beneath::PendingBeneath::No => Ok(self
+                .core
+                .held_by(settings)?
+                .into_iter()
+                .map(|item| item.id)
+                .collect()),
+            beneath::PendingBeneath::Unbound(_) => Ok(HashSet::new()),
+            beneath::PendingBeneath::Bound(named) => {
+                let ids: Vec<String> = named.query.beneath.iter().cloned().collect();
+                self.core.held_among(&named, &ids)
+            }
+        }
     }
 
     fn render(

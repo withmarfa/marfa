@@ -1523,6 +1523,7 @@ pub(in crate::folder) mod tests {
             directories: Vec::new(),
             first_sync: None,
             beneath_waiting: None,
+            beneath_waiting_reason: None,
             sync_paused: false,
             unwatched: 0,
         };

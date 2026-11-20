@@ -11,7 +11,7 @@ use super::{Folder, STATE_DIR, state};
 use crate::directory::{Directory, FileType};
 use crate::error::CoreError;
 use crate::http::ByIdRead;
-use crate::{Result, catch_up};
+use crate::{Result, catch_up, store};
 
 /// What a pass did about a folder narrowed beneath a file of its own.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -39,12 +39,30 @@ pub(super) enum PendingBeneath {
 /// Version conflicts met in a row before a pass leaves the rest to the next.
 const ATTEMPTS: usize = 3;
 
+/// The path and why it still names no item, as the last pass that tried found.
+const META_BENEATH_WAITING: &str = "folder_beneath_waiting";
+
 impl Folder {
     /// The path the query narrows beneath while its file has no item.
     pub fn beneath_waiting(&self) -> Option<String> {
         self.settings()
             .ok()
             .and_then(|settings| settings.pending_beneath().map(str::to_string))
+    }
+
+    /// Why the path the query narrows beneath still names no item, as the
+    /// last pass that tried to name it found.
+    pub fn beneath_waiting_reason(&self) -> Result<Option<String>> {
+        let Some(path) = self.beneath_waiting() else {
+            return Ok(None);
+        };
+        let Some(kept) = store::meta_get(&*self.core.conn()?, META_BENEATH_WAITING)? else {
+            return Ok(None);
+        };
+        let Ok((said, why)) = serde_json::from_str::<(String, String)>(&kept) else {
+            return Ok(None);
+        };
+        Ok(names::same(&said, &path).then_some(why))
     }
 
     pub(super) fn bound_beneath(&self, path: &str) -> Result<Option<state::Bound>> {
@@ -130,8 +148,26 @@ impl Folder {
 
     /// Writes the id of the item the file became in the place of the path in
     /// `query.beneath`, once the server holds it. `None` where the query names
-    /// no path; what stops it is reported and the next pass tries again.
+    /// no path; what stops it is reported, kept for the folder's status, and
+    /// the next pass tries again.
     pub(super) fn resolve_beneath(&self) -> Result<Option<BeneathReport>> {
+        let report = self.name_file_beneath()?;
+        let conn = self.core.conn()?;
+        match report
+            .as_ref()
+            .and_then(|said| Some((&said.path, said.waiting.as_ref()?)))
+        {
+            Some(waiting) => store::meta_set(
+                &conn,
+                META_BENEATH_WAITING,
+                &serde_json::to_string(&waiting)?,
+            )?,
+            None => store::meta_delete(&conn, META_BENEATH_WAITING)?,
+        }
+        Ok(report)
+    }
+
+    fn name_file_beneath(&self) -> Result<Option<BeneathReport>> {
         let Ok(settings) = self.settings() else {
             return Ok(None);
         };
@@ -220,9 +256,16 @@ impl Folder {
                 Err(error) if error.is_environmental() => {
                     return report(None, Some(format!("not sent yet: {error}")));
                 }
+                Err(error @ CoreError::Forbidden { .. }) => {
+                    return report(
+                        None,
+                        Some(format!(
+                            "this key cannot change the folder, which takes write access to `system.folder`: {error}"
+                        )),
+                    );
+                }
                 Err(
-                    error @ (CoreError::Forbidden { .. }
-                    | CoreError::Validation { .. }
+                    error @ (CoreError::Validation { .. }
                     | CoreError::NotFound { .. }
                     | CoreError::Server { .. }),
                 ) => {

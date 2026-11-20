@@ -12,9 +12,16 @@ import { answers, refusal } from "../../device/marfa-answers.js";
 import type { FolderSettings } from "../../device/cli-adapter.js";
 import type { Item, Outcome } from "../../device/protocol.js";
 import type { Answer, RecordedRequest } from "../../device/scripted-server.js";
-import { folderHarness, folderItem, type FolderHarness } from "./harness.js";
+import {
+  KEY,
+  folderHarness,
+  folderItem,
+  scriptFolderItem,
+  type FolderHarness,
+} from "./harness.js";
 import {
   onCaseSensitiveVolume,
+  idIn,
   put,
   scriptFolderWrites,
   sentTitles,
@@ -28,10 +35,13 @@ import {
  */
 
 let harness: FolderHarness | undefined;
+let elsewhere: FolderHarness | undefined;
 
 afterEach(async () => {
   await harness?.stop();
+  await elsewhere?.stop();
   harness = undefined;
+  elsewhere = undefined;
 });
 
 const id = (n: number): string =>
@@ -245,6 +255,99 @@ describe("a folder narrowed beneath a file it holds", () => {
       expect(namingReserved(harness)).toEqual([]);
     },
   );
+
+  it("writes no item another folder on the computer holds while its key cannot name the project, and says why the path waits", async () => {
+    // Another folder on the computer holds every note: an umbrella and the
+    // projects under it.
+    elsewhere = await folderHarness("beneath-file-elsewhere", {
+      items: {
+        "core.note": [
+          note(10, "Umbrella"),
+          note(11, "Sibling"),
+          note(12, "Cousin"),
+        ],
+      },
+      edges: {
+        "parent-of": [parentOf(1, 10, 11), parentOf(2, 10, 12)],
+      },
+    });
+    // Before the item doors, whose read would answer for any id.
+    const folder = scriptFolderItem(elsewhere.server, {
+      query: { types: ["core.note"], beneath: PATH },
+    });
+    scriptFolderWrites(elsewhere);
+    value(await elsewhere.folder.pull());
+    expect(written(elsewhere).sort()).toEqual([
+      "Cousin.md",
+      "Sibling.md",
+      "Umbrella.md",
+    ]);
+
+    // This folder's project is new and names the umbrella as its parent, and
+    // its key reads `system.folder` but cannot write it.
+    harness = await folderHarness("beneath-file-unnamed", {
+      sharing: { server: elsewhere.server, key: KEY },
+      registry: elsewhere.registry,
+      folder,
+      files: {
+        [PATH]: '---\ntitle: Project\nchild-of: "[[Umbrella]]"\n---\nProject\n',
+      },
+    });
+    let writable = false;
+    const sent: Array<Record<string, unknown>> = [];
+    harness.server.answer("PATCH", `/folders/${folder.id}`, (request) => {
+      const body = JSON.parse(request.body) as Record<string, unknown>;
+      sent.push(body);
+      if (!writable)
+        return refusal(
+          403,
+          "type_not_permitted",
+          'Write access to type "system.folder" denied',
+        );
+      const { version: _version, ...settings } = body;
+      folder.settings = { ...folder.settings, ...settings };
+      folder.version += 1;
+      return answers.updated(folderItem(folder));
+    });
+
+    const pushes = [
+      value(await harness.folder.push()),
+      value(await harness.folder.push()),
+    ];
+    expect(sent).toHaveLength(2);
+    // The witness: the umbrella is in this folder's copy, held for the
+    // project's parent line, so a pull could have written it.
+    expect(await heldIds(harness)).toContain(id(10));
+    expect(written(harness)).toEqual(["Projects"]);
+    expect(readdirSync(join(harness.dir, "Projects"))).toEqual(["project.md"]);
+    for (const pushed of pushes) {
+      expect(pushed.beneath?.resolved ?? null).toBeNull();
+      expect(pushed.beneath?.waiting).toContain("system.folder");
+      expect(pushed.beneath?.waiting).toContain("cannot change the folder");
+    }
+    const status = value(await harness.folder.status());
+    expect(status.beneath_waiting).toBe(PATH);
+    expect(status.beneath_waiting_reason).toContain("cannot change the folder");
+    expect(status.beneath_waiting_reason).toContain("system.folder");
+    expect(status.files.map((file) => [file.path, file.status])).toEqual([
+      [PATH, "in_step"],
+    ]);
+
+    // With a key that can write the folder, the path names the project, and
+    // the umbrella above it stays out.
+    writable = true;
+    const named = value(await harness.folder.push());
+    const project = named.beneath?.resolved;
+    expect(project).toBe(idIn(harness, PATH));
+    expect(folder.settings.query).toEqual({
+      types: ["core.note"],
+      beneath: project,
+    });
+    expect(written(harness)).toEqual(["Projects"]);
+    const after = value(await harness.folder.status());
+    expect(after.beneath_waiting).toBeUndefined();
+    expect(after.beneath_waiting_reason).toBeUndefined();
+  });
 
   it("sends the files beneath the project in the pass that names its item, and holds the rest outside the query", async () => {
     const project = "---\ntitle: Project\n---\nProject\n";
