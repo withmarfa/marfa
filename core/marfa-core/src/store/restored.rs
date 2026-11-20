@@ -189,6 +189,20 @@ pub(crate) fn keep_missing(
     Ok(true)
 }
 
+/// Lets go of an edge kept under `keep_missing` whose place a folder line
+/// gives another edge, with what would put it back after a restore: the
+/// line no longer asks for it, and the edge made in its place carries its
+/// properties.
+pub(crate) fn let_go_of_replaced_edge(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    if !server_gave(conn, Subject::Edge, id)? {
+        return Ok(());
+    }
+    super::forget_edge(conn, id)?;
+    conn.prepare_cached("DELETE FROM answer_receipts WHERE subject = ?1 AND id = ?2")?
+        .execute(params![subject_name(Subject::Edge), id])?;
+    Ok(())
+}
+
 /// Whether the copy holds `id` as the server gave it: at a version the
 /// server answered, beneath any writes waiting on it, and with no create of
 /// it waiting to be sent. A row this device removed, or asked to, is not:
@@ -992,6 +1006,27 @@ mod tests {
         keep_missing(&conn, Subject::Item, "given").unwrap();
         receipts_seen(&conn, "item.purged", &event("given", 3)).unwrap();
         assert_eq!(unseen(&conn), vec![]);
+    }
+
+    #[test]
+    fn an_edge_kept_missing_is_let_go_with_its_receipts_once_a_line_replaces_it() {
+        let conn = testing::conn();
+        let given = testing::wire_edge("given", "p", "c", "parent-of");
+        store::upsert_edge(&conn, &given).unwrap();
+        let mut made = testing::wire_edge("made", "p", "d", "parent-of");
+        made.version = 0;
+        store::upsert_edge(&conn, &made).unwrap();
+        assert!(keep_missing(&conn, Subject::Edge, "given").unwrap());
+        // The witness: the edge and its receipt are kept.
+        assert!(store::edge_by_id(&conn, "given").unwrap().is_some());
+        assert_eq!(unseen(&conn), vec![("given".into(), None, false)]);
+
+        let_go_of_replaced_edge(&conn, "given").unwrap();
+        let_go_of_replaced_edge(&conn, "made").unwrap();
+        assert!(store::edge_by_id(&conn, "given").unwrap().is_none());
+        assert_eq!(unseen(&conn), vec![]);
+        // An edge the server never gave is not this one to let go.
+        assert!(store::edge_by_id(&conn, "made").unwrap().is_some());
     }
 
     #[test]
