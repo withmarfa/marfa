@@ -9,8 +9,7 @@ use crate::failure::Failure;
 pub struct Migration {
     pub version: u32,
     pub sql: &'static str,
-    /// For a migration that cannot run twice, such as one that adds a column: a query that
-    /// answers 1 when a file already holds what `sql` makes, so completing a file skips it.
+    /// A query that returns true when an unfinished file already has this migration's changes.
     pub done: Option<&'static str>,
 }
 
@@ -47,7 +46,6 @@ pub enum Standing {
     Behind(u32),
 }
 
-/// Makes every table the migrations make, on a test's own connection.
 #[cfg(test)]
 pub fn make_all(conn: &Connection) -> rusqlite::Result<()> {
     MIGRATIONS
@@ -266,8 +264,6 @@ pub fn upgrade(
     apply(conn, steps, latest(migrations), false)
 }
 
-/// Applies every migration to a new or unfinished file, which holds no rows. A file left
-/// partway may already hold what a migration that cannot run twice makes; that one is skipped.
 pub fn complete(conn: &mut Connection, migrations: &[Migration]) -> Result<(), Unapplied> {
     apply(conn, migrations.iter(), latest(migrations), true)
 }
