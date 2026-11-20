@@ -4870,7 +4870,7 @@ marfa server status [OPTIONS]
 
 Start the server, if it is not running.
 
-A native install stays on the release it runs. A `marfa` of another release is refused, and so is a start after the programs the service runs were replaced in place while an earlier release still runs, as Homebrew and the install script do. `marfa server upgrade` moves the install. A `marfa` of the same release that has moved is named by its new path.
+A native install stays on the release it runs. A `marfa` of another release is refused, and so is a start after the programs the service runs were replaced in place while an earlier release still runs, as Homebrew and the install script do. `marfa server upgrade` moves the install. A `marfa` of the same release at another path is named there while the program the service runs is still in place; once that program is gone, `marfa server upgrade` names the new one.
 
 On a Mac with a Docker install, this starts Docker's engine first if it is down: it is what the login agent runs.
 
