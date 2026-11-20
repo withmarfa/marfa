@@ -199,10 +199,14 @@ pub fn locate(dir: Option<&Path>) -> Result<PathBuf, CliError> {
 /// Whether the install in `dir`, which records `recorded`, is trying a new server of an update
 /// between `recorded` and this `marfa`'s release, which the service already names.
 pub fn trying_update(dir: &Path, recorded: &str) -> bool {
-    record_of(dir).pending().ok().flatten().is_some_and(|pending| {
-        let part = |release: &str| release == pending.from || release == pending.to;
-        part(recorded) && part(OWN)
-    })
+    record_of(dir)
+        .pending()
+        .ok()
+        .flatten()
+        .is_some_and(|pending| {
+            let part = |release: &str| release == pending.from || release == pending.to;
+            part(recorded) && part(OWN)
+        })
 }
 
 /// What `server` says when it will not run on the install's settings and `database`, or `None`

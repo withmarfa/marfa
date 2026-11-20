@@ -1262,8 +1262,17 @@ fn a_docker_upgrade_to_a_release_that_refuses_the_database_puts_the_earlier_rele
     );
     assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.22\n"));
     assert!(answers(rig.port));
-    let ups = rig.log().lines().filter(|line| line.contains(" up ")).count();
-    assert_eq!(ups, 3, "install, the upgrade and the put-back: {}", rig.log());
+    let ups = rig
+        .log()
+        .lines()
+        .filter(|line| line.contains(" up "))
+        .count();
+    assert_eq!(
+        ups,
+        3,
+        "install, the upgrade and the put-back: {}",
+        rig.log()
+    );
 
     // Witness: without the refusal, the same upgrade moves the install.
     fs::remove_file(rig.state.join("refuses-0.0.23")).unwrap();
@@ -3064,7 +3073,10 @@ fn start_and_restart_keep_an_install_on_its_release_and_name_the_command_that_mo
     .unwrap();
     let (code, _, stderr) = rig.marfa(&["start", "--wait-seconds", "5"]);
     assert_eq!(code, 2, "{stderr}");
-    assert!(stderr.contains("0.0.5 is installed and 0.0.0 is older"), "{stderr}");
+    assert!(
+        stderr.contains("0.0.5 is installed and 0.0.0 is older"),
+        "{stderr}"
+    );
     assert_eq!(rig.service_moves_since(calls), Vec::<String>::new());
 
     // Witness: once the command it names has moved the install, both go ahead.
@@ -3170,8 +3182,9 @@ fn a_native_upgrade_to_a_release_that_will_not_open_the_database_changes_nothing
     let (code, _, stderr) = rig.marfa(&["upgrade", "--wait-seconds", "5"]);
     assert_eq!(code, 3, "{stderr}");
     assert!(
-        stderr.contains("0.0.0 will not run on this install's settings and database, so nothing was changed")
-            && stderr.contains("a build this one does not read")
+        stderr.contains(
+            "0.0.0 will not run on this install's settings and database, so nothing was changed"
+        ) && stderr.contains("a build this one does not read")
             && stderr.contains("MARFA_VERSION=0.0.0-before")
             && stderr.contains("marfa export")
             && stderr.contains("marfa restore"),
@@ -3192,7 +3205,10 @@ fn a_native_upgrade_to_a_release_that_will_not_open_the_database_changes_nothing
     fs::remove_file(rig.state.join("cannot-open")).unwrap();
     let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("Upgraded from 0.0.0-before to 0.0.0"), "{stdout}");
+    assert!(
+        stdout.contains("Upgraded from 0.0.0-before to 0.0.0"),
+        "{stdout}"
+    );
     assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.0\n"));
 }
 
