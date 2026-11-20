@@ -125,7 +125,7 @@ socket() {
 }
 
 jq -n --arg password "$(openssl rand -hex 16)" \
-  '{email: "reading@example.com", password: $password}' > "$request"
+  '{username: "reading", password: $password}' > "$request"
 socket "The claim on the private socket" '2[0-9][0-9]' -X POST --data-binary "@$request" http://localhost/_control/setup/claim
 
 jq -n '{label: "reading", source: "reading", permissions: ["instance.maintain"],
