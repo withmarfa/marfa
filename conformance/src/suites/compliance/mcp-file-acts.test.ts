@@ -2,6 +2,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   renameSync,
   writeFileSync,
@@ -781,7 +782,7 @@ describe("marfa_adopt_backup_folder adopts the backup folder", () => {
       confirm: expect.any(String),
     });
     expect(refused.confirm).not.toBe(shown.confirm);
-    expect(markerNow()).toBeUndefined();
+    expect(readdirSync(root)).toEqual([]);
     expect((await folderStore()).id).toBe(old.id);
   });
 

@@ -886,9 +886,9 @@ When `marfa_adopt_backup_folder` adopts the folder and the folder answered, the 
 
 ### `mcp/adopt-changed-folder`
 
-If the backup folder was replaced at its path, or an entry was added, removed or replaced in it, in its `files` folder or in this instance's files folder, other than an entry the operating system or the server makes, since a `marfa_adopt_backup_folder` preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and a new preview with a `confirm` token of its own.
+If the backup folder was replaced at its path, or an entry was added, removed or replaced in it, in its `files` folder or in this instance's files folder, other than an entry the operating system or the server makes, since a `marfa_adopt_backup_folder` preview, then the server MUST refuse the call that confirms it, making nothing in the folder, with the tool error code `confirmation_stale` and a new preview with a `confirm` token of its own.
 
-**Reason:** the person agreed to adopt the folder the preview read, and a disk mounted or swapped in its place since is another folder.
+**Reason:** the person agreed to adopt the folder the preview read, and a disk mounted or swapped in its place since is another folder, which a refused call leaves as it found it.
 
 **Tests:** `compliance/mcp-file-acts.test.ts › refuses a confirmation once another folder took the backup folder's path since the preview, with a new preview`, `› refuses a confirmation once an entry was added to the folder since the preview`.
 

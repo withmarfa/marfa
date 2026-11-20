@@ -239,12 +239,7 @@ impl App {
         }
         self.look_to_adopt(&folder, followed).await?;
         let root = folder.root().display().to_string();
-        let looked = folder.clone();
-        let fingerprint =
-            tokio::time::timeout(self.blobs.check(), blocking(move || looked.fingerprint()))
-                .await
-                .map_err(|_| unanswered(&root, "did not answer in time"))?
-                .map_err(|error| looked_at_failed(&root, &error))?;
+        let fingerprint = self.fingerprint_of(&folder).await?;
         let (caller, at, app) = (caller.clone(), self.clock.stamp(), self.clone());
         let (named, old) = (folder.root().to_path_buf(), folder.files().id().to_string());
         let forgets = self
@@ -282,6 +277,16 @@ impl App {
         .and_then(|joined| joined.ok())
         .flatten();
         Ok(Some(FolderNow { store_id, marked }))
+    }
+
+    /// The backup folder's fingerprint, read without making a folder in it.
+    async fn fingerprint_of(&self, folder: &Arc<Folder>) -> Result<String> {
+        let root = folder.root().display().to_string();
+        let looked = folder.clone();
+        tokio::time::timeout(self.blobs.check(), blocking(move || looked.fingerprint()))
+            .await
+            .map_err(|_| unanswered(&root, "did not answer in time"))?
+            .map_err(|error| looked_at_failed(&root, &error))
     }
 
     /// Judges an adopt's confirmation alone, before the folder is looked at.
@@ -357,6 +362,23 @@ impl App {
         };
         self.look_to_adopt(&folder, followed).await?;
         let root = folder.root().display().to_string();
+        // Holding the folder makes folders in it, which a confirmation that no longer holds
+        // must not leave behind.
+        if let Some(guard) = &guard {
+            let fingerprint = self.fingerprint_of(&folder).await?;
+            let (guard, now) = (guard.clone(), self.clock.instant());
+            let old = folder.files().id().to_string();
+            let halt = self
+                .db
+                .read(move |tx| {
+                    let forgets = forgets(tx, &old, &fingerprint)?;
+                    guard.peek_at(tx, now, Some(&forgets.digest))
+                })
+                .await?;
+            if let Some(halt) = halt {
+                return Ok(Adopting::Halted(halt));
+            }
+        }
         let mut holding = match folder.hold_within(self.blobs.check()).await {
             Some(Ok(holding)) => holding,
             Some(Err(error)) => return Err(looked_at_failed(&root, &error)),
