@@ -496,3 +496,187 @@ fn a_create_let_go_of_while_its_read_back_is_owed_records_nothing() {
         );
     }
 }
+
+/// The copy's create, its answer lost, then its row at 1 from a catch-up.
+fn made_and_lost(
+    server: &crate::scripted::Scripted,
+) -> (tempfile::TempDir, Core, QueuedWrite, String) {
+    let (dir, core) = deleting(server, &[]);
+    let (made, id) = made_here(&core);
+    server.on("/items", vec![crate::scripted::refusal(503, "unavailable")]);
+    core.drain().unwrap();
+    assert_eq!(core.queue().unwrap()[0].verdict, None);
+    caught_up(&core, &server_row(&id, 1, "made here"));
+    assert_eq!(core.get(&id).unwrap().unwrap().version, 1);
+    (dir, core, made, id)
+}
+
+fn queued(core: &Core, id: &str) -> QueuedWrite {
+    store::queued_write(&core.conn().unwrap(), id)
+        .unwrap()
+        .unwrap()
+}
+
+#[test]
+fn an_edit_read_at_version_0_behind_a_dead_create_is_refused_unsent_and_goes_when_it_is_released() {
+    let server = crate::scripted::Scripted::start();
+    let (_dir, core, made, id) = made_and_lost(&server);
+    {
+        let conn = core.conn().unwrap();
+        for _ in 1..store::CEILING {
+            store::count_refusal(&conn, &made.id).unwrap();
+        }
+    }
+    server.on(
+        "/items",
+        vec![crate::scripted::refusal(409, "idempotency_key_in_flight")],
+    );
+    core.drain().unwrap();
+    assert_eq!(queued(&core, &made.id).verdict, Some(Verdict::Dead));
+
+    let edit = core
+        .update_item_as_read(&id, &typed(0))
+        .unwrap_or_else(|error| {
+            panic!("an edit read at version 0 of a dead create was refused: {error}")
+        });
+    assert_eq!(edit.base_version, Some(0));
+    assert_eq!(edit.depends_on, vec![made.id.clone()]);
+    let created = server_row(&id, 1, "made here");
+    server.on(&format!("/items/{id}"), vec![read_answer(&created)]);
+    core.drain().unwrap();
+    assert!(
+        versions_sent(&server, &id).is_empty(),
+        "the edit went out behind a dead create"
+    );
+    let refused = queued(&core, &edit.id);
+    assert_eq!(refused.verdict, Some(Verdict::Refused));
+    assert!(
+        refused
+            .reason
+            .as_deref()
+            .is_some_and(|why| why.contains("dead")),
+        "{:?}",
+        refused.reason
+    );
+    assert!(store::unsent(&core.conn().unwrap(), &edit.id).unwrap());
+    assert_eq!(refused.body["version"], json!(0));
+    assert_eq!(refused.body["properties"]["body"], json!("typed"));
+
+    assert!(core.release(&made.id).unwrap());
+    assert_eq!(
+        queued(&core, &edit.id).verdict,
+        None,
+        "the edit refused for the dead create was not released with it"
+    );
+    server.on(
+        "/items",
+        vec![crate::scripted::json(
+            200,
+            &json!({ "item": created, "acknowledged": false }).to_string(),
+        )],
+    );
+    edit_lands(&server, &id, &created);
+    core.drain().unwrap();
+    assert_eq!(
+        versions_sent(&server, &id),
+        vec![json!(1)],
+        "the released edit went out on a version other than the one its create made"
+    );
+    let held = core.get(&id).unwrap().unwrap();
+    assert_eq!(held.version, 2);
+    assert_eq!(held.properties["body"], json!("typed"));
+}
+
+#[test]
+fn an_edit_read_at_version_0_behind_a_blocked_create_waits_and_is_refused_when_it_is_withdrawn() {
+    let server = crate::scripted::Scripted::start();
+    let (_dir, core, made, id) = made_and_lost(&server);
+    // The create meets the failure in three drains, the first over five
+    // minutes before the third; in the third an edit queued behind it lands
+    // and it meets the failure again, so it is set aside.
+    server.on(
+        "/items",
+        vec![crate::scripted::refusal(503, "unavailable"); 3],
+    );
+    core.drain().unwrap();
+    core.conn()
+        .unwrap()
+        .execute(
+            "UPDATE queue SET environmental_since = environmental_since - 360000 WHERE id = ?1",
+            [&made.id],
+        )
+        .unwrap();
+    let other = server_row("other", 1, "made elsewhere");
+    caught_up(&core, &other);
+    core.update_item("other", &typed(1)).unwrap();
+    let mut merged = other.clone();
+    merged["version"] = json!(2);
+    merged["properties"]["body"] = json!("typed");
+    server.on(
+        "/items/other",
+        vec![
+            crate::scripted::json(
+                200,
+                &json!({ "item": merged, "acknowledged": false }).to_string(),
+            ),
+            read_answer(&merged),
+        ],
+    );
+    core.drain().unwrap();
+    let blocked = queued(&core, &made.id);
+    assert_eq!(
+        (blocked.verdict, blocked.blocked_reason()),
+        (Some(Verdict::Blocked), Some(BlockedReason::FailingAlone))
+    );
+
+    let edit = core
+        .update_item_as_read(&id, &typed(0))
+        .unwrap_or_else(|error| {
+            panic!("an edit read at version 0 of a blocked create was refused: {error}")
+        });
+    assert_eq!(edit.base_version, Some(0));
+    assert_eq!(edit.depends_on, vec![made.id.clone()]);
+    core.drain().unwrap();
+    assert!(
+        versions_sent(&server, &id).is_empty(),
+        "the edit went out behind a blocked create"
+    );
+    let held = queued(&core, &edit.id);
+    assert_eq!(
+        (held.verdict, held.reason.as_deref()),
+        (
+            Some(Verdict::Blocked),
+            Some(crate::model::AWAITING_DEPENDENCY)
+        )
+    );
+
+    let created = server_row(&id, 1, "made here");
+    server.on(
+        &format!("/items/{id}"),
+        vec![read_answer(&created), read_answer(&created)],
+    );
+    assert_eq!(core.withdraw(&made.id).unwrap(), vec![made.id.clone()]);
+    let refused = queued(&core, &edit.id);
+    assert_eq!(refused.verdict, Some(Verdict::Refused));
+    assert!(
+        refused
+            .reason
+            .as_deref()
+            .is_some_and(|why| why.contains("withdrawn")),
+        "{:?}",
+        refused.reason
+    );
+    assert!(store::unsent(&core.conn().unwrap(), &edit.id).unwrap());
+    assert_eq!(refused.body["version"], json!(0));
+    assert_eq!(refused.body["properties"]["body"], json!("typed"));
+    assert!(
+        !core.release(&edit.id).unwrap(),
+        "an edit refused for a withdrawn create was released to wait for nothing"
+    );
+    core.drain().unwrap();
+    assert!(
+        versions_sent(&server, &id).is_empty(),
+        "the edit went out after its create was withdrawn"
+    );
+    assert_eq!(core.get(&id).unwrap().unwrap().version, 1);
+}
