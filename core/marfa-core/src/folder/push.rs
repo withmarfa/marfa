@@ -3,7 +3,7 @@ use super::{
     HashSet, Item, ItemState, Kept, LOCAL_ADMISSION_REFUSAL, Map, Names, Path, Resolver, Result,
     Retitle, Scanned, Settings, Value, blank, bytes_of, bytes_type, carries_frontmatter, document,
     executable, fields, identity, local_admission_refusal, local_properties_refusal, name_of,
-    names, placement, state, title_of,
+    names, placement, pull, state, title_of,
 };
 
 fn named_item(queued: crate::model::QueuedWrite, key: &str) -> Result<String> {
@@ -1014,8 +1014,12 @@ impl Folder {
         };
         let (old_name, new_name) = (name_of(&bound.path), name_of(&file.key));
         let title = fields::title_field(catalog, &held.r#type);
+        let titled = held.properties.get(title).and_then(Value::as_str);
         if old_name != new_name
-            && held.properties.get(title).and_then(Value::as_str) == Some(old_name)
+            && titled.is_some_and(|titled| {
+                titled == old_name
+                    || (!titled.trim().is_empty() && pull::new_name(held, catalog) == old_name)
+            })
         {
             edit.properties
                 .insert(title.into(), Value::String(new_name.into()));

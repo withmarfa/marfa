@@ -284,7 +284,7 @@ When a checked-out document is first bound, a device MUST place its item where t
 
 ### `folder-files/placement-rename-only`
 
-When a file is moved or renamed without a content change, a device MUST send only its placement change, unless it is a Markdown document whose new name is not in step with its title (`folder-documents/rename-title`) or a file item whose title is its old file name.
+When a file is moved or renamed without a content change, a device MUST send only its placement change, unless it is a Markdown document whose new name is not in step with its title (`folder-documents/rename-title`) or a file item whose title is its old file name or the name `folder-documents/file-extension-added` makes from its title.
 
 **Tests:** `device/folders-placement.test.ts › sends only the placement for a move under the same name`, `› sends only the placement for a rename of a document that is not Markdown`.
 
@@ -1509,6 +1509,12 @@ When a nonempty file at an `.html`, `.htm` or `.xhtml` name, in any letter case,
 When the bytes of a bound file item change in a folder, a device MUST queue an upload followed by an item update naming the new bytes regardless of the file’s extension.
 
 **Tests:** `device/folders-placement.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`, `device/folders-placement.test.ts › sends an edited file item named like a document as bytes`.
+
+### `folder-files/binary-title-named`
+
+When a bound file item's file is renamed from the name `folder-documents/file-extension-added` made from its title, a device MUST send the new name, with the extension only where the person typed one, as the item's title.
+
+**Tests:** `device/folders-placement.test.ts › sends a renamed file item's new name as its title, with the extension only where the person typed one`.
 
 ### `folder-files/binary-title-preserved`
 

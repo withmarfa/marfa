@@ -6258,6 +6258,160 @@ describe("a file that is not a document", () => {
     ).toBe("moved.png");
   });
 
+  const receipt = Buffer.from("%PDF-1.4\nboiler receipt\n");
+  const fileRow = (
+    id: string,
+    title: string,
+    mime: string,
+    bytes: Buffer = receipt,
+  ) => ({
+    id,
+    type: "core.file",
+    properties: { title, blob_ref: hashOf(bytes), mime_type: mime },
+  });
+
+  it("names a file item's file with the extension its type needs where its title has none", async () => {
+    const rows = [
+      fileRow(
+        "01a00000-0000-7000-8000-0000000000e1",
+        "Boiler receipt",
+        "application/pdf",
+      ),
+      fileRow(
+        "01a00000-0000-7000-8000-0000000000e2",
+        "Boiler receipt",
+        "application/pdf",
+      ),
+      // A title that already ends in an extension is the name, as it was.
+      fileRow(
+        "01a00000-0000-7000-8000-0000000000e3",
+        "Receipt.pdf",
+        "application/pdf",
+      ),
+      // A type whose extension would make the file a document adds none.
+      fileRow("01a00000-0000-7000-8000-0000000000ea", "Notes", "text/markdown"),
+      // A type with no known extension adds none.
+      fileRow(
+        "01a00000-0000-7000-8000-0000000000e5",
+        "Blob",
+        "application/octet-stream",
+      ),
+    ];
+    harness = await folderHarness("folder-file-extension", {
+      settings,
+      items: { "core.file": rows.map((item) => ({ item })) },
+    });
+    scriptBlob(harness.server, receipt);
+    const edges = new EdgeDoor();
+    scriptFolderWrites(harness, { edges });
+
+    expect((await harness.folder.pull()).ok).toBe(true);
+    const names = readdirSync(harness.dir)
+      .filter((name) => !name.startsWith("."))
+      .sort();
+    expect(
+      names,
+      "a file item's file was named without the extension its type needs, or two items of one title shared a name",
+    ).toEqual([
+      "Blob",
+      "Boiler receipt (2).pdf",
+      "Boiler receipt.pdf",
+      "Notes",
+      "Receipt.pdf",
+    ]);
+    for (const name of names)
+      expect(readFileSync(join(harness.dir, name))).toEqual(receipt);
+
+    // The extension lives in the file's name alone: no title changes, and
+    // no file reads back as a new item.
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentUpdates(harness)).toEqual([]);
+    expect(sentCreates(harness)).toEqual([]);
+    const placed = edges.placements(harness.settings.id);
+    expect(
+      rows.map((row) => placed.get(row.id)).sort(),
+      "a placement did not name the file written",
+    ).toEqual(names.slice().sort());
+  });
+
+  it("names a file item's file the same on every computer, with the extension its type needs", async () => {
+    const id = "01a00000-0000-7000-8000-0000000000e6";
+    const row = fileRow(id, "Boiler receipt", "application/pdf");
+    harness = await folderHarness("folder-file-extension-a", {
+      settings,
+      items: { "core.file": [{ item: row }] },
+    });
+    scriptBlob(harness.server, receipt);
+    scriptFolderWrites(harness, { edges: new EdgeDoor() });
+    second = await folderHarness("folder-file-extension-b", {
+      settings,
+      items: { "core.file": [{ item: row }] },
+    });
+    scriptBlob(second.server, receipt);
+    scriptFolderWrites(second, { edges: new EdgeDoor() });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect((await second.folder.pull()).ok).toBe(true);
+    expect(
+      readdirSync(harness.dir).filter((name) => !name.startsWith(".")),
+    ).toEqual(["Boiler receipt.pdf"]);
+    expect(
+      readdirSync(second.dir).filter((name) => !name.startsWith(".")),
+    ).toEqual(["Boiler receipt.pdf"]);
+  });
+
+  it("sends a renamed file item's new name as its title, with the extension only where the person typed one", async () => {
+    const ids = [
+      "01a00000-0000-7000-8000-0000000000e7",
+      "01a00000-0000-7000-8000-0000000000e8",
+      "01a00000-0000-7000-8000-0000000000e9",
+    ];
+    harness = await folderHarness("folder-file-extension-rename", {
+      settings,
+      items: {
+        "core.file": [
+          { item: fileRow(ids[0], "Boiler receipt", "application/pdf") },
+          { item: fileRow(ids[1], "Warranty", "application/pdf") },
+          { item: fileRow(ids[2], "Manual", "application/pdf") },
+        ],
+      },
+    });
+    scriptBlob(harness.server, receipt);
+    scriptFolderWrites(harness, { edges: new EdgeDoor() });
+    expect((await harness.folder.pull()).ok).toBe(true);
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(sentUpdates(harness)).toEqual([]);
+
+    renameSync(
+      join(harness.dir, "Boiler receipt.pdf"),
+      join(harness.dir, "Receipt 2.pdf"),
+    );
+    renameSync(
+      join(harness.dir, "Warranty.pdf"),
+      join(harness.dir, "Warranty copy"),
+    );
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+    if (!pushed.ok) return;
+    expect(pushed.value.scan.renamed).toBe(2);
+    const titles = new Map(
+      sentUpdates(harness).map((sent) => [
+        sent.id,
+        (sent.body.properties as Record<string, unknown> | undefined)?.title,
+      ]),
+    );
+    expect(
+      titles.get(ids[0]),
+      "a rename to a name with an extension did not become the title",
+    ).toBe("Receipt 2.pdf");
+    expect(
+      titles.get(ids[1]),
+      "a rename to a name with no extension gained the extension the file had",
+    ).toBe("Warranty copy");
+    expect(titles.has(ids[2]), "a file nobody renamed was retitled").toBe(
+      false,
+    );
+  });
+
   it("keeps the file of an item whose new bytes cannot be had", async () => {
     const hash = hashOf(photo);
     const later = Buffer.concat([photo, Buffer.from("later")]);

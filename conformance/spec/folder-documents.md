@@ -256,6 +256,40 @@ When a generated file name has more than 32 bytes from its last dot to its end, 
 
 **Tests:** `device/folders-contract-c.test.ts › keeps a 32-byte extension whole and treats a longer ending as stem when fitting UTF-8 names`.
 
+### `folder-documents/file-extension-added`
+
+When a device makes a file name from the title of a file item whose title, made into a name, has no ending of at most 32 bytes from its last dot to its end, a device MUST end the name with the extension its MIME type is known by.
+
+**Reason:** a file item saved from the command line or an app keeps a readable title, and another app opens the file by its extension. Every device derives the extension from the item's MIME type alone, so two devices name one item alike.
+
+**Tests:** `device/folders-placement.test.ts › names a file item's file with the extension its type needs where its title has none`, `› names a file item's file the same on every computer, with the extension its type needs`.
+
+### `folder-documents/file-extension-unknown`
+
+When a device makes a file name from the title of a file item whose MIME type is known by no extension, a device MUST NOT add an extension to the name.
+
+**Tests:** `device/folders-placement.test.ts › names a file item's file with the extension its type needs where its title has none`.
+
+### `folder-documents/file-extension-document`
+
+When the extension a file item's MIME type is known by is a document's (`.md`, `.markdown` or `.txt`), a device MUST NOT add it to the name made from the item's title.
+
+**Reason:** a file at a document's name is read as a note wherever its binding is lost.
+
+**Tests:** `device/folders-placement.test.ts › names a file item's file with the extension its type needs where its title has none`.
+
+### `folder-documents/file-extension-title`
+
+When a device makes a file name from the title of a file item whose title, made into a name, has an ending of at most 32 bytes from its last dot to its end, a device MUST use that name whatever the item's MIME type.
+
+**Tests:** `device/folders-placement.test.ts › names a file item's file with the extension its type needs where its title has none`.
+
+### `folder-documents/file-extension-not-title`
+
+When a device writes a file item's file under a name that ends in an extension its title lacks, a device MUST NOT change the item's title.
+
+**Tests:** `device/folders-placement.test.ts › names a file item's file with the extension its type needs where its title has none`.
+
 ### `folder-documents/name-comparison`
 
 When a device compares directory paths, file names or titles, a device MUST treat two names as the same name where they are equal after each is put in normalization form NFC, has Unicode full case folding applied with no locale rule, and is put in NFC again.
