@@ -1,6 +1,6 @@
 # The Iconify sets a type's icon may name, each pinned to an npm release and its integrity hash.
 # scripts/icon-sets.sh downloads each tarball, refuses one that does not match, and writes
-# packages/types/generated/icon-set-<prefix>.json from it.
+# core/marfa-rules/icons/icon-set-<prefix>.json from it.
 #
 # To move a set: read the new version's `dist.integrity` with
 # `npm view @iconify-json/<prefix>@<version> dist.integrity`, change its line, run

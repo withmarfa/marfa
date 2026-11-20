@@ -705,7 +705,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Key the server on everything it is built from
         id: key
-        run: echo "key=marfa-rust-server-hooks-$RUNNER_OS-${{ hashFiles('core/Cargo.toml', 'core/Cargo.lock', 'core/.cargo/**', 'core/marfa-server/**', 'core/marfa-rules/**', 'core/marfa-enrichment/**', 'core/marfa-acl/**', 'core/marfa-allocator/**', 'core/marfa-telemetry/**', 'openapi.json', 'packages/types/generated/icon-set-*.json', '.github/actions/native-build-image/**', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=marfa-rust-server-hooks-$RUNNER_OS-${{ hashFiles('core/Cargo.toml', 'core/Cargo.lock', 'core/.cargo/**', 'core/marfa-server/**', 'core/marfa-rules/**', 'core/marfa-enrichment/**', 'core/marfa-acl/**', 'core/marfa-allocator/**', 'core/marfa-telemetry/**', 'openapi.json', '.github/actions/native-build-image/**', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       # Saved by `main` only, and restored for a pull request only, by the
       # exact key: a server a pull request gets was built from these files.
       - name: Restore the server
@@ -787,7 +787,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Key the server on everything it is built from
         id: key
-        run: echo "key=marfa-rust-server-release-$RUNNER_OS-${{ hashFiles('core/Cargo.toml', 'core/Cargo.lock', 'core/.cargo/**', 'core/marfa-server/**', 'core/marfa-rules/**', 'core/marfa-enrichment/**', 'core/marfa-acl/**', 'core/marfa-allocator/**', 'core/marfa-telemetry/**', 'openapi.json', 'packages/types/generated/icon-set-*.json', '.github/actions/native-build-image/**', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=marfa-rust-server-release-$RUNNER_OS-${{ hashFiles('core/Cargo.toml', 'core/Cargo.lock', 'core/.cargo/**', 'core/marfa-server/**', 'core/marfa-rules/**', 'core/marfa-enrichment/**', 'core/marfa-acl/**', 'core/marfa-allocator/**', 'core/marfa-telemetry/**', 'openapi.json', '.github/actions/native-build-image/**', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       # Saved by `main` only, and restored for a pull request only, by the
       # exact key: a server a pull request gets was built from these files.
       - name: Restore the server
@@ -884,12 +884,12 @@ jobs:
       # The CLI and device fixtures drive the `marfa` binary, and the device
       # fixtures the Node module. The keys leave out `core/marfa-server/`,
       # which neither is built from, so a change to the server alone reuses
-      # what `main` built. They add the icon sets, which the rules crate
-      # embeds from outside `core/`: a stale binary is a silent pass.
+      # what `main` built. A stale binary is a silent pass, so the keys hash
+      # every file of `core/` the programs embed.
       - name: Key the device under test
         id: device-key
         if: ${{ matrix.binary }}
-        run: echo "key=marfa-rust-contract-$RUNNER_OS-${{ hashFiles('core/**', '!core/marfa-server/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', 'packages/types/generated/icon-set-*.json', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=marfa-rust-contract-$RUNNER_OS-${{ hashFiles('core/**', '!core/marfa-server/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the device under test
         id: device
         if: ${{ matrix.binary && github.event_name == 'pull_request' }}
@@ -904,7 +904,7 @@ jobs:
       - name: Key the Node module under test
         id: module-key
         if: ${{ matrix.module }}
-        run: echo "key=marfa-rust-contract-module-$RUNNER_OS-${{ hashFiles('core/**', '!core/marfa-server/**', '!core/bindings/swift/**', '!core/bindings/node/test/**', '!core/bindings/node/scripts/**', '!core/bindings/node/node_modules/**', '!core/bindings/node/*.node', '!core/bindings/node/index.js', '!core/bindings/node/index.d.ts', '!core/marfa-cli/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', 'packages/types/generated/icon-set-*.json', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=marfa-rust-contract-module-$RUNNER_OS-${{ hashFiles('core/**', '!core/marfa-server/**', '!core/bindings/swift/**', '!core/bindings/node/test/**', '!core/bindings/node/scripts/**', '!core/bindings/node/node_modules/**', '!core/bindings/node/*.node', '!core/bindings/node/index.js', '!core/bindings/node/index.d.ts', '!core/marfa-cli/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the Node module under test
         id: module
         if: ${{ matrix.module && github.event_name == 'pull_request' }}
@@ -1503,25 +1503,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-        with:
-          dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @withmarfa/types validate
-      - name: Regenerate and check for drift
-        run: |
-          rm -rf packages/types/generated
-          pnpm --filter @withmarfa/types generate
-          if [ -n "$(git status --porcelain packages/types/generated)" ]; then
-            git status --porcelain packages/types/generated
-            echo "Generated type registry is out of date, or holds a file the generator did not write. Run 'pnpm --filter @withmarfa/types generate' and commit."
-            exit 1
-          fi
-      # Keep the existing icon sets for compilation because the rules crate embeds them.
+      # The rules crate writes the shapes' digest from the shipped definitions
+      # and the icon sets from the pinned Iconify releases. It embeds the icon
+      # sets, so they stay in the tree while it builds, and the writer's own
+      # folder is compared with them after.
       - uses: ./.github/actions/rust-toolchain
       - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
         with:
@@ -1532,15 +1517,17 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: The icon sets' writer refuses what it should
         run: scripts/icon-sets.test.sh
-      - name: Write the digest and the icon sets with Rust and check for drift
+      - name: Write the digest with Rust and check for drift
         run: |
-          rm packages/types/shipped-shapes.sha256
+          rm core/marfa-rules/types/shipped-shapes.sha256
           (cd core && MARFA_WRITE_CATALOG=1 cargo nextest run --locked -p marfa-rules the_committed_digest_is)
-          if [ -n "$(git status --porcelain packages/types/shipped-shapes.sha256)" ]; then
-            git status --porcelain packages/types/shipped-shapes.sha256
+          if [ -n "$(git status --porcelain core/marfa-rules/types)" ]; then
+            git status --porcelain core/marfa-rules/types
             echo "The shapes' digest differs from what the Rust writer produces. Run 'MARFA_WRITE_CATALOG=1 cargo nextest run -p marfa-rules builtin::catalog_file' in core and commit."
             exit 1
           fi
+      - name: Write the icon sets with Rust and check for drift
+        run: |
           # A fresh folder, so a set already in the tree cannot stand in for one the Rust writer did not write.
           sets="icon-set-lucide.json icon-set-simple-icons.json"
           fresh="${RUNNER_TEMP}/icon-sets"
@@ -1550,8 +1537,12 @@ jobs:
             echo "The Rust icon writer wrote: $(ls -A "${fresh}")"
             exit 1
           fi
+          if [ "$(ls -A core/marfa-rules/icons)" != "$(printf '%s\n' ${sets})" ]; then
+            echo "core/marfa-rules/icons holds: $(ls -A core/marfa-rules/icons)"
+            exit 1
+          fi
           for set in ${sets}; do
-            git show "HEAD:packages/types/generated/${set}" | cmp - "${fresh}/${set}" || {
+            git show "HEAD:core/marfa-rules/icons/${set}" | cmp - "${fresh}/${set}" || {
               echo "${set} differs from what the Rust icon writer produces. Run 'scripts/icon-sets.sh' and commit."
               exit 1
             }
@@ -1621,12 +1612,11 @@ jobs:
           fi
       - name: Regenerate what the core is built from and check for drift
         run: |
-          rm -f core/marfa-rules/src/contract.rs core/marfa-rules/src/builtin_catalog.json
+          rm -f core/marfa-rules/src/contract.rs
           pnpm run generate:core
-          generated="core/marfa-rules/src/contract.rs core/marfa-rules/src/builtin_catalog.json"
-          if [ -n "$(git status --porcelain $generated)" ]; then
-            git status --porcelain $generated
-            echo "What the core is built from is out of date with openapi.json or the shipped types, or was edited by hand. Run 'pnpm generate' and commit."
+          if [ -n "$(git status --porcelain core/marfa-rules/src/contract.rs)" ]; then
+            git status --porcelain core/marfa-rules/src/contract.rs
+            echo "The core's contract is out of date with openapi.json, or was edited by hand. Run 'pnpm generate' and commit."
             exit 1
           fi
       - uses: ./.github/actions/rust-toolchain

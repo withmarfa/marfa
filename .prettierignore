@@ -2,9 +2,8 @@
 **/node_modules/
 **/coverage/
 # Generated code — shape owned by the codegen, not Prettier.
-packages/types/generated/
 packages/client/src/generated/
-# The types the core carries, written from the registry by the generator.
+# The types the core carries, written by the rules crate.
 core/marfa-rules/src/builtin_catalog.json
 # Auto-generated OpenAPI spec — emitted as JSON from route definitions.
 openapi.json

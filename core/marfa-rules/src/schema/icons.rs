@@ -8,9 +8,8 @@ use serde_json::Value;
 
 use super::{Issue, describe};
 
-const LUCIDE: &str = include_str!("../../../../packages/types/generated/icon-set-lucide.json");
-const SIMPLE_ICONS: &str =
-    include_str!("../../../../packages/types/generated/icon-set-simple-icons.json");
+const LUCIDE: &str = include_str!("../../icons/icon-set-lucide.json");
+const SIMPLE_ICONS: &str = include_str!("../../icons/icon-set-simple-icons.json");
 
 #[derive(Deserialize)]
 struct RawSet {
@@ -98,5 +97,37 @@ mod tests {
         assert!(is_icon_id("simple-icons:github"));
         assert!(!is_icon_id("calendar-days"));
         assert!(!is_icon_id("lucide:no-such-icon"));
+    }
+
+    #[test]
+    fn a_bare_name_stands_for_the_icon_it_names_or_was_renamed_to_and_nothing_else() {
+        assert_eq!(
+            lucide_icon_id("calendar").as_deref(),
+            Some("lucide:calendar")
+        );
+        assert_eq!(lucide_icon_id("bold").as_deref(), Some("lucide:letter-b"));
+        assert_eq!(
+            lucide_icon_id("archive-restore").as_deref(),
+            Some("lucide:archive-arrow-up")
+        );
+        assert_eq!(
+            lucide_icon_id("circle-parking-off").as_deref(),
+            Some("lucide:circle-letter-p-off")
+        );
+        assert_eq!(
+            lucide_icon_id("square-parking-off").as_deref(),
+            Some("lucide:square-letter-p-off")
+        );
+        for name in ["indent", "album", "no-such-icon", "Bold", "toString"] {
+            assert_eq!(lucide_icon_id(name), None, "{name}");
+        }
+        assert!(is_icon_id("lucide:letter-b"));
+        assert!(!is_icon_id("lucide:bold"));
+    }
+
+    #[test]
+    fn the_sets_are_lucide_then_simple_icons() {
+        let prefixes: Vec<&str> = sets().iter().map(|set| set.prefix.as_str()).collect();
+        assert_eq!(prefixes, ["lucide", "simple-icons"]);
     }
 }

@@ -10,6 +10,8 @@ use crate::wire::{WireCatalog, WireType};
 
 #[cfg(test)]
 mod catalog_file;
+#[cfg(test)]
+mod registration_cases;
 
 const CATALOG: &str = include_str!("builtin_catalog.json");
 

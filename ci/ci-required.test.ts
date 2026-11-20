@@ -216,31 +216,33 @@ describe("what a change runs", () => {
     ],
     [
       "a type definition, which the core's catalog is written from and its tests hold to the rules for a registered type",
-      ["packages/types/core/note.json"],
+      ["core/marfa-rules/types/note.json"],
       [
         ...PACKAGES,
         "types-freshness",
         "clients-freshness",
-        "core-checks-linux",
+        "core",
+        ...RUST_LINUX,
       ],
     ],
     [
       "an edge type definition and a system type definition, which the same tests read",
       [
-        "packages/types/core/edges/about.json",
-        "packages/types/core/system/folder.json",
+        "core/marfa-rules/types/edges/about.json",
+        "core/marfa-rules/types/system/folder.json",
       ],
       [
         ...PACKAGES,
         "types-freshness",
         "clients-freshness",
-        "core-checks-linux",
+        "core",
+        ...RUST_LINUX,
       ],
     ],
     [
-      "the types package's source, which the core's tests do not read",
-      ["packages/types/src/index.ts"],
-      [...PACKAGES, "lint", "types-freshness", "clients-freshness"],
+      "the shapes' digest, which the rules crate's tests hold to the definitions",
+      ["core/marfa-rules/types/shipped-shapes.sha256"],
+      ["quick-checks", "types-freshness", "core", ...RUST_LINUX],
     ],
     [
       "the catalog the core carries",
@@ -640,8 +642,8 @@ describe("what a change runs", () => {
     ],
     [
       "Markdown in a generated tree, which its freshness check refuses",
-      ["packages/types/generated/NOTES.md"],
-      [...PACKAGES, "types-freshness", "clients-freshness"],
+      ["packages/client/src/generated/NOTES.md"],
+      ["quick-checks", "workspace", "lint", "clients-freshness"],
     ],
     ["the attributes checkout applies", [".gitattributes"], [...JOBS]],
     [
@@ -703,14 +705,20 @@ describe("what a change runs", () => {
     ],
     [
       "Markdown a test reads as a fixture",
-      ["packages/types/src/fixtures/note.md"],
-      [...PACKAGES, "types-freshness", "clients-freshness"],
+      ["packages/client/src/fixtures/note.md"],
+      ["quick-checks", "workspace", "clients-freshness"],
     ],
     ["a path no rule names", ["tools/new.ts"], [...JOBS]],
     [
       "documentation beside a package change",
-      ["README.md", "conformance/spec/blobs.md", "packages/types/src/x.ts"],
-      [...PACKAGES, "lint", "types-freshness", "clients-freshness"],
+      ["README.md", "conformance/spec/blobs.md", "packages/client/src/x.ts"],
+      [
+        "quick-checks",
+        "workspace",
+        "lint",
+        "conformance-offline",
+        "clients-freshness",
+      ],
     ],
     [
       "Rust beside a client change",
@@ -787,8 +795,8 @@ describe("what a change runs", () => {
     ],
     [
       "an icon set the rules crate embeds",
-      ["packages/types/generated/icon-set-lucide.json"],
-      [...PACKAGES, "lint", "types-freshness", "clients-freshness", ...RUST],
+      ["core/marfa-rules/icons/icon-set-lucide.json"],
+      [...PACKAGES, "types-freshness", "clients-freshness", ...RUST],
     ],
     [
       "the score script",
@@ -810,9 +818,9 @@ describe("what a change runs", () => {
     expect(runs(paths)).toEqual(JOBS.filter((job) => expected.includes(job)));
   });
 
-  it("leaves the Rust contract jobs out of a change to a package but for the files the Rust server embeds", () => {
+  it("leaves the Rust contract jobs out of a change to a package, and runs them for an icon set the rules crate embeds", () => {
     const embedded = tracked().filter((path) =>
-      /^packages\/types\/generated\/icon-set-[\w-]+\.json$/.test(path),
+      /^core\/marfa-rules\/icons\/icon-set-[\w-]+\.json$/.test(path),
     );
     // The witness: there are icon sets, and a change to one reaches the jobs.
     expect(embedded.length).toBeGreaterThan(0);
@@ -821,9 +829,7 @@ describe("what a change runs", () => {
         expect.arrayContaining(CONTRACT_SHARDS),
       );
     }
-    const packages = tracked().filter(
-      (path) => path.startsWith("packages/") && !embedded.includes(path),
-    );
+    const packages = tracked().filter((path) => path.startsWith("packages/"));
     expect(packages.length).toBeGreaterThan(0);
     for (const path of packages) {
       for (const shard of CONTRACT_SHARDS) {
@@ -881,7 +887,7 @@ describe("what a change runs", () => {
       [...affected(path)].filter((job) => job !== "quick-checks");
     // The rule fixtures and generated trees fall through on purpose.
     const docs = RULES.find(([pattern]) => pattern.test("README.md"))?.[0];
-    expect(docs?.test("packages/types/src/fixtures/note.md")).toBe(false);
+    expect(docs?.test("packages/client/src/fixtures/note.md")).toBe(false);
     // The witnesses: the contract and a package's README reach a job.
     expect(beyond("conformance/spec/items.md")).toEqual([
       "workspace",
@@ -932,7 +938,7 @@ describe("what a change runs", () => {
     }
     for (const paths of [
       [],
-      ["AGENTS.md", "packages/types/src/runtime.ts"],
+      ["AGENTS.md", "packages/client/src/runtime.ts"],
       ["packages/client/README.md"],
       ["core/marfa-cli/COMMANDS.md"],
       ["core/TELEMETRY.md"],
@@ -1260,11 +1266,10 @@ describe("what a draft runs", () => {
       "workspace",
       "lint",
     ]);
-    const types = forDraft(classify(["packages/types/src/runtime.ts"]));
+    const types = forDraft(classify(["core/marfa-rules/types/note.json"]));
     expect(JOBS.filter((job) => types[job])).toEqual([
       "quick-checks",
       "workspace",
-      "lint",
       "types-freshness",
     ]);
     const swift = forDraft(classify(["core/bindings/swift/build.sh"]));
@@ -1585,7 +1590,7 @@ describe("CodeQL", () => {
       ".github/workflows/ci.yml",
       ".agents/skills/release/helper.ts",
       ".githooks/check.mjs",
-      "packages/types/src/runtime.ts",
+      "packages/client/src/runtime.ts",
       "core/marfa-core/src/lib.rs",
       "core/Cargo.toml",
       "openapi.json",
@@ -1836,12 +1841,10 @@ describe("what a job reads reaches it", () => {
       const embedded = embeddedOutsideCore((path) =>
         crates.some((crate) => path.startsWith(`core/${crate}/`)),
       );
-      // The witness: the rules crate embeds the icon sets, which the
-      // program is not built without, and the key has no way to see them in
-      // `core/`.
-      expect(embedded, id).toContain(
-        "packages/types/generated/icon-set-lucide.json",
-      );
+      // The witness: the scan finds a file outside `core/` that a crate
+      // embeds, so an empty list for these programs is a fact and not
+      // blindness.
+      expect(embeddedOutsideCore(() => true)).toContain("openapi.json");
       expect(
         embedded.filter((path) => !hashes(globs, path)),
         `${id} leaves out a file the program embeds`,
@@ -2268,13 +2271,13 @@ describe("the classifier as CI runs it", () => {
     git("config", "user.name", "CI Fixture");
     git("config", "commit.gpgsign", "false");
     commit("base", {
-      "packages/types/src/runtime.ts": "export const v = 1;\n",
+      "packages/client/src/runtime.ts": "export const v = 1;\n",
     });
     commit("docs", { "deploy/README.md": "Words\n" });
     commit("server", {
-      "packages/types/src/runtime.ts": "export const v = 2;\n",
+      "packages/client/src/runtime.ts": "export const v = 2;\n",
     });
-    git("mv", "packages/types/src/runtime.ts", "packages/types/README.md");
+    git("mv", "packages/client/src/runtime.ts", "packages/client/README.md");
     git("commit", "-qm", "rename");
     commits.rename = git("rev-parse", "HEAD");
     commit("instructions", {
@@ -2399,7 +2402,7 @@ describe("the classifier as CI runs it", () => {
     );
     expect(JOBS.filter((job) => server[job] === "true")).toEqual(
       JOBS.filter((job) =>
-        [...PACKAGES, "lint", "types-freshness", "clients-freshness"].includes(
+        ["quick-checks", "workspace", "lint", "clients-freshness"].includes(
           job,
         ),
       ),
@@ -2611,12 +2614,7 @@ describe("the classifier as CI runs it", () => {
       commits.server ?? "",
       true,
     );
-    expect(quick(server)).toEqual([
-      "quick-checks",
-      "workspace",
-      "lint",
-      "types-freshness",
-    ]);
+    expect(quick(server)).toEqual(["quick-checks", "workspace", "lint"]);
     expect(server.full).toBe("false");
     // Documentation names no quick job but the format check, which `Quick checks`
     // runs for every change.
@@ -2636,7 +2634,7 @@ describe("the classifier as CI runs it", () => {
     );
     expect(quick(ready)).toEqual(
       JOBS.filter((job) =>
-        [...PACKAGES, "lint", "types-freshness", "clients-freshness"].includes(
+        ["quick-checks", "workspace", "lint", "clients-freshness"].includes(
           job,
         ),
       ),
@@ -2659,7 +2657,7 @@ describe("the classifier as CI runs it", () => {
       commits.rename ?? "",
     );
     expect(renamed.workspace).toBe("true");
-    expect(renamed["conformance-offline"]).toBe("true");
+    expect(renamed["clients-freshness"]).toBe("true");
   });
 
   it("runs every job when the diff cannot be read or is empty", () => {

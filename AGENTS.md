@@ -1,6 +1,6 @@
 # Marfa
 
-Marfa's server, the Rust core every native client embeds and the `marfa` command line, all under `core/`, and the contract they are held to, under `conformance/`. `packages/` holds the TypeScript client and the shipped type definitions. The Swift SDK lives in `withmarfa/marfa-swift`.
+Marfa's server, the Rust core every native client embeds and the `marfa` command line, all under `core/`, and the contract they are held to, under `conformance/`. `packages/` holds the TypeScript client. The Swift SDK lives in `withmarfa/marfa-swift`.
 
 ## What Marfa promises its owner
 
@@ -20,7 +20,7 @@ Read the file for an area before you work there. Your tool may not load it for y
 - **`conformance/`:** `conformance/AGENTS.md`. Before you write a contract statement, `conformance/spec/README.md`.
 - **`.github/`, `ci/` or `scripts/ci-required.ts`:** `.github/AGENTS.md`.
 - **Text in `openapi.json`:** `API-STYLE.md`.
-- **A shipped type:** `packages/types/README.md`.
+- **A shipped type:** `core/marfa-rules/types/README.md`.
 - **Procedures are skills** in `.agents/skills/`: `release`, `land-a-pull-request`, `local-server`, `run-the-contract`, `move-pdfium`.
 
 ## Working here

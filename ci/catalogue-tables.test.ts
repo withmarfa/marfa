@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   catalogueTables,
   permissionNames,
+  shippedCatalog,
   webhookEvents,
 } from "../conformance/scripts/catalogue-sources.js";
 import {
@@ -10,11 +11,6 @@ import {
   CATALOGUE_CHAPTER,
   withTable,
 } from "../conformance/src/utils/catalogue-tables.js";
-import {
-  ALL_EDGE_TYPES,
-  ALL_SYSTEM_TYPES,
-  ALL_TYPES,
-} from "../packages/types/src/index.js";
 
 const chapter = (name: (typeof CATALOGUES)[number]) =>
   readFileSync(
@@ -25,9 +21,10 @@ const chapter = (name: (typeof CATALOGUES)[number]) =>
 /**
  * The contract's catalogues are written from the server's own definitions by
  * `conformance/scripts/catalogue-tables.ts`: the shipped types and edge types
- * in `packages/types`, and the permission list, the event names in the webhook
- * vocabulary and the stream's frame schema in `openapi.json`. A definition added, removed or changed changes its table, so one
- * that was not rewritten is stale in the contract. Compared as text, because
+ * in the rules crate's `builtin_catalog.json`, and the permission list, the
+ * event names in the webhook vocabulary and the stream's frame schema in
+ * `openapi.json`. A definition added, removed or changed changes its table, so
+ * one that was not rewritten is stale in the contract. Compared as text, because
  * the table is text a reader sees.
  */
 describe("the catalogues in the contract", () => {
@@ -45,13 +42,18 @@ describe("the catalogues in the contract", () => {
 
   it("list every definition they are written from, so the comparisons above cannot pass on an empty table", () => {
     const rows = (name: (typeof CATALOGUES)[number]) => chapter(name);
-    expect(ALL_TYPES.length).toBeGreaterThan(15);
-    expect(ALL_SYSTEM_TYPES.length).toBeGreaterThan(0);
-    for (const { id } of [...ALL_TYPES, ...ALL_SYSTEM_TYPES]) {
+    const { types, edgeTypes } = shippedCatalog();
+    expect(
+      types.filter(({ id }) => !id.startsWith("system.")).length,
+    ).toBeGreaterThan(15);
+    expect(
+      types.filter(({ id }) => id.startsWith("system.")).length,
+    ).toBeGreaterThan(0);
+    for (const { id } of types) {
       expect(rows("types"), id).toContain(`| \`${id}\` `);
     }
-    expect(ALL_EDGE_TYPES.length).toBe(11);
-    for (const { id } of ALL_EDGE_TYPES) {
+    expect(edgeTypes.length).toBe(11);
+    for (const { id } of edgeTypes) {
       expect(rows("edge-types"), id).toContain(`| \`${id}\` `);
     }
     const permissions = permissionNames();

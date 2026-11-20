@@ -1,11 +1,11 @@
 /**
  * Binds this suite's fixture type identifiers to the platform type registry.
  *
- * `packages/types` is read here as a spec artifact rather than as an
- * implementation: the only thing taken from it is `ALL_TYPE_IDS`, the list of
- * shipped type identifiers. Nothing else in `src/generators/` or `src/suites/`
- * imports it, so the suite still exercises a server over HTTP alone and the
- * no-implementation-imports rule stands.
+ * The rules crate's `builtin_catalog.json` is read here as a spec artifact
+ * rather than as an implementation: the only thing taken from it is the list
+ * of shipped type identifiers. Nothing else in `src/generators/` or
+ * `src/suites/` reads it, so the suite still exercises a server over HTTP alone
+ * and the no-implementation-imports rule stands.
  *
  * A commit that changes the shipped types and leaves a fixture behind reddens
  * in its own pull request rather than as a puzzling `unknown_type` from a
@@ -13,10 +13,22 @@
  * `test:generators`.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { ALL_TYPE_IDS } from "../../../packages/types/src/index.js";
 import * as itemGenerators from "./items.js";
 import { PROFILES } from "../suites/load/profiles.js";
+
+const ALL_TYPE_IDS: string[] = (
+  JSON.parse(
+    readFileSync(
+      new URL(
+        "../../../core/marfa-rules/src/builtin_catalog.json",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+  ) as { types: { id: string }[] }
+).types.map(({ id }) => id);
 
 const REGISTERED = new Set<string>(ALL_TYPE_IDS);
 

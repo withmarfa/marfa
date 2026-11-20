@@ -206,4 +206,127 @@ mod tests {
             assert!(COLUMN_KEYS.contains(&key), "{key}");
         }
     }
+
+    /// Whether registration reads `key`: some value of it is refused where it is, or it is stored back as written.
+    fn is_read(
+        build: impl Fn(Value) -> Value,
+        at: &str,
+        held: impl Fn(&Obj) -> Option<Value>,
+    ) -> bool {
+        use serde_json::json;
+        let registry = super::super::Registry::default();
+        let key = at.rsplit('.').next().unwrap_or(at);
+        [
+            json!(7),
+            json!(["a"]),
+            json!("a"),
+            json!({"a": 1}),
+            json!(true),
+        ]
+        .into_iter()
+        .any(
+            |value| match super::super::validate_type(&build(value.clone()), &registry) {
+                Err(issues) => issues
+                    .iter()
+                    .filter(|issue| !issue.actual.starts_with("an unread key"))
+                    .any(|issue| issue.field == at || issue.field.starts_with(&format!("{at}."))),
+                Ok(stored) => held(&stored).is_some_and(|holder| holder.get(key) == Some(&value)),
+            },
+        )
+    }
+
+    #[test]
+    fn every_key_the_lists_name_is_read_by_registration() {
+        use serde_json::json;
+        // The witness: a key nothing reads is neither refused for its value nor stored back.
+        let invented = |value: Value| {
+            let mut input = json!({"id": "user.t", "fields": {"title": {"type": "string"}}});
+            input["invented_key"] = value;
+            input
+        };
+        assert!(!is_read(invented, "invented_key", |stored| Some(
+            Value::Object(stored.clone())
+        )));
+        for key in TYPE_KEYS {
+            let build = |value: Value| {
+                let mut input = json!({"id": "user.t", "fields": {"title": {"type": "string"}}});
+                input[key] = value;
+                input
+            };
+            assert!(
+                is_read(build, key, |stored| Some(Value::Object(stored.clone()))),
+                "type key {key} is listed and not read"
+            );
+        }
+        for key in FIELD_KEYS {
+            let build = |value: Value| {
+                let mut field = json!({"type": "string"});
+                field[key] = value;
+                json!({"id": "user.t", "fields": {"title": field}})
+            };
+            assert!(
+                is_read(build, &format!("fields.title.{key}"), |stored| {
+                    stored["fields"].get("title").cloned()
+                }),
+                "field key {key} is listed and not read"
+            );
+        }
+        for (holder, keys) in [
+            ("display_hints", &HINT_KEYS[..]),
+            ("version_policy", &VERSION_KEYS[..]),
+            ("merge_policy", &MERGE_KEYS[..]),
+            ("retention_policy", &RETENTION_KEYS[..]),
+        ] {
+            for key in keys {
+                let build = |value: Value| json!({"id": "user.t", "fields": {"title": {"type": "string"}}, holder: {*key: value}});
+                assert!(
+                    is_read(build, &format!("{holder}.{key}"), |stored| stored
+                        .get(holder)
+                        .cloned()),
+                    "{holder} key {key} is listed and not read"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_key_the_edge_lists_name_is_read_by_registration() {
+        use serde_json::json;
+        let values = [
+            json!(7),
+            json!(["a"]),
+            json!("a"),
+            json!({"a": 1}),
+            json!(true),
+        ];
+        let refused = |body: Value| {
+            let body = body.as_object().cloned().unwrap_or_default();
+            super::super::request_shape(&body).is_err()
+                || super::super::edge_type_from_request(&body, &|_| None).is_err()
+        };
+        for key in EDGE_KEYS {
+            assert!(
+                values.iter().any(|value| {
+                    let mut body =
+                        json!({"id": "cites", "label": "L", "cardinality": "many-to-many"});
+                    body[key] = value.clone();
+                    refused(body)
+                }),
+                "edge key {key} is listed and not read"
+            );
+        }
+        for key in EDGE_PROPERTY_KEYS {
+            assert!(
+                values.iter().any(|value| {
+                    let mut property = json!({"type": "string"});
+                    property[key] = value.clone();
+                    refused(
+                        json!({"id": "cites", "label": "L", "cardinality": "many-to-many",
+                                   "property_schema": {"weight": property}}),
+                    )
+                }),
+                "edge property key {key} is listed and not read"
+            );
+        }
+    }
 }

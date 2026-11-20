@@ -39,7 +39,7 @@ const LARGEST_WHOLE: f64 = 9_007_199_254_740_991.0;
 pub(super) type Source = (String, Obj);
 
 pub(super) fn definitions() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/types/core")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("types")
 }
 
 pub(super) fn catalog_path() -> PathBuf {
@@ -47,7 +47,7 @@ pub(super) fn catalog_path() -> PathBuf {
 }
 
 pub(super) fn digest_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/types/shipped-shapes.sha256")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("types/shipped-shapes.sha256")
 }
 
 /// Holds each number as JavaScript would read it: a whole number up to 2^53 stays whole, and a larger one is the double JavaScript reads it as.
@@ -197,8 +197,20 @@ pub(super) fn register_types(types: &[Source]) -> Result<Vec<Registered>, Vec<St
     let mut registry = Registry::default();
     let mut refused: Vec<String> = Vec::new();
     let mut held: HashMap<String, Registered> = HashMap::new();
+    let ids: BTreeSet<&str> = types
+        .iter()
+        .filter_map(|(_, row)| row.get("id").and_then(Value::as_str))
+        .collect();
     for (file, row) in ordered {
         let id = id_of(file, row).map_err(|e| vec![e])?;
+        if let Some(parent) = row.get("parent").and_then(Value::as_str)
+            && !ids.contains(parent)
+        {
+            refused.push(format!(
+                "{file}: {id}: parent: {parent} is not a shipped type"
+            ));
+            continue;
+        }
         let stored =
             match validate_type(&Value::Object(row.clone()), &registry) {
                 Ok(stored) => stored,

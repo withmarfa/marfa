@@ -17,11 +17,11 @@ const RESTORED: &str = "restored:";
 const ICON_SETS: [(&str, &str); 2] = [
     (
         "lucide",
-        include_str!("../../../../packages/types/generated/icon-set-lucide.json"),
+        include_str!("../../../marfa-rules/icons/icon-set-lucide.json"),
     ),
     (
         "simple-icons",
-        include_str!("../../../../packages/types/generated/icon-set-simple-icons.json"),
+        include_str!("../../../marfa-rules/icons/icon-set-simple-icons.json"),
     ),
 ];
 
