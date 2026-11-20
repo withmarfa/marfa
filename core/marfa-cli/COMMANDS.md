@@ -4451,7 +4451,7 @@ marfa folders add [OPTIONS] --folder <ID_OR_TITLE> <DIR>
 
 ### marfa folders list
 
-List the directories on this machine that follow a folder, as its registry holds them. The registry is the file MARFA_FOLDER_REGISTRY names, where it names one. With --json, each entry has `dir`, `folder`, and where the registry records them, `store` and `root`. `root` is an opaque value that identifies the directory as it was opened: compare it for equality and do not parse it.
+List the directories on this machine that follow a folder, as its registry holds them. The registry is the file MARFA_FOLDER_REGISTRY names, where it names one. With --json, each entry has `dir`, `folder`, `paused` (whether its sync is paused with `folders pause`), and where the registry records them, `store` and `root`. `root` is an opaque value that identifies the directory as it was opened: compare it for equality and do not parse it.
 
 ```text
 marfa folders list [OPTIONS]
@@ -4506,6 +4506,30 @@ marfa folders health [OPTIONS] <ID>
 | Argument | Description |
 | --- | --- |
 | `<ID>` | The folder's `system.folder` id. |
+
+### marfa folders pause
+
+Pause a directory's sync until `folders resume`. A watch, of one directory or of every one, skips a paused directory, and `folders push` and `folders pull` refuse it. The pause is kept in the directory's own state on this computer, so it lasts through a restart of the watch and of the computer, and nothing in the directory or in its saved state changes. A watch that holds the directory lets it go to this command. Pausing a directory that is paused changes nothing and says so.
+
+```text
+marfa folders pause [OPTIONS] <DIR>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<DIR>` | The directory. |
+
+### marfa folders resume
+
+Let a paused directory's sync go on. A watch picks the directory up again, and the next sync sends what changed in it and pulls what changed on the server, as a watch that starts again does; conflicts are handled as they are then. Resuming a directory that is not paused changes nothing and says so.
+
+```text
+marfa folders resume [OPTIONS] <DIR>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<DIR>` | The directory. |
 
 ### marfa folders confirm
 
