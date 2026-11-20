@@ -34,7 +34,7 @@ const WAIT = { timeout: 30_000, interval: 50 };
 /** More reaches of a gate than any bounded retry makes. */
 const REACHES_MOST = 40;
 const ALL = 1_000_000;
-const BUSY_NOTICE = "another program kept writing to the folder's store";
+const BUSY_NOTICE = "another program kept writing to the directory's saved state";
 
 let client: MarfaClient;
 let ctx: TestContext;
