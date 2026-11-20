@@ -444,6 +444,75 @@ fn edge_deleted(server: &Scripted, dir: &Path) -> Arc<Core> {
 }
 
 #[test]
+fn an_edge_the_server_gave_and_misses_after_a_refused_edit_is_kept_until_its_deleted_event() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = following(&server, dir.path());
+    let at = "2026-01-01T00:00:00Z";
+    server.on(
+        "/events",
+        vec![replay(&[
+            (
+                "11",
+                "item.created",
+                item_event("item.created", row("source", 1, "active", "source", at)),
+            ),
+            (
+                "12",
+                "edge.created",
+                edge_event("edge.created", edge("link", "source", "target", 1)),
+            ),
+        ])],
+    );
+    core.catch_up().unwrap();
+    let mut properties = serde_json::Map::new();
+    properties.insert("note".into(), "edited".into());
+    core.update_edge(
+        "link",
+        &crate::model::EdgeEdit {
+            properties,
+            base_version: Some(1),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    server.on(
+        "/edges/link",
+        vec![
+            scripted::refusal(404, "edge_not_found"),
+            certified(scripted::refusal(404, "edge_not_found")),
+        ],
+    );
+    let report = core.drain().unwrap();
+    assert_eq!(report.verdicts[0].verdict, Some(crate::Verdict::Refused));
+    assert!(
+        edge_held(&core, "link"),
+        "the edge was let go on a 404 alone"
+    );
+    let unseen = || {
+        store::restored::unseen_receipts(&core.conn().unwrap(), i64::MAX)
+            .unwrap()
+            .into_iter()
+            .map(|receipt| receipt.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(unseen(), ["link"]);
+    // The stream shows the edge deleted, and the copy lets it go with no
+    // sign of a restore.
+    server.on(
+        "/events",
+        vec![replay(&[(
+            "13",
+            "edge.deleted",
+            edge_event("edge.deleted", edge("link", "source", "target", 1)),
+        )])],
+    );
+    core.catch_up().unwrap();
+    assert!(!edge_held(&core, "link"));
+    assert!(unseen().is_empty());
+}
+
+#[test]
 fn an_edge_deleted_here_stays_gone_through_older_events_and_a_reopen() {
     for marked in [false, true] {
         let server = Scripted::start();

@@ -87,6 +87,12 @@ pub fn holds_nothing_of(conn: &Connection, id: &str) -> Result<bool, CoreError> 
         .query_row([id, &removal_key(Subject::Item, id)], |row| row.get(0))?)
 }
 
+/// Whether a removal this device sent of the row is out, waits, or was
+/// accepted and its event not yet read.
+pub fn removal_marked(conn: &Connection, subject: Subject, id: &str) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, &removal_key(subject, id))?.is_some())
+}
+
 /// Whether an event naming the row or edge is from before a removal the
 /// server accepted.
 pub fn removed(conn: &Connection, subject: Subject, id: &str) -> Result<bool, CoreError> {

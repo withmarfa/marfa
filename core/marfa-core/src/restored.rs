@@ -16,7 +16,7 @@ use crate::model::{
     BlockedReason, Draft, Edge, EdgeDraft, EdgeEdit, Edit, Item, ItemState, Subject, Verdict,
     WriteKind,
 };
-use crate::store::{self, restored::Receipt};
+use crate::store::{self, Stamp, restored::Receipt};
 use crate::wire::{EventPayload, WireEdge, WireItemWithMetadata};
 use crate::{Core, Result};
 use marfa_rules::catalog::Catalog;
@@ -86,7 +86,10 @@ impl Opening {
 
     pub(crate) fn heard(&mut self, kind: &str, id: Option<&str>, payload: &EventPayload) -> Heard {
         let Some((anchor, print)) = &self.anchor else {
-            return Heard::Take;
+            return match id.and_then(crate::reach::cursor) {
+                Some(at) if at <= self.cursor => Heard::Again,
+                _ => Heard::Take,
+            };
         };
         if !self.settled && kind == "catchup_too_old" {
             let oldest = payload
@@ -142,22 +145,7 @@ pub(crate) fn went_back(
     }
     let receipts = store::restored::unseen_receipts(&*core.conn()?, opening.opened)?;
     for receipt in receipts {
-        let lost = match receipt.subject {
-            Subject::Item => item_lost(
-                &receipt,
-                read_item(http, stop, &receipt.id)?.map(|row| {
-                    (
-                        row.item.version,
-                        row.item.state == ItemState::Trashed.as_str(),
-                    )
-                }),
-            ),
-            Subject::Edge => edge_lost(
-                &receipt,
-                read_edge(http, stop, &receipt.id)?.map(|edge| edge.version),
-            ),
-        };
-        if lost {
+        if judged(http, stop, &receipt)? == Some(true) {
             return Err(CoreError::expired(format!("{LOST_WRITE}, {RESTORED}")));
         }
         store::restored::receipt_confirmed(&*core.conn()?, &receipt)?;
@@ -165,23 +153,105 @@ pub(crate) fn went_back(
     Ok(())
 }
 
-/// Whether the server's item, its version and whether it is in the bin,
-/// lacks what `receipt` says it took. A removal is lost only where the item
-/// stands out of the bin at the version it was removed over, or an earlier.
-fn item_lost(receipt: &Receipt, held: Option<(i64, bool)>) -> bool {
+/// The rows the receipts the stream has not yet shown name that the server
+/// has lost, read before a hydration clears or refills a copy for another
+/// reason, so the comparison after the fill still finds them.
+pub(crate) fn lost_unseen(
+    core: &Core,
+    http: &Http,
+    stop: &AtomicBool,
+) -> Result<Vec<(Subject, String)>> {
+    let receipts = store::restored::unseen_receipts(&*core.conn()?, i64::MAX)?;
+    let mut lost = Vec::new();
+    for receipt in receipts {
+        if judged(http, stop, &receipt)? == Some(true) {
+            lost.push((receipt.subject, receipt.id));
+        }
+    }
+    Ok(lost)
+}
+
+/// Whether the server has lost what `receipt` says it took, or `None` where
+/// the read of its row answered about that row but said nothing of it: an
+/// answer that does not read, or a refusal of the read itself.
+fn judged(http: &Http, stop: &AtomicBool, receipt: &Receipt) -> Result<Option<bool>> {
+    let read = match receipt.subject {
+        Subject::Item => read_item(http, stop, &receipt.id).map(|row| {
+            item_lost(
+                receipt,
+                row.map(|row| {
+                    let trashed = row.item.state == ItemState::Trashed.as_str();
+                    (
+                        Stamp {
+                            version: row.item.version,
+                            updated_at: row.item.updated_at,
+                        },
+                        trashed,
+                    )
+                }),
+            )
+        }),
+        Subject::Edge => read_edge(http, stop, &receipt.id).map(|edge| {
+            edge_lost(
+                receipt,
+                edge.map(|edge| Stamp {
+                    version: edge.version,
+                    updated_at: edge.updated_at,
+                }),
+            )
+        }),
+    };
+    match read {
+        Ok(lost) => Ok(Some(lost)),
+        Err(error) if says_nothing(&error) => {
+            crate::telemetry::degraded!(&error);
+            Ok(None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// An answer about the row read rather than about the server, the copy or
+/// the credential, which no later read of the same row would answer
+/// otherwise.
+fn says_nothing(error: &CoreError) -> bool {
+    match error {
+        CoreError::Decoding(_)
+        | CoreError::Validation { .. }
+        | CoreError::Forbidden { .. }
+        | CoreError::NotFound { .. }
+        | CoreError::UnknownType { .. } => true,
+        CoreError::Server { .. } => !error.is_environmental(),
+        _ => false,
+    }
+}
+
+/// Whether the server's item, its stamp and whether it is in the bin, lacks
+/// what `receipt` says it took: a change at a version and time the server's
+/// row is not at or past. A removal is lost only where the item stands out
+/// of the bin and was not moved there since the removal, by version or by
+/// time.
+fn item_lost(receipt: &Receipt, held: Option<(Stamp, bool)>) -> bool {
     match (receipt.removal, held) {
         (false, None) => true,
-        (false, Some((version, _))) => receipt.version.is_some_and(|taken| version < taken),
-        (true, Some((version, false))) => receipt.version.is_none_or(|over| version <= over),
+        (false, Some((server, _))) => receipt
+            .stamp()
+            .is_some_and(|taken| taken.later_than(&server)),
+        (true, Some((server, false))) => receipt
+            .stamp()
+            .is_none_or(|removed| !server.later_than(&removed)),
         (true, _) => false,
     }
 }
 
-/// `item_lost` for an edge, by its version.
-fn edge_lost(receipt: &Receipt, held: Option<i64>) -> bool {
+/// `item_lost` for an edge. An edge removal leaves nothing behind it, so any
+/// row the server holds lacks it.
+fn edge_lost(receipt: &Receipt, held: Option<Stamp>) -> bool {
     match (receipt.removal, held) {
         (false, None) => true,
-        (false, Some(version)) => receipt.version.is_some_and(|taken| version < taken),
+        (false, Some(server)) => receipt
+            .stamp()
+            .is_some_and(|taken| taken.later_than(&server)),
         (true, held) => held.is_some(),
     }
 }
@@ -205,16 +275,20 @@ fn read_edge(http: &Http, stop: &AtomicBool, id: &str) -> Result<Option<WireEdge
 /// What a row the copy held is to the row the server holds now.
 #[derive(Debug, PartialEq, Eq)]
 enum Against {
-    /// The server holds it as the copy did, or has moved it on since.
+    /// The server holds it as the copy did.
     Same,
+    /// Another writer has moved it on since the copy held it.
+    Later,
     Gone,
     Behind,
 }
 
 /// A row the server holds at a later version and time than the copy held
-/// moved on through another writer; anything else at another version or
-/// time is behind what the copy held.
-fn against(held: (i64, &str), server: Option<(i64, &str)>) -> Against {
+/// moved on through another writer, as did one at the same version with a
+/// later time and the same fields, since a write that keeps the version
+/// (tags, a move to or from the bin, a state) changes no field. Anything
+/// else at another version or time is behind what the copy held.
+fn against(held: (i64, &str), server: Option<(i64, &str)>, same_fields: bool) -> Against {
     let Some((version, updated_at)) = server else {
         return Against::Gone;
     };
@@ -223,17 +297,31 @@ fn against(held: (i64, &str), server: Option<(i64, &str)>) -> Against {
         return Against::Same;
     }
     let later = match (
-        updated_at.parse::<jiff::Timestamp>(),
-        held_at.parse::<jiff::Timestamp>(),
+        marfa_rules::time::read(updated_at),
+        marfa_rules::time::read(held_at),
     ) {
         (Ok(server), Ok(held)) => server > held,
-        _ => updated_at > held_at,
+        _ => false,
     };
-    if version > held_version && later {
-        Against::Same
+    if later && (version > held_version || version == held_version && same_fields) {
+        Against::Later
     } else {
         Against::Behind
     }
+}
+
+fn same_item_fields(held: &Item, server: &Item) -> bool {
+    held.properties == server.properties
+        && held.r#type == server.r#type
+        && held.tier == server.tier
+        && held.occurred_at == server.occurred_at
+        && held.source_id == server.source_id
+}
+
+fn same_edge_fields(held: &Edge, server: &Edge) -> bool {
+    held.properties == server.properties
+        && held.from_id == server.from_id
+        && held.to_id == server.to_id
 }
 
 enum LostItem {
@@ -333,10 +421,12 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
         let at = server
             .as_ref()
             .map(|server| (server.version, server.updated_at.as_str()));
-        match against((held.version, &held.updated_at), at) {
+        let same_fields = server
+            .as_ref()
+            .is_some_and(|server| same_item_fields(&held, server));
+        match against((held.version, &held.updated_at), at, same_fields) {
             Against::Same => {
                 if let Some(server) = server
-                    && server.version == held.version
                     && kept_tags(&held) != kept_tags(&server)
                 {
                     lost.items.push(LostItem::Update {
@@ -345,6 +435,7 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
                     });
                 }
             }
+            Against::Later => {}
             // Out of the bin and out of `revoked` alone: no create makes a
             // row in either.
             Against::Gone if matches!(held.state, ItemState::Active | ItemState::Archived) => {
@@ -369,8 +460,11 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
         let at = server
             .as_ref()
             .map(|server| (server.version, server.updated_at.as_str()));
-        match against((held.version, &held.updated_at), at) {
-            Against::Same => {}
+        let same_fields = server
+            .as_ref()
+            .is_some_and(|server| same_edge_fields(&held, server));
+        match against((held.version, &held.updated_at), at, same_fields) {
+            Against::Same | Against::Later => {}
             Against::Gone => lost.edges.push(LostEdge::Create(held)),
             Against::Behind => {
                 let Some(server) = server else { continue };
@@ -390,10 +484,12 @@ pub(crate) fn compare(core: &Core, http: &Http, stop: &AtomicBool) -> Result<Opt
                 let Some(server) = server_item(core, http, stop, &receipt.id)? else {
                     continue;
                 };
-                if item_lost(
-                    &receipt,
-                    Some((server.version, server.state == ItemState::Trashed)),
-                ) && !removal_waits(&*core.conn()?, &server.id, WriteKind::DeleteItem)?
+                let at = Stamp {
+                    version: server.version,
+                    updated_at: server.updated_at.clone(),
+                };
+                if item_lost(&receipt, Some((at, server.state == ItemState::Trashed)))
+                    && !removal_waits(&*core.conn()?, &server.id, WriteKind::DeleteItem)?
                 {
                     lost.items.push(LostItem::Remove(server));
                 }
@@ -496,9 +592,14 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
             }
         }
     }
+    let mut edge_created: HashMap<String, String> = HashMap::new();
     for edge in &lost.edges {
         match edge {
-            LostEdge::Create(held) => kept.push(keep_edge_create(tx, held)?),
+            LostEdge::Create(held) => {
+                let create = keep_edge_create(tx, held)?;
+                edge_created.insert(held.id.clone(), create.clone());
+                kept.push(create);
+            }
             LostEdge::Update { held, server } => {
                 if let Some(id) = keep_edge_update(tx, held, server)? {
                     kept.push(id);
@@ -512,23 +613,65 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
             }
         }
     }
-    // A write already waiting on an item the server no longer holds is sent
-    // only once the create that puts the item back is answered.
-    let kept_ids: HashSet<&String> = kept.iter().collect();
-    for row in store::waiting_writes(tx)? {
+    // A write already waiting on a row the server no longer holds, or refused
+    // because the server did not hold it, is sent only once the create that
+    // puts the row back is answered.
+    let kept_ids: HashSet<String> = kept.iter().cloned().collect();
+    for row in store::queued_writes(tx)? {
         if kept_ids.contains(&row.id) {
             continue;
         }
+        let waiting = matches!(row.verdict, None | Some(Verdict::Blocked | Verdict::Dead));
+        let refused_missing = row.verdict == Some(Verdict::Refused)
+            && !row.kind.rows()
+            && matches!(
+                row.reason.as_deref(),
+                Some("item_not_found" | "edge_not_found")
+            );
+        if !waiting && !refused_missing {
+            continue;
+        }
+        let creates: Vec<&String> = [&row.item_id, &row.to_id]
+            .into_iter()
+            .flatten()
+            .filter_map(|named| created.get(named))
+            .chain(row.edge_id.as_ref().and_then(|edge| edge_created.get(edge)))
+            .collect();
+        if creates.is_empty() {
+            continue;
+        }
         let mut depends_on = row.depends_on.clone();
-        for named in [&row.item_id, &row.to_id].into_iter().flatten() {
-            if let Some(create) = created.get(named)
-                && !depends_on.contains(create)
-            {
+        for create in creates {
+            if !depends_on.contains(create) {
                 depends_on.push(create.clone());
             }
         }
         if depends_on != row.depends_on {
             store::restored::wait_on(tx, &row.id, &depends_on)?;
+        }
+        if row.kind.rows() {
+            continue;
+        }
+        // The server holds nothing the write could have changed, so a key
+        // it went under answers nothing the write is owed.
+        store::restored::send_afresh(tx, &row.id)?;
+        let over_create = match row.kind {
+            WriteKind::UpdateItem | WriteKind::DeleteItem => row
+                .item_id
+                .as_ref()
+                .is_some_and(|item| created.contains_key(item)),
+            WriteKind::UpdateEdge => row
+                .edge_id
+                .as_ref()
+                .is_some_and(|edge| edge_created.contains_key(edge)),
+            _ => false,
+        };
+        if over_create && row.base_version.is_some() {
+            // A create makes version 1.
+            store::rebase(tx, &row.id, 1)?;
+        }
+        if refused_missing {
+            kept.push(row.id);
         }
     }
     for id in &kept {
@@ -813,68 +956,124 @@ fn keep_edge_update(tx: &Connection, held: &Edge, server: &Edge) -> Result<Optio
 mod tests {
     use super::*;
 
-    fn receipt(removal: bool, version: Option<i64>) -> Receipt {
+    const TEN: &str = "2026-11-19T10:00:00.000Z";
+    const PAST_TEN: &str = "2026-11-19T10:05:00.000Z";
+
+    fn receipt(removal: bool, version: Option<i64>, at: Option<&str>) -> Receipt {
         Receipt {
             write_id: "w".into(),
             subject: Subject::Item,
             id: "i".into(),
             version,
+            updated_at: at.map(str::to_string),
             removal,
             answered_at: 0,
         }
     }
 
+    fn at(version: i64, at: &str) -> Stamp {
+        Stamp {
+            version,
+            updated_at: at.into(),
+        }
+    }
+
     #[test]
-    fn a_change_is_lost_where_the_server_lacks_its_row_or_holds_an_earlier_version() {
-        let taken = receipt(false, Some(3));
+    fn a_change_is_lost_where_the_server_lacks_its_row_or_holds_an_earlier_stamp() {
+        let taken = receipt(false, Some(3), Some(PAST_TEN));
         assert!(item_lost(&taken, None));
-        assert!(item_lost(&taken, Some((2, false))));
-        assert!(!item_lost(&taken, Some((3, false))));
-        assert!(!item_lost(&taken, Some((4, true))));
+        assert!(item_lost(&taken, Some((at(2, PAST_TEN), false))));
+        // A write that keeps the version, such as a tag write, is lost at
+        // its version with an earlier time.
+        assert!(item_lost(&taken, Some((at(3, TEN), false))));
+        assert!(!item_lost(&taken, Some((at(3, PAST_TEN), false))));
+        assert!(!item_lost(&taken, Some((at(4, TEN), true))));
         assert!(edge_lost(&taken, None));
-        assert!(edge_lost(&taken, Some(2)));
-        assert!(!edge_lost(&taken, Some(3)));
+        assert!(edge_lost(&taken, Some(at(2, PAST_TEN))));
+        assert!(!edge_lost(&taken, Some(at(3, PAST_TEN))));
+        // A row found missing names no version: only its absence is a loss.
+        let missing = receipt(false, None, None);
+        assert!(item_lost(&missing, None));
+        assert!(!item_lost(&missing, Some((at(1, TEN), false))));
+        assert!(!edge_lost(&missing, Some(at(1, TEN))));
     }
 
     #[test]
     fn a_removal_is_lost_only_where_the_row_stands_again_as_it_was_removed_over() {
-        let removed = receipt(true, Some(3));
-        assert!(item_lost(&removed, Some((3, false))));
-        assert!(item_lost(&removed, Some((2, false))));
-        assert!(!item_lost(&removed, Some((4, false))));
-        assert!(!item_lost(&removed, Some((3, true))));
+        let removed = receipt(true, Some(3), Some(TEN));
+        assert!(item_lost(&removed, Some((at(3, TEN), false))));
+        assert!(item_lost(
+            &removed,
+            Some((at(3, "2026-11-19T09:00:00.000Z"), false))
+        ));
+        assert!(item_lost(&removed, Some((at(2, PAST_TEN), false))));
+        // Taken out of the bin after the removal, at the version a move to
+        // the bin keeps.
+        assert!(!item_lost(&removed, Some((at(3, PAST_TEN), false))));
+        assert!(!item_lost(&removed, Some((at(4, TEN), false))));
+        assert!(!item_lost(&removed, Some((at(3, TEN), true))));
         assert!(!item_lost(&removed, None));
-        let edge = receipt(true, None);
-        assert!(edge_lost(&edge, Some(1)));
+        // A removal whose event the stream never showed has no time to
+        // order by, and the version decides.
+        let unseen = receipt(true, Some(3), None);
+        assert!(item_lost(&unseen, Some((at(3, PAST_TEN), false))));
+        let edge = receipt(true, None, None);
+        assert!(edge_lost(&edge, Some(at(1, TEN))));
         assert!(!edge_lost(&edge, None));
     }
 
     #[test]
-    fn a_row_moved_on_by_another_writer_is_the_same_and_one_behind_is_not() {
-        let held = (3, "2026-11-19T10:00:00.000Z");
+    fn a_row_moved_on_by_another_writer_is_later_and_one_behind_is_not() {
+        let held = (3, TEN);
+        assert_eq!(against(held, Some((3, TEN)), false), Against::Same);
         assert_eq!(
-            against(held, Some((3, "2026-11-19T10:00:00.000Z"))),
-            Against::Same
+            against(held, Some((4, "2026-11-19T10:00:01.000Z")), false),
+            Against::Later
         );
         assert_eq!(
-            against(held, Some((4, "2026-11-19T10:00:01.000Z"))),
-            Against::Same
-        );
-        assert_eq!(
-            against(held, Some((2, "2026-11-19T09:00:00.000Z"))),
+            against(held, Some((2, "2026-11-19T09:00:00.000Z")), true),
             Against::Behind
         );
+        // Another writer's tags or state keep the version and every field.
+        assert_eq!(against(held, Some((3, PAST_TEN)), true), Against::Later);
         // A restored server that took a write since can reach the same
         // version with other content, and a later version made earlier.
+        assert_eq!(against(held, Some((3, PAST_TEN)), false), Against::Behind);
         assert_eq!(
-            against(held, Some((3, "2026-11-19T10:05:00.000Z"))),
+            against(held, Some((4, "2026-11-19T09:00:00.000Z")), true),
             Against::Behind
         );
         assert_eq!(
-            against(held, Some((4, "2026-11-19T09:00:00.000Z"))),
+            against(held, Some((3, "not a time")), true),
             Against::Behind
         );
-        assert_eq!(against(held, None), Against::Gone);
+        assert_eq!(against(held, None, true), Against::Gone);
+    }
+
+    #[test]
+    fn a_read_that_answers_about_its_row_alone_says_nothing_of_a_loss() {
+        let server = |status: u16| CoreError::Server {
+            status,
+            code: "x".into(),
+            message: String::new(),
+            details: None,
+        };
+        assert!(says_nothing(&CoreError::Decoding("x".into())));
+        assert!(says_nothing(&CoreError::Forbidden {
+            code: "forbidden".into(),
+            message: String::new(),
+            server: None,
+        }));
+        assert!(says_nothing(&server(409)));
+        // The witness: the server, the network or the credential failing
+        // still ends the catch-up.
+        assert!(!says_nothing(&server(503)));
+        assert!(!says_nothing(&CoreError::Network("x".into())));
+        assert!(!says_nothing(&CoreError::Unauthorized {
+            code: "unauthorized".into(),
+            message: String::new(),
+            server: None,
+        }));
     }
 
     fn payload(item: Option<(&str, i64, &str)>) -> EventPayload {
@@ -956,7 +1155,30 @@ mod tests {
         let mut filling = Opening::read(&conn, "7", false).unwrap();
         assert_eq!(filling.from(), "7");
         assert_eq!(
-            filling.heard("item.updated", Some("7"), &payload(None)),
+            filling.heard("item.updated", Some("8"), &payload(None)),
+            Heard::Take
+        );
+    }
+
+    #[test]
+    fn a_stream_with_no_anchor_takes_nothing_at_or_before_its_cursor_again() {
+        let conn = store::testing::conn();
+        let mut opening = Opening::read(&conn, "10", true).unwrap();
+        assert_eq!(opening.from(), "10");
+        assert_eq!(
+            opening.heard("item.updated", Some("10"), &payload(None)),
+            Heard::Again
+        );
+        assert_eq!(
+            opening.heard("item.updated", Some("9"), &payload(None)),
+            Heard::Again
+        );
+        assert_eq!(
+            opening.heard("item.updated", Some("11"), &payload(None)),
+            Heard::Take
+        );
+        assert_eq!(
+            opening.heard("stream_cursor", None, &payload(None)),
             Heard::Take
         );
     }

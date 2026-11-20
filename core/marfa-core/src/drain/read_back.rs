@@ -226,12 +226,16 @@ pub(crate) enum ReadBack {
         /// The copy's stamp before the read, so a row the read did not find
         /// is forgotten only where nothing has written it since.
         before: Option<store::Stamp>,
+        /// Every read answered `404`, which a purge and a server restored
+        /// to before the row both answer.
+        absent: bool,
     },
     Edge {
         context: reach::Context,
         id: String,
         held: Option<Box<WireEdge>>,
         before: Option<store::Stamp>,
+        absent: bool,
     },
 }
 
@@ -366,10 +370,13 @@ fn read_held(
     let http = context.http(core.http()?);
     if owed.subject == Subject::Edge {
         let id = owed.id.clone();
-        let held = match ask_unless_stopped(stop, &http, move |http| http.edge(&id)) {
-            Ok(found) => found,
-            Err(CoreError::Forbidden { .. }) => None,
-            Err(error) if names_no_row(&error) => None,
+        let (held, absent) = match ask_unless_stopped(stop, &http, move |http| http.edge(&id)) {
+            Ok(found) => {
+                let absent = found.is_none();
+                (found, absent)
+            }
+            Err(CoreError::Forbidden { .. }) => (None, false),
+            Err(error) if names_no_row(&error) => (None, false),
             Err(error) => return Err(error),
         };
         return Ok(ReadBack::Edge {
@@ -377,11 +384,12 @@ fn read_held(
             id: owed.id.clone(),
             held: held.map(Box::new),
             before,
+            absent,
         });
     }
     let id = owed.id.clone();
-    let held = match ask_unless_stopped(stop, &http, move |http| http.item(&id)) {
-        Ok(Some(found)) => Some(found),
+    let (held, absent) = match ask_unless_stopped(stop, &http, move |http| http.item(&id)) {
+        Ok(Some(found)) => (Some(found), false),
         // A read by id answers a row in the bin `404` as it answers a row
         // that is gone (`items/get-missing`), and the slice may hold such a
         // row. A landing takes no row in the bin
@@ -390,12 +398,15 @@ fn read_held(
             let id = owed.id.clone();
             move |http| http.trashed_item(&id)
         }) {
-            Ok(found) => found,
-            Err(CoreError::Forbidden { .. }) => None,
+            Ok(found) => {
+                let absent = found.is_none();
+                (found, absent)
+            }
+            Err(CoreError::Forbidden { .. }) => (None, false),
             Err(error) => return Err(error),
         },
-        Ok(None) | Err(CoreError::Forbidden { .. }) => None,
-        Err(error) if names_no_row(&error) => None,
+        Ok(None) | Err(CoreError::Forbidden { .. }) => (None, false),
+        Err(error) if names_no_row(&error) => (None, false),
         Err(error) => return Err(error),
     };
     Ok(ReadBack::Item {
@@ -403,6 +414,7 @@ fn read_held(
         id: owed.id.clone(),
         held: held.map(Box::new),
         before,
+        absent,
     })
 }
 
@@ -445,12 +457,20 @@ pub(super) fn restore_settled_overlay(
     row: &QueuedWrite,
     read: &ReadBack,
 ) -> Result<()> {
-    if !matches!(row.kind, WriteKind::CreateItem | WriteKind::CreateEdge)
-        && matches!(
-            read,
-            ReadBack::Item { held: Some(_), .. } | ReadBack::Edge { held: Some(_), .. }
-        )
-    {
+    if matches!(row.kind, WriteKind::CreateItem | WriteKind::CreateEdge) {
+        return Ok(());
+    }
+    let kept = match read {
+        ReadBack::Item { held: Some(_), .. } | ReadBack::Edge { held: Some(_), .. } => true,
+        ReadBack::Item {
+            id, absent: true, ..
+        } => store::restored::server_gave(conn, Subject::Item, id)?,
+        ReadBack::Edge {
+            id, absent: true, ..
+        } => store::restored::server_gave(conn, Subject::Edge, id)?,
+        _ => false,
+    };
+    if kept {
         store::put_back(conn, row)?;
     }
     Ok(())
@@ -475,8 +495,14 @@ pub(super) fn apply_read_back_unchecked(
             id,
             held: None,
             before,
+            absent,
             ..
         } => {
+            // Only the stream tells a purge from a server restored to before
+            // the row (`device/read-back-missing-kept`).
+            if *absent && store::restored::keep_missing(conn, Subject::Edge, id)? {
+                return Ok(());
+            }
             let now = store::stamp(conn, Subject::Edge, id)?;
             if now.is_none() || now == *before {
                 store::forget_edge(conn, id)?;
@@ -514,8 +540,12 @@ pub(super) fn apply_read_back_unchecked(
             id,
             held: None,
             before,
+            absent,
             ..
         } => {
+            if *absent && store::restored::keep_missing(conn, Subject::Item, id)? {
+                return Ok(());
+            }
             let now = store::stamp(conn, Subject::Item, id)?;
             if now.is_none() || now == *before {
                 store::forget_item(conn, id)?;

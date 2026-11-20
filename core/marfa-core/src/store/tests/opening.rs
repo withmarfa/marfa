@@ -657,7 +657,7 @@ const SHAPES: [&str; 9] = [
     "195bcf17d74301ef",
     "917adee5fa567dda",
     "b6799eca96cc6c3f",
-    "4fdeb65d6872f921",
+    "8677b34bec9e8814",
 ];
 
 #[test]

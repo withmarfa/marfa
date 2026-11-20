@@ -110,15 +110,21 @@ CREATE TABLE IF NOT EXISTS read_backs (
 
 -- What the server answered it holds after a write it took, so a server
 -- restored to an earlier point is found by what it no longer holds. A change
--- is kept until the stream carries the subject at that version or later, and
--- a removal, which a restored server may have undone, is kept whatever the
--- stream carries. None is kept or read 30 days after its answer.
+-- is kept until the stream carries the subject at that version and time or
+-- later, and a removal, which a restored server may have undone, is kept
+-- whatever the stream carries. A row the server gave that a read after a
+-- refusal found missing is kept as a change with no version. None is kept or
+-- read 30 days after its answer.
 CREATE TABLE IF NOT EXISTS answer_receipts (
   write_id TEXT PRIMARY KEY,
   subject TEXT NOT NULL CHECK (subject IN ('item', 'edge')),
   id TEXT NOT NULL,
-  -- Null for an edge removed, which the answer names no version for.
+  -- Null for an edge removed, which the answer names no version for, and
+  -- for a row found missing.
   version INTEGER,
+  -- The server's time on the row the answer named, or for a removal on the
+  -- event that showed it. Null where neither has been seen.
+  updated_at TEXT,
   removal INTEGER NOT NULL CHECK (removal IN (0, 1)),
   -- Milliseconds on the store's clock.
   answered_at INTEGER NOT NULL,
@@ -126,6 +132,7 @@ CREATE TABLE IF NOT EXISTS answer_receipts (
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS answer_receipts_subject ON answer_receipts (subject, id);
 CREATE INDEX IF NOT EXISTS answer_receipts_unseen ON answer_receipts (seen, answered_at);
+CREATE INDEX IF NOT EXISTS answer_receipts_answered ON answer_receipts (answered_at);
 
 -- The last event the copy took and what it named, which a stream asked from
 -- the event before it carries again: a server restored to an earlier point
