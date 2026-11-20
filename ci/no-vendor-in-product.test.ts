@@ -30,7 +30,7 @@ const SCOPE = [
 ];
 
 /** A path ending in `/` allows the folder; any other allows that file alone. */
-const ALLOWED: ReadonlyArray<readonly [path: string, reason: string]> = [
+const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
   [
     "core/marfa-server/src/telemetry/sinks.rs",
     "the server's one place that builds a PostHog exception report",
