@@ -2,9 +2,10 @@
 
 use super::Cached;
 use super::dead::remaining_dead_fields;
+use super::meta::meta_get;
 use super::reads::{edge_by_id, item_by_id};
 use super::time::now_iso;
-use super::verdicts::{payload_of, pending_landing};
+use super::verdicts::{RECEIPT_PENDING, payload_of, pending_landing};
 use crate::error::CoreError;
 use crate::model::{BlockedReason, Item, QueuedWrite, Subject, Verdict, WriteKind};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
@@ -305,6 +306,32 @@ pub fn untaken_creates_for_item(
         }
     }
     Ok(waiting)
+}
+
+/// Whether a create of `item_id` that this copy showed at version 0 has yet
+/// to have its answer taken: unanswered, blocked, dead, or answered with the
+/// read that settles it still owed. The edits behind it move onto the version it made
+/// when its answer is taken.
+pub fn own_create_untaken(conn: &Connection, item_id: &str) -> Result<bool, CoreError> {
+    for row in read_writes(
+        conn,
+        "WHERE item_id = ?1 AND kind = ?2",
+        [item_id, WriteKind::CreateItem.as_str()],
+    )? {
+        if row.base_version.is_some_and(|base| base != 0) {
+            continue;
+        }
+        match row.verdict {
+            None | Some(Verdict::Blocked | Verdict::Dead) => return Ok(true),
+            Some(Verdict::Accepted | Verdict::Merged)
+                if meta_get(conn, &format!("{RECEIPT_PENDING}{}", row.id))?.is_some() =>
+            {
+                return Ok(true);
+            }
+            _ => {}
+        }
+    }
+    Ok(false)
 }
 
 pub fn queued_writes(conn: &Connection) -> Result<Vec<QueuedWrite>, CoreError> {
