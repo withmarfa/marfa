@@ -33,6 +33,7 @@ admin_tasks! {
     Connectors => [ConnectorsManage];
     Files => [BlobsManage];
     SignIns => [SignInsManage];
+    EndSignIn => [SignInsManage, GrantsManage];
 }
 
 impl AdminTask {

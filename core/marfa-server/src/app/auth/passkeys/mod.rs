@@ -29,11 +29,12 @@ use crate::app::access::{Caller, unauthorized};
 use crate::app::addresses::Address;
 use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
+use crate::app::unit::Unit;
 use crate::db::Write;
 
 const ADDED: &str = "owner.passkey.added";
 const RENAMED: &str = "owner.passkey.renamed";
-const REMOVED: &str = "owner.passkey.removed";
+pub(crate) const REMOVED: &str = "owner.passkey.removed";
 const RELYING_PARTY_NAME: &str = "Marfa";
 const CEREMONY_TIMEOUT: Duration = Duration::from_millis(challenge::LIFE_MS.unsigned_abs());
 
@@ -522,17 +523,26 @@ pub async fn rename(app: &App, caller: &Caller, id: String, name: &str) -> Resul
     .await
 }
 
+/// The passkey with its credential ID, as the caller may remove it.
+pub(crate) fn held(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<(Listed, String)> {
+    caller.require_passkeys()?;
+    store::by_id(tx, id)?.ok_or_else(not_found)
+}
+
+/// `DELETE /owner/passkeys/{id}` in the caller's transaction.
+pub(crate) fn remove_in(unit: &Unit<'_, '_>, id: &str) -> Result<()> {
+    unit.caller.require_passkeys()?;
+    unit.caller.require_recent(&unit.at)?;
+    if !store::remove(unit.tx(), id)? {
+        return Err(not_found());
+    }
+    unit.audit("passkey", id, None)
+}
+
 pub async fn remove(app: &App, caller: &Caller, id: String) -> Result<()> {
     caller.require_passkeys()?;
-    app.write(caller, REMOVED, move |unit| {
-        unit.caller.require_passkeys()?;
-        unit.caller.require_recent(&unit.at)?;
-        if !store::remove(unit.tx(), &id)? {
-            return Err(not_found());
-        }
-        unit.audit("passkey", &id, None)
-    })
-    .await
+    app.write(caller, REMOVED, move |unit| remove_in(unit, &id))
+        .await
 }
 
 /// The owner's passkey page, which a browser signs in to first.

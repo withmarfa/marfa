@@ -82,7 +82,7 @@ When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mc
 
 ### `mcp/tools-for-admin`
 
-When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_backups` and `marfa_take_backup` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors`, `marfa_make_endpoint`, `marfa_delete_connector` and `marfa_retire_endpoint` while it holds `connectors.manage`, `marfa_files` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
+When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_end_sign_in` while it holds `sign_ins.manage` or `grants.manage`, `marfa_backups` and `marfa_take_backup` while it holds `backups.manage`, `marfa_maintain` while it holds `instance.maintain`, `marfa_connectors`, `marfa_make_endpoint`, `marfa_delete_connector` and `marfa_retire_endpoint` while it holds `connectors.manage`, `marfa_files` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
 
 **Reason:** a credential that holds a permission can do the owner task it opens through the API, so an agent holding it does the same from MCP, except for the tasks `mcp/tools-withheld` names.
 
@@ -144,9 +144,9 @@ If the rows of a page that `marfa_trash` or `marfa_connectors` answers do not al
 
 ### `mcp/tools-withheld`
 
-The server MUST NOT list at any MCP endpoint a tool that revokes an app, ends a sign-in, removes a passkey, removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
+The server MUST NOT list at any MCP endpoint a tool that removes a copy of a file, adopts the backup folder, restores a backup or an archive, exports the instance, claims the instance, recovers or changes the owner's password, adds a passkey or gets the link that adds one, updates the server or confirms the server's clock.
 
-**Reason:** an agent's confirmation of a change that cannot be undone must bind every effect of the change to the state the owner saw, and the confirmations for revoking, ending, removing and adopting do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
+**Reason:** an agent's confirmation of a change that cannot be undone must bind the change to the state the owner saw, and the confirmations for removing a copy of a file and adopting the backup folder do not do that yet. Claiming and password recovery start on the server host, changing the password would put owner credentials in tool arguments, adding a passkey needs a browser, and restoring data remotely needs a recent sign-in. The owner uses the server controls to update the server or confirm its clock and the export API to stream a copy of the instance. Housekeeping stays: `marfa_maintain` may run the trash's retention at once, which removes only the items the owner's retention policy makes eligible and never one an agent chose.
 
 **Tests:** `compliance/mcp.test.ts › lists every admin tool at /mcp/admin to a credential that holds every permission and reaches no type`, `› lists the eight tools and every schema tool at /mcp/schema to a credential that may use each`, `compliance/owner-tasks.test.ts › runs the trash's retention through the maintenance tool, removing only what the retention makes eligible and no chosen item`.
 
@@ -426,7 +426,7 @@ When the server lists `marfa_purge`, the server MUST annotate it with `destructi
 
 **Reason:** a purge cannot be undone, and a client asks the person differently before a tool that destroys data.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/purge-preview`
 
@@ -750,7 +750,7 @@ When the server lists `marfa_delete_connector` or `marfa_retire_endpoint`, the s
 
 **Reason:** neither change can be undone, and a client asks the person differently before a tool that destroys data.
 
-**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
 
 ### `mcp/connector-acts-gone`
 
@@ -927,6 +927,212 @@ If the sources a credential sees do not fit one `marfa_sources` answer, then the
 **Reason:** an agent that reads a short list as the whole list names the wrong sources. A source left out is read by naming it as `source`.
 
 **Tests:** `compliance/mcp-shortened.test.ts › names how many sources it left out when the list outgrows one answer, and none when it does not`.
+
+## Ending a sign-in, an app or a passkey
+
+`marfa_end_sign_in` ends a browser sign-in or an app, as `DELETE /owner/sign-ins/{id}` does, or removes a passkey, as `DELETE /owner/passkeys/{id}` does, in two calls: a preview with a `confirm` token, and a call that sends the same `kind`, `id` and `revoke_keys` with that token.
+
+### `mcp/end-sign-in-destructive`
+
+When the server lists `marfa_end_sign_in`, the server MUST annotate it with `destructiveHint` `true` and `readOnlyHint` `false`.
+
+**Reason:** none of the three can be undone: a browser and an app must sign in again, and a passkey must be added again from a browser.
+
+**Tests:** `compliance/mcp.test.ts › marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only`.
+
+### `mcp/end-sign-in-preview`
+
+When `marfa_end_sign_in` is called without `confirm`, the server MUST NOT end the browser sign-in or the app, revoke a key, delete a webhook or remove the passkey.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › ends nothing when called without a confirmation, and previews the browser`, `› ends nothing when called without a confirmation, and previews the app with its webhooks, keys and token chains`, `› removes nothing when called without a confirmation, and removes the passkey with the one the preview gave`.
+
+### `mcp/end-sign-in-preview-browser`
+
+When `marfa_end_sign_in` previews ending a browser sign-in, the server MUST answer `kind` as `browser` and under `sign_in` the sign-in as `marfa_sign_ins` lists it.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › ends nothing when called without a confirmation, and previews the browser`.
+
+### `mcp/end-sign-in-preview-app`
+
+When `marfa_end_sign_in` previews ending an app, the server MUST answer `kind` as `app`, under `sign_in` the app as `marfa_sign_ins` lists it, under `scopes` the scopes it was approved for, under `webhooks` each of its webhooks with its `id`, `url`, `events`, `type_filter` and `active`, under `token_chains` the number of its token chains, under `ends_this_connection` whether the act ends the credential that makes the call, and, where `revoke_keys` is `true`, under `keys` each live key the app made with its `id`, `label` and `source`, or, where it is not, under `keys_kept` the number of those keys.
+
+**Reason:** the person agrees to everything ending the app removes, and is told which of its keys outlive it.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › ends nothing when called without a confirmation, and previews the app with its webhooks, keys and token chains`, `› says when ending the app ends the connection making the call, which then stops working`, `› says when revoking the app's keys ends the key making the call`.
+
+### `mcp/end-sign-in-preview-fits`
+
+If an app's webhooks or keys do not all fit the answer of a `marfa_end_sign_in` preview, then the server MUST answer the leading ones that fit and the number it left out in `webhooks_left_out` or `keys_left_out`.
+
+**Reason:** the answer stays within what a client hands to the model whole.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › previews the app's webhooks and keys that fit the answer, counting those it leaves out`.
+
+### `mcp/end-sign-in-own-connection`
+
+When `marfa_end_sign_in` previews ending the app whose access token makes the call, or with `revoke_keys` the app whose key makes the call, the server MUST answer `ends_this_connection` as `true`.
+
+**Reason:** one grant serves `/mcp`, `/mcp/schema` and `/mcp/admin`, so ending the app ends the agent's own connection at all three, and the person agrees to that knowing it.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › says when ending the app ends the connection making the call, which then stops working`, `› says when revoking the app's keys ends the key making the call`.
+
+### `mcp/end-sign-in-preview-passkey`
+
+When `marfa_end_sign_in` previews removing a passkey, the server MUST answer `kind` as `passkey` and under `passkey` the passkey as `marfa_sign_ins` lists it.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › removes nothing when called without a confirmation, and removes the passkey with the one the preview gave`.
+
+### `mcp/end-sign-in-confirmed`
+
+When `marfa_end_sign_in` is called with the `confirm` token its preview gave, by the same credential, within five minutes, while what the preview showed stands, the server MUST end the browser sign-in or the app as `DELETE /owner/sign-ins/{id}` does, or remove the passkey as `DELETE /owner/passkeys/{id}` does, and answer `ended` as `true` with the `kind` it ended.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › ends the browser sign-in with the confirmation the preview gave`, `› ends the app, its token chains and webhooks with the confirmation the preview gave, and keeps its keys`, `› revokes the app's keys with it when the preview asked for revoke_keys, and says how many`, `› removes nothing when called without a confirmation, and removes the passkey with the one the preview gave`.
+
+### `mcp/end-sign-in-grants-manage`
+
+While a credential holds `grants.manage` and not `sign_ins.manage`, the server MUST end an app on a confirmed `marfa_end_sign_in` call as `DELETE /grants/{id}` does.
+
+**Reason:** `DELETE /grants/{id}` and `DELETE /owner/sign-ins/{id}` each end an app, so either permission ends one from MCP too.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › ends an app for a credential that holds grants.manage alone, and ends no browser sign-in or passkey for it`.
+
+### `mcp/end-sign-in-needs-sign-ins`
+
+If a credential that does not hold `sign_ins.manage` names a browser sign-in or a passkey in a `marfa_end_sign_in` call, then the server MUST answer a tool error.
+
+**Reason:** only `sign_ins.manage` opens `DELETE /owner/sign-ins/{id}` and `DELETE /owner/passkeys/{id}`.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › ends an app for a credential that holds grants.manage alone, and ends no browser sign-in or passkey for it`.
+
+### `mcp/end-sign-in-keeps-keys`
+
+When `marfa_end_sign_in` ends an app without `revoke_keys`, the server MUST keep the keys the app made.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › ends the app, its token chains and webhooks with the confirmation the preview gave, and keeps its keys`.
+
+### `mcp/end-sign-in-revoked-keys`
+
+When `marfa_end_sign_in` ends an app, the server MUST answer under `revoked_keys` the number of keys it revoked.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › ends the app, its token chains and webhooks with the confirmation the preview gave, and keeps its keys`, `› revokes the app's keys with it when the preview asked for revoke_keys, and says how many`.
+
+### `mcp/end-sign-in-key`
+
+While a credential holds `sign_ins.manage`, if a `marfa_end_sign_in` call names a key, then the server MUST refuse the call with the tool error code `validation_error` and `use_tool` as `marfa_revoke_key`.
+
+**Reason:** a key has one way to be revoked from MCP, whose confirmation binds the key as the person saw it (`mcp/revoke-confirmed`).
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses a key with a pointer to marfa_revoke_key, and revokes nothing`.
+
+### `mcp/end-sign-in-keys-app-only`
+
+If a `marfa_end_sign_in` call sets `revoke_keys` to `true` and names a browser sign-in or a passkey, then the server MUST refuse the call with the tool error code `validation_error`.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses revoke_keys for a browser sign-in or a passkey, and ends nothing`.
+
+### `mcp/end-sign-in-app-changed`
+
+If an app's name, approved scopes or approved destinations changed, or one of its webhooks was made, changed or deleted, since a `marfa_end_sign_in` preview of ending it, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and a new preview with a `confirm` token of its own.
+
+**Reason:** the person agreed to end the app as the preview showed it: its name, what it may reach and where it may be sent a code, and the webhooks that are deleted with it.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses a confirmation once a webhook was made, changed or deleted since the preview, with a new preview`, `› refuses a confirmation once the app's access was narrowed since the preview, with a new preview`, `› refuses a confirmation once the app was renamed since the preview, with a new preview`, `› refuses a confirmation once a new approval added a destination since the preview, with a new preview`.
+
+### `mcp/end-sign-in-app-keys-changed`
+
+Where a `marfa_end_sign_in` preview of ending an app set `revoke_keys` to `true`, if the app made a key, or a key it made was changed or revoked, since the preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale`.
+
+**Reason:** the keys are what the person agreed to revoke. Without `revoke_keys` the app's keys stay, so the confirmation does not cover them.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses a confirmation that revokes keys once the app made, changed or lost a key since the preview`.
+
+### `mcp/end-sign-in-chains-unbound`
+
+When an app only refreshed its tokens between a `marfa_end_sign_in` preview of ending it and the confirmation, the server MUST end the app on the confirmation.
+
+**Reason:** an app refreshes its tokens as it works, so a confirmation bound to them would rarely hold. The preview's `token_chains` is counted when it is read, and ending the app ends every token chain it has when it happens.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › ends the app on a confirmation after it refreshed its token since the preview`.
+
+### `mcp/end-sign-in-codes-unbound`
+
+When only a code was issued or redeemed for an app, or events were queued for its webhooks, between a `marfa_end_sign_in` preview of ending it and the confirmation, the server MUST end the app on the confirmation.
+
+**Reason:** a code becomes a token chain once redeemed, and an event is queued for a webhook on every item write it matches, so a confirmation bound to them would rarely hold. Ending the app removes every code it has not redeemed and deletes its webhooks with every delivery queued for them when it happens.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › ends the app on a confirmation after codes were issued and redeemed for it and an event was queued for its webhook since the preview`.
+
+### `mcp/end-sign-in-passkey-changed`
+
+If a passkey was renamed since a `marfa_end_sign_in` preview of removing it, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and a new preview with a `confirm` token of its own.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses a confirmation once the passkey was renamed since the preview, with a new preview`.
+
+### `mcp/end-sign-in-passkey-use-unbound`
+
+When a passkey only signed the owner in between a `marfa_end_sign_in` preview of removing it and the confirmation, the server MUST remove the passkey on the confirmation.
+
+**Reason:** each use rewrites the passkey's stored credential and its last use, so a confirmation bound to them would not hold past the owner's next sign-in.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › removes the passkey on a confirmation after it signed the owner in since the preview`.
+
+### `mcp/end-sign-in-gone`
+
+If the browser sign-in, the app or the passkey that a `marfa_end_sign_in` call with a `confirm` token names was ended or removed since the preview, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Reason:** the call answers the confirmation it was sent with, so it names nothing as missing.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses a confirmation when the sign-in or passkey is gone, without saying it was not found`.
+
+### `mcp/end-sign-in-other-credential`
+
+If a `marfa_end_sign_in` call carries a `confirm` token a preview gave another credential, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses a confirmation another credential got`.
+
+### `mcp/end-sign-in-expired`
+
+If a `marfa_end_sign_in` call carries a `confirm` token from a preview more than five minutes earlier, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses a confirmation once five minutes have passed since the preview`.
+
+### `mcp/end-sign-in-token-first`
+
+If a `marfa_end_sign_in` call carries a `confirm` token that another credential got, that expired, or that a preview of another `kind`, `id` or `revoke_keys` gave, then the server MUST answer `confirmation_stale` without a new preview.
+
+**Reason:** the server judges the token before it reads what the call names, so a token that does not hold tells the caller nothing about it.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses a confirmation sent for another sign-in, kind or revoke_keys before reading it`, `› refuses a confirmation once five minutes have passed since the preview`, `› refuses a confirmation another credential got`.
+
+### `mcp/end-sign-in-atomic`
+
+If a `marfa_end_sign_in` call with a `confirm` token that holds fails after it has begun its change, then the server MUST leave the browser sign-in, the app with its tokens, webhooks and keys, and the passkey as they were.
+
+**Reason:** a person who agreed to a change must not find part of it done.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › leaves everything and the confirmation as they were when the confirmed change fails, and changes it without the fault`.
+
+### `mcp/end-sign-in-spent-on-commit`
+
+If a `marfa_end_sign_in` call fails before its change commits, then the server MUST make the change on the same `confirm` token when it is sent again within five minutes.
+
+**Reason:** a token is recorded as used in the transaction of the change it allowed, so a change that never happened does not use it up.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › leaves everything and the confirmation as they were when the confirmed change fails, and changes it without the fault`.
+
+### `mcp/end-sign-in-single-use`
+
+If a `marfa_end_sign_in` call carries a `confirm` token that an earlier call already used, then the server MUST NOT change anything on it.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › changes nothing more on a confirmation an earlier call used, and says it already did`.
+
+### `mcp/end-sign-in-repeated`
+
+When a `marfa_end_sign_in` call carries a `confirm` token that an earlier call by the same credential used for the same change, within five minutes of the preview, the server MUST answer `already_done` as `true`, with the `kind` and, for an app, the `revoked_keys` that earlier call answered.
+
+**Reason:** a client that did not see the first answer, such as one that timed out, learns that the change landed.
+
+**Tests:** `compliance/mcp-sign-in-acts.test.ts › changes nothing more on a confirmation an earlier call used, and says it already did`.
 
 ## Revoking a key
 

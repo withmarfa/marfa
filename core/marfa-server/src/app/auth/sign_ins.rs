@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use arc_swap::ArcSwap;
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
@@ -8,11 +9,13 @@ use super::owner::said_name;
 use super::session::{self, ENDED, Session};
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
+use crate::app::catalog::Catalog;
 use crate::app::clock::Stamp;
 use crate::app::keys::{self, Key};
 use crate::app::oauth::grants;
 use crate::app::oauth::store::Consent;
 use crate::app::refusal::{Code, Refusal, Result};
+use crate::app::unit::Unit;
 use crate::settings::registry::GRANT_INACTIVITY_DAYS;
 
 #[derive(Clone, Debug)]
@@ -95,7 +98,7 @@ fn key_of(key: &Key, apps: &[Consent]) -> Result<SignIn> {
     })
 }
 
-fn inactivity_days(app: &App) -> u64 {
+pub(crate) fn inactivity_days(app: &App) -> u64 {
     app.settings.live().get(GRANT_INACTIVITY_DAYS)
 }
 
@@ -159,6 +162,82 @@ fn to_end(tx: &Transaction<'_>, id: &str, with_keys: bool, at: &str) -> Result<N
     }
 }
 
+/// What an ID names that a caller may end, read for a preview.
+pub(crate) enum Held {
+    /// The token's digest never changes while the session lasts.
+    Browser {
+        shown: SignIn,
+        token_digest: String,
+    },
+    App {
+        shown: SignIn,
+        consent: Box<Consent>,
+    },
+    Key,
+}
+
+/// A browser sign-in needs `sign_ins.manage`, and an app it or `grants.manage`, as
+/// `DELETE /owner/sign-ins/{id}` and `DELETE /grants/{id}` each allow.
+pub(crate) fn held(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    id: &str,
+    at: &str,
+    days: u64,
+) -> Result<Held> {
+    let app = |consent: Consent| -> Result<Held> {
+        Ok(Held::App {
+            shown: app_of(tx, &consent, days)?,
+            consent: Box::new(consent),
+        })
+    };
+    if !caller.holds(Permission::SignInsManage) {
+        caller.require(Permission::GrantsManage)?;
+        return app(grants::of_owner(tx, id)?.ok_or_else(grants::no_such_grant)?);
+    }
+    if let Some((session, client_ip, token_digest)) =
+        session::live_held_by_id(tx, id, Stamp::read(at)?)?
+    {
+        return Ok(Held::Browser {
+            shown: browser(&session, client_ip),
+            token_digest,
+        });
+    }
+    if let Some(consent) = grants::of_owner(tx, id)? {
+        return app(consent);
+    }
+    match keys::live_by_id(tx, id, at)? {
+        Some(_) => Ok(Held::Key),
+        None => Err(no_such_sign_in()),
+    }
+}
+
+/// `DELETE /owner/sign-ins/{id}` in the caller's transaction; answers how many keys it ended.
+pub(crate) fn end_in(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    id: &str,
+    with_keys: bool,
+    visit: &Visit,
+) -> Result<usize> {
+    unit.caller.require(Permission::SignInsManage)?;
+    match to_end(unit.tx(), id, with_keys, &unit.at)? {
+        Named::Browser(session) => session::ended(
+            unit.tx(),
+            &unit.at,
+            &unit.caller,
+            visit,
+            &session.id,
+            &session.owner_id,
+            false,
+        )
+        .map(|()| 0),
+        Named::App(consent) => grants::withdraw(unit, cache, &consent, with_keys),
+        Named::Key(key) => keys::end_for_owner(unit, &key.id).map(|()| 0),
+        Named::Nothing => Err(no_such_sign_in()),
+    }
+}
+
 pub async fn end(
     app: &Arc<App>,
     caller: &Caller,
@@ -184,21 +263,7 @@ pub async fn end(
         .await?;
     let cache = app.catalog_handle();
     app.write(caller, action, move |unit| {
-        unit.caller.require(Permission::SignInsManage)?;
-        match to_end(unit.tx(), &id, with_keys, &unit.at)? {
-            Named::Browser(session) => session::ended(
-                unit.tx(),
-                &unit.at,
-                &unit.caller,
-                &visit,
-                &session.id,
-                &session.owner_id,
-                false,
-            ),
-            Named::App(consent) => grants::withdraw(unit, &cache, &consent, with_keys),
-            Named::Key(key) => keys::end_for_owner(unit, &key.id),
-            Named::Nothing => Err(no_such_sign_in()),
-        }
+        end_in(unit, &cache, &id, with_keys, &visit).map(drop)
     })
     .await
 }

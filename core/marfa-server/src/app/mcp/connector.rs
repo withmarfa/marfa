@@ -77,7 +77,7 @@ pub async fn retiring(
     .await
 }
 
-fn issue(
+pub(super) fn issue(
     app: &App,
     caller: &Caller,
     tool: &str,
@@ -142,7 +142,7 @@ pub fn read_now<T>(read: Result<T>) -> Result<Option<T>> {
 
 /// Judges the token, reads the target as the act will find it, does the act and spends the token
 /// in one write, so a failure anywhere leaves the target and the token as they were.
-async fn confirmed<R, A>(
+pub(super) async fn confirmed<R, A>(
     app: &Arc<App>,
     caller: &Caller,
     (tool, action, target): (&'static str, &'static str, String),
