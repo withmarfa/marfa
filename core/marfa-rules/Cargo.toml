@@ -9,6 +9,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[[example]]
+name = "icon_set"
+test = true
+
 [dependencies]
 base64.workspace = true
 globset = "0.4"
