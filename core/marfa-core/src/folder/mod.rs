@@ -297,6 +297,16 @@ pub struct ScanReport {
 }
 
 impl ScanReport {
+    /// The walk a quick pass handed its sweep to: what the quick pass sent
+    /// is added, and the walk reports the rest.
+    pub(super) fn absorb_quick(&mut self, quick: ScanReport) {
+        self.created += quick.created;
+        self.updated += quick.updated;
+        self.renamed += quick.renamed;
+        self.requeued += quick.requeued;
+        self.flagged = merged_flagged(&self.flagged, &quick.flagged);
+    }
+
     /// A rescan of the same sync: what it made is added, and what it holds
     /// back is what it reports.
     pub(super) fn absorb_rescan(&mut self, later: ScanReport) {
@@ -2346,12 +2356,14 @@ struct Carriers {
 }
 
 impl Carriers {
-    /// An error where a file cannot be read, since it may carry any item.
+    /// The file that cannot be read and why, since it may carry any item.
     fn of<'a>(
         walked: &Walked,
         files: impl IntoIterator<Item = (&'a Path, &'a str, bool)>,
-    ) -> std::io::Result<Carriers> {
+    ) -> std::result::Result<Carriers, (String, std::io::Error)> {
         let mut carriers = Carriers::default();
+        #[cfg(debug_assertions)]
+        crate::fault::hold(|| "folder-sweep-carriers");
         for (path, key, read_id) in files {
             let captured = walked.opened.get(path);
             let mark = captured
@@ -2362,8 +2374,9 @@ impl Carriers {
             }
             if read_id && carries_frontmatter(path) {
                 let bytes = captured
-                    .ok_or_else(|| std::io::Error::other("file not opened"))?
-                    .read()?;
+                    .ok_or_else(|| std::io::Error::other("the walk could not open it"))
+                    .and_then(Captured::read)
+                    .map_err(|error| (key.to_string(), error))?;
                 if let Some(id) = document::id_line_of(&bytes) {
                     carriers.by_id.insert(id, key.to_string());
                 }

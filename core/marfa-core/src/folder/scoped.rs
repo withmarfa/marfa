@@ -249,6 +249,14 @@ impl Folder {
                 state::bound_to_lost_items(&conn)?,
             )
         };
+        // Only a walk sees every file that may carry a binding instead.
+        let carriers: HashSet<String> = journaled
+            .iter()
+            .filter_map(|row| match &row.kept {
+                Some(state::Kept::Carried(carrier)) => Some(carrier.clone()),
+                _ => None,
+            })
+            .collect();
         let (named, mut gone) = self.spelled(&inventory, scope);
         let mut active: BTreeSet<String> = named;
         active.extend(inventory.dirty.iter().cloned());
@@ -314,6 +322,14 @@ impl Folder {
                     found.push((path, key));
                 }
             }
+        }
+        if found
+            .iter()
+            .map(|(_, key)| key)
+            .chain(&vanished)
+            .any(|key| carriers.contains(key))
+        {
+            return Ok(None);
         }
         // A file that is gone is a delete or half a rename; only one that
         // turned up elsewhere is a move this pass sees whole.

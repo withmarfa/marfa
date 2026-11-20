@@ -653,7 +653,18 @@ impl Folder {
                 && *kept_for == item.id
                 && !self.exists(self.root.join(&bound.path))
             {
-                report.elsewhere += usize::from(*why == state::Kept::Arriving);
+                match why {
+                    state::Kept::Arriving => report.elsewhere += 1,
+                    state::Kept::Carried(carrier) => report.flagged.push(Flagged {
+                        path: bound.path.clone(),
+                        flag: "carried",
+                        reason: format!(
+                            "its file is now {carrier}, which the folder holds for its name or does not send, so the pull writes no second file"
+                        ),
+                        item: Some(item.id.clone()),
+                    }),
+                    state::Kept::Unsure(_) => {}
+                }
                 continue;
             }
             // Moved to another folder here and not yet taken there, written

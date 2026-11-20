@@ -788,7 +788,39 @@ pub fn journal_clear_for(conn: &Connection, path: &str, item_id: &str) -> Result
     Ok(())
 }
 
-/// Why a sweep past the grace kept a missing file's binding.
+/// Records that the file at `carrier` carries the missing file at `path`.
+/// A row that was not carried before starts its grace again once it is not.
+pub fn journal_carried(
+    conn: &Connection,
+    path: &str,
+    item_id: &str,
+    carrier: &str,
+) -> Result<(), CoreError> {
+    conn.execute_cached(
+        "INSERT INTO folder_journal (path, item_id, missing_since, kept, reason)
+         VALUES (?1, ?2, ?3, 'carried', ?4)
+         ON CONFLICT (path) DO UPDATE SET
+           item_id = excluded.item_id, kept = 'carried', reason = excluded.reason",
+        params![
+            path,
+            item_id,
+            crate::store::iso_at(crate::clock::system_time()),
+            carrier
+        ],
+    )?;
+    Ok(())
+}
+
+/// Journals as missing from now a file no other file carries any longer.
+pub fn journal_uncarried(conn: &Connection, path: &str, item_id: &str) -> Result<(), CoreError> {
+    conn.execute_cached(
+        "DELETE FROM folder_journal WHERE path = ?1 AND kept = 'carried'",
+        [path],
+    )?;
+    journal_missing(conn, path, item_id)
+}
+
+/// Why a sweep kept a missing file's binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Kept {
     /// Moved to a folder that knows the file only by this binding, and that
@@ -796,6 +828,9 @@ pub enum Kept {
     Arriving,
     /// Whether it moved cannot be told yet, and why.
     Unsure(String),
+    /// The file at this path, which the scan holds for its name or skips,
+    /// carries its identity or its item's ID.
+    Carried(String),
 }
 
 /// A journaled delete.
@@ -806,6 +841,17 @@ pub struct Journaled {
     pub missing_since: String,
     /// What the last sweep that looked decided, where it kept the binding.
     pub kept: Option<Kept>,
+}
+
+impl Journaled {
+    pub fn carried(&self) -> bool {
+        matches!(self.kept, Some(Kept::Carried(_)))
+    }
+
+    /// Kept until a look at the other folders, or a full pass, can tell.
+    pub fn looked_for(&self) -> bool {
+        matches!(self.kept, Some(Kept::Arriving | Kept::Unsure(_)))
+    }
 }
 
 /// Records what a sweep decided for a journaled file whose binding it kept,
@@ -819,6 +865,7 @@ pub fn journal_keep(
     let (kind, reason) = match kept {
         Some(Kept::Arriving) => (Some("arriving"), None),
         Some(Kept::Unsure(reason)) => (Some("unsure"), Some(reason.as_str())),
+        Some(Kept::Carried(carrier)) => (Some("carried"), Some(carrier.as_str())),
         None => (None, None),
     };
     conn.execute_cached(
@@ -841,6 +888,7 @@ pub fn journaled(conn: &Connection) -> Result<Vec<Journaled>, CoreError> {
             missing_since: row.get(2)?,
             kept: match row.get::<_, Option<String>>(3)?.as_deref() {
                 Some("arriving") => Some(Kept::Arriving),
+                Some("carried") => Some(Kept::Carried(reason.unwrap_or_default())),
                 Some(_) => Some(Kept::Unsure(reason.unwrap_or_default())),
                 None => None,
             },

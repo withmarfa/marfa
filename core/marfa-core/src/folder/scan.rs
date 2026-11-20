@@ -89,6 +89,9 @@ struct ScanState {
     guard: Guard,
     scope: Option<Scoping>,
     skipped_keys: Vec<String>,
+    /// A quick pass found a bound file missing that no journal row covers,
+    /// which only a walk can tell no other file carries.
+    walk_again: bool,
     /// Whether this pass reads every document's edges again
     /// (`EMBEDS_REREAD`).
     reread_embeds: bool,
@@ -189,6 +192,8 @@ pub(super) enum Missing {
     Changed,
     Deleted,
     Gone,
+    /// Still bound, while another file carries it.
+    Carried,
 }
 
 /// Bounded, so a row another device keeps changing ends the sweep's decision
@@ -248,7 +253,9 @@ impl Folder {
         let now = crate::store::millis_at(at);
         let grace = RENAME_GRACE.as_millis() as i64;
         Ok(state::journaled(&*self.core.conn()?)?.iter().any(|row| {
-            millis_of(&row.missing_since).is_some_and(|since| now.saturating_sub(since) < grace)
+            !row.carried()
+                && millis_of(&row.missing_since)
+                    .is_some_and(|since| now.saturating_sub(since) < grace)
         }))
     }
 
@@ -365,6 +372,12 @@ impl Folder {
         }
         if self.sweep(&mut scan, &peers)?.is_break() {
             return Ok(scan.report);
+        }
+        if scan.walk_again {
+            self.forget_inventory();
+            let mut walked = self.scan_as(full, settle, mode, Reading::Keeping, journal)?;
+            walked.absorb_quick(scan.report);
+            return Ok(walked);
         }
         scan.report.root_gone = scan.report.root_gone.or_else(|| self.root_gone());
         if keep && !scan.incomplete && scan.report.root_gone.is_none() {
@@ -619,6 +632,7 @@ impl Folder {
             guard,
             scope,
             skipped_keys: Vec::new(),
+            walk_again: false,
             reread_embeds: false,
             settle,
             mode,
@@ -1589,16 +1603,17 @@ impl Folder {
         let (seen, lists, walked, settings) =
             (&scan.seen, &scan.lists, &scan.walked, &scan.settings);
         let (mut incomplete, report) = (scan.incomplete, &mut scan.report);
+        let quick = scan.scope.is_some();
         let mut carriers: Option<Carriers> = None;
         // Journaled rather than deleted: the first half of a rename looks
         // exactly like a delete.
         let bound = state::bound_paths(&*self.core.conn()?)?;
         // By path and item: another item's file at the path answers no delete.
-        let journaled: HashSet<(String, String)> = {
+        let journaled: HashMap<(String, String), Option<state::Kept>> = {
             let conn = self.core.conn()?;
             state::journaled(&conn)?
                 .into_iter()
-                .map(|row| (row.path, row.item_id))
+                .map(|row| ((row.path, row.item_id), row.kept))
                 .collect()
         };
         let present: HashSet<String> = bound
@@ -1606,8 +1621,18 @@ impl Folder {
             .filter(|(path, _)| seen.contains(path))
             .map(|(_, item_id)| item_id.clone())
             .collect();
+        // A new file at the path took the binding, and so ended the record.
+        for ((path, item_id), kept) in &journaled {
+            if matches!(kept, Some(state::Kept::Carried(_)))
+                && !bound.contains(&(path.clone(), item_id.clone()))
+            {
+                state::journal_clear_for(&*self.core.conn()?, path, item_id)?;
+            }
+        }
         for (path, item_id) in bound {
-            let held = journaled.contains(&(path.clone(), item_id.clone()));
+            let row = journaled.get(&(path.clone(), item_id.clone()));
+            let held = row.is_some();
+            let was_carried = matches!(row, Some(Some(state::Kept::Carried(_))));
             let stands = seen.contains(&path);
             if stands && !held {
                 continue;
@@ -1649,25 +1674,48 @@ impl Folder {
                 None => match self.carriers(walked, &scan.paths, &scan.skipped_keys)? {
                     Ok(found) => carriers.insert(found),
                     // Unread, it may carry this item or any other.
-                    Err(_) => {
+                    Err((key, error)) => {
+                        report.flagged.push(Flagged {
+                            path: key,
+                            flag: "unreadable",
+                            reason: format!(
+                                "{error}, so this pass journals no missing file until it can be read"
+                            ),
+                            item: None,
+                        });
                         incomplete = true;
                         continue;
                     }
                 },
             };
             let conn = self.core.conn()?;
-            if state::bound_at(&conn, &path)?
+            let carrier = state::bound_at(&conn, &path)?
                 .filter(|row| row.item_id == item_id)
-                .is_some_and(|row| carriers.carrying(&row).is_some())
-            {
-                if held {
-                    state::journal_clear(&conn, &path)?;
-                }
+                .and_then(|row| carriers.carrying(&row).map(str::to_string));
+            if let Some(carrier) = carrier {
+                state::journal_carried(&conn, &path, &item_id, &carrier)?;
                 report.unreached += 1;
                 continue;
             }
-            state::journal_missing(&conn, &path, &item_id)?;
+            // A quick pass sees only the files it looked at, which a pass
+            // that touched a carrier walked over.
+            if quick && was_carried {
+                report.unreached += 1;
+                continue;
+            }
+            if quick && !held {
+                scan.walk_again = true;
+                continue;
+            }
+            if was_carried {
+                state::journal_uncarried(&conn, &path, &item_id)?;
+            } else {
+                state::journal_missing(&conn, &path, &item_id)?;
+            }
             report.missing += 1;
+        }
+        if scan.walk_again {
+            return Ok(ControlFlow::Continue(()));
         }
         if !incomplete && self.root_gone().is_none() {
             report.swept = true;
@@ -1687,7 +1735,7 @@ impl Folder {
         walked: &Walked,
         paths: &[PathBuf],
         skipped: &[String],
-    ) -> Result<std::io::Result<Carriers>> {
+    ) -> Result<std::result::Result<Carriers, (String, std::io::Error)>> {
         let read: HashSet<&PathBuf> = paths.iter().collect();
         let mut files = Vec::new();
         for path in walked.files.iter().filter(|path| !read.contains(path)) {
@@ -1939,8 +1987,15 @@ impl Folder {
             .iter()
             .filter_map(|row| row.identity.as_deref().map(|mark| (mark, row)))
             .collect();
+        // Another file carries such a binding, so a file at its path is new.
+        let carried: HashSet<(String, String)> = state::journaled(&*self.core.conn()?)?
+            .into_iter()
+            .filter(|row| matches!(row.kept, Some(state::Kept::Carried(_))))
+            .map(|row| (row.path, row.item_id))
+            .collect();
         let by_path: HashMap<&str, &state::Bound> = snapshot
             .iter()
+            .filter(|row| !carried.contains(&(row.path.clone(), row.item_id.clone())))
             .map(|row| (row.path.as_str(), row))
             .collect();
         let by_item: HashMap<&str, &state::Bound> = snapshot
@@ -2734,6 +2789,8 @@ impl Folder {
             let conn = self.core.conn()?;
             (state::journaled(&conn)?, state::bound_count(&conn)?)
         };
+        let journaled: Vec<state::Journaled> =
+            journaled.into_iter().filter(|row| !row.carried()).collect();
         // Counted over every missing file, not only those past the grace, so
         // files a watch meets a pass apart are one removal.
         if settings.removal_threshold.exceeded(journaled.len(), of) {
@@ -2761,6 +2818,7 @@ impl Folder {
                     continue;
                 }
                 Some(state::Kept::Arriving) if !look => continue,
+                Some(state::Kept::Carried(_)) => continue,
                 _ => {}
             }
             due.push((row.path, row.item_id));
@@ -2780,7 +2838,7 @@ impl Folder {
                     report.deleted += 1;
                     report.trashed.push(path);
                 }
-                Missing::Gone => {}
+                Missing::Gone | Missing::Carried => {}
             }
         }
         if kept && look {
@@ -2800,7 +2858,7 @@ impl Folder {
         if self.kept_look_due()?
             && state::journaled(&*self.core.conn()?)?
                 .iter()
-                .any(|row| row.kept.is_some())
+                .any(state::Journaled::looked_for)
         {
             *self
                 .kept_looked
@@ -2827,7 +2885,7 @@ impl Folder {
     pub(super) fn kept_look_at(&self) -> Result<Option<std::time::Instant>> {
         if !state::journaled(&*self.core.conn()?)?
             .iter()
-            .any(|row| row.kept.is_some())
+            .any(state::Journaled::looked_for)
         {
             return Ok(None);
         }
@@ -2901,6 +2959,12 @@ impl Folder {
         // says is an error, not a reason to skip the delete.
         let (held, bound) = {
             let conn = self.core.conn()?;
+            if state::journaled(&conn)?
+                .iter()
+                .any(|row| row.path == path && row.item_id == item_id && row.carried())
+            {
+                return Ok(Missing::Carried);
+            }
             (
                 crate::store::items_by_ids(&conn, &[item_id.to_string()])?.pop(),
                 state::bound_at(&conn, path)?.filter(|bound| bound.item_id == item_id),

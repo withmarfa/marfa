@@ -584,10 +584,12 @@ CREATE TABLE IF NOT EXISTS folder_journal (
   path TEXT PRIMARY KEY,
   item_id TEXT NOT NULL,
   missing_since TEXT NOT NULL,
-  -- Why a sweep past the grace kept the file's binding: `arriving`, until the
-  -- folder the file moved to takes it, or `unsure`, with `reason`, until a
-  -- move can be told. A pull writes no file over either.
-  kept TEXT CHECK (kept IN ('arriving', 'unsure')),
+  -- Why a sweep kept the file's binding: `arriving`, until the folder the
+  -- file moved to takes it, `unsure`, with `reason`, until a move can be
+  -- told, or `carried`, while the file at `reason`, which the scan holds or
+  -- skips, carries its identity or its item's ID. A pull writes no file over
+  -- any of them.
+  kept TEXT CHECK (kept IN ('arriving', 'unsure', 'carried')),
   reason TEXT
 ) WITHOUT ROWID;
 
