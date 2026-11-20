@@ -785,8 +785,12 @@ pub(crate) enum Settled {
     /// Unchanged, and no program can still write to it.
     Discarded,
     /// Changed, and back at its path in place of the new file, which goes.
-    /// Answers the metadata of the file now at the path.
-    PutBack(Metadata),
+    /// Answers the metadata of the file now at the path, and the bytes of
+    /// the new file it replaced.
+    PutBack {
+        metadata: Metadata,
+        replaced: Vec<u8>,
+    },
     /// Changed after its removal, and back at its empty path.
     Restored,
     /// Changed, and kept beside its path, or under its reserved name where it
@@ -858,6 +862,7 @@ pub(crate) fn settle_retained(
             read: None,
         };
         if found(dir, target, known)? == Found::Ours {
+            let replaced = dir.read(target)?;
             match exchange_at(guard.aside, name, dir, target) {
                 Ok(()) => {
                     match found(guard.aside, name, known)? {
@@ -868,7 +873,10 @@ pub(crate) fn settle_retained(
                             keep_beside(dir, guard, target, name)?;
                         }
                     }
-                    return Ok(Settled::PutBack(dir.entry_metadata(target)?));
+                    return Ok(Settled::PutBack {
+                        metadata: dir.entry_metadata(target)?,
+                        replaced,
+                    });
                 }
                 Err(error) if error.kind() == io::ErrorKind::Unsupported => {}
                 Err(error) => return Err(error),
@@ -2701,7 +2709,7 @@ mod tests {
         drop(writer);
         let settled = place.ledger.settle(&place.dir, place.guard(), now());
         assert!(
-            matches!(settled.as_slice(), [Settled::PutBack(_)]),
+            matches!(settled.as_slice(), [Settled::PutBack { .. }]),
             "{settled:?}"
         );
         assert_eq!(place.read("note.md"), b"first half\nsecond half\n");

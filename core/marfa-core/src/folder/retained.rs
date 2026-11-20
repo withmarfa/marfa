@@ -1,6 +1,7 @@
 //! Files a pull set aside while a program might still write to them, kept
 //! under their reserved names until a pass settles them.
 
+use super::fields::VERSION_FIELD;
 use super::{
     Directory, Folder, Rows, carries_frontmatter, device, document, identity, in_state, joined,
     landing, line_of, state, writers,
@@ -159,18 +160,17 @@ fn settle_retained_row(
             }
             Ok(RowSettled::Kept)
         }
-        landing::Settled::PutBack(metadata) => {
+        landing::Settled::PutBack { metadata, replaced } => {
             let path = joined(&row.dir, &retained.target);
-            let read_at = version_line(&path, file);
+            let read_at = put_back_read_at(&path, file, &replaced, &retained.read);
             let tx = conn.unchecked_transaction()?;
             if let Some(bound) = state::bound_at(&tx, &path)? {
                 state::bind(
                     &tx,
                     &state::Bound {
                         identity: identity::of(&metadata).map(|found| found.key()),
-                        // The program wrote over what the file held at its own
-                        // version, not over what the pull wrote, so a remote
-                        // edit since meets it as any concurrent edit does.
+                        // A remote edit since meets what the program wrote as
+                        // any concurrent edit does.
                         content_hash: read_at
                             .map_or(bound.content_hash.clone(), state::untaken_read_at),
                         ..bound
@@ -201,18 +201,62 @@ fn settle_retained_row(
     }
 }
 
-/// The `marfa_version` line of the document at `path` that `file`, put back
-/// there, holds.
-fn version_line(path: &str, file: &std::fs::File) -> Option<i64> {
+/// The version a document put back at `path` was read at, where `file` is
+/// the kept file now there and `replaced` the file the pull wrote. Where the
+/// kept file was set aside as `replaced` but for its version line, the pull
+/// moved only that line past this device's own edit, and the file holds what
+/// `replaced` shows; otherwise it holds what its own line says.
+fn put_back_read_at(
+    path: &str,
+    file: &std::fs::File,
+    replaced: &[u8],
+    set_aside: &landing::Object,
+) -> Option<i64> {
     use std::io::{Read, Seek};
     if !carries_frontmatter(Path::new(path)) {
         return None;
     }
     let mut file = file;
-    let mut text = String::new();
+    let mut kept = String::new();
     file.seek(std::io::SeekFrom::Start(0)).ok()?;
-    file.read_to_string(&mut text).ok()?;
-    line_of(&document::read(&text).front)
+    file.read_to_string(&mut kept).ok()?;
+    let kept_line = version_line(&kept)?;
+    if let Ok(replaced) = std::str::from_utf8(replaced)
+        && let Some(written) = version_line(replaced)
+    {
+        let as_set_aside = [
+            &replaced[..written.start],
+            &kept[kept_line.clone()],
+            &replaced[written.end..],
+        ]
+        .concat();
+        if set_aside.hash.as_deref() == Some(state::hash(as_set_aside.as_bytes()).as_str()) {
+            return line_of(&document::read(replaced).front);
+        }
+    }
+    line_of(&document::read(&kept).front)
+}
+
+/// Where in `text` its front matter's `marfa_version` line is, with its
+/// line ending.
+fn version_line(text: &str) -> Option<std::ops::Range<usize>> {
+    let mut lines = text.split_inclusive('\n');
+    let first = lines.next()?;
+    if first.trim_end() != "---" {
+        return None;
+    }
+    let mut at = first.len();
+    for line in lines {
+        let trimmed = line.trim_end();
+        if trimmed == "---" {
+            return None;
+        }
+        if trimmed.starts_with(&format!("{VERSION_FIELD}:")) {
+            return Some(at..at + line.len());
+        }
+        at += line.len();
+    }
+    None
 }
 
 /// What settling one kept file left.

@@ -4,8 +4,10 @@ import { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { copyLiveReplay } from "../../device/marfa-answers.js";
 import type { PushReport } from "../../device/cli-adapter.js";
+import type { FolderDoor } from "../../device/folder-door.js";
 import { folderHarness, type FolderHarness } from "./harness.js";
 import {
+  EdgeDoor,
   idIn,
   put,
   read,
@@ -47,6 +49,41 @@ async function noteFolder(name: string): Promise<FolderHarness> {
   expect((await harness.folder.pull()).ok).toBe(true);
   expect(read(harness, "Note.md")).toContain("marfa_version: 1\n");
   return harness;
+}
+
+/** `noteFolder`, with the door another machine edits the note through. */
+async function noteFolderEditedElsewhere(name: string): Promise<{
+  harness: FolderHarness;
+  door: () => FolderDoor;
+  editElsewhere: (body: string) => void;
+}> {
+  const edges = new EdgeDoor();
+  harness = await folderHarness(name, {
+    items: {
+      "core.note": [
+        {
+          item: {
+            id,
+            version: 1,
+            properties: { title: "Note", body: "as read\n" },
+          },
+        },
+      ],
+    },
+    events: [edges.stream()],
+  });
+  let door: FolderDoor | undefined;
+  scriptFolderWrites(harness, { edges, door: (made) => (door = made) });
+  expect((await harness.folder.pull()).ok).toBe(true);
+  expect(read(harness, "Note.md")).toContain("marfa_version: 1\n");
+  const editElsewhere = (body: string) => {
+    const version = door!.rows.get(id)!.version;
+    edges.logItem(
+      "item.updated",
+      door!.update(id, { properties: { body }, version }),
+    );
+  };
+  return { harness, door: () => door!, editElsewhere };
 }
 
 /** A program that holds `Note.md` open for writing, as a log or an editor
@@ -161,6 +198,44 @@ describe("a file a program holds open for writing", () => {
       "what a program wrote to a file set aside was not put back",
     ).toContain("first half\nsecond half\n");
     expect(lastSentBody(harness)).toContain("second half");
+    // The pull moved only the version line past the device's own edit, so
+    // what the program wrote goes on that edit's version.
+    expect(sentUpdates(harness).at(-1)?.body.version).toBe(2);
+    expect(keptNames(harness)).toEqual([]);
+  });
+
+  it("sends what a program wrote to a file it set aside as an edit of the version the file held, so another machine's edit meanwhile is kept", async () => {
+    const { harness, door, editElsewhere } = await noteFolderEditedElsewhere(
+      "folder-open-writer-elsewhere",
+    );
+    holdOpen(harness);
+    editElsewhere("their edit\n");
+    expect((await harness.folder.device().catchUp()).ok).toBe(true);
+    const pulled = await withFault("writers-unknown", () =>
+      harness.folder.pull(),
+    );
+    expect(pulled.ok, JSON.stringify(pulled)).toBe(true);
+    expect(read(harness, "Note.md")).toContain("their edit\n");
+    expect(keptNames(harness)).toHaveLength(1);
+
+    write("the program's line\n");
+    close();
+    await push(harness);
+    expect(lastSentBody(harness)).toContain("the program's line");
+    expect(
+      sentUpdates(harness).at(-1)?.body.version,
+      "what a program wrote over version 1 was sent as an edit of version 2, replacing the other machine's edit",
+    ).toBe(1);
+    const bodies = [
+      door().rows.get(id)?.properties.body,
+      ...door()
+        .conflictedCopies()
+        .map(([, copy]) => copy.properties.body),
+    ];
+    expect(bodies, "the two edits were not kept apart").toEqual(
+      expect.arrayContaining(["their edit\n", "as read\nthe program's line\n"]),
+    );
+    expect(bodies).toHaveLength(2);
     expect(keptNames(harness)).toEqual([]);
   });
 
