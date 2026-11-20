@@ -1435,7 +1435,8 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
   it("writes its own file, and takes none from the other directory of the folder, when a widened query brings an item back", async () => {
     const { a, b, left, query } = await sameFolderTwice("same-folder-widened");
     query('tags contains "vkeep"');
-    // Each directory keeps the file of the other's push unread, as above.
+    // The first directory is shut while the second pushes, so no departure
+    // takes the file and only the take-in below is tested.
     chmodSync(a.dir, 0o000);
     try {
       await keptUnmatched(b, "the directory took the file away");
