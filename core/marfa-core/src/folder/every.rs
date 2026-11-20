@@ -44,6 +44,9 @@ const POLL: Duration = Duration::from_millis(100);
 /// The code of a folder let go to a command that asked for it.
 pub const HANDED_OVER: &str = "handed_over";
 
+/// The code of a folder whose sync the person paused.
+pub const PAUSED: &str = "paused";
+
 /// The reason the record of folder watches gives a listed folder whose
 /// directory cannot be found. It is no error code: nothing failed.
 pub const MISSING: &str = "missing";
@@ -103,6 +106,16 @@ impl Unwatched {
             code: HANDED_OVER.into(),
             message:
                 "a command asked for this folder; it is watched again once that command lets it go"
+                    .into(),
+        }
+    }
+
+    /// The person paused the folder's sync.
+    pub fn paused() -> Unwatched {
+        Unwatched {
+            code: PAUSED.into(),
+            message:
+                "this directory's sync is paused; it is watched once `folders resume` lets it go on"
                     .into(),
         }
     }
@@ -243,6 +256,8 @@ fn read(registry: &Registry) -> Listing {
 struct Recorded {
     origin: Option<String>,
     first_sync_waiting: bool,
+    /// The person paused the folder's sync.
+    paused: bool,
     /// A command waits for the folder, so the watch must not take it.
     asked: bool,
 }
@@ -289,13 +304,14 @@ fn stored_origin(dir: &Path) -> crate::Result<Option<String>> {
 
 fn recorded(dir: &Path) -> crate::Result<Recorded> {
     let (root, state_dir) = state_of(dir)?;
-    let (origin, first_sync_waiting) =
+    let (origin, first_sync_waiting, paused) =
         match Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite")) {
             Ok(core) => {
                 let conn = core.conn()?;
                 (
                     store::meta_get(&conn, store::META_SERVER_ORIGIN)?,
                     first::waiting(&conn)?,
+                    super::paused(&conn)?,
                 )
             }
             // The open replaces it (`folder-setup/refused-store-replaced`).
@@ -303,12 +319,16 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
                 unsent: Some(0),
                 folder: Some(crate::FolderStore::Replaceable),
                 ..
-            }) => super::refused::recorded(&state_dir)?,
+            }) => {
+                let (origin, waiting) = super::refused::recorded(&state_dir)?;
+                (origin, waiting, false)
+            }
             Err(error) => return Err(error),
         };
     Ok(Recorded {
         origin,
         first_sync_waiting,
+        paused,
         asked: handover::asked_at(&state_dir),
     })
 }
@@ -409,6 +429,9 @@ impl<W: EveryFolder> Supervised for Machine<'_, W> {
         // never refused because the watch holds it for a moment.
         if recorded.first_sync_waiting {
             return Err(Unwatched::of(&CoreError::FirstSyncWaiting));
+        }
+        if recorded.paused {
+            return Err(Unwatched::paused());
         }
         // Taken now, it would only be let go again at once.
         if recorded.asked {

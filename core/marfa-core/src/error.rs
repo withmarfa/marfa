@@ -240,6 +240,10 @@ pub enum CoreError {
         "this folder's first sync waits for confirmation, and nothing is written or sent until it is given: `folders push` says what it will do, `folders confirm` lets it go, and `folders remove` drops it"
     )]
     FirstSyncWaiting,
+    #[error(
+        "this directory's sync is paused, so nothing is sent or written until `folders resume` lets it go on"
+    )]
+    SyncPaused,
     #[error("{0}")]
     Invalid(String),
     /// The working copy lacks the edges or items needed for a link count.
@@ -342,6 +346,7 @@ codes! {
     ServerTooOld: CoreError::ServerTooOld { .. } => "server_too_old",
     Canceled: CoreError::Canceled => "canceled",
     FirstSyncWaiting: CoreError::FirstSyncWaiting => "first_sync_waiting",
+    SyncPaused: CoreError::SyncPaused => "sync_paused",
     RenewalRefused: CoreError::RenewalRefused { .. } => "renewal_refused",
     Invalid: CoreError::Invalid(_) => "invalid",
     NotAnswerable: CoreError::NotAnswerable(_) => "not_answerable",

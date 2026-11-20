@@ -9,7 +9,7 @@ use crate::app::types::missing_field;
 /// Largest count or sequence: the largest whole number a JSON number holds exactly.
 pub const MOST: i64 = 9_007_199_254_740_991;
 
-pub const PROBLEM_CODES: [&str; 8] = [
+pub const PROBLEM_CODES: [&str; 10] = [
     "conflict",
     "refused",
     "credential_refused",
@@ -18,6 +18,8 @@ pub const PROBLEM_CODES: [&str; 8] = [
     "unavailable",
     "root_gone",
     "settings_invalid",
+    "unwatched",
+    "paused",
 ];
 
 const FIELDS: [&str; 8] = [

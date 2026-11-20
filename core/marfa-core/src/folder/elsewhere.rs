@@ -132,6 +132,7 @@ impl Peer {
                 last_reads: std::sync::Mutex::default(),
                 inventory: std::sync::Mutex::default(),
                 every_addition: std::sync::atomic::AtomicBool::new(false),
+                unwatched: std::sync::atomic::AtomicUsize::new(0),
                 replaced: None,
             })
         });

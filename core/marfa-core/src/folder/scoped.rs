@@ -33,6 +33,8 @@ pub(super) struct Scope {
     pub(super) keys: BTreeSet<String>,
     /// The paths a rename event named.
     pub(super) renamed: BTreeSet<String>,
+    /// The files a look at the unwatched directories found, however many.
+    pub(super) beneath: BTreeSet<String>,
 }
 
 impl Touched {
@@ -91,6 +93,18 @@ impl Touched {
         if self.scope.keys.len() > MOST_TOUCHED {
             self.distrust();
         }
+    }
+
+    /// Names files no event named; `false` where one is outside the folder.
+    pub(super) fn name(&mut self, root: &Path, paths: impl IntoIterator<Item = PathBuf>) -> bool {
+        for path in paths {
+            let Ok(key) = identity::relative(root, &path) else {
+                self.distrust();
+                return false;
+            };
+            self.scope.beneath.insert(key);
+        }
+        true
     }
 
     /// Says the paths cannot be trusted to be all that changed.
@@ -179,6 +193,17 @@ impl Folder {
         *self.inventory.lock().expect("inventory lock") = None;
     }
 
+    /// The files the last pass found beneath `directories`.
+    pub(super) fn kept_beneath(&self, root: &Path, directories: &[PathBuf]) -> Option<Vec<String>> {
+        let directories: HashSet<String> = directories
+            .iter()
+            .map(|directory| identity::relative(root, directory))
+            .collect::<std::result::Result<_, _>>()
+            .ok()?;
+        let guard = self.inventory.lock().expect("inventory lock");
+        Some(beneath(&guard.as_ref()?.keys, &directories))
+    }
+
     pub(super) fn keep_inventory(&self, inventory: Inventory) {
         *self.inventory.lock().expect("inventory lock") = Some(inventory);
     }
@@ -249,6 +274,7 @@ impl Folder {
         if active.len() > MOST_ACTIVE {
             return Ok(None);
         }
+        active.extend(scope.beneath.iter().cloned());
         let by_identity: HashMap<&str, &str> = snapshot
             .iter()
             .filter_map(|row| Some((row.identity.as_deref()?, row.path.as_str())))
@@ -586,6 +612,17 @@ impl Folder {
     }
 }
 
+/// The `keys` beneath any of `directories`, by each key's ancestors.
+fn beneath(keys: &HashSet<String>, directories: &HashSet<String>) -> Vec<String> {
+    keys.iter()
+        .filter(|key| {
+            key.match_indices('/')
+                .any(|(at, _)| directories.contains(&key[..at]))
+        })
+        .cloned()
+        .collect()
+}
+
 /// Whether two spellings are one name to a volume that ignores case or Unicode
 /// form.
 fn same_name(one: &str, other: &str) -> bool {
@@ -619,5 +656,65 @@ pub(super) enum Reading<'a> {
 impl Touched {
     pub(super) fn reading(scope: &Option<Scope>) -> Reading<'_> {
         scope.as_ref().map_or(Reading::Keeping, Reading::Named)
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+
+    #[test]
+    fn the_keys_beneath_a_directory_are_those_it_is_an_ancestor_of() {
+        let keys: HashSet<String> = [
+            "a.md",
+            "sub/b.md",
+            "sub/deep/c.md",
+            "sub2/d.md",
+            "other/sub/e.md",
+        ]
+        .map(String::from)
+        .into();
+        let found = |directories: &[&str]| {
+            let mut found = beneath(
+                &keys,
+                &directories.iter().map(|name| name.to_string()).collect(),
+            );
+            found.sort();
+            found
+        };
+        assert_eq!(found(&["sub"]), ["sub/b.md", "sub/deep/c.md"]);
+        assert_eq!(found(&["sub/deep", "sub2"]), ["sub/deep/c.md", "sub2/d.md"]);
+        assert!(
+            found(&["su"]).is_empty(),
+            "a name that only begins as a directory's does"
+        );
+        assert!(found(&["a.md"]).is_empty(), "a file is no directory");
+    }
+
+    #[test]
+    fn named_paths_join_the_scope_however_many_unless_one_is_outside() {
+        let root = Path::new("/folder");
+        let under = |count: usize| (0..count).map(|at| root.join(format!("d/n{at}.md")));
+
+        let mut touched = Touched::default();
+        assert!(touched.name(root, under(3)));
+        let scope = touched.scope().expect("trusted");
+        assert_eq!(scope.beneath.len(), 3);
+        assert!(scope.beneath.contains("d/n0.md"));
+        assert!(scope.keys.is_empty(), "no event named them");
+
+        let mut many = Touched::default();
+        assert!(many.name(root, under(MOST_TOUCHED * 8)));
+        assert_eq!(
+            many.scope().expect("trusted").beneath.len(),
+            MOST_TOUCHED * 8
+        );
+
+        let mut outside = Touched::default();
+        assert!(!outside.name(root, [PathBuf::from("/elsewhere/a.md")]));
+        assert!(
+            outside.scope().is_none(),
+            "a path outside the folder leaves the pass to walk"
+        );
     }
 }

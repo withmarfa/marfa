@@ -1126,7 +1126,7 @@ When a folder is added and the registry’s existing contents cannot be parsed, 
 
 ## The record of folder watches
 
-A watch process keeps a record of its folders in `folder-watch.json`, beside the machine’s folder registry, for any program on the machine to read. The file holds `version` (`1`) and `processes`, one entry for each watch process: its `pid`, `build_version`, `started_at`, `heartbeat_at`, `heartbeat_interval_seconds`, `ended_at`, and `folders`. Each folder lists its `dir`, its `system.folder` ID in `folder`, `watching`, `reason`, `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals`. A watch takes a lock on `folder-watch.lock`, beside the file, to write it.
+A watch process keeps a record of its folders in `folder-watch.json`, beside the machine’s folder registry, for any program on the machine to read. The file holds `version` (`1`) and `processes`, one entry for each watch process: its `pid`, `build_version`, `started_at`, `heartbeat_at`, `heartbeat_interval_seconds`, `ended_at`, and `folders`. Each folder lists its `dir`, its `system.folder` ID in `folder`, `watching`, `reason`, `paused`, `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals`. A watch takes a lock on `folder-watch.lock`, beside the file, to write it.
 
 ### `folder-setup/watch-record-location`
 
@@ -1157,6 +1157,20 @@ While a folder that a watch of every folder lists is not said to be watched, and
 **Reason:** A program showing folder syncing tells a folder that is failing from one that is not listed. The code is the one `folders watch` reports, and the record holds no message, which may name a path.
 
 **Tests:** `device/folder-watch-record.test.ts › lists a folder it cannot watch as not watched, with the code of the reason, and the other watch beside it`, `device/folder-watch-record.test.ts › lists the folder whose credential the server refused as not watched, with the problem the report carries`, `device/folders-handover.test.ts › says a folder it let go is held by another process once that process keeps it`.
+
+### `folder-setup/watch-record-paused`
+
+While the sync of a folder's directory is paused, a device MUST list it in the record with `watching` set to `false`, `reason` set to `paused` and `paused` set to `true`.
+
+**Reason:** A program showing folder syncing tells a folder a person paused from one that is failing.
+
+**Tests:** `device/folder-watch-record.test.ts › lists a folder whose sync is paused as not watched and paused, keeps it so across a restart of the watch, and watches it once it is resumed`.
+
+### `folder-setup/watch-record-not-paused`
+
+While the sync of a folder's directory is not paused, a device MUST set `paused` to `false` for the folder in the record.
+
+**Tests:** `device/folder-watch-record.test.ts › lists a folder whose sync is paused as not watched and paused, keeps it so across a restart of the watch, and watches it once it is resumed`.
 
 ### `folder-setup/watch-record-missing`
 

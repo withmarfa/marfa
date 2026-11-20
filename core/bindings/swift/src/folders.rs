@@ -16,6 +16,8 @@ pub struct ListedFolder {
     pub dir: String,
     /// The id of the `system.folder` whose settings it follows.
     pub folder: String,
+    /// Its sync is paused with `Folders.pause`.
+    pub paused: bool,
 }
 
 /// Why a folder's directory is in cloud-synced or network storage, where
@@ -150,6 +152,11 @@ pub struct FolderStatus {
     pub paused: FolderPaused,
     /// Set while the folder's first sync waits to be confirmed.
     pub first_sync: Option<WaitingFirstSync>,
+    /// The directory's sync is paused with `Folders.pause`.
+    pub sync_paused: bool,
+    /// How many directories a watch last found it could not watch, from the
+    /// folder's last health report.
+    pub unwatched: u64,
 }
 
 /// A file a pass held or warned about, with why.
@@ -352,8 +359,13 @@ pub enum FolderEvent {
     /// caller waits, with no command or call asking for it. Told once; the
     /// watch takes the folder back once that process lets it go.
     HeldElsewhere,
+    /// The directory's sync was paused with `Folders.pause`, and the watch
+    /// let the folder go and waits, holding nothing, for `Folders.resume`. Told
+    /// once for each pause; the watch takes the folder back once it ends.
+    Paused,
     /// The watch took the folder back and keeps it in step again. It follows
-    /// `HandedOver` or `HeldElsewhere`, and stands in for a second `Watching`.
+    /// `HandedOver`, `HeldElsewhere` or `Paused`, and stands in for a second
+    /// `Watching`.
     TakenBack,
     /// The call the folder was let go to removed the folder from this
     /// machine, so there is nothing to watch. The watch ends.
@@ -450,6 +462,7 @@ guarded! {
                 .folders()?
                 .into_iter()
                 .map(|entry| ListedFolder {
+                    paused: marfa_core::Folder::paused_at(&entry.dir),
                     dir: entry.dir.display().to_string(),
                     folder: entry.folder,
                 })
@@ -486,7 +499,25 @@ guarded! {
                 first_sync: report.first_sync.map(|waiting| WaitingFirstSync {
                     plan: waiting.plan.map(Into::into),
                 }),
+                sync_paused: report.sync_paused,
+                unwatched: report.unwatched,
             })
+        }
+
+        /// Pauses the directory's sync until `resume`: a watch skips it, and
+        /// `sync`, `confirm`, `restore` and the other calls that read the
+        /// server's side or write either side are refused with `SyncPaused`.
+        /// Answers whether it was running. Asks a watch that holds the folder
+        /// to let it go, as `add` does.
+        pub fn pause(&self, dir: String) -> Result<bool, MarfaError> {
+            Ok(working(&dir, self.server(), self.renewal.as_ref())?.pause_sync()?)
+        }
+
+        /// Lets a paused directory's sync go on. Answers whether it was
+        /// paused. Asks a watch that holds the folder to let it go, as `add`
+        /// does.
+        pub fn resume(&self, dir: String) -> Result<bool, MarfaError> {
+            Ok(working(&dir, self.server(), self.renewal.as_ref())?.resume_sync()?)
         }
 
         /// Everything a folder does, once: sends what changed on disk, catches
@@ -686,33 +717,48 @@ fn keep_in_step(
     use marfa_core::folder::TakeBack;
     // The watch has taken the folder back, and its first `Watching` says so.
     let mut back = false;
+    // A directory paused before the watch began is refused; one paused under it is waited for.
+    let mut begun = false;
     loop {
-        let end = folder.watch_handing_over(stop, |event| {
-            if matches!(
-                event,
-                marfa_core::WatchEvent::Busy { .. }
-                    | marfa_core::WatchEvent::Limited { .. }
-                    | marfa_core::WatchEvent::Missed { .. }
-                    | marfa_core::WatchEvent::Reclaimed { .. }
-                    | marfa_core::WatchEvent::ReclaimFailed(_)
-            ) {
-                return Ok(());
-            }
-            if back && matches!(event, marfa_core::WatchEvent::Watching { .. }) {
-                back = false;
-                listener.told(FolderEvent::TakenBack);
-                return Ok(());
-            }
-            listener.told(event_of(event)?);
-            Ok::<(), MarfaError>(())
+        let paused = begun && folder.is_paused()?;
+        let end = (if paused {
+            Ok(marfa_core::WatchEnd::HandedOver)
+        } else {
+            folder.watch_handing_over(stop, |event| {
+                if matches!(
+                    event,
+                    marfa_core::WatchEvent::Busy { .. }
+                        | marfa_core::WatchEvent::Limited { .. }
+                        | marfa_core::WatchEvent::Missed { .. }
+                        | marfa_core::WatchEvent::Reclaimed { .. }
+                        | marfa_core::WatchEvent::ReclaimFailed(_)
+                ) {
+                    return Ok(());
+                }
+                if back && matches!(event, marfa_core::WatchEvent::Watching { .. }) {
+                    back = false;
+                    listener.told(FolderEvent::TakenBack);
+                    return Ok(());
+                }
+                listener.told(event_of(event)?);
+                Ok::<(), MarfaError>(())
+            })
         })?;
         if end == marfa_core::WatchEnd::Stopped {
             return Ok(());
         }
+        begun = true;
         let root = folder.root().to_path_buf();
         let listed = marfa_core::Folder::listed_at(&root);
         drop(folder);
-        listener.told(FolderEvent::HandedOver);
+        if paused {
+            listener.told(FolderEvent::Paused);
+            if !marfa_core::Folder::wait_resumed(&root, stop) {
+                return Ok(());
+            }
+        } else {
+            listener.told(FolderEvent::HandedOver);
+        }
         let taken = marfa_core::Folder::take_back(
             &root,
             listed,

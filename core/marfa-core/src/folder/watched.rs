@@ -24,12 +24,34 @@ pub(super) trait Directories {
 
 impl<W: Watcher> Directories for W {
     fn watch(&mut self, directory: &Path) -> notify::Result<()> {
+        #[cfg(debug_assertions)]
+        if refused_by_fault(directory) {
+            return Err(notify::Error::generic("no watches left"));
+        }
         Watcher::watch(self, directory, RecursiveMode::NonRecursive)
     }
 
     fn unwatch(&mut self, directory: &Path) -> notify::Result<()> {
         Watcher::unwatch(self, directory)
     }
+}
+
+/// Whether the `watch-refuse` fault lists a name that ends `directory` or an ancestor.
+#[cfg(debug_assertions)]
+fn refused_by_fault(directory: &Path) -> bool {
+    crate::fault::named("watch-refuse")
+        .and_then(|file| std::fs::read_to_string(file).ok())
+        .is_some_and(|names| {
+            names
+                .lines()
+                .any(|name| !name.is_empty() && directory.ancestors().any(|up| up.ends_with(name)))
+        })
+}
+
+/// Whether a fixture has the watch register directories one by one on every
+/// platform, so that `watch-refuse` has a registration to refuse.
+fn by_directory_forced() -> bool {
+    cfg!(debug_assertions) && crate::fault::named("watch-refuse").is_some()
 }
 
 /// The folder's rules, and the directories they were found to leave out. An
@@ -208,7 +230,7 @@ impl<W: Watcher> Listening<W> {
         root: &Path,
         reach: Reach,
     ) -> Result<(Listening<W>, Vec<notify::Error>), notify::Error> {
-        if W::kind() == WatcherKind::Inotify {
+        if W::kind() == WatcherKind::Inotify || by_directory_forced() {
             return Listening::by_directory(watcher, root, reach);
         }
         watcher.watch(root, RecursiveMode::Recursive)?;
@@ -281,20 +303,54 @@ impl<W: Directories> Listening<W> {
         tree.reopen(&mut self.watcher, &self.reach)
     }
 
+    /// The directories that could not be watched, and are not now. No event
+    /// names a change in one, or in any directory below it.
+    pub(super) fn unwatched(&self) -> Vec<PathBuf> {
+        self.tree
+            .as_ref()
+            .map(|tree| tree.unwatched.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// The files on disk in and below `directories`.
+    pub(super) fn files_beneath(&self, root: &Path, directories: &[PathBuf]) -> BTreeSet<PathBuf> {
+        let mut found = BTreeSet::new();
+        let mut pending = directories.to_vec();
+        while let Some(directory) = pending.pop() {
+            let Ok(entries) = std::fs::read_dir(&directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    let enters = path
+                        .strip_prefix(root)
+                        .ok()
+                        .and_then(Path::to_str)
+                        .is_some_and(|relative| self.reach.enters(relative));
+                    if enters {
+                        pending.push(path);
+                    }
+                } else {
+                    found.insert(path);
+                }
+            }
+        }
+        found
+    }
+
     /// Readies the watch for a pass. A directory that could not be watched is
-    /// tried again, and while one stands unwatched, or has only now been
-    /// watched, or the folder is on a network file system, no event names what
-    /// changed, so the pass walks. Returns the directories that could not be
-    /// watched and were not told of before, or `None` where there are none.
+    /// tried again. While the folder is on a network file system, or the
+    /// directory has only now come back, no event names what changed, so the
+    /// pass walks. Returns the directories that could not be watched and were
+    /// not told of before, or `None` where there are none.
     pub(super) fn ready(&mut self, touched: &mut Touched) -> Option<Vec<notify::Error>> {
-        let mut distrust = self.remote;
         let mut failures = Vec::new();
         if let Some(tree) = &mut self.tree {
-            distrust |= !tree.unwatched.is_empty();
             failures = tree.retry(&mut self.watcher, &self.reach);
         }
         let restored = self.restore();
-        if distrust || restored.is_some() {
+        if self.remote || restored.is_some() {
             touched.distrust();
         }
         match restored {
@@ -1268,5 +1324,80 @@ mod tests {
         assert!(!ready(Some(StorageCause::ICloudDrive)));
         assert!(ready(Some(StorageCause::NetworkFileSystem("nfs".into()))));
         assert!(ready(Some(StorageCause::NetworkFileSystem("smbfs".into()))));
+    }
+
+    #[test]
+    fn a_directory_that_cannot_be_watched_does_not_send_every_pass_to_walk() {
+        let dir = folder_of(&["notes", "refused"]);
+        let ready = |refused: &[&str]| {
+            let watcher = Refusing {
+                refused: refused.iter().map(|name| dir.path().join(name)).collect(),
+            };
+            let (mut listening, failures) =
+                Listening::by_directory(watcher, dir.path(), reaching(&[])).unwrap();
+            assert_eq!(failures.len(), refused.len());
+            let mut touched = Touched::default();
+            listening.ready(&mut touched);
+            (listening.unwatched().len(), touched.scope().is_none())
+        };
+        // The witness: a watch the system will not trust does make a pass walk.
+        let (_, walks) = {
+            let (mut listening, _) = Listening::by_directory(
+                Refusing {
+                    refused: BTreeSet::new(),
+                },
+                dir.path(),
+                reaching(&[]),
+            )
+            .unwrap();
+            listening.stored(Some(&StorageCause::NetworkFileSystem("nfs".into())));
+            let mut touched = Touched::default();
+            listening.ready(&mut touched);
+            (0, touched.scope().is_none())
+        };
+        assert!(walks);
+        assert_eq!(ready(&[]), (0, false));
+        assert_eq!(ready(&["refused"]), (1, false));
+    }
+
+    #[test]
+    fn the_files_beneath_the_unwatched_directories_are_named() {
+        let dir = folder_of(&["a/deeper", "b", "skipped/inner"]);
+        let root = dir.path();
+        for file in [
+            "a/one.md",
+            "a/deeper/two.md",
+            "b/three.md",
+            "skipped/inner/four.md",
+        ] {
+            std::fs::write(root.join(file), "x").unwrap();
+        }
+        let (listening, _) = Listening::by_directory(
+            Refusing {
+                refused: BTreeSet::new(),
+            },
+            root,
+            reaching(&["skipped/"]),
+        )
+        .unwrap();
+        let named = |directories: &[&str]| {
+            let directories: Vec<PathBuf> =
+                directories.iter().map(|name| root.join(name)).collect();
+            relative(
+                root,
+                &listening
+                    .files_beneath(root, &directories)
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            )
+        };
+        // Everything beneath a directory, none of what a scan leaves out, and
+        // none of a directory that is not named.
+        assert_eq!(
+            named(&["a"]),
+            BTreeSet::from(["a/deeper/two.md".to_string(), "a/one.md".to_string()])
+        );
+        assert_eq!(named(&["skipped"]), BTreeSet::new());
+        assert_eq!(named(&["a", "b"]).len(), 3);
     }
 }

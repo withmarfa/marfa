@@ -61,6 +61,7 @@ impl Folder {
     /// A folder whose first sync waits to be confirmed is only read, and says
     /// what the sync will do.
     pub fn sync(&self) -> Result<Synced> {
+        self.refuse_while_paused()?;
         let result = self.sync_observed();
         match &result {
             Ok(Synced::Done(report)) => {
@@ -120,6 +121,7 @@ impl Folder {
     /// left. Refused while the first sync waits to be confirmed, before
     /// anything is sent.
     pub fn send_only(&self) -> Result<SendReport> {
+        self.refuse_while_paused()?;
         self.refuse_while_waiting()?;
         let result = self.send_only_observed();
         match &result {
