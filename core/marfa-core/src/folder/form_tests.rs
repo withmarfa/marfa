@@ -439,4 +439,14 @@ fn a_file_written_with_no_form_fills_none_and_a_persons_file_fills_its_own() {
     assert_eq!(forms_sent(&pair.a), before + 1);
     pair.a.scan().unwrap();
     assert_eq!(forms_sent(&pair.a), before + 1);
+
+    // A later run of the second directory, as the next push is, knows its
+    // files need no form without rendering them.
+    let Two { b, second, .. } = pair;
+    drop(b);
+    let again = Folder::open(second.path(), None).unwrap();
+    tests::rendered();
+    again.scan().unwrap();
+    assert_eq!(tests::rendered(), 0);
+    assert_eq!(forms_sent(&again), 0);
 }

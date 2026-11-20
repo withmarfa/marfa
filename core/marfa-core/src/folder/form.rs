@@ -1,7 +1,7 @@
 //! How a file writes its frontmatter, apart from what it says: the keys in
 //! order, which are empty, and each value's style. A placement carries it, so
 //! a directory that never had the file writes it as the file was written.
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -14,7 +14,6 @@ use super::{BoundFiles, Folder, Scanned, fields, preserve, state};
 use crate::Result;
 use crate::body::embed::carries_frontmatter;
 use crate::body::resolve::Names;
-use crate::error::CoreError;
 use crate::model::{EdgeEdit, WriteKind};
 use marfa_rules::catalog::Catalog;
 
@@ -23,6 +22,10 @@ pub(super) const FORM_PROPERTY: &str = "form";
 
 /// The items whose form waits on the server taking a change to the item.
 const META_FORMS_OWED: &str = "folder_forms_owed";
+
+/// The files whose form is the one a directory writes with no form, as the
+/// bytes each item's file held, so no later pass renders them to know it.
+const META_FORMS_UNFORMED: &str = "folder_forms_unformed";
 
 /// The most a form may take as JSON: a larger one is not kept.
 const FORM_LIMIT: usize = 8 * 1024;
@@ -225,10 +228,23 @@ impl Folder {
         withheld: &Withheld,
     ) -> Result<()> {
         let mut names = None;
+        let mut placements: HashMap<String, crate::Edge> = HashMap::new();
+        for edge in self.core.edges_to(&self.folder)? {
+            if edge.edge_type != PLACEMENT_EDGE {
+                continue;
+            }
+            match placements.get(&edge.from_id) {
+                Some(kept) if placement::rank_of(kept) <= placement::rank_of(&edge) => {}
+                _ => {
+                    placements.insert(edge.from_id.clone(), edge);
+                }
+            }
+        }
         let judging = Judging {
             catalog,
             edge_types,
             withheld,
+            placements: &placements,
         };
         // By item, so a move that leaves the bytes alone is no change.
         let before: HashMap<&str, &str> = snapshot
@@ -237,6 +253,8 @@ impl Folder {
             .collect();
         let was = self.owed_forms()?;
         let mut owed = was.clone();
+        let unformed_was = self.unformed_forms()?;
+        let mut unformed = unformed_was.clone();
         let mut judged: BTreeSet<String> = BTreeSet::new();
         for file in files {
             if file.deferred || file.unreadable.is_some() || !carries_frontmatter(&file.path) {
@@ -253,7 +271,14 @@ impl Folder {
                 && before
                     .get(bound.item_id.as_str())
                     .is_none_or(|was| *was != file.hash);
-            self.send_form(&bound, &file.text, changed, &judging, &mut names, &mut owed)?;
+            self.send_form(
+                &bound,
+                &file.text,
+                changed,
+                &judging,
+                &mut names,
+                (&mut owed, &mut unformed),
+            )?;
         }
         // A form that waited, its file left unread by a quick pass.
         for item in was.difference(&judged) {
@@ -271,17 +296,29 @@ impl Folder {
                 owed.remove(item);
                 continue;
             };
-            self.send_form(&bound, &text, false, &judging, &mut names, &mut owed)?;
+            self.send_form(
+                &bound,
+                &text,
+                false,
+                &judging,
+                &mut names,
+                (&mut owed, &mut unformed),
+            )?;
         }
         if owed != was {
             self.keep_owed_forms(&owed)?;
+        }
+        unformed.retain(|item, _| before.contains_key(item.as_str()) || judged.contains(item));
+        if unformed != unformed_was {
+            self.keep_unformed_forms(&unformed)?;
         }
         Ok(())
     }
 
     /// Sends the form of the file `bound` holds, `text`, where it is due,
     /// noting in `owed` a form that waits on the server taking the item's
-    /// change, so a key the server refuses never reaches it.
+    /// change, so a key the server refuses never reaches it, and in
+    /// `unformed` a file written as a directory writes it with no form.
     fn send_form(
         &self,
         bound: &state::Bound,
@@ -289,27 +326,32 @@ impl Folder {
         changed: bool,
         judging: &Judging<'_>,
         names: &mut Option<Names>,
-        owed: &mut BTreeSet<String>,
+        (owed, unformed): (&mut BTreeSet<String>, &mut BTreeMap<String, String>),
     ) -> Result<()> {
         let Judging {
             catalog,
             edge_types,
             withheld,
+            placements,
         } = *judging;
         let item = bound.item_id.as_str();
         let was_owed = owed.remove(item);
         if bound.held.is_some() || bound.holds_refusal() || withheld.contains_key(item) {
             return Ok(());
         }
-        let Some(edge) = self.placement(item)? else {
+        let Some(edge) = placements.get(item) else {
             return Ok(());
         };
-        if !placement::path_of(&edge)
-            .is_some_and(|path| marfa_rules::names::same(path, &bound.path))
+        if !placement::path_of(edge).is_some_and(|path| marfa_rules::names::same(path, &bound.path))
         {
             return Ok(());
         }
         let held = edge.properties.get(FORM_PROPERTY);
+        if held.is_some() {
+            unformed.remove(item);
+        } else if unformed.get(item) == Some(&bound.content_hash) {
+            return Ok(());
+        }
         if held.is_some() && !changed && !was_owed {
             return Ok(());
         }
@@ -327,7 +369,9 @@ impl Folder {
         }
         // A file written as a directory writes the item with no form fills
         // none: it stands for no person's way of writing it.
-        if held.is_none() && self.written_unformed(bound, &form, catalog, edge_types, names)? {
+        if held.is_none()
+            && self.written_unformed(bound, &form, (catalog, edge_types), names, unformed)?
+        {
             return Ok(());
         }
         let waits = crate::store::waiting_writes_for_item(&*self.core.conn()?, item)?
@@ -367,16 +411,11 @@ impl Folder {
         &self,
         bound: &state::Bound,
         form: &Value,
-        catalog: &Catalog,
-        edge_types: &EdgeTypes,
+        (catalog, edge_types): (&Catalog, &EdgeTypes),
         names: &mut Option<Names>,
+        unformed: &mut BTreeMap<String, String>,
     ) -> Result<bool> {
-        let seen = (bound.item_id.clone(), bound.content_hash.clone());
-        let mut unformed = self
-            .unformed
-            .lock()
-            .map_err(|_| CoreError::Store("the unformed files were poisoned".into()))?;
-        if unformed.contains(&seen) {
+        if unformed.get(&bound.item_id) == Some(&bound.content_hash) {
             return Ok(true);
         }
         let Some(item) = self.core.get(&bound.item_id)? else {
@@ -386,7 +425,7 @@ impl Folder {
             Some(names) => names,
             None => names.insert(Names::load(&*self.core.conn()?, catalog, &BoundFiles)?),
         };
-        let rendered = self.render_with(
+        let rendered = self.render(
             &item,
             &bound.path,
             None,
@@ -405,7 +444,9 @@ impl Folder {
                 .zip(Form::read(form))
                 .is_some_and(|(written, form)| form.only_stamped_beyond(&written));
         if same {
-            unformed.insert(seen);
+            unformed.insert(bound.item_id.clone(), bound.content_hash.clone());
+        } else {
+            unformed.remove(&bound.item_id);
         }
         Ok(same)
     }
@@ -416,6 +457,27 @@ impl Folder {
                 .and_then(|json| serde_json::from_str(&json).ok())
                 .unwrap_or_default(),
         )
+    }
+
+    fn unformed_forms(&self) -> Result<BTreeMap<String, String>> {
+        Ok(
+            crate::store::meta_get(&*self.core.conn()?, META_FORMS_UNFORMED)?
+                .and_then(|json| serde_json::from_str(&json).ok())
+                .unwrap_or_default(),
+        )
+    }
+
+    fn keep_unformed_forms(&self, unformed: &BTreeMap<String, String>) -> Result<()> {
+        let conn = self.core.conn()?;
+        if unformed.is_empty() {
+            crate::store::meta_delete(&conn, META_FORMS_UNFORMED)
+        } else {
+            crate::store::meta_set(
+                &conn,
+                META_FORMS_UNFORMED,
+                &serde_json::to_string(unformed)?,
+            )
+        }
     }
 
     fn keep_owed_forms(&self, owed: &BTreeSet<String>) -> Result<()> {
@@ -434,6 +496,8 @@ struct Judging<'a> {
     catalog: &'a Catalog,
     edge_types: &'a EdgeTypes,
     withheld: &'a Withheld,
+    /// Each item's placement in this folder, read once for the pass.
+    placements: &'a HashMap<String, crate::Edge>,
 }
 
 impl Key {
