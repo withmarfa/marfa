@@ -93,6 +93,10 @@ struct Entry {
     /// The code of the error that keeps a listed folder from being watched;
     /// `None` while it is watched or has not been tried.
     reason: Option<String>,
+    /// Whether the person paused the folder's sync, which the watch found
+    /// when it tried the folder. An entry an earlier build wrote has none.
+    #[serde(default)]
+    paused: bool,
     last_success_at: Option<String>,
     first_sync_waiting: Option<bool>,
     problems: Option<Vec<Problem>>,
@@ -126,6 +130,7 @@ impl Held {
             folder: self.folder.clone(),
             watching: self.watching,
             reason: self.reason.clone(),
+            paused: self.reason.as_deref() == Some(super::PAUSED),
             last_success_at: health.and_then(|health| health.last_success_at.clone()),
             // The reason is a fact about the folder with no report read.
             first_sync_waiting: if self.reason.as_deref() == Some("first_sync_waiting") {

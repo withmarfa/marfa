@@ -44,7 +44,8 @@ pub enum FoldersCommand {
     /// List the directories on this machine that follow a folder, as its
     /// registry holds them. The
     /// registry is the file MARFA_FOLDER_REGISTRY names, where it names one.
-    /// With --json, each entry has `dir`, `folder`, and where the registry
+    /// With --json, each entry has `dir`, `folder`, `paused` (whether its sync is
+    /// paused with `folders pause`), and where the registry
     /// records them, `store` and `root`. `root` is an opaque value that
     /// identifies the directory as it was opened: compare it for equality
     /// and do not parse it.
@@ -79,6 +80,26 @@ pub enum FoldersCommand {
     Health {
         /// The folder's `system.folder` id.
         id: String,
+    },
+    /// Pause a directory's sync until `folders resume`. A watch, of one
+    /// directory or of every one, skips a paused directory, and `folders push`
+    /// and `folders pull` refuse it. The pause is kept in the directory's own
+    /// state on this computer, so it lasts through a restart of the watch and
+    /// of the computer, and nothing in the directory or in its saved state
+    /// changes. A watch that holds the directory lets it go to this command.
+    /// Pausing a directory that is paused changes nothing and says so.
+    Pause {
+        /// The directory.
+        dir: PathBuf,
+    },
+    /// Let a paused directory's sync go on. A watch picks the directory up
+    /// again, and the next sync sends what changed in it and pulls what
+    /// changed on the server, as a watch that starts again does; conflicts are
+    /// handled as they are then. Resuming a directory that is not paused
+    /// changes nothing and says so.
+    Resume {
+        /// The directory.
+        dir: PathBuf,
     },
     /// Let a directory's first sync go, or what it holds back: a paused large
     /// removal, whose deletes are queued and whose files that items left
@@ -324,17 +345,25 @@ pub fn run(
                 Some(registry) => registry.folders()?,
                 None => Vec::new(),
             };
+            let listed: Vec<ListedFolder<'_>> = listed
+                .iter()
+                .map(|entry| ListedFolder {
+                    paused: Folder::paused_at(&entry.dir),
+                    entry,
+                })
+                .collect();
             output::list_report(&listed, None, json, || {
                 if listed.is_empty() {
                     return "no directory on this machine follows a folder".into();
                 }
                 listed
                     .iter()
-                    .map(|entry| {
+                    .map(|listed| {
                         format!(
-                            "{} follows the folder {}",
-                            entry.dir.display(),
-                            printable(&entry.folder)
+                            "{} follows the folder {}{}",
+                            listed.entry.dir.display(),
+                            printable(&listed.entry.folder),
+                            if listed.paused { " (paused)" } else { "" }
                         )
                     })
                     .collect::<Vec<_>>()
@@ -390,6 +419,16 @@ pub fn run(
                 "folders", &id, "status",
             ]))?;
             output::report(&report, json, || describe_health(&report))
+        }
+        FoldersCommand::Pause { dir } => {
+            let folder = working(&dir, None)?;
+            let changed = folder.pause_sync()?;
+            paused_report(&folder, true, changed, json)
+        }
+        FoldersCommand::Resume { dir } => {
+            let folder = working(&dir, None)?;
+            let changed = folder.resume_sync()?;
+            paused_report(&folder, false, changed, json)
         }
         FoldersCommand::Confirm { dir } => {
             let folder = working(&dir, None)?;
@@ -1313,6 +1352,14 @@ fn status_words(status: &str) -> String {
     }
 }
 
+/// A directory the registry lists, and whether its sync is paused.
+#[derive(serde::Serialize)]
+struct ListedFolder<'a> {
+    #[serde(flatten)]
+    entry: &'a marfa_core::folder::registry::Registered,
+    paused: bool,
+}
+
 /// `folders status` in JSON: the folder's own status, and the current watch
 /// of the folder where it runs another build of marfa.
 #[derive(serde::Serialize)]
@@ -1328,7 +1375,17 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
         .iter()
         .filter(|file| file.status == "in_step")
         .count();
-    let mut lines = vec![format!("{in_step} file(s) in step")];
+    let headline = if report.sync_paused {
+        format!("sync paused; {in_step} file(s) were in step when it last ran")
+    } else if report.unwatched > 0 {
+        format!(
+            "{in_step} file(s) were in step when last read, but {} cannot be watched, so a change there is found only when the watch looks again",
+            directories_words(report.unwatched)
+        )
+    } else {
+        format!("{in_step} file(s) in step")
+    };
+    let mut lines = vec![headline];
     for file in report.files.iter().filter(|file| {
         file.status != "in_step"
             || file.flag.is_some()
@@ -1360,6 +1417,18 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
             printable(&directory.reason)
         ));
     }
+    if report.sync_paused {
+        lines.push(
+            "the sync is paused: nothing is sent or written until `folders resume` lets it go on"
+                .into(),
+        );
+    }
+    if report.unwatched > 0 {
+        lines.push(format!(
+            "{} could not be registered with the system's file watch; the watch registers them again and looks at their files on a short interval until it can",
+            directories_words(report.unwatched)
+        ));
+    }
     if let Some(path) = &report.beneath_waiting {
         lines.push(format!(
             "the folder holds nothing from the server until {} has an item",
@@ -1387,6 +1456,31 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
         });
     }
     lines.join("\n")
+}
+
+fn directories_words(count: u64) -> String {
+    match count {
+        1 => "1 directory".into(),
+        count => format!("{count} directories"),
+    }
+}
+
+/// What `folders pause` and `folders resume` say: the directory's sync as it
+/// now stands, and whether the command changed it.
+fn paused_report(folder: &Folder, paused: bool, changed: bool, json: bool) -> Result<(), CliError> {
+    output::report(
+        &serde_json::json!({ "dir": folder.root(), "paused": paused, "changed": changed }),
+        json,
+        || {
+            let dir = folder.root().display();
+            match (paused, changed) {
+                (true, true) => format!("{dir} is paused; `folders resume` lets its sync go on"),
+                (true, false) => format!("{dir} was already paused; nothing changed"),
+                (false, true) => format!("{dir} is resumed; its sync goes on"),
+                (false, false) => format!("{dir} was not paused; nothing changed"),
+            }
+        },
+    )
 }
 
 fn plan_line(plan: &FirstSync) -> String {

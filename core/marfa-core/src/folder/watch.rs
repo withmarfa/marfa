@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use super::handover::{self, Requests};
 use super::lists::Lists;
-use super::scoped::{Reading, Touched};
+use super::scoped::{MOST_TOUCHED, Reading, Touched};
 use super::selective::Selection;
 use super::watched::{Listening, Reach, settings_file};
 use super::{
@@ -30,6 +30,12 @@ const FULL_PASS: Duration = Duration::from_secs(600);
 /// A file written more often than `SETTLE`, a log say, would otherwise hold
 /// off every pass for as long as it is written.
 const HELD_MOST: Duration = Duration::from_secs(5);
+
+/// How often a watch looks again at the directories it could not register,
+/// which no event names a change in: a twentieth of the default full pass, so
+/// a change there shows within half a minute, and no oftener, since each look
+/// reads those directories again. Never longer than the folder's own full pass.
+const UNWATCHED_EVERY: Duration = Duration::from_secs(30);
 
 const RETRY_FIRST: Duration = Duration::from_secs(1);
 
@@ -260,6 +266,7 @@ impl Folder {
         mut tell: impl FnMut(WatchEvent) -> Result<(), E>,
     ) -> Result<WatchEnd, WatchError<E>> {
         let _lowered = lowered();
+        self.refuse_while_paused()?;
         // Only a person's go-ahead lets it write or send, and none can reach
         // a folder this watch holds.
         self.refuse_while_waiting()?;
@@ -339,6 +346,8 @@ impl Folder {
 
         let mut gate = Gate::new(crate::clock::now());
         let mut telling = Telling::default();
+        let _unwatched = Uncounted(&self.unwatched);
+        self.count_unwatched(&listening, &mut telling);
         let mut last_full: Option<Instant> = None;
         let mut send_again_at = self.kept_wait();
         // Whether anything has happened since the last pass began that it
@@ -390,6 +399,7 @@ impl Folder {
                     if let Some(said) = unwatchable(&listening.follow(&event)) {
                         tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
                     }
+                    self.count_unwatched(&listening, &mut telling);
                     if !listening
                         .reach
                         .passes_over(&event, dir, |path| self.stands_as_read(path))
@@ -483,11 +493,16 @@ impl Folder {
             if let Some(passes) = rate.started(crate::clock::now()) {
                 tell(WatchEvent::Busy { passes }).map_err(WatchError::Told)?;
             }
+            let uncovered = listening.unwatched();
             if let Some(unwatched) = listening.ready(&mut touched)
                 && let Some(said) = unwatchable(&unwatched)
             {
                 tell(WatchEvent::WatcherFailed(said)).map_err(WatchError::Told)?;
             }
+            self.count_unwatched(&listening, &mut telling);
+            let named = self.name_unwatched(&listening, dir, &uncovered, &mut touched);
+            telling.unwatched_due = (named && !listening.unwatched().is_empty())
+                .then(|| crate::clock::now() + unwatched_every(full_every));
             let scope = touched.scope();
             let passed = self.pass(
                 full,
@@ -537,6 +552,46 @@ impl Folder {
             stale = false;
         }
         Ok(WatchEnd::Stopped)
+    }
+
+    /// Keeps the count of directories the watch could not register, and has
+    /// the next pass report it where it changed.
+    fn count_unwatched(
+        &self,
+        listening: &Listening<notify::RecommendedWatcher>,
+        telling: &mut Telling,
+    ) {
+        let now = listening.unwatched().len();
+        if self.unwatched.swap(now, Ordering::SeqCst) != now {
+            telling.health_changed = true;
+        }
+    }
+
+    /// Names for the next pass the files in the directories it could not
+    /// register, as a quick pass would otherwise miss changes there. Answers
+    /// whether it could: more files than a pass looks at by name are left to
+    /// the full pass.
+    fn name_unwatched(
+        &self,
+        listening: &Listening<notify::RecommendedWatcher>,
+        root: &Path,
+        uncovered: &[PathBuf],
+        touched: &mut Touched,
+    ) -> bool {
+        if uncovered.is_empty() {
+            return true;
+        }
+        let Some(files) = listening.files_beneath(root, uncovered, MOST_TOUCHED) else {
+            touched.distrust();
+            return false;
+        };
+        let kept = self.kept_beneath(root, uncovered).unwrap_or_default();
+        touched.name(
+            root,
+            files
+                .into_iter()
+                .chain(kept.into_iter().map(|key| root.join(key))),
+        )
     }
 
     /// Reads the settings again. Returns whether the rules for which paths
@@ -1269,6 +1324,25 @@ fn wait_unless_stopped(stop: &AtomicBool, wait: Duration) {
     crate::clock::wait(stop, wait, Duration::from_millis(250));
 }
 
+/// The wait between looks at the unwatched directories.
+fn unwatched_every(full_every: Duration) -> Duration {
+    #[cfg(debug_assertions)]
+    if let Some(millis) = crate::fault::named("unwatched-every").and_then(|ms| ms.parse().ok()) {
+        return Duration::from_millis(millis);
+    }
+    UNWATCHED_EVERY.min(full_every)
+}
+
+/// Sets the count of unwatched directories back to none as a watch ends, so
+/// no report says what the watch no longer knows.
+struct Uncounted<'a>(&'a std::sync::atomic::AtomicUsize);
+
+impl Drop for Uncounted<'_> {
+    fn drop(&mut self) {
+        self.0.store(0, Ordering::SeqCst);
+    }
+}
+
 fn full_due(last: Option<Instant>, now: Instant, every: Duration) -> bool {
     last.is_none_or(|last| now.duration_since(last) >= every)
 }
@@ -1445,6 +1519,9 @@ struct Telling {
     /// due, which ends the rest: only a pass meets a folder that took the
     /// file or can be read again.
     kept_look: Option<Instant>,
+    /// While directories stand unwatched, when the next look at them is due,
+    /// which ends the rest.
+    unwatched_due: Option<Instant>,
     /// When the last pass began its scan.
     scan_began: Option<Instant>,
     /// When the last pass began to read the copy for its pull.
@@ -1469,6 +1546,9 @@ impl Telling {
             && self.at_rest
             && self.key_due.is_none_or(|due| crate::clock::now() < due)
             && self.kept_look.is_none_or(|due| crate::clock::now() < due)
+            && self
+                .unwatched_due
+                .is_none_or(|due| crate::clock::now() < due)
     }
 
     /// Whether a change the copy took at `applied` is one the last pull did not

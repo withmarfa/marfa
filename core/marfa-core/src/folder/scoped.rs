@@ -93,6 +93,29 @@ impl Touched {
         }
     }
 
+    /// Takes in files that no event named, which a pass is to look at all the
+    /// same, such as those in a directory that cannot be watched.
+    /// Answers whether they could be named: more than a pass looks at by
+    /// name, or one outside the folder, leaves the next pass to walk.
+    pub(super) fn name(&mut self, root: &Path, paths: impl IntoIterator<Item = PathBuf>) -> bool {
+        for path in paths {
+            match identity::relative(root, &path) {
+                Ok(key) => {
+                    self.scope.keys.insert(key);
+                }
+                Err(_) => {
+                    self.distrust();
+                    return false;
+                }
+            }
+        }
+        if self.scope.keys.len() > MOST_TOUCHED {
+            self.distrust();
+            return false;
+        }
+        true
+    }
+
     /// Says the paths cannot be trusted to be all that changed.
     pub(super) fn distrust(&mut self) {
         self.untrusted = true;
@@ -177,6 +200,26 @@ impl Folder {
     /// Forgets what the last pass found, so the next walks.
     pub(super) fn forget_inventory(&self) {
         *self.inventory.lock().expect("inventory lock") = None;
+    }
+
+    /// The files the last pass found in `directories` or below them, which a
+    /// change since may have removed. `None` where the last pass kept nothing.
+    pub(super) fn kept_beneath(&self, root: &Path, directories: &[PathBuf]) -> Option<Vec<String>> {
+        let prefixes: Vec<String> = directories
+            .iter()
+            .map(|directory| identity::relative(root, directory).map(|key| format!("{key}/")))
+            .collect::<std::result::Result<_, _>>()
+            .ok()?;
+        let guard = self.inventory.lock().expect("inventory lock");
+        let inventory = guard.as_ref()?;
+        Some(
+            inventory
+                .keys
+                .iter()
+                .filter(|key| prefixes.iter().any(|prefix| key.starts_with(prefix)))
+                .cloned()
+                .collect(),
+        )
     }
 
     pub(super) fn keep_inventory(&self, inventory: Inventory) {

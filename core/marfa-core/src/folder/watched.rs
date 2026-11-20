@@ -24,12 +24,36 @@ pub(super) trait Directories {
 
 impl<W: Watcher> Directories for W {
     fn watch(&mut self, directory: &Path) -> notify::Result<()> {
+        #[cfg(debug_assertions)]
+        if refused_by_fault(directory) {
+            return Err(notify::Error::generic("no watches left"));
+        }
         Watcher::watch(self, directory, RecursiveMode::NonRecursive)
     }
 
     fn unwatch(&mut self, directory: &Path) -> notify::Result<()> {
         Watcher::unwatch(self, directory)
     }
+}
+
+/// Whether a fixture has the registration of `directory` refused: the file the
+/// fault names lists, one to a line, names that end the paths it refuses, and
+/// refuses none once the file is gone.
+#[cfg(debug_assertions)]
+fn refused_by_fault(directory: &Path) -> bool {
+    crate::fault::named("watch-refuse")
+        .and_then(|file| std::fs::read_to_string(file).ok())
+        .is_some_and(|names| {
+            names
+                .lines()
+                .any(|name| !name.is_empty() && directory.ends_with(name))
+        })
+}
+
+/// Whether a fixture has the watch register directories one by one on every
+/// platform, so that `watch-refuse` has a registration to refuse.
+fn by_directory_forced() -> bool {
+    cfg!(debug_assertions) && crate::fault::named("watch-refuse").is_some()
 }
 
 /// The folder's rules, and the directories they were found to leave out. An
@@ -208,7 +232,7 @@ impl<W: Watcher> Listening<W> {
         root: &Path,
         reach: Reach,
     ) -> Result<(Listening<W>, Vec<notify::Error>), notify::Error> {
-        if W::kind() == WatcherKind::Inotify {
+        if W::kind() == WatcherKind::Inotify || by_directory_forced() {
             return Listening::by_directory(watcher, root, reach);
         }
         watcher.watch(root, RecursiveMode::Recursive)?;
@@ -281,20 +305,63 @@ impl<W: Directories> Listening<W> {
         tree.reopen(&mut self.watcher, &self.reach)
     }
 
+    /// The directories that could not be watched, and are not now. No event
+    /// names a change in one, or in any directory below it.
+    pub(super) fn unwatched(&self) -> Vec<PathBuf> {
+        self.tree
+            .as_ref()
+            .map(|tree| tree.unwatched.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// The files on disk in `directories` and below them, where a scan enters
+    /// them, or `None` where there are more than `most`.
+    pub(super) fn files_beneath(
+        &self,
+        root: &Path,
+        directories: &[PathBuf],
+        most: usize,
+    ) -> Option<BTreeSet<PathBuf>> {
+        let mut found = BTreeSet::new();
+        let mut pending = directories.to_vec();
+        while let Some(directory) = pending.pop() {
+            let Ok(entries) = std::fs::read_dir(&directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    let enters = path
+                        .strip_prefix(root)
+                        .ok()
+                        .and_then(Path::to_str)
+                        .is_some_and(|relative| self.reach.enters(relative));
+                    if enters {
+                        pending.push(path);
+                    }
+                } else {
+                    found.insert(path);
+                    if found.len() > most {
+                        return None;
+                    }
+                }
+            }
+        }
+        Some(found)
+    }
+
     /// Readies the watch for a pass. A directory that could not be watched is
-    /// tried again, and while one stands unwatched, or has only now been
-    /// watched, or the folder is on a network file system, no event names what
-    /// changed, so the pass walks. Returns the directories that could not be
-    /// watched and were not told of before, or `None` where there are none.
+    /// tried again. While the folder is on a network file system, or the
+    /// directory has only now come back, no event names what changed, so the
+    /// pass walks. Returns the directories that could not be watched and were
+    /// not told of before, or `None` where there are none.
     pub(super) fn ready(&mut self, touched: &mut Touched) -> Option<Vec<notify::Error>> {
-        let mut distrust = self.remote;
         let mut failures = Vec::new();
         if let Some(tree) = &mut self.tree {
-            distrust |= !tree.unwatched.is_empty();
             failures = tree.retry(&mut self.watcher, &self.reach);
         }
         let restored = self.restore();
-        if distrust || restored.is_some() {
+        if self.remote || restored.is_some() {
             touched.distrust();
         }
         match restored {

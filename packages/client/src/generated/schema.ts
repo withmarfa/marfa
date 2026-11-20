@@ -6055,10 +6055,10 @@ export interface components {
         /** @description A safe problem code and its count. */
         FolderStatusProblem: {
             /**
-             * @description conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable entry; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings.
+             * @description conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable entry; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings; unwatched: directories the watch cannot watch, counted; paused: the person paused the directory's sync.
              * @enum {string}
              */
-            code: "conflict" | "refused" | "credential_refused" | "unreadable" | "held_file" | "unavailable" | "root_gone" | "settings_invalid";
+            code: "conflict" | "refused" | "credential_refused" | "unreadable" | "held_file" | "unavailable" | "root_gone" | "settings_invalid" | "unwatched" | "paused";
             /** @description The number of current observations with this problem. */
             count: number;
         };

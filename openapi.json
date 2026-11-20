@@ -8148,7 +8148,7 @@
             "items": {
               "$ref": "#/components/schemas/FolderStatusProblem"
             },
-            "maxItems": 8,
+            "maxItems": 10,
             "description": "The current problem counts, each code once; an empty list means none were observed."
           }
         },
@@ -8178,9 +8178,11 @@
               "held_file",
               "unavailable",
               "root_gone",
-              "settings_invalid"
+              "settings_invalid",
+              "unwatched",
+              "paused"
             ],
-            "description": "conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable entry; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings."
+            "description": "conflict: unresolved conflict; refused: current refused write; credential_refused: rejected credential; unreadable: unreadable entry; held_file: held file; unavailable: failed sync; root_gone: unavailable root; settings_invalid: invalid settings; unwatched: directories the watch cannot watch, counted; paused: the person paused the directory's sync."
           },
           "count": {
             "type": "integer",
@@ -8372,7 +8374,7 @@
             "items": {
               "$ref": "#/components/schemas/FolderStatusProblem"
             },
-            "maxItems": 8,
+            "maxItems": 10,
             "description": "The current problem counts, each code once; an empty list means none were observed."
           },
           "received_at": {

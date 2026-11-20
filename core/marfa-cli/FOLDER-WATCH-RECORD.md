@@ -25,6 +25,7 @@ For `marfa folders health`, which reads what the server was told, see [Read remo
           "folder": "0199a1c2-7d3e-7a10-8c55-3f2b6e9d4a01",
           "watching": true,
           "reason": null,
+          "paused": false,
           "last_success_at": "2026-10-15T09:20:31.004Z",
           "first_sync_waiting": false,
           "problems": [{ "code": "conflict", "count": 2 }],
@@ -43,6 +44,7 @@ For `marfa folders health`, which reads what the server was told, see [Read remo
 - `folders` lists the folders that process was asked to hold. A watch of every folder lists every folder the registry lists, and stops listing one the registry drops.
 - `dir` is the folder's directory, and `folder` is its `system.folder` ID.
 - `watching` is `true` once the folder is said to be watched. A folder tried again after it failed is said to be watched once its watch has lasted about 10 seconds, so until then `watching` stays `false` and `reason` stays as it was. For a folder a watch of every folder cannot watch, it is `false` and `reason` is the error code, such as `first_sync_waiting`, `unauthorized` or `io`. For a folder whose directory cannot be found, as a deleted directory or a volume that is away, `reason` is `missing`, which is no error code; `folders remove` takes such a folder off the list. The watch tries it again, and `reason` changes with the attempt. `reason` is `null` for a folder not yet tried. A folder that a command such as `folders confirm` asked for is `false` with `reason` `handed_over` from when either form of the watch lets it go, or a watch of every folder finds it asked for as it opens it, until the watch holds it again.
+- `paused` is `true` for a folder whose directory's sync the person paused with `marfa folders pause`, which the watch found when it tried the folder. Such a folder is `watching: false` with `reason` `paused`, and the watch reads the pause again every few seconds, so it is watched once `marfa folders resume` runs. An entry an earlier build wrote has no `paused`; read it as `false`.
 - `last_success_at`, `first_sync_waiting`, `problems`, `pending_uploads`, `pending_downloads` and `paused_removals` are the values of the folder's latest report to the server, as [Read remote folder health](FOLDER-HEALTH.md) describes them. `last_success_at` is `null` until a sync completes. They stay as last observed while a folder is not watched. Until this process has read a report for a folder, such as one it could not open, though another process may have saved one, all six are `null`, so `null` in `problems` means unknown and `[]` means none. The exception is a folder whose `reason` is `first_sync_waiting`, which shows `first_sync_waiting` as `true`.
 
 The record holds no credential, no file name inside a folder and no item content. A folder's directory and its ID are the only names in it.

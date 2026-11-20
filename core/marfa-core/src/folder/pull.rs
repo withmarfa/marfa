@@ -304,6 +304,7 @@ impl Folder {
     /// Pulls again from the start where the copy changed under it, such as a
     /// catch-up applying a purge, since what it read is then stale.
     pub fn pull(&self) -> Result<PullReport> {
+        self.refuse_while_paused()?;
         self.pull_with(None)
     }
 
