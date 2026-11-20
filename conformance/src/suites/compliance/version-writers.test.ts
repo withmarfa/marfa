@@ -67,7 +67,7 @@ async function signIn(userAgent = SAFARI): Promise<Browser> {
   const cookie = await signInOwnerWithPassword(
     server.apiUrl,
     origin,
-    { email: OWNER.email, password: OWNER.password },
+    { username: OWNER.username, password: OWNER.password },
     {
       "user-agent": userAgent,
       [CLIENT_HEADER]: `198.51.100.${String(addresses)}`,

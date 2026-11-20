@@ -20,7 +20,7 @@ let ownerId: string;
 let cookie: string;
 let managementKey: string;
 const OWNER = {
-  email: "owner@example.test",
+  username: "owner",
   password: "correct horse battery",
 };
 
@@ -313,6 +313,37 @@ describe("claiming the one owner", () => {
     expect((await local("/_control/setup/status")).body.claimed).toBe(false);
   });
 
+  it("refuses a username that is not 1 to 64 letters, numbers, dots, dashes and underscores without consuming valid setup proof", async () => {
+    for (const username of [
+      "owner@example.test",
+      "two words",
+      "hidden\u200bcharacter",
+      "émile",
+      "",
+      "   ",
+      "o".repeat(65),
+    ]) {
+      const refused = await post("/owner", { ...OWNER, username, code });
+      expect(refused.status, JSON.stringify(username)).toBe(400);
+      const { error } = await refused.json();
+      expect(error.code).toBe("validation_error");
+      expect(error.details.errors[0].path).toBe("username");
+    }
+    const noUsername = await post("/owner", {
+      password: OWNER.password,
+      code,
+    });
+    expect(noUsername.status).toBe(400);
+    const badEmail = await post("/owner", {
+      ...OWNER,
+      email: "not an email",
+      code,
+    });
+    expect(badEmail.status).toBe(400);
+    expect((await badEmail.json()).error.details.errors[0].path).toBe("email");
+    expect((await local("/_control/setup/status")).body.claimed).toBe(false);
+  });
+
   it("refuses a key the claim does not declare without consuming valid setup proof", async () => {
     for (const key of ["bogus", "_trace"]) {
       const refused = await post("/owner", { ...OWNER, code, [key]: 1 });
@@ -365,6 +396,7 @@ describe("claiming the one owner", () => {
       [0, 1].map(() =>
         post("/owner", {
           ...OWNER,
+          username: " Owner ",
           email: "Owner@Example.test",
           code,
         }),
@@ -376,7 +408,11 @@ describe("claiming the one owner", () => {
     const claim = attempts.find((response) => response.status === 201)!;
     const owner = await claim.json();
     await expectMatchesSchema("POST", "/owner", 201, owner);
-    expect(owner).toMatchObject({ email: OWNER.email, name: "owner" });
+    expect(owner).toMatchObject({
+      username: OWNER.username,
+      email: "owner@example.test",
+      name: OWNER.username,
+    });
     ownerId = owner.id;
     const audit = await local("/audit?action=owner.claimed");
     expect(audit.status).toBe(200);
@@ -408,6 +444,7 @@ describe("claiming the one owner", () => {
     await expectMatchesSchema("GET", "/profile", 200, read.body);
     expect(read.body).toEqual({
       name: owner.name,
+      username: owner.username,
       email: owner.email,
       avatar: owner.avatar,
     });
@@ -483,14 +520,14 @@ describe("claiming the one owner", () => {
           )
         ).status,
       ).toBe(401);
-    // Then the address's own limit across every email, so that no email
+    // Then the address's own limit across every username, so that no username
     // signs in from it.
     for (let i = 0; i < 20; i++)
       expect(
         (
           await post(
             "/auth/sign-in",
-            { email: `stranger-${String(i)}@example.test`, password },
+            { username: `stranger-${String(i)}`, password },
             lockedAddress,
           )
         ).status,
@@ -502,7 +539,7 @@ describe("claiming the one owner", () => {
       (
         await post(
           "/auth/sign-in",
-          { email: "stranger-new@example.test", password },
+          { username: "stranger-new", password },
           lockedAddress,
         )
       ).status,
@@ -672,6 +709,7 @@ describe("signing the owner in at the claim", () => {
           (await controlRequest(instance.controlSocket, "/profile")).body,
         ).toEqual({
           name: owner.name,
+          username: owner.username,
           email: owner.email,
           avatar: owner.avatar,
         });
@@ -854,8 +892,9 @@ describe("claiming through the private socket", () => {
         expect(ticket.body.expires_at).toBe(
           new Date(Date.parse(ticket.body.expires_at as string)).toISOString(),
         );
+        const longest = `Socket.${"o".repeat(57)}`;
         const claim = await control("/_control/setup/claim", {
-          email: "Socket.Owner@Example.test",
+          username: longest,
           password: "correct horse battery",
           name: "socket owner",
         });
@@ -866,10 +905,12 @@ describe("claiming through the private socket", () => {
           "email",
           "id",
           "name",
+          "username",
         ]);
         expect(claim.body).toMatchObject({
           avatar: null,
-          email: "socket.owner@example.test",
+          username: longest.toLowerCase(),
+          email: null,
           name: "socket owner",
         });
         expect(typeof claim.body.id).toBe("string");

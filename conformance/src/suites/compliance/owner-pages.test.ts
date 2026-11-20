@@ -50,7 +50,7 @@ function passwordSignIn(
       origin,
       [CLIENT_HEADER]: address,
     },
-    body: JSON.stringify({ email: TEST_OWNER.email, password }),
+    body: JSON.stringify({ username: TEST_OWNER.username, password }),
   });
 }
 
@@ -142,14 +142,14 @@ describe("the root in a browser", () => {
     expect(signedOut.status).toBe(200);
     const nobody = await signedOut.text();
     expect(nobody).toContain('href="/auth/sign-in"');
-    expect(nobody).not.toContain(TEST_OWNER.email);
+    expect(nobody).not.toContain(TEST_OWNER.username);
 
     const cookie = await signIn();
     const signedIn = await rootPage(cookie);
     expect(signedIn.status).toBe(200);
     expect(signedIn.headers.get("content-type")).toContain("text/html");
     const owner = await signedIn.text();
-    expect(owner).toContain(TEST_OWNER.email);
+    expect(owner).toContain(TEST_OWNER.username);
     expect(owner).toContain('href="/auth/owner/passkeys"');
     expect(owner).toMatch(/<form[^>]*action="\/auth\/sign-out"/);
     expect(owner).not.toContain('href="/auth/sign-in"');
@@ -161,7 +161,7 @@ describe("the root in a browser", () => {
     expect(described.status).toBe(200);
     const description = (await described.json()) as Record<string, unknown>;
     expect(description.name).toBeTypeOf("string");
-    expect(JSON.stringify(description)).not.toContain(TEST_OWNER.email);
+    expect(JSON.stringify(description)).not.toContain(TEST_OWNER.username);
 
     const out = await fetch(`${server.apiUrl}/auth/sign-out`, {
       method: "POST",
@@ -170,7 +170,7 @@ describe("the root in a browser", () => {
     expect(out.status).toBe(200);
     const ended = await (await rootPage(cookie)).text();
     expect(ended).toContain('href="/auth/sign-in"');
-    expect(ended).not.toContain(TEST_OWNER.email);
+    expect(ended).not.toContain(TEST_OWNER.username);
   });
 
   it("sends a signed-in browser no cookie from the root", async () => {
@@ -179,7 +179,7 @@ describe("the root in a browser", () => {
     await server.advanceClock(2 * 60 * 1000);
     const page = await rootPage(cookie);
     expect(page.status).toBe(200);
-    expect(await page.text()).toContain(TEST_OWNER.email);
+    expect(await page.text()).toContain(TEST_OWNER.username);
     expect(page.headers.get("set-cookie")).toBeNull();
     expect(await lives(cookie)).toBe(true);
   });

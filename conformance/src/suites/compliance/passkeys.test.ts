@@ -40,7 +40,7 @@ function onLocalhost(url: string): string {
   return own.origin;
 }
 const owner = {
-  email: "owner@example.test",
+  username: "owner",
   password: "correct horse battery",
 };
 const first = testAuthenticator(),
@@ -596,6 +596,58 @@ describe("owner passkeys", () => {
           })
         ).status,
       ).toBe(200);
+  });
+  it("registers a passkey under the owner's current username and keeps the earlier passkeys working after the username changes", async () => {
+    const rename = (username: string) =>
+      controlRequest(server.controlSocket, "/profile", {
+        method: "PATCH",
+        body: { username },
+      });
+    const registration = async () => {
+      const asked = await options("register");
+      return (
+        asked.body as unknown as {
+          user: { name: string; displayName: string };
+        }
+      ).user;
+    };
+    // The witness: before the change the passkey is made for the first username.
+    expect(await registration()).toEqual(
+      expect.objectContaining({ name: "owner", displayName: "owner" }),
+    );
+    expect((await rename("Renamed.Owner")).status).toBe(200);
+    try {
+      expect(await registration()).toEqual(
+        expect.objectContaining({
+          name: "renamed.owner",
+          displayName: "owner",
+        }),
+      );
+      const third = testAuthenticator();
+      const challenge = await options("register");
+      const added = await post(
+        "/auth/passkeys/registration",
+        {
+          name: "Third",
+          response: third.registration(challenge.body.challenge, base, HOST),
+        },
+        challenge.cookie,
+      );
+      expect(added.status).toBe(201);
+      const thirdId = ((await added.json()) as { id: string }).id;
+      expect((await signIn(third, 1)).status).toBe(200);
+      expect((await signIn(first, 100)).status).toBe(200);
+      expect(
+        (
+          await fetch(base + "/owner/passkeys/" + thirdId, {
+            method: "DELETE",
+            headers: { origin: base, cookie: ownerCookie },
+          })
+        ).status,
+      ).toBe(200);
+    } finally {
+      expect((await rename(owner.username)).status).toBe(200);
+    }
   });
   it(
     "preserves individual removal and other passkeys across restart",

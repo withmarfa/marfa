@@ -109,6 +109,7 @@ Access is read the same way wherever a person sees it: on the pages where they a
 | `edge.*`              | Links between items        |
 | `profile`             | Profile                    |
 | `profile.name`        | Name                       |
+| `profile.username`    | Username                   |
 | `profile.email`       | Email address              |
 | `profile.avatar`      | Avatar                     |
 | `metadata`            | Definitions on your server |
@@ -181,7 +182,7 @@ Access is read the same way wherever a person sees it: on the pages where they a
 - **CLI**: The `marfa` program: the reference client of an instance, and the subject of a rule for what only it does. Everything it does is a **command**.
 - **command**: One command of the CLI, such as `marfa items list`. `core/marfa-cli/COMMANDS.md` lists every one.
 - **binary**: The built file of the CLI. In prose about what it does, say **CLI**.
-- **profile**: Two things, so a sentence names which. **The owner's profile** is the owner's name, email address and avatar on the instance, which `marfa profile update` changes and the `profile` access row and `--profile-permission` grant. **A profile in `profiles.toml`** is a section of the CLI's own file, written by hand, that names a server and where its key comes from, and that `--profile` or `MARFA_PROFILE` picks.
+- **profile**: Two things, so a sentence names which. **The owner's profile** is the owner's name, username, email address and avatar on the instance. The username is the name the owner signs in with, and the email address is optional and plays no part in signing in. `marfa profile update` changes the profile, and the `profile` access row and `--profile-permission` grant. **A profile in `profiles.toml`** is a section of the CLI's own file, written by hand, that names a server and where its key comes from, and that `--profile` or `MARFA_PROFILE` picks.
 
 ## Banned
 

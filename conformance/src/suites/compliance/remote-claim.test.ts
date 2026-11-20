@@ -129,7 +129,7 @@ async function pageText(url: string, cookie?: string): Promise<string> {
 /** Whether a password sign-in with `password` gives the owner a session. */
 async function signsIn(server: FreshServer, password: string) {
   return signInOwnerWithPassword(server.apiUrl, new URL(server.apiUrl).origin, {
-    email: TEST_OWNER.email,
+    username: TEST_OWNER.username,
     password,
   }).then(
     () => true,

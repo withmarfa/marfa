@@ -52,7 +52,8 @@ afterAll(async () => {
 });
 
 interface Owner {
-  email: string;
+  username: string;
+  email: string | null;
   name: string;
   avatar: string | null;
 }
@@ -69,10 +70,10 @@ describe("the owner", () => {
       (await local.json<{ claimed: boolean }>(["setup", "status"])).claimed,
     ).toBe(true);
     const shown = await local.json<Owner>(["profile", "show"]);
-    expect(shown.email).toBe(TEST_OWNER.email);
+    expect(shown.username).toBe(TEST_OWNER.username);
     const again = await local.refused(["setup", "claim", "--stdin"], {
       stdin: JSON.stringify({
-        email: "second@example.com",
+        username: "second",
         password: "another test owner password",
       }),
     });
@@ -196,11 +197,15 @@ describe("the owner", () => {
 
     // The token reaches the data plane, and the binary knows whose it is.
     const me = await c.cli.as(token.access_token).json<{
-      credential: { kind: string; from: string; person?: { email?: string } };
+      credential: {
+        kind: string;
+        from: string;
+        person?: { username?: string };
+      };
     }>(["whoami"]);
     expect(me.credential.kind).toBe("token");
     expect(me.credential.from).toBe("MARFA_API_KEY");
-    expect(me.credential.person?.email).toBe(TEST_OWNER.email);
+    expect(me.credential.person?.username).toBe(TEST_OWNER.username);
     const listed = await c.cli
       .as(token.access_token)
       .json<{ data: unknown[] }>(["items", "list", "--type", "core.note"]);

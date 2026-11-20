@@ -274,7 +274,7 @@ describe("the instance from the terminal", () => {
         "--metadata-permission",
         "types=read",
         "--profile-permission",
-        "email=read",
+        "username=read",
       ]);
     trackKey(c.ctx, minted.id);
 
@@ -287,7 +287,7 @@ describe("the instance from the terminal", () => {
       ],
       ["edge_permissions", "--no-edge-permissions", { references: "read" }],
       ["metadata_permissions", "--no-metadata-permissions", { types: "read" }],
-      ["profile_permissions", "--no-profile-permissions", { email: "read" }],
+      ["profile_permissions", "--no-profile-permissions", { username: "read" }],
     ] as const;
     const read = async () => {
       const listed = await c.operator.json<{

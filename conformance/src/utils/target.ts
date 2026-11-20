@@ -11,7 +11,7 @@ export function maskInActions(...values: string[]): void {
 }
 
 export const TEST_OWNER = {
-  email: "owner@example.test",
+  username: "owner",
   password: "conformance owner password",
 };
 

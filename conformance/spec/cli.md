@@ -518,11 +518,25 @@ The CLI MUST print its table of operations without sending a request.
 
 ### `cli/claim-stdin`
 
-When `setup claim --stdin` runs, the CLI MUST read the email, password and setup code from a JSON object on standard input.
+When `setup claim --stdin` runs, the CLI MUST read the username, password and setup code, and the email and name where given, from a JSON object on standard input.
 
 **Reason:** passwords and setup codes must not be left in shell history or process arguments.
 
 **Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
+
+### `cli/profile-clear-email`
+
+When `profile update --clear-email` runs, the CLI MUST send `PATCH /profile` with `email` set to `null`.
+
+**Tests:** `cli/profile.test.ts › changes the owner through the private socket and through a credential`.
+
+### `cli/profile-email-or-clear`
+
+If `profile update` is given both `--email` and `--clear-email`, then the CLI MUST refuse with exit code 2 and send no request.
+
+**Reason:** An address to set and an order to remove it contradict each other.
+
+**Tests:** `cli/profile.test.ts › changes the owner through the private socket and through a credential`.
 
 ### `cli/claim-invalid-stdin`
 

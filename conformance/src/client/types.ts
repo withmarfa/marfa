@@ -321,7 +321,8 @@ export interface ApiKeyRequest {
 /** The one account behind the instance's sign-in surface. */
 export interface Owner {
   id: string;
-  email: string;
+  username: string;
+  email: string | null;
   name: string;
   created_at: string;
 }

@@ -96,7 +96,7 @@ function passwordSignIn(
       origin,
       [CLIENT_HEADER]: address,
     },
-    body: JSON.stringify({ email: TEST_OWNER.email, password }),
+    body: JSON.stringify({ username: TEST_OWNER.username, password }),
   });
 }
 
@@ -272,7 +272,7 @@ describe("replacing the password with a credential", () => {
         expect(error.details?.errors?.map((e) => e.path)).toEqual([path]);
       }
     }
-    const extra = await replace(key, { ...FORWARD, email: "a@example.test" });
+    const extra = await replace(key, { ...FORWARD, username: "someone" });
     expect(extra.status).toBe(400);
     expect(await code(extra)).toBe("validation_error");
     expect(await signsIn(NEW_PASSWORD)).toBe(false);
@@ -375,7 +375,7 @@ describe("replacing the password with a credential", () => {
   });
 
   it(
-    "counts the passwords the doors that need the owner's credential judge in the hundred an hour at the owner's email",
+    "counts the passwords the doors that need the owner's credential judge in the hundred an hour at the owner's username",
     async () => {
       // The case spends the owner's hundred, so it has a server of its own.
       const held = await bootFreshServer("owner-password-owners-count", {
@@ -384,7 +384,11 @@ describe("replacing the password with a credential", () => {
       });
       try {
         const heldOrigin = await issuerOrigin(held);
-        const signInAt = (email: string, password: string, address: string) =>
+        const signInAt = (
+          username: string,
+          password: string,
+          address: string,
+        ) =>
           fetch(`${held.apiUrl}/auth/sign-in`, {
             method: "POST",
             headers: {
@@ -392,21 +396,21 @@ describe("replacing the password with a credential", () => {
               origin: heldOrigin,
               [CLIENT_HEADER]: address,
             },
-            body: JSON.stringify({ email, password }),
+            body: JSON.stringify({ username, password }),
           });
         const signedIn = await signInAt(
-          TEST_OWNER.email,
+          TEST_OWNER.username,
           TEST_OWNER.password,
           "10.5.0.1",
         );
         expect(signedIn.status).toBe(200);
         let session = sessionCookie(signedIn)!;
         expect(session).toBeTruthy();
-        // Strangers spend fifty of the hundred at the owner's email.
+        // Strangers spend fifty of the hundred at the owner's username.
         for (let a = 1; a <= 5; a++) {
           for (let i = 0; i < 10; i++) {
             const stranger = await signInAt(
-              TEST_OWNER.email,
+              TEST_OWNER.username,
               "not the password",
               `10.5.${String(a)}.1`,
             );
@@ -485,14 +489,14 @@ describe("replacing the password with a credential", () => {
         expect(unconfirmed.status).toBe(429);
         expect(await code(unconfirmed)).toBe("rate_limited");
         // The same count answers a stranger's right password at the owner's
-        // email as a wrong one.
+        // username as a wrong one.
         const right = await signInAt(
-          TEST_OWNER.email,
+          TEST_OWNER.username,
           TEST_OWNER.password,
           "10.7.4.1",
         );
         const wrong = await signInAt(
-          TEST_OWNER.email,
+          TEST_OWNER.username,
           "not the password",
           "10.7.5.1",
         );
