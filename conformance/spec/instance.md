@@ -1142,9 +1142,9 @@ Where neither `object_store_bucket` nor `backup_path` is set, the server MUST an
 
 ### `instance/backup-health-turned-off`
 
-Where a destination is set and `backup_interval_seconds` is 0, while `instance/object-store-refused-unusable` does not hold, the server MUST answer `GET /health` with `backups.reason` `turned_off`.
+Where a destination is set and `backup_interval_seconds` is 0, while a backup folder or an object store is in use as the destination and `instance/object-store-refused-unusable` does not hold, the server MUST answer `GET /health` with `backups.reason` `turned_off`.
 
-**Reason:** the reason stays while a failure or a damaged part makes `backups.status` `failing`, so an owner reads both.
+**Reason:** the reason stays while a failure or a damaged part makes `backups.status` `failing`, so an owner reads both. While no destination is in use, or the address rules refuse the one in use, the reason is `destination_unusable` wherever the server can say why (`instance/backup-health-unusable`, `instance/backup-folder-missing-unusable`, `instance/object-store-private-unusable`, `instance/object-store-refused-unusable`), since that is what the owner must fix first.
 
 **Tests:** `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/backup-folder.test.ts › says a backup run by hand that failed as failing in health while scheduled backups are turned off, and off once one is put`, `› says a backup folder that takes no copies as failing in health while scheduled backups are turned off, and off once it takes them`, `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
 
@@ -3569,9 +3569,9 @@ While the address rules refuse the server's requests to an attached object store
 
 ### `instance/object-store-refused-ends`
 
-When the address rules stop refusing the server's requests to an attached object store, the server MUST answer `GET /health` with `backups.store_error` `null` and `backups.reason` not `destination_unusable`, whether or not a run of `blob-replicate` has ended since.
+When the address rules let through a request to an attached object store after refusing one, the server MUST NOT answer `GET /health` with a `backups.store_error` that names `allow_private_addresses` until they refuse a request to that store again, whether or not a run of `blob-replicate` has ended since.
 
-**Reason:** the last copy run's refusal says what the store did then, so health that kept repeating it would name an address rule that no longer refuses.
+**Reason:** the last copy run's refusal says what the store did then, so health that kept repeating it would name an address rule that no longer refuses. A later run of `blob-replicate` that fails for another reason still gives its own error in `backups.store_error`.
 
 **Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
 
