@@ -171,7 +171,7 @@ fn unwatched(error: &CliError) -> Unwatched {
     let message = match error {
         // Its own words tell a one-off command to stop the other process.
         CliError::FolderHeld(_) => {
-            "another process is working this folder, such as a `folders watch` of it alone; it joins this watch once that process lets it go".into()
+            "another process is working this directory, such as a `folders watch` of it alone; it joins this watch once that process lets it go".into()
         }
         other => other.to_string(),
     };
@@ -492,7 +492,7 @@ fn keep_in_step(
             TakeBack::Removed => {
                 return say.line(
                     serde_json::json!({ "watching": false, "listed": false }),
-                    || "no longer a folder, so no longer watched".into(),
+                    || "no longer follows a folder, so no longer watched".into(),
                 );
             }
             TakeBack::Unlisted => {
@@ -615,14 +615,14 @@ fn tell(
             wait,
         } => {
             say.note(&format!(
-                "another program kept writing to the folder's store while the watch wrote to it ({}); the watch goes on and tries again in {wait:?}",
+                "another program kept writing to the directory's saved state while the watch wrote to it ({}); the watch goes on and tries again in {wait:?}",
                 output::printable(&error.to_string())
             ));
             Ok(())
         }
         WatchEvent::Retrying { error, wait } => {
             say.note(&format!(
-                "could not hydrate ({}); trying again in {wait:?}, and after each failure \
+                "could not read the folder's items from the server ({}); trying again in {wait:?}, and after each failure \
                  a wait that doubles to {RETRY_MOST:?}, or longer where the server names one",
                 output::printable(&error.to_string())
             ));
@@ -676,20 +676,18 @@ fn refused_credential(server: &str, said: &CoreError) -> CliError {
         code: "credential_refused".into(),
         message: format!(
             "the server at {server} refused this watch's credential ({said}), so the watch stopped; \
-             queued writes wait until a working credential is kept, and the next watch or push sends them"
+             changes not yet sent wait until a working credential is kept, and the next watch or push sends them"
         ),
     })
 }
 
-/// What the pass's drain came to, in the words `counts` uses for the same
-/// numbers, with the writes it left undelivered for the next pass.
+/// What the pass sent to the server and what came of it, in the words a push
+/// uses for the same numbers, with the changes it left undelivered for the
+/// next pass.
 fn drain_clause(report: &marfa_core::DrainReport) -> String {
-    let mut clause = crate::output::answered_and_held(report);
-    if report.undelivered > 0 {
-        clause.push_str(&format!(
-            ", {} not delivered, waiting for the next pass",
-            report.undelivered
-        ));
+    let mut clause = crate::output::folder_counts(report);
+    if let Some(undelivered) = crate::output::folder_undelivered(report, "the next pass") {
+        clause.push_str(&format!(", {undelivered}"));
     }
     clause
 }
@@ -768,12 +766,7 @@ fn passed(
     let unplaced = unplaced_changed
         .then(|| folders::unplaced_line(pulled.unplaced))
         .flatten();
-    let stopped = drained
-        .report
-        .stopped
-        .clone()
-        .filter(|_| *stopped_changed)
-        .map(|reason| format!("the drain stopped: {}", output::printable(&reason)));
+    let stopped = output::folder_stopped(&drained.report).filter(|_| *stopped_changed);
     // What stands is said when it changes; what happened, every time.
     let standing = standing(
         scanned,
@@ -904,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn a_watch_line_says_the_drain_in_the_words_a_push_does() {
+    fn a_watch_line_says_the_pass_in_the_words_a_push_does() {
         let mut report = pass(
             3,
             12,
@@ -916,15 +909,15 @@ mod tests {
         report.undelivered = 2;
         assert_eq!(
             drain_clause(&report),
-            "the server answered 3 write(s), creating 2 item(s); 12 more held back until the write each follows is answered, 2 not delivered, waiting for the next pass"
+            "the server answered 3 change(s), creating 2 item(s); 12 more held back until the change each follows is answered, 2 change(s) not delivered, waiting for the next pass"
         );
         assert!(
-            drain_clause(&report).starts_with(&crate::output::counts(&report)),
-            "the watch and the push say the same drain differently"
+            drain_clause(&report).starts_with(&crate::output::folder_counts(&report)),
+            "the watch and the push say the same pass differently"
         );
         assert_eq!(
             drain_clause(&pass(0, 0, Vec::new())),
-            "the server answered 0 write(s)"
+            "the server answered 0 change(s)"
         );
     }
 

@@ -3152,12 +3152,16 @@ describe("files and items", () => {
         );
         expect(watching.running(), watching.stderr).toBe(true);
         // The witness: the first hydration did fail.
-        expect(watching.stderr).toContain("could not hydrate");
+        expect(watching.stderr).toContain(
+          "could not read the folder's items from the server",
+        );
       } finally {
         await watching.stop();
       }
       expect(
-        watching.stderr.split("could not hydrate").length - 1,
+        watching.stderr.split(
+          "could not read the folder's items from the server",
+        ).length - 1,
         `a watch said it could not hydrate at every attempt rather than once: ${watching.stderr}`,
       ).toBe(1);
     });
@@ -3673,9 +3677,9 @@ describe("files and items", () => {
     expect(said.value.exit).toBe(3);
     expect(said.value.text).toContain("0 unchanged");
     expect(said.value.text).toContain(
-      "2 already queued by an earlier scan, so not counted as created or updated here",
+      "2 already waiting to be sent from an earlier scan, so not counted as created or updated here",
     );
-    expect(said.value.text).toContain("2 write(s) not delivered");
+    expect(said.value.text).toContain("2 change(s) not delivered");
     expect(said.value.text).toContain("the server asked for 2s");
   });
 
@@ -4419,10 +4423,12 @@ describe("what a folder takes", () => {
     if (!pushed.ok) return;
     expect(read(harness, "Note (2).md")).toContain("mine");
     expect(
-      pushed.value.split("\n").filter((line) => line.startsWith("conflicted ")),
+      pushed.value
+        .split("\n")
+        .filter((line) => line.includes("changed in two places")),
       pushed.value,
     ).toEqual([
-      "conflicted update_item Note.md conflicted copy Note (2).md merged body",
+      "Note.md changed in two places; the other edit is in Note (2).md",
     ]);
   });
 
@@ -4458,7 +4464,7 @@ describe("what a folder takes", () => {
       await vi.waitFor(
         () =>
           expect(watching.stdout, watching.stdout).toContain(
-            "it is not a file in this folder yet",
+            "that is not in this directory yet",
           ),
         { timeout: 30_000, interval: 100 },
       );
@@ -4466,7 +4472,7 @@ describe("what a folder takes", () => {
       await vi.waitFor(
         () =>
           expect(watching.stdout, watching.stdout).toContain(
-            "Note (2).md holds the text of the conflicted edit of Note.md",
+            "Note (2).md now holds the other edit of Note.md",
           ),
         { timeout: 30_000, interval: 100 },
       );
@@ -4475,14 +4481,12 @@ describe("what a folder takes", () => {
     }
     const said = watching.stdout
       .split("\n")
-      .filter((line) => line.includes("conflicted"));
+      .filter((line) => line.includes("the other edit"));
     expect(said, watching.stdout).toHaveLength(2);
-    expect(said[0]).toMatch(
-      /^conflicted update_item Note\.md conflicted copy [0-9a-f-]{36} merged body; it is not a file in this folder yet$/,
+    expect(said[0]).toBe(
+      "Note.md changed in two places; the other edit is in a new file that is not in this directory yet",
     );
-    expect(said[1]).toBe(
-      "Note (2).md holds the text of the conflicted edit of Note.md",
-    );
+    expect(said[1]).toBe("Note (2).md now holds the other edit of Note.md");
   });
 
   it("says a conflicted edit while watching, and that its copy is not a file yet", async () => {
@@ -4515,7 +4519,7 @@ describe("what a folder takes", () => {
     try {
       await vi.waitFor(
         () =>
-          expect(watching.stdout).toContain("conflicted update_item Note.md"),
+          expect(watching.stdout).toContain("Note.md changed in two places"),
         { timeout: 20_000, interval: 100 },
       );
       // Passes enough for a line said at every one to show more than once.
@@ -4525,10 +4529,10 @@ describe("what a folder takes", () => {
     }
     const said = watching.stdout
       .split("\n")
-      .filter((line) => line.startsWith("conflicted "));
+      .filter((line) => line.includes("changed in two places"));
     expect(said, watching.stdout).toHaveLength(1);
-    expect(said[0]).toMatch(
-      /^conflicted update_item Note\.md conflicted copy [0-9a-f-]{36} merged body; it is not a file in this folder yet$/,
+    expect(said[0]).toBe(
+      "Note.md changed in two places; the other edit is in a new file that is not in this directory yet",
     );
     expect(door?.conflictedCopies()).toHaveLength(1);
   });
@@ -4701,8 +4705,8 @@ describe("what a folder takes", () => {
     if (!pushed.ok) return;
     // The witness: the write conflicted, and a drain answered it.
     expect(door.conflictedCopies()).toHaveLength(1);
-    expect(pushed.value).not.toContain("conflicted");
-    expect(pushed.value).not.toContain("not a file in this folder");
+    expect(pushed.value).not.toContain("changed in two places");
+    expect(pushed.value).not.toContain("not in this directory yet");
   });
 
   it("does not name a conflict on a write that is no file of the folder's, in a watch", async () => {
@@ -4723,8 +4727,8 @@ describe("what a folder takes", () => {
     } finally {
       await watching.stop();
     }
-    expect(watching.stdout).not.toContain("conflicted");
-    expect(watching.stdout).not.toContain("not a file in this folder");
+    expect(watching.stdout).not.toContain("changed in two places");
+    expect(watching.stdout).not.toContain("not in this directory yet");
   });
 
   it("says a refused secret in words once while watching", async () => {
@@ -6171,7 +6175,11 @@ describe("a folder that cannot reach the server", () => {
     ).toBe(1);
     const offlineLines = watching.stdout
       .split("\n")
-      .filter((line) => line.includes("; the server answered 0 write(s)"));
+      .filter((line) => line.includes("; the server answered 0 change(s)"));
+    expect(
+      offlineLines.length,
+      `a watch printed no pass line while nothing went: ${watching.stdout}`,
+    ).toBeGreaterThan(0);
     expect(
       offlineLines.length,
       `a watch printed its line at every pass while nothing went: ${watching.stdout}`,
@@ -6232,8 +6240,8 @@ describe("a folder that cannot reach the server", () => {
     if (!pushed.ok) return;
     expect(
       pushed.value,
-      `a push whose drain stopped did not say why: ${pushed.value}`,
-    ).toMatch(/refused the credential.*drain stopped/);
+      `a push whose sending stopped did not say why: ${pushed.value}`,
+    ).toMatch(/sending stopped: .*refused the credential/);
     // The witness: the create met the refusal.
     expect(sentTitles(harness)).toEqual(["Stopped"]);
   });
@@ -6264,8 +6272,8 @@ describe("a folder that cannot reach the server", () => {
     expect(watching.stderr).toMatch(/refused this watch's credential/);
     expect(
       watching.stdout,
-      `the watch did not say in its own lines why its drain stopped: ${watching.stdout}`,
-    ).toMatch(/the drain stopped: .*refused the credential/);
+      `the watch did not say in its own lines why its sending stopped: ${watching.stdout}`,
+    ).toMatch(/sending stopped: .*refused the credential/);
     // The witness: it was the create that met the refusal.
     expect(sentTitles(harness)).toEqual(["Refused"]);
   });

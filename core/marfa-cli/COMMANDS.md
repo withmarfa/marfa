@@ -4427,10 +4427,10 @@ marfa folders [OPTIONS] <COMMAND>
 
 ### marfa folders add
 
-Make a directory a folder that follows a `system.folder`'s settings, which `folders create` makes. Needs read on `system.folder`. Warns on standard error, once, and goes on, if the directory is in iCloud Drive, a cloud service's synced location or a network file system, or if git tracks it.
+Make a directory follow a folder, the `system.folder` that `folders create` makes. Needs read on `system.folder`. Warns on standard error, once, and goes on, if the directory is in iCloud Drive, a cloud service's synced location or a network file system, or if git tracks it.
 
 ```text
-marfa folders add [OPTIONS] --folder <ID> <DIR>
+marfa folders add [OPTIONS] --folder <ID_OR_TITLE> <DIR>
 ```
 
 | Argument | Description |
@@ -4439,12 +4439,12 @@ marfa folders add [OPTIONS] --folder <ID> <DIR>
 
 | Option | Description |
 | --- | --- |
-| `--folder <ID>` | The folder's `system.folder` id. |
+| `--folder <ID_OR_TITLE>` | The folder to follow, by its `system.folder` ID, or by its title where exactly one folder the credential can read has that title. A value that is an ID is taken as one. |
 | `--yes` | Confirm the first sync without asking, for scripts. Without it, the add says what the first sync will do and waits for a go-ahead. |
 
 ### marfa folders list
 
-List the folders on this machine, as its registry holds them. The registry is the file MARFA_FOLDER_REGISTRY names, where it names one. With --json, each entry has `dir`, `folder`, and where the registry records them, `store` and `root`. `root` is an opaque value that identifies the directory the folder opened: compare it for equality and do not parse it.
+List the directories on this machine that follow a folder, as its registry holds them. The registry is the file MARFA_FOLDER_REGISTRY names, where it names one. With --json, each entry has `dir`, `folder`, and where the registry records them, `store` and `root`. `root` is an opaque value that identifies the directory as it was opened: compare it for equality and do not parse it.
 
 ```text
 marfa folders list [OPTIONS]
@@ -4452,7 +4452,7 @@ marfa folders list [OPTIONS]
 
 ### marfa folders inventory
 
-List the active folders in Marfa, to a credential that reads `system.folder`.
+List the active folders in Marfa, each with its title and ID, to a credential that reads `system.folder`.
 
 ```text
 marfa folders inventory [OPTIONS]
@@ -4466,7 +4466,7 @@ marfa folders inventory [OPTIONS]
 
 ### marfa folders remove
 
-Take a folder off this machine: its own state under `.marfa` goes, and its files stay as plain files. Empty administrative directories remain. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels. Follows no symbolic link, and takes a path through one only where it is the path `folders list` shows. Where that path is gone, passes through a link, or holds state the registry does not show to be the folder's own, the folder is only taken off the list and nothing is deleted.
+Make a directory stop following its folder: its own state under `.marfa` goes, and its files stay as plain files. Empty administrative directories remain. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels. Follows no symbolic link, and takes a path through one only where it is the path `folders list` shows. Where that path is gone, passes through a link, or holds state the registry does not show to be the directory's own, the directory is only taken off the list and nothing is deleted.
 
 ```text
 marfa folders remove [OPTIONS] <DIR>
@@ -4474,11 +4474,11 @@ marfa folders remove [OPTIONS] <DIR>
 
 | Argument | Description |
 | --- | --- |
-| `<DIR>` | The folder. |
+| `<DIR>` | The directory. |
 
 ### marfa folders status
 
-Say where every file in the folder stands, from its own store, asking the server nothing, and whether the watch of the folder runs another build of marfa.
+Say where every file in the directory stands, from its own store, asking the server nothing, and whether the watch of the directory runs another build of marfa.
 
 ```text
 marfa folders status [OPTIONS] <DIR>
@@ -4486,7 +4486,7 @@ marfa folders status [OPTIONS] <DIR>
 
 | Argument | Description |
 | --- | --- |
-| `<DIR>` | The folder. |
+| `<DIR>` | The directory. |
 
 ### marfa folders health
 
@@ -4502,7 +4502,7 @@ marfa folders health [OPTIONS] <ID>
 
 ### marfa folders confirm
 
-Let a folder's first sync go, or what it holds back: a paused large removal, whose deletes are queued and whose files that items left elsewhere are taken away, and new files held for being more than the addition threshold lets in at once, which are queued as new items.
+Let a directory's first sync go, or what it holds back: a paused large removal, whose deletes are queued and whose files that items left elsewhere are taken away, and new files held for being more than the addition threshold lets in at once, which are queued as new items.
 
 ```text
 marfa folders confirm [OPTIONS] <DIR>
@@ -4510,7 +4510,7 @@ marfa folders confirm [OPTIONS] <DIR>
 
 | Argument | Description |
 | --- | --- |
-| `<DIR>` | The folder. |
+| `<DIR>` | The directory. |
 
 ### marfa folders restore
 
@@ -4522,11 +4522,11 @@ marfa folders restore [OPTIONS] <DIR>
 
 | Argument | Description |
 | --- | --- |
-| `<DIR>` | The folder. |
+| `<DIR>` | The directory. |
 
 ### marfa folders hydrate
 
-Pull what the folder's query needs into its working copy.
+Pull what its folder's query needs into the directory's working copy.
 
 ```text
 marfa folders hydrate [OPTIONS] <DIR>
@@ -4534,11 +4534,11 @@ marfa folders hydrate [OPTIONS] <DIR>
 
 | Argument | Description |
 | --- | --- |
-| `<DIR>` | The folder. |
+| `<DIR>` | The directory. |
 
 ### marfa folders scan
 
-Read the folder and queue what has changed. Sends nothing.
+Read the directory and queue what has changed. Sends nothing.
 
 ```text
 marfa folders scan [OPTIONS] <DIR>
@@ -4546,11 +4546,11 @@ marfa folders scan [OPTIONS] <DIR>
 
 | Argument | Description |
 | --- | --- |
-| `<DIR>` | The folder. |
+| `<DIR>` | The directory. |
 
 ### marfa folders pull
 
-Write what the folder's query matches out as files.
+Write what its folder's query matches out as files.
 
 ```text
 marfa folders pull [OPTIONS] <DIR>
@@ -4558,11 +4558,11 @@ marfa folders pull [OPTIONS] <DIR>
 
 | Argument | Description |
 | --- | --- |
-| `<DIR>` | The folder. |
+| `<DIR>` | The directory. |
 
 ### marfa folders push
 
-Scan, drain, catch up, pull, and send the placements the pull queued: everything a folder does, once. Exits 3 where a write is left unsent or the catch-up failed, and 5 where the server refused the credential.
+Scan, drain, catch up, pull, and send the placements the pull queued: everything a directory does, once. Exits 3 where a write is left unsent or the catch-up failed, and 5 where the server refused the credential.
 
 ```text
 marfa folders push [OPTIONS] <DIR>
@@ -4570,16 +4570,16 @@ marfa folders push [OPTIONS] <DIR>
 
 | Argument | Description |
 | --- | --- |
-| `<DIR>` | The folder. |
+| `<DIR>` | The directory. |
 
 | Option | Description |
 | --- | --- |
-| `--send-only` | Send what the folder holds and go no further: scan and drain, catch up with nothing and pull nothing, so no item's file is written into the directory or removed from it. A copy never hydrated hydrates first, which writes only the folder's store. A later push without this pulls what the server holds. Refused while the first sync waits to be confirmed. |
+| `--send-only` | Send what the directory holds and go no further: scan and drain, catch up with nothing and pull nothing, so no item's file is written into the directory or removed from it. A copy never hydrated hydrates first, which writes only the directory's store. A later push without this pulls what the server holds. Refused while the first sync waits to be confirmed. |
 | `--confirm-additions` | Send every new file this push finds, however many, in place of holding a drop of more than the folder's `addition_threshold` for `folders confirm`. For a script that no one is at; the decision is the script's. |
 
 ### marfa folders unmatched
 
-List the files the folder keeps whose items its query does not match, as the last pull left them, and with `--remove` take them away. A file goes only after a confirmation at a terminal or `--yes`, and only while its bytes are the ones the folder wrote (for a file made from a new file, the ones it last read) and no edit of it waits to be sent; any other is kept and said. The item stays in Marfa as it was, and the folder's placement of it ends, sent at the next push. Also lists, with why, the new files a folder whose `outside_query` is `hold` holds because its query would not hold them; they have no item and are never taken away. Takes away no `held`, `outside` or `unreached` file. With `--remove`, a watch holding the folder lets it go while this runs, and this is refused if the process holding the folder does not let it go within 10 seconds. Delete an unmatched file with this, not by hand: a file deleted by hand sends a delete of its item.
+List the files the directory keeps whose items its folder's query does not match, as the last pull left them, and with `--remove` take them away. A file goes only after a confirmation at a terminal or `--yes`, and only while its bytes are the ones the directory wrote (for a file made from a new file, the ones it last read) and no edit of it waits to be sent; any other is kept and said. The item stays in Marfa as it was, and the folder's placement of it ends, sent at the next push. Also lists, with why, the new files a directory whose folder's `outside_query` is `hold` holds because its query would not hold them; they have no item and are never taken away. Takes away no `held`, `outside` or `unreached` file. With `--remove`, a watch holding the directory lets it go while this runs, and this is refused if the process holding the directory does not let it go within 10 seconds. Delete an unmatched file with this, not by hand: a file deleted by hand sends a delete of its item.
 
 ```text
 marfa folders unmatched [OPTIONS] <DIR>
@@ -4587,7 +4587,7 @@ marfa folders unmatched [OPTIONS] <DIR>
 
 | Argument | Description |
 | --- | --- |
-| `<DIR>` | The folder. |
+| `<DIR>` | The directory. |
 
 | Option | Description |
 | --- | --- |
@@ -4665,7 +4665,7 @@ marfa folders revoke [OPTIONS] <ID>
 
 ### marfa folders watch
 
-Watch a folder and keep it in step, or every folder on this machine. Warns on standard error, once per folder, and goes on, if a folder's directory is in iCloud Drive, a cloud service's synced location or a network file system. `SIGTERM` stops it as Ctrl-C does, and it then exits 0, so a service manager that stopped it does not start it again. A command that works a folder the watch holds, such as `folders confirm`, asks for it: the watch lets it go at the end of the step of its pass under way, and takes it back once the command ends.
+Watch a directory and keep it in step, or every directory on this machine. Warns on standard error, once per directory, and goes on, if a directory is in iCloud Drive, a cloud service's synced location or a network file system. `SIGTERM` stops it as Ctrl-C does, and it then exits 0, so a service manager that stopped it does not start it again. A command that works a directory the watch holds, such as `folders confirm`, asks for it: the watch lets it go at the end of the step of its pass under way, and takes it back once the command ends.
 
 ```text
 marfa folders watch [OPTIONS] [DIR]
@@ -4673,18 +4673,18 @@ marfa folders watch [OPTIONS] [DIR]
 
 | Argument | Description |
 | --- | --- |
-| `[DIR]` | The directory to watch, recursively. Without one, the command watches every folder the folder registry lists, in one process. Each folder uses the server its copy came from, and each line names its folder. A folder added or removed while the watch runs joins or leaves it. A folder that can't be watched is reported once and tried again. A folder whose sign-in ended is reported once as `signed_out` and is not tried again with that sign-in; it is watched once `marfa login` or `marfa keys keep` keeps a new credential, and the other folders go on. A watch of one folder ends with exit status 5 when its sign-in ends. Either way the watch keeps a record of its folders in `folder-watch.json` beside the registry, for other programs on the machine to read. |
+| `[DIR]` | The directory to watch, recursively. Without one, the command watches every directory the folder registry lists, in one process. Each directory uses the server its copy came from, and each line names its directory. A directory added or removed while the watch runs joins or leaves it. A directory that can't be watched is reported once and tried again. A directory whose sign-in ended is reported once as `signed_out` and is not tried again with that sign-in; it is watched once `marfa login` or `marfa keys keep` keeps a new credential, and the other directories go on. A watch of one directory ends with exit status 5 when its sign-in ends. Either way the watch keeps a record of its directories in `folder-watch.json` beside the registry, for other programs on the machine to read. |
 
 | Option | Description |
 | --- | --- |
 | `--for-seconds <SECONDS>` | Stop after this long. Unset, it runs until interrupted. |
 | `--log <FILE>` | Write what the watch prints, and its errors, to this file in place of the terminal. A file of 1 MiB or more is moved to the same name with `.1` added, replacing the one there, when the watch starts and as it runs. `folders autostart` runs the watch with it. When Ctrl-C or `SIGTERM` stops the watch, the last line written names the signal and the time, and the process that sent it where the system reports one. |
-| `--key-file <FILE>` | A file that holds `MARFA_API_URL` and `MARFA_API_KEY` lines, which only you can read (mode 600), for a watch that runs with nobody signed in to unlock the keychain. The watch uses it for the folders that name that server and reads the keychain for none, so a folder of another server is reported as having no credential. Keep the file outside every folder. `folders autostart on --key-file` runs the watch with it. |
+| `--key-file <FILE>` | A file that holds `MARFA_API_URL` and `MARFA_API_KEY` lines, which only you can read (mode 600), for a watch that runs with nobody signed in to unlock the keychain. The watch uses it for the directories that name that server and reads the keychain for none, so a directory of another server is reported as having no credential. Keep the file outside every directory. `folders autostart on --key-file` runs the watch with it. |
 | `--exit-on-new-build` | End with exit status 3 once a new build of marfa is installed at the path the watch was started by, after the passes under way finish, so that a service manager starts the new build. A link moved to another build counts, as does a file replaced in place. `folders autostart` runs the watch with it. Without it, the watch says once that a new build is installed and goes on. Either way, a path that leads to no file, or to one that does not say its version, is said once, and the watch goes on. |
 
 ### marfa folders autostart
 
-Sync every folder from login, in your own account: a launchd agent on macOS or a systemd user unit on Linux runs `folders watch` with no directory. Supported on macOS and Linux.
+Sync every directory from login, in your own account: a launchd agent on macOS or a systemd user unit on Linux runs `folders watch` with no directory. Supported on macOS and Linux.
 
 ```text
 marfa folders autostart [OPTIONS] <COMMAND>
