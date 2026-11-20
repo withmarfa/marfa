@@ -113,7 +113,10 @@ pub async fn change(app: &Arc<App>, caller: &Caller, arguments: Map<String, Valu
     }
     if let Some(Value::Object(settings)) = arguments.get("settings") {
         if settings.contains_key(SIGN_IN_ADDRESS.entry.key) {
-            return Err(Stop::coded("app_sign_in_required", SIGN_IN_ADDRESS_WITHHELD));
+            return Err(Stop::coded(
+                "app_sign_in_required",
+                SIGN_IN_ADDRESS_WITHHELD,
+            ));
         }
         for (key, value) in settings {
             if key == "name" || key == "enforcement" || !ENTRIES.iter().any(|e| e.key == key) {

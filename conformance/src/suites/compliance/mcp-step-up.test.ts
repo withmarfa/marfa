@@ -142,7 +142,14 @@ async function authorizing(
 async function connect(app: App, cookie: string): Promise<string> {
   let { landed, verifier } = await authorizing(app, cookie);
   if (landed !== undefined && !landed.href.startsWith(CALLBACK)) {
-    landed = await decide(server, origin, cookie, landed, true, SCOPE.split(" "));
+    landed = await decide(
+      server,
+      origin,
+      cookie,
+      landed,
+      true,
+      SCOPE.split(" "),
+    );
   }
   const code = landed?.searchParams.get("code");
   expect(code, `no code on ${String(landed)}`).toBeTruthy();
@@ -197,20 +204,28 @@ function expectRenewalAsked(answer: ToolAnswer): void {
 
 describe("the settings that need a recent sign-in, through the settings tool", () => {
   it("changes allow_private_addresses and backup_path for an app whose owner signed in within the recent sign-in window", async () => {
-    const access = await connect(await registerApp(server, SCOPE), await signIn());
+    const access = await connect(
+      await registerApp(server, SCOPE),
+      await signIn(),
+    );
     const on = toolResult(await settingsCall(access, { [SWITCH]: true }));
     expect(on, JSON.stringify(on)).toBeTruthy();
     expect((await stored())[SWITCH]).toBe(true);
     toolResult(await settingsCall(access, { backup_path: elsewhere }));
     expect((await stored()).backup_path).toBe(elsewhere);
-    toolResult(await settingsCall(access, { [SWITCH]: false, backup_path: backups }));
+    toolResult(
+      await settingsCall(access, { [SWITCH]: false, backup_path: backups }),
+    );
     const after = await stored();
     expect(after[SWITCH]).toBe(false);
     expect(after.backup_path).toBe(backups);
   });
 
   it("refuses an app whose owner signed in longer ago than the recent sign-in window with insufficient_user_authentication and max_age, as the API does, and changes nothing", async () => {
-    const access = await connect(await registerApp(server, SCOPE), await signIn());
+    const access = await connect(
+      await registerApp(server, SCOPE),
+      await signIn(),
+    );
     // The witness: within the window the same token changes the setting.
     toolResult(await settingsCall(access, { [SWITCH]: true }));
     toolResult(await settingsCall(access, { [SWITCH]: false }));
@@ -227,7 +242,10 @@ describe("the settings that need a recent sign-in, through the settings tool", (
   });
 
   it("refuses sign_in_address to an app whose owner signed in just now with app_sign_in_required, and changes nothing", async () => {
-    const access = await connect(await registerApp(server, SCOPE), await signIn());
+    const access = await connect(
+      await registerApp(server, SCOPE),
+      await signIn(),
+    );
     const before = await stored();
     const refused = toolError(
       await settingsCall(access, {

@@ -27,6 +27,7 @@ mod sources;
 mod trash;
 mod types;
 mod update;
+mod update_server;
 mod views;
 mod webhooks;
 
@@ -111,6 +112,7 @@ fn definitions() -> Vec<(Home, Definition)> {
         (Home::Admin(Task::Backups), backups::list_definition()),
         (Home::Admin(Task::Backups), backups::take_definition()),
         (Home::Admin(Task::Maintain), maintain::definition()),
+        (Home::Admin(Task::Maintain), update_server::definition()),
         (Home::Admin(Task::Connectors), connectors::list_definition()),
         (
             Home::Admin(Task::Connectors),
@@ -275,6 +277,7 @@ async fn run(
         backups::LIST_NAME => backups::list(app, caller).await,
         backups::TAKE_NAME => backups::take(app, caller).await,
         maintain::NAME => maintain::run(app, caller, arguments).await,
+        update_server::NAME => update_server::run(app, caller, arguments).await,
         connectors::LIST_NAME => connectors::list(app, caller, arguments).await,
         connectors::ENDPOINT_NAME => connectors::make_endpoint(app, caller, arguments).await,
         retire_endpoint::NAME => retire_endpoint::run(app, caller, arguments).await,

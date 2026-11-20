@@ -24,8 +24,8 @@ pub use check::{JOB as CHECK_JOB, enabled as checking, job as check};
 use super::access::{Caller, Permission};
 use super::faults::HOLD_UPDATE_START;
 use super::refusal::{Code, Refusal, Result};
-use super::{App, health};
-use crate::db::{self, Db, Write, migrate::MIGRATIONS};
+use super::{App, audit, health, provenance};
+use crate::db::{self, Write, migrate::MIGRATIONS};
 use crate::failure::Failure;
 use crate::settings::DatabasePath;
 use feed::Feed;
@@ -303,65 +303,148 @@ pub async fn status(app: &App) -> Result<Value> {
     }))
 }
 
-/// Decided as the writer admits it, so no change to the caller's access commits between the
-/// decision and the start.
-pub async fn start(app: &Arc<App>, caller: &Caller) -> Result<Value> {
-    app.faults.hold(HOLD_UPDATE_START, None).await;
-    let (deciding, caller) = (app.clone(), caller.clone());
-    begin_on_writer(&app.db, move |tx| {
-        caller
-            .current(tx, &deciding.clock.stamp())?
-            .require(Permission::InstanceMaintain)?;
-        let kept = if check::enabled(&deciding) {
-            check::kept_in(tx)?
-        } else {
-            check::Kept::default()
-        };
-        let job = decide(&deciding, kept)?;
-        Ok(deciding
-            .updates
-            .begin(&job.version)
-            .then(|| run(deciding.clone(), job)))
-    })
-    .await?;
-    status(app).await
+pub const UPDATE_STARTED: &str = "instance.update.started";
+
+/// What a start did, or why a gate stopped it.
+pub enum Started<T> {
+    /// The update runs, begun by this call or by one before it.
+    Running(Value),
+    Stopped(T),
 }
 
-/// Runs `decide` on the writer and starts what it begins from there, so begun work runs even if
-/// the request is gone by the time the writer reaches it.
-async fn begin_on_writer<W>(
-    db: &Db,
-    decide: impl FnOnce(&Transaction<'_>) -> Result<Option<W>> + Send + 'static,
-) -> Result<()>
+pub async fn start(app: &Arc<App>, caller: &Caller) -> Result<Value> {
+    match start_if(app, caller, |_, _| Ok(None::<()>)).await? {
+        Started::Running(status) => Ok(status),
+        Started::Stopped(()) => Err(Refusal::internal("an open gate stopped the update")),
+    }
+}
+
+/// Decided as the writer admits it, so no change to the caller's access commits between the
+/// decision and the start. `gate` judges the newest release found in the same write, and
+/// anything it writes commits with the start.
+pub async fn start_if<T, G>(app: &Arc<App>, caller: &Caller, gate: G) -> Result<Started<T>>
 where
-    W: Future<Output = ()> + Send + 'static,
+    T: Send + 'static,
+    G: FnOnce(&Transaction<'_>, &str) -> Result<Option<T>> + Send + 'static,
 {
-    let runtime = tokio::runtime::Handle::current();
+    app.faults.hold(HOLD_UPDATE_START, None).await;
+    let (deciding, caller, origin) = (app.clone(), caller.clone(), provenance::current());
+    let decided = begin_on_writer(
+        app.clone(),
+        |app: &App| &app.db,
+        |app: &App| app.updates.set(State::Idle),
+        move |tx| {
+            let at = deciding.clock.stamp();
+            let caller = caller.current(tx, &at)?;
+            caller.require(Permission::InstanceMaintain)?;
+            let kept = if check::enabled(&deciding) {
+                check::kept_in(tx)?
+            } else {
+                check::Kept::default()
+            };
+            let latest = newest(kept)?;
+            if let Some(stopped) = gate(tx, &latest.version)? {
+                return Ok(Err(stopped));
+            }
+            let job = decide(&deciding, latest)?;
+            if !deciding.updates.begin(&job.version) {
+                return Ok(Ok(None));
+            }
+            let recorded = audit::record_from(
+                tx,
+                &at,
+                Some(&caller),
+                origin.client_ip.as_deref(),
+                audit::Entry {
+                    action: UPDATE_STARTED,
+                    resource_type: "instance",
+                    resource_id: None,
+                    details: origin.mark(Some(json!({ "from": job.from, "to": job.version }))),
+                },
+            );
+            if let Err(refused) = recorded {
+                deciding.updates.set(State::Idle);
+                return Err(refused);
+            }
+            Ok(Ok(Some(run(deciding.clone(), job))))
+        },
+    )
+    .await?;
+    match decided {
+        Ok(()) => Ok(Started::Running(status(app).await?)),
+        Err(stopped) => Ok(Started::Stopped(stopped)),
+    }
+}
+
+/// Runs `decide` on the writer from a task of its own, and starts what it begins once the write
+/// has committed, so begun work runs even if the request is gone by then.
+async fn begin_on_writer<O, W, T>(
+    owner: Arc<O>,
+    db: fn(&O) -> &db::Db,
+    undo_begin: fn(&O),
+    decide: impl FnOnce(&Transaction<'_>) -> Result<std::result::Result<Option<W>, T>> + Send + 'static,
+) -> Result<std::result::Result<(), T>>
+where
+    O: Send + Sync + 'static,
+    W: Future<Output = ()> + Send + 'static,
+    T: Send + 'static,
+{
     let begun = Arc::new(AtomicBool::new(false));
     let marked = begun.clone();
-    let decided = db
-        .write(Write::own().unsynced(), move |tx| {
-            if let Some(work) = decide(tx)? {
-                marked.store(true, Ordering::SeqCst);
-                runtime.spawn(work);
+    let task = tokio::spawn(provenance::carried(async move {
+        let decided = db(&owner)
+            .write(Write::caller(UPDATE_STARTED), move |tx| {
+                let decided = decide(tx)?;
+                if matches!(decided, Ok(Some(_))) {
+                    marked.store(true, Ordering::SeqCst);
+                }
+                Ok(decided)
+            })
+            .await;
+        match decided {
+            Ok(Ok(Some(work))) => {
+                tokio::spawn(work);
+                Ok(Ok(()))
             }
-            Ok(())
-        })
-        .await;
-    // Begun work runs even if the commit after the decision failed.
-    if begun.load(Ordering::SeqCst) {
-        return Ok(());
-    }
-    decided
+            Ok(Ok(None)) => Ok(Ok(())),
+            Ok(Err(stopped)) => Ok(Err(stopped)),
+            Err(failed) => {
+                if begun.load(Ordering::SeqCst) {
+                    undo_begin(&owner);
+                }
+                Err(failed)
+            }
+        }
+    }));
+    task.await
+        .map_err(|_| Refusal::internal("the update's start stopped without an answer"))?
 }
 
-fn decide(app: &App, kept: check::Kept) -> Result<apply::Job> {
-    let Some(latest) = latest_newer(kept.latest()) else {
-        return Err(Refusal::new(
+fn newest(kept: check::Kept) -> Result<Latest> {
+    latest_newer(kept.latest()).ok_or_else(|| {
+        Refusal::new(
             Code::UpdateNotReady,
             "No release newer than the running one has been found.",
-        ));
+        )
+    })
+}
+
+/// The release the server runs.
+pub fn running() -> String {
+    Version::running().to_string()
+}
+
+/// The release an update would move to now, refused as `POST /update` refuses it.
+pub async fn offer(app: &App) -> Result<String> {
+    let kept = if check::enabled(app) {
+        check::kept(app).await?
+    } else {
+        check::Kept::default()
     };
+    Ok(decide(app, newest(kept)?)?.version)
+}
+
+fn decide(app: &App, latest: Latest) -> Result<apply::Job> {
     let (Install::Service { programs, dir }, Some(archive), Some(checksums), Some(platform)) = (
         &app.updates.install,
         latest.archive.clone(),

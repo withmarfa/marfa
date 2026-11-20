@@ -772,6 +772,14 @@ When a caller holding `instance.maintain` sends `POST /clock/confirm` (`marfa ho
 
 **Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`, `› stamps by the clock when it is set back, and keeps the trusted time through a crash`, `compliance/owner-tasks.test.ts › lets a key holding each permission do each owner task`.
 
+### `housekeeping/clock-confirm-audited`
+
+When the server takes the clock's time as the trusted time on a caller's confirmation, the server MUST record an `instance.clock.confirmed` entry naming the time it took and whether clean-up was held, in the write that takes it.
+
+**Reason:** a confirmation lets the held jobs remove what is old by the server's time, so the log says who confirmed it.
+
+**Tests:** `compliance/mcp-instance.test.ts › records instance.clock.confirmed for a confirmation through the tool and through POST /clock/confirm, with the key that confirmed it`.
+
 ### `housekeeping/clock-confirm-permission`
 
 If a credential without `instance.maintain` sends `POST /clock/confirm`, then the server MUST answer `403 forbidden` with `details.required_scope` `instance.maintain`.

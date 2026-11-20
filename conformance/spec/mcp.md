@@ -810,6 +810,82 @@ When a call carries a `confirm` token that an earlier call by the same credentia
 
 **Tests:** `compliance/mcp-connector-acts.test.ts › changes nothing more on a confirmation an earlier call used, and says it already did`.
 
+## Updating the server
+
+`marfa_update_server` updates the server in two calls: a preview that names the release and gives a `confirm` token, and a call with that token, which starts the update `POST /update` starts. A token is refused, as `marfa_delete_connector`'s is, when another credential sends it or five minutes have passed.
+
+### `mcp/update-preview`
+
+When a credential holding `instance.maintain` calls `marfa_update_server` without a `confirm` token, and `POST /update` would start an update, the server MUST answer the release it runs, the release the update would move to and a `confirm` token, and start nothing.
+
+**Reason:** the update restarts the server and drops every connection, so the person agrees to it first.
+
+**Tests:** waiting on #3177.
+
+### `mcp/update-refused`
+
+If `POST /update` would refuse an update, then the server MUST answer `marfa_update_server` with the tool error code that operation would answer, with the same `details.step`.
+
+**Tests:** `compliance/mcp-instance.test.ts › refuses an update with no newer release found, and one on a server that cannot update itself with the step to take on its host, as POST /update does`.
+
+### `mcp/update-release-bound`
+
+If a `marfa_update_server` call carries a `confirm` token whose preview named a release other than the newest release found when the server decides whether the update starts, then the server MUST answer the tool error code `confirmation_stale` with a new preview, and start nothing.
+
+**Reason:** the person agreed to the release the preview named, not to a newer one found since.
+
+**Tests:** waiting on #3177.
+
+### `mcp/update-token-unread`
+
+If a `marfa_update_server` call carries a `confirm` token that is not one a preview gave, then the server MUST answer the tool error code `confirmation_stale` and start nothing.
+
+**Tests:** `compliance/mcp-instance.test.ts › refuses a confirmation that is not one, and starts nothing`.
+
+## Confirming the clock
+
+`marfa_maintain` with `action` `confirm_clock` confirms the server's clock (`housekeeping/clock-confirm`) in two calls: a preview of the hold on clean-up with a `confirm` token, and a call with that token. A token is refused, as `marfa_delete_connector`'s is, when another credential sends it or five minutes have passed.
+
+### `mcp/clock-preview`
+
+While the server's clock is more than 7 days later than the trusted time, when `marfa_maintain` is called with `action` `confirm_clock` and no `confirm` token, the server MUST answer the server's time as `server_time`, the trusted time as `trusted_time`, the seconds between them as `gap_seconds`, the jobs that run once the clock is confirmed as `held_jobs`, the time the hold ends by itself as `hold_ends_at` and a `confirm` token, and confirm nothing.
+
+**Reason:** confirming lets the held jobs remove what is old by the server's time, which cannot be undone, so the agent checks the time with the person first.
+
+**Tests:** `compliance/mcp-instance.test.ts › previews the server time, the trusted time, the gap, the jobs that would run and when the hold ends, and confirms the clock on the confirmation`.
+
+### `mcp/clock-preview-not-held`
+
+While the server's clock is not more than 7 days later than the trusted time, when `marfa_maintain` is called with `action` `confirm_clock` and no `confirm` token, the server MUST answer `held` as `false` with no `confirm` token.
+
+**Tests:** `compliance/mcp-instance.test.ts › previews the server time, the trusted time, the gap, the jobs that would run and when the hold ends, and confirms the clock on the confirmation`.
+
+### `mcp/clock-confirmed`
+
+When a `marfa_maintain` call with `action` `confirm_clock` carries a `confirm` token whose preview showed the hold that stands, the server MUST take the clock's time as the trusted time and answer it as `confirmed_at`.
+
+**Tests:** `compliance/mcp-instance.test.ts › previews the server time, the trusted time, the gap, the jobs that would run and when the hold ends, and confirms the clock on the confirmation`.
+
+### `mcp/clock-jumped`
+
+If the server's clock has jumped since the preview that gave a `confirm_clock` call's `confirm` token, then the server MUST answer the tool error code `confirmation_stale` with a new preview, and confirm nothing.
+
+**Reason:** the person agreed to the time the preview showed, not to the time the clock reads after a jump.
+
+**Tests:** `compliance/mcp-instance.test.ts › refuses a confirmation once the clock jumped since the preview, answering a new preview and confirming nothing`.
+
+### `mcp/clock-nothing-held`
+
+If nothing is held when a `confirm_clock` call carries a `confirm` token, then the server MUST answer the tool error code `confirmation_stale` and confirm nothing.
+
+**Tests:** `compliance/mcp-instance.test.ts › refuses a confirmation once nothing is held, and confirms nothing`.
+
+### `mcp/clock-repeated`
+
+When a `confirm_clock` call carries a `confirm` token that an earlier call by the same credential used, within five minutes of the preview, the server MUST answer `already_done` as `true` and confirm nothing more.
+
+**Tests:** `compliance/mcp-instance.test.ts › previews the server time, the trusted time, the gap, the jobs that would run and when the hold ends, and confirms the clock on the confirmation`.
+
 ## Moving items to another type
 
 `marfa_move_items` moves every item of one type to another in two calls, as `marfa_delete` trashes: a preview that names the items the move would take, with a `confirm` token, and a call with that token, which starts the move as a job. A token is refused, as `marfa_delete`'s is, when another credential sends it or five minutes have passed.

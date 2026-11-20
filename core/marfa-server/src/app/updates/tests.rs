@@ -745,9 +745,11 @@ async fn work_the_writer_begins_runs_after_the_request_that_asked_for_it_is_gone
         upgrade_marks: None,
     };
     let lock = Lock::take(&options.path).map_err(|f| f.message).unwrap();
-    let db = Db::open(&options, lock, Arc::default())
-        .map_err(|f| f.message)
-        .unwrap();
+    let db = Arc::new(
+        Db::open(&options, lock, Arc::default())
+            .map_err(|f| f.message)
+            .unwrap(),
+    );
 
     let (entered, busy) = std::sync::mpsc::channel();
     let (let_go, held) = std::sync::mpsc::channel::<()>();
@@ -764,11 +766,16 @@ async fn work_the_writer_begins_runs_after_the_request_that_asked_for_it_is_gone
     busy.recv_timeout(Duration::from_secs(5)).unwrap();
 
     let (ran, done) = tokio::sync::oneshot::channel();
-    let mut asking = Box::pin(super::begin_on_writer(&db, move |_| {
-        Ok(Some(async move {
-            let _ = ran.send(());
-        }))
-    }));
+    let mut asking = Box::pin(super::begin_on_writer(
+        db.clone(),
+        |db: &Db| db,
+        |_: &Db| {},
+        move |_| {
+            Ok(Ok::<_, ()>(Some(async move {
+                let _ = ran.send(());
+            })))
+        },
+    ));
     assert!(
         tokio::time::timeout(Duration::from_millis(50), &mut asking)
             .await
