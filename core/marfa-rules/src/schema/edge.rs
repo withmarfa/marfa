@@ -30,14 +30,12 @@ pub enum EdgeIssues {
     },
 }
 
-/// How the properties of an edge type are judged for their shape.
 #[derive(Clone, Copy, PartialEq)]
 pub enum Judging<'a> {
-    /// A new registration: every property is judged as a type's field is.
     Register,
-    /// A constraint evolution of the stored edge type: a property left as the stored type holds it is not judged again.
+    /// Carries the stored edge type for comparison.
     Evolve(&'a Obj),
-    /// An archive's edge type: it holds what an earlier registration accepted, so only a format that does not suit its property is refused.
+    /// An archive can carry shapes accepted when it was made.
     Restore,
 }
 

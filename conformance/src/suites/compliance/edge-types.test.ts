@@ -1367,8 +1367,7 @@ describe("custom edge-type registration", () => {
     const listed = await client.listEdgeTypes();
     expect(listed.data.data.map((t) => t.id)).not.toContain("Bad Id");
 
-    // The witnesses: the kebab form a shipped type has, an undotted name with
-    // an underscore and a digit, and the dotted form.
+    // Positive controls for single-segment and dotted names.
     for (const id of [
       `mock-kebab-${ctx.runId}`,
       `mock_snake_case_${ctx.runId}`,
@@ -1524,7 +1523,6 @@ describe("custom edge-type registration", () => {
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("validation_error");
 
-    // The witness: an undotted reverse name with an underscore registers.
     const id = `mock.rev-snake.${ctx.runId}`;
     const taken = await client.registerEdgeType({
       label: "Test edge type",

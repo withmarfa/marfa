@@ -299,7 +299,6 @@ impl Restoring {
     }
 }
 
-/// Judges each edge type an archive carries as `POST /edge-types` would register it.
 pub fn plan_restored(catalog: &Catalog, archived: &[Obj]) -> Result<Restoring> {
     let mut plan = Restoring {
         fresh: Vec::new(),

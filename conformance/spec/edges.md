@@ -1712,7 +1712,7 @@ When `POST /edge-types` reads `evolve_constraints`, the server MUST treat it as 
 
 If `POST /edge-types` names an `id` that is neither a type identifier (`types/id-grammar`) nor one segment that starts with a lowercase letter, ends with a lowercase letter or a digit, and holds only lowercase letters, digits, hyphens and underscores, then the server MUST answer `400 validation_error`.
 
-**Reason:** a shipped edge type is one segment such as `parent-of`, and a registered one is usually a type identifier such as `acme.parent-of`. A one-segment name with an underscore, such as `parent_of`, is as good a name. A dotted identifier is one a type could have, so a root the server reserves (`types/id-reserved-scope-root`) is refused.
+**Reason:** single-segment names include `parent-of` and `parent_of`. Dotted names follow the same rules as type identifiers, including `types/id-reserved-scope-root`.
 
 **Tests:** `compliance/edge-types.test.ts › refuses an id that is not an edge type identifier with 400 validation_error, and registers one that is`.
 
@@ -1744,7 +1744,7 @@ If `POST /edge-types` names a property whose `type` is neither `thumbnail` nor a
 
 If `POST /edge-types` names a property whose `type` is `array` and that names no `items_type`, then the server MUST answer `400 invalid_schema` with `details.errors` naming `property_schema.<name>.items_type`.
 
-**Reason:** the code and the fault a type's field gets (`types/field-grammar`). An array with no element type holds any element.
+**Reason:** without an element type, an array accepts values of any type. Item fields also require an element type (`types/field-grammar`).
 
 **Tests:** `compliance/edge-property-schema.test.ts › refuses an array property with no items_type, naming the property`.
 
@@ -1752,7 +1752,7 @@ If `POST /edge-types` names a property whose `type` is `array` and that names no
 
 If `POST /edge-types` names a property whose `type` is `enum` and that names no `enum_values` or an empty list, then the server MUST answer `400 invalid_schema` with `details.errors` naming `property_schema.<name>.enum_values`.
 
-**Reason:** the code and the fault a type's field gets (`types/field-grammar`). An enum with no values takes any string.
+**Reason:** without a list of allowed values, an enum accepts any string. Item fields also require a list of allowed values (`types/field-grammar`).
 
 **Tests:** `compliance/edge-property-schema.test.ts › refuses an enum property with no enum_values or an empty list, naming the property`.
 
@@ -1760,9 +1760,9 @@ If `POST /edge-types` names a property whose `type` is `enum` and that names no 
 
 If `POST /edge-types` names `enum_values` on a property whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, then the server MUST answer `400 invalid_schema` with `details.errors` naming `property_schema.<name>.enum_values`.
 
-**Reason:** the fault a type's field gets (`types/enum-values-kind`). Only an enum checks its values, so the list would read as a rule that nothing keeps.
+**Reason:** a list of allowed values constrains enums and arrays of enums. The same rule applies to item fields (`types/enum-values-kind`).
 
-**Tests:** `compliance/edge-property-schema.test.ts › refuses enum_values on a property that is not an enum, naming the property`.
+**Tests:** `compliance/edge-property-schema.test.ts › refuses enum_values on a string property, naming the property`.
 
 ### `edges/types-register-shapes-named`
 
@@ -1774,7 +1774,7 @@ If `POST /edge-types` names several properties that `edges/types-register-array-
 
 While a stored edge type holds a property that `edges/types-register-array-items`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind` refuses, the server MUST answer a read of the edge type with the property as stored.
 
-**Reason:** a registration the server accepted before those rules stays readable (`archive/restore-compatible-types`).
+**Reason:** preserving the stored property lets a client read the same definition the owner can export and restore (`archive/restore-compatible-types`).
 
 **Tests:** `compliance/restore-edge-property-shapes.test.ts › restores from an archive and reads as the archive held it`.
 
@@ -1782,7 +1782,7 @@ While a stored edge type holds a property that `edges/types-register-array-items
 
 When `POST /restore` carries an edge type with a property that `edges/types-register-array-items`, `edges/types-register-enum-values` or `edges/types-register-enum-values-kind` refuses, the server MUST register the edge type with the property as the archive holds it.
 
-**Reason:** an archive records an edge type as the instance stored it, and a server that took the registration wrote it. A `format` that does not suit its property is still refused (`edges/types-restore-format-fit`).
+**Reason:** an archive lets the owner recover the edge type as stored. Format validity is governed by `edges/types-restore-format-fit`.
 
 **Tests:** `compliance/restore-edge-property-shapes.test.ts › restores from an archive and reads as the archive held it`.
 
@@ -2108,7 +2108,7 @@ When `POST /restore` carries an edge type that declares a `string` property with
 
 If `POST /restore` carries an edge type that declares a `format` on a property whose `type` the format does not suit, then the server MUST answer `400 invalid_schema` with `details.errors` naming `property_schema.<name>.format`.
 
-**Reason:** an archive is judged as the registration it stands for (`edges/types-register-format-fit`).
+**Reason:** restore applies the same format checks as registration (`edges/types-register-format-fit`).
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive whose edge type puts a format on a property it does not suit, naming the property, and registers nothing`.
 

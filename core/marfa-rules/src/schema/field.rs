@@ -266,7 +266,7 @@ pub(super) fn validate_field_shape(
                 "enum_values",
                 expected,
                 "an empty array".into(),
-                "An enum with no values can never validate. List the allowed values.".into(),
+                "List at least one allowed value in enum_values.".into(),
             )),
             Some(Value::Array(values)) if !values.iter().all(Value::is_string) => {
                 errors.push(issue(

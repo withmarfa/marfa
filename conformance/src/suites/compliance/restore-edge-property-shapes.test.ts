@@ -9,13 +9,6 @@ import {
   trackEdgeType,
 } from "../../utils/setup.js";
 
-/**
- * A registration refuses an edge property with no `items_type`, an enum with
- * no `enum_values` and `enum_values` on a property that is not an enum, but an
- * edge type an earlier registration stored with one still reads, restores
- * from an archive and takes a change of its endpoint constraints. The only way
- * to hold one is an archive that says so.
- */
 let client: MarfaClient;
 let owner: MarfaClient;
 let ctx: TestContext;
@@ -57,7 +50,6 @@ const archiveOf = (id: string, properties: Record<string, unknown>) =>
 
 describe("an edge type whose properties break the shape rules", () => {
   it("restores from an archive and reads as the archive held it", async () => {
-    // The witness: the same properties are refused when they are registered.
     const refused = await client.registerEdgeType({
       label: "Test edge type",
       id: `mock.shapes.direct.${ctx.runId}`,
@@ -121,7 +113,6 @@ describe("an edge type whose properties break the shape rules", () => {
     ]);
     expect(widened.data.property_schema).toEqual(FAULTS);
 
-    // A property the change adds is judged as a registration judges it.
     const added = await evolve({ ...FAULTS, fresh: { type: "array" } });
     expect(added.status).toBe(400);
     expect(added.error?.error.code).toBe("invalid_schema");

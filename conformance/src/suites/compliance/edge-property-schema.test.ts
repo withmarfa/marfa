@@ -747,10 +747,6 @@ describe("null and format", () => {
     expect(paths).toEqual(["property_schema.size.format"]);
   });
 
-  /**
-   * Each shape fault is refused naming its property, and the same property
-   * with the fault mended registers: the witness that the refusal is the fault.
-   */
   async function refusesUntilMended(
     id: string,
     fault: Record<string, unknown>,
@@ -810,7 +806,7 @@ describe("null and format", () => {
     ]);
   });
 
-  it("refuses enum_values on a property that is not an enum, naming the property", async () => {
+  it("refuses enum_values on a string property, naming the property", async () => {
     await refusesUntilMended(
       `mock.propschema.strayvalues.${ctx.runId}`,
       { type: "string", enum_values: ["a"] },
