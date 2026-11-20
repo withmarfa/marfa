@@ -889,8 +889,9 @@ pub(crate) fn keep_beside(
 }
 
 /// Settles a displacement a run recorded and did not clear, from what the
-/// disk holds now: the new file goes; the file read goes back where nothing
-/// took its path, or is discarded; anything else goes back to its path or
+/// disk holds now: the new file goes; the file read goes back where the new
+/// file never took its path, is kept where the path was emptied after it
+/// did, and is otherwise discarded; anything else goes back to its path or
 /// beside it. The record is cleared once settled.
 pub(crate) fn settle(
     dir: &Directory,
