@@ -30,9 +30,10 @@ pub const UNCONFIRMED_NOTE: &str = "\
 
 pub const COMPOSE_FILE: &str = "\
 # Written by `marfa server install`, and the same for every install. Change
-# the release, the port and the name in .env, and the server's own settings in
-# marfa.env. Without the command: `docker network create \"${MARFA_NAME}-net\"`
-# once, then `docker compose up -d` in this folder.
+# the port and the name in .env, and the server's own settings in marfa.env.
+# `marfa server upgrade` changes the release, once that release has said it
+# opens the database. Without the command: `docker network create
+# \"${MARFA_NAME}-net\"` once, then `docker compose up -d` in this folder.
 name: ${MARFA_NAME}
 
 services:
@@ -62,7 +63,8 @@ volumes:
 
 pub const DOTENV_HEADER: &str = "\
 # What `marfa server` records about this install; the server does not read
-# it. Change a value, then run `marfa server install` again.";
+# it. Change a value, then run `marfa server install` again. Only
+# `marfa server upgrade` changes the release.";
 
 pub const SETTINGS_HEADER: &str = "\
 # The server's settings: https://docs.marfa.so/run/settings

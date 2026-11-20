@@ -94,15 +94,15 @@ If `PUT /folders/{id}/status` names undeclared fields, caller identities, file p
 
 ### `folder-status/problem-codes`
 
-If a report to `PUT /folders/{id}/status` names a problem code outside `conflict`, `refused`, `credential_refused`, `unreadable`, `held_file`, `unavailable`, `root_gone`, and `settings_invalid`, or repeats a code, then the server MUST answer `400 validation_error`.
+If a report to `PUT /folders/{id}/status` names a problem code outside `conflict`, `refused`, `credential_refused`, `unreadable`, `held_file`, `unavailable`, `root_gone`, `settings_invalid`, `unwatched`, and `paused`, or repeats a code, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/folder-status.test.ts › rejects caller identities, file details, unknown codes, and unsafe counts without changing the report`, `› takes each of the eight problem codes once, and a sequence and counts at the largest whole number`.
+**Tests:** `compliance/folder-status.test.ts › rejects caller identities, file details, unknown codes, and unsafe counts without changing the report`, `› takes each of the ten problem codes once, and a sequence and counts at the largest whole number`.
 
 ### `folder-status/number-bounds`
 
 If `PUT /folders/{id}/status` names a sequence outside the integers from 1 through 9007199254740991, or a count outside the integers from 0 through 9007199254740991, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/folder-status.test.ts › rejects caller identities, file details, unknown codes, and unsafe counts without changing the report`, `› takes each of the eight problem codes once, and a sequence and counts at the largest whole number`.
+**Tests:** `compliance/folder-status.test.ts › rejects caller identities, file details, unknown codes, and unsafe counts without changing the report`, `› takes each of the ten problem codes once, and a sequence and counts at the largest whole number`.
 
 ### `folder-status/last-success-time`
 

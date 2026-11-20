@@ -1591,6 +1591,43 @@ fn open(link: &str, from: u64) -> std::result::Result<Opened, Refusal> {
     })
 }
 
+/// Each MIME type a file's extension can stand for, with the extensions that
+/// do, the one a file is named with first.
+const MIME_TYPES: &[(&str, &[&str])] = &[
+    ("image/png", &["png"]),
+    ("image/jpeg", &["jpg", "jpeg"]),
+    ("image/gif", &["gif"]),
+    ("image/webp", &["webp"]),
+    ("image/svg+xml", &["svg"]),
+    ("image/heic", &["heic"]),
+    ("application/pdf", &["pdf"]),
+    ("application/epub+zip", &["epub"]),
+    (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        &["docx"],
+    ),
+    (
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        &["xlsx"],
+    ),
+    (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        &["pptx"],
+    ),
+    ("text/plain", &["txt"]),
+    ("text/markdown", &["md", "markdown"]),
+    ("text/html", &["html", "htm"]),
+    ("application/xhtml+xml", &["xhtml"]),
+    ("application/json", &["json"]),
+    ("text/csv", &["csv"]),
+    ("audio/mpeg", &["mp3"]),
+    ("audio/mp4", &["m4a"]),
+    ("audio/wav", &["wav"]),
+    ("video/mp4", &["mp4", "m4v"]),
+    ("video/quicktime", &["mov"]),
+    ("application/zip", &["zip"]),
+];
+
 pub fn mime_type_for(path: &Path, given: Option<&str>) -> String {
     if let Some(given) = given {
         return given.to_string();
@@ -1600,33 +1637,27 @@ pub fn mime_type_for(path: &Path, given: Option<&str>) -> String {
         .and_then(|extension| extension.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    match extension.as_str() {
-        "png" => "image/png",
-        "jpg" | "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "svg" => "image/svg+xml",
-        "heic" => "image/heic",
-        "pdf" => "application/pdf",
-        "epub" => "application/epub+zip",
-        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        "txt" => "text/plain",
-        "md" | "markdown" => "text/markdown",
-        "html" | "htm" => "text/html",
-        "xhtml" => "application/xhtml+xml",
-        "json" => "application/json",
-        "csv" => "text/csv",
-        "mp3" => "audio/mpeg",
-        "m4a" => "audio/mp4",
-        "wav" => "audio/wav",
-        "mp4" | "m4v" => "video/mp4",
-        "mov" => "video/quicktime",
-        "zip" => "application/zip",
-        _ => "application/octet-stream",
-    }
-    .to_string()
+    MIME_TYPES
+        .iter()
+        .find(|(_, extensions)| extensions.contains(&extension.as_str()))
+        .map_or("application/octet-stream", |(mime, _)| mime)
+        .to_string()
+}
+
+/// The extension, without its dot, a file of `mime_type` is named with, or
+/// `None` for a type no extension is known for. Parameters and case do not
+/// change the type.
+pub fn extension_for_mime(mime_type: &str) -> Option<&'static str> {
+    let essence = mime_type
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
+    MIME_TYPES
+        .iter()
+        .find(|(mime, _)| *mime == essence)
+        .map(|(_, extensions)| extensions[0])
 }
 
 /// The file type a MIME type names when the writer names none. Parameters
@@ -3231,6 +3262,22 @@ pub(crate) mod tests {
         assert_eq!(file_type_for("audio/mpeg", None), "core.file.audio");
         assert_eq!(file_type_for("image/png", None), "core.file.image");
         assert_eq!(file_type_for("image/png", Some("user.scan")), "user.scan");
+    }
+
+    #[test]
+    fn a_mime_type_names_the_extension_that_types_back_to_it() {
+        for (mime, extensions) in MIME_TYPES {
+            let extension = extension_for_mime(mime).unwrap();
+            assert_eq!(extension, extensions[0]);
+            assert_eq!(
+                mime_type_for(Path::new(&format!("a.{extension}")), None),
+                *mime
+            );
+        }
+        assert_eq!(extension_for_mime("IMAGE/JPEG; q=1"), Some("jpg"));
+        assert_eq!(extension_for_mime("application/octet-stream"), None);
+        assert_eq!(extension_for_mime("application/x-unknown"), None);
+        assert_eq!(extension_for_mime(""), None);
     }
 
     #[test]

@@ -3,9 +3,9 @@ use super::{
     ATTACHMENT_EDGE, BoundFiles, Catalog, CoreError, EdgeTypes, FOLDER_TYPE, Flagged, Folder,
     HashMap, HashSet, Item, ItemState, Lists, Look, Mode, Names, OFlags, Path, Peers, Result,
     Serialize, Settings, SettingsFileReport, Uncarried, Value, beside, bytes_of,
-    carries_frontmatter, cleaned, document, executable, fields, identity, landing, line_of,
-    name_of, names, path_of, placement, plainly_inside, read_file, stat_metadata, state, suited,
-    transfer,
+    carries_frontmatter, cleaned, document, executable, fields, identity, is_document, landing,
+    line_of, name_of, names, path_of, placement, plainly_inside, read_file, stat_metadata, state,
+    suited, transfer,
 };
 
 /// What a render of an item's file reads besides the item.
@@ -246,12 +246,26 @@ pub(super) fn new_name(item: &Item, catalog: &Catalog) -> String {
         .and_then(Value::as_str)
         .filter(|title| !title.trim().is_empty())
         .unwrap_or(&item.id);
-    // A file item's title is a file's name already, extension and all.
     if bytes_of(item, catalog).is_some() {
-        name_from_title(title, None)
+        let mime_type = item.properties.get("mime_type").and_then(Value::as_str);
+        name_from_title(title, needed_extension(title, mime_type).as_deref())
     } else {
         name_from_title(title, Some(".md"))
     }
+}
+
+/// The extension, dot included, a file item's name takes beyond its `title`:
+/// the one its `mime_type` needs where the title ends in none, and never one
+/// that would read as a document.
+fn needed_extension(title: &str, mime_type: Option<&str>) -> Option<String> {
+    if !names::split_extension(&names::title_stem(title))
+        .1
+        .is_empty()
+    {
+        return None;
+    }
+    let extension = crate::blob::extension_for_mime(mime_type?)?;
+    (!is_document(Path::new(&format!("a.{extension}")))).then(|| format!(".{extension}"))
 }
 
 /// A file's name for a title, with `extension` where the title carries none.
@@ -304,6 +318,7 @@ impl Folder {
     /// Pulls again from the start where the copy changed under it, such as a
     /// catch-up applying a purge, since what it read is then stale.
     pub fn pull(&self) -> Result<PullReport> {
+        self.refuse_while_paused()?;
         self.pull_with(None)
     }
 
@@ -3141,5 +3156,43 @@ mod tests {
         // A name at the limit already is left whole.
         let exact = format!("{}.md", "e".repeat(252));
         assert_eq!(name_from_title(&"e".repeat(252), Some(".md")), exact);
+    }
+
+    fn file_named(title: &str, mime_type: Option<&str>) -> String {
+        name_from_title(title, needed_extension(title, mime_type).as_deref())
+    }
+
+    #[test]
+    fn a_file_item_takes_the_extension_its_type_needs_where_its_title_has_none() {
+        assert_eq!(
+            file_named("Boiler receipt", Some("application/pdf")),
+            "Boiler receipt.pdf"
+        );
+        assert_eq!(
+            file_named("Holiday", Some("IMAGE/JPEG; q=1")),
+            "Holiday.jpg"
+        );
+        assert_eq!(file_named("a/b", Some("image/png")), "a-b.png");
+        // A title that ends in an extension is the name, whatever the bytes are.
+        assert_eq!(file_named("scan.png", Some("application/pdf")), "scan.png");
+        assert_eq!(
+            file_named("v1.2 notes", Some("application/pdf")),
+            "v1.2 notes"
+        );
+        // No extension for a type none is known for, or where none is told.
+        assert_eq!(file_named("Blob", Some("application/octet-stream")), "Blob");
+        assert_eq!(file_named("Blob", None), "Blob");
+        // Never one that would read as a document.
+        assert_eq!(file_named("Notes", Some("text/markdown")), "Notes");
+        assert_eq!(file_named("Notes", Some("text/plain")), "Notes");
+        // The cut keeps the added extension, and a long ending stays stem.
+        let long = file_named(&"p".repeat(300), Some("application/pdf"));
+        assert_eq!(long, format!("{}.pdf", "p".repeat(251)));
+        let dotted = file_named(
+            &format!("Plan.{}", "q".repeat(300)),
+            Some("application/pdf"),
+        );
+        assert_eq!(dotted.len(), 255);
+        assert!(dotted.starts_with("Plan.q") && dotted.ends_with(".pdf"));
     }
 }

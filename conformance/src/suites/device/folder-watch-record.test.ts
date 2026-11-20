@@ -32,6 +32,7 @@ interface Entry {
   folder: string;
   watching: boolean;
   reason: string | null;
+  paused: boolean;
   last_success_at: string | null;
   first_sync_waiting: boolean | null;
   problems: Array<{ code: string; count: number }> | null;
@@ -699,5 +700,50 @@ describe("the record of folder watches", () => {
     await new Promise((resolve) => setTimeout(resolve, 7_000));
     expect(alone.stderr.split("folder-watch.json").length - 1).toBe(1);
     expect(alone.running(), alone.stderr).toBe(true);
+  });
+
+  it("lists a folder whose sync is paused as not watched and paused, keeps it so across a restart of the watch, and watches it once it is resumed", async () => {
+    const { a, b } = await twoFolders("record-paused");
+    const first = hold(a.folder.watchEvery());
+    await vi.waitFor(() => {
+      for (const harness of [a, b]) {
+        const entry = entryOf(harness, first.pid(), harness.dir);
+        expect(entry?.watching, first.stdout + first.stderr).toBe(true);
+        // The witness: a folder that runs is neither paused nor kept out.
+        expect(entry?.paused).toBe(false);
+        expect(entry?.reason).toBeNull();
+      }
+    }, WAIT);
+
+    // A pause lets a running watch go: the command takes the folder, and the
+    // watch keeps it out until the pause ends.
+    expect((await b.folder.pause()).ok).toBe(true);
+    await vi.waitFor(() => {
+      const entry = entryOf(b, first.pid(), b.dir);
+      expect(entry?.watching, first.stdout + first.stderr).toBe(false);
+      expect(entry?.paused).toBe(true);
+      expect(entry?.reason).toBe("paused");
+      expect(entryOf(a, first.pid(), a.dir)?.watching).toBe(true);
+    }, WAIT);
+    first.interrupt();
+    await first.exited();
+
+    const second = hold(a.folder.watchEvery());
+    await vi.waitFor(() => {
+      const entry = entryOf(b, second.pid(), b.dir);
+      expect(entry?.watching, second.stdout + second.stderr).toBe(false);
+      expect(entry?.paused).toBe(true);
+      expect(entry?.reason).toBe("paused");
+      expect(entryOf(a, second.pid(), a.dir)?.watching).toBe(true);
+    }, WAIT);
+    expect(second.stdout + second.stderr).toContain("folders resume");
+
+    expect((await b.folder.resume()).ok).toBe(true);
+    await vi.waitFor(() => {
+      const entry = entryOf(b, second.pid(), b.dir);
+      expect(entry?.watching, second.stdout + second.stderr).toBe(true);
+      expect(entry?.paused).toBe(false);
+      expect(entry?.reason).toBeNull();
+    }, WAIT);
   });
 });

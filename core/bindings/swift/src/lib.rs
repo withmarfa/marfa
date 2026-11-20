@@ -1607,6 +1607,11 @@ pub enum MarfaError {
     FirstSyncWaiting {
         message: String,
     },
+    /// A directory's sync is paused, so the call that would read the server's
+    /// side or write either side was refused until `Folders.resume`.
+    SyncPaused {
+        message: String,
+    },
     /// The app's `CredentialRenewer` threw `Refused`: the renewal failed for
     /// `reason` and the sign-in still stands, which is neither the app's own
     /// bad arguments nor a network failure. Queued writes stay queued and the
@@ -1667,6 +1672,7 @@ impl MarfaError {
             | MarfaError::ServerTooOld { message, .. }
             | MarfaError::Canceled { message }
             | MarfaError::FirstSyncWaiting { message }
+            | MarfaError::SyncPaused { message }
             | MarfaError::RenewalRefused { message, .. }
             | MarfaError::Invalid { message }
             | MarfaError::NotAnswerable { message }
@@ -1717,6 +1723,7 @@ impl MarfaError {
             MarfaError::ServerTooOld { .. } => marfa_core::CoreErrorKind::ServerTooOld,
             MarfaError::Canceled { .. } => marfa_core::CoreErrorKind::Canceled,
             MarfaError::FirstSyncWaiting { .. } => marfa_core::CoreErrorKind::FirstSyncWaiting,
+            MarfaError::SyncPaused { .. } => marfa_core::CoreErrorKind::SyncPaused,
             MarfaError::RenewalRefused { .. } => marfa_core::CoreErrorKind::RenewalRefused,
             MarfaError::Invalid { .. } => marfa_core::CoreErrorKind::Invalid,
             MarfaError::NotAnswerable { .. } => marfa_core::CoreErrorKind::NotAnswerable,
@@ -1887,6 +1894,7 @@ impl From<marfa_core::CoreError> for MarfaError {
             },
             E::Canceled => MarfaError::Canceled { message },
             E::FirstSyncWaiting => MarfaError::FirstSyncWaiting { message },
+            E::SyncPaused => MarfaError::SyncPaused { message },
             E::RenewalRefused { reason, .. } => MarfaError::RenewalRefused {
                 reason: reason.into(),
                 message,
@@ -3571,11 +3579,13 @@ mod tests {
             E::NoCatalog,
             E::ReadingHandle,
             E::FirstSyncWaiting,
+            E::SyncPaused,
             E::WrongSchema {
                 path: text(),
                 reason: text(),
                 unsent: None,
                 folder: None,
+                release: None,
             },
             E::StoreDamaged {
                 path: text(),
@@ -4032,6 +4042,7 @@ mod tests {
                     reason: text(),
                     unsent: Some(1),
                     folder: None,
+                    release: None,
                 }
                 .into(),
                 "WrongSchema",

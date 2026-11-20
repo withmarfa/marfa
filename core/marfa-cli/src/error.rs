@@ -451,6 +451,7 @@ impl CliError {
                 | CoreError::ContractMismatch { .. }
                 | CoreError::ServerTooOld { .. }
                 | CoreError::FirstSyncWaiting
+                | CoreError::SyncPaused
                 | CoreError::Invalid(_)
                 | CoreError::RenewalRefused { .. }
                 | CoreError::NotAnswerable(_) => Exit::Refused,

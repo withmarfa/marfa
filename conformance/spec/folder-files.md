@@ -252,6 +252,14 @@ When an item has an `in-folder` edge to the folder, a device MUST place its file
 
 **Tests:** `device/folders-placement.test.ts › places an item where its in-folder edge says, on every Mac`.
 
+### `folder-files/placement-existing-name`
+
+When a file item's `in-folder` edge names a path, a device MUST keep the item's file at that path, whether or not the name ends in the extension `folder-documents/file-extension-added` would add.
+
+**Reason:** a file an earlier build named with no extension keeps that name, so no app loses track of it. Only a file named for the first time gets the extension.
+
+**Tests:** `device/folders-placement.test.ts › keeps the name of a file an older build wrote with no extension`.
+
 ### `folder-files/placement-edge-type`
 
 When another edge points to the folder's item, a device MUST NOT treat it as placement.
@@ -284,9 +292,9 @@ When a checked-out document is first bound, a device MUST place its item where t
 
 ### `folder-files/placement-rename-only`
 
-When a file is moved or renamed without a content change, a device MUST send only its placement change, unless it is a Markdown document whose new name is not in step with its title (`folder-documents/rename-title`) or a file item whose title is its old file name.
+When a file is moved or renamed without a content change, a device MUST send only its placement change, unless it is a Markdown document whose new name is not in step with its title (`folder-documents/rename-title`) or a file item whose title is its old file name or the name `folder-documents/file-extension-added` makes from its title.
 
-**Tests:** `device/folders-placement.test.ts › sends only the placement for a move under the same name`, `› sends only the placement for a rename of a document that is not Markdown`.
+**Tests:** `device/folders-placement.test.ts › sends only the placement for a move under the same name`, `› sends only the placement for a rename of a document that is not Markdown`, `› sends a renamed file item's new name as its title, with the extension only where the person typed one`.
 
 ### `folder-files/placement-not-document`
 
@@ -1510,9 +1518,15 @@ When the bytes of a bound file item change in a folder, a device MUST queue an u
 
 **Tests:** `device/folders-placement.test.ts › pushes a file that is not a document as a file item, its bytes uploaded first`, `device/folders-placement.test.ts › sends an edited file item named like a document as bytes`.
 
+### `folder-files/binary-title-named`
+
+When a bound file item's file is renamed from the name `folder-documents/file-extension-added` made from its title, a device MUST send the new name, with the extension only where the person typed one, as the item's title.
+
+**Tests:** `device/folders-placement.test.ts › sends a renamed file item's new name as its title, with the extension only where the person typed one`.
+
 ### `folder-files/binary-title-preserved`
 
-When a bound file item is renamed and its title differs from its old file name, a device MUST retain the item’s title.
+When a bound file item is renamed and its title differs from its old file name, and from the name `folder-documents/file-extension-added` makes from its title, a device MUST retain the item’s title.
 
 **Tests:** `device/folders-placement.test.ts › keeps a title somebody set when the file moves`.
 

@@ -268,6 +268,162 @@ When `folders status` runs and no current entry in the record of folder watches 
 
 **Tests:** `device/folders-new-build.test.ts › says in the folder's status that its watch runs another build`.
 
+## Pausing a directory's sync
+
+A person pauses one directory, not the folder it follows, with `folders pause` and lets it go on with `folders resume`. The pause lives in the directory's own state on that computer, so another computer that follows the same folder is not paused.
+
+### `folder-sync/pause-command`
+
+When `folders pause` names a directory that follows a folder whose sync runs, the CLI MUST pause the directory's sync, keep the pause in the directory's own state on that computer, and report `paused` as `true` and `changed` as `true`.
+
+**Reason:** The pause is not on the instance, so it pauses one computer's directory and leaves every other directory that follows the folder as it is.
+
+**Tests:** `device/folders-pause.test.ts › is paused and resumed by a command that says so, and says that nothing changed when the directory was already as asked`, `device/folders-pause.test.ts › shows in its status and in the list of folders, and reports to the server that its sync is paused`.
+
+### `folder-sync/pause-already`
+
+When `folders pause` names a directory whose sync is paused, the CLI MUST report `paused` as `true` and `changed` as `false` and change nothing.
+
+**Tests:** `device/folders-pause.test.ts › is paused and resumed by a command that says so, and says that nothing changed when the directory was already as asked`.
+
+### `folder-sync/resume-command`
+
+When `folders resume` names a directory whose sync is paused, the CLI MUST let the directory's sync go on and report `paused` as `false` and `changed` as `true`.
+
+**Tests:** `device/folders-pause.test.ts › is paused and resumed by a command that says so, and says that nothing changed when the directory was already as asked`, `device/folders-pause.test.ts › shows in its status and in the list of folders, and reports to the server that its sync is paused`.
+
+### `folder-sync/resume-not-paused`
+
+When `folders resume` names a directory whose sync is not paused, the CLI MUST report `paused` as `false` and `changed` as `false` and change nothing.
+
+**Tests:** `device/folders-pause.test.ts › is paused and resumed by a command that says so, and says that nothing changed when the directory was already as asked`.
+
+### `folder-sync/pause-sync-refused`
+
+While a directory's sync is paused, the CLI MUST refuse `folders push`, with or without `--send-only`, and `folders pull` for that directory with the error code `sync_paused`, naming `folders resume`.
+
+**Reason:** A command a person types for a paused directory would otherwise undo the pause without saying so.
+
+**Tests:** `device/folders-pause.test.ts › refuses a push, a send-only push and a pull, naming resume, and leaves the directory and the server as they were`.
+
+### `folder-sync/pause-nothing-changes`
+
+While a directory's sync is paused, a device MUST NOT write a file into the directory, change what the directory's store keeps of its files, or send a change to the directory's files to the server for it.
+
+**Reason:** A pause must change nothing, so that what the person resumes is the directory as it stood.
+
+**Tests:** `device/folders-pause.test.ts › refuses a push, a send-only push and a pull, naming resume, and leaves the directory and the server as they were`.
+
+### `folder-sync/pause-watch-refused`
+
+While a directory's sync is paused, a device MUST refuse a watch of that directory, naming `folders resume`.
+
+**Tests:** `device/folders-pause.test.ts › refuses a watch of the directory, naming resume, and watches it again once resumed`, `device/binding-folders-handover.test.ts › refuses a watch of a directory that is paused before it begins`.
+
+### `folder-sync/pause-running-watch-stays`
+
+While a directory's sync is paused after a watch of that directory has started, a device MUST keep the watch running, say that the directory is paused, and watch the directory again once it is resumed.
+
+**Reason:** A pause is a person's choice for a while, so it does not end the watch they would have to start again.
+
+**Tests:** `device/folders-pause.test.ts › keeps a running watch of the directory going while it is paused, says so, and syncs a change once it is resumed`, `device/binding-folders-handover.test.ts › keeps a running watch of the directory going while it is paused, says so, and syncs a change once it is resumed`.
+
+### `folder-sync/pause-watch-skipped`
+
+While a directory's sync is paused, a device MUST NOT watch the directory in a watch of every folder, whether the watch started before or after the pause.
+
+**Reason:** The watch skips the directory and keeps watching every other.
+
+**Tests:** `device/folder-watch-record.test.ts › lists a folder whose sync is paused as not watched and paused, keeps it so across a restart of the watch, and watches it once it is resumed`.
+
+### `folder-sync/pause-survives-restart`
+
+While a directory's sync is paused, a device MUST leave the directory paused when a watch of it ends and another starts.
+
+**Reason:** The pause is kept in the directory's own state, so it lasts through the end of a watch, a restart of the computer and a login that starts the watch again.
+
+**Tests:** `device/folder-watch-record.test.ts › lists a folder whose sync is paused as not watched and paused, keeps it so across a restart of the watch, and watches it once it is resumed`.
+
+### `folder-sync/resume-watch-takes`
+
+When a paused directory is resumed, a device MUST watch the directory in a watch of every folder.
+
+**Tests:** `device/folder-watch-record.test.ts › lists a folder whose sync is paused as not watched and paused, keeps it so across a restart of the watch, and watches it once it is resumed`, `device/folders-pause.test.ts › refuses a watch of the directory, naming resume, and watches it again once resumed`.
+
+### `folder-sync/resume-catches-up`
+
+When a paused directory is resumed, a device MUST send at the directory's next sync what changed in the directory while it was paused, and write what changed on the server while it was paused.
+
+**Reason:** The sync is the one a watch that starts again makes, so a file changed on both sides is a conflict as it is at any other time.
+
+**Tests:** `device/folders-pause.test.ts › sends on resume what changed in the directory and writes what changed on the server while it was paused`.
+
+### `folder-sync/pause-status`
+
+While a directory's sync is paused, the CLI MUST report `sync_paused` as `true` in the answer of `folders status`.
+
+**Tests:** `device/folders-pause.test.ts › shows in its status and in the list of folders, and reports to the server that its sync is paused`.
+
+### `folder-sync/pause-status-words`
+
+While a directory's sync is paused, the CLI MUST say in the text of `folders status` that the sync is paused.
+
+**Tests:** `device/folders-pause.test.ts › shows in its status and in the list of folders, and reports to the server that its sync is paused`.
+
+### `folder-sync/pause-list`
+
+While a directory's sync is paused, the CLI MUST report `paused` as `true` for the directory in the answer of `folders list`.
+
+**Tests:** `device/folders-pause.test.ts › shows in its status and in the list of folders, and reports to the server that its sync is paused`.
+
+### `folder-sync/pause-reported`
+
+While a directory's sync is paused, a device MUST report `paused` with a count of 1 among the problems of the folder's report to the server.
+
+**Reason:** A person or an app reading the folder's health from the server tells a folder that is paused from one that has stopped syncing.
+
+**Tests:** `device/folders-pause.test.ts › shows in its status and in the list of folders, and reports to the server that its sync is paused`.
+
+### `folder-sync/pause-last-success`
+
+When a directory's sync is paused, a device MUST NOT change the `last_success_at` its reports carry.
+
+**Reason:** A pause is not a sync, so it does not say the directory is in step.
+
+**Tests:** `device/folders-pause.test.ts › does not move the last success a report carries`.
+
+## A part of a directory a watch cannot watch
+
+On some systems a watch registers each directory with the system one by one, and the system refuses once its limit is reached. The directories refused have no event for a change in them.
+
+### `folder-sync/unwatched-reported`
+
+While a watch cannot register some directories beneath a folder's directory with the system, a device MUST report `unwatched` among the problems of the folder's report to the server, with the number of those directories as its count.
+
+**Reason:** A report that a folder is in step says nothing about a change in a directory nothing watches.
+
+**Tests:** `device/folders-unwatched.test.ts › reports each directory it cannot watch, says so in the folder's status, and stops once it can watch them`.
+
+### `folder-sync/unwatched-cleared`
+
+When a watch has registered every directory beneath a folder's directory, a device MUST report no `unwatched` problem for the folder.
+
+**Tests:** `device/folders-unwatched.test.ts › reports each directory it cannot watch, says so in the folder's status, and stops once it can watch them`.
+
+### `folder-sync/unwatched-status`
+
+While a watch cannot register some directories beneath a folder's directory, the CLI MUST report the number of them as `unwatched` in the answer of `folders status`.
+
+**Tests:** `device/folders-unwatched.test.ts › reports each directory it cannot watch, says so in the folder's status, and stops once it can watch them`.
+
+### `folder-sync/unwatched-status-words`
+
+While a watch cannot register some directories beneath a folder's directory, the CLI MUST say in the text of `folders status` that they cannot be watched.
+
+**Reason:** a person reading that the files are in step would take a change in those directories to be in step too.
+
+**Tests:** `device/folders-unwatched.test.ts › reports each directory it cannot watch, says so in the folder's status, and stops once it can watch them`.
+
 ## Folders kept apart, and first writes
 
 ### `folder-sync/independent-folders`
