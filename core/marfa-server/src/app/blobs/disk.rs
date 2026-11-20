@@ -246,8 +246,17 @@ impl Claim {
         &self.id
     }
 
-    /// Removes the pending marker; one already gone is undone. It blocks.
+    /// Why the files area is not locked against another server, where it could not be.
+    pub fn unlocked(&self) -> Option<&str> {
+        self.area.folder.unlocked_why()
+    }
+
+    /// Removes the pending marker where it still holds this claim; one already gone, or now
+    /// another's, is left. It blocks.
     pub fn undo(self) -> io::Result<()> {
+        if read_in(self.area.dir(), PENDING)?.is_none_or(|found| found.trim() != self.id) {
+            return Ok(());
+        }
         match rustix::fs::unlinkat(self.area.dir(), PENDING, AtFlags::empty()) {
             Ok(()) | Err(rustix::io::Errno::NOENT) => {}
             Err(error) => return Err(error.into()),
@@ -413,11 +422,15 @@ impl Disk {
         })
     }
 
-    /// The claim an adopt left pending in the files area `root`, where it holds no marker. It
+    /// The claim an adopt left pending in the files area `root`, where it holds no marker. A
+    /// files area that is not there fails as not found, since a claim in it is unread. It
     /// blocks.
     pub fn pending(&self, root: &Path) -> io::Result<Option<Claim>> {
         if !root.is_dir() {
-            return Ok(None);
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the backup folder's files area is not there",
+            ));
         }
         let area = self.hold_at(root)?;
         if read_in(area.dir(), MARKER)?.is_some_and(|found| !found.trim().is_empty()) {
@@ -488,6 +501,17 @@ impl Disk {
     /// drive that did not mount and an empty mount point all fail this.
     pub fn reachable(&self) -> bool {
         fs::read_to_string(self.root.join(MARKER)).is_ok_and(|text| text.trim() == self.id)
+    }
+
+    /// Whether the files area is reachable, after it takes as its marker the pending marker of
+    /// this store, which an adopt recorded and ended before it was made the marker. It blocks.
+    pub fn reached(&self) -> bool {
+        if self.reachable() {
+            return true;
+        }
+        let claimed = self.place == Place::BackupFiles
+            && fs::read_to_string(self.root.join(PENDING)).is_ok_and(|id| id.trim() == self.id);
+        claimed && self.writable().is_ok() && self.reachable()
     }
 
     fn unreachable() -> io::Error {
@@ -567,8 +591,9 @@ impl Disk {
     }
 
     /// Takes a folder that came back holding this store's marker: locked, and for the blob
-    /// folder made private, through one descriptor. Nothing is written in a folder without
-    /// the marker. It blocks.
+    /// folder made private, through one descriptor. A files area holding only this store's
+    /// pending marker takes it as its marker under the lock; nothing is written in any other
+    /// folder without the marker. It blocks.
     fn take_back(&self) -> io::Result<Arc<Area>> {
         let returning = &self.returning;
         let _one_at_a_time = returning
@@ -586,12 +611,22 @@ impl Disk {
                 .map_err(|failure| io::Error::other(failure.message))?,
             Place::BackupFiles => folder_lock::open_dir(&self.root)?,
         };
-        if marker_in(&dir, &self.root, self.place)
-            .ok()
-            .flatten()
-            .as_deref()
-            != Some(self.id.as_str())
-        {
+        let marked = |dir: &File| {
+            marker_in(dir, &self.root, self.place)
+                .ok()
+                .flatten()
+                .as_deref()
+                == Some(self.id.as_str())
+        };
+        // An adopt recorded this store but ended before the folder took its marker.
+        let claimed = |dir: &File| {
+            self.place == Place::BackupFiles
+                && read_in(dir, MARKER).is_ok_and(|found| found.is_none_or(|m| m.trim().is_empty()))
+                && read_in(dir, PENDING)
+                    .is_ok_and(|found| found.is_some_and(|id| id.trim() == self.id))
+        };
+        let promoting = !marked(&dir);
+        if promoting && !claimed(&dir) {
             return Err(Disk::unreachable());
         }
         let folder = match folder_lock::lock_dir(dir) {
@@ -611,6 +646,14 @@ impl Disk {
                 Place::BackupFiles => failure.message,
             })
         })?;
+        if promoting {
+            if !claimed(folder.dir()) {
+                return Err(Disk::unreachable());
+            }
+            rustix::fs::renameat(folder.dir(), PENDING, folder.dir(), MARKER)?;
+            folder.dir().sync_all()?;
+            tracing::info!("The backup folder took the store an earlier adopt recorded");
+        }
         let area = Arc::new(Area::new(folder, self.place == Place::BackupFiles));
         let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
         // `let_go` may have run since the look above, and the folder then closes here.
@@ -1721,6 +1764,32 @@ mod tests {
         let disk = Disk::unmounted(id, root, Place::Blobs);
         assert!(without_locks(|| disk.stage()).is_err());
         assert!(without_locks(|| disk.unwritable()).is_some());
+    }
+
+    #[test]
+    fn a_returned_files_area_holding_only_its_own_claim_takes_it_as_its_marker() {
+        let dir = TempDir::new().unwrap();
+        let id = Uuid::now_v7().to_string();
+        // The witness: a claim for another store is left as it is, and nothing is made.
+        let other = dir.path().join("other");
+        fs::create_dir_all(&other).unwrap();
+        let foreign = Uuid::now_v7().to_string();
+        fs::write(other.join(PENDING), &foreign).unwrap();
+        let disk = Disk::unmounted(id.clone(), other.clone(), Place::BackupFiles);
+        assert!(disk.stage().is_err());
+        assert_eq!(fs::read_to_string(other.join(PENDING)).unwrap(), foreign);
+        assert!(!other.join(MARKER).exists());
+        assert!(!other.join(LOCK).exists());
+
+        let area = dir.path().join("area");
+        fs::create_dir_all(&area).unwrap();
+        fs::write(area.join(PENDING), &id).unwrap();
+        let disk = Disk::unmounted(id.clone(), area.clone(), Place::BackupFiles);
+        let mut staged = disk.stage().unwrap();
+        staged.append(b"copied").unwrap();
+        assert_eq!(fs::read_to_string(area.join(MARKER)).unwrap(), id);
+        assert!(!area.join(PENDING).exists());
+        assert!(disk.reachable());
     }
 
     #[test]

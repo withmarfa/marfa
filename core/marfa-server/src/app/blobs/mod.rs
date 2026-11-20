@@ -34,8 +34,8 @@ use super::access::{Caller, Permission};
 use super::catalog::{self, Snapshot};
 use super::faults::{
     FAIL_BLOB_DELETE, FAIL_BLOB_READ, FAIL_BLOB_WRITE, FAIL_STORES_RECORD, FAIL_STORES_RECORD_LOST,
-    Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS, HOLD_BLOB_READ, HOLD_BLOB_WRITE, HOLD_STORES_RECORD,
-    HOLD_STORES_SWAP, Lie,
+    Faults, HOLD_BLOB_DELETE, HOLD_BLOB_HAS, HOLD_BLOB_READ, HOLD_BLOB_WRITE, HOLD_FOLDER_SETTLE,
+    HOLD_STORES_RECORD, HOLD_STORES_SWAP, Lie,
 };
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
@@ -45,7 +45,7 @@ use crate::failure::Failure;
 use crate::settings::registry::Snapshot as Settings;
 use crate::settings::registry::{BACKUP_PATH, BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
 use crate::telemetry::caught;
-use disk::{Disk, Place, Staged};
+use disk::{Claim, Disk, Place, Staged};
 pub use disk::{MARKER, Scratch, Taken, lock_blobs, take_blob_folder};
 pub use folder::Folder;
 pub use hash::Hash;
@@ -1321,7 +1321,26 @@ impl App {
 
     /// Settles what an adopt that did not finish left in the backup folder against the record:
     /// its claim is promoted where the record names its store, and removed where it does not.
-    pub(crate) async fn settle_folder(&self, folder: &Arc<Folder>) -> Result<()> {
+    /// Answers `false` where the files area is not there, so a claim in it was not read.
+    pub(crate) async fn settle_folder(&self, folder: &Arc<Folder>) -> Result<bool> {
+        self.settling(folder, |folder, recorded| folder.settle(recorded))
+            .await
+    }
+
+    /// Settles `claim`, an adopt's own claim on the backup folder, against the record without
+    /// letting go of the folder's lock first, so no other server settles it meanwhile.
+    pub(crate) async fn settle_claim(&self, folder: &Arc<Folder>, claim: Claim) -> Result<()> {
+        self.settling(folder, move |folder, recorded| {
+            folder.settle_claim(claim, recorded)
+        })
+        .await
+    }
+
+    async fn settling<T: Send + 'static>(
+        &self,
+        folder: &Arc<Folder>,
+        settle: impl FnOnce(&Folder, Option<String>) -> io::Result<T> + Send + 'static,
+    ) -> Result<T> {
         let deadline = self.blobs.check();
         let late = || {
             Refusal::new(
@@ -1336,17 +1355,18 @@ impl App {
         if folder.claim_unended() {
             return Err(late());
         }
+        self.faults.hold(HOLD_FOLDER_SETTLE, None).await;
         let locator = folder.files().root().display().to_string();
         let recorded = self
             .db
             .read(move |tx| rows::folder_at(tx, &locator))
             .await?;
         match folder
-            .within(deadline, move |folder| folder.settle(recorded), |()| {})
+            .within(deadline, move |folder| settle(folder, recorded), |_| {})
             .await
         {
             None => Err(late()),
-            Some(Ok(())) => Ok(()),
+            Some(Ok(settled)) => Ok(settled),
             // The record stays in doubt, so the next follow tries again.
             Some(Err(error)) => {
                 tracing::warn!(%error, "The backup folder's claim by an adopt could not be settled");
@@ -1396,14 +1416,33 @@ impl App {
                     if !blobs.record_doubted.load(Ordering::SeqCst) {
                         return Ok(());
                     }
-                    if let Some(folder) = &current.folder
-                        && let Err(refused) = self.settle_folder(folder).await
-                    {
-                        tracing::error!(%refused, "The backup folder in use could not be checked against its record");
-                        return Err(refused);
+                    let mut unread = None;
+                    if let Some(folder) = &current.folder {
+                        match self.settle_folder(folder).await {
+                            Ok(true) => {}
+                            Ok(false) => unread = Some(folder.root().display().to_string()),
+                            Err(refused) => {
+                                tracing::error!(%refused, "The backup folder in use could not be checked against its record");
+                                return Err(refused);
+                            }
+                        }
                     }
                     match self.record_stores(&current).await {
-                        Ok(Recorded::At(_)) => blobs.record_doubted.store(false, Ordering::SeqCst),
+                        Ok(Recorded::At(_)) => {
+                            // A claim in a files area that is not there is not settled.
+                            if let Some(root) = unread {
+                                return Err(Refusal::new(
+                                    Code::BlobStoreUnavailable,
+                                    format!(
+                                        "The backup folder {root} is not there, so a claim an \
+                                         adopt that did not finish may have left in it is not \
+                                         settled. Backups wait until its disk is back, and the \
+                                         server settles the claim then."
+                                    ),
+                                ));
+                            }
+                            blobs.record_doubted.store(false, Ordering::SeqCst)
+                        }
                         Ok(Recorded::Superseded) => {}
                         Err(refused) => {
                             tracing::error!(%refused, "The stores in use could not be recorded");

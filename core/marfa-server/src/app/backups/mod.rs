@@ -32,8 +32,8 @@ use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
 use super::blobs::{Attached, Blob, Hash, Kept, Retry, Wanted, folder_shortfall, unsettled};
 use super::clock::Stamp;
 use super::faults::{
-    FAIL_STORES_RECORD, HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE, HOLD_FOLDER_MARKER,
-    HOLD_STORES_RECORD, HOLD_STORES_SWAP,
+    FAIL_STORES_RECORD, FAIL_STORES_RECORD_LOST, HOLD_BACKUP_PUT, HOLD_BACKUP_READ,
+    HOLD_DISK_PROBE, HOLD_FOLDER_MARKER, HOLD_STORES_RECORD, HOLD_STORES_SWAP,
 };
 use super::housekeeping::{self, Report, Run};
 use super::refusal::{Code, Refusal, Result};
@@ -552,7 +552,7 @@ impl Destination {
     fn failed_while(&self, what: &str, why: &str) -> Refusal {
         let message = match self {
             Destination::Bucket(_) => format!("The object store failed while {what}: {why}."),
-            Destination::Folder(folder) if folder.reachable() => format!(
+            Destination::Folder(folder) if folder.files().reachable() => format!(
                 "The backup folder {} failed while {what}: {why}",
                 folder.root().display()
             ),
@@ -1468,13 +1468,19 @@ impl App {
                 Ok((copies, backups))
             })
             .await;
+        let written = match written {
+            Ok(_) if self.faults.fail(FAIL_STORES_RECORD_LOST, None) => Err(Refusal {
+                commit_failed: true,
+                ..io_refusal()
+            }),
+            written => written,
+        };
         let (copies, backups) = match written {
             Ok(counted) => counted,
             Err(refusal) if refusal.commit_failed => {
                 // The record may name the new store or the old: the claim is settled against it.
-                drop(claim);
                 self.blobs.doubt_record();
-                if let Err(refused) = self.settle_folder(folder).await {
+                if let Err(refused) = self.settle_claim(folder, claim).await {
                     tracing::error!(%refused, "An adopt of unknown outcome left the backup folder unsettled");
                 }
                 return Err(refusal);
