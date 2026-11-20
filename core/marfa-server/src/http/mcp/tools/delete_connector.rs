@@ -12,7 +12,7 @@ use crate::app::access::Caller;
 use crate::app::connectors::{Clearing, Deletion};
 use crate::app::mcp::confirm;
 use crate::app::mcp::connector::{self, Confirmed, Part};
-use crate::app::refusal::Refusal;
+use crate::app::refusal::{Code, Refusal};
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, fit_list, json_length};
 
 pub const NAME: &str = connector::DELETE_TOOL;
@@ -35,9 +35,9 @@ const CLEAR_REPEATED: &str =
     "This confirmation already cleared this state. This call changed nothing.";
 
 const STALE: &str = "This confirmation does not hold for this connector. This call changed nothing. Preview again to get a new confirmation.";
-const CHANGED: &str =
+pub(super) const CHANGED: &str =
     "What the preview showed has changed. This call changed nothing; here is a new preview.";
-const CHANGED_GONE: &str =
+pub(super) const CHANGED_GONE: &str =
     "What the preview showed has changed. This call changed nothing. Preview again.";
 
 pub fn definition() -> Definition {
@@ -195,6 +195,44 @@ pub(super) fn stale(message: &str, body: Option<Map<String, Value>>) -> Stop {
         stop.error.insert(name, value);
     }
     stop
+}
+
+/// Whether a confirmed call stopped by `refused` answers the refusal itself: it is about the
+/// caller or the server, or the outcome is unknown.
+pub(super) fn stands(refused: &Refusal) -> bool {
+    refused.commit_failed
+        || matches!(
+            refused.code,
+            Code::Forbidden | Code::Unauthorized | Code::InternalError
+        )
+}
+
+/// What a confirmed call stopped by `refused` answers: stale, saying why, with `preview` where
+/// one could be made, unless the refusal [`stands`].
+pub(super) fn refused_stale(refused: Refusal, preview: Option<Map<String, Value>>) -> Stop {
+    if stands(&refused) {
+        return refused.into();
+    }
+    let next = match preview {
+        Some(_) => "This call changed nothing; here is a new preview.",
+        None => "This call changed nothing.",
+    };
+    stale(&format!("{} {next}", refused.message), preview)
+}
+
+/// What a confirmation whose target changed answers where the new preview was refused.
+pub(super) fn changed_unpreviewable(refused: Refusal) -> Stop {
+    if stands(&refused) {
+        return refused.into();
+    }
+    stale(
+        &format!(
+            "What the preview showed has changed, and it cannot be previewed again: {} This call \
+             changed nothing.",
+            refused.message
+        ),
+        None,
+    )
 }
 
 fn part(arguments: &Map<String, Value>) -> Part {

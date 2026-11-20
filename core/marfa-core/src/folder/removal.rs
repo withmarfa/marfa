@@ -98,6 +98,10 @@ impl Folder {
                     path: path.clone(),
                     reason: format!("Marfa left the file rather than remove it: {reason}"),
                 }),
+                super::pull::TakenAway::Busy(reason) => confirmed.refused.push(Unsure {
+                    path: path.clone(),
+                    reason: format!("Marfa left the file for now: {reason}"),
+                }),
             }
         }
         {
@@ -110,6 +114,7 @@ impl Folder {
             state::set_paused(&conn, state::Removal::Disk, &[])?;
             state::set_paused(&conn, state::Removal::Pull, &refused)?;
         }
+        self.settle_retained()?;
         Ok(confirmed)
     }
 

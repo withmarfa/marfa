@@ -9,6 +9,7 @@ mod every;
 mod executable;
 pub mod fields;
 mod first;
+mod form;
 mod handover;
 pub mod identity;
 mod landing;
@@ -24,6 +25,7 @@ mod push;
 mod refused;
 mod relink;
 mod removal;
+mod retained;
 mod scan;
 mod scoped;
 mod selective;
@@ -34,6 +36,7 @@ pub use first::{FirstSync, Synced};
 pub(crate) use paused::paused;
 pub use pull::{PullReport, copy_changed};
 pub use removal::{Confirmed, Restored};
+pub use retained::{KeptDiscarded, KeptFile};
 mod health;
 pub mod registry;
 pub mod settings;
@@ -46,6 +49,7 @@ mod transfer;
 mod watch;
 mod watch_record;
 mod watched;
+mod writers;
 pub use every::{
     Every, EveryFolder, Followed, HANDED_OVER, MISSING, PAUSED, RETRY_HANDED, Unwatched, followed,
     follows, watch_every,
@@ -210,6 +214,11 @@ pub struct Folder {
     store_mark: (u64, u64),
     /// Files this folder's pulls landed with an ordering flush only.
     unflushed: landing::Unflushed,
+    /// What tells whether a program holds a file open for writing.
+    writers: writers::Census,
+    /// Whether the last settling kept a file a program held open for
+    /// writing, which a watch at rest looks at again soon.
+    writer_wait: AtomicBool,
     folder: String,
     core: Core,
     key: std::sync::Mutex<Option<placement::KeyRead>>,
@@ -500,6 +509,8 @@ impl Folder {
                 .map_err(io_error)?,
             state_dir,
             unflushed: landing::Unflushed::default(),
+            writers: writers::Census::default(),
+            writer_wait: AtomicBool::new(false),
             folder: folder.to_string(),
             core,
             key: std::sync::Mutex::new(None),
@@ -635,6 +646,8 @@ impl Folder {
                 .map_err(io_error)?,
             state_dir,
             unflushed: landing::Unflushed::default(),
+            writers: writers::Census::default(),
+            writer_wait: AtomicBool::new(false),
             folder,
             core,
             key: std::sync::Mutex::new(None),
@@ -697,6 +710,8 @@ impl Folder {
                 .map_err(io_error)?,
             state_dir,
             unflushed: landing::Unflushed::default(),
+            writers: writers::Census::default(),
+            writer_wait: AtomicBool::new(false),
             folder,
             core,
             key: std::sync::Mutex::new(None),
@@ -1210,6 +1225,7 @@ struct Guarded<'a> {
     name: std::ffi::OsString,
     aside: Directory,
     rows: Rows<'a>,
+    writers: &'a writers::Census,
 }
 
 impl Guarded<'_> {
@@ -1218,6 +1234,7 @@ impl Guarded<'_> {
             aside: &self.aside,
             ledger: &self.rows,
             beside: !in_state(&self.rows.dir),
+            writers: self.writers,
         }
     }
 }
@@ -1339,6 +1356,20 @@ impl landing::Ledger for Rows<'_> {
         };
     }
 
+    fn retain(&self, retained: &landing::Retained) -> std::io::Result<()> {
+        state::set_retained(
+            self.conn,
+            &state::Retained {
+                dir: self.dir.clone(),
+                dir_at: self.dir_at,
+                aside: self.aside.clone(),
+                aside_at: self.aside_at,
+                retained: retained.clone(),
+            },
+        )
+        .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+
     fn kept(&self, name: &Path, aside: bool, reason: String) {
         // The file is kept whether or not the report can name it.
         let _ = state::put_kept(
@@ -1374,6 +1405,7 @@ fn settle_row(
     (dir, dir_place): (&Directory, &str),
     (aside, aside_place): (&Directory, &str),
     root_device: Option<u64>,
+    writers: &writers::Census,
 ) -> Result<()> {
     let target = Path::new(&row.displacement.target);
     let rows = Rows {
@@ -1392,6 +1424,7 @@ fn settle_row(
         aside,
         ledger: &rows,
         beside: !in_state(dir_place),
+        writers,
     };
     let displacement = remounted(row, dir, root_device);
     if let Err(error) = landing::settle(dir, guard, &displacement) {
@@ -1527,6 +1560,7 @@ impl Folder {
             directory,
             name,
             aside,
+            writers: &self.writers,
         })
     }
 
@@ -1544,6 +1578,7 @@ impl Folder {
             directory: entry.directory.clone(),
             name: entry.name.clone().into_os_string(),
             aside: entry.directory.clone(),
+            writers: &self.writers,
             rows: Rows {
                 conn,
                 dir: dir.clone(),
@@ -1559,20 +1594,7 @@ impl Folder {
     /// folder's state, or absolute, where it is still the directory `at`
     /// names. Another directory at that path answers as not found.
     fn displaced_dir(&self, place: &str, at: (u64, u64)) -> std::io::Result<Directory> {
-        let place = Path::new(place);
-        let directory = if place.is_absolute() {
-            Directory::open(place)?
-        } else if place.as_os_str().is_empty() {
-            self.root_dir.clone()
-        } else if let Ok(below) = place.strip_prefix(STATE_DIR) {
-            if below.as_os_str().is_empty() {
-                self.state_dir.clone()
-            } else {
-                self.state_dir.child(below, false)?
-            }
-        } else {
-            self.root_dir.child(place, false)?
-        };
+        let directory = self.place_dir(place)?;
         if !same_directory(
             landing::identity(&directory.metadata()?),
             at,
@@ -1584,6 +1606,24 @@ impl Folder {
             ));
         }
         Ok(directory)
+    }
+
+    /// The directory a row names by `place`, whatever directory has that name.
+    fn place_dir(&self, place: &str) -> std::io::Result<Directory> {
+        let place = Path::new(place);
+        Ok(if place.is_absolute() {
+            Directory::open(place)?
+        } else if place.as_os_str().is_empty() {
+            self.root_dir.clone()
+        } else if let Ok(below) = place.strip_prefix(STATE_DIR) {
+            if below.as_os_str().is_empty() {
+                self.state_dir.clone()
+            } else {
+                self.state_dir.child(below, false)?
+            }
+        } else {
+            self.root_dir.child(place, false)?
+        })
     }
 
     /// Whether `row`'s directory, or the one its reserved names are in, is
@@ -1639,6 +1679,7 @@ impl Folder {
                     (&dir, &row.dir),
                     (&aside, &row.aside),
                     root_device,
+                    &self.writers,
                 )?,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => state::put_kept(
@@ -1678,7 +1719,14 @@ impl Folder {
                 .parent()
                 .map(|parent| parent.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            settle_row(&conn, &row, (&dir, &place), (&dir, &place), root_device)?;
+            settle_row(
+                &conn,
+                &row,
+                (&dir, &place),
+                (&dir, &place),
+                root_device,
+                &self.writers,
+            )?;
             settled = true;
         }
         Ok(settled)
@@ -1752,12 +1800,32 @@ impl Folder {
         &self,
         walked: &'a [(WalkRoute, String)],
     ) -> impl Iterator<Item = Flagged> + 'a {
-        walked.iter().map(|(_, path)| Flagged {
+        let mut retained = self.retained_reasons();
+        walked.iter().map(move |(_, path)| Flagged {
             path: path.clone(),
             flag: "kept",
-            reason: "Marfa moved this file out of its path and could not tell whether it holds a change; check it, and delete it when it is not needed".into(),
+            reason: retained.remove(path).unwrap_or_else(|| "Marfa moved this file out of its path and could not tell whether it holds a change; check it, and delete it when it is not needed".into()),
             item: None,
         })
+    }
+
+    /// Why each file kept for a pass to settle is kept, by its path.
+    fn retained_reasons(&self) -> HashMap<String, String> {
+        let Ok(rows) = self.core.conn().and_then(|conn| state::retained(&conn)) else {
+            return HashMap::new();
+        };
+        rows.into_iter()
+            .map(|row| match row {
+                Ok(row) => {
+                    let retained = &row.retained;
+                    (
+                        joined(&row.aside, &retained.kept),
+                        retained::retained_reason(&joined(&row.dir, &retained.target), retained),
+                    )
+                }
+                Err(row) => (joined(&row.aside, &row.kept), retained::UNREAD.into()),
+            })
+            .collect()
     }
 
     /// The files kept since the last report, each once.
@@ -3064,11 +3132,12 @@ impl Folder {
             .get_or_init(|| executable::kept(&self.state_dir))
     }
 
-    /// The pass includes pinned members that the credential's source filter hides from listings.
+    /// The pass includes pinned members that the credential's source filter
+    /// hides from listings.
     fn members(&self, settings: &Settings) -> Result<HashSet<String>> {
         Ok(self
             .core
-            .held_by(settings)?
+            .held_by(&*self.holds_by(settings)?)?
             .into_iter()
             .map(|item| item.id)
             .collect())
@@ -3089,6 +3158,44 @@ impl Folder {
         tests::RENDERED_ITEMS.with(|rendered| rendered.borrow_mut().insert(item.id.clone()));
         #[cfg(debug_assertions)]
         crate::fault::hold(|| "folder-render");
+        let rendered = self.render_with(item, path, line, catalog, edge_types, lines)?;
+        let (names, typed, recorded) = lines;
+        // A file this directory never had is written in the form its
+        // placement holds, through the same rewrite as a file it had.
+        if typed.is_none()
+            && carries_frontmatter(Path::new(path))
+            && let Ok(text) = &rendered.text
+            && let Some(form) = self.placement(&item.id)?.and_then(|edge| {
+                edge.properties
+                    .get(form::FORM_PROPERTY)
+                    .and_then(form::Form::read)
+            })
+            && let Some(stand_in) = form.stand_in(&document::read(text).front, &item.occurred_at)
+        {
+            let shaped = self.render_with(
+                item,
+                path,
+                line,
+                catalog,
+                edge_types,
+                (names, Some(&stand_in), recorded),
+            )?;
+            if shaped.text.is_ok() {
+                return Ok(shaped);
+            }
+        }
+        Ok(rendered)
+    }
+
+    fn render_with(
+        &self,
+        item: &Item,
+        path: &str,
+        line: Option<i64>,
+        catalog: &Catalog,
+        edge_types: &EdgeTypes,
+        lines: LinesBy<'_>,
+    ) -> Result<Rendered> {
         let body_field = fields::body_field(catalog, &item.r#type);
         let body = item
             .properties
@@ -3121,7 +3228,10 @@ impl Folder {
         shown.extend(embeds.iter().filter(|id| !links.contains(id)).cloned());
         let mut outside = embeds.clone();
         if !outside.is_empty() {
-            let held = self.core.held_among(&self.settings()?, &outside)?;
+            let settings = self.settings()?;
+            let held = self
+                .core
+                .held_among(&*self.holds_by(&settings)?, &outside)?;
             outside.retain(|id| !held.contains(id));
         }
         let (names, typed, recorded) = lines;
@@ -3350,6 +3460,8 @@ fn typed_title(
 mod answered_tests;
 #[cfg(all(test, unix))]
 mod displaced_tests;
+#[cfg(test)]
+mod form_tests;
 #[cfg(test)]
 mod held_links_tests;
 #[cfg(test)]
@@ -5898,6 +6010,32 @@ mod tests {
     }
 
     #[test]
+    fn a_path_whose_file_has_an_item_holds_that_item_and_what_is_beneath_it() {
+        let (_dir, folder, _server, _) = watched_notes(&["umbrella.md", "project.md", "child.md"]);
+        let [umbrella, project, child] =
+            ["umbrella.md", "project.md", "child.md"].map(|p| id_at(&folder, p));
+        for (n, (from, to)) in [(&umbrella, &project), (&project, &child)]
+            .into_iter()
+            .enumerate()
+        {
+            let edge =
+                crate::store::testing::wire_edge(&format!("parent-{n}"), from, to, "parent-of");
+            crate::store::put_server_edge(&folder.core.conn().unwrap(), &edge).unwrap();
+        }
+        let members = |beneath: &str| {
+            folder.core.conn().unwrap().execute("UPDATE items SET properties = json_set(properties, '$.query.beneath', ?2) WHERE id = ?1", [&folder.folder, beneath]).unwrap();
+            let settings = folder.settings().unwrap();
+            assert!(settings.pending_beneath().is_some());
+            folder.members(&settings).unwrap()
+        };
+        assert_eq!(
+            members("project.md"),
+            HashSet::from([project.clone(), child.clone()])
+        );
+        assert!(members("missing.md").is_empty());
+    }
+
+    #[test]
     fn an_edit_on_disk_then_withdrawn_renders_as_a_full_pull_does() {
         let (dir, folder, _server, _) = watched_notes(&["a.md", "b.md"]);
         let a = id_at(&folder, "a.md");
@@ -6854,6 +6992,14 @@ mod tests {
         assert!(confirmed.refused.is_empty(), "{confirmed:?}");
         assert!(paused().is_empty());
         assert!(!dir.path().join("a.md").exists());
+        assert!(
+            std::fs::read_dir(dir.path())
+                .unwrap()
+                .all(|entry| !super::landing::is_reserved(std::path::Path::new(
+                    &entry.unwrap().file_name()
+                ))),
+            "a confirmed removal left what it removed under a reserved name"
+        );
     }
 
     #[test]
@@ -9980,7 +10126,9 @@ mod tests {
             .queue()
             .unwrap()
             .into_iter()
-            .find(|row| row.kind == WriteKind::UpdateEdge)
+            .find(|row| {
+                row.kind == WriteKind::UpdateEdge && row.edge_id.as_deref() == Some("threaded")
+            })
             .expect("the move is queued");
         // Another machine deleted the edge before the move reached it, and
         // the item the line names went to the bin since.

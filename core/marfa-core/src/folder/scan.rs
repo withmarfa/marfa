@@ -354,6 +354,13 @@ impl Folder {
             ControlFlow::Continue(work) => work,
         };
         self.queue_edge_work(&mut scan, work)?;
+        self.send_forms(
+            &scan.files,
+            &scan.snapshot,
+            &scan.catalog,
+            &scan.edge_types,
+            &self.withheld()?,
+        )?;
         self.settle_default_edges(&scan.settings)?;
         if scan.reread_embeds && !scan.incomplete {
             crate::store::meta_set(&*self.core.conn()?, EMBEDS_REREAD, "1")?;
@@ -465,6 +472,7 @@ impl Folder {
         }
         if mode == Files::Write {
             self.settle_displaced()?;
+            self.settle_retained()?;
         }
         self.settle_landings()?;
         // Every pass, so a watch lists its folder again too.
@@ -544,6 +552,7 @@ impl Folder {
             None => {
                 let mut walked = self.walked(&lists);
                 if mode == Files::Write && self.settle_found(&walked.kept)? {
+                    self.settle_retained()?;
                     walked = self.walked(&lists);
                 }
                 (walked, None)

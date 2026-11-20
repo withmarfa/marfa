@@ -32,9 +32,9 @@ When an unbound document has no usable item ID, a device MUST create it under a 
 
 ### `folder-files/id-after-create`
 
-When a document's create lands and its bytes have not changed since scan, a device MUST write the accepted `marfa_id` into the file.
+When a document's create lands, its bytes have not changed since scan and no program holds it open for writing, a device MUST write the accepted `marfa_id` into the file.
 
-**Tests:** `device/folders-identity.test.ts › creates a file under the device's id and writes the id back once it lands`.
+**Tests:** `device/folders-identity.test.ts › creates a file under the device's id and writes the id back once it lands`, `device/folders-open-writer.test.ts › writes the id into a new file once the program writing it closes it`.
 
 ### `folder-files/id-before-create`
 
@@ -614,6 +614,114 @@ When a watch cannot read the current key, a device MUST suppress repeated key re
 
 **Tests:** `device/folders-placement.test.ts › asks a key it could not read again at most once a minute while watching`.
 
+## The file's form
+
+A document's form is how its frontmatter is written, apart from what it says: its top-level keys in order, which of them are empty, and each value's style (plain, single-quoted, double-quoted, a block of text, a date written as a day, or a flow or block list, with the style of the list's items). The item's `in-folder` edge carries it as `form` (`edges/folder-form-kept`), so a directory that never had the file writes it as the directory that made it did.
+
+### `folder-files/form-sent`
+
+Where the server's `in-folder` edge type declares a `form`, when a device places a document it read from its directory, a device MUST send the document's form as the `form` of the item's `in-folder` edge.
+
+**Tests:** `device/folders-form-live.test.ts › sends a file's form on its placement, holding each key's style and no value or comment`.
+
+### `folder-files/form-no-value`
+
+A device MUST NOT send a frontmatter value or a frontmatter comment in a `form`.
+
+**Reason:** the item already holds the values, and a value kept on the edge would outlive the item's own change.
+
+**Tests:** `device/folders-form-live.test.ts › sends a file's form on its placement, holding each key's style and no value or comment`.
+
+### `folder-files/form-refused-key`
+
+If a document shows a key whose value the item does not hold, because the server or the device refused that change, then a device MUST leave the key out of the `form` it sends.
+
+**Reason:** a form names only what the item took, so a key the server refused never reaches the edge or another directory.
+
+**Tests:** `device/folders-form-live.test.ts › leaves a key whose change was refused out of a file's form`.
+
+### `folder-files/form-changed`
+
+When a person changes a document so that its form differs from the `form` its `in-folder` edge holds, a device MUST send the new form once the server has taken the change to the item.
+
+**Tests:** `device/folders-form-live.test.ts › sends a changed form from the directory where the file changed, and rewrites no file elsewhere for it`.
+
+### `folder-files/form-filled`
+
+When a device reads a document whose `in-folder` edge holds no `form`, and whose form differs from the one a device writes for the item where its edge holds none, a device MUST send the document's form once.
+
+**Reason:** a directory that followed the folder before forms existed fills them in without a change to the files.
+
+**Tests:** `device/folders-form-live.test.ts › fills the form of a placement that holds none once, from a directory where a person wrote the file`.
+
+### `folder-files/form-fill-unformed`
+
+If a document's `in-folder` edge holds no `form` and the document's form is the one a device writes for the item where its edge holds none, then a device MUST NOT send the document's form.
+
+**Reason:** such a file stands for no person's way of writing it, so a directory that only holds files Marfa wrote leaves the form to the directory where a person wrote the file.
+
+**Tests:** `device/folders-form-live.test.ts › fills the form of a placement that holds none once, from a directory where a person wrote the file`.
+
+### `folder-files/form-written`
+
+When a device writes a document its directory does not hold and the item's `in-folder` edge holds a `form`, a device MUST write the frontmatter keys in the form's order, each value in the form's style where that style shows the value the item holds.
+
+**Reason:** two directories of one folder then hold the same bytes for the same item.
+
+**Tests:** `device/folders-form-live.test.ts › writes each file new to a second directory as the directory that made it wrote it`.
+
+### `folder-files/form-beyond`
+
+When a device writes a document its directory does not hold and the item's `in-folder` edge holds a `form`, a device MUST write each key the form does not hold after the form's keys, in the style it uses for an item no file has shown.
+
+**Reason:** the form says nothing of such a key, so it is written as every directory writes it.
+
+**Tests:** `cli/folder.test.ts › names a conflicted edit and the file its text went to, in words`.
+
+### `folder-files/form-empty`
+
+When a device writes a document its directory does not hold, a device MUST write each key that the `form` of the item's `in-folder` edge holds as empty, and that the item holds no value for, as an empty key.
+
+**Tests:** `device/folders-form-live.test.ts › writes each file new to a second directory as the directory that made it wrote it`.
+
+### `folder-files/form-day`
+
+If the `form` of the item's `in-folder` edge writes a date as a day, and the item's value is not exactly midnight UTC, then a device MUST write the value's full time.
+
+**Reason:** a day alone is read back as midnight UTC, so writing a later time as a day would change it.
+
+**Tests:** `device/folders-form-live.test.ts › writes a day only for a time that is midnight in UTC, and the full time otherwise`.
+
+### `folder-files/form-unread`
+
+If the `form` of an item's `in-folder` edge is larger than the limit a device sends a form within, or puts a block list's items further right than that limit, then a device MUST write the item's document as it writes one whose edge holds no `form`.
+
+**Reason:** any credential that may write the edge can set its `form`, so a device follows only a form it could have sent itself, and one bad form never stops a pull.
+
+**Tests:** `device/folders-form-live.test.ts › writes a file as with no form where its placement holds a form beyond the limits a device sends one within`.
+
+### `folder-files/form-none`
+
+When a device writes a document its directory does not hold and the item's `in-folder` edge holds no `form`, a device MUST write the frontmatter in the order and styles it uses for an item no file has shown.
+
+**Tests:** `device/folders-form-live.test.ts › writes each file new to a second directory as the directory that made it wrote it`.
+
+### `folder-files/form-alone-no-rewrite`
+
+When only the `form` of an item's `in-folder` edge changes, a device MUST NOT rewrite the item's file.
+
+**Reason:** a form says how a file is written, not what it says, so a directory's own copy stays as it is.
+
+**Tests:** `device/folders-form-live.test.ts › sends a changed form from the directory where the file changed, and rewrites no file elsewhere for it`.
+
+### `folder-files/form-older-server`
+
+Where the server's `in-folder` edge type declares no `form`, a device MUST NOT send a `form`.
+
+**Reason:** an older server refuses an `in-folder` property it does not declare, and the placement still goes without it.
+
+**Tests:** `device/folders-form-live.test.ts › sends no form to a server whose in-folder edge type declares none`.
+
 ## Ending a placement
 
 ### `folder-files/placement-end-departure`
@@ -975,6 +1083,120 @@ When a document cannot be rendered safely, a device MUST count it `unwritten`.
 When an existing file is read-only, a device MUST leave it unchanged during a pull.
 
 **Tests:** `device/folders-contract-a.test.ts › keeps a read-only document unchanged when another device changes its item`.
+
+## Files a program holds open for writing
+
+A device looks at which programs hold a file open for writing before it replaces or removes the file. On macOS it sees only the programs of the account it runs under, so a program of the root account or of another account is outside these rules there.
+
+### `folder-files/write-open-writer-kept`
+
+When a device finds that a program holds a file open for writing, a device MUST NOT replace or remove the file, including to change only its `marfa_id` or `marfa_version` line.
+
+**Reason:** a program that holds a file open keeps writing to the file it opened, so a write that moves another file into the path loses everything the program writes after it.
+
+**Tests:** `device/folders-open-writer.test.ts › leaves the file while the program holds it, and sends what the program wrote after the push`, `› writes the id into a new file once the program writing it closes it`.
+
+### `folder-files/write-open-writer-reported`
+
+When a pull leaves a file because a program holds it open for writing, a device MUST count the file in the report's `busy` and report it in `flagged` with the flag `busy`.
+
+**Tests:** `device/folders-open-writer.test.ts › leaves the file while the program holds it, and sends what the program wrote after the push`.
+
+### `folder-files/write-open-writer-retried`
+
+When a pull left a file because a program held it open for writing and the program has since closed it, a device MUST write the file at its next pull.
+
+**Tests:** `device/folders-open-writer.test.ts › leaves the file while the program holds it, and sends what the program wrote after the push`, `› writes the id into a new file once the program writing it closes it`.
+
+### `folder-files/write-open-writer-sent`
+
+When a program writes to a file through a descriptor it held open across a pull, a device MUST send what the program wrote at the next push.
+
+**Tests:** `device/folders-open-writer.test.ts › leaves the file while the program holds it, and sends what the program wrote after the push`, `› writes the id into a new file once the program writing it closes it`.
+
+### `folder-files/write-retained-held`
+
+When a device replaces or removes a file and cannot tell that no program holds it open for writing, a device MUST keep the file it moved out under a name of the form `.marfa-kept-<id>.tmp`.
+
+**Reason:** a device cannot always tell, as on a network volume, inside a sandboxed app or when a program opens the file during the pull.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps a file it set aside where it cannot tell whether a program writes to it, and puts back what the program wrote`, `› keeps a file it set aside while a program holds it open, and deletes it once the program closes it unchanged`.
+
+### `folder-files/write-retained-put-back`
+
+When a program writes to a file a device keeps under a name of the form `.marfa-kept-<id>.tmp`, and the path the file came from holds the file the device wrote there, a device MUST move the kept file back to that path at its next scan or pull.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps a file it set aside where it cannot tell whether a program writes to it, and puts back what the program wrote`.
+
+### `folder-files/write-retained-put-back-version`
+
+When a device sends what a program wrote to a file with a `marfa_version` line that it moved back from a name of the form `.marfa-kept-<id>.tmp`, a device MUST send it as an edit of the version the file showed when the device moved it out: the version its `marfa_version` line named, or the version of the device's own edit where the device moved the file out only to rewrite that line after the edit landed.
+
+**Reason:** what the program wrote is based on the file it held, not on the file the pull wrote, so an edit another machine made since then meets it as any concurrent edit does, and neither is lost.
+
+**Tests:** `device/folders-open-writer.test.ts › sends what a program wrote to a file it set aside as an edit of the version the file held, so another machine's edit meanwhile is kept`, `› keeps a file it set aside where it cannot tell whether a program writes to it, and puts back what the program wrote`.
+
+### `folder-files/write-retained-beside`
+
+If a program writes to a file a device keeps under a name of the form `.marfa-kept-<id>.tmp`, and the path the file came from holds a file other than the one the device wrote, then a device MUST move the kept file to the first free numbered name beside the path, as `folder-files/placement-collision-number` numbers it.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps what a program wrote to a file it set aside beside the path, where a person saved over the path meanwhile`.
+
+### `folder-files/write-retained-discarded`
+
+When a file a device keeps under a name of the form `.marfa-kept-<id>.tmp` is unchanged since the device moved it out and no program holds it open for writing, a device MUST delete it at its next scan or pull.
+
+**Reason:** a change to the file's mode, times or extended attributes alone, as a tag in Finder makes, leaves it unchanged.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps a file it set aside while a program holds it open, and deletes it once the program closes it unchanged`, `› keeps a file it set aside whose mode and times alone changed as unchanged, and deletes it once no program holds it`.
+
+### `folder-files/write-retained-unknown-week`
+
+Where a device cannot tell whether a program holds a file it keeps under a name of the form `.marfa-kept-<id>.tmp` open for writing, a device MUST delete the file at its first scan or pull once seven days have passed since it moved the file out with the file unchanged.
+
+**Reason:** a device that cannot tell would otherwise keep every file it replaces there for ever.
+
+**Tests:** `device/folders-open-writer.test.ts › deletes a file it set aside unchanged a week after it could not tell whether a program writes to it`.
+
+### `folder-files/write-retained-reported`
+
+While a device keeps a file under a name of the form `.marfa-kept-<id>.tmp` because a program may still write to it, a device MUST list the file in the folder's status with the flag `kept` and a reason that says why it is kept.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`.
+
+### `folder-files/write-retained-listed`
+
+The CLI MUST list in `folders kept` each file a folder keeps because a program may still write to it, with the path it came from where its record names it, and whether the last look found a program holding it open, could not tell, or has not looked yet.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`, `› keeps a file it set aside while a program holds it open, and deletes it once the program closes it unchanged`.
+
+### `folder-files/write-retained-discard`
+
+When the owner confirms `folders kept --discard`, the CLI MUST settle each file the folder keeps under a record it can read as `folder-files/write-retained-put-back`, `folder-files/write-retained-beside` and `folder-files/write-retained-discarded` settle it, taking it that no program holds the file open for writing.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps for a program that might still write to it, and deletes it when the owner discards it`, `› puts back a file it kept that a program wrote to, when the owner discards the files it keeps`.
+
+### `folder-files/write-retained-unread-listed`
+
+The CLI MUST list in `folders kept` each file a folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, with the reason `Marfa could not read its record`.
+
+**Reason:** a device cannot tell whether a program wrote to such a file, so it keeps the file until the owner decides.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps under a record it cannot read, and deletes it when the owner discards it`.
+
+### `folder-files/write-retained-unread-discard`
+
+When the owner confirms `folders kept --discard`, the CLI MUST delete each file the folder keeps under a name of the form `.marfa-kept-<id>.tmp` under a record it cannot read, where the file holds the bytes the record says were set aside.
+
+**Tests:** `device/folders-open-writer.test.ts › lists a file it keeps under a record it cannot read, and deletes it when the owner discards it`.
+
+### `folder-files/write-retained-unread-written-kept`
+
+When the owner confirms `folders kept --discard`, the CLI MUST NOT delete a file the folder keeps under a record it cannot read where the file's bytes differ from the bytes the record says were set aside, or the record holds no hash of them.
+
+**Reason:** a program may have written to the file after it was set aside, and with its record unread the device cannot put the file back, so it keeps the file listed for the owner to look at.
+
+**Tests:** `device/folders-open-writer.test.ts › keeps a file it keeps under a record it cannot read when a program wrote to it, though the owner discards`.
 
 ## Deletion, purges and missing directories
 

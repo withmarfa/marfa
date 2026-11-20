@@ -968,17 +968,17 @@ describe("the schema and admin endpoints", () => {
       expect(choices("marfa_maintain", "action")).toEqual([
         "run_housekeeping",
         "cancel_job",
+        "confirm_clock",
       ]);
       expect(choices("marfa_rename_sign_in", "kind")).toEqual([
         "sign_in",
         "passkey",
       ]);
-      const withheld =
-        /revoke_app|remove|drop|adopt|restore|export|claim|recover|password|passkey|update_server|clock/;
+      const withheld = /restore|export|claim|recover|password|passkey/;
       // The witness: the pattern matches the names of the withheld tasks.
-      expect(withheld.test("marfa_revoke_app")).toBe(true);
       expect(withheld.test("marfa_add_passkey")).toBe(true);
-      expect(withheld.test("marfa_adopt_backup_folder")).toBe(true);
+      expect(withheld.test("marfa_change_password")).toBe(true);
+      expect(withheld.test("marfa_restore_backup")).toBe(true);
       expect(
         tools.map((tool) => tool.name).filter((name) => withheld.test(name)),
       ).toEqual([]);
@@ -1143,13 +1143,16 @@ describe("the schema and admin endpoints", () => {
       "/mcp/schema",
     );
     // A file fetched from a web address, a webhook, a backup to an object
-    // store, the heartbeat and error tracking each reach outside.
+    // store, a copy removed from one, the heartbeat, error tracking and a
+    // release download each reach outside.
     const outward = [
       "marfa_change_settings",
       "marfa_create",
       "marfa_maintain",
       "marfa_manage_webhook",
+      "marfa_remove_file_copy",
       "marfa_take_backup",
+      "marfa_update_server",
     ];
     try {
       const seen = new Set<string>();
@@ -1170,6 +1173,204 @@ describe("the schema and admin endpoints", () => {
       await admin.close();
       await everyAdmin.close();
       await schema.close();
+    }
+  });
+});
+
+type Path = "/mcp" | "/mcp/schema" | "/mcp/admin";
+
+/**
+ * Connections at each endpoint that between them are offered every tool it
+ * serves: a key that writes every type, and one that holds every owner
+ * permission, which no one key this file can mint holds together.
+ */
+async function everyEndpoint(
+  label: string,
+): Promise<Record<Path, McpConnection[]>> {
+  const management = process.env.MARFA_MANAGEMENT_KEY;
+  if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
+  const manager = new MarfaClient({ baseUrl: apiUrl, apiKey: management });
+  const minted = await manager.createKey({
+    label: `${ctx.source}-${label}-owner`,
+    source: `${ctx.source}-${label}-owner`,
+    permissions: Object.keys(ADMIN_TOOLS_BY_PERMISSION),
+    type_permissions: {},
+  });
+  expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+  trackKey(ctx, minted.data.id);
+  const writer = await keyWith(
+    `${label}-writer`,
+    { "*": "write" },
+    {
+      permissions: ["schema.write", "audit.read", "webhooks.manage"],
+      metadata_permissions: { "*": "write" },
+    },
+  );
+  const at = (key: string, path: Path) =>
+    connectMcp(apiUrl, key, "2026-07-28", path);
+  return {
+    "/mcp": [await at(writer, "/mcp")],
+    "/mcp/schema": [await at(writer, "/mcp/schema")],
+    "/mcp/admin": [
+      await at(writer, "/mcp/admin"),
+      await at(minted.data.key, "/mcp/admin"),
+    ],
+  };
+}
+
+async function closeAll(endpoints: Record<Path, McpConnection[]>) {
+  for (const connection of Object.values(endpoints).flat()) {
+    await connection.close();
+  }
+}
+
+describe("what a client is told about the tools", () => {
+  const READS = [
+    "marfa_apps",
+    "marfa_audit",
+    "marfa_backups",
+    "marfa_connectors",
+    "marfa_files",
+    "marfa_find",
+    "marfa_get",
+    "marfa_health",
+    "marfa_keys",
+    "marfa_overview",
+    "marfa_read_rows",
+    "marfa_search_docs",
+    "marfa_settings",
+    "marfa_sign_ins",
+    "marfa_sources",
+    "marfa_trash",
+    "marfa_webhooks",
+  ];
+  const DESTRUCTIVE = [
+    "marfa_adopt_backup_folder",
+    "marfa_bulk_save",
+    "marfa_delete",
+    "marfa_delete_connector",
+    "marfa_end_sign_in",
+    "marfa_maintain",
+    "marfa_manage_key",
+    "marfa_manage_webhook",
+    "marfa_move_items",
+    "marfa_narrow_app",
+    "marfa_purge",
+    "marfa_remove_file_copy",
+    "marfa_retire_endpoint",
+    "marfa_revoke_key",
+    "marfa_save_type",
+    "marfa_save_view",
+    "marfa_update",
+    "marfa_update_server",
+    "marfa_write_rows",
+  ];
+  const ADDITIVE = ["marfa_create", "marfa_make_endpoint", "marfa_take_backup"];
+  const IDEMPOTENT = ["marfa_name_source", "marfa_rename_sign_in"];
+  const DESTRUCTIVE_IDEMPOTENT = ["marfa_change_settings"];
+
+  it("annotates every tool with the four hints its kind of tool gives it", async () => {
+    const endpoints = await everyEndpoint("hints");
+    try {
+      const hints = new Map<string, Record<string, unknown>>();
+      for (const connection of Object.values(endpoints).flat()) {
+        const { tools } = await connection.client.listTools();
+        for (const tool of tools) {
+          hints.set(tool.name, { ...tool.annotations });
+        }
+      }
+      // The witness: every tool of every kind was listed, and none of another kind.
+      expect([...hints.keys()].sort()).toEqual(
+        [
+          ...READS,
+          ...DESTRUCTIVE,
+          ...ADDITIVE,
+          ...IDEMPOTENT,
+          ...DESTRUCTIVE_IDEMPOTENT,
+        ].sort(),
+      );
+      for (const [name, given] of hints) {
+        for (const hint of [
+          "readOnlyHint",
+          "destructiveHint",
+          "idempotentHint",
+          "openWorldHint",
+        ]) {
+          expect(typeof given[hint], `${name} ${hint}`).toBe("boolean");
+        }
+        const [readOnly, destructive, idempotent] = READS.includes(name)
+          ? [true, false, true]
+          : DESTRUCTIVE.includes(name)
+            ? [false, true, false]
+            : ADDITIVE.includes(name)
+              ? [false, false, false]
+              : DESTRUCTIVE_IDEMPOTENT.includes(name)
+                ? [false, true, true]
+                : [false, false, true];
+        expect(
+          [given.readOnlyHint, given.destructiveHint, given.idempotentHint],
+          name,
+        ).toEqual([readOnly, destructive, idempotent]);
+      }
+    } finally {
+      await closeAll(endpoints);
+    }
+  });
+
+  it("gives each endpoint instructions of at most 512 characters that name only tools it lists", async () => {
+    const endpoints = await everyEndpoint("instructions");
+    try {
+      const seen = new Set<string>();
+      for (const [path, connections] of Object.entries(endpoints)) {
+        const instructions = connections[0]!.client.getInstructions() ?? "";
+        seen.add(instructions);
+        expect(instructions.length, path).toBeGreaterThan(0);
+        expect(instructions.length, path).toBeLessThanOrEqual(512);
+        const listed: string[] = [];
+        for (const connection of connections) {
+          expect(connection.client.getInstructions(), path).toBe(instructions);
+          listed.push(...(await toolNames(connection)));
+        }
+        const named = instructions.match(/marfa_[a-z_]+/g) ?? [];
+        expect(named.length, path).toBeGreaterThan(0);
+        for (const name of named) {
+          expect(listed, `${path} names ${name}`).toContain(name);
+        }
+        if (path === "/mcp/admin") {
+          expect(instructions).toMatch(/preview first/);
+          expect(instructions).toMatch(/only once they agree/);
+        }
+      }
+      // Each endpoint has its own.
+      expect(seen.size).toBe(3);
+    } finally {
+      await closeAll(endpoints);
+    }
+  });
+
+  it("names the page where the owner adds a passkey or changes the password in the sign-ins tool, and that page answers", async () => {
+    const endpoints = await everyEndpoint("owner-page");
+    const admin = endpoints["/mcp/admin"][1]!;
+    try {
+      const listed = toolResult(await callTool(admin, "marfa_sign_ins", {}));
+      const page = new URL(listed.owner_page as string);
+      expect(page.pathname).toBe("/auth/owner/passkeys");
+      expect(String(listed.owner_page_offers)).toContain(
+        "marfa owner password",
+      );
+      const answered = await fetch(new URL(page.pathname, apiUrl), {
+        redirect: "manual",
+      });
+      await answered.body?.cancel();
+      // Signed out, the page sends the browser to sign in, so it exists.
+      expect([200, 302, 303]).toContain(answered.status);
+      const missing = await fetch(new URL("/auth/owner/no-such-page", apiUrl), {
+        redirect: "manual",
+      });
+      await missing.body?.cancel();
+      expect(missing.status).toBe(404);
+    } finally {
+      await closeAll(endpoints);
     }
   });
 });
@@ -1215,7 +1416,7 @@ describe("a tool the endpoint does not list to the credential", () => {
 });
 
 describe("the owner-task tools' annotations", () => {
-  it("marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only", async () => {
+  it("marks narrowing an app, purging, deleting a connector, retiring an endpoint, ending a sign-in, removing a copy of a file, adopting the backup folder, the maintenance tool and changing settings as destructive, the other owner-task changes as not, and each listing tool as read-only", async () => {
     const management = process.env.MARFA_MANAGEMENT_KEY;
     if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
     const admin = await connectMcp(
@@ -1233,13 +1434,15 @@ describe("the owner-task tools' annotations", () => {
         "marfa_delete_connector",
         "marfa_retire_endpoint",
         "marfa_end_sign_in",
+        "marfa_remove_file_copy",
+        "marfa_adopt_backup_folder",
         "marfa_maintain",
+        "marfa_change_settings",
       ]) {
         expect(hints.get(name)?.destructiveHint, name).toBe(true);
         expect(hints.get(name)?.readOnlyHint, name).toBe(false);
       }
       for (const name of [
-        "marfa_change_settings",
         "marfa_take_backup",
         "marfa_make_endpoint",
         "marfa_rename_sign_in",

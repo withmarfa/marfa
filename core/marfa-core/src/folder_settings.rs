@@ -581,6 +581,30 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_beneath_a_path_with_no_item_holds_nothing_the_copy_holds() {
+        const HELD: &str = "01a00000-0000-7000-8000-000000000001";
+        let core = copy(None, &["core.note", FOLDER_TYPE], "library", &[]);
+        put(&core, HELD, "core.note", "active", "library", &[]);
+        let read = |beneath: Option<&str>| {
+            let mut query = json!({ "types": ["core.note"] });
+            if let Some(beneath) = beneath {
+                query["beneath"] = json!(beneath);
+            }
+            let settings = json!({ "title": "Project", "query": query });
+            Settings::read(FOLDER, FOLDER_TYPE, "active", settings.as_object().unwrap()).unwrap()
+        };
+        let held = [HELD.to_string()];
+        let every = read(None);
+        assert_eq!(ids(core.held_by(&every).unwrap()), [HELD]);
+        assert_eq!(core.held_among(&every, &held).unwrap().len(), 1);
+
+        let waiting = read(Some("Projects/p.md"));
+        assert!(core.held_by(&waiting).unwrap().is_empty());
+        assert!(core.held_among(&waiting, &held).unwrap().is_empty());
+        assert_eq!(ids(core.held_by(&read(Some(HELD))).unwrap()), [HELD]);
+    }
+
+    #[test]
     fn a_copy_of_both_tiers_answers_each_folder_query_tier() {
         let core = copy(None, &["core.note", FOLDER_TYPE], "all", &[]);
         put(&core, "shelved", "core.note", "active", "library", &[]);

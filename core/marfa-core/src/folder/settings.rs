@@ -312,7 +312,8 @@ impl Settings {
     /// folder's pass and a list or full-text search in a folder share, so the two
     /// cannot hold different items. `whole_edges` is the edge types the copy
     /// holds whole, which a view's `backref` term needs; a folder passes none,
-    /// as `Settings::of` has refused its `backref`. `system.*` is never held.
+    /// as `Settings::of` has refused its `backref`. `system.*` is never held,
+    /// and nothing is beneath a path with no item yet.
     pub(crate) fn narrow(
         &self,
         catalog: &Catalog,
@@ -321,7 +322,7 @@ impl Settings {
         values: &mut Vec<Value>,
     ) -> Result<()> {
         self.narrow_types(catalog, clauses, values)?;
-        self.slice_query()
+        self.held_query()
             .narrow(catalog, whole_edges, clauses, values)
     }
 
@@ -383,15 +384,19 @@ impl Settings {
         }
     }
 
-    /// What a copy of the folder holds past its types and tier
-    /// (`folder-setup/copy-holds-query`), `None` where that is all of them.
-    /// Beneath a path with no item yet, a copy holds no item from the server.
-    pub(crate) fn copy_query(&self) -> Result<Option<crate::slice::SliceQuery>> {
+    /// The query past its types and tier, as the folder holds items by it:
+    /// beneath a path with no item yet, none.
+    fn held_query(&self) -> crate::slice::SliceQuery {
         crate::slice::SliceQuery {
             nothing: self.pending_beneath().is_some(),
             ..self.slice_query()
         }
-        .for_copy()
+    }
+
+    /// What a copy of the folder holds past its types and tier
+    /// (`folder-setup/copy-holds-query`), `None` where that is all of them.
+    pub(crate) fn copy_query(&self) -> Result<Option<crate::slice::SliceQuery>> {
+        self.held_query().for_copy()
     }
 
     /// Refuses where the copy's slice does not take every item the query

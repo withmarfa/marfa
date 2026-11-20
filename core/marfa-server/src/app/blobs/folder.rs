@@ -5,7 +5,7 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Write as _};
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{DirEntryExt as _, MetadataExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{Duration, SystemTime};
@@ -19,8 +19,10 @@ use super::hash::Hash;
 use super::rows;
 use super::store::ByteStream;
 use crate::app::faults::{FAIL_BACKUP_FOLDER_WRITE, Faults};
+use crate::app::fingerprint::Fingerprint;
 use crate::db::Db;
 use crate::failure::Failure;
+use crate::folder_lock;
 
 pub const BACKUPS: &str = "backups";
 pub const PARTS: &str = "backup-parts";
@@ -76,6 +78,15 @@ impl Drop for Claiming {
     }
 }
 
+/// Why work on the files area through [`Folder::within`] gave no answer.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Unanswered {
+    /// Other work on the area has not ended, so this work never started.
+    Busy,
+    /// The work did not answer in time; it goes on, and what it answers goes to its `abandon`.
+    Late,
+}
+
 /// What the folder holds when the owner asks to adopt it.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Adoptable {
@@ -85,8 +96,115 @@ pub enum Adoptable {
     Missing,
     /// Its files area holds the marker of the store with this id.
     Foreign(String),
+    /// Its files area takes no locks and holds the claim of another adopt, for the store with
+    /// this id.
+    Claimed(String),
     /// Its files area holds no marker.
     Unmarked,
+}
+
+fn born(meta: &Metadata) -> Option<String> {
+    let born = meta
+        .created()
+        .ok()?
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?;
+    Some(format!("{}.{:09}", born.as_secs(), born.subsec_nanos()))
+}
+
+/// Names the operating system or a desktop gives entries it makes in any folder it opens.
+fn made_by_the_system(name: &str) -> bool {
+    name.starts_with("._")
+        || name.starts_with(".Trash")
+        || matches!(
+            name,
+            ".DS_Store"
+                | ".Spotlight-V100"
+                | ".fseventsd"
+                | ".TemporaryItems"
+                | ".DocumentRevisions-V100"
+                | ".apdisk"
+                | ".VolumeIcon.icns"
+                | ".localized"
+                | ".com.apple.timemachine.donotpresent"
+                | ".directory"
+                | ".hidden"
+        )
+}
+
+fn kind_of(kind: fs::FileType) -> &'static str {
+    if kind.is_dir() {
+        "d"
+    } else if kind.is_file() {
+        "f"
+    } else if kind.is_symlink() {
+        "l"
+    } else {
+        "o"
+    }
+}
+
+type Entry = (String, &'static str, u64);
+
+/// The entries of `folder` but `own` and the system's, by name, kind and inode, sorted; `None`
+/// where `folder` is not there.
+fn entries_of(folder: &Path, own: &[&str]) -> io::Result<Option<Vec<Entry>>> {
+    let listed = match fs::read_dir(folder) {
+        Ok(listed) => listed,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let mut found = Vec::new();
+    for entry in listed {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if own.contains(&name.as_str()) || made_by_the_system(&name) {
+            continue;
+        }
+        let kind = match entry.file_type() {
+            Ok(kind) => kind_of(kind),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        found.push((name, kind, entry.ino()));
+    }
+    found.sort_unstable();
+    Ok(Some(found))
+}
+
+fn add_entries(print: &mut Fingerprint, found: Option<&[Entry]>) {
+    let found = found.unwrap_or_default();
+    print.number(i64::try_from(found.len()).unwrap_or(i64::MAX));
+    for (name, kind, ino) in found {
+        print.text(name).text(kind).text(&ino.to_string());
+    }
+}
+
+/// Whether `path` is missing, or a folder on `device` that holds nothing in `inside`, which
+/// adopting fills the same as one the claim makes. Not following a symbolic link, so a link or
+/// another volume in its place is not empty.
+fn empty_place(path: &Path, device: u64, inside: Option<&[Entry]>) -> io::Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(meta) => {
+            Ok(meta.is_dir() && meta.dev() == device && inside.is_some_and(<[Entry]>::is_empty))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error),
+    }
+}
+
+/// Adds `path` as absent where it is `empty`, and otherwise by kind, device and inode.
+fn add_place(print: &mut Fingerprint, path: &Path, empty: bool) -> io::Result<()> {
+    if empty {
+        print.text("absent");
+        return Ok(());
+    }
+    let meta = fs::symlink_metadata(path)?;
+    print
+        .text(kind_of(meta.file_type()))
+        .text(&meta.dev().to_string())
+        .text(&meta.ino().to_string());
+    Ok(())
 }
 
 fn started(error: impl std::fmt::Display) -> Failure {
@@ -306,8 +424,46 @@ impl Folder {
         self.files().reached()
     }
 
-    fn area(&self) -> PathBuf {
+    /// This instance's files area.
+    pub fn area(&self) -> PathBuf {
         self.root.join(FILES).join(&self.instance)
+    }
+
+    /// Whether the files area holds the marker of the store `id`; `None` where it cannot be read.
+    /// It blocks.
+    pub fn holds_marker(&self, id: &str) -> Option<bool> {
+        Disk::marked(&self.area())
+            .ok()
+            .map(|found| found.as_deref() == Some(id))
+    }
+
+    /// What adopting would take: the folder, by device, inode and birth time; `files/` and this
+    /// instance's files area, each absent or by kind, device and inode; and the entries of all
+    /// three, by name, kind and inode. The entries the operating system makes and the server's
+    /// own are left out. Either folder reads as absent where it is missing or an empty folder on
+    /// the backup folder's own device, as the claim makes it. It blocks.
+    pub fn fingerprint(&self) -> io::Result<String> {
+        let meta = fs::metadata(&self.root)?;
+        let (files, area) = (self.root.join(FILES), self.area());
+        let in_root = entries_of(&self.root, &[FILES])?;
+        let in_files = entries_of(&files, &[&self.instance])?;
+        let in_area = entries_of(
+            &area,
+            &[disk::MARKER, disk::PENDING, folder_lock::LOCK, disk::TMP],
+        )?;
+        let area_empty = empty_place(&area, meta.dev(), in_area.as_deref())?;
+        let files_empty = area_empty && empty_place(&files, meta.dev(), in_files.as_deref())?;
+        let mut print = Fingerprint::new("backup folder");
+        print
+            .text(&meta.dev().to_string())
+            .text(&meta.ino().to_string())
+            .maybe(born(&meta).as_deref());
+        add_entries(&mut print, in_root.as_deref());
+        add_place(&mut print, &files, files_empty)?;
+        add_entries(&mut print, in_files.as_deref());
+        add_place(&mut print, &area, area_empty)?;
+        add_entries(&mut print, in_area.as_deref());
+        Ok(print.finish())
     }
 
     /// What adopting the folder would meet. It blocks.
@@ -318,11 +474,16 @@ impl Folder {
         if !self.root.is_dir() {
             return Ok(Adoptable::Missing);
         }
-        match Disk::marked(&self.area()) {
-            Ok(Some(id)) => Ok(Adoptable::Foreign(id)),
-            Ok(None) => Ok(Adoptable::Unmarked),
-            Err(failure) => Err(io::Error::other(failure.message)),
+        let area = self.area();
+        match Disk::marked(&area) {
+            Ok(Some(id)) => return Ok(Adoptable::Foreign(id)),
+            Ok(None) => {}
+            Err(failure) => return Err(io::Error::other(failure.message)),
         }
+        Ok(match Disk::claimed_unlocked(&area)? {
+            Some(id) => Adoptable::Claimed(id),
+            None => Adoptable::Unmarked,
+        })
     }
 
     /// Whether work on the files area started through [`Folder::within`] has not ended.
@@ -332,33 +493,36 @@ impl Folder {
 
     /// Runs `work` on the files area off the runtime, one piece of work per area at a time, and
     /// answers it within `deadline`. A timeout does not cancel the work: what it answers after
-    /// the caller stopped waiting goes to `abandon`, while the area is still held. `None` where
-    /// the work did not answer in time, or other work on the area has not ended.
+    /// the caller stopped waiting goes to `abandon`, while the area is still held. An answer
+    /// carries the area's hold, so the area is free again once `within` answers.
     pub async fn within<T: Send + 'static>(
         self: &Arc<Self>,
         deadline: Duration,
         work: impl FnOnce(&Folder) -> io::Result<T> + Send + 'static,
         abandon: impl FnOnce(T) + Send + 'static,
-    ) -> Option<io::Result<T>> {
+    ) -> Result<io::Result<T>, Unanswered> {
         if !claiming().insert(self.claim_key.clone()) {
-            return None;
+            return Err(Unanswered::Busy);
         }
         let (folder, claiming) = (self.clone(), Claiming(self.claim_key.clone()));
         let (answer, mut answered) = tokio::sync::oneshot::channel();
         tokio::task::spawn_blocking(move || {
-            let _claiming = claiming;
-            if let Err(Ok(left)) = answer.send(work(&folder)) {
+            if let Err((Ok(left), _claiming)) = answer.send((work(&folder), claiming)) {
                 abandon(left);
             }
         });
         tokio::select! {
             biased;
-            answer = &mut answered => Some(answer.unwrap_or_else(|_| {
-                Err(io::Error::other("work on the backup folder ended without an answer"))
-            })),
+            answer = &mut answered => Ok(answer.map_or_else(
+                |_| Err(io::Error::other("work on the backup folder ended without an answer")),
+                |(answer, _claiming)| answer,
+            )),
             () = tokio::time::sleep(deadline) => {
                 answered.close();
-                answered.try_recv().ok()
+                answered
+                    .try_recv()
+                    .map(|(answer, _claiming)| answer)
+                    .map_err(|_| Unanswered::Late)
             }
         }
     }
@@ -389,12 +553,26 @@ impl Folder {
     }
 
     /// Makes `claim`, an adopt's own claim that recorded its store, the files area's marker and
-    /// its store. A claim that could not be promoted is held until a follow settles it. It
-    /// blocks.
-    pub fn promote(&self, claim: disk::Claim) -> io::Result<()> {
+    /// its store, and answers `read`, run on the folder once the marker is written and before
+    /// the store is in use. A claim that could not be promoted is held until a follow settles it.
+    /// It blocks.
+    pub fn promote<T>(
+        &self,
+        claim: disk::Claim,
+        read: impl FnOnce(&Folder) -> T,
+    ) -> (io::Result<()>, T) {
         let promoted = claim.promote();
-        self.swap(promoted.inspect_err(|_| self.hold_unsettled(claim))?);
-        Ok(())
+        let read = read(self);
+        match promoted {
+            Ok(disk) => {
+                self.swap(disk);
+                (Ok(()), read)
+            }
+            Err(error) => {
+                self.hold_unsettled(claim);
+                (Err(error), read)
+            }
+        }
     }
 
     /// Holds `claim`, with its files area's lock, for the next follow to settle against the
@@ -1130,6 +1308,7 @@ mod tests {
                 },
             )
             .await
+            .ok()
     }
 
     /// A claim on a folder at `root` is given up on; a folder at `other` then tries to claim.
@@ -1292,6 +1471,10 @@ mod tests {
         assert!(!folder.give_up(&claim).unwrap());
         assert!(!pending.exists());
         assert!(folder.kept_claim().is_none());
+        // A claim left pending in a locked area is one a new claim takes over.
+        fs::write(&pending, Uuid::now_v7().to_string()).unwrap();
+        assert_eq!(folder.adoptable().unwrap(), Adoptable::Unmarked);
+        fs::remove_file(&pending).unwrap();
 
         for code in [libc::ENOTSUP, libc::EOPNOTSUPP, libc::ENOLCK] {
             let dir = TempDir::new().unwrap();
@@ -1306,6 +1489,9 @@ mod tests {
             assert!(kept, "{code}");
             assert_eq!(fs::read_to_string(&pending).unwrap(), id, "{code}");
             assert_eq!(folder.kept_claim().as_deref(), Some(id.as_str()), "{code}");
+            let looked =
+                crate::server_lock::without_locks_answering(code, || folder.adoptable()).unwrap();
+            assert_eq!(looked, Adoptable::Claimed(id.clone()), "{code}");
 
             let refused = crate::server_lock::without_locks_answering(code, || {
                 folder.claim(&Uuid::now_v7().to_string())
@@ -1341,5 +1527,105 @@ mod tests {
         assert!(settled_at_start(&area, &recorded).0.is_none());
         assert!(!area.join(disk::PENDING).exists());
         assert!(!area.join(disk::MARKER).exists());
+    }
+
+    #[test]
+    fn a_fingerprint_ignores_what_the_system_and_the_server_make() {
+        let dir = TempDir::new().unwrap();
+        let folder = unmounted_at(dir.path());
+        let before = folder.fingerprint().unwrap();
+        let area = dir.path().join(FILES).join("instance");
+        fs::create_dir_all(area.join(disk::TMP)).unwrap();
+        for made in [
+            dir.path().join(".DS_Store"),
+            dir.path().join("._backups"),
+            dir.path().join(FILES).join(".DS_Store"),
+            area.join(".DS_Store"),
+            area.join(disk::MARKER),
+            area.join(disk::PENDING),
+            area.join(folder_lock::LOCK),
+        ] {
+            fs::write(made, b"x").unwrap();
+        }
+        assert_eq!(folder.fingerprint().unwrap(), before);
+
+        fs::write(area.join("abcd"), b"x").unwrap();
+        assert_ne!(folder.fingerprint().unwrap(), before, "a file in the area");
+    }
+
+    #[test]
+    fn a_fingerprint_tells_a_folder_swapped_at_the_same_path() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("backups");
+        fs::create_dir_all(root.join("backups")).unwrap();
+        let folder = unmounted_at(&root);
+        let before = folder.fingerprint().unwrap();
+        assert_eq!(folder.fingerprint().unwrap(), before);
+
+        fs::rename(&root, dir.path().join("moved")).unwrap();
+        fs::create_dir_all(root.join("backups")).unwrap();
+        assert_ne!(folder.fingerprint().unwrap(), before);
+    }
+
+    #[test]
+    fn an_adopts_claim_and_its_marker_leave_the_fingerprint_as_it_was() {
+        let dir = TempDir::new().unwrap();
+        let folder = unmounted_at(dir.path());
+        let before = folder.fingerprint().unwrap();
+        let claim = folder.claim("adopted").unwrap();
+        assert_eq!(folder.fingerprint().unwrap(), before, "the claim");
+        let (written, after) = folder.promote(claim, |folder| {
+            (
+                folder.files().id().to_string(),
+                folder.fingerprint().unwrap(),
+            )
+        });
+        written.unwrap();
+        assert_eq!(after.0, "old", "read before the new store is in use");
+        assert_eq!(after.1, before, "the marker");
+        assert_eq!(folder.files().id(), "adopted");
+    }
+
+    #[test]
+    fn a_fingerprint_binds_the_files_folder_and_the_area_unless_missing_or_empty() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("backups");
+        fs::create_dir_all(&root).unwrap();
+        let folder = unmounted_at(&root);
+        let files = root.join(FILES);
+        let before = folder.fingerprint().unwrap();
+        fs::create_dir_all(files.join("instance")).unwrap();
+        assert_eq!(folder.fingerprint().unwrap(), before, "empty folders");
+
+        // Another files folder holding the same area, in place of the one read.
+        fs::write(files.join("instance").join("abcd"), b"x").unwrap();
+        let held = folder.fingerprint().unwrap();
+        assert_ne!(held, before, "a file in the area");
+        assert_eq!(folder.fingerprint().unwrap(), held);
+        let other = dir.path().join("other files");
+        fs::create_dir_all(&other).unwrap();
+        fs::rename(files.join("instance"), other.join("instance")).unwrap();
+        fs::remove_dir(&files).unwrap();
+        fs::rename(&other, &files).unwrap();
+        assert_ne!(
+            folder.fingerprint().unwrap(),
+            held,
+            "a files folder swapped"
+        );
+
+        // A link to a folder elsewhere, which may be another volume.
+        fs::remove_dir_all(&files).unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        fs::create_dir_all(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, &files).unwrap();
+        assert_ne!(
+            folder.fingerprint().unwrap(),
+            before,
+            "a linked files folder"
+        );
+        fs::remove_file(&files).unwrap();
+        fs::create_dir_all(&files).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, files.join("instance")).unwrap();
+        assert_ne!(folder.fingerprint().unwrap(), before, "a linked area");
     }
 }

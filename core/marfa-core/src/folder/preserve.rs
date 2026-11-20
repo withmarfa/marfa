@@ -15,7 +15,7 @@ fn invalid(reason: impl std::fmt::Display) -> CoreError {
     CoreError::Invalid(format!("cannot preserve this frontmatter: {reason}"))
 }
 
-fn parse(source: &str) -> Result<tree_sitter::Tree> {
+pub(super) fn parse(source: &str) -> Result<tree_sitter::Tree> {
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_yaml::LANGUAGE.into())
@@ -54,13 +54,13 @@ pub(super) fn holds_unread_text(source: &str) -> bool {
     false
 }
 
-fn children(node: Node<'_>) -> Vec<Node<'_>> {
+pub(super) fn children(node: Node<'_>) -> Vec<Node<'_>> {
     node.named_children(&mut node.walk())
         .filter(|n| n.kind() != "comment")
         .collect()
 }
 
-fn value_node(mut node: Node<'_>) -> Node<'_> {
+pub(super) fn value_node(mut node: Node<'_>) -> Node<'_> {
     while matches!(
         node.kind(),
         "stream" | "document" | "block_node" | "flow_node"
@@ -78,7 +78,7 @@ fn value_node(mut node: Node<'_>) -> Node<'_> {
 
 /// Resolve keys in their complete document context: aliases can name keys, and
 /// YAML's ordered mapping preserves the correspondence to grammar entries.
-fn keys(
+pub(super) fn keys(
     node: Node<'_>,
     yaml: &yaml_rust2::Yaml,
     result: &mut HashMap<usize, String>,
@@ -118,7 +118,10 @@ fn keys(
     Ok(())
 }
 
-fn entries<'a>(node: Node<'a>, keys: &HashMap<usize, String>) -> Result<Vec<(String, Node<'a>)>> {
+pub(super) fn entries<'a>(
+    node: Node<'a>,
+    keys: &HashMap<usize, String>,
+) -> Result<Vec<(String, Node<'a>)>> {
     children(node)
         .into_iter()
         .map(|pair| {
@@ -132,7 +135,7 @@ fn entries<'a>(node: Node<'a>, keys: &HashMap<usize, String>) -> Result<Vec<(Str
         .collect()
 }
 
-fn sequence_value(child: Node<'_>) -> Option<Node<'_>> {
+pub(super) fn sequence_value(child: Node<'_>) -> Option<Node<'_>> {
     if child.kind() == "block_sequence_item" {
         children(child).first().copied()
     } else {
@@ -140,7 +143,7 @@ fn sequence_value(child: Node<'_>) -> Option<Node<'_>> {
     }
 }
 
-fn json(value: &Value) -> String {
+pub(super) fn json(value: &Value) -> String {
     if let Value::String(text) = value
         && text
             .chars()
@@ -154,7 +157,7 @@ fn json(value: &Value) -> String {
     value.to_string()
 }
 
-fn emitted_key(key: &str) -> String {
+pub(super) fn emitted_key(key: &str) -> String {
     if key
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))

@@ -377,6 +377,14 @@ async fn by_refresh(
             store::end_chain(tx, &old.chain_id, now)?;
             return Ok(Err(dead()));
         }
+        if consent
+            .login_after
+            .is_some_and(|after| old.authenticated_at.ms() < after.ms())
+        {
+            return Ok(Err(invalid_grant(
+                "The person must sign in to this app again.",
+            )));
+        }
         if let Some(asked) = &asked
             && first_uncovered(&old.scopes, asked).is_some()
         {

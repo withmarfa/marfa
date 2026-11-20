@@ -140,6 +140,14 @@ If the credential that sent `POST /update` has been revoked or has expired when 
 
 **Tests:** `compliance/updates.test.ts › decides a start on the key as it stands when the update would begin, refusing one that lost instance.maintain or ended`.
 
+### `updates/start-audited`
+
+When the server starts an update, the server MUST record an `instance.update.started` entry naming the release it runs and the release it moves to, in the write that decides the update starts.
+
+**Reason:** an update replaces the programs the server runs, so the log says who started it, and a start whose entry cannot be recorded does not start.
+
+**Tests:** waiting on #3177.
+
 ### `updates/start-once`
 
 While an update runs, the server MUST answer another `POST /update` with the update that runs, and start no second one.

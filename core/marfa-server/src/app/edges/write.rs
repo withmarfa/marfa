@@ -26,6 +26,7 @@ use crate::app::unit::Unit;
 
 const FOLDER_EDGE: &str = "in-folder";
 const FOLDER_PATH: &str = "path";
+const FOLDER_FORM: &str = "form";
 const MAX_FOLDER_PATH: usize = 1024;
 const FOLDER_TYPE: &str = "system.folder";
 
@@ -891,10 +892,22 @@ pub(super) fn repeat(held: &Edge, from: &str, to: &str, edge_type: &str) -> Resu
 }
 
 fn judge_folder(properties: &Map<String, Value>) -> Result<()> {
-    if let Some(other) = properties.keys().find(|name| *name != FOLDER_PATH) {
+    if let Some(other) = properties
+        .keys()
+        .find(|name| *name != FOLDER_PATH && *name != FOLDER_FORM)
+    {
         return Err(invalid_property(
             &format!("properties.{other}"),
             format!("Edge \"{FOLDER_EDGE}\" declares no property \"{other}\""),
+        ));
+    }
+    if properties
+        .get(FOLDER_FORM)
+        .is_some_and(|form| !form.is_object())
+    {
+        return Err(invalid_property(
+            &format!("properties.{FOLDER_FORM}"),
+            format!("Edge \"{FOLDER_EDGE}\" takes a \"{FOLDER_FORM}\" that is an object"),
         ));
     }
     let path = format!("properties.{FOLDER_PATH}");

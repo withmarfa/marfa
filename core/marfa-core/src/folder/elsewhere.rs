@@ -119,6 +119,8 @@ impl Peer {
                 store_mark: state_dir.entry_identity(Path::new("core.sqlite")).ok()?,
                 state_dir,
                 unflushed: Default::default(),
+                writers: Default::default(),
+                writer_wait: Default::default(),
                 folder,
                 core,
                 key: std::sync::Mutex::new(None),
@@ -371,7 +373,7 @@ type CodeUnit = fn([u8; 2]) -> u16;
 /// an I/O failure. A file that opens with a UTF-16 byte-order mark, or with
 /// a frontmatter fence in UTF-16 and no mark, is read as UTF-16, so a moved
 /// file saved again that way still shows where it came from.
-fn id_of_reader(reader: impl std::io::Read) -> std::io::Result<Option<String>> {
+pub(super) fn id_of_reader(reader: impl std::io::Read) -> std::io::Result<Option<String>> {
     let mut reader = BufReader::new(reader);
     let (wide, mark): (Option<CodeUnit>, usize) = match reader.fill_buf()? {
         [0xff, 0xfe, ..] => (Some(u16::from_le_bytes), 2),

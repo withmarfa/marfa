@@ -83,7 +83,7 @@ pub fn read_definition() -> Definition {
                 "total_chars": { "type": "integer" },
             },
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }

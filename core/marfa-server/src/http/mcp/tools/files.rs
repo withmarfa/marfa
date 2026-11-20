@@ -32,7 +32,7 @@ pub fn definition() -> Definition {
             },
             "required": ["copies"],
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }

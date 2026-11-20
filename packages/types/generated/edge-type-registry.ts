@@ -98,6 +98,7 @@ const inFolder: EdgeTypeSchema = {
   written_from: "none",
   property_schema: {
     path: { type: "string", description: "The file's path from the folder's root." },
+    form: { type: "object", description: "How the file writes its frontmatter: its keys in order and each value's style, with no values." },
   },
 };
 
@@ -259,6 +260,9 @@ export const SHIPPED_EDGE_TYPE_SHAPES = {
       "*"
     ],
     "property_schema": {
+      "form": {
+        "type": "object"
+      },
       "path": {
         "type": "string"
       }

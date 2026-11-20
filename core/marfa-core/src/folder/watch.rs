@@ -10,7 +10,7 @@ use super::selective::Selection;
 use super::watched::{Directories, Listening, Reach, settings_file};
 use super::{
     Barred, Drained, Flagged, Folder, PullReport, ScanReport, SettingsFileReport, StorageCause,
-    Uncarried, Unsure,
+    Uncarried, Unsure, landing,
 };
 use crate::error::CoreError;
 use crate::priority::{inheriting, lowered};
@@ -31,6 +31,11 @@ const FULL_PASS: Duration = Duration::from_secs(600);
 /// off every pass for as long as it is written.
 const HELD_MOST: Duration = Duration::from_secs(5);
 
+/// No file event says a program closed a file, so a watch at rest looks again
+/// at one held open for writing: first after this, then twice as long each
+/// time, up to `WRITER_LOOK_MOST`.
+const WRITER_LOOK_FIRST: Duration = Duration::from_secs(2);
+const WRITER_LOOK_MOST: Duration = Duration::from_secs(60);
 /// How often a watch looks again at the directories it could not register.
 const UNWATCHED_EVERY: Duration = Duration::from_secs(30);
 
@@ -448,6 +453,13 @@ impl Folder {
                         #[cfg(debug_assertions)]
                         crate::fault::hold(|| "folder-file-changed");
                         telling.health_changed = true;
+                    } else if event.paths.iter().any(|path| landing::is_reserved(path))
+                        && self.retains()?
+                    {
+                        // A program wrote to a file a pull set aside, which
+                        // a pass puts back.
+                        changed = true;
+                        gate.changed(delivered);
                     } else if !gate.passed_over_is_due(crate::clock::now()) {
                         continue;
                     }
@@ -890,6 +902,15 @@ impl Folder {
         } else {
             None
         };
+        telling.writer_look =
+            if telling.at_rest && (pull.busy > 0 || self.writer_wait.load(Ordering::Relaxed)) {
+                telling.writer_wait =
+                    (telling.writer_wait * 2).clamp(WRITER_LOOK_FIRST, WRITER_LOOK_MOST);
+                Some(crate::clock::now() + telling.writer_wait)
+            } else {
+                telling.writer_wait = Duration::ZERO;
+                None
+            };
         if drain.report.limited {
             tell(WatchEvent::Limited { wait }).map_err(WatchError::Told)?;
         }
@@ -1337,6 +1358,7 @@ impl Folder {
             + pull.relinked
             + pull.unrelinked
             + pull.unwritten
+            + pull.busy
             + pull.absent
             + pull.unplaced
             + pull.unmatched
@@ -1647,6 +1669,10 @@ pub(super) struct Telling {
     /// due, which ends the rest: only a pass meets a folder that took the
     /// file or can be read again.
     kept_look: Option<Instant>,
+    /// When a pass is next due to look again at a file a program held open
+    /// for writing, which ends the rest, and how long the last such wait was.
+    writer_look: Option<Instant>,
+    writer_wait: Duration,
     /// While directories stand unwatched, when the next look at them is due,
     /// which ends the rest.
     pub(super) unwatched_due: Option<Instant>,
@@ -1672,6 +1698,7 @@ impl Telling {
             && self.at_rest
             && self.key_due.is_none_or(|due| crate::clock::now() < due)
             && self.kept_look.is_none_or(|due| crate::clock::now() < due)
+            && self.writer_look.is_none_or(|due| crate::clock::now() < due)
             && self
                 .unwatched_due
                 .is_none_or(|due| crate::clock::now() < due)
@@ -1698,6 +1725,7 @@ struct Standing {
     settling: Vec<String>,
     warnings: Vec<Flagged>,
     unwritten: usize,
+    busy: usize,
     outside: usize,
     unsuited: usize,
     unplaced: usize,
@@ -1832,6 +1860,7 @@ impl Telling {
             settling: scan.settling.clone(),
             warnings: scan.warnings.clone(),
             unwritten: pull.unwritten,
+            busy: pull.busy,
             outside: pull.outside,
             unsuited: pull.unsuited,
             unplaced: pull.unplaced,

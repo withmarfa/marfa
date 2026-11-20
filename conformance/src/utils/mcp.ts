@@ -137,8 +137,12 @@ const KEY_TOOLS = ["marfa_keys", "marfa_manage_key", "marfa_revoke_key"];
 /** The tools `/mcp/admin` lists to a credential that holds each permission. */
 export const ADMIN_TOOLS_BY_PERMISSION: Readonly<Record<string, string[]>> = {
   "audit.read": ["marfa_audit"],
-  "backups.manage": ["marfa_backups", "marfa_take_backup"],
-  "blobs.manage": ["marfa_files"],
+  "backups.manage": [
+    "marfa_adopt_backup_folder",
+    "marfa_backups",
+    "marfa_take_backup",
+  ],
+  "blobs.manage": ["marfa_files", "marfa_remove_file_copy"],
   "config.manage": ["marfa_change_settings", "marfa_settings"],
   "connectors.manage": [
     "marfa_connectors",
@@ -148,7 +152,7 @@ export const ADMIN_TOOLS_BY_PERMISSION: Readonly<Record<string, string[]>> = {
     "marfa_retire_endpoint",
   ],
   "grants.manage": ["marfa_apps", "marfa_end_sign_in", "marfa_narrow_app"],
-  "instance.maintain": ["marfa_maintain"],
+  "instance.maintain": ["marfa_maintain", "marfa_update_server"],
   "instance.read": ["marfa_health"],
   "items.purge": ["marfa_purge", "marfa_trash"],
   "keys.manage": KEY_TOOLS,

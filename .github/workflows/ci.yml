@@ -115,8 +115,10 @@ jobs:
       # and the contract's reference check read the whole tree, so a
       # documentation change stops after these. The build, typecheck and lint
       # are jobs of their own, so that each one reports as soon as it can.
+      # The vendor check runs here because a change to any product file can
+      # breach it, and this job runs for every change, a draft's too.
       - run: pnpm format:check
-      - run: pnpm vitest run ci/ci-required.test.ts
+      - run: pnpm vitest run ci/ci-required.test.ts ci/no-vendor-in-product.test.ts
       - working-directory: conformance
         run: pnpm exec vitest run --project generators src/utils/spec-citations.test.ts
 

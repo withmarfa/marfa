@@ -1,3 +1,4 @@
+use super::writers::{Census, Writers};
 use crate::directory::Directory;
 use crate::directory::{Mode, OFlags};
 use serde::{Deserialize, Serialize};
@@ -11,6 +12,8 @@ pub(crate) enum Unlanded {
     Failed(io::Error),
     /// The target is no longer what the caller decided to write over.
     Changed,
+    /// A program holds the target open for writing, so it stays as it is.
+    Busy,
 }
 
 impl std::fmt::Display for Unlanded {
@@ -18,6 +21,7 @@ impl std::fmt::Display for Unlanded {
         match self {
             Unlanded::Failed(error) => error.fmt(f),
             Unlanded::Changed => f.write_str("it changed on the disk while it was being written"),
+            Unlanded::Busy => f.write_str(BUSY),
         }
     }
 }
@@ -27,8 +31,23 @@ impl From<Unlanded> for io::Error {
         match unlanded {
             Unlanded::Failed(error) => error,
             Unlanded::Changed => io::Error::other(Unlanded::Changed.to_string()),
+            Unlanded::Busy => busy(),
         }
     }
+}
+
+const BUSY: &str =
+    "a program has it open for writing, so Marfa leaves it until that program closes it";
+
+/// The error a write or a removal answers where a program holds its target
+/// open for writing.
+pub(crate) fn busy() -> io::Error {
+    io::Error::new(io::ErrorKind::ResourceBusy, BUSY)
+}
+
+/// Whether `error` is [`busy`]'s.
+pub(crate) fn is_busy(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::ResourceBusy
 }
 
 impl From<io::Error> for Unlanded {
@@ -258,6 +277,11 @@ fn land_flushed(
     flush: Flush<'_>,
 ) -> Result<Metadata, Unlanded> {
     let read = Held::take(dir, target)?;
+    if let (Some(read), Some(guard)) = (&read, guard)
+        && guard.writers.of(&read.file) == Writers::Open
+    {
+        return Err(Unlanded::Busy);
+    }
     let (mut file, beside) = beside(dir)?;
     let landed = (|| {
         // A file written anew keeps the permission the one it replaces had,
@@ -351,6 +375,8 @@ pub(crate) struct Guard<'a> {
     pub(crate) aside: &'a Directory,
     pub(crate) ledger: &'a dyn Ledger,
     pub(crate) beside: bool,
+    /// What tells whether a program holds a file open for writing.
+    pub(crate) writers: &'a Census,
 }
 
 /// Records each move of a person's file out of its path before the rename,
@@ -362,6 +388,9 @@ pub(crate) trait Ledger {
     /// A person's file kept at `name`: beside its path, in the target's
     /// directory, or under its reserved name in the aside directory.
     fn kept(&self, name: &Path, aside: bool, reason: String);
+    /// Records the file read, out of its path and kept under its reserved
+    /// name in the aside directory, for each pass to settle.
+    fn retain(&self, retained: &Retained) -> io::Result<()>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -444,9 +473,43 @@ impl Held {
     /// Whether its bytes, read again through the held descriptor, are still
     /// those it was read with.
     fn unchanged(&self) -> io::Result<bool> {
-        let mut file = &self.file;
+        self.proved().unchanged()
+    }
+
+    fn proved(&self) -> Proved<'_> {
+        Proved {
+            file: &self.file,
+            bytes: Proof::Bytes(&self.bytes),
+        }
+    }
+}
+
+/// A file open, with what tells whether it still holds the bytes it was
+/// proved to hold.
+#[derive(Clone, Copy)]
+struct Proved<'a> {
+    file: &'a File,
+    bytes: Proof<'a>,
+}
+
+#[derive(Clone, Copy)]
+enum Proof<'a> {
+    Bytes(&'a [u8]),
+    Hash(&'a str),
+}
+
+impl Proved<'_> {
+    fn unchanged(&self) -> io::Result<bool> {
+        let mut file = self.file;
         file.seek(io::SeekFrom::Start(0))?;
-        same_bytes(file, &self.bytes)
+        match self.bytes {
+            Proof::Bytes(bytes) => same_bytes(file, bytes),
+            Proof::Hash(hash) => {
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes)?;
+                Ok(crate::folder::state::hash(&bytes) == hash)
+            }
+        }
     }
 }
 
@@ -486,6 +549,28 @@ fn modified(time: std::time::SystemTime) -> Option<(u64, u32)> {
     time.duration_since(std::time::UNIX_EPOCH)
         .ok()
         .map(|since| (since.as_secs(), since.subsec_nanos()))
+}
+
+/// When the file's status last changed, which every write moves and no
+/// program can set.
+fn changed_at(metadata: &Metadata) -> Option<(u64, u32)> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        u64::try_from(metadata.ctime())
+            .ok()
+            .zip(u32::try_from(metadata.ctime_nsec()).ok())
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        None
+    }
+}
+
+pub(crate) fn seconds(time: std::time::SystemTime) -> u64 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
 }
 
 fn written_object(written: &Metadata) -> Object {
@@ -567,7 +652,7 @@ fn found(dir: &Directory, name: &Path, known: Known<'_>) -> io::Result<Found> {
 
 /// A name no sweep removes and no walk takes, in a directory on the target's
 /// volume.
-fn reserved(id: &str) -> PathBuf {
+pub(crate) fn reserved(id: &str) -> PathBuf {
     PathBuf::from(format!("{RESERVED}{id}.tmp"))
 }
 
@@ -588,13 +673,228 @@ fn name_of(target: &Path) -> io::Result<String> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a plain UTF-8 name"))
 }
 
-/// The one place that decides what becomes of the file read, once it is
-/// out of its path and proved to be that file, unchanged.
 fn discard(aside: &Directory, name: &Path) -> io::Result<()> {
     match aside.unlink(name) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
+}
+
+/// A file read and moved out of its path, kept under its reserved name in
+/// the aside directory while a program may still write to it through a
+/// descriptor it held before the move.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Retained {
+    pub(crate) id: String,
+    pub(crate) kind: Displaced,
+    /// The target's name in its directory.
+    pub(crate) target: String,
+    /// Its reserved name in the aside directory.
+    pub(crate) kept: String,
+    /// The new file that took the target's path, where one did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) ours: Option<Object>,
+    /// The file as it was set aside: its identity, length, modification time
+    /// and the hash of the bytes proved.
+    pub(crate) read: Object,
+    /// When its status last changed as it was set aside.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) changed: Option<(u64, u32)>,
+    /// When it was set aside, in seconds since the Unix epoch.
+    pub(crate) since: u64,
+    /// What the last look found holding it open for writing, where one was
+    /// made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) writers: Option<Writers>,
+}
+
+/// How long a file set aside and never changed is kept where it cannot be
+/// told whether a program still holds it open for writing.
+pub(crate) const RETAINED_FOR: u64 = 7 * 24 * 60 * 60;
+
+enum LetGo {
+    /// Discarded, or kept for each pass to settle.
+    Gone,
+    /// Its bytes are no longer those proved: a program wrote to it.
+    Changed,
+}
+
+/// The one place that decides what becomes of the file read, once it is out
+/// of its path at `name` in the aside directory and proved to be that file:
+/// discarded only where no program holds it open for writing and it is
+/// still unchanged, and otherwise recorded and kept for each pass to settle.
+/// `ours` is the new file at its path, where one took it.
+fn let_go(
+    guard: Guard<'_>,
+    displacement: &Displacement,
+    name: &Path,
+    ours: Option<&Object>,
+    proved: Proved<'_>,
+) -> io::Result<LetGo> {
+    // Taken before the bytes are checked, so a write after the check shows
+    // in what is recorded, and asked before, so no writer can close after
+    // the answer and leave its last bytes unchecked.
+    let metadata = proved.file.metadata()?;
+    let writers = guard
+        .writers
+        .current()
+        .then(|| guard.writers.of(proved.file));
+    if !proved.unchanged()? {
+        return Ok(LetGo::Changed);
+    }
+    if writers == Some(Writers::None) {
+        discard(guard.aside, name)?;
+        return Ok(LetGo::Gone);
+    }
+    let (device, inode) = identity(&metadata);
+    let retained = Retained {
+        id: displacement.id.clone(),
+        kind: displacement.kind,
+        target: displacement.target.clone(),
+        kept: name_of(name)?,
+        ours: ours.cloned(),
+        read: Object {
+            device,
+            inode,
+            length: Some(metadata.len()),
+            modified: metadata.modified().ok().and_then(modified),
+            hash: displacement.read.hash.clone(),
+        },
+        changed: changed_at(&metadata),
+        since: seconds(crate::clock::system_time()),
+        writers,
+    };
+    if let Err(error) = guard.ledger.retain(&retained) {
+        guard.ledger.kept(
+            name,
+            true,
+            format!(
+                "it is {} as Marfa read it before it replaced or removed the file, kept because a program may still write to it, and Marfa could not record it to look again: {error}; check it, and delete it when it is not needed",
+                displacement.target
+            ),
+        );
+    }
+    Ok(LetGo::Gone)
+}
+
+/// What became of a file kept by [`let_go`] when a pass settled it.
+#[derive(Debug)]
+pub(crate) enum Settled {
+    /// Its reserved name no longer holds it, so there is nothing to settle.
+    Gone,
+    /// Unchanged, and no program can still write to it.
+    Discarded,
+    /// Changed, and back at its path in place of the new file, which goes.
+    /// Answers the metadata of the file now at the path, and the bytes of
+    /// the new file it replaced.
+    PutBack {
+        metadata: Metadata,
+        replaced: Vec<u8>,
+    },
+    /// Changed after its removal, and back at its empty path.
+    Restored,
+    /// Changed, and kept beside its path, or under its reserved name where it
+    /// cannot go there, and reported.
+    Beside,
+    /// Unchanged, and kept, with what this look found.
+    Kept(Retained),
+}
+
+/// Settles `retained`, whose reserved name `file` was opened from, with
+/// `writers`, what was found holding it open for writing at `now`, in
+/// seconds since the Unix epoch.
+pub(crate) fn settle_retained(
+    dir: &Directory,
+    guard: Guard<'_>,
+    retained: &Retained,
+    file: &File,
+    writers: Writers,
+    now: u64,
+) -> io::Result<Settled> {
+    let name = Path::new(&retained.kept);
+    let metadata = file.metadata()?;
+    let at = identity(&metadata);
+    if !is_reserved(name)
+        || at != (retained.read.device, retained.read.inode)
+        || guard.aside.entry_identity(name).ok() != Some(at)
+    {
+        return Ok(Settled::Gone);
+    }
+    let stated = retained.read.length == Some(metadata.len())
+        && retained.read.modified == metadata.modified().ok().and_then(modified)
+        && retained.changed == changed_at(&metadata);
+    let proved = Proved {
+        file,
+        bytes: Proof::Hash(retained.read.hash.as_deref().unwrap_or_default()),
+    };
+    // A tag, a mode or new times change the status and leave the bytes. The
+    // status taken before the hash is recorded, so a write after it shows.
+    if stated || proved.unchanged()? {
+        let kept = Retained {
+            read: Object {
+                length: Some(metadata.len()),
+                modified: metadata.modified().ok().and_then(modified),
+                ..retained.read.clone()
+            },
+            changed: changed_at(&metadata),
+            writers: Some(writers),
+            ..retained.clone()
+        };
+        let due = match writers {
+            Writers::None => true,
+            Writers::Unknown => now >= retained.since.saturating_add(RETAINED_FOR),
+            Writers::Open => false,
+        };
+        if !due {
+            return Ok(Settled::Kept(kept));
+        }
+        // A write that keeps the length on a volume with coarse times shows
+        // only in the bytes.
+        if !stated || proved.unchanged()? {
+            discard(guard.aside, name)?;
+            return Ok(Settled::Discarded);
+        }
+    }
+    let target = Path::new(&retained.target);
+    if let Some(ours) = &retained.ours {
+        let known = Known::Held {
+            ours: Some(ours),
+            read: None,
+        };
+        if found(dir, target, known)? == Found::Ours {
+            let replaced = dir.read(target)?;
+            match exchange_at(guard.aside, name, dir, target) {
+                Ok(()) => {
+                    match found(guard.aside, name, known)? {
+                        Found::Ours => guard.aside.unlink(name)?,
+                        Found::Absent => {}
+                        // Saved at the path again as it went back.
+                        Found::Read | Found::Other => {
+                            keep_beside(dir, guard, target, name)?;
+                        }
+                    }
+                    return Ok(Settled::PutBack {
+                        metadata: dir.entry_metadata(target)?,
+                        replaced,
+                    });
+                }
+                Err(error) if error.kind() == io::ErrorKind::Unsupported => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+    if retained.kind == Displaced::Withdraw {
+        match rename_new_at(guard.aside, name, dir, target) {
+            Ok(()) => return Ok(Settled::Restored),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::AlreadyExists | io::ErrorKind::Unsupported
+                ) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    keep_beside(dir, guard, target, name).map(|_| Settled::Beside)
 }
 
 fn exchange_at(from_dir: &Directory, from: &Path, to_dir: &Directory, to: &Path) -> io::Result<()> {
@@ -669,7 +969,7 @@ fn replace(
     match exchange_at(guard.aside, &waiting, dir, target) {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::Unsupported => {
-            return without_exchange(dir, guard, target, known, &mut displacement);
+            return without_exchange(dir, guard, target, (&ours, read), &mut displacement);
         }
         Err(error) => {
             // Nothing moved: the new file still waits at its reserved name.
@@ -684,10 +984,13 @@ fn replace(
     }
     stop_if_asked(target, "crash-after-exchange");
     let landed = match found(guard.aside, &waiting, known)? {
-        Found::Read => {
-            discard(guard.aside, &waiting)?;
-            Ok(())
-        }
+        Found::Read => match let_go(guard, &displacement, &waiting, Some(&ours), read.proved())? {
+            LetGo::Gone => Ok(()),
+            LetGo::Changed => {
+                put_back(dir, guard, target, &waiting, known)?;
+                landed_after(dir, target, known)
+            }
+        },
         Found::Other => {
             put_back(dir, guard, target, &waiting, known)?;
             Err(Unlanded::Changed)
@@ -713,9 +1016,13 @@ fn without_exchange(
     dir: &Directory,
     guard: Guard<'_>,
     target: &Path,
-    known: Known<'_>,
+    (ours, read): (&Object, &Held),
     displacement: &mut Displacement,
 ) -> Result<(), Unlanded> {
+    let known = Known::Held {
+        ours: Some(ours),
+        read: Some(read),
+    };
     let waiting = PathBuf::from(
         displacement
             .ours
@@ -757,12 +1064,17 @@ fn without_exchange(
         Found::Read => match rename_new_at(guard.aside, &waiting, dir, target) {
             Ok(()) => {
                 stop_if_asked(target, "crash-after-aside-landing");
-                discard(guard.aside, &aside)?;
-                Ok(())
+                match let_go(guard, displacement, &aside, Some(ours), read.proved())? {
+                    LetGo::Gone => Ok(()),
+                    LetGo::Changed => {
+                        put_back(dir, guard, target, &aside, known)?;
+                        landed_after(dir, target, known)
+                    }
+                }
             }
             Err(error) => {
                 guard.aside.unlink(&waiting)?;
-                restore(dir, guard, target, &aside)?;
+                restore(dir, guard, target, &aside, displacement, read.proved())?;
                 Err(if error.kind() == io::ErrorKind::AlreadyExists {
                     Unlanded::Changed
                 } else {
@@ -785,12 +1097,34 @@ fn without_exchange(
 }
 
 /// Puts the file read, proved unchanged, back at `target` where nothing
-/// took the path; where something did, that is newer, and the file read
-/// goes.
-fn restore(dir: &Directory, guard: Guard<'_>, target: &Path, name: &Path) -> io::Result<()> {
+/// took the path; where something did, that is newer, and the file read is
+/// let go, or kept beside it where it changed.
+fn restore(
+    dir: &Directory,
+    guard: Guard<'_>,
+    target: &Path,
+    name: &Path,
+    displacement: &Displacement,
+    proved: Proved<'_>,
+) -> io::Result<()> {
     match rename_new_at(guard.aside, name, dir, target) {
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => discard(guard.aside, name),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            match let_go(guard, displacement, name, None, proved)? {
+                LetGo::Gone => Ok(()),
+                LetGo::Changed => keep_beside(dir, guard, target, name).map(drop),
+            }
+        }
         result => result,
+    }
+}
+
+/// What a write answers once a file it moved out of its path changed and
+/// went back to its path or beside it: written only where the new file is
+/// still at the path.
+fn landed_after(dir: &Directory, target: &Path, known: Known<'_>) -> Result<(), Unlanded> {
+    match found(dir, target, known)? {
+        Found::Ours => Ok(()),
+        _ => Err(Unlanded::Changed),
     }
 }
 
@@ -914,11 +1248,42 @@ pub(crate) fn settle(
         match found(guard.aside, name, known)? {
             Found::Absent => {}
             Found::Ours => guard.aside.unlink(name)?,
-            Found::Read => match (displacement.kind, found(dir, target, known)?) {
+            Found::Read => {
+                let file = guard.aside.open_file(name, OFlags::RDONLY, Mode::empty())?;
+                if identity(&file.metadata()?)
+                    != (displacement.read.device, displacement.read.inode)
+                {
+                    drop(put_back(dir, guard, target, name, known)?);
+                    continue;
+                }
+                let proved = Proved {
+                    file: &file,
+                    bytes: Proof::Hash(displacement.read.hash.as_deref().unwrap_or_default()),
+                };
+                settle_read(dir, guard, displacement, name, proved)?;
+            }
+            Found::Other => drop(put_back(dir, guard, target, name, known)?),
+        }
+    }
+    guard.ledger.clear(displacement);
+    Ok(())
+}
+
+/// Settles the file read, found unchanged at `name` after a run stopped.
+fn settle_read(
+    dir: &Directory,
+    guard: Guard<'_>,
+    displacement: &Displacement,
+    name: &Path,
+    proved: Proved<'_>,
+) -> io::Result<()> {
+    let target = Path::new(&displacement.target);
+    let known = Known::Recorded(displacement);
+    match (displacement.kind, found(dir, target, known)?) {
                 // Where the volume cannot exchange names, the path is empty
                 // in the gap, while the new file still waits.
                 (Displaced::Aside, Found::Absent) if waits(guard, displacement)? => {
-                    restore(dir, guard, target, name)?
+                    restore(dir, guard, target, name, displacement, proved)?
                 }
                 // Once the new file has taken the path, an empty path is the
                 // person's delete.
@@ -930,12 +1295,17 @@ pub(crate) fn settle(
                         displacement.target
                     ),
                 ),
-                _ => discard(guard.aside, name)?,
-            },
-            Found::Other => drop(put_back(dir, guard, target, name, known)?),
-        }
+                (_, at) => {
+                    let ours = displacement
+                        .ours
+                        .as_ref()
+                        .filter(|_| at == Found::Ours)
+                        .map(|(_, ours)| ours);
+                    if let LetGo::Changed = let_go(guard, displacement, name, ours, proved)? {
+                        drop(put_back(dir, guard, target, name, known)?);
+                    }
+                }
     }
-    guard.ledger.clear(displacement);
     Ok(())
 }
 
@@ -1036,6 +1406,9 @@ pub(crate) fn withdraw_at(
     if !still(&read.bytes) {
         return Ok(Withdrawal::Kept(None));
     }
+    if guard.writers.of(&read.file) == Writers::Open {
+        return Err(RemoveError::Remove(busy()));
+    }
     save_after_last_look(dir, target);
     write_after_last_look(dir, target);
     let id = uuid::Uuid::now_v7().simple().to_string();
@@ -1076,12 +1449,14 @@ pub(crate) fn withdraw_at(
     };
     let withdrawn = (|| match found(guard.aside, &aside, known)? {
         Found::Read => match then() {
-            Ok(()) => {
-                discard(guard.aside, &aside)?;
-                Ok(Withdrawal::Removed)
-            }
+            Ok(()) => match let_go(guard, &displacement, &aside, None, read.proved())? {
+                LetGo::Gone => Ok(Withdrawal::Removed),
+                LetGo::Changed => Ok(Withdrawal::Kept(put_back(
+                    dir, guard, target, &aside, known,
+                )?)),
+            },
             Err(error) => {
-                restore(dir, guard, target, &aside)?;
+                restore(dir, guard, target, &aside, &displacement, read.proved())?;
                 Ok(Withdrawal::Undone(error))
             }
         },
@@ -1306,6 +1681,7 @@ fn beside(dir: &Directory) -> io::Result<(File, PathBuf)> {
 pub(crate) struct Memory {
     pub(crate) rows: std::cell::RefCell<Vec<Displacement>>,
     pub(crate) kept: std::cell::RefCell<Vec<(PathBuf, String)>>,
+    pub(crate) retained: std::cell::RefCell<Vec<Retained>>,
     /// Refuses every record, as a store on a full disk does.
     pub(crate) full: std::cell::Cell<bool>,
 }
@@ -1331,6 +1707,48 @@ impl Ledger for Memory {
     fn kept(&self, name: &Path, _aside: bool, reason: String) {
         self.kept.borrow_mut().push((name.to_path_buf(), reason));
     }
+
+    fn retain(&self, retained: &Retained) -> io::Result<()> {
+        if self.full.get() {
+            return Err(io::Error::from(io::ErrorKind::StorageFull));
+        }
+        let mut kept = self.retained.borrow_mut();
+        kept.retain(|row| row.id != retained.id);
+        kept.push(retained.clone());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+impl Memory {
+    /// Settles every file retained, as a pass does: each opened, then one
+    /// fresh look at the programs writing them. Answers what became of each.
+    pub(crate) fn settle(&self, dir: &Directory, guard: Guard<'_>, now: u64) -> Vec<Settled> {
+        let rows = self.retained.take();
+        let files: Vec<_> = rows
+            .iter()
+            .map(|row| {
+                guard
+                    .aside
+                    .open_file(Path::new(&row.kept), OFlags::RDONLY, Mode::empty())
+            })
+            .collect();
+        guard.writers.fresh();
+        let mut settled = Vec::new();
+        for (row, file) in rows.iter().zip(files) {
+            let Ok(file) = file else {
+                settled.push(Settled::Gone);
+                continue;
+            };
+            let writers = guard.writers.of(&file);
+            let outcome = settle_retained(dir, guard, row, &file, writers, now).unwrap();
+            if let Settled::Kept(kept) = &outcome {
+                self.retained.borrow_mut().push(kept.clone());
+            }
+            settled.push(outcome);
+        }
+        settled
+    }
 }
 
 #[cfg(test)]
@@ -1345,15 +1763,23 @@ pub(crate) fn land(
         aside: &dir,
         ledger: &ledger,
         beside: true,
+        writers: &Census::default(),
     };
-    land_at(
+    let landed = land_at(
         &dir,
         guard,
         Path::new(target.file_name().unwrap()),
         fill,
         still,
     )
-    .map(drop)
+    .map(drop);
+    ledger.settle(&dir, guard, now());
+    landed
+}
+
+#[cfg(test)]
+fn now() -> u64 {
+    seconds(crate::clock::system_time())
 }
 
 #[cfg(test)]
@@ -1374,8 +1800,11 @@ fn remove(target: &Path, still: impl FnOnce(&[u8]) -> bool) -> io::Result<bool> 
         aside: &dir,
         ledger: &ledger,
         beside: true,
+        writers: &Census::default(),
     };
-    remove_at(&dir, guard, Path::new(target.file_name().unwrap()), still)
+    let removed = remove_at(&dir, guard, Path::new(target.file_name().unwrap()), still);
+    ledger.settle(&dir, guard, now());
+    removed
 }
 
 #[cfg(test)]
@@ -1405,6 +1834,7 @@ mod tests {
                 aside: &dir,
                 ledger: &ledger,
                 beside: true,
+                writers: &Census::default(),
             },
             unflushed,
             Path::new(name),
@@ -1507,6 +1937,7 @@ mod tests {
                 aside: &handle,
                 ledger: &ledger,
                 beside: true,
+                writers: &Census::default(),
             },
             &unflushed,
             Path::new("a.md"),
@@ -1747,6 +2178,7 @@ mod tests {
         root: PathBuf,
         dir: Directory,
         ledger: Memory,
+        census: Census,
     }
 
     impl Place {
@@ -1762,6 +2194,7 @@ mod tests {
                 root,
                 dir,
                 ledger: Memory::default(),
+                census: Census::default(),
             }
         }
 
@@ -1770,6 +2203,7 @@ mod tests {
                 aside: &self.dir,
                 ledger: &self.ledger,
                 beside: true,
+                writers: &self.census,
             }
         }
 
@@ -1801,9 +2235,12 @@ mod tests {
                 settle(&self.dir, self.guard(), &row).unwrap();
             }
             assert!(self.ledger.rows.borrow().is_empty());
+            self.ledger.settle(&self.dir, self.guard(), now());
         }
 
         fn clean(&self) {
+            // The next pass lets go of what no program holds open.
+            self.ledger.settle(&self.dir, self.guard(), now());
             assert!(
                 leftovers(&self.root).is_empty(),
                 "{:?}",
@@ -2147,12 +2584,12 @@ mod tests {
         );
         assert!(landed.is_ok(), "{landed:?}");
         assert_eq!(place.read("note.md"), b"from the server");
+        place.clean();
         let names: Vec<_> = std::fs::read_dir(&place.root)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(names.len(), 1, "{names:?}");
-        place.clean();
     }
 
     #[test]
@@ -2165,13 +2602,16 @@ mod tests {
             std::fs::write(path.join("note.md"), b"owned").unwrap();
             let directory = Directory::open(&path).unwrap();
             let ledger = Memory::default();
+            let census = Census::default();
+            let guard = Guard {
+                aside: &directory,
+                ledger: &ledger,
+                beside: true,
+                writers: &census,
+            };
             let result = land_at(
                 &directory,
-                Guard {
-                    aside: &directory,
-                    ledger: &ledger,
-                    beside: true,
-                },
+                guard,
                 Path::new("note.md"),
                 |file, temporary| {
                     std::fs::rename(&path, base.join("original"))?;
@@ -2188,6 +2628,7 @@ mod tests {
             );
             assert_eq!(result.is_err(), fail);
             assert!(ledger.rows.borrow().is_empty());
+            ledger.settle(&directory, guard, now());
             assert!(reserved_left(&path).is_empty());
             assert!(reserved_left(&base.join("original")).is_empty());
             assert_eq!(std::fs::read(path.join("note.md")).unwrap(), b"replacement");
@@ -2207,5 +2648,181 @@ mod tests {
                 }
             );
         }
+    }
+
+    fn appending(path: &Path) -> File {
+        std::fs::OpenOptions::new().append(true).open(path).unwrap()
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_descriptor_held_open_for_writing_keeps_its_file_through_a_write() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().canonicalize().unwrap().join("note.md");
+        std::fs::write(&target, b"first half\n").unwrap();
+        let mut writer = appending(&target);
+        let _ = write(&target, b"from the server", |_| true);
+        writer.write_all(b"second half\n").unwrap();
+        assert_eq!(
+            writer.metadata().unwrap().nlink(),
+            1,
+            "the file was unlinked"
+        );
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"first half\nsecond half\n"
+        );
+        drop(writer);
+        // Witness: once the program closes it, the write lands.
+        write(&target, b"from the server", |_| true).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"from the server");
+        assert!(leftovers(dir.path()).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_a_program_holds_open_for_writing_is_not_removed() {
+        let place = Place::new(Some(b"as last written"));
+        let writer = appending(&place.root.join("note.md"));
+        let removed = place.remove(b"as last written");
+        assert!(removed.as_ref().is_err_and(is_busy), "{removed:?}");
+        assert_eq!(place.read("note.md"), b"as last written");
+        drop(writer);
+        place.census.fresh();
+        assert!(place.remove(b"as last written").unwrap());
+        assert!(!place.root.join("note.md").exists());
+        place.clean();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_file_written_through_a_descriptor_after_it_was_set_aside_goes_back_to_its_path() {
+        let place = Place::new(Some(b"first half\n"));
+        let mut writer = appending(&place.root.join("note.md"));
+        {
+            let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+            place.write(b"first half\n").unwrap();
+        }
+        assert_eq!(place.read("note.md"), b"from the server");
+        writer.write_all(b"second half\n").unwrap();
+        drop(writer);
+        let settled = place.ledger.settle(&place.dir, place.guard(), now());
+        assert!(
+            matches!(settled.as_slice(), [Settled::PutBack { .. }]),
+            "{settled:?}"
+        );
+        assert_eq!(place.read("note.md"), b"first half\nsecond half\n");
+        assert!(place.ledger.retained.borrow().is_empty());
+        place.clean();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_file_set_aside_unchanged_goes_once_no_program_holds_it_open() {
+        let place = Place::new(Some(b"as last written"));
+        let writer = appending(&place.root.join("note.md"));
+        {
+            let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+            place.write(b"as last written").unwrap();
+        }
+        let settled = place.ledger.settle(&place.dir, place.guard(), now());
+        assert!(
+            matches!(
+                settled.as_slice(),
+                [Settled::Kept(Retained {
+                    writers: Some(Writers::Open),
+                    ..
+                })]
+            ),
+            "{settled:?}"
+        );
+        assert_eq!(reserved_left(&place.root).len(), 1);
+        drop(writer);
+        let settled = place.ledger.settle(&place.dir, place.guard(), now());
+        assert!(
+            matches!(settled.as_slice(), [Settled::Discarded]),
+            "{settled:?}"
+        );
+        assert_eq!(place.read("note.md"), b"from the server");
+        place.clean();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_file_set_aside_where_writers_are_unknown_goes_after_a_week_unchanged() {
+        let place = Place::new(Some(b"as last written"));
+        let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+        place.write(b"as last written").unwrap();
+        let at = now();
+        for when in [at, at + RETAINED_FOR - 60] {
+            let settled = place.ledger.settle(&place.dir, place.guard(), when);
+            assert!(
+                matches!(
+                    settled.as_slice(),
+                    [Settled::Kept(Retained {
+                        writers: Some(Writers::Unknown),
+                        ..
+                    })]
+                ),
+                "{settled:?}"
+            );
+            assert_eq!(reserved_left(&place.root).len(), 1);
+        }
+        let settled = place
+            .ledger
+            .settle(&place.dir, place.guard(), at + RETAINED_FOR + 60);
+        assert!(
+            matches!(settled.as_slice(), [Settled::Discarded]),
+            "{settled:?}"
+        );
+        assert!(reserved_left(&place.root).is_empty());
+        place.clean();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_file_set_aside_that_changed_after_a_newer_save_is_kept_beside_it() {
+        let place = Place::new(Some(b"first half\n"));
+        let mut writer = appending(&place.root.join("note.md"));
+        let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+        place.write(b"first half\n").unwrap();
+        writer.write_all(b"second half\n").unwrap();
+        std::fs::write(place.root.join("note.md"), b"saved by the person").unwrap();
+        let settled = place.ledger.settle(&place.dir, place.guard(), now());
+        assert!(
+            matches!(settled.as_slice(), [Settled::Beside]),
+            "{settled:?}"
+        );
+        let beside = place.ledger.kept.borrow()[0].0.clone();
+        assert!(!is_reserved(&beside), "{beside:?}");
+        assert_eq!(
+            place.read(&beside.to_string_lossy()),
+            b"first half\nsecond half\n"
+        );
+        assert_eq!(place.read("note.md"), b"saved by the person");
+        assert_eq!(place.ledger.kept.borrow().len(), 1);
+        place.clean();
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_removed_file_written_after_it_was_set_aside_goes_back_to_its_path() {
+        let place = Place::new(Some(b"first half\n"));
+        let mut writer = appending(&place.root.join("note.md"));
+        {
+            let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
+            assert!(place.remove(b"first half\n").unwrap());
+        }
+        assert!(!place.root.join("note.md").exists());
+        writer.write_all(b"second half\n").unwrap();
+        let settled = place.ledger.settle(&place.dir, place.guard(), now());
+        assert!(
+            matches!(settled.as_slice(), [Settled::Restored]),
+            "{settled:?}"
+        );
+        assert_eq!(place.read("note.md"), b"first half\nsecond half\n");
+        drop(writer);
+        place.clean();
     }
 }

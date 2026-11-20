@@ -13,6 +13,7 @@ use super::registry::{
 use super::sealed::Secret;
 use super::start::Fixed;
 use crate::app::addresses::Address;
+use crate::app::auth::session::RECENT_SECONDS;
 use crate::app::blobs::s3::virtual_host;
 use crate::app::outbound::address::names_private_literal;
 
@@ -294,11 +295,11 @@ fn destinations_are_public(judged: &Judged) -> Vec<Breach> {
     })
     .map(|(path, _)| Breach {
         path,
-        message:
+        message: format!(
             "names an address that is not public; allow one by setting allow_private_addresses \
-                  to true, from the private local command or an app signed in to within five \
-                  minutes"
-                .to_string(),
+             to true, from the private local command or an app signed in to within {} minutes",
+            RECENT_SECONDS / 60
+        ),
     })
     .collect()
 }

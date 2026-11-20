@@ -591,6 +591,11 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
         type: "string",
         description: "The file's path from the folder's root.",
       },
+      form: {
+        type: "object",
+        description:
+          "How the file writes its frontmatter: its keys in order and each value's style, with no values.",
+      },
     },
   }),
   shipped("in-thread", "In thread", "Messages", {

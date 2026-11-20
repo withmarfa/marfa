@@ -535,7 +535,7 @@ describe("custom edge-type registration", () => {
     trackEdgeType(ctx, id);
   });
 
-  it("ships in-folder from any item to a system.folder, carrying its path", async () => {
+  it("ships in-folder from any item to a system.folder, carrying its path and its form", async () => {
     const r = await client.listEdgeTypes();
     expect(r.ok).toBe(true);
     const inFolder = r.data.data.find((t) => t.id === "in-folder") as
@@ -552,6 +552,104 @@ describe("custom edge-type registration", () => {
     });
     expect(inFolder?.reverse_name ?? null).toBeNull();
     expect(inFolder?.property_schema).toHaveProperty("path");
+    expect(inFolder?.property_schema).toHaveProperty("form.type", "object");
+  });
+
+  it("keeps an in-folder form beside its path, and refuses one that is not an object, on every door that writes one", async () => {
+    const made = await client.createFolder({ title: "forms" });
+    expect(made.status).toBe(201);
+    const folderId = made.data.item.id;
+    trackFolder(ctx, folderId);
+    const note = async (): Promise<string> => {
+      const r = await client.createItem(createNote({ source: ctx.source }));
+      expect(r.status).toBe(201);
+      trackItem(ctx, r.data.item.id);
+      return r.data.item.id;
+    };
+    const form = {
+      keys: [
+        { key: "title", style: "plain" },
+        { key: "occurred_at", style: "day" },
+      ],
+    };
+    const refusedAtForm = (
+      error: { code?: string; details?: unknown } | undefined,
+      label: string,
+    ) => {
+      expect(error?.code, label).toBe("invalid_properties");
+      const details = error?.details as
+        { errors?: { path: string }[] } | undefined;
+      expect(details?.errors?.[0]?.path, label).toBe("properties.form");
+    };
+
+    const source = await note();
+    const placed = await client.createEdge({
+      from_id: source,
+      to_id: folderId,
+      edge_type: "in-folder",
+      properties: { path: "kept.md", form },
+    });
+    expect(placed.status).toBe(201);
+    trackEdge(ctx, placed.data.edge.id);
+    expect(placed.data.edge.properties).toEqual({ path: "kept.md", form });
+
+    // An update naming only the path keeps the form; one naming a form
+    // replaces it.
+    const moved = await client.updateEdge(placed.data.edge.id, {
+      version: placed.data.edge.version,
+      properties: { path: "moved.md" },
+    });
+    expect(moved.status).toBe(200);
+    const read = await client.getEdge(placed.data.edge.id);
+    expect(read.data.edge.properties).toEqual({ path: "moved.md", form });
+    const reshaped = { keys: [{ key: "title", style: "double" }] };
+    const replaced = await client.updateEdge(placed.data.edge.id, {
+      version: moved.data.edge.version,
+      properties: { form: reshaped },
+    });
+    expect(replaced.status).toBe(200);
+    expect(replaced.data.edge.properties).toEqual({
+      path: "moved.md",
+      form: reshaped,
+    });
+
+    for (const bad of ["plain", ["title"], 1]) {
+      const label = JSON.stringify(bad);
+      const created = await client.createEdge({
+        from_id: await note(),
+        to_id: folderId,
+        edge_type: "in-folder",
+        properties: { path: "a.md", form: bad },
+      });
+      expect(created.status, `POST ${label}`).toBe(400);
+      refusedAtForm(created.error?.error, `POST ${label}`);
+
+      const updated = await client.updateEdge(placed.data.edge.id, {
+        version: replaced.data.edge.version,
+        properties: { form: bad },
+      });
+      expect(updated.status, `PATCH ${label}`).toBe(400);
+      refusedAtForm(updated.error?.error, `PATCH ${label}`);
+
+      const bulk = await client.bulkEdges({
+        atomic: false,
+        edges: [
+          {
+            from_id: await note(),
+            to_id: folderId,
+            edge_type: "in-folder",
+            properties: { path: "b.md", form: bad },
+          },
+        ],
+      });
+      expect(bulk.status, `bulk ${label}`).toBe(200);
+      refusedAtForm(bulk.data.results[0]?.error, `bulk ${label}`);
+    }
+    const unchanged = await client.getEdge(placed.data.edge.id);
+    expect(unchanged.data.edge.properties).toEqual({
+      path: "moved.md",
+      form: reshaped,
+    });
   });
 
   it("writes an in-folder edge from a key holding the from item's type, the edge type and read on system.folder, and writing nothing of it", async () => {

@@ -48,7 +48,7 @@ pub fn list_definition() -> Definition {
                 "left_out": { "type": "integer" },
             },
         }),
-        annotations: json!({ "readOnlyHint": true, "openWorldHint": false }),
+        annotations: super::reads(),
         meta: None,
     }
 }

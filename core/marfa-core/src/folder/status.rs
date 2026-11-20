@@ -48,6 +48,10 @@ pub struct StatusReport {
     /// until it has.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub beneath_waiting: Option<String>,
+    /// Why `beneath_waiting` still names no item, as the last sync that tried
+    /// to name it found.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub beneath_waiting_reason: Option<String>,
     /// The person paused the directory's sync. Read by `Folder::status_of`
     /// alone.
     pub sync_paused: bool,
@@ -400,6 +404,7 @@ impl Folder {
                 None
             },
             beneath_waiting: self.beneath_waiting(),
+            beneath_waiting_reason: self.beneath_waiting_reason()?,
             sync_paused: false,
             unwatched: 0,
         })
@@ -764,6 +769,8 @@ mod tests {
             unwatched: std::sync::atomic::AtomicUsize::new(0),
             replaced: None,
             unflushed: Default::default(),
+            writers: Default::default(),
+            writer_wait: Default::default(),
             root_dir: crate::directory::Directory::open(&dir.path().canonicalize().unwrap())
                 .unwrap(),
             store_mark: crate::directory::Directory::open(&state_dir.canonicalize().unwrap())
