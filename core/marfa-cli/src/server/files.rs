@@ -398,12 +398,22 @@ fn check_parents(dir: &Path, trusted: u32) -> Result<(), CliError> {
     Ok(())
 }
 
+/// Makes `dir` and the folders above it that are missing with no write for other accounts,
+/// whatever the umask: the server refuses data below a folder another account can write, and
+/// Ubuntu gives an account with a group of its own the umask `0002`.
+pub fn make_folders(dir: &Path) -> std::io::Result<()> {
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o755)
+        .create(dir)
+}
+
 /// Root changes only what it made or checked itself, through descriptors, and
 /// touches nothing inside `data`, which the account controls.
 pub fn prepare_root_folder(dir: &Path, account: Identity) -> Result<(), CliError> {
     check_parents(dir, 0)?;
     if let Some(parent) = dir.parent() {
-        fs::create_dir_all(parent)?;
+        make_folders(parent)?;
     }
     match fs::DirBuilder::new().mode(0o750).create(dir) {
         Ok(()) => {}

@@ -355,6 +355,8 @@ struct Rig {
     stop: Arc<AtomicBool>,
     health: Vec<JoinHandle<()>>,
     isolated: std::cell::Cell<bool>,
+    /// The umask `marfa` runs under, where a test sets one.
+    umask: std::cell::Cell<Option<libc::mode_t>>,
 }
 
 impl Rig {
@@ -387,6 +389,7 @@ impl Rig {
         };
         Rig {
             isolated: std::cell::Cell::new(false),
+            umask: std::cell::Cell::new(None),
             dir: root.join("install"),
             root,
             state,
@@ -411,11 +414,21 @@ impl Rig {
     }
 
     fn command(&self) -> Command {
-        if self.isolated.get() {
+        let mut command = if self.isolated.get() {
             quiet::quiet(Command::new(self.root.join("bin/marfa")))
         } else {
             quiet::marfa()
+        };
+        if let Some(mask) = self.umask.get() {
+            // SAFETY: `umask` is async-signal-safe and touches nothing the parent shares.
+            unsafe {
+                command.pre_exec(move || {
+                    libc::umask(mask);
+                    Ok(())
+                });
+            }
         }
+        command
     }
 
     fn marfa_with(&self, args: &[&str], env: &[(&str, &Path)]) -> (i32, String, String) {
@@ -4479,6 +4492,21 @@ fn a_second_try_of_a_release_put_back_before_gets_an_outcome_of_its_own() {
     let (outcome, reason) = rig.last();
     assert_eq!(outcome, "rolled_back");
     assert!(reason.contains("did not finish"), "{reason}");
+}
+
+#[test]
+fn an_install_and_its_run_make_no_folder_another_account_can_write_under_a_loose_umask() {
+    let rig = Rig::new("n-umask");
+    rig.isolate();
+    let loose = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o022;
+    // A shell on Ubuntu and a systemd user manager both start with this umask.
+    rig.umask.set(Some(0o002));
+    rig.native_installed(&["--access", "local"]);
+    let mut child = rig.run_server(&[]);
+    ended(&mut child, 20).expect("run did not end");
+    for folder in [rig.dir.clone(), rig.dir.join("data"), rig.update_record()] {
+        assert_eq!(loose(&folder), 0, "{}", folder.display());
+    }
 }
 
 #[test]

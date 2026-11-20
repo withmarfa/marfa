@@ -401,7 +401,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     let kept = files::kept(identity);
     match identity {
         Some(identity) => files::prepare_root_folder(&folder.dir, identity)?,
-        None => std::fs::create_dir_all(&folder.dir)?,
+        None => files::make_folders(&folder.dir)?,
     }
 
     // The settings the server reads. The secrets are made once, and not at

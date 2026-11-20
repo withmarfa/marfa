@@ -6,7 +6,7 @@
 
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::mpsc;
@@ -122,10 +122,25 @@ impl Folder {
         &self.0
     }
 
+    /// `marfa server run` can make the data folder before the server does, under a umask such
+    /// as a systemd user manager's `0002`, and the server refuses a data folder another account
+    /// can write.
+    fn make(&self) -> io::Result<()> {
+        fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&self.0)
+    }
+
     fn write(&self, name: &str, text: &str) -> io::Result<()> {
-        fs::create_dir_all(&self.0)?;
+        self.make()?;
         let temporary = self.0.join(format!("{name}.partial"));
-        let mut file = File::create(&temporary)?;
+        let mut file = File::options()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .open(&temporary)?;
         file.write_all(text.as_bytes())?;
         file.sync_all()?;
         fs::rename(&temporary, self.0.join(name))?;
@@ -212,11 +227,12 @@ impl Folder {
 
     /// The file a `marfa server run` locks while it supervises a try of the new release.
     pub fn supervisor_lock(&self) -> io::Result<File> {
-        fs::create_dir_all(&self.0)?;
+        self.make()?;
         File::options()
             .create(true)
             .truncate(false)
             .write(true)
+            .mode(0o600)
             .open(self.0.join(SUPERVISOR))
     }
 }
@@ -511,6 +527,28 @@ mod tests {
             ..this
         };
         assert!(!last(None, "0.0.75").ends(&unnamed));
+    }
+
+    #[test]
+    fn the_record_makes_its_folders_and_files_for_the_servers_account_alone() {
+        let (dir, record) = scratch("private");
+        assert!(
+            !dir.join("data").exists(),
+            "the server has not made its folder"
+        );
+        let _lock = record.supervisor_lock().unwrap();
+        record.keep_pending(&pending(&dir.join("bin"))).unwrap();
+        record
+            .end(AT, Outcome::Succeeded, "0.0.75", None, None)
+            .unwrap();
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        for folder in [dir.join("data"), record.path().to_path_buf()] {
+            assert_eq!(mode(&folder), 0o700, "{}", folder.display());
+        }
+        for name in [SUPERVISOR, PENDING, LAST] {
+            assert_eq!(mode(&record.path().join(name)), 0o600, "{name}");
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
