@@ -286,7 +286,7 @@ When a checked-out document is first bound, a device MUST place its item where t
 
 When a file is moved or renamed without a content change, a device MUST send only its placement change, unless it is a Markdown document whose new name is not in step with its title (`folder-documents/rename-title`) or a file item whose title is its old file name or the name `folder-documents/file-extension-added` makes from its title.
 
-**Tests:** `device/folders-placement.test.ts › sends only the placement for a move under the same name`, `› sends only the placement for a rename of a document that is not Markdown`.
+**Tests:** `device/folders-placement.test.ts › sends only the placement for a move under the same name`, `› sends only the placement for a rename of a document that is not Markdown`, `› sends a renamed file item's new name as its title, with the extension only where the person typed one`.
 
 ### `folder-files/placement-not-document`
 
