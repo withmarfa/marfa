@@ -633,7 +633,8 @@ describe("an array field", () => {
 
   it("refuses an array longer than its max_items, or than 10,000 elements where the field names none, and takes one at the bound", async () => {
     const DEFAULT_CAP = 10_000;
-    const elements = (count: number) => Array.from({ length: count }, () => "a");
+    const elements = (count: number) =>
+      Array.from({ length: count }, () => "a");
 
     // The witness: an array at each bound is taken.
     const atCap = await create({ capped: ["a", "b"] });

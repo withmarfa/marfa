@@ -470,13 +470,21 @@ If a type names `enum_values` on a field, a member of `items_fields` or a table 
 
 **Reason:** only an `enum` takes its values and checks them (`types/array-items`), so a list on any other field would register as though it held and never be enforced.
 
-**Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› refuses enum_values on a field that is not an enum on a replacement, and keeps the type as it was`.
+**Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› refuses enum_values on a field that is not an enum on a replacement, and keeps the type as it was`, `compliance/type-tables.test.ts › refuses a column that breaks a rule a field of its kind keeps`.
 
 ### `types/enum-values-restored`
 
-When an archive restore carries a type that names `enum_values` on a field whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, the server MUST restore the type as the archive holds it, and an item of that type MUST read and take any string in that field.
+When an archive restore carries a type that names `enum_values` on a field whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, the server MUST restore the type as the archive holds it.
 
-**Reason:** a registration the server accepted before `types/enum-values-kind` stays valid when exported and restored (`archive/restore-compatible-types`), and the list was never enforced.
+**Reason:** a registration the server accepted before `types/enum-values-kind` stays valid when exported and restored (`archive/restore-compatible-types`).
+
+**Tests:** `compliance/restore-enum-values.test.ts › restores from an archive, and its items read and take any string`.
+
+### `types/enum-values-unchecked`
+
+Where a type names `enum_values` on a field whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, the server MUST NOT check a value of that field against the list.
+
+**Reason:** only an `enum` checks its values (`types/array-items`), so an item of a type restored with such a list still reads and takes any string in the field.
 
 **Tests:** `compliance/restore-enum-values.test.ts › restores from an archive, and its items read and take any string`.
 
