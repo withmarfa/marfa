@@ -80,7 +80,7 @@ fn upgrade_native(
     let binary = native::stable_binary_of_this()?;
     let serviced = service.release();
     let running = running_release(state.port);
-    let from = install_release(folder, state, running.clone()).ok();
+    let from = install_release(folder, running.clone()).ok();
     let on_target = from.as_deref() == Some(target.as_str());
     // The server running on the database is the one release known to open it; any other start
     // is asked first.
@@ -172,26 +172,20 @@ fn running_release(port: u16) -> Option<String> {
 }
 
 /// The release a native install is on: the one serving it, `running`, else the one that last
-/// served its database. `Err` says why it cannot be told.
-pub(super) fn install_release(
-    folder: &Folder,
-    state: &State,
-    running: Option<String>,
-) -> Result<String, String> {
+/// served its database. `Err` says why it cannot be told. The `MARFA_RELEASE` line in `.env` is
+/// no source: `marfa` and `marfa-server` up to 0.0.85 do not keep it up to date when they update
+/// themselves, so it may name an earlier release than the one that last served.
+pub(super) fn install_release(folder: &Folder, running: Option<String>) -> Result<String, String> {
     if let Some(running) = running {
         return Ok(running);
     }
     let database = native::Layout::new(&folder.dir).database();
     match served_release(&database) {
         Ok(Some(served)) => Ok(served),
-        // `marfa-server` up to 0.0.85 names no release beside the database, and `marfa` up to
-        // 0.0.85 writes the release it installs or upgrades to in `.env`.
-        Ok(None) => state.release.clone().ok_or_else(|| {
-            format!(
-                "neither {} nor .env names one",
-                release_record(&database).display()
-            )
-        }),
+        Ok(None) => Err(format!(
+            "{} does not exist: a release up to 0.0.85 last served the database, and those write none",
+            release_record(&database).display()
+        )),
         Err(error) => Err(format!(
             "{} cannot be read: {error}",
             release_record(&database).display()
@@ -255,10 +249,12 @@ fn put_back(from: Option<&str>, program: &Path, dir: &Path) -> String {
 /// in its own folder.
 fn put_back_by(from: Option<&str>, program: &Path, homebrew: bool, dir: &Path) -> String {
     let dir = shell_word(dir);
-    let (which, version) = match from {
-        Some(from) => (from, from),
-        None => ("the release it ran before", "<release>"),
+    let Some(from) = from else {
+        return format!(
+            "The release that last ran on this install cannot be told, so none is named here. To put it back, install it the way you installed marfa, then run `marfa server restart --dir {dir}` with that release's marfa. Releases up to 0.0.85 have no `marfa server upgrade` that goes back, and their server refuses a database it cannot read, changing nothing in it. A later release goes back with `marfa server upgrade --dir {dir}` instead."
+        );
     };
+    let (which, version) = (from, from);
     let how = if homebrew {
         format!(
             "Homebrew installs only its newest release, so install {which} with the install script, which puts it in ~/.local/bin: `curl -fsSL {INSTALL_SCRIPT} | MARFA_VERSION={version} sh`, then run `~/.local/bin/marfa server upgrade --dir {dir}`."
@@ -707,7 +703,7 @@ pub(super) fn keeps_release(
             &upgrade,
         ));
     }
-    let on = install_release(folder, state, running_release(state.port)).map_err(|why| {
+    let on = install_release(folder, running_release(state.port)).map_err(|why| {
         CliError::Usage(format!(
             "the release this install is on cannot be told, because {why}: `{upgrade}` moves it to {serviced}, once {serviced} has said it opens the database"
         ))
@@ -851,7 +847,7 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         None
     };
     let installed = match &service {
-        Some(_) => install_release(&folder, &state, release.clone()),
+        Some(_) => install_release(&folder, release.clone()),
         None => Ok(state.image().to_string()),
     };
     // Programs replaced while the install was on another release wait for `upgrade`.
@@ -956,6 +952,11 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         );
         if let Err(why) = &installed {
             text.push_str(&format!("\n  Release   cannot be told: {why}"));
+            if let (Some(recorded), true) = (&state.release, service.is_some()) {
+                text.push_str(&format!(
+                    "\n  Recorded  {recorded} in .env, which releases up to 0.0.85 write at install only, so it may not be the release that last ran"
+                ));
+            }
         }
         if let Some(programs) = &waiting {
             text.push_str(&format!(
@@ -1285,11 +1286,13 @@ mod tests {
         );
         assert!(!words.contains("MARFA_INSTALL_DIR"), "{words}");
         assert!(!words.contains("/opt/homebrew"), "{words}");
-        // A release that cannot be told is named as the one it ran before.
+        // A release that cannot be told is named nowhere, and no value is given to install by.
         let words = put_back_by(None, Path::new("/usr/local/bin/marfa"), false, dir);
         assert!(
-            words.contains("To put the release it ran before back")
-                && words.contains("MARFA_VERSION=<release>"),
+            words.contains("The release that last ran on this install cannot be told")
+                && words.contains("`marfa server restart --dir '/srv/marfa'`")
+                && !words.contains("MARFA_VERSION")
+                && !words.contains("<release>"),
             "{words}"
         );
     }

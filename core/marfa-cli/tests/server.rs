@@ -3671,39 +3671,57 @@ fn a_passing_upgrade_of_a_stopped_install_moves_it_from_the_release_it_is_on() {
     assert_eq!(rig.file("data/marfa.db.release"), "0.0.0\n");
 }
 
-#[test]
-fn an_install_whose_database_names_no_release_is_on_the_release_env_names() {
-    let rig = Rig::new("n-no-record");
+/// An install whose database only releases up to 0.0.85 served, stopped, with `.env` naming
+/// `recorded`, which releases up to 0.0.85 do not keep up to date.
+fn served_before_the_record(name: &str, recorded: &str) -> Rig {
+    let rig = Rig::new(name);
     rig.isolate();
-    // The release that served it, up to 0.0.85, named none beside the database.
     fs::write(rig.state.join("no-release-record"), "").unwrap();
     rig.native_installed(&["--access", "local"]);
     assert!(!rig.dir.join("data/marfa.db.release").exists());
     let (code, _, stderr) = rig.marfa(&["stop"]);
     assert_eq!(code, 0, "{stderr}");
-    rig.recorded_release("0.0.0-before");
+    rig.recorded_release(recorded);
+    rig
+}
 
-    let (code, _, stderr) = rig.marfa(&["start", "--wait-seconds", "5"]);
-    assert_eq!(code, 2, "{stderr}");
-    assert!(
-        stderr.contains(
-            "this install is on 0.0.0-before, and the programs its service runs are now 0.0.0: "
-        ),
-        "{stderr}"
-    );
+#[test]
+fn an_install_whose_database_names_no_release_is_on_a_release_that_cannot_be_told() {
+    let rig = served_before_the_record("n-no-record", "0.0.0-before");
+    let calls = rig.manager_log().lines().count();
+
+    // `.env` may be stale, so the release it names is not put in the refusal, and it does not
+    // let a start through either, whether or not it names the programs' release.
+    for recorded in ["0.0.0-before", "0.0.0"] {
+        rig.recorded_release(recorded);
+        for command in ["start", "restart"] {
+            let (code, _, stderr) = rig.marfa(&[command, "--wait-seconds", "5"]);
+            assert_eq!(code, 2, "{command}: {stderr}");
+            assert!(
+                stderr.contains("the release this install is on cannot be told, because ")
+                    && stderr.contains("`marfa server upgrade --dir ")
+                    && !stderr.contains("this install is on 0.0.")
+                    && !stderr.contains("0.0.0-before"),
+                "{command} with .env on {recorded}: {stderr}"
+            );
+        }
+    }
+    assert_eq!(rig.service_moves_since(calls), Vec::<String>::new());
+    assert!(!answers(rig.port));
+
+    // Status says what `.env` records, and that it is not the release that ran.
     let (_, stdout, _) = rig.marfa(&["--json", "status"]);
     let status: serde_json::Value = serde_json::from_str(&stdout).expect(&stdout);
-    assert_eq!(status["release"], "0.0.0-before", "{stdout}");
+    assert_eq!(status["release"], serde_json::Value::Null, "{stdout}");
+    let (_, stdout, _) = rig.marfa(&["status"]);
+    assert!(
+        stdout.contains("Release   cannot be told")
+            && stdout.contains("Recorded  0.0.0 in .env")
+            && stdout.contains("may not be the release that last ran"),
+        "{stdout}"
+    );
 
-    // Witness: with `.env` on the release the programs are, it starts.
-    rig.recorded_release("0.0.0");
-    let (code, stdout, stderr) = rig.marfa(&["start", "--wait-seconds", "5"]);
-    assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("marfa 0.0.0 is running"), "{stdout}");
-
-    // With neither, the release cannot be told, and only upgrade moves the install.
-    let (code, _, stderr) = rig.marfa(&["stop"]);
-    assert_eq!(code, 0, "{stderr}");
+    // With no line at all, the release cannot be told either, and only upgrade moves the install.
     let dotenv: String = rig
         .file(".env")
         .lines()
@@ -3714,13 +3732,49 @@ fn an_install_whose_database_names_no_release_is_on_the_release_env_names() {
     let (code, _, stderr) = rig.marfa(&["start", "--wait-seconds", "5"]);
     assert_eq!(code, 2, "{stderr}");
     assert!(
-        stderr.contains("the release this install is on cannot be told, because neither ")
+        stderr.contains("the release this install is on cannot be told, because ")
             && stderr.contains("`marfa server upgrade --dir "),
         "{stderr}"
     );
     let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait-seconds", "5"]);
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("Upgraded to 0.0.0"), "{stdout}");
+}
+
+#[test]
+fn a_refused_upgrade_of_an_install_that_only_env_names_puts_back_no_named_release() {
+    let rig = served_before_the_record("n-no-record-refused", "0.0.0-before");
+    let calls = rig.manager_log().lines().count();
+    fs::write(
+        rig.state.join("cannot-open"),
+        "The database was written by a build this one does not read.",
+    )
+    .unwrap();
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--wait-seconds", "5"]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(
+        stderr.contains("The release that last ran on this install cannot be told")
+            && stderr.contains("install it the way you installed marfa")
+            && stderr.contains("`marfa server restart --dir ")
+            && stderr.contains("with that release's marfa")
+            && !stderr.contains("0.0.0-before")
+            && !stderr.contains("MARFA_VERSION")
+            && !stderr.contains("<release>"),
+        "{stderr}"
+    );
+    assert_eq!(rig.service_moves_since(calls), Vec::<String>::new());
+    assert!(!answers(rig.port));
+
+    // The same install, once its release is known, is told which one to put back.
+    fs::create_dir_all(rig.dir.join("data")).unwrap();
+    rig.name_served("0.0.0-before");
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--wait-seconds", "5"]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(
+        stderr.contains("To put 0.0.0-before back")
+            && stderr.contains("MARFA_VERSION=0.0.0-before "),
+        "{stderr}"
+    );
 }
 
 impl Rig {

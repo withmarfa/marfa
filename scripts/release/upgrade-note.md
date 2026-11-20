@@ -4,7 +4,7 @@ Before Marfa 0.1, a newer release may not read an earlier release's database. `m
 
 Note the release your instance runs: `marfa server status` shows it, and so does `version` in the JSON that `GET /` answers. `marfa server upgrade` asks this release first whether it runs on the install's settings and database, and changes nothing when it says no. On a native install, the programs you installed are still this release's, so install the earlier release again and run `marfa server upgrade` with its `marfa`, as the command's message shows. On a Docker install, the earlier image keeps running.
 
-`marfa server upgrade` is the only command that changes an install's release, newer or older. `marfa server install`, `start` and `restart` keep an install on the release it is on, also when its programs were replaced while it was stopped.
+`marfa server upgrade` is the only command that changes an install's release, newer or older. `marfa server install`, `start` and `restart` keep an install on the release it is on, also when its programs were replaced while it was stopped. When only a release up to 0.0.85 has served the database, the release the install is on can't be told: `start` and `restart` say so, and `marfa server upgrade` moves it. To go back from there, install the release you ran before and run `marfa server restart` with its `marfa`.
 
 When this release can't read your database, move by export and restore: export the data while your release runs, make a new install of this release in another `--dir`, and restore the archive there. A restore refuses an archive whose `manifest.json` names no format or another format, as every release before 0.0.72 wrote.
 

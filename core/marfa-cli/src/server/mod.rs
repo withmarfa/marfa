@@ -3,7 +3,8 @@
 //! The install is a folder holding `.env` (name, port, runtime, how the server is
 //! reached, and the release) and `marfa.env` (the server's secrets and proxy trust). A Docker
 //! install runs the release `.env` names. A native install is on the release that last served
-//! its database, which that server names beside the database.
+//! its database, which that server names beside the database; a database that only releases up
+//! to 0.0.85 served has no such name, so its release cannot be told.
 
 mod account;
 pub(crate) mod address;
@@ -75,12 +76,14 @@ pub enum ServerCommand {
     /// Before Marfa 0.1, a release may not read another release's database. This command first
     /// asks the release it moves to, newer or older, whether it opens the install's database
     /// and settings, and changes nothing when it does not. When the programs the service runs
-    /// were already replaced, the error says how to put back the release the install is on. A
-    /// release that could not be asked is started, and a Docker install whose new release then
-    /// refuses the database starts its earlier release again. A Docker image before 0.0.76
-    /// cannot be asked, so it is refused. The way to move is then to export, make a new install
-    /// of the other release and restore the archive there. A release that changes how the
-    /// database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+    /// were already replaced, the error says how to put back the release the install is on. When
+    /// a release up to 0.0.85 last served the database, which names none, the error says the
+    /// release cannot be told and gives the general way back. A release that could not be asked
+    /// is started, and a Docker install whose new release then refuses the database starts its
+    /// earlier release again. A Docker image before 0.0.76 cannot be asked, so it is refused.
+    /// The way to move is then to export, make a new install of the other release and restore
+    /// the archive there. A release that changes how the database is laid out keeps a copy of
+    /// it first, as `marfa.db.before-upgrade` beside it.
     ///
     /// To go back to an earlier release, install it the way you installed marfa and run this
     /// command with its `marfa`, or with `--release` for Docker.
@@ -109,7 +112,9 @@ pub enum ServerCommand {
     /// `marfa server upgrade` moves the install. A `marfa` of the same
     /// release at another path is named there while the program the service
     /// runs is still in place; once that program is gone, `marfa server
-    /// upgrade` names the new one.
+    /// upgrade` names the new one. When a release up to 0.0.85 last served the database, which
+    /// names none, the release the install is on cannot be told, and `marfa server upgrade`
+    /// moves it.
     ///
     /// On a Mac with a Docker install, this starts Docker's engine first if it
     /// is down: it is what the login agent runs.
@@ -335,7 +340,8 @@ struct State {
     name: String,
     /// The `MARFA_RELEASE` line. A Docker install runs this image, which only
     /// `marfa server upgrade` changes. A native install is on the release that last served its
-    /// database, and this line only stands in for it: [`lifecycle::install_release`].
+    /// database. Releases up to 0.0.85 do not update this line when they update themselves, so
+    /// a native install's status shows it as recorded, and no decision reads it.
     release: Option<String>,
     port: u16,
     access: Access,
