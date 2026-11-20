@@ -214,6 +214,11 @@ stays because that thing is what it checks.
   moves the files folder away while the server is stopped and back while it
   runs, and reads the adopt's claim in it, because only a disk that goes away
   and returns does that.
+- `device/working-copy.test.ts` and `device/folders-refused-store-live.test.ts`
+  set the release a store records in its meta, or remove it, and set its schema
+  version, to leave the store as another build would have: no door makes a store
+  another build saved. `working-copy.test.ts` also adds triggers that refuse the
+  release record, to stand a store that cannot take a write: no door fills a disk.
 - `device/binding-reading-handle-writes-nothing.test.ts` compares the store
   file and its write-ahead log before and after the last connection closes.
   It opens a writable SQLite connection as a control. The binding exposes

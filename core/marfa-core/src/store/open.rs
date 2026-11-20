@@ -1,6 +1,8 @@
 //! Opening a store: making it, checking its shape, and setting aside or replacing one this build cannot use.
 
-use super::meta::{META_STORE_ID, meta_get, meta_set};
+use super::meta::{
+    META_RELEASE, META_STORE_ID, RELEASE, is_release, meta_delete, meta_get, meta_set,
+};
 use super::unsent::{folder_unsent, unsendable, untaken, untaken_count};
 use crate::error::CoreError;
 use crate::file_cache::{Place, volume_is_full};
@@ -61,12 +63,14 @@ pub(crate) fn at_path(error: CoreError, path: &Path) -> CoreError {
             reason,
             unsent,
             folder,
+            release,
             ..
         } => CoreError::WrongSchema {
             path: path.display().to_string(),
             reason,
             unsent,
             folder,
+            release,
         },
         other => other,
     }
@@ -81,6 +85,7 @@ fn in_folder(error: CoreError, label: &Path, conn: &Connection) -> CoreError {
             path,
             reason,
             unsent,
+            release,
             ..
         } => match folder_store(conn) {
             Ok(folder) => CoreError::WrongSchema {
@@ -88,6 +93,7 @@ fn in_folder(error: CoreError, label: &Path, conn: &Connection) -> CoreError {
                 reason,
                 unsent: unsent.and(folder_unsent(conn)),
                 folder: Some(folder),
+                release,
             },
             Err(error) => error,
         },
@@ -824,6 +830,15 @@ pub(super) fn prepare(conn: &Connection, place: Option<Place<'_>>) -> Result<(),
             &uuid::Uuid::now_v7().simple().to_string(),
         )?;
     }
+    // The record only names this build in a later refusal, so a store that
+    // cannot take it (a full disk, a read-only file, a busy writer) still
+    // opens. A record that cannot be renewed is removed where it can be, so
+    // it never names a release that was not the last to save the store.
+    if meta_get(conn, META_RELEASE).ok().flatten().as_deref() != Some(RELEASE)
+        && meta_set(conn, META_RELEASE, RELEASE).is_err()
+    {
+        let _ = meta_delete(conn, META_RELEASE);
+    }
     Ok(())
 }
 
@@ -945,6 +960,10 @@ pub(crate) fn refused(conn: &Connection, found: i64) -> CoreError {
         ),
         unsent: untaken_count(conn),
         folder: None,
+        release: meta_get(conn, META_RELEASE)
+            .ok()
+            .flatten()
+            .filter(|release| is_release(release)),
     }
 }
 

