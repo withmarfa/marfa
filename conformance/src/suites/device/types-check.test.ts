@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { typeCatalog } from "../../device/marfa-answers.js";
@@ -280,8 +280,13 @@ describe("a folder of type definitions, checked offline", () => {
     }
   });
 
-  it("reports a file that is not JSON, not UTF-8 or not an object, and still checks the others", async () => {
+  it("reports unreadable and malformed files and still checks the others", async () => {
     const folder = folderOf([{ id: "acme.fine", fields: { x: note } }]);
+    const target = join(folder, "target");
+    writeFileSync(target, JSON.stringify({ id: "acme.link", fields: {} }));
+    symlinkSync(target, join(folder, "acme.link.json"));
+    expect((await verdictOf(folder, 0)).checked).toBe(2);
+    unlinkSync(target);
     writeFileSync(join(folder, "acme.broken.json"), '{ "id": ');
     writeFileSync(join(folder, "acme.list.json"), "[]");
     writeFileSync(join(folder, "acme.latin.json"), Buffer.from([0x7b, 0xe9]));
@@ -293,8 +298,11 @@ describe("a folder of type definitions, checked offline", () => {
       ]),
     );
     const verdict = await verdictOf(folder, 1);
-    expect(verdict).toMatchObject({ checked: 5, refused: 4 });
+    expect(verdict).toMatchObject({ checked: 6, refused: 5 });
     expect(problemsOf(verdict, "acme.fine.json")).toEqual([]);
+    expect(problemsOf(verdict, "acme.link.json")).toMatchObject([
+      { code: "file_unreadable" },
+    ]);
     expect(problemsOf(verdict, "acme.broken.json")[0]?.message).toContain(
       "line 1 column",
     );

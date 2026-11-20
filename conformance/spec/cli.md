@@ -1514,7 +1514,7 @@ If a file's name is not its type's `id` followed by `.json`, then the CLI MUST r
 
 If a file in the folder cannot be read, is not valid UTF-8, is not valid JSON or is not a JSON object, then the CLI MUST refuse that file in `marfa types check` with the reason and check the other files.
 
-**Tests:** `device/types-check.test.ts › reports a file that is not JSON, not UTF-8 or not an object, and still checks the others`.
+**Tests:** `device/types-check.test.ts › reports unreadable and malformed files and still checks the others`.
 
 ### `cli/types-check-folder-refused`
 

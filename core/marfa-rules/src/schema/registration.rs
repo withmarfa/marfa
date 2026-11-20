@@ -1,4 +1,4 @@
-//! What a registration refuses before and after `validate_type` judges the definition, as the server's register and the folder check both say it.
+//! Refusal precedence shared by registration and offline checks.
 
 use serde_json::Value;
 

@@ -21,12 +21,12 @@ An agent, a script or a test runs `marfa` with no keychain prompt and no person 
 
 ## Check a folder of type definitions
 
-`marfa types check FOLDER` judges the item type definitions in a folder with the rules a server applies when it registers a type, so a repository that keeps type files can run it in CI. It needs no server, key or keychain and sends nothing. `marfa-rules` holds the judgement (`schema::check_type_files`, built on the `validate_type` call the server makes), and the command only reads the folder and prints.
+Run `marfa types check FOLDER` locally or in CI to validate item type definitions using the server's registration rules. The command needs no server, key or keychain and sends no requests.
 
 - **What it reads:** each `*.json` file directly in the folder, as the body `marfa types register --file` sends. The file is named `<id>.json`. A subfolder, a file whose name starts with a dot and a file with any other extension are left alone. A name ending in `.JSON` is read, and refused because its name differs from `<id>.json`. Edge types are not checked.
 - **What it judges against:** the types the build ships and the folder's own types, each type after its parent. A parent that is neither shipped nor in the folder is reported as missing, even where an instance holds a type of that name.
 - **What it reports:** every problem in every file, each with the file, the path in the definition and the code and message a server gives. The codes `file_unreadable`, `file_name_mismatch`, `parent_refused` and `compatible_with_refused` are the command's own. A type whose parent is missing, in a loop or refused is reported with that reason alone, and is not judged further.
-- **Exit codes:** 0 when every file passes, 1 when a file is refused or the folder holds no `*.json` file, and 2 when the path is not a folder. With `--json`, standard output holds `{ok, checked, refused, files}` and a refusal's error envelope goes to standard error as for any command.
+- **Exit codes** are 0 when every file passes, 1 when any file fails, no type files are found, or the folder cannot be listed, and 2 when the path does not resolve to a folder. With `--json`, a completed check of one or more files writes `{ok, checked, refused, files}` to standard output. A refusal also writes the standard JSON error envelope to standard error.
 - **What it cannot judge:** a server also decides from what an instance holds. The command does not check that the type's `id` is free (`409 type_exists`), that the key may register it (`403 forbidden`, `403 type_not_permitted`, the `metadata.types:write` and `schema.write` permissions and the key's type map), that the key reaches the `parent` and each `compatible_with` target that is not a platform type, that the body is within the instance's request-size setting, or that a type the instance already holds is compatible with it.
 
 ## Limits and timings

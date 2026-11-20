@@ -209,7 +209,6 @@ async fn a_parent_that_is_missing_or_would_close_a_cycle_is_refused() {
     );
 }
 
-/// What each registration is refused with, as an answer the checker also gives: the code, and each message.
 fn answered(reply: &Reply) -> (String, Vec<String>) {
     let said = reply.body["error"]["details"]["errors"]
         .as_array()

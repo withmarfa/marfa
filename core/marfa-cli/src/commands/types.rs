@@ -115,7 +115,6 @@ pub struct CheckArgs {
 }
 
 impl TypesCommand {
-    /// Whether the command runs on this machine alone.
     pub fn is_offline(&self) -> bool {
         matches!(self, TypesCommand::Scaffold(_) | TypesCommand::Check(_))
     }
@@ -506,7 +505,6 @@ fn scaffold(args: &ScaffoldArgs, out: &Printer) -> Result<(), CliError> {
     out.raw(&format!("{}\n", serde_json::to_string_pretty(&definition)?))
 }
 
-/// Every `*.json` file directly in the folder, read where it can be.
 fn type_files(folder: &PathBuf) -> Result<Vec<TypeFile>, CliError> {
     let entries = std::fs::read_dir(folder).map_err(|error| {
         CliError::Invalid(format!(

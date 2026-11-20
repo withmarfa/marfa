@@ -1,4 +1,4 @@
-//! A folder of type definitions judged as a server judges each at registration, with no instance behind it.
+//! Offline validation of item type definitions.
 
 use std::collections::{HashMap, HashSet};
 
@@ -18,7 +18,7 @@ pub struct TypeFile {
     pub content: Result<Vec<u8>, String>,
 }
 
-/// One thing wrong in a file. `code` is the one the server answers the registration with.
+/// A file diagnostic with a server or local code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {
     pub path: String,
@@ -51,7 +51,6 @@ pub fn shipped_registry() -> Result<Registry, RuleError> {
 
 const PARENT_PATH: &str = "parent";
 
-/// A type definition, by file name; anything else in the folder is not one.
 pub fn is_type_file(name: &str) -> bool {
     !name.starts_with('.') && name.to_ascii_lowercase().ends_with(".json")
 }
@@ -119,7 +118,6 @@ enum Link {
     Compat,
 }
 
-/// The ids a definition names in `compatible_with`.
 fn compat_targets(body: &Obj) -> Vec<&str> {
     match body.get("compatible_with") {
         Some(Value::String(target)) => vec![target.as_str()],

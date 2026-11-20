@@ -1318,6 +1318,8 @@ const NOT_DRIVEN: Record<string, string> = {
   operations: "prints the table, sending nothing; held by its own case",
   "types scaffold":
     "prints a definition from its arguments, sending nothing; held by types-scaffold.test.ts",
+  "types check":
+    "checks local type definitions without sending a request; covered by types-check.test.ts",
   "docs search":
     "reads the docs site, which is not a server; held by its own case",
   "docs topics":
