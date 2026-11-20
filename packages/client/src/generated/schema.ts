@@ -5341,6 +5341,11 @@ export interface components {
              * @example 2026-10-03T09:30:00.000Z
              */
             detached_at: string | null;
+            /**
+             * @description Why the attached object store cannot be used while `allow_private_addresses` refuses the requests to it, the same text as `backups.store_error` in `GET /health`, or `null`.
+             * @example The object store cannot be used: the object store's address is not public, and allow_private_addresses is false. Until it can, no file is copied there, no backup is taken and no file is purged.
+             */
+            error: string | null;
         };
         /** @description An error response. */
         BlobNotFoundRefusal: {

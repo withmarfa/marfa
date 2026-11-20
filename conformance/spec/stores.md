@@ -6,9 +6,9 @@ Where a blob's bytes live, and the rules that keep them. A store is a place byte
 
 ### `stores/list`
 
-When a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer `200` with every store, each with its `id`, `kind`, `locator`, `attached_at` and `detached_at`.
+When a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer `200` with every store, each with its `id`, `kind`, `locator`, `attached_at`, `detached_at` and `error`.
 
-**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`, `› lists each store with the time it was first attached`.
+**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`, `› lists each store with the time it was first attached`, `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
 
 ### `stores/list-disk-always`
 
@@ -41,6 +41,14 @@ Where an object store is attached, when a caller authorized by `instance.read` o
 When a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer each store's `attached_at` as the time the store was first attached, the same on every listing.
 
 **Tests:** `compliance/blob-stores.test.ts › lists each store with the time it was first attached`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
+
+### `stores/list-error`
+
+When a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer each store's `error` as `null`, except that of an attached object store while `instance/object-store-refused-unusable` holds for it, which is the text `GET /health` answers in `backups.store_error`.
+
+**Reason:** health and the store list say the same thing about whether the store in use can be used, so an owner who reads either is not told two things.
+
+**Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`, `› names the credentials fetch, not the store's address, when the address rules refuse it for an object store with no access key, and keeps that store attached`.
 
 ### `stores/list-needs-instance-read`
 
@@ -201,6 +209,14 @@ While a run of `blob-replicate` would end with the outcome `failed` under `store
 **Reason:** the server decides what to purge from what the stores in use hold and what their backups name, and until the record of those stores and the settings are confirmed it does not know which stores they are.
 
 **Tests:** `compliance/store-follows-settings.test.ts › purges nothing while the record of the folder in use cannot be written, and purges the same file once it can`, `› purges nothing while the settings cannot be read again after a write to /config of unknown outcome, and purges the same file once they can`.
+
+### `stores/refused-kept`
+
+While `instance/object-store-refused-unusable` holds for an attached object store, the server MUST list that store in `GET /blobs/stores` with the `id` it had and `detached_at` `null`, and no other object store as attached.
+
+**Reason:** the copies and backups recorded in the store stay its own, and a refusal says nothing about what the store holds.
+
+**Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`, `› names the credentials fetch, not the store's address, when the address rules refuse it for an object store with no access key, and keeps that store attached`.
 
 ### `stores/detached-listed`
 
@@ -482,6 +498,20 @@ If a run of `blob-replicate` copies no blob because an attached store does not t
 
 **Tests:** `compliance/blob-store-silent.test.ts › finishes, copies nothing, counts the copy in remaining, and makes it once the stores answer`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`, `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`.
 
+### `stores/replicate-refused-failed`
+
+While `instance/object-store-refused-unusable` holds for an attached object store, when a run of `blob-replicate` ends, the server MUST end it with `outcome` `failed` and an `error` that names `allow_private_addresses`.
+
+**Reason:** a run that reports `succeeded` while no copy can reach the store would tell the owner that every file has its copy.
+
+**Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
+
+### `stores/replicate-refused-remaining`
+
+While `instance/object-store-refused-unusable` holds for an attached object store, when a run of `blob-replicate` ends, the server MUST count in its `result`'s `remaining` each copy that store still waits for.
+
+**Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
+
 ### `stores/replicate-failure-by-store`
 
 If a run of `blob-replicate` ends with `outcome` `failed` because attached stores do not take a copy, then the server MUST answer the run's `result` with `refused`, an object that holds, for each store that took none, the store's ID and why.
@@ -590,6 +620,14 @@ If a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
+### `stores/drop-refused-store`
+
+While `instance/object-store-refused-unusable` holds for an attached object store, if a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}` naming that store, where the copy record names a copy of the blob, then the server MUST answer `503 blob_store_unavailable` without changing any copy.
+
+**Reason:** the server cannot read which of the store's backups name the blob, so it cannot tell whether the copy is held (`stores/drop-held-by-backup`), and `404 blob_copy_not_found` would say the store holds no copy.
+
+**Tests:** `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
+
 ### `stores/drop-not-attached`
 
 If a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}` naming a store that is not attached, an unknown id and a detached store among them, then the server MUST answer `404 blob_copy_not_found`.
@@ -618,7 +656,7 @@ If a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs
 
 ### `stores/drop-order`
 
-When `DELETE /blobs/{hash}/copies/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a write or a deletion of the blob's bytes that is still out (`stores/drop-unfinished`), `503 blob_store_unavailable`; a store that is not attached or holds no copy, `404 blob_copy_not_found`; a copy a backup kept in that store names (`stores/drop-held-by-backup`), `409 copy_held_by_backup`; a stored `blob_min_copies` outside the values it accepts (`stores/drop-unreadable-minimum`), `500 internal_error`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
+When `DELETE /blobs/{hash}/copies/{store}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: no credential, `401 unauthorized`; a key or app token lacking `blobs.manage`, `403 forbidden`; a malformed hash, `400 validation_error`; a hash no blob holds, `404 blob_not_found`; a write or a deletion of the blob's bytes that is still out (`stores/drop-unfinished`), `503 blob_store_unavailable`; a store that is not attached or holds no copy, `404 blob_copy_not_found`; a store the address rules refuse (`stores/drop-refused-store`), `503 blob_store_unavailable`; a copy a backup kept in that store names (`stores/drop-held-by-backup`), `409 copy_held_by_backup`; a stored `blob_min_copies` outside the values it accepts (`stores/drop-unreadable-minimum`), `500 internal_error`; fewer than `min_copies` live copies left, or fewer confirmed by their stores (`stores/drop-confirms-copies`), `409 copies_below_minimum`.
 
 **Reason:** the copy record is read before any store is asked, so a drop that the copy record alone refuses is answered without waiting on a store. A write or a deletion still out comes before the copy record's answers because the store can still be changing the blob's bytes, so a store that is not attached is also answered `503` while one is out.
 
@@ -704,7 +742,7 @@ When a run of `blob-integrity` cannot reach a store, such as a disk store whose 
 
 When a run of `blob-integrity` cannot reach a store, the server MUST count the store in the run's `unreachable`.
 
-**Tests:** `compliance/blob-store-folders.test.ts › strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns`.
+**Tests:** `compliance/blob-store-folders.test.ts › strikes nothing, answers 503 for the blob while no store can, and serves it again when the folder returns`, `compliance/store-address-refused.test.ts › keeps an object store it attached before attached while the address rules refuse it, says why in health, attention and the store list, purges nothing, and uses the store again once its host is public`.
 
 ### `stores/integrity-unreachable-others`
 
