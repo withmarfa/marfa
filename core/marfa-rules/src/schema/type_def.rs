@@ -344,7 +344,7 @@ fn judge_type(input: &Value, registry: &Registry, naming: Naming) -> Result<Obj,
         &mut errors,
     );
     if naming == Naming::Any {
-        // A type an earlier build accepted restores as the archive holds it.
+        // A restore takes a type as the archive holds it.
         errors.retain(|issue| issue.expected != UNUSED_ENUM_VALUES);
     }
     if !errors.is_empty() {

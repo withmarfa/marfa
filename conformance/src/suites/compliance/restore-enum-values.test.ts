@@ -8,9 +8,9 @@ import {
 } from "../../utils/fresh-server.js";
 
 /**
- * A type registered before the grammar refused `enum_values` on a field that
- * is not an enum comes back through a backup or an export. The only way to
- * hold one is an archive that says so, so the fixture edits the type's line.
+ * A restore takes a type that names `enum_values` on a field that is not an
+ * enum as the archive holds it. The only way to hold one is an archive that
+ * says so, so the fixture edits the type's line.
  */
 const TYPE = "user.stored-enum-values";
 
