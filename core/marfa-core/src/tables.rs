@@ -975,12 +975,26 @@ fn filter_of(read: &Read) -> Result<String> {
 
 /// Hands `found` each asked row the server holds; false where the server
 /// certifies the item or the table gone.
-pub(crate) fn read_named(
+fn read_named(
     core: &Core,
     http: &Http,
     item: &str,
     table: &str,
     ids: &[String],
+    found: &mut dyn FnMut(String, Value),
+) -> Result<bool> {
+    read_named_or(core, http, item, table, ids, invalid, found)
+}
+
+/// `read_named`, failing with `off_shape` on a page that does not read as
+/// rows.
+pub(crate) fn read_named_or(
+    core: &Core,
+    http: &Http,
+    item: &str,
+    table: &str,
+    ids: &[String],
+    off_shape: fn() -> CoreError,
     found: &mut dyn FnMut(String, Value),
 ) -> Result<bool> {
     let mut ids = ids.to_vec();
@@ -1014,10 +1028,13 @@ pub(crate) fn read_named(
                 other => other?,
             };
             let Some(Value::Array(rows)) = page.get("data") else {
-                return Err(invalid());
+                return Err(off_shape());
             };
             for row in rows {
-                let id = row.get("id").and_then(Value::as_str).ok_or_else(invalid)?;
+                let id = row
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(off_shape)?;
                 if wanted.contains(id) {
                     found(id.to_string(), row.clone());
                 }

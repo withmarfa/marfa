@@ -13,7 +13,7 @@ use crate::http::Http;
 use crate::model::QueuedWrite;
 use crate::row_writes::{self, Op};
 use crate::store::{self, Cached, restored::RECEIPTS_KEPT_MILLIS};
-use crate::{Core, Result};
+use crate::{Core, CoreError, Result};
 
 fn floor() -> i64 {
     store::now_millis().saturating_sub(RECEIPTS_KEPT_MILLIS)
@@ -108,6 +108,11 @@ fn earlier(server: &str, at: &str) -> bool {
     }
 }
 
+/// A page that does not read as rows is about this read alone.
+fn off_shape() -> CoreError {
+    CoreError::Decoding("a page of table rows".into())
+}
+
 /// Reads the rows each receipt no event has shown names, for those answered
 /// before `before`, and answers whether the server has lost one: a change
 /// whose row it lacks or holds at an earlier time, or a removal whose row it
@@ -142,13 +147,21 @@ pub(crate) fn lost(core: &Core, http: &Http, stop: &AtomicBool, before: i64) -> 
         crate::catch_up::refuse_if_stopped(stop)?;
         let ids: Vec<String> = unseen.iter().map(|receipt| receipt.id.clone()).collect();
         let mut held: HashMap<String, Option<String>> = HashMap::new();
-        let read = crate::tables::read_named(core, http, &item, &table, &ids, &mut |id, row| {
-            let at = row
-                .get("updated_at")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            held.insert(id, at);
-        });
+        let read = crate::tables::read_named_or(
+            core,
+            http,
+            &item,
+            &table,
+            &ids,
+            off_shape,
+            &mut |id, row| {
+                let at = row
+                    .get("updated_at")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                held.insert(id, at);
+            },
+        );
         let conn = core.conn()?;
         let Some(read) = crate::restored::heard(read)? else {
             conn.prepare_cached("DELETE FROM row_receipts WHERE item_id = ?1 AND name = ?2")?
@@ -618,6 +631,62 @@ mod tests {
         conn.execute("DELETE FROM row_receipts", []).unwrap();
         keep_receipts(&conn, &write, "late", LATER, &results, true).unwrap();
         assert_eq!(receipts(&conn), vec![("b".into(), true, true)]);
+    }
+
+    #[test]
+    fn a_read_of_the_rows_that_says_nothing_sets_their_receipts_aside() {
+        use crate::scripted::{Scripted, certified, json as answer, refusal};
+        let cases = [
+            (
+                "a page of no rows",
+                certified(answer(200, r#"{"data":[]}"#)),
+                true,
+            ),
+            (
+                "a page that is no rows",
+                certified(answer(200, r#"{"rows":"none"}"#)),
+                false,
+            ),
+            (
+                "400 validation_failed",
+                refusal(400, "validation_failed"),
+                false,
+            ),
+        ];
+        for (name, read, expected) in cases {
+            let server = Scripted::start();
+            let core = crate::stop_tests::copy(&server);
+            {
+                let conn = core.conn().unwrap();
+                store::upsert_item(
+                    &conn,
+                    &store::testing::note("item", "T", "", BEFORE),
+                    None,
+                    &marfa_rules::catalog::Indexing::default(),
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO item_tables (item_id, name, state) VALUES ('item', 'steps', 'whole')",
+                    [],
+                )
+                .unwrap();
+                receipt(&conn, "a", TEN, false, false);
+            }
+            let path = "/items/item/tables/steps/rows";
+            server.on(path, vec![read]);
+            let stop = AtomicBool::new(false);
+            let http = core.http().unwrap();
+            assert_eq!(
+                lost(&core, http, &stop, i64::MAX).unwrap(),
+                expected,
+                "{name}"
+            );
+            assert_eq!(server.seen(path).len(), 1, "{name}");
+            if !expected {
+                assert!(!lost(&core, http, &stop, i64::MAX).unwrap(), "{name}");
+                assert_eq!(server.seen(path).len(), 1, "{name} was read again");
+            }
+        }
     }
 
     #[test]
