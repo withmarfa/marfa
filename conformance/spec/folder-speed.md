@@ -40,9 +40,9 @@ While a folder watch runs, a device MUST perform a full scan at its first pass a
 
 ### `folder-speed/watch-at-rest-no-pass`
 
-While a folder watch's last pass left nothing that time alone moves on, a device MUST start no pass before the folder's full-pass interval ends unless a change arrives.
+While a folder watch's last pass left nothing that time alone moves on, no file that a pull left because a program held it open for writing, and no file kept under a name of the form `.marfa-kept-<id>.tmp`, a device MUST start no pass before the folder's full-pass interval ends unless a change arrives.
 
-**Reason:** A watch at rest that woke itself would spend the machine's power and the server's attention on nothing.
+**Reason:** A watch at rest that woke itself would spend the machine's power and the server's attention on nothing. No file event says a program closed a file, so a watch looks again at such a file on a timer of its own.
 
 **Tests:** `device/binding-folders-backoff.test.ts › leaves a folder at rest with no pass but its full pass, and sends a change on disk within seconds`.
 

@@ -459,6 +459,7 @@ impl Folder {
                         // A program wrote to a file a pull set aside, which
                         // a pass puts back.
                         changed = true;
+                        backoff.reset();
                         gate.changed(delivered);
                     } else if !gate.passed_over_is_due(crate::clock::now()) {
                         continue;
@@ -3091,35 +3092,29 @@ mod backoff_tests {
         assert_eq!(server.seen("/").len(), 2, "one read of the root each");
     }
 
-    #[test]
-    fn passes_that_keep_failing_back_off_and_a_real_change_ends_the_wait() {
-        let (_dir, folder, server) = online_folder(nothing_found());
-        std::fs::write(
-            folder.root().join("Waiting.md"),
-            "a write the server never takes\n",
-        )
-        .unwrap();
-        // Every request now meets a closed port.
-        drop(server);
-        crate::clock::set_manual(true);
-        crate::fault::observe(true);
+    /// Watches `folder` through ten simulated minutes of passes that fail
+    /// against a closed port, makes `change` at the ninth minute and fifty
+    /// seconds, and answers the passes started before it and five seconds
+    /// after it.
+    fn failing_then(folder: &Folder, change: impl FnOnce()) -> (usize, usize) {
         let (stop, ended) = (AtomicBool::new(false), AtomicBool::new(false));
-        let mut before_change = 0;
-        let mut after_change = 0;
-        let mut ended_early = false;
+        let mut change = Some(change);
+        let (mut before, mut after, mut ended_early) = (0, 0, false);
         std::thread::scope(|scope| {
             scope.spawn(|| {
+                // A pass keeps a kept file, as where it cannot tell who writes.
+                let _unknown = crate::fault::fail_on_this_thread("writers-unknown");
                 let _ = folder.watch(&stop, |_| Ok::<(), ()>(()));
                 ended.store(true, Ordering::SeqCst);
             });
             ten_minutes(&ended, |second| match second {
                 590 => {
-                    before_change = passes();
-                    std::fs::write(folder.root().join("Changed.md"), "a real change\n").unwrap();
+                    before = passes();
+                    change.take().unwrap()();
                     // The watcher's event arrives on the system's time.
                     std::thread::sleep(Duration::from_millis(500));
                 }
-                595 => after_change = passes(),
+                595 => after = passes(),
                 _ => {}
             });
             ended_early = ended.load(Ordering::SeqCst);
@@ -3128,14 +3123,95 @@ mod backoff_tests {
         crate::clock::set_manual(false);
         assert!(!ended_early, "the watch ended before it was stopped");
         // The witness: the passes ran and failed.
-        assert!(before_change >= 2, "{before_change} passes");
+        assert!(before >= 2, "{before} passes");
         assert!(
-            before_change <= 12,
-            "{before_change} passes in ten minutes of failing ones"
+            before <= 12,
+            "{before} passes in ten minutes of failing ones"
+        );
+        (before, after)
+    }
+
+    /// A folder whose writes the server never takes, as every request meets
+    /// a closed port, on the manual clock.
+    fn unreachable_folder() -> (crate::folder::tests::ScannedDir, Folder) {
+        let (dir, folder, server) = online_folder(nothing_found());
+        std::fs::write(
+            folder.root().join("Waiting.md"),
+            "a write the server never takes\n",
+        )
+        .unwrap();
+        drop(server);
+        crate::clock::set_manual(true);
+        crate::fault::observe(true);
+        (dir, folder)
+    }
+
+    #[test]
+    fn passes_that_keep_failing_back_off_and_a_real_change_ends_the_wait() {
+        let (_dir, folder) = unreachable_folder();
+        let (before, after) = failing_then(&folder, || {
+            std::fs::write(folder.root().join("Changed.md"), "a real change\n").unwrap();
+        });
+        assert!(
+            after > before,
+            "no pass ran within five seconds of a change on disk"
+        );
+    }
+
+    #[test]
+    fn a_write_to_a_kept_file_ends_the_wait_between_failing_passes() {
+        let (_dir, folder) = unreachable_folder();
+        let root = folder.root().to_path_buf();
+        let kept = root.join(landing::reserved("00000000000000000000000000000004"));
+        std::fs::write(&kept, "as set aside\n").unwrap();
+        std::fs::write(root.join("Plan.md"), "as the pull wrote it\n").unwrap();
+        let metadata = std::fs::metadata(&kept).unwrap();
+        let (device, inode) = landing::identity(&metadata);
+        let at = landing::identity(&std::fs::metadata(&root).unwrap());
+        super::super::state::set_retained(
+            &folder.core.conn().unwrap(),
+            &super::super::state::Retained {
+                dir: String::new(),
+                dir_at: at,
+                aside: String::new(),
+                aside_at: at,
+                retained: landing::Retained {
+                    id: "00000000000000000000000000000004".into(),
+                    kind: landing::Displaced::Exchange,
+                    target: "Plan.md".into(),
+                    kept: kept.file_name().unwrap().to_string_lossy().into_owned(),
+                    ours: None,
+                    read: landing::Object {
+                        device,
+                        inode,
+                        length: Some(metadata.len()),
+                        modified: None,
+                        hash: Some(super::super::state::hash(b"as set aside\n")),
+                    },
+                    changed: None,
+                    since: landing::seconds(crate::clock::system_time()),
+                    writers: None,
+                },
+            },
+        )
+        .unwrap();
+
+        let mut kept_when_written = false;
+        let (before, after) = failing_then(&folder, || {
+            kept_when_written = folder.retains().unwrap() && kept.exists();
+            let mut file = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&kept)
+                .unwrap();
+            std::io::Write::write_all(&mut file, b"what the program wrote after\n").unwrap();
+        });
+        assert!(
+            kept_when_written,
+            "the kept file was settled before the program wrote to it"
         );
         assert!(
-            after_change > before_change,
-            "no pass ran within five seconds of a change on disk"
+            after > before,
+            "no pass ran within five seconds of a program's write to a kept file"
         );
     }
 }
