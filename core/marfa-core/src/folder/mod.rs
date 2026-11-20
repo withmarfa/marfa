@@ -3060,9 +3060,9 @@ impl Folder {
             .get_or_init(|| executable::kept(&self.state_dir))
     }
 
-    /// The pass includes pinned members that the credential's source filter hides from listings.
-    /// Beneath a path with no item named yet, only the item of the file the
-    /// path names.
+    /// The pass includes pinned members that the credential's source filter
+    /// hides from listings. Beneath a path with no item named yet, the only
+    /// member is the item of the file the path names.
     fn members(&self, settings: &Settings) -> Result<HashSet<String>> {
         match self.pending_beneath_of(settings)? {
             beneath::PendingBeneath::No => Ok(self

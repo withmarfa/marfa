@@ -152,17 +152,19 @@ impl Folder {
     /// the next pass tries again.
     pub(super) fn resolve_beneath(&self) -> Result<Option<BeneathReport>> {
         let report = self.name_file_beneath()?;
-        let conn = self.core.conn()?;
-        match report
+        let waiting = report
             .as_ref()
             .and_then(|said| Some((&said.path, said.waiting.as_ref()?)))
-        {
-            Some(waiting) => store::meta_set(
-                &conn,
-                META_BENEATH_WAITING,
-                &serde_json::to_string(&waiting)?,
-            )?,
-            None => store::meta_delete(&conn, META_BENEATH_WAITING)?,
+            .map(serde_json::to_string)
+            .transpose()?;
+        let conn = self.core.conn()?;
+        // Only a change is written, so a pass that finds the same reason
+        // leaves the store as it was.
+        if store::meta_get(&conn, META_BENEATH_WAITING)? != waiting {
+            match &waiting {
+                Some(kept) => store::meta_set(&conn, META_BENEATH_WAITING, kept)?,
+                None => store::meta_delete(&conn, META_BENEATH_WAITING)?,
+            }
         }
         Ok(report)
     }
