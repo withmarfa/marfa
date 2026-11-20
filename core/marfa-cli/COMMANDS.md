@@ -3892,7 +3892,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Send a blocked, dead or unsent refused write again.
 
-A write blocked `awaiting_dependency` is released only by the answer to the write it waits behind, never by this command. A released write goes under a fresh idempotency key. A row write instead goes again with every write sent in its batch, as they went, under the batch's key, and an undo under its own key, unless either was blocked `key_spent`. A write blocked `record_unread` whose copy is now built from another instance than the one it was made against, or from one the set-aside could not tell, is held `instance_changed` instead, and goes only when released again.
+A write blocked `awaiting_dependency` is released only by the answer to the write it waits behind, never by this command. A released write goes under the idempotency key it holds: a row write goes again with every write sent in its batch, as they went, under the batch's key, and an undo under its own. One blocked `key_spent`, `conflict_unresolved` or `ancestor_unavailable` goes under a fresh key instead. A write blocked `server_restored` was never sent: the copy queued it to put back what the server lost when it was restored to an earlier point. A write blocked `record_unread` whose copy is now built from another instance than the one it was made against, or from one the set-aside could not tell, is held `instance_changed` instead, and goes only when released again.
 
 ```text
 marfa device release [OPTIONS] [ID]
@@ -3904,13 +3904,13 @@ marfa device release [OPTIONS] [ID]
 
 | Option | Description |
 | --- | --- |
-| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`, `instance_changed`, `record_unread`. |
+| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`, `instance_changed`, `record_unread`, `server_restored`. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device withdraw
 
-Take a write that is `dead`, or blocked `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`, `instance_changed` or `record_unread`, out of the queue, and put the copy back to what the server holds.
+Take a write that is `dead`, or blocked `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`, `instance_changed`, `record_unread` or `server_restored`, out of the queue, and put the copy back to what the server holds.
 
 A release sends a write again on the version it already names. A write blocked `conflict_unresolved` is refused the same way each time, and one blocked `ancestor_unavailable` too, unless the credential it is sent with has come to read the snapshot it names. A `dead` write has failed five times in a way that counts. The writes held for the withdrawn write are refused unsent. A row write goes with every write sent in its batch.
 

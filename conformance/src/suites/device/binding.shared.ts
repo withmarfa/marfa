@@ -53,6 +53,24 @@ export function heldBy(feed: StreamFeed, ...frames: SseFrame[]): Responder {
   });
 }
 
+/**
+ * `heldBy` at the head `head`. A copy that has taken an event asks from the
+ * one before it (`device/stream-asks-before-last`), and a server that holds
+ * that event names no head below it.
+ */
+export function heldAt(
+  head: string,
+  feed: StreamFeed,
+  ...frames: SseFrame[]
+): Responder {
+  return () => ({
+    kind: "sse",
+    frames: [connected, copyStreamCursor(head), ...frames],
+    hold: true,
+    feed,
+  });
+}
+
 /** The frame that tells a note was made, at `cursor`. */
 export function noteMade(id: string, cursor: string): SseFrame {
   return copyItemEvent(

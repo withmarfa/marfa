@@ -16,6 +16,7 @@ import {
   BUSY,
   bindingHarness,
   createsSent,
+  heldAt,
   heldBy,
   nextWait,
   noteMade,
@@ -140,7 +141,7 @@ describe("a hydration or a catch-up called on a copy that is watched", () => {
       if (call === "a catch-up") {
         events.set(
           held(copyReplay("12", [noteMade("n2", "12")])),
-          heldBy(feed),
+          heldAt("12", feed),
         );
       } else {
         events.set(
@@ -159,13 +160,15 @@ describe("a hydration or a catch-up called on a copy that is watched", () => {
       });
       // The call has the stream. What the watch's old connection still
       // carries is not applied, and the watch asks for no stream of its own.
+      // A catch-up asks from the event before 11, the last the copy took
+      // (`device/stream-asks-before-last`).
       feed.push(noteMade("lingering", "99"));
       await quietly();
       expect(calling.settled).toBe(false);
       expect(
         [asked, feed.opened],
         "the watch asked for a stream while the call held it",
-      ).toEqual([[call === "a catch-up" ? "11" : undefined], 1]);
+      ).toEqual([[call === "a catch-up" ? "10" : undefined], 1]);
       expect([listener.isOver, listener.endings]).toEqual([false, 0]);
       expect(
         listener.kinds,
@@ -179,10 +182,13 @@ describe("a hydration or a catch-up called on a copy that is watched", () => {
         `the call was refused or did not reach the cursor: ${JSON.stringify(done)}`,
       ).toBe("12");
       await untilOpened(feed, 2);
+      // A hydration forgets the last event its copy took, so the watch asks
+      // from the cursor it left, and after a catch-up from the event before
+      // 12, the last it took.
       expect(
         openedFrom(server).at(-1),
         "the watch did not hold its stream again from the cursor the call left",
-      ).toBe("12");
+      ).toBe(call === "a catch-up" ? "11" : "12");
       feed.push(noteMade("n3", "13"));
       await vi.waitFor(() => {
         expect(ids(listener)).toEqual(["n1", "n3"]);
@@ -215,14 +221,17 @@ describe("a hydration or a catch-up called on a copy that is watched", () => {
         release = resolve;
       });
       let asked = 0;
-      events.set(() => {
-        asked += 1;
-        return {
-          kind: "gated",
-          until: gate,
-          then: refusal(503, "unavailable", "busy"),
-        };
-      }, heldBy(feed));
+      events.set(
+        () => {
+          asked += 1;
+          return {
+            kind: "gated",
+            until: gate,
+            then: refusal(503, "unavailable", "busy"),
+          };
+        },
+        heldAt("11", feed),
+      );
       const stop = await device.newStop();
       const catchUp = device.catchUp(ending === "a stop" ? stop : undefined);
       await vi.waitFor(() => {
@@ -237,10 +246,12 @@ describe("a hydration or a catch-up called on a copy that is watched", () => {
       ).toBe(false);
 
       await untilOpened(feed, 2);
+      // From the event before 11, the last the copy took
+      // (`device/stream-asks-before-last`).
       expect(
         openedFrom(server).at(-1),
         "the watch did not hold its stream again from the cursor the call left",
-      ).toBe("11");
+      ).toBe("10");
       expect([listener.isOver, listener.endings]).toEqual([false, 0]);
       feed.push(noteMade("n2", "12"));
       await vi.waitFor(() => {

@@ -80,6 +80,7 @@ mod replace_tests;
 mod request_limit_tests;
 #[cfg(test)]
 mod resend_tests;
+mod restored;
 mod row_writes;
 mod scaffold;
 #[cfg(test)]

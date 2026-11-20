@@ -865,6 +865,7 @@ fn a_refill_whose_server_was_restored_clears_rather_than_keep_later_versions() {
         )],
     );
     server.on("/items/bulk-get", vec![pinned_row()]);
+    lost_on(&server);
     server.on(
         "/events",
         vec![
@@ -884,8 +885,58 @@ fn a_refill_whose_server_was_restored_clears_rather_than_keep_later_versions() {
     );
     assert_eq!(
         ids(&listed(&core).unwrap().1),
-        ["changed", "kept", "pinned"]
+        ["changed", "gone", "kept", "pinned"]
     );
+    assert_eq!(kept_blocked(&core), held_lost());
+}
+
+/// The server answers it holds neither `gone` nor either edge the copy held.
+fn lost_on(server: &Scripted) {
+    for path in ["/items/gone", "/edges/stays", "/edges/dropped"] {
+        server.on(
+            path,
+            vec![scripted::certified(scripted::refusal(404, "not_found"))],
+        );
+    }
+}
+
+/// Every queued write, as its kind and subject, each blocked `server_restored`.
+fn kept_blocked(core: &Core) -> Vec<(String, String)> {
+    let queue = core.queue().unwrap();
+    for write in &queue {
+        assert_eq!(
+            (write.verdict, write.reason.as_deref()),
+            (Some(crate::Verdict::Blocked), Some("server_restored")),
+            "{write:?}"
+        );
+    }
+    let mut kept: Vec<_> = queue
+        .iter()
+        .map(|write| {
+            (
+                format!("{:?}", write.kind),
+                write.subject_id().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    kept.sort();
+    kept
+}
+
+/// What `aged_out` held that the restored server lacks: `gone` and both
+/// edges. `kept` at a later version carries the same fields as the version
+/// the server holds, so no edit puts anything back.
+fn held_lost() -> Vec<(String, String)> {
+    let mut lost: Vec<(String, String)> = [
+        ("CreateEdge", "dropped"),
+        ("CreateEdge", "stays"),
+        ("CreateItem", "gone"),
+    ]
+    .into_iter()
+    .map(|(kind, id)| (kind.to_string(), id.to_string()))
+    .collect();
+    lost.sort();
+    lost
 }
 
 #[test]
@@ -1194,6 +1245,7 @@ fn a_server_restored_before_any_refill_clears_rather_than_fill_over_later_versio
         )],
     );
     server.on("/items/bulk-get", vec![pinned_row()]);
+    lost_on(&server);
     server.on("/events", vec![head("2"), replay(vec![], "2")]);
     let report = hydrate(&core).unwrap();
 
@@ -1208,7 +1260,520 @@ fn a_server_restored_before_any_refill_clears_rather_than_fill_over_later_versio
     );
     assert_eq!(
         ids(&listed(&core).unwrap().1),
-        ["changed", "kept", "pinned"]
+        ["changed", "gone", "kept", "pinned"]
+    );
+    assert_eq!(kept_blocked(&core), held_lost());
+}
+
+/// A receipt of a write the server answered for the item `id` at `version`
+/// and the time every scripted row carries, which no event has shown unless
+/// `seen`.
+fn receipt(core: &Core, id: &str, version: i64, removal: bool, seen: bool) {
+    receipt_of(core, "item", id, version, removal, seen);
+}
+
+/// `receipt` for a `subject` of `item` or `edge`.
+fn receipt_of(core: &Core, subject: &str, id: &str, version: i64, removal: bool, seen: bool) {
+    core.conn()
+        .unwrap()
+        .execute(
+            "INSERT INTO answer_receipts
+               (write_id, subject, id, version, updated_at, removal, answered_at, seen)
+             VALUES (?1, ?7, ?2, ?3, '2026-01-01T00:00:00Z', ?4, ?5, ?6)",
+            rusqlite::params![
+                format!("w {id}"),
+                id,
+                version,
+                removal,
+                store::now_millis(),
+                seen,
+                subject
+            ],
+        )
+        .unwrap();
+}
+
+fn receipts(core: &Core) -> i64 {
+    core.conn()
+        .unwrap()
+        .query_row("SELECT count(*) FROM answer_receipts", [], |row| row.get(0))
+        .unwrap()
+}
+
+#[test]
+fn a_restore_comparison_sets_aside_a_removal_whose_read_says_nothing() {
+    let server = Scripted::start();
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(core, &[row("kept", 5, &[])]);
+    });
+    // A removal of an item the copy no longer holds, which the server now
+    // refuses to read.
+    receipt(&core, "binned", 1, true, true);
+    server.on(
+        "/items/binned",
+        vec![scripted::certified(scripted::refusal(403, "forbidden"))],
+    );
+    server.on(
+        "/items",
+        vec![page(
+            vec![row("kept", 2, &[]), row("changed", 1, &[])],
+            None,
+        )],
+    );
+    server.on("/items/bulk-get", vec![pinned_row()]);
+    lost_on(&server);
+    server.on("/events", vec![head("2"), replay(vec![], "2")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(!report.in_place);
+    assert_eq!(
+        server.seen("/items/binned").len(),
+        1,
+        "the comparison read the removal"
+    );
+    assert_eq!(kept_blocked(&core), held_lost());
+    assert_eq!(
+        receipts(&core),
+        0,
+        "the unreadable removal stayed to be read"
+    );
+}
+
+#[test]
+fn a_refill_of_the_same_instance_reads_no_row_it_brought_back_as_the_server_answered() {
+    let server = Scripted::start();
+    let core = aged_out(&server);
+    receipt(&core, "kept", 1, false, false);
+    server.on(
+        "/items/kept",
+        vec![scripted::certified(scripted::json(
+            200,
+            &row("kept", 1, &[]).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert!(
+        server.seen("/items/kept").is_empty(),
+        "a row the refill brought at the stamp its receipt names was read again"
+    );
+    assert!(core.queue().unwrap().is_empty());
+    assert_eq!(receipts(&core), 0);
+}
+
+#[test]
+fn a_refill_of_the_same_instance_keeps_a_row_the_server_lost_that_the_walk_left_out() {
+    let server = Scripted::start();
+    let core = aged_out(&server);
+    receipt(&core, "gone", 1, false, false);
+    server.on(
+        "/items/gone",
+        vec![scripted::certified(scripted::refusal(404, "not_found"))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(server.seen("/items/gone").len(), 1);
+    assert_eq!(
+        kept_blocked(&core),
+        [("CreateItem".to_string(), "gone".to_string())],
+        "the row the walk left out was judged by the copy's own stale row"
+    );
+}
+
+/// `row` for `id` at `version`, titled `title`, in `state` since `updated_at`.
+fn row_as(id: &str, version: i64, title: &str, state: &str, updated_at: &str) -> Value {
+    let mut row = row(id, version, &[]);
+    row["item"]["properties"]["title"] = title.into();
+    row["item"]["state"] = state.into();
+    row["item"]["updated_at"] = updated_at.into();
+    row
+}
+
+fn beneath_version(core: &Core, subject: crate::model::Subject, id: &str) -> Option<i64> {
+    let conn = core.conn().unwrap();
+    match subject {
+        crate::model::Subject::Item => store::beneath_item(&conn, id)
+            .unwrap()
+            .map(|item| item.version),
+        crate::model::Subject::Edge => store::beneath_edge(&conn, id)
+            .unwrap()
+            .map(|edge| edge.version),
+    }
+}
+
+#[test]
+fn a_refill_in_place_puts_back_an_edit_the_server_holds_at_an_earlier_version() {
+    let server = Scripted::start();
+    // This device's edit made `kept` version 2, and the server was then
+    // restored to version 1 and written past the copy's cursor and anchor.
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(
+            core,
+            &[row_as(
+                "kept",
+                2,
+                "kept, edited",
+                "active",
+                "2026-01-01T00:00:00Z",
+            )],
+        );
+    });
+    receipt(&core, "kept", 2, false, false);
+    server.on(
+        "/items/kept",
+        vec![scripted::certified(scripted::json(
+            200,
+            &row("kept", 1, &[]).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("UpdateItem".to_string(), "kept".to_string())],
+        "the refill judged the row by the copy's own later version"
+    );
+    assert_eq!(server.seen("/items/kept").len(), 1);
+    assert_eq!(
+        core.get("kept").unwrap().unwrap().properties["title"],
+        "kept, edited"
+    );
+    assert_eq!(
+        beneath_version(&core, crate::model::Subject::Item, "kept"),
+        Some(1),
+        "the edit waits over a row the server does not hold"
+    );
+}
+
+#[test]
+fn a_refill_in_place_puts_back_an_edge_edit_the_server_holds_at_an_earlier_version() {
+    let server = Scripted::start();
+    let core = aged_out_after(&server, copy(&server), |core| {
+        let mut edge = edge_of("stays", "kept", "changed");
+        edge["version"] = 2.into();
+        edge["properties"] = json!({"note": "edited"});
+        let edge: crate::wire::WireEdge = serde_json::from_value(edge).unwrap();
+        store::put_server_edge(&core.conn().unwrap(), &edge).unwrap();
+    });
+    receipt_of(&core, "edge", "stays", 2, false, false);
+    server.on(
+        "/edges/stays",
+        vec![scripted::certified(scripted::json(
+            200,
+            &json!({"edge": edge_of("stays", "kept", "changed")}).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("UpdateEdge".to_string(), "stays".to_string())],
+        "the refill judged the edge by the copy's own later version"
+    );
+    assert_eq!(server.seen("/edges/stays").len(), 1);
+    assert_eq!(
+        beneath_version(&core, crate::model::Subject::Edge, "stays"),
+        Some(1),
+        "the edit waits over an edge the server does not hold"
+    );
+}
+
+#[test]
+fn a_refill_in_place_puts_back_in_the_bin_an_item_the_server_holds_out_of_it() {
+    let server = Scripted::start();
+    // This device trashed `kept`, which keeps its version and moves its time.
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(
+            core,
+            &[row_as("kept", 1, "kept", "trashed", "2026-01-02T00:00:00Z")],
+        );
+    });
+    receipt(&core, "kept", 1, true, false);
+    server.on(
+        "/items/kept",
+        vec![scripted::certified(scripted::json(
+            200,
+            &row("kept", 1, &[]).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("DeleteItem".to_string(), "kept".to_string())],
+        "the refill judged the removal by the copy's own row in the bin"
+    );
+    assert_eq!(
+        beneath_version(&core, crate::model::Subject::Item, "kept"),
+        Some(1)
+    );
+}
+
+#[test]
+fn a_refill_in_place_puts_back_an_edit_the_stream_showed_that_the_server_holds_at_an_earlier_version()
+ {
+    let server = Scripted::start();
+    // The stream showed this device's edit, so its receipt is seen and names
+    // nothing to set aside; the server was then restored to version 1 and
+    // written past the copy's cursor and anchor.
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(
+            core,
+            &[row_as(
+                "kept",
+                2,
+                "kept, edited",
+                "active",
+                "2026-01-01T00:00:00Z",
+            )],
+        );
+    });
+    receipt(&core, "kept", 2, false, true);
+    server.on(
+        "/items/kept",
+        vec![scripted::certified(scripted::json(
+            200,
+            &row("kept", 1, &[]).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("UpdateItem".to_string(), "kept".to_string())],
+        "the copy kept its later row over the server's with nothing queued"
+    );
+    assert_eq!(server.seen("/items/kept").len(), 1);
+    assert_eq!(
+        core.get("kept").unwrap().unwrap().properties["title"],
+        "kept, edited"
+    );
+    assert_eq!(
+        beneath_version(&core, crate::model::Subject::Item, "kept"),
+        Some(1)
+    );
+}
+
+#[test]
+fn a_refill_in_place_puts_back_an_edge_edit_the_stream_showed_that_the_server_holds_at_an_earlier_version()
+ {
+    let server = Scripted::start();
+    let core = aged_out_after(&server, copy(&server), |core| {
+        let mut edge = edge_of("stays", "kept", "changed");
+        edge["version"] = 2.into();
+        edge["properties"] = json!({"note": "edited"});
+        let edge: crate::wire::WireEdge = serde_json::from_value(edge).unwrap();
+        store::put_server_edge(&core.conn().unwrap(), &edge).unwrap();
+    });
+    receipt_of(&core, "edge", "stays", 2, false, true);
+    server.on(
+        "/edges/stays",
+        vec![scripted::certified(scripted::json(
+            200,
+            &json!({"edge": edge_of("stays", "kept", "changed")}).to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("UpdateEdge".to_string(), "stays".to_string())],
+        "the copy kept its later edge over the server's with nothing queued"
+    );
+    assert_eq!(server.seen("/edges/stays").len(), 1);
+    assert_eq!(
+        beneath_version(&core, crate::model::Subject::Edge, "stays"),
+        Some(1)
+    );
+}
+
+/// A copy that took `kept` at version 2 from a write's answer while the
+/// refill's page still listed version 1, and a server that now holds
+/// `server_row`.
+fn answered_while_listed(server_row: Value) -> (Scripted, Arc<Core>) {
+    let server = Scripted::start();
+    let core = aged_out_after(&server, copy(&server), |core| {
+        put(
+            core,
+            &[row_as(
+                "kept",
+                2,
+                "kept, edited",
+                "active",
+                "2026-01-02T00:00:00Z",
+            )],
+        );
+    });
+    server.on(
+        "/items/kept",
+        vec![scripted::certified(scripted::json(
+            200,
+            &server_row.to_string(),
+        ))],
+    );
+    server.on("/items", refill_pages());
+    server.on("/events", vec![head("60"), replay(vec![], "60")]);
+    (server, core)
+}
+
+#[test]
+fn a_write_answered_while_a_refill_lists_its_row_keeps_nothing_where_the_server_holds_it() {
+    let (server, core) = answered_while_listed(row_as(
+        "kept",
+        2,
+        "kept, edited",
+        "active",
+        "2026-01-02T00:00:00Z",
+    ));
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(
+        server.seen("/items/kept").len(),
+        1,
+        "the row refused as older was not read"
+    );
+    assert!(core.queue().unwrap().is_empty());
+    assert_eq!(core.get("kept").unwrap().unwrap().version, 2);
+}
+
+#[test]
+fn a_write_answered_while_a_refill_lists_its_row_takes_the_later_row_the_server_holds() {
+    let (server, core) = answered_while_listed(row_as(
+        "kept",
+        3,
+        "kept, later",
+        "active",
+        "2026-01-03T00:00:00Z",
+    ));
+    let report = hydrate(&core).unwrap();
+
+    assert!(report.in_place);
+    assert_eq!(server.seen("/items/kept").len(), 1);
+    assert!(core.queue().unwrap().is_empty());
+    let held = core.get("kept").unwrap().unwrap();
+    assert_eq!(
+        (held.version, held.properties["title"].clone()),
+        (3, json!("kept, later")),
+        "the copy kept its row over the later one the server holds"
+    );
+}
+
+#[test]
+fn a_restore_found_in_a_copy_with_nothing_to_set_aside_still_puts_back_a_removal() {
+    let server = Scripted::start();
+    // Every item the copy holds is read only, so nothing is set aside.
+    let core = aged_out_after(&server, copy(&server), |core| {
+        core.conn()
+            .unwrap()
+            .execute_batch("UPDATE items SET read_only = 1; DELETE FROM edges;")
+            .unwrap();
+    });
+    receipt(&core, "binned", 1, true, true);
+    server.on(
+        "/items",
+        vec![page(
+            vec![
+                row("kept", 1, &[]),
+                row("changed", 1, &[]),
+                row("binned", 1, &[]),
+            ],
+            None,
+        )],
+    );
+    server.on("/items/bulk-get", vec![pinned_row()]);
+    server.on("/events", vec![head("2"), replay(vec![], "2")]);
+    let report = hydrate(&core).unwrap();
+
+    assert!(!report.in_place);
+    assert_eq!(
+        kept_blocked(&core),
+        [("DeleteItem".to_string(), "binned".to_string())],
+        "a restore found with nothing set aside read no removal"
+    );
+}
+
+#[test]
+fn a_hydration_under_another_reach_keeps_nothing_its_reads_cannot_tell_lost() {
+    let server = Scripted::start();
+    let core = aged_out(&server);
+    receipt(&core, "gone", 1, false, false);
+    let other = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    server.on(
+        "/types",
+        vec![scripted::certified_under(
+            scripted::types(&[("core.note", None)]),
+            other,
+        )],
+    );
+    server.on(
+        "/edge-types",
+        vec![scripted::certified_under(scripted::edge_types(&[]), other)],
+    );
+    server.on(
+        "/keys/current",
+        vec![scripted::certified_under(
+            scripted::json(200, r#"{"type_permissions":{"core.note":"read"}}"#),
+            other,
+        )],
+    );
+    // A type the key no longer reads answers `404`, as a lost item does.
+    server.on(
+        "/items/gone",
+        vec![scripted::certified_under(
+            scripted::refusal(404, "not_found"),
+            other,
+        )],
+    );
+    server.on(
+        "/items",
+        vec![page_under(vec![row("kept", 1, &[])], None, other)],
+    );
+    server.on("/items/bulk-get", vec![pinned_row_under(other)]);
+    server.on(
+        "/events",
+        vec![
+            head_under("60", other),
+            scripted::stream(
+                vec![
+                    scripted::copy_marker_under("stream_cursor", "60", other),
+                    scripted::copy_marker_under("stream_live", "60", other),
+                ],
+                Then::End,
+            ),
+        ],
+    );
+    let report = hydrate(&core).unwrap();
+
+    assert!(!report.in_place);
+    assert!(
+        server.seen("/items/gone").is_empty(),
+        "a hydration under another reach read a receipt"
+    );
+    assert!(
+        core.queue().unwrap().is_empty(),
+        "a row the new reach cannot read was kept as lost"
     );
 }
 

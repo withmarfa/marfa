@@ -531,6 +531,9 @@ impl Folder {
             id,
             held: held.map(Box::new),
             before,
+            // The item's placements are listed whole, and the copy gives way
+            // to them: one the list leaves out is not kept beside them.
+            absent: false,
         };
         #[cfg(debug_assertions)]
         crate::fault::hold(|| "folder-give-way-read");

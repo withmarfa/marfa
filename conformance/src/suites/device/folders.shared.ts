@@ -12,11 +12,13 @@ import { expect } from "vitest";
 import { join } from "node:path";
 import {
   answers,
+  connected,
   edgeEvent,
   edgesPage,
   copyHeadRead,
   copyItemEvent,
   copyLiveReplay,
+  copyStreamCursor,
   refusal,
   SCRIPTED_EDGE_TYPES,
   wireEdge,
@@ -38,6 +40,7 @@ import type {
   Answer,
   RecordedRequest,
   SseFrame,
+  StreamFeed,
 } from "../../device/scripted-server.js";
 import type { WireEdgeOptions } from "../../device/marfa-answers.js";
 /**
@@ -559,6 +562,24 @@ export class EdgeDoor {
         head,
         this.events.filter((frame) => Number(frame.id) > Number(after)),
       );
+    };
+  }
+
+  /** `stream`, held open on `feed` once it has sent every change after the
+   *  cursor, as a watch's stream is. */
+  held(feed: StreamFeed): (request: RecordedRequest) => Answer {
+    return (request) => {
+      const after = Number(request.headers["last-event-id"] ?? "0");
+      return {
+        kind: "sse",
+        frames: [
+          connected,
+          copyStreamCursor(String(this.events.length + 1)),
+          ...this.events.filter((frame) => Number(frame.id) > after),
+        ],
+        hold: true,
+        feed,
+      };
     };
   }
 
