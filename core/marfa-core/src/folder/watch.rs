@@ -142,9 +142,9 @@ pub enum WatchError<E> {
     CredentialRefused(CoreError),
     /// The server's changes stopped reaching the directory.
     FollowEnded(CoreError),
-    /// Another Marfa instance answers at the folder's server, which holds
+    /// Another Marfa instance answers at the folder's server, `server`, which holds
     /// neither the folder nor its key, so no retry can reach the folder.
-    InstanceChanged { error: CoreError, server: String },
+    InstanceChanged { server: String },
     /// The directory could not be watched.
     Unwatchable(String),
     /// A pass failed, or a thread of the watch panicked (`CoreError::Fault`).
@@ -1072,7 +1072,7 @@ impl Folder {
                 .core
                 .http()
                 .map_or_else(|_| "this folder's server".into(), crate::http::Http::origin);
-            return WatchError::InstanceChanged { error, server };
+            return WatchError::InstanceChanged { server };
         }
         follow_ended(error)
     }
@@ -3038,7 +3038,11 @@ mod backoff_tests {
     #[test]
     fn passes_that_keep_failing_back_off_and_a_real_change_ends_the_wait() {
         let (_dir, folder, server) = online_folder(nothing_found());
-        std::fs::write(folder.root().join("Waiting.md"), "a write the server never takes\n").unwrap();
+        std::fs::write(
+            folder.root().join("Waiting.md"),
+            "a write the server never takes\n",
+        )
+        .unwrap();
         // Every request now meets a closed port.
         drop(server);
         crate::clock::set_manual(true);

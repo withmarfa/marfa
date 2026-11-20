@@ -338,8 +338,8 @@ pub fn stopped_for_another_instance(dir: &Path) -> Option<String> {
         .iter()
         .any(|(current, folder)| *current && folder.watching);
     (stopped && !held).then(|| {
-        let server = marfa_core::folder::origin_of(dir)
-            .unwrap_or_else(|| "this folder's server".into());
+        let server =
+            marfa_core::folder::origin_of(dir).unwrap_or_else(|| "this folder's server".into());
         marfa_core::folder::instance_changed_said(&server)
     })
 }
@@ -1089,9 +1089,15 @@ mod tests {
         };
         machine.opened_with(dir, "https://one.test".into(), "first".into());
         machine.ended(dir, &refused);
-        assert_eq!(machine.still_refused(dir, "https://one.test", "first"), Some(refused.clone()));
+        assert_eq!(
+            machine.still_refused(dir, "https://one.test", "first"),
+            Some(refused.clone())
+        );
         // The witness: another credential is tried.
-        assert_eq!(machine.still_refused(dir, "https://one.test", "second"), None);
+        assert_eq!(
+            machine.still_refused(dir, "https://one.test", "second"),
+            None
+        );
         // Refused the same way, so nothing is said of it: kept all the same.
         machine.opened_with(dir, "https://one.test".into(), "second".into());
         machine.ended(dir, &refused);
@@ -1107,7 +1113,10 @@ mod tests {
         };
         machine.opened_with(dir, "https://one.test".into(), "third".into());
         machine.ended(dir, &ended);
-        assert_eq!(machine.still_refused(dir, "https://one.test", "third"), None);
+        assert_eq!(
+            machine.still_refused(dir, "https://one.test", "third"),
+            None
+        );
     }
 
     #[test]
@@ -1137,10 +1146,19 @@ mod tests {
             Some(changed.clone())
         );
         // The witness: each change is tried.
-        assert_eq!(machine.still_refused(dir, "https://one.test", "second"), None);
-        assert_eq!(machine.still_refused(dir, "https://two.test", "first"), None);
+        assert_eq!(
+            machine.still_refused(dir, "https://one.test", "second"),
+            None
+        );
+        assert_eq!(
+            machine.still_refused(dir, "https://two.test", "first"),
+            None
+        );
         std::fs::write(&settings, "folder: two\n").unwrap();
-        assert_eq!(machine.still_refused(dir, "https://one.test", "first"), None);
+        assert_eq!(
+            machine.still_refused(dir, "https://one.test", "first"),
+            None
+        );
         assert!(not_watched(&changed).contains("tried again only once"));
     }
 
@@ -1159,9 +1177,15 @@ mod tests {
         };
         machine.opened_with(dir, "https://one.test".into(), "first".into());
         machine.ended(dir, &out);
-        assert_eq!(machine.still_refused(dir, "https://one.test", "first"), Some(out));
+        assert_eq!(
+            machine.still_refused(dir, "https://one.test", "first"),
+            Some(out)
+        );
         // The witness: a credential kept since is tried.
-        assert_eq!(machine.still_refused(dir, "https://one.test", "second"), None);
+        assert_eq!(
+            machine.still_refused(dir, "https://one.test", "second"),
+            None
+        );
     }
 
     #[test]

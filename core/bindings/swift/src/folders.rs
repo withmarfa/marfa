@@ -809,7 +809,10 @@ fn ended(error: marfa_core::WatchError<MarfaError>, origin: Option<&str>) -> Mar
                 &said,
             ),
         },
-        W::FollowEnded(error) | W::Core(error) | W::InstanceChanged { error, .. } => error.into(),
+        W::FollowEnded(error) | W::Core(error) => error.into(),
+        W::InstanceChanged { .. } => {
+            marfa_core::CoreError::expired(marfa_core::http::INSTANCE_CHANGED).into()
+        }
         W::Unwatchable(message) => MarfaError::Io { message },
         W::Told(error) => error,
     }
