@@ -466,7 +466,7 @@ export interface paths {
         get?: never;
         /**
          * Replace an item's tags
-         * @description Replaces the item's tags with the ones you send and returns them. An empty list clears all tags.
+         * @description Replaces the item's tags with the ones you send and returns them. An empty list clears all tags. Send `read_tags` to replace them only if the item still has the tags you read.
          */
         put: operations["replaceItemTags"];
         /**
@@ -13897,10 +13897,7 @@ export interface operations {
     };
     replaceItemTags: {
         parameters: {
-            query?: {
-                /** @description The item version you read. If it differs, no tag changes. Leave it out to replace the tags of the item as it is. */
-                version?: number;
-            };
+            query?: never;
             header?: {
                 /** @description A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it. */
                 "Idempotency-Key"?: string;
@@ -13921,6 +13918,8 @@ export interface operations {
                      * @default []
                      */
                     tags?: string[];
+                    /** @description The tags you read. If the item's tags now differ, in more or fewer tags and not in order, no tag changes. Leave it out to replace the tags of the item as it is. */
+                    read_tags?: string[];
                 };
             };
         };
@@ -13946,7 +13945,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: `tags` is not a list of valid tags or has more than 100, `version` is not a whole number of 1 or more, or the body has a field this endpoint doesn't take.
+             * @description - `validation_error`: `tags` is not a list of valid tags or has more than 100, `read_tags` is not a list of strings, or the body has a field this endpoint doesn't take.
              *     - `invalid_id`: the ID is not a valid item ID.
              */
             400: {
@@ -14011,7 +14010,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `version_conflict`: `version` differs from the item. `current` is the item now; no tag changed.
+             * @description - `version_conflict`: `read_tags` differs from the item's tags. `current` is the item now; no tag changed.
              *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.
              */
             409: {

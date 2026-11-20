@@ -23137,7 +23137,7 @@
           "Metadata"
         ],
         "summary": "Replace an item's tags",
-        "description": "Replaces the item's tags with the ones you send and returns them. An empty list clears all tags.",
+        "description": "Replaces the item's tags with the ones you send and returns them. An empty list clears all tags. Send `read_tags` to replace them only if the item still has the tags you read.",
         "security": [
           {
             "bearerAuth": []
@@ -23153,17 +23153,6 @@
             "description": "The ID of the item.",
             "name": "id",
             "in": "path"
-          },
-          {
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "The item version you read. If it differs, no tag changes. Leave it out to replace the tags of the item as it is."
-            },
-            "required": false,
-            "description": "The item version you read. If it differs, no tag changes. Leave it out to replace the tags of the item as it is.",
-            "name": "version",
-            "in": "query"
           },
           {
             "name": "Idempotency-Key",
@@ -23202,6 +23191,13 @@
                     },
                     "default": [],
                     "description": "The tags the item will have: at most 100, each up to 128 characters. An empty list clears them."
+                  },
+                  "read_tags": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The tags you read. If the item's tags now differ, in more or fewer tags and not in order, no tag changes. Leave it out to replace the tags of the item as it is."
                   }
                 },
                 "additionalProperties": false
@@ -23238,7 +23234,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `tags` is not a list of valid tags or has more than 100, `version` is not a whole number of 1 or more, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
+            "description": "- `validation_error`: `tags` is not a list of valid tags or has more than 100, `read_tags` is not a list of strings, or the body has a field this endpoint doesn't take.\n- `invalid_id`: the ID is not a valid item ID.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23349,7 +23345,7 @@
             }
           },
           "409": {
-            "description": "- `version_conflict`: `version` differs from the item. `current` is the item now; no tag changed.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "description": "- `version_conflict`: `read_tags` differs from the item's tags. `current` is the item now; no tag changed.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
             "content": {
               "application/json": {
                 "schema": {

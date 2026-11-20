@@ -142,6 +142,7 @@ export interface UpdateItemInput {
 
 export interface ReplaceTagsInput {
   tags?: string[];
+  read_tags?: string[];
 }
 
 /**
@@ -1440,13 +1441,8 @@ export class MarfaClient {
   async replaceTags(
     id: string,
     input: ReplaceTagsInput,
-    options?: { version?: number },
   ): Promise<ApiResponse<{ tags: string[] }>> {
-    const query =
-      options?.version === undefined
-        ? ""
-        : `?version=${String(options.version)}`;
-    return this.request<{ tags: string[] }>(`/items/${id}/tags${query}`, {
+    return this.request<{ tags: string[] }>(`/items/${id}/tags`, {
       method: "PUT",
       body: input,
     });

@@ -58,6 +58,7 @@ const UPDATE_FIELDS: [&str; 11] = [
     "edges",
 ];
 const TAG_FIELDS: [&str; 1] = ["tags"];
+const REPLACE_TAG_FIELDS: [&str; 2] = ["tags", "read_tags"];
 const BULK_GET_FIELDS: [&str; 2] = ["ids", "include"];
 const COUNT_FIELDS: [&str; 4] = ["ids", "backref", "edge", "table"];
 const TITLE_FIELDS: [&str; 1] = ["names"];
@@ -790,15 +791,25 @@ pub async fn set_tags(
 ) -> Answer {
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
-        let version = named_version(&uri)?;
-        let sent = only_declared(body.object(Bag::Properties)?, &TAG_FIELDS)?;
+        query::only(&uri, &[])?;
+        let sent = only_declared(body.object(Bag::Properties)?, &REPLACE_TAG_FIELDS)?;
         check_item_id(&id)?;
         let tags = sent
             .get("tags")
             .map(tags_of)
             .transpose()?
             .unwrap_or_default();
-        let change = Change::SetTags { id, tags, version };
+        // An item can hold a tag the bound refuses, such as one an archive
+        // restore wrote, so the tags named as read are not held to it.
+        let read_tags = sent
+            .get("read_tags")
+            .map(|read| strings_of(read, "read_tags"))
+            .transpose()?;
+        let change = Change::SetTags {
+            id,
+            tags,
+            read_tags,
+        };
         write::run(&door, &who, claim, change).await
     })
     .await
