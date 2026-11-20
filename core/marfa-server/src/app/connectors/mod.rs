@@ -13,10 +13,12 @@ use serde_json::{Map, Value, json};
 use super::App;
 use super::access::Caller;
 use super::faults::HOLD_CONNECTOR_WRITE;
+use super::fingerprint::Fingerprint;
 use super::housekeeping;
 use super::items;
 use super::query::bad_cursor;
 use super::refusal::{Code, Refusal, Result};
+use super::unit::Unit;
 use crate::app::clock::Stamp;
 pub use read_only::{ReadOnly, Registry};
 pub use request::{Batch, Lookup, Register, Replace, Run, Take, released};
@@ -230,15 +232,87 @@ pub async fn read(app: &App, caller: &Caller, id: String) -> Result<Value> {
     .await
 }
 
+pub const DELETED: &str = "connector.delete";
+pub const STATE_CLEARED: &str = "connector_state.delete";
+
 pub async fn remove(app: &App, caller: &Caller, id: String) -> Result<()> {
-    app.write(caller, "connector.delete", move |unit| {
-        let registration = find(unit.tx(), &id)?;
-        unit.caller
-            .require_connector_key_or_manager(&registration.key_id)?;
-        store::delete(unit.tx(), &id)?;
-        unit.audit("connector", &id, Some(json!({ "name": registration.name })))
+    app.write(caller, DELETED, move |unit| {
+        remove_in(unit, &id).map(|_| ())
     })
     .await
+}
+
+/// Deletes the registration in the caller's write, and answers how many runs went with it.
+pub(crate) fn remove_in(unit: &Unit<'_, '_>, id: &str) -> Result<i64> {
+    let registration = find(unit.tx(), id)?;
+    unit.caller
+        .require_connector_key_or_manager(&registration.key_id)?;
+    let runs = store::run_count(unit.tx(), id)?;
+    store::delete(unit.tx(), id)?;
+    unit.audit("connector", id, Some(json!({ "name": registration.name })))?;
+    Ok(runs)
+}
+
+fn summary(registration: &Registration) -> Value {
+    json!({
+        "id": registration.id,
+        "name": registration.name,
+        "source": registration.source,
+        "key_id": registration.key_id,
+    })
+}
+
+/// What deleting a registration removes and what outlives it, read in one snapshot.
+pub struct Deletion {
+    pub connector: Value,
+    /// What the registration holds as its source's current one; nothing where another holds it.
+    pub held: Option<super::inbound::Held>,
+    pub runs: i64,
+    pub state_kept: bool,
+    pub agreements_kept: i64,
+    digest: String,
+}
+
+impl Deletion {
+    /// The registration without its heartbeat or hold, whether it is current, and what that
+    /// removes. Runs and handled deliveries are left out: a running connector adds them.
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+}
+
+/// The registration as deleting it would find it, refused as `DELETE /connectors/{id}` refuses.
+pub(crate) fn deletion(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Deletion> {
+    let registration = find(tx, id)?;
+    caller.require_connector_key_or_manager(&registration.key_id)?;
+    let held = super::inbound::held_by(tx, &registration)?;
+    let mut fingerprint = Fingerprint::new("connector-delete");
+    fingerprint
+        .text(&registration.id)
+        .text(&registration.key_id)
+        .text(&registration.source)
+        .text(&registration.name)
+        .maybe(registration.description.as_deref())
+        .text(&registration.registered_at)
+        .number(registration.read_only_types.len() as i64);
+    for type_id in &registration.read_only_types {
+        fingerprint.text(type_id);
+    }
+    fingerprint.flag(held.is_some());
+    if let Some(held) = &held {
+        held.bind(&mut fingerprint);
+    }
+    let mut connector = summary(&registration);
+    connector["description"] = registration.description.clone().into();
+    connector["read_only_types"] = registration.read_only_types.clone().into();
+    Ok(Deletion {
+        connector,
+        runs: store::run_count(tx, &registration.id)?,
+        state_kept: store::document(tx, &registration.source)?.is_some(),
+        agreements_kept: store::agreement_counts(tx, &registration.source)?.0,
+        held,
+        digest: fingerprint.finish(),
+    })
 }
 
 pub async fn heartbeat(app: &App, caller: &Caller, id: String) -> Result<Value> {
@@ -404,24 +478,81 @@ pub async fn replace_state(
 }
 
 pub async fn clear_state(app: &App, caller: &Caller, id: String) -> Result<()> {
-    app.write(caller, "connector_state.delete", move |unit| {
-        let tx = unit.tx();
-        let registration = find(tx, &id)?;
-        unit.caller
-            .require_connector_key_or_manager(&registration.key_id)?;
-        let state = store::clear_document(tx, &registration.source)?;
-        let agreements = store::clear_agreements(tx, &registration.source)?;
-        unit.audit(
-            "connector",
-            &id,
-            Some(json!({
-                "source": registration.source,
-                "state": state,
-                "agreements": agreements,
-            })),
-        )
+    app.write(caller, STATE_CLEARED, move |unit| {
+        clear_in(unit, &id).map(|_| ())
     })
     .await
+}
+
+/// Clears the source's state and agreements in the caller's write, and answers how many
+/// agreements went.
+pub(crate) fn clear_in(unit: &Unit<'_, '_>, id: &str) -> Result<usize> {
+    let tx = unit.tx();
+    let registration = find(tx, id)?;
+    unit.caller
+        .require_connector_key_or_manager(&registration.key_id)?;
+    let state = store::clear_document(tx, &registration.source)?;
+    let agreements = store::clear_agreements(tx, &registration.source)?;
+    unit.audit(
+        "connector",
+        id,
+        Some(json!({
+            "source": registration.source,
+            "state": state,
+            "agreements": agreements,
+        })),
+    )?;
+    Ok(agreements)
+}
+
+/// What clearing a connector's state removes, read in one snapshot.
+pub struct Clearing {
+    pub connector: Value,
+    pub state: bool,
+    pub problems: usize,
+    pub agreements: i64,
+    pub waiting: i64,
+    digest: String,
+}
+
+impl Clearing {
+    /// The state, its problems and every agreement, as stored, without the times they were written.
+    pub fn digest(&self) -> &str {
+        &self.digest
+    }
+}
+
+/// The source's state as clearing it would find it, refused as `DELETE /connectors/{id}/state`
+/// refuses.
+pub(crate) fn clearing(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Clearing> {
+    let registration = find(tx, id)?;
+    caller.require_connector_key_or_manager(&registration.key_id)?;
+    let document = store::document(tx, &registration.source)?;
+    let mut fingerprint = Fingerprint::new("connector-state-clear");
+    fingerprint
+        .text(&registration.id)
+        .text(&registration.source);
+    match &document {
+        Some(held) => {
+            fingerprint
+                .flag(true)
+                .text(&printed(&held.state)?)
+                .text(&printed(&held.problems)?);
+        }
+        None => {
+            fingerprint.flag(false);
+        }
+    }
+    store::bind_agreements(tx, &registration.source, &mut fingerprint)?;
+    let (agreements, waiting) = store::agreement_counts(tx, &registration.source)?;
+    Ok(Clearing {
+        connector: summary(&registration),
+        state: document.is_some(),
+        problems: document.as_ref().map_or(0, |held| held.problems.len()),
+        agreements,
+        waiting,
+        digest: fingerprint.finish(),
+    })
 }
 
 pub async fn take_hold(app: &App, caller: &Caller, id: String, request: Take) -> Result<Value> {

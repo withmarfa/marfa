@@ -4,6 +4,7 @@ use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value};
 
 use crate::app::clock::Stamp;
+use crate::app::fingerprint::Fingerprint;
 use crate::app::refusal::{Refusal, Result};
 
 pub struct Registration {
@@ -236,6 +237,12 @@ pub fn insert_run(tx: &Transaction<'_>, kept: usize, report: &Run) -> Result<()>
     Ok(())
 }
 
+pub fn run_count(tx: &Transaction<'_>, connector_id: &str) -> Result<i64> {
+    Ok(tx
+        .prepare_cached("SELECT COUNT(*) FROM connector_runs WHERE connector_id = ?1")?
+        .query_row([connector_id], |row| row.get(0))?)
+}
+
 pub fn runs_page(
     tx: &Transaction<'_>,
     connector_id: &str,
@@ -371,6 +378,38 @@ pub fn agreements_on(tx: &Transaction<'_>, item_id: &str) -> Result<Vec<(String,
         )?
         .query_map([item_id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?)
+}
+
+/// How many agreements the source holds, and how many of them wait.
+pub fn agreement_counts(tx: &Transaction<'_>, source: &str) -> Result<(i64, i64)> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT COUNT(*), COALESCE(SUM(waiting), 0) FROM connector_agreements WHERE source = ?1",
+        )?
+        .query_row([source], |row| Ok((row.get(0)?, row.get(1)?)))?)
+}
+
+/// Adds each of the source's agreements, by item, whether it waits and its record as stored.
+pub fn bind_agreements(
+    tx: &Transaction<'_>,
+    source: &str,
+    fingerprint: &mut Fingerprint,
+) -> Result<()> {
+    let mut statement = tx.prepare_cached(
+        "SELECT item_id, waiting, record FROM connector_agreements WHERE source = ?1 \
+         ORDER BY item_id",
+    )?;
+    let mut rows = statement.query([source])?;
+    let mut count = 0i64;
+    while let Some(row) = rows.next()? {
+        let item_id: String = row.get(0)?;
+        let waiting: i64 = row.get(1)?;
+        let record: String = row.get(2)?;
+        fingerprint.text(&item_id).flag(waiting == 1).text(&record);
+        count += 1;
+    }
+    fingerprint.number(count);
+    Ok(())
 }
 
 pub fn clear_agreements(tx: &Transaction<'_>, source: &str) -> Result<usize> {

@@ -974,7 +974,7 @@ describe("the schema and admin endpoints", () => {
         "passkey",
       ]);
       const withheld =
-        /revoke_app|end_sign|remove|delete_connector|clear|retire|drop|adopt|restore|export|claim|recover|password|passkey|update_server|clock/;
+        /revoke_app|end_sign|remove|drop|adopt|restore|export|claim|recover|password|passkey|update_server|clock/;
       // The witness: the pattern matches the names of the withheld tasks.
       expect(withheld.test("marfa_revoke_app")).toBe(true);
       expect(withheld.test("marfa_adopt_backup_folder")).toBe(true);
@@ -1214,7 +1214,7 @@ describe("a tool the endpoint does not list to the credential", () => {
 });
 
 describe("the owner-task tools' annotations", () => {
-  it("marks narrowing an app, purging and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only", async () => {
+  it("marks narrowing an app, purging, deleting a connector, retiring an endpoint and the maintenance tool as destructive, the other owner-task changes as not, and each listing tool as read-only", async () => {
     const management = process.env.MARFA_MANAGEMENT_KEY;
     if (!management) throw new Error("MARFA_MANAGEMENT_KEY is required");
     const admin = await connectMcp(
@@ -1229,6 +1229,8 @@ describe("the owner-task tools' annotations", () => {
       for (const name of [
         "marfa_narrow_app",
         "marfa_purge",
+        "marfa_delete_connector",
+        "marfa_retire_endpoint",
         "marfa_maintain",
       ]) {
         expect(hints.get(name)?.destructiveHint, name).toBe(true);

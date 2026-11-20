@@ -197,6 +197,44 @@ pub fn endpoints(tx: &Transaction<'_>, source: &str) -> Result<Vec<Endpoint>> {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+/// Every endpoint of the source, newest first, with the hash of its address.
+pub fn endpoints_hashed(tx: &Transaction<'_>, source: &str) -> Result<Vec<(Endpoint, String)>> {
+    let mut statement =
+        tx.prepare_cached("SELECT * FROM inbound_endpoints WHERE source = ?1 ORDER BY seq DESC")?;
+    let rows = statement.query_map([source], |row| Ok((endpoint(row)?, row.get("token_hash")?)))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn endpoint_hashed(
+    tx: &Transaction<'_>,
+    source: &str,
+    id: &str,
+) -> Result<Option<(Endpoint, String)>> {
+    Ok(tx
+        .prepare_cached("SELECT * FROM inbound_endpoints WHERE source = ?1 AND id = ?2")?
+        .query_row(params![source, id], |row| {
+            Ok((endpoint(row)?, row.get("token_hash")?))
+        })
+        .optional()?)
+}
+
+/// The ids of the source's deliveries no one has marked handled, oldest first.
+pub fn unhandled_ids(tx: &Transaction<'_>, source: &str) -> Result<Vec<String>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT id FROM inbound_deliveries WHERE source = ?1 AND handled_at IS NULL ORDER BY seq",
+    )?;
+    let rows = statement.query_map([source], |row| row.get(0))?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+pub fn unhandled_on(tx: &Transaction<'_>, endpoint_id: &str) -> Result<i64> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT COUNT(*) FROM inbound_deliveries WHERE endpoint_id = ?1 AND handled_at IS NULL",
+        )?
+        .query_row([endpoint_id], |row| row.get(0))?)
+}
+
 pub fn endpoint_of(tx: &Transaction<'_>, source: &str, id: &str) -> Result<Option<Endpoint>> {
     Ok(tx
         .prepare_cached("SELECT * FROM inbound_endpoints WHERE source = ?1 AND id = ?2")?

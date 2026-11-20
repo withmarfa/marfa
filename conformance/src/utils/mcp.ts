@@ -142,8 +142,10 @@ export const ADMIN_TOOLS_BY_PERMISSION: Readonly<Record<string, string[]>> = {
   "config.manage": ["marfa_change_settings", "marfa_settings"],
   "connectors.manage": [
     "marfa_connectors",
+    "marfa_delete_connector",
     "marfa_health",
     "marfa_make_endpoint",
+    "marfa_retire_endpoint",
   ],
   "grants.manage": ["marfa_apps", "marfa_narrow_app"],
   "instance.maintain": ["marfa_maintain"],

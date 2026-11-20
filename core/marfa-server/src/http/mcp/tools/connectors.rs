@@ -136,7 +136,7 @@ pub async fn list(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>
 }
 
 /// Keeps the declared types that fit, and counts the rest.
-fn keep_types_that_fit(connector: &mut Value) {
+pub(super) fn keep_types_that_fit(connector: &mut Value) {
     let Some(types) = connector["read_only_types"].as_array().cloned() else {
         return;
     };

@@ -18,6 +18,7 @@ pub mod edges;
 pub mod enrichment;
 pub mod events;
 pub mod faults;
+pub mod fingerprint;
 pub mod folders;
 pub mod health;
 pub mod housekeeping;
