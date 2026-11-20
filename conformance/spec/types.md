@@ -474,7 +474,7 @@ If a type names `enum_values` on a field, a member of `items_fields` or a table 
 
 ### `types/enum-values-kept`
 
-When `PUT /types/{id}` leaves a field, a member of `items_fields` or a table column that names `enum_values` on a `type` that is neither `enum` nor an `array` whose `items_type` is `enum` with the `type`, the `items_type` and the `enum_values` the stored type holds for it, the server MUST NOT refuse the replacement for that member under `types/enum-values-kind`.
+When `PUT /types/{id}`, or a change through the MCP tool `marfa_save_type`, leaves a field, a member of `items_fields` or a table column that names `enum_values` on a `type` that is neither `enum` nor an `array` whose `items_type` is `enum` with the `type`, the `items_type` and the `enum_values` the stored type holds for it, the server MUST NOT refuse the replacement for that member under `types/enum-values-kind`.
 
 **Reason:** a type restored with such a list (`types/enum-values-restored`) could otherwise never be changed in any other way. A member the replacement adds, or whose `type`, `items_type` or `enum_values` it changes, is refused.
 

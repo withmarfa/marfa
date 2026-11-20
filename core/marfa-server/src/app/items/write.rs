@@ -1714,7 +1714,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         }
         let written = conflict::changed(&properties, stale.current);
         rules
-            .validate_merged(&row.type_id, &properties, true, &written, &Map::new())
+            .validate_merged(&row.type_id, &properties, true, &written, stale.current)
             .map_err(|error| self.invalid(error, None))?;
         let mut properties = rules.coerced_properties(&row.type_id, &properties);
         let id = match self.claim {

@@ -846,7 +846,7 @@ When a write changes the `blob_ref` of a file item that holds one to a different
 
 ### `blobs/file-bytes-replaced-set`
 
-When a write changes the `blob_ref` of a file item and sets `extracted_text`, `width`, `height` or `duration`, the server MUST store the value the write sets.
+When a write changes the `blob_ref` of a file item and names `extracted_text`, `width`, `height` or `duration`, including at the value the item already holds, the server MUST store the value the write names.
 
 **Reason:** a writer that sets a value in the write that moves the bytes knows what the new bytes hold, and the sweep never overwrites it. A value the write sends back as the item holds it counts as set, so the write names it and the server keeps it.
 
