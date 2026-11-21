@@ -47,8 +47,8 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     let second = seed(&["note", "Second", &format!("{marker} two"), "live,beta"]);
     let third = seed(&[
         "note",
-        &format!("{marker} in the title"),
-        "three longer words make this match less concentrated",
+        "Third",
+        &format!("{marker} three longer words make this match less concentrated"),
     ]);
     let file = seed(&["file", "notes.txt", &format!("{marker} in a file")]);
 
