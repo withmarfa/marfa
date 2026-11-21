@@ -87,7 +87,10 @@ pub fn is_name(name: &str) -> bool {
                     .bytes()
                     .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
         })
-        && name.bytes().next().is_some_and(|byte| byte.is_ascii_lowercase())
+        && name
+            .bytes()
+            .next()
+            .is_some_and(|byte| byte.is_ascii_lowercase())
 }
 
 /// The reserved root a plugin's type `id` sits under, if any.
@@ -154,11 +157,7 @@ fn identity_faults(object: &Obj) -> Vec<Problem> {
     text_field(object, "description", DESCRIPTION_CAP, &mut faults);
     text_field(object, "maker", NAME_CAP, &mut faults);
     match object.get("mark") {
-        None => faults.push(fault(
-            "mark",
-            "missing_required_field",
-            "mark is required",
-        )),
+        None => faults.push(fault("mark", "missing_required_field", "mark is required")),
         Some(mark) => {
             if let Some(issue) = icon_issue(Some(mark), "mark") {
                 faults.push(fault("mark", "invalid_schema", issue.message()));
@@ -326,9 +325,13 @@ fn below<'a>(path: &'a str, folder: &str) -> Option<&'a str> {
 }
 
 fn read_object(path: &str, content: &Result<Vec<u8>, String>) -> Result<Obj, Problem> {
-    let bytes = content
-        .as_ref()
-        .map_err(|why| fault(path, "file_unreadable", format!("Cannot read {path}: {why}")))?;
+    let bytes = content.as_ref().map_err(|why| {
+        fault(
+            path,
+            "file_unreadable",
+            format!("Cannot read {path}: {why}"),
+        )
+    })?;
     match serde_json::from_slice::<Value>(bytes) {
         Ok(Value::Object(object)) => Ok(object),
         Ok(_) => Err(fault(
@@ -625,7 +628,12 @@ pub fn index_lookup<'a>(index: &'a Value, name: &str) -> Result<(&'a str, &'a st
         .get("bundle")
         .and_then(Value::as_str)
         .filter(|file| *file == bundle_file_name(name))
-        .ok_or_else(|| format!("{INDEX} names no bundle file {} for {name}", bundle_file_name(name)))?;
+        .ok_or_else(|| {
+            format!(
+                "{INDEX} names no bundle file {} for {name}",
+                bundle_file_name(name)
+            )
+        })?;
     let digest = entry
         .get("sha256")
         .and_then(Value::as_str)
@@ -679,7 +687,10 @@ fn words(field: &Value, key: &str) -> Vec<String> {
         .flatten()
         .filter_map(|word| match word {
             Value::String(word) => Some(word.clone()),
-            Value::Object(word) => word.get("value").and_then(Value::as_str).map(str::to_string),
+            Value::Object(word) => word
+                .get("value")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             _ => None,
         })
         .collect()
@@ -963,10 +974,17 @@ mod tests {
         assert_eq!(bundle["format"], json!(1));
         assert_eq!(bundle["version"], json!("1.2.3"));
         assert_eq!(bundle["name"], json!("tickets"));
-        assert_eq!(bundle["types"][0]["guidance"], json!("File one per request."));
+        assert_eq!(
+            bundle["types"][0]["guidance"],
+            json!("File one per request.")
+        );
         assert_eq!(bundle["edge_types"][0]["id"], json!("blocks"));
         assert!(!bundle.contains_key("connector"));
-        assert!(bundle_faults(&bundle).is_empty(), "{:?}", bundle_faults(&bundle));
+        assert!(
+            bundle_faults(&bundle).is_empty(),
+            "{:?}",
+            bundle_faults(&bundle)
+        );
     }
 
     #[test]
@@ -976,7 +994,12 @@ mod tests {
         named["version"] = json!("1.0.0");
         files[0] = file(MANIFEST, named);
         let refused = build_bundle(&files, "1.0.0").unwrap_err();
-        assert!(refused.iter().any(|held| held.path == "plugin.json: version"), "{refused:?}");
+        assert!(
+            refused
+                .iter()
+                .any(|held| held.path == "plugin.json: version"),
+            "{refused:?}"
+        );
     }
 
     #[test]
@@ -990,7 +1013,10 @@ mod tests {
         files.remove(2);
         let verdict = check_source(&files, &shipped_registry().unwrap()).unwrap();
         let problems = &verdict.types.files[0].problems;
-        assert!(problems.iter().any(|held| held.code == "forbidden"), "{problems:?}");
+        assert!(
+            problems.iter().any(|held| held.code == "forbidden"),
+            "{problems:?}"
+        );
     }
 
     #[test]
@@ -1002,7 +1028,11 @@ mod tests {
         bundle["types"][0]["id"] = json!("app.acme.ticket");
         let faults = bundle_faults(&bundle);
         assert!(faults.iter().any(|held| held.path == "extra"), "{faults:?}");
-        assert!(faults.iter().any(|held| held.path == "types.0.id" && held.code == "forbidden"));
+        assert!(
+            faults
+                .iter()
+                .any(|held| held.path == "types.0.id" && held.code == "forbidden")
+        );
     }
 
     #[test]
@@ -1026,16 +1056,27 @@ mod tests {
         let mut cut = stored.clone();
         cut["fields"].as_object_mut().unwrap().remove("reporter");
         cut["fields"]["kind"]["enum_values"] = json!(["bug"]);
-        cut["fields"]["stage"]["status_values"] = json!([{ "value": "open", "group": "not_started" }]);
-        let paths: Vec<String> = narrowings(&stored, &cut).into_iter().map(|held| held.path).collect();
+        cut["fields"]["stage"]["status_values"] =
+            json!([{ "value": "open", "group": "not_started" }]);
+        let paths: Vec<String> = narrowings(&stored, &cut)
+            .into_iter()
+            .map(|held| held.path)
+            .collect();
         assert_eq!(
             paths,
-            ["fields.kind.enum_values.chore", "fields.reporter", "fields.stage.status_values.done"]
+            [
+                "fields.kind.enum_values.chore",
+                "fields.reporter",
+                "fields.stage.status_values.done"
+            ]
         );
         let mut retyped = stored.clone();
         retyped["fields"]["reporter"] = json!({ "type": "integer" });
         retyped["fields"]["kind"]["required"] = json!(true);
-        let paths: Vec<String> = narrowings(&stored, &retyped).into_iter().map(|held| held.path).collect();
+        let paths: Vec<String> = narrowings(&stored, &retyped)
+            .into_iter()
+            .map(|held| held.path)
+            .collect();
         assert_eq!(paths, ["fields.kind", "fields.reporter"]);
     }
 

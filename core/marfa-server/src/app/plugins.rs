@@ -58,12 +58,29 @@ fn row(tx: &Transaction<'_>, name: &str) -> Result<Option<Installed>> {
             "SELECT version, manifest, installed_at, installed_by, updated_at FROM plugins \
              WHERE name = ?1",
             [name],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()?;
-    held.map(|(version, manifest, installed_at, installed_by, updated_at)| {
-        read_row(name, version, &manifest, installed_at, installed_by, updated_at)
-    })
+    held.map(
+        |(version, manifest, installed_at, installed_by, updated_at)| {
+            read_row(
+                name,
+                version,
+                &manifest,
+                installed_at,
+                installed_by,
+                updated_at,
+            )
+        },
+    )
     .transpose()
 }
 
@@ -184,8 +201,9 @@ fn problems_json(problems: &[Problem]) -> Vec<Value> {
 /// Refuses a bundle whose shape is wrong, then one with a type under a reserved root.
 fn require_shape(bundle: &Obj) -> Result<()> {
     let faults = plugin::bundle_faults(bundle);
-    let (reserved, shape): (Vec<Problem>, Vec<Problem>) =
-        faults.into_iter().partition(|fault| fault.code == "forbidden");
+    let (reserved, shape): (Vec<Problem>, Vec<Problem>) = faults
+        .into_iter()
+        .partition(|fault| fault.code == "forbidden");
     if !shape.is_empty() {
         let named: Vec<&str> = shape.iter().map(|fault| fault.path.as_str()).collect();
         return Err(Refusal::validation(format!(
@@ -275,7 +293,11 @@ fn clashes_refusal(clashes: Vec<ChildClash>) -> Refusal {
     let message = format!(
         "This version of the plugin gives a type a field or status word that {} already declares in another shape. Change or remove it on {}, then install again.",
         named.join(", "),
-        if named.len() == 1 { "that type" } else { "each of those types" }
+        if named.len() == 1 {
+            "that type"
+        } else {
+            "each of those types"
+        }
     );
     let conflicts: Vec<Value> = clashes
         .iter()
@@ -462,7 +484,10 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
     }
     let installed_at = read("installed_at").ok_or("names no installed_at")?;
     let updated_at = read("updated_at").ok_or("names no updated_at")?;
-    let installed_by = line.get("installed_by").filter(|by| by.is_object()).cloned();
+    let installed_by = line
+        .get("installed_by")
+        .filter(|by| by.is_object())
+        .cloned();
     Ok(Archived {
         name: name.clone(),
         line: Installed {
