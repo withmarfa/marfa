@@ -289,7 +289,7 @@ const SINCE_VERSION_2: [&str; 1] = ["plugin"];
 const PROVENANCE: &str = "provenance";
 
 /// Where an archived type came from. Version 1 names a registered type `user`.
-fn archived_origin(line: &Value, version: u64) -> Result<Origin> {
+fn archived_origin(line: &Value, version: u64, type_id: Option<&str>) -> Result<Origin> {
     let refused = |message: String| invalid(message).with_detail("entry", INSTANCE);
     let origin = match line.pointer("/provenance/origin") {
         None => None,
@@ -328,6 +328,11 @@ fn archived_origin(line: &Value, version: u64) -> Result<Origin> {
                     if marfa_rules::plugin::is_name(&name)
                         && marfa_rules::plugin::Version::parse(&version).is_some() =>
                 {
+                    if let Some(root) = type_id.and_then(marfa_rules::plugin::reserved_root) {
+                        return Err(refused(format!(
+                            "The archive names a type under {root}.* from a plugin, and no plugin registers one there."
+                        )));
+                    }
                     Ok(Origin::Plugin { name, version })
                 }
                 _ => Err(refused(
@@ -575,8 +580,9 @@ impl Rows {
         let registrations = &mut self.registrations;
         match kind {
             "type" => {
-                let origin = archived_origin(line, self.version)?;
-                if let Some(id) = body.get("id").and_then(Value::as_str)
+                let id = body.get("id").and_then(Value::as_str);
+                let origin = archived_origin(line, self.version, id)?;
+                if let Some(id) = id
                     && !self.type_ids.insert(id.to_string())
                 {
                     return Err(registered_twice("type_id", id));

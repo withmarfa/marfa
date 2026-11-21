@@ -275,6 +275,46 @@ describe("plugins from the terminal", () => {
     }
   });
 
+  it("refuses a plugins address that is not text before it fetches, naming the variable and printing no value", async () => {
+    const name = `${root}-undecodable`;
+    const id = `${root}.undecodable-thing`;
+    trackType(c.ctx, id);
+    const bundle = JSON.stringify(bundleOf(name, id, "1.0.0"));
+    const served = await release({
+      "plugins.json": JSON.stringify({
+        format: 1,
+        plugins: [
+          {
+            ...manifest(name),
+            version: "1.0.0",
+            has_connector: false,
+            bundle: `${name}.plugin.json`,
+            sha256: sha256(bundle),
+          },
+        ],
+      }),
+      [`${name}.plugin.json`]: bundle,
+    });
+    try {
+      const refused = await c.cli.run(["--json", "plugins", "install", name], {
+        undecodable: { name: "MARFA_PLUGINS_URL", text: served.url },
+      });
+      expect(refused.code).toBe(1);
+      expect(refused.stderr).toContain("MARFA_PLUGINS_URL");
+      expect(refused.stderr + refused.stdout).not.toContain(served.url);
+      expect(served.asked).toEqual([]);
+      // The witness: the same address as text installs, so a request was producible.
+      const installed = await c.cli
+        .withEnv({ MARFA_PLUGINS_URL: served.url })
+        .json<Plugin>(["plugins", "install", name]);
+      expect(installed).toMatchObject({ name, version: "1.0.0" });
+      expect(served.asked).toHaveLength(2);
+    } finally {
+      served.server.close();
+      await c.cli.run(["plugins", "remove", name]);
+    }
+  });
+
   it("refuses a bundle whose SHA-256 is not the one the index lists, exiting 3 with plugins_unreachable and installing nothing", async () => {
     const name = `${root}-tampered`;
     const id = `${root}.tampered-thing`;

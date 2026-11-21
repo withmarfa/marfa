@@ -151,8 +151,15 @@ describe("a plugin's source folder from the terminal", () => {
         code: "file_name_mismatch",
       }),
     ]);
+    const codeOf = (stderr: string) =>
+      (
+        JSON.parse(stderr.trim().split("\n").at(-1) ?? "") as {
+          error: { code: string };
+        }
+      ).error.code;
     const bundled = await marfa(
       [
+        "--json",
         "plugins",
         "bundle",
         folder,
@@ -163,14 +170,19 @@ describe("a plugin's source folder from the terminal", () => {
     );
     expect(bundled.code).not.toBe(0);
     expect(bundled.stderr).toContain("edge-types/first.json");
+    expect(codeOf(bundled.stderr)).toBe("file_name_mismatch");
     // No server listens: the install stops at the folder, before any request.
     const unserved = {
       MARFA_API_URL: "http://127.0.0.1:9",
       MARFA_API_KEY: "mrf_unused",
       MARFA_NO_KEYCHAIN: "1",
     };
-    const installed = await marfa(["plugins", "install", folder], unserved);
+    const installed = await marfa(
+      ["--json", "plugins", "install", folder],
+      unserved,
+    );
     expect(installed.code).not.toBe(0);
+    expect(codeOf(installed.stderr)).toBe("file_name_mismatch");
     expect(installed.stderr).toContain("edge-types/first.json");
     expect(installed.stderr).toContain("does not build");
     // The witness: named after its id, the same folder checks clean.

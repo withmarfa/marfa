@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -101,6 +101,11 @@ function single(name: string, id: string, fields: Partial<Bundle> = {}) {
     edge_types: [],
     ...fields,
   });
+}
+
+/** A part of a name or id that no earlier run of a test body on this server used. */
+function fresh(): string {
+  return randomUUID().replaceAll("-", "").slice(0, 8);
 }
 
 let origin: FreshServer;
@@ -489,14 +494,16 @@ describe("a newer version of an installed plugin", () => {
   });
 
   it("refuses 403 the same or an older version to a key without write on an edge type's stored reverse name", async () => {
-    const watched = (version: string, reverse: boolean) =>
-      single("stored-reverse", "storedreverse.thing", {
+    const part = fresh();
+    const [forward, reverse] = [`watches-${part}`, `watched-by-${part}`];
+    const watched = (version: string, stored: boolean) =>
+      single(`stored-reverse-${part}`, `storedreverse${part}.thing`, {
         version,
         edge_types: [
           {
-            id: "watches",
+            id: forward,
             cardinality: "many-to-many",
-            ...(reverse ? { reverse_name: "watched-by" } : {}),
+            ...(stored ? { reverse_name: reverse } : {}),
           },
         ],
       });
@@ -506,7 +513,7 @@ describe("a newer version of an installed plugin", () => {
       origin,
       ["schema.write"],
       { "*": "write" },
-      { watches: "write" },
+      { [forward]: "write" },
     );
     for (const version of ["1.0.0", "0.9.0"]) {
       const refused = await forwardOnly.installPlugin(watched(version, false));
@@ -518,7 +525,7 @@ describe("a newer version of an installed plugin", () => {
       origin,
       ["schema.write"],
       { "*": "write" },
-      { watches: "write", "watched-by": "write" },
+      { [forward]: "write", [reverse]: "write" },
     );
     const again = await both.installPlugin(watched("1.0.0", false));
     expect(again.status, JSON.stringify(again.error)).toBe(200);
@@ -528,12 +535,13 @@ describe("a newer version of an installed plugin", () => {
   });
 
   it("takes a version that moves a requirement from the type's required list to the field", async () => {
+    const part = fresh();
     const versioned = (version: string, inField: boolean) =>
-      single("moved-required", "movedrequired.thing", {
+      single(`moved-required-${part}`, `movedrequired${part}.thing`, {
         version,
         types: [
           {
-            id: "movedrequired.thing",
+            id: `movedrequired${part}.thing`,
             description: "A thing whose title is required.",
             ...(inField ? {} : { required: ["title"] }),
             fields: {
@@ -908,6 +916,44 @@ describe("plugins in an archive", () => {
     ).toBe("registered");
   });
 
+  it("restores an export taken after the owner deleted the types a plugin's stored bundle names as parents", async () => {
+    const part = fresh();
+    const name = `parent-gone-${part}`;
+    const parent = `user.parent-gone-${part}`;
+    const child = `parentgone${part}.child`;
+    const registered = await owner.registerType({
+      id: parent,
+      fields: { title: { type: "string" } },
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const installed = await owner.installPlugin(
+      single(name, child, {
+        types: [
+          {
+            id: child,
+            parent,
+            description: "A child of a type the owner registered.",
+            fields: { note: { type: "string" } },
+          },
+        ],
+      }),
+    );
+    expect(installed.status, JSON.stringify(installed.error)).toBe(201);
+    expect((await owner.deleteType(child)).status).toBe(200);
+    expect((await owner.deleteType(parent)).status).toBe(200);
+    const archive = await owner.exportArchive({ state: "any" });
+    expect(archive.status).toBe(200);
+    const local = new MarfaClient({
+      baseUrl: destination.apiUrl,
+      controlSocket: destination.controlSocket,
+    });
+    const restored = await local.restoreArchive(archive.data);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    const record = await elsewhere.getPlugin(name);
+    expect(record.status).toBe(200);
+    expect(record.data.types).toEqual([]);
+  });
+
   it("restores a version 1 archive whose type names the origin user as registered", async () => {
     const id = "user.from-version-one";
     const archive = tar([
@@ -942,7 +988,7 @@ describe("plugins in an archive", () => {
   });
 
   it("refuses a version 2 archive whose type names the origin user", async () => {
-    const id = "user.user-in-version-two";
+    const id = `user.user-in-version-two-${fresh()}`;
     const lines = (origin: string) =>
       tar([
         {
@@ -1007,7 +1053,7 @@ describe("a version 2 archive's provenance and install records", () => {
     }).restoreArchive(archive);
 
   it("refuses a type whose origin or creator is mistyped, missing, outside the sign-in kinds or at odds with its plugin", async () => {
-    const id = "user.mistyped-origin";
+    const id = `user.mistyped-origin-${fresh()}`;
     const typed = (provenance: Record<string, unknown>) =>
       archiveOf(
         [{ type: { id, fields: { title: { type: "string" } } }, provenance }],
@@ -1044,8 +1090,44 @@ describe("a version 2 archive's provenance and install records", () => {
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
   });
 
+  it("refuses a type from a plugin under a root no plugin registers, which it restores under common", async () => {
+    const part = fresh();
+    const typed = (id: string) =>
+      archiveOf(
+        [
+          {
+            type: { id, fields: { title: { type: "string" } } },
+            provenance: {
+              origin: "plugin",
+              plugin: { name: "claimed", version: "1.0.0" },
+              created_by: null,
+            },
+          },
+        ],
+        0,
+      );
+    for (const root of ["core", "system", "marfa", "app", "user"]) {
+      const id = `${root}.plugin-claimed-${part}`;
+      const refused = await restore(typed(id));
+      expect(refused.status, id).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect((await elsewhere.getType(id)).status, id).toBe(404);
+    }
+    // The witness: the same line under common restores, so a plugin's type was producible.
+    const id = `common.plugin-claimed-${part}`;
+    const restored = await restore(typed(id));
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect((await elsewhere.getType(id)).data.provenance?.origin).toBe(
+      "plugin",
+    );
+  });
+
   it("refuses a plugin line whose times, installer, edge types, fingerprint or bundle definitions are not ones the server writes or installs", async () => {
-    const plugin = single("archived-record", "archivedrecord.thing");
+    const part = fresh();
+    const plugin = single(
+      `archived-record-${part}`,
+      `archivedrecord${part}.thing`,
+    );
     const line = (fields: Record<string, unknown>) => ({
       plugin: {
         name: plugin.name,
@@ -1067,10 +1149,15 @@ describe("a version 2 archive's provenance and install records", () => {
       {
         bundle: {
           ...plugin,
-          types: [{ id: "archivedrecord.thing", description: "No fields." }],
+          types: [
+            { id: `archivedrecord${part}.thing`, description: "No fields." },
+          ],
         },
       },
       { edge_types: "none" },
+      { edge_types: [""] },
+      { edge_types: ["NOT AN EDGE ID"] },
+      { edge_types: ["about"] },
       { fingerprint: "AB".repeat(32) },
       { fingerprint: "ab" },
       { fingerprint: null },
@@ -1086,6 +1173,7 @@ describe("a version 2 archive's provenance and install records", () => {
         [
           line({
             installed_by: { kind: "local", id: "local", name: "Local command" },
+            edge_types: [`gone-link-${part}`],
           }),
         ],
         1,
@@ -1095,6 +1183,7 @@ describe("a version 2 archive's provenance and install records", () => {
     const read = await elsewhere.getPlugin(plugin.name);
     expect(read.status).toBe(200);
     expect(read.data.fingerprint).toBe("ab".repeat(32));
+    expect(read.data.edge_types).toEqual([]);
     await expectMatchesSchema("GET", "/plugins/{name}", 200, read.data);
   });
 });
@@ -1333,40 +1422,39 @@ describe("installing a plugin with a connector", () => {
 
 describe("an edge type an earlier version brought", () => {
   it("keeps reporting an edge type a newer version omits, through an export, a restore and the removal", async () => {
+    const part = fresh();
+    const [plugin, link, thing] = [
+      `review-plugin-${part}`,
+      `review-link-${part}`,
+      `reviewplugin${part}.thing`,
+    ];
     const versioned = (version: string, linked: boolean) =>
-      single("review-plugin", "reviewplugin.thing", {
+      single(plugin, thing, {
         version,
-        edge_types: linked
-          ? [{ id: "review-link", cardinality: "many-to-many" }]
-          : [],
+        edge_types: linked ? [{ id: link, cardinality: "many-to-many" }] : [],
       });
     const first = await owner.installPlugin(versioned("1.0.0", true));
     expect(first.status, JSON.stringify(first.error)).toBe(201);
     const omitted = await owner.installPlugin(versioned("1.1.0", false));
     expect(omitted.status, JSON.stringify(omitted.error)).toBe(200);
-    expect(omitted.data.edge_types).toEqual(["review-link"]);
+    expect(omitted.data.edge_types).toEqual([link]);
     const held = await owner.listEdgeTypes();
-    expect(held.data.data.map((edge) => edge.id)).toContain("review-link");
+    expect(held.data.data.map((edge) => edge.id)).toContain(link);
     const archive = await owner.exportArchive({ state: "any" });
     expect(archive.status).toBe(200);
     const line = archiveLines(archive.data, "instance")
       .map((held) => held.plugin as { name: string; edge_types: string[] })
-      .find((held) => held?.name === "review-plugin");
-    expect(line?.edge_types).toEqual(["review-link"]);
+      .find((held) => held?.name === plugin);
+    expect(line?.edge_types).toEqual([link]);
     const local = new MarfaClient({
       baseUrl: destination.apiUrl,
       controlSocket: destination.controlSocket,
     });
     const restored = await local.restoreArchive(archive.data);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-    expect(
-      (await elsewhere.getPlugin("review-plugin")).data.edge_types,
-    ).toEqual(["review-link"]);
-    const removed = await owner.removePlugin("review-plugin");
+    expect((await elsewhere.getPlugin(plugin)).data.edge_types).toEqual([link]);
+    const removed = await owner.removePlugin(plugin);
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
-    expect(removed.data.kept).toEqual({
-      types: ["reviewplugin.thing"],
-      edge_types: ["review-link"],
-    });
+    expect(removed.data.kept).toEqual({ types: [thing], edge_types: [link] });
   });
 });

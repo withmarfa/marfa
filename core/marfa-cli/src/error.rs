@@ -113,6 +113,9 @@ pub enum CliError {
     DeviceCodeEnded,
     #[error("{0}")]
     Invalid(String),
+    /// A plugin source folder's definition file named other than its id.
+    #[error("{0}")]
+    FileNameMismatch(String),
     /// An export written whole but for the files it names and does not carry.
     #[error(
         "the archive lacks {} blob(s), which its files.ndjson.gz marks not_carried or lost: {}; it holds everything else it names",
@@ -385,6 +388,7 @@ own_codes! {
     CliError::CredentialEnded => "unauthorized",
     CliError::DeviceCodeEnded => "device_code_ended",
     CliError::Invalid(_) => "invalid",
+    CliError::FileNameMismatch(_) => "file_name_mismatch",
     CliError::ArchiveLacksBlobs(_)
     | CliError::ArchiveKeptApart { .. }
     | CliError::RestoreLacksBlobs(_) => "blobs_missing",
@@ -499,6 +503,7 @@ impl CliError {
             | CliError::DocsUnreachable { .. }
             | CliError::PluginsUnreachable { .. } => Exit::Environment,
             CliError::Invalid(_)
+            | CliError::FileNameMismatch(_)
             | CliError::ArchiveLacksBlobs(_)
             | CliError::ArchiveKeptApart { .. }
             | CliError::RestoreLacksBlobs(_)
@@ -962,6 +967,7 @@ mod tests {
             "docs_section_not_found",
             "docs_unreachable",
             "plugins_unreachable",
+            "file_name_mismatch",
             "blobs_missing",
             "install",
         ] {
@@ -1008,6 +1014,7 @@ mod tests {
             CliError::CredentialEnded,
             CliError::DeviceCodeEnded,
             CliError::Invalid(String::new()),
+            CliError::FileNameMismatch(String::new()),
             CliError::ContractMismatch {
                 origin: String::new(),
                 served: None,

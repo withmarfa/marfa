@@ -329,11 +329,19 @@ fn problems_said(problems: &[Problem]) -> String {
 fn built(folder: &Path, version: &str) -> Result<Obj, CliError> {
     let files = source_files(folder)?;
     plugin::build_bundle(&files, version).map_err(|problems| {
-        CliError::Invalid(format!(
+        let said = format!(
             "{} does not build into a bundle: {}",
             folder.display(),
             problems_said(&problems)
-        ))
+        );
+        if problems
+            .iter()
+            .any(|problem| problem.code == "file_name_mismatch")
+        {
+            CliError::FileNameMismatch(said)
+        } else {
+            CliError::Invalid(said)
+        }
     })
 }
 
@@ -465,7 +473,13 @@ struct Release {
 impl Release {
     /// `MARFA_PLUGINS_URL` where it is set and not empty, else the plugins repository's latest release.
     fn from_environment() -> Result<Release, CliError> {
-        Release::at(std::env::var(RELEASE_VARIABLE).ok())
+        match std::env::var(RELEASE_VARIABLE) {
+            Ok(address) => Release::at(Some(address)),
+            Err(std::env::VarError::NotPresent) => Release::at(None),
+            Err(std::env::VarError::NotUnicode(_)) => Err(CliError::Invalid(format!(
+                "{RELEASE_VARIABLE} is not text this command can read: set it to the release address alone"
+            ))),
+        }
     }
 
     fn at(address: Option<String>) -> Result<Release, CliError> {

@@ -1008,11 +1008,27 @@ If `POST /restore` reads an archive at version 2 with a `type` line whose `prove
 
 ### `archive/restore-plugin-line`
 
-If `POST /restore` reads a `plugin` line whose `bundle` `POST /plugins` would refuse for its shape or for the definition of a type or an edge type it holds, whose `name` or `version` differs from its bundle's, whose `edge_types` is not a list naming each edge type of its bundle and each name once, whose `installed_at` or `updated_at` is not a time in the form the server writes, whose `installed_by` is neither `null` nor a sign-in's `kind` (`browser`, `app`, `key` or `local`), `id` and `name`, or whose `fingerprint` is not a SHA-256 in lowercase hexadecimal, then the server MUST answer `400 validation_error` naming the line and keep no record of the archive.
+If `POST /restore` reads a `plugin` line whose `bundle` `POST /plugins` would refuse for its shape or for the definition of a type or an edge type it holds, whose `name` or `version` differs from its bundle's, whose `edge_types` is not a list naming each edge type of its bundle and each name once, whose `edge_types` names an empty string, a string that is not an edge type id or an edge type Marfa ships, whose `installed_at` or `updated_at` is not a time in the form the server writes, whose `installed_by` is neither `null` nor a sign-in's `kind` (`browser`, `app`, `key` or `local`), `id` and `name`, or whose `fingerprint` is not a SHA-256 in lowercase hexadecimal, then the server MUST answer `400 validation_error` naming the line and keep no record of the archive.
 
-**Reason:** a restored record is answered by `GET /plugins/{name}`, so it holds only what that answer's schema allows. Its bundle is judged as installing judges it, with the archive's types and the instance's as the types it may name, since a type it installed may since have been deleted.
+**Reason:** a restored record is answered by `GET /plugins/{name}`, so it holds only what that answer's schema allows. A plugin may have brought an edge type the owner has since deleted, so `edge_types` is history and need not name an edge type the instance holds now, but no plugin can have brought a name that is no edge type id or one Marfa ships.
 
 **Tests:** `compliance/plugins.test.ts › refuses a plugin line whose times, installer, edge types, fingerprint or bundle definitions are not ones the server writes or installs`.
+
+### `archive/restore-plugin-history`
+
+When `POST /restore` reads a `plugin` line whose `bundle` is well formed, the server MUST keep the install record whether or not the instance or the archive holds a parent that a type of the bundle names.
+
+**Reason:** a stored bundle is history. The owner may delete a plugin's types and the types they name as parents, and the export that follows must restore as it was written, so a restore judges each definition of the bundle on its own and never against what the instance holds now.
+
+**Tests:** `compliance/plugins.test.ts › restores an export taken after the owner deleted the types a plugin's stored bundle names as parents`.
+
+### `archive/restore-plugin-type-root`
+
+If `POST /restore` reads a `type` line whose `provenance.origin` is `plugin` and whose `id` sits under `core`, `system`, `marfa`, `app` or `user`, then the server MUST answer `400 validation_error` and register no type of the archive.
+
+**Reason:** installing refuses a plugin's type under those roots (`plugins/install-reserved-root`), so no archive written by a server holds one, and a restored type is read back as `origin: plugin` only when a plugin could have registered it.
+
+**Tests:** `compliance/plugins.test.ts › refuses a type from a plugin under a root no plugin registers, which it restores under common`.
 
 ### `archive/export-plugins`
 

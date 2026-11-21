@@ -480,7 +480,8 @@ fn edge_type_problem(path: &str, issues: EdgeIssues) -> Problem {
     }
 }
 
-fn is_shipped_edge(id: &str) -> bool {
+/// Whether `id` names an edge type Marfa ships.
+pub fn is_shipped_edge(id: &str) -> bool {
     crate::builtin::shipped_edge_types().is_ok_and(|held| {
         held.iter()
             .any(|edge| edge.get("id").and_then(Value::as_str) == Some(id))

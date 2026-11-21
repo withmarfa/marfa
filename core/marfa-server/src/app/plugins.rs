@@ -501,6 +501,11 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
         .get("edge_types")
         .and_then(edge_type_names)
         .filter(|names| {
+            names
+                .iter()
+                .all(|id| marfa_rules::schema::edge_id(id) && !plugin::is_shipped_edge(id))
+        })
+        .filter(|names| {
             bundle_ids(&bundle, "edge_types")
                 .iter()
                 .all(|id| names.iter().any(|name| name == id))
@@ -536,8 +541,8 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
     })
 }
 
-/// Each restored record's bundle judged as installing it judges its definitions, against the
-/// catalog with the archive's own types, so a type it names need not be held.
+/// Each restored record's bundle judged as installing it judges its definitions on their own: a
+/// stored bundle is history, so a parent it names that no type holds now is not required.
 pub fn judge_restored(
     before: &Catalog,
     archived_types: &[Obj],
@@ -546,7 +551,22 @@ pub fn judge_restored(
     let base = marfa_rules::schema::with_set_stored(&before.types, archived_types);
     for line in archived {
         let bundle = &line.line.manifest;
-        types::write::judge_bundle_types(&base, &bundle_objects(bundle, "types"))
+        let definitions = bundle_objects(bundle, "types");
+        let held = marfa_rules::schema::with_set_stored(&base, &definitions);
+        let on_their_own: Vec<Obj> = definitions
+            .into_iter()
+            .map(|mut definition| {
+                let gone = definition
+                    .get("parent")
+                    .and_then(Value::as_str)
+                    .is_some_and(|parent| !held.contains(parent));
+                if gone {
+                    definition.remove("parent");
+                }
+                definition
+            })
+            .collect();
+        types::write::judge_bundle_types(&base, &on_their_own)
             .and_then(|()| edge_types::judge_bundle(&bundle_objects(bundle, "edge_types")))
             .map_err(|refused| {
                 Refusal::validation(format!(

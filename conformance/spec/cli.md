@@ -1678,11 +1678,11 @@ If the release address `MARFA_PLUGINS_URL` names, or an address a release redire
 
 ### `cli/plugins-address-unread`
 
-If the release address `MARFA_PLUGINS_URL` names is not an `http` or `https` address with a host and no query or fragment, then the CLI MUST refuse it before it sends any request, naming `MARFA_PLUGINS_URL` without printing its value.
+If the release address `MARFA_PLUGINS_URL` names is not text, or is not an `http` or `https` address with a host and no query or fragment, then the CLI MUST refuse it before it sends any request, naming `MARFA_PLUGINS_URL` without printing its value.
 
-**Reason:** an address that does not parse cannot be checked for a user name or a password, so the CLI prints none of it.
+**Reason:** an address that does not parse cannot be checked for a user name or a password, so the CLI prints none of it. A value the CLI cannot read as text is set, so it never selects the default release.
 
-**Tests:** `cli/plugins.test.ts › refuses a plugins address carrying a user name or password before it fetches, printing and sending neither`.
+**Tests:** `cli/plugins.test.ts › refuses a plugins address carrying a user name or password before it fetches, printing and sending neither`, `› refuses a plugins address that is not text before it fetches, naming the variable and printing no value`.
 
 ### `cli/plugins-install-digest`
 
