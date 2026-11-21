@@ -199,6 +199,51 @@ describe("plugins from the terminal", () => {
     }
   });
 
+  it("refuses a plugins address carrying a user name or password before it fetches, printing and sending neither", async () => {
+    const name = `${root}-credentialed`;
+    const id = `${root}.credentialed-thing`;
+    trackType(c.ctx, id);
+    const bundle = JSON.stringify(bundleOf(name, id, "1.0.0"));
+    const served = await release({
+      "plugins.json": JSON.stringify({
+        format: 1,
+        plugins: [
+          {
+            ...manifest(name),
+            version: "1.0.0",
+            has_connector: false,
+            bundle: `${name}.plugin.json`,
+            sha256: createHash("sha256").update(bundle).digest("hex"),
+          },
+        ],
+      }),
+      [`${name}.plugin.json`]: bundle,
+    });
+    const secret = "hunter2-plugins-secret";
+    try {
+      const carrying = served.url.replace(
+        "http://",
+        `http://reader:${secret}@`,
+      );
+      const refused = await c.cli
+        .withEnv({ MARFA_PLUGINS_URL: carrying })
+        .run(["--json", "plugins", "install", name]);
+      expect(refused.code).not.toBe(0);
+      expect(refused.stderr).toContain("user name or password");
+      expect(refused.stderr + refused.stdout).not.toContain(secret);
+      expect(served.asked).toEqual([]);
+      // The witness: the same release without the user info installs.
+      const installed = await c.cli
+        .withEnv({ MARFA_PLUGINS_URL: served.url })
+        .json<Plugin>(["plugins", "install", name]);
+      expect(installed).toMatchObject({ name, version: "1.0.0" });
+      expect(served.asked).toHaveLength(2);
+    } finally {
+      served.server.close();
+      await c.cli.run(["plugins", "remove", name]);
+    }
+  });
+
   it("refuses a bundle whose SHA-256 is not the one the index lists, exiting 3 with plugins_unreachable and installing nothing", async () => {
     const name = `${root}-tampered`;
     const id = `${root}.tampered-thing`;

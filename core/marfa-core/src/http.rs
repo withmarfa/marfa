@@ -310,7 +310,7 @@ impl Agents {
         }
     }
 
-    /// Follows redirects without cross-origin credentials or HTTPS downgrades.
+    /// Follows redirects without cross-origin credentials, HTTPS downgrades or user info.
     pub fn get(
         &self,
         url: &str,
@@ -320,6 +320,13 @@ impl Agents {
         let mut at = url.to_string();
         let mut left_origin = false;
         for _ in 0..=limit {
+            if Url::parse(&at)
+                .is_ok_and(|url| !url.username().is_empty() || url.password().is_some())
+            {
+                return Err(ureq::Error::Other(
+                    "an address carrying a user name or password is refused".into(),
+                ));
+            }
             let agent = if marfa_telemetry::host::may_use_proxy(&at) {
                 &self.proxied
             } else {
@@ -4883,6 +4890,33 @@ mod tests {
             hop(&at("http://a.test/x"), &at("http://a.test/y")),
             Hop::SameOrigin
         );
+    }
+
+    #[test]
+    fn an_address_or_a_redirect_carrying_user_info_is_refused_before_it_is_requested() {
+        let (target, seen) = recording_listener(|first| {
+            if first.contains(" /next") {
+                "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into()
+            } else if first.contains(" /plain") {
+                "HTTP/1.1 302 Found\r\nLocation: /next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into()
+            } else {
+                "HTTP/1.1 302 Found\r\nLocation: http://user:secret@127.0.0.1:9/next\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into()
+            }
+        });
+        let agents = Agents::new(Agent::config_builder);
+        // The witness: a redirect with no user info is followed.
+        let plain = agents.get(&format!("http://127.0.0.1:{target}/plain"), &[], 2);
+        assert_eq!(plain.unwrap().status().as_u16(), 200);
+        let refused = agents.get(&format!("http://127.0.0.1:{target}/carrying"), &[], 2);
+        assert!(matches!(refused, Err(ureq::Error::Other(_))), "{refused:?}");
+        let direct = agents.get(
+            &format!("http://user:secret@127.0.0.1:{target}/next"),
+            &[],
+            2,
+        );
+        assert!(matches!(direct, Err(ureq::Error::Other(_))), "{direct:?}");
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 3, "{seen:?}");
     }
 
     #[test]
