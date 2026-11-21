@@ -1122,27 +1122,35 @@ When a hydration declares `*` beside hidden types, a device MUST hold every type
 
 ### `device/hydrate-every-type-no-system`
 
-While a device's slice is `*` alone, a device MUST NOT apply an event for a hidden item that is not pinned.
+While a device's slice is `*` alone, a device MUST NOT apply an event for a hidden item that the copy does not hold and that is not pinned.
 
-**Reason:** the listing the slice reads leaves hidden types out (`folder-setup/search-default-types`), so a copy that took one by event would hold what no hydration of the same slice holds. A pinned item keeps taking its updates, whatever the slice.
+**Reason:** the listing the slice reads leaves hidden types out (`folder-setup/search-default-types`), so a copy that took one by event would hold what no hydration of the same slice holds. A pinned item, and a hidden item the copy already holds (`device/keep-held-hidden`), keeps taking its updates.
 
 **Tests:** `device/hydrate-every-type.test.ts › takes no system item by event, but one that is pinned`, `device/hidden-types-live.test.ts › holds no app item in a slice of every type, by hydration or by event, and holds a user item the same way`.
 
 ### `device/slice-hidden-subtype`
 
-While a device's slice names a visible type and does not name a hidden subtype of it exactly, a device MUST NOT take an item of that hidden subtype that is neither pinned nor named by a queued write, whether a hydration or an event brings it.
+While a device's slice names a visible type, and names neither a hidden subtype of it nor a hidden type above that subtype exactly, a device MUST NOT take an item of that hidden subtype that the copy does not hold and that is neither pinned nor named by a queued write, whether a hydration or an event brings it.
 
-**Reason:** naming a type opens only that type's own hidden items (`search-and-filters/type-hidden-exact`), so a copy that took a hidden subtype by event would hold what no hydration of the same slice holds.
+**Reason:** a type opens its own hidden items and those of its hidden subtypes only when it is named exactly (`search-and-filters/type-hidden-exact`), so a copy that took a hidden subtype by event would hold what no hydration of the same slice holds.
 
 **Tests:** `device/hidden-types-slice.test.ts › takes no hidden subtype of a type it names by event, and takes the type's own item`.
 
 ### `device/read-hidden`
 
-When a caller lists or searches a working copy, a device MUST leave out each hidden item (`items/hidden-types`) the copy holds, unless a type the request names is that item's hidden type, written exactly and not as a wildcard, or is above it.
+When a caller lists or searches a working copy, a device MUST leave out each hidden item (`items/hidden-types`) the copy holds, unless the request reads the bin (`device/read-hidden-bin`), or a type the request names exactly, not as a wildcard, is that item's hidden type or a hidden type above it.
 
 **Reason:** a copy can hold a hidden item that a pin, a slice naming its type or an earlier release took, and a device keeps every row it holds, so nothing a person made is lost to a server restored behind the copy. It hides such an item when it reads, by the server's rule (`search-and-filters/type-hidden-exact`), so the copy answers what the server answers.
 
-**Tests:** `device/hidden-types-slice.test.ts › keeps a hidden item an earlier release held across a catch-up, and lists or finds it only where its exact type is named`.
+**Tests:** `device/hidden-types-slice.test.ts › keeps a hidden item an earlier release held and applies its update, and lists or finds it only where its exact type is named`.
+
+### `device/keep-held-hidden`
+
+When an event changes a hidden item that a working copy holds, a device MUST apply the event as it applies an event for an item of a visible type that the slice takes.
+
+**Reason:** a copy an earlier release made can hold hidden items its slice no longer takes, one perhaps with a queued edit, and dropping the row would lose what the person can still read and recover. The item leaves only when the server purges it or the copy's other rules let it go.
+
+**Tests:** `device/hidden-types-slice.test.ts › keeps a hidden item an earlier release held and applies its update, and lists or finds it only where its exact type is named`.
 
 ### `device/read-hidden-bin`
 

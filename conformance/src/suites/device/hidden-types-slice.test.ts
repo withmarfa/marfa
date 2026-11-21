@@ -15,7 +15,8 @@ import {
  * A slice that names a visible type takes no hidden subtype of it
  * (`device/slice-hidden-subtype`), and a hidden item a copy already holds stays
  * in it and is left out of what the copy lists and searches, as the server
- * leaves it out (`device/read-hidden`).
+ * leaves it out (`device/read-hidden`), while its updates still reach it
+ * (`device/keep-held-hidden`).
  */
 
 let harness: Harness | undefined;
@@ -54,7 +55,7 @@ it("takes no hidden subtype of a type it names by event, and takes the type's ow
   ).toBe(false);
 });
 
-it("keeps a hidden item an earlier release held across a catch-up, and lists or finds it only where its exact type is named", async () => {
+it("keeps a hidden item an earlier release held and applies its update, and lists or finds it only where its exact type is named", async () => {
   harness = await startHarness("hidden-subtype-kept");
   const { server, device } = harness;
   scriptHydration(server, { head: "10", catalog });
@@ -66,10 +67,15 @@ it("keeps a hidden item an earlier release held across a catch-up, and lists or 
   server.copyAnswer(
     "GET",
     "/events",
-    copyReplay("11", [
+    copyReplay("12", [
       copyItemEvent("11", "item.created", wireItem({ id: "later" })),
+      copyItemEvent(
+        "12",
+        "item.updated",
+        wireItem({ id: "s1", type: HIDDEN, version: 2 }),
+      ),
     ]),
-    copyHeadRead("11"),
+    copyHeadRead("12"),
   );
   expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
   expect((await device.pin("s1")).ok).toBe(true);
@@ -88,10 +94,12 @@ it("keeps a hidden item an earlier release held across a catch-up, and lists or 
   const caught = await device.catchUp();
   expect(caught.ok, JSON.stringify(caught)).toBe(true);
   expect((await device.get("later")).ok, "the stream was applied").toBe(true);
+  const held = await device.get("s1");
+  expect(held.ok, "the copy let go of a hidden item it held").toBe(true);
   expect(
-    (await device.get("s1")).ok,
-    "the copy let go of a hidden item it held",
-  ).toBe(true);
+    held.ok ? held.value?.version : undefined,
+    "the copy missed the update of a hidden item it held",
+  ).toBe(2);
 
   const listed = async (type?: string | string[]) => {
     const answer = await device.list(type === undefined ? {} : { type });
