@@ -2010,6 +2010,100 @@ async fn a_database_named_by_a_bare_file_name_uri_is_upgraded_with_its_copy() {
     upgraded_by_uri(&place.file, "file:marfa.db?mode=rw").await;
 }
 
+#[tokio::test]
+async fn a_database_named_by_a_uri_that_asks_for_rwc_is_upgraded_with_its_copy() {
+    let place = folder();
+    upgraded_by_uri(
+        &place.file,
+        &format!("file:{}?mode=rwc", place.file.display()),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn a_new_database_named_by_a_uri_that_asks_for_rwc_is_made_and_read_back() {
+    let place = folder();
+    let by_uri = Options {
+        path: DatabasePath::Uri(format!("file:{}?mode=rwc", place.file.display())),
+        ..options(&place.file, MIGRATIONS)
+    };
+
+    let db = db_open(&by_uri, Arc::default())
+        .map_err(|f| f.message)
+        .unwrap();
+    db.close().await;
+
+    assert!(has_login_after(&place.file));
+    assert!(!copy_of(&place.file).exists());
+    let again = db_open(&by_uri, Arc::default())
+        .map_err(|f| f.message)
+        .unwrap();
+    let kept = again
+        .read(|tx| {
+            Ok(tx
+                .query_row("SELECT count(*) FROM instance", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .unwrap())
+        })
+        .await;
+    assert!(kept.is_ok());
+    again.close().await;
+}
+
+#[tokio::test]
+async fn a_uri_that_asks_for_rw_does_not_make_a_missing_database() {
+    let place = folder();
+    let by_uri = Options {
+        path: DatabasePath::Uri(format!("file:{}?mode=rw", place.file.display())),
+        ..options(&place.file, MIGRATIONS)
+    };
+
+    let failure = db_open(&by_uri, Arc::default()).err().unwrap();
+
+    assert!(
+        failure.message.contains("could not be opened"),
+        "{}",
+        failure.message
+    );
+    assert!(!place.file.exists());
+}
+
+#[tokio::test]
+async fn a_uri_that_asks_for_ro_keeps_every_connection_read_only() {
+    let place = folder();
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    let by_uri = Options {
+        path: DatabasePath::Uri(format!("file:{}?mode=ro", place.file.display())),
+        ..options(&place.file, MIGRATIONS)
+    };
+    let db = db_open(&by_uri, Arc::default())
+        .map_err(|f| f.message)
+        .unwrap();
+
+    let make = |tx: &Transaction<'_>| {
+        tx.execute_batch("CREATE TABLE touched (id INTEGER)")?;
+        Ok(())
+    };
+    assert!(db.read(make).await.is_err());
+    assert!(db.write(WRITE, make).await.is_err());
+    db.close().await;
+
+    let touched: bool = Connection::open(&place.file)
+        .unwrap()
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE name = 'touched')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!touched);
+}
+
 async fn upgraded_by_uri(file: &Path, uri: &str) {
     db_open(&options(file, &MIGRATIONS[..1]), Arc::default())
         .map_err(|f| f.message)
