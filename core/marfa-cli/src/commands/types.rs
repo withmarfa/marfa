@@ -1,10 +1,12 @@
-use std::path::PathBuf;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, Subcommand};
 use marfa_core::ScaffoldField;
 use marfa_rules::schema::{
-    FolderVerdict, Problem, TypeFile, check_type_files, is_type_file, shipped_registry,
+    FolderVerdict, Problem, TypeFile, check_type_files, guidance_file_name, is_guidance_file,
+    is_type_file, read_guidance_file, shipped_registry,
 };
 use serde_json::{Map, Value};
 
@@ -18,7 +20,7 @@ use crate::remote::request::Request;
 pub enum TypesCommand {
     /// Every type the instance holds.
     List,
-    /// One type by id, with its schema.
+    /// One type by id, with its schema, its guidance and the guidance of the types above it.
     Get {
         /// The type id, such as `core.note` or `user.recipe`.
         id: String,
@@ -31,17 +33,21 @@ pub enum TypesCommand {
     Scaffold(ScaffoldArgs),
     /// Check a folder of type definitions the way a server checks each at registration, with no server.
     ///
-    /// Reads each `*.json` file directly in the folder (not its subfolders, and not a file whose name starts with a dot) as an item type definition, in the body `types register --file` sends. The file is named `ID.json`, after the type's `id`. Other files are ignored. An edge type is not checked.
+    /// Reads each `*.json` file directly in the folder (not its subfolders, and not a file whose name starts with a dot) as an item type definition, in the body `types register --file` sends. The file is named `ID.json`, after the type's `id`. The entry named exactly `ID.md` beside it (a link is followed, and `ID.MD` is not it) is read as the type's `guidance`, as `register --file` reads it: a regular file, UTF-8 with no byte-order mark, trailing whitespace removed, and no `guidance` also in the definition. An `ID.md` that cannot be read, or is a folder or a link to nothing, is refused first, whether or not the definition names `guidance`. A `.md` file named for a type with no `ID.json` beside it is refused. Other files are ignored. An edge type is not checked.
     ///
-    /// Needs no server, key or keychain, sends nothing, and takes none of `--url`, `--key`, `--profile` and `--socket`. Each type is judged with the registration rules that need no instance, against the types Marfa ships and the types of the folder that passed before it: a type goes after the folder types it names, as its `parent`, in a `compatible_with` list of strings or in a table column's `type_constraints`, except a type that names itself and the types in a loop. A file refused for any reason supplies no type to the others. Types that name one another in a loop cannot be registered in any order, so each is judged with the others absent, which is the answer a server gives whichever it is given first. Every problem is reported, each with its file, its path in the definition, and the code and message a server gives for that file; a type whose parent or other named type is absent also says why, beside the server's answer. The command reports its own codes, `file_name_mismatch` and `file_unreadable`, first. What only an instance knows is left to it: whether the type already exists, what a key may register, and the body size an instance allows. Exits 1 when any file is refused or none is found, and 2 when the path is not a folder.
+    /// Needs no server, key or keychain, sends nothing, and takes none of `--url`, `--key`, `--profile` and `--socket`. Each type is judged with the registration rules that need no instance, against the types Marfa ships and the types of the folder that passed before it: a type goes after the folder types it names, as its `parent`, in a `compatible_with` list of strings or in a table column's `type_constraints`, except a type that names itself and the types in a loop. A file refused for any reason supplies no type to the others. Types that name one another in a loop cannot be registered in any order, so each is judged with the others absent, which is the answer a server gives whichever it is given first. Every problem is reported, each with its file, its path in the definition, and the code and message a server gives for that file; a type whose parent or other named type is absent also says why, beside the server's answer. The command reports its own codes, `file_name_mismatch`, `file_unreadable`, `guidance_file_unreadable`, `guidance_named_twice` and `guidance_file_without_definition`, first. What only an instance knows is left to it: whether the type already exists, what a key may register, and the body size an instance allows. Exits 1 when any file is refused or none is found, and 2 when the path is not a folder.
     Check(CheckArgs),
-    /// Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map.
-    Register(BodySource),
-    /// Normalize a definition and compare it with the registered type. Any authenticated key can use this command.
-    Normalize(BodySource),
-    /// Replace a registered type's definition. Needs write on the type in the key's type map and `schema.write` or `metadata.types:write`.
+    /// Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map, and `schema.write` for a type that carries guidance.
     ///
-    /// `metadata.types:write` alone covers adding optional fields that no stored item holds a value under, adding a table or an optional column, and changing the type's label, plural, description, display hints and version, or a field's, table's or column's label and description. Any other change, including removing a field, table or column, needs `schema.write`.
+    /// Given `--file PATH.json`, the entry named exactly `PATH.md` beside it (a link is followed, and `PATH.MD` is not it) is sent as the type's `guidance`, with its trailing whitespace removed. A `PATH.md` that is not UTF-8, starts with a byte-order mark, or is a folder or a link to nothing is refused first. Then a definition that also names `guidance` is refused, even if `PATH.md` is empty. A `PATH.md` with only white space and a definition with no `guidance` mean no guidance. `--body` and `--file -` read no Markdown file.
+    Register(BodySource),
+    /// Normalize a definition and compare it with the registered type. Any authenticated key can use this command. A `PATH.md` beside `--file PATH.json` is read as guidance, as `register` reads it.
+    Normalize(BodySource),
+    /// Replace a registered type's definition. Needs write on the type in the key's type map and `schema.write` or `metadata.types:write`. A `PATH.md` beside `--file PATH.json` is read as guidance, as `register` reads it.
+    ///
+    /// A replacement without guidance removes the type's guidance, and adding, changing or removing guidance needs `schema.write`. A replacement that leaves it as it is needs nothing more.
+    ///
+    /// `metadata.types:write` alone covers adding optional fields that no stored item holds a value under, adding a table or an optional column, and naming an order for a table without one. It also covers changes to the type's label, plural, description, display hints and version, to field, table and column labels and descriptions, and to status word descriptions. Removing a field, table or column needs `schema.write`.
     Replace {
         /// The type id.
         id: String,
@@ -247,9 +253,9 @@ pub fn run(
         TypesCommand::Move(args) => return move_type(args, &remote()?, out),
         TypesCommand::List => list_request(),
         TypesCommand::Get { id } => get_request(id),
-        TypesCommand::Register(body) => register_request(body.read()?),
-        TypesCommand::Normalize(body) => normalize_request(body.read()?),
-        TypesCommand::Replace { id, body } => replace_request(id, body.read()?),
+        TypesCommand::Register(body) => register_request(definition(body)?),
+        TypesCommand::Normalize(body) => normalize_request(definition(body)?),
+        TypesCommand::Replace { id, body } => replace_request(id, definition(body)?),
         TypesCommand::Delete { id, force } => delete_request(id, *force),
         TypesCommand::SetIcon { id, icon } => set_icon_request(id, icon),
         TypesCommand::ClearIcon { id } => clear_icon_request(id),
@@ -265,8 +271,110 @@ pub fn run(
         TypesCommand::ClearIcon { id } => {
             out.report(&answer, |_| format!("cleared the icon of type {id}"))
         }
+        TypesCommand::Get { .. } if !out.json => guided(&answer, out),
         _ => out.value(&answer),
     }
+}
+
+/// The Markdown file beside `file`: the entry of its folder named exactly `<stem>.md`, followed if it is a link.
+fn guidance_text(file: &Path) -> Result<Option<String>, CliError> {
+    let Some(name) = file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(guidance_file_name)
+    else {
+        return Ok(None);
+    };
+    let folder = file
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let shown = folder.join(&name).display().to_string();
+    let sibling = if std::fs::read_dir(folder).is_ok() {
+        folder_files(folder, |held| held == OsStr::new(&name))?
+            .into_iter()
+            .next()
+            .map(|file| file.content)
+    } else {
+        unlisted_file(&folder.join(&name))
+    };
+    let Some(content) = sibling else {
+        return Ok(None);
+    };
+    let refused = |why: String| {
+        CliError::Invalid(format!(
+            "cannot read {shown} as guidance (guidance_file_unreadable): {why}"
+        ))
+    };
+    let bytes = content.map_err(refused)?;
+    read_guidance_file(&bytes)
+        .map(Some)
+        .map_err(|fault| refused(fault.message(&shown)))
+}
+
+/// A folder that can be entered but not listed still opens a file by its name,
+/// though a name differing only by case cannot be told apart there.
+fn unlisted_file(path: &Path) -> Option<Result<Vec<u8>, String>> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => return Some(Err(error.to_string())),
+        Ok(_) => {}
+    }
+    Some(match std::fs::metadata(path) {
+        Ok(held) if held.is_file() => std::fs::read(path).map_err(|error| error.to_string()),
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.to_string()),
+        _ => Err("it is not a regular file".to_string()),
+    })
+}
+
+fn definition(body: &BodySource) -> Result<Value, CliError> {
+    let mut definition = body.read()?;
+    let Some(file) = body.file.as_deref() else {
+        return Ok(definition);
+    };
+    let (Some(text), Value::Object(held)) = (guidance_text(file)?, &mut definition) else {
+        return Ok(definition);
+    };
+    if held.contains_key("guidance") {
+        return Err(CliError::Invalid(format!(
+            "the definition names guidance and the Markdown file beside {} holds it too (guidance_named_twice). Keep it in one place.",
+            file.display()
+        )));
+    }
+    if !text.is_empty() {
+        held.insert("guidance".into(), Value::String(text));
+    }
+    Ok(definition)
+}
+
+fn guided(answer: &Value, out: &Printer) -> Result<(), CliError> {
+    let mut rest = answer.clone();
+    let own = rest
+        .as_object_mut()
+        .and_then(|held| held.remove("guidance"));
+    let above = rest
+        .as_object_mut()
+        .and_then(|held| held.remove("ancestor_guidance"));
+    out.value(&rest)?;
+    if let Some(text) = own.as_ref().and_then(Value::as_str) {
+        out.line(&format!(
+            "\nguidance:\n{}",
+            crate::output::printable_lines(text)
+        ))?;
+    }
+    for entry in above
+        .as_ref()
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        out.line(&format!(
+            "\nguidance of {}:\n{}",
+            crate::output::printable(field(entry, "type")),
+            crate::output::printable_lines(field(entry, "guidance"))
+        ))?;
+    }
+    Ok(())
 }
 
 fn type_line(verb: &str, answer: &Value) -> String {
@@ -505,27 +613,26 @@ fn scaffold(args: &ScaffoldArgs, out: &Printer) -> Result<(), CliError> {
     out.raw(&format!("{}\n", serde_json::to_string_pretty(&definition)?))
 }
 
-fn type_files(folder: &PathBuf) -> Result<Vec<TypeFile>, CliError> {
-    let entries = std::fs::read_dir(folder).map_err(|error| {
+/// The files of `folder` that `wanted` names, read as the folder check and `register --file` both read them: a link is followed, a folder or anything else that is not a regular file at a Markdown name is a file that cannot be read, and one at a definition's name is left alone.
+fn folder_files(folder: &Path, wanted: impl Fn(&OsStr) -> bool) -> Result<Vec<TypeFile>, CliError> {
+    let cannot = |error: std::io::Error| {
         CliError::Invalid(format!(
             "cannot read the folder {}: {error}",
             folder.display()
         ))
-    })?;
+    };
     let mut files = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|error| {
-            CliError::Invalid(format!(
-                "cannot read the folder {}: {error}",
-                folder.display()
-            ))
-        })?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !is_type_file(&name) {
+    for entry in std::fs::read_dir(folder).map_err(cannot)? {
+        let entry = entry.map_err(cannot)?;
+        if !wanted(&entry.file_name()) {
             continue;
         }
+        let name = entry.file_name().to_string_lossy().into_owned();
         let path = entry.path();
         let content = match std::fs::metadata(&path) {
+            Ok(held) if !held.is_file() && is_guidance_file(&name) => {
+                Err("it is not a regular file".to_string())
+            }
             Ok(held) if !held.is_file() => continue,
             Ok(_) => std::fs::read(&path).map_err(|error| error.to_string()),
             Err(error) => Err(error.to_string()),
@@ -533,6 +640,13 @@ fn type_files(folder: &PathBuf) -> Result<Vec<TypeFile>, CliError> {
         files.push(TypeFile { name, content });
     }
     Ok(files)
+}
+
+fn type_files(folder: &Path) -> Result<Vec<TypeFile>, CliError> {
+    folder_files(folder, |held| {
+        let name = held.to_string_lossy();
+        is_type_file(&name) || is_guidance_file(&name)
+    })
 }
 
 fn problem_json(problem: &Problem) -> Value {
@@ -617,6 +731,10 @@ fn verdict_words(answer: &Value) -> String {
     lines.join("\n")
 }
 
+fn no_definitions(folder: &Path) -> CliError {
+    CliError::Invalid(format!("no *.json files found in {}", folder.display()))
+}
+
 fn check(args: &CheckArgs, out: &Printer) -> Result<(), CliError> {
     let folder = &args.folder;
     match std::fs::metadata(folder) {
@@ -640,14 +758,15 @@ fn check(args: &CheckArgs, out: &Printer) -> Result<(), CliError> {
         &shipped_registry().map_err(marfa_core::CoreError::from)?,
     )
     .map_err(marfa_core::CoreError::from)?;
-    if verdict.files.is_empty() {
-        return Err(CliError::Invalid(format!(
-            "no *.json files found in {}",
-            folder.display()
-        )));
+    let found_definitions = files.iter().any(|file| is_type_file(&file.name));
+    if verdict.files.is_empty() && !found_definitions {
+        return Err(no_definitions(folder));
     }
     let answer = verdict_json(&verdict);
     out.report(&answer, verdict_words)?;
+    if !found_definitions {
+        return Err(no_definitions(folder));
+    }
     match count(&answer, "refused") {
         0 => Ok(()),
         refused => Err(CliError::Invalid(format!(
@@ -700,5 +819,202 @@ mod said_tests {
         let text = said(&job, |job| moved_words(&args, job));
         assert!(only_drawn(&text), "{text:?}");
         assert_eq!(text.lines().count(), 4, "{text:?}");
+    }
+}
+
+#[cfg(test)]
+mod guidance_file_tests {
+    use super::{BodySource, definition};
+    use serde_json::{Value, json};
+
+    fn source(
+        dir: &std::path::Path,
+        name: &str,
+        json: &str,
+        markdown: Option<&[u8]>,
+    ) -> BodySource {
+        let path = dir.join(name);
+        std::fs::write(&path, json).unwrap();
+        if let Some(markdown) = markdown {
+            std::fs::write(path.with_extension("md"), markdown).unwrap();
+        }
+        BodySource {
+            file: Some(path),
+            body: None,
+        }
+    }
+
+    const TYPE: &str = r#"{"id": "user.note", "fields": {}}"#;
+
+    #[test]
+    fn the_markdown_file_beside_the_json_is_sent_as_guidance_without_its_final_newline() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = source(
+            dir.path(),
+            "user.note.json",
+            TYPE,
+            Some("Use it.\n\nTwo parts.\n".as_bytes()),
+        );
+        assert_eq!(
+            definition(&body).unwrap(),
+            json!({"id": "user.note", "fields": {}, "guidance": "Use it.\n\nTwo parts."})
+        );
+    }
+
+    #[test]
+    fn a_json_file_with_no_markdown_beside_it_is_sent_as_it_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = source(dir.path(), "user.note.json", TYPE, None);
+        assert_eq!(
+            definition(&body).unwrap(),
+            json!({"id": "user.note", "fields": {}})
+        );
+        let inline = BodySource {
+            file: None,
+            body: Some(TYPE.into()),
+        };
+        assert!(definition(&inline).unwrap().get("guidance").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_that_cannot_be_listed_still_gives_its_markdown_file_as_guidance() {
+        let dir = tempfile::tempdir().unwrap();
+        let with = source(dir.path(), "user.note.json", TYPE, Some(b"Use it.\n"));
+        let other = dir.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        let without = source(&other, "user.note.json", TYPE, None);
+        let dangling = dir.path().join("dangling");
+        std::fs::create_dir(&dangling).unwrap();
+        let pointing = source(&dangling, "user.note.json", TYPE, None);
+        std::os::unix::fs::symlink(dangling.join("gone"), dangling.join("user.note.md")).unwrap();
+        let _with = marfa_acl::testing::locked(dir.path(), 0o300);
+        let _without = marfa_acl::testing::locked(&other, 0o300);
+        let _dangling = marfa_acl::testing::locked(&dangling, 0o300);
+        assert!(std::fs::read_dir(dir.path()).is_err());
+        assert_eq!(
+            definition(&with).unwrap().get("guidance"),
+            Some(&json!("Use it."))
+        );
+        assert!(definition(&without).unwrap().get("guidance").is_none());
+        let refused = definition(&pointing).unwrap_err().to_string();
+        assert!(refused.contains("guidance_file_unreadable"), "{refused}");
+    }
+
+    #[test]
+    fn an_empty_markdown_file_is_no_guidance() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = source(dir.path(), "user.note.json", TYPE, Some(b"\n \n"));
+        assert!(definition(&body).unwrap().get("guidance").is_none());
+    }
+
+    #[test]
+    fn a_definition_that_names_guidance_beside_a_markdown_file_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = source(
+            dir.path(),
+            "user.note.json",
+            r#"{"id": "user.note", "fields": {}, "guidance": "x"}"#,
+            Some(b"Use it."),
+        );
+        let refused = definition(&body).unwrap_err().to_string();
+        assert!(refused.contains("Keep it in one place"), "{refused}");
+        let alone = source(
+            dir.path(),
+            "user.other.json",
+            r#"{"id": "user.other", "fields": {}, "guidance": "x"}"#,
+            None,
+        );
+        assert_eq!(definition(&alone).unwrap()["guidance"], Value::from("x"));
+    }
+
+    #[test]
+    fn a_markdown_file_that_is_not_utf8_or_starts_with_a_byte_order_mark_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, bytes) in [
+            ("user.a.json", &b"\xEF\xBB\xBFUse it."[..]),
+            ("user.b.json", &b"Use \xFF it."[..]),
+        ] {
+            let body = source(dir.path(), name, TYPE, Some(bytes));
+            let refused = definition(&body).unwrap_err().to_string();
+            assert!(
+                refused.contains("byte-order mark") || refused.contains("not UTF-8"),
+                "{refused}"
+            );
+        }
+        let witness = source(
+            dir.path(),
+            "user.c.json",
+            TYPE,
+            Some("Use it. é 😀".as_bytes()),
+        );
+        assert_eq!(definition(&witness).unwrap()["guidance"], "Use it. é 😀");
+    }
+
+    fn named(dir: &std::path::Path, name: &str) -> BodySource {
+        let path = dir.join(name);
+        std::fs::write(&path, TYPE).unwrap();
+        BodySource {
+            file: Some(path),
+            body: None,
+        }
+    }
+
+    #[test]
+    fn a_markdown_name_that_differs_by_case_is_not_the_guidance_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = named(dir.path(), "user.note.json");
+        std::fs::write(dir.path().join("user.note.MD"), "Use it.").unwrap();
+        assert!(definition(&body).unwrap().get("guidance").is_none());
+        let witness = source(dir.path(), "user.other.json", TYPE, Some(b"Use it."));
+        assert_eq!(definition(&witness).unwrap()["guidance"], "Use it.");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_markdown_link_is_followed_and_a_dangling_one_or_a_folder_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::fs::write(elsewhere.path().join("text.md"), "Use it.").unwrap();
+        let body = named(dir.path(), "user.note.json");
+        let link = dir.path().join("user.note.md");
+        std::os::unix::fs::symlink(elsewhere.path().join("text.md"), &link).unwrap();
+        assert_eq!(definition(&body).unwrap()["guidance"], "Use it.");
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(elsewhere.path().join("missing.md"), &link).unwrap();
+        let refused = definition(&body).unwrap_err().to_string();
+        assert!(refused.contains("guidance_file_unreadable"), "{refused}");
+        std::fs::remove_file(&link).unwrap();
+        std::fs::create_dir(&link).unwrap();
+        let refused = definition(&body).unwrap_err().to_string();
+        assert!(refused.contains("guidance_file_unreadable"), "{refused}");
+        assert!(refused.contains("not a regular file"), "{refused}");
+    }
+
+    #[test]
+    fn an_unreadable_markdown_file_is_refused_before_the_definition_is_found_to_name_guidance() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, bytes) in [
+            ("user.a.json", &b"\xEF\xBB\xBF"[..]),
+            ("user.b.json", &b"\xFF"[..]),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, r#"{"id": "user.x", "fields": {}, "guidance": "x"}"#).unwrap();
+            std::fs::write(path.with_extension("md"), bytes).unwrap();
+            let body = BodySource {
+                file: Some(path),
+                body: None,
+            };
+            let refused = definition(&body).unwrap_err().to_string();
+            assert!(refused.contains("guidance_file_unreadable"), "{refused}");
+        }
+        let empty = source(
+            dir.path(),
+            "user.c.json",
+            r#"{"id": "user.x", "fields": {}, "guidance": "x"}"#,
+            Some(b""),
+        );
+        let refused = definition(&empty).unwrap_err().to_string();
+        assert!(refused.contains("guidance_named_twice"), "{refused}");
     }
 }

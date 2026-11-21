@@ -857,7 +857,7 @@ export interface paths {
         };
         /**
          * Get a type
-         * @description Returns a type's schema, with the fields and policies it inherits from its ancestors. Every credential reads any type, whatever its type map reaches.
+         * @description Returns a type's schema, with the fields and policies it inherits from its ancestors, and the guidance of its ancestors. Every credential reads any type, whatever its type map reaches.
          */
         get: operations["getType"];
         /**
@@ -2439,7 +2439,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Restores an exported archive atomically and returns counts of written and skipped records. While it writes, Marfa turns other writes away. Requires `backups.manage`, `config.manage` to add settings, and a sign-in from the last fifteen minutes.
+         * @description Restores an archive atomically and returns write and skip counts. Marfa blocks other writes during the restore. Requires `backups.manage`, `config.manage` to add settings, and `schema.write` to register a type with guidance.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -2503,7 +2503,7 @@ export interface paths {
         put?: never;
         /**
          * Restore a backup
-         * @description Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. Requires `backups.manage`, `config.manage` to add settings, and a sign-in from the last fifteen minutes.
+         * @description Restores a backup from the backup folder or object store and returns write and skip counts. Requires `backups.manage`, `config.manage` to add settings, and `schema.write` to register a type with guidance.
          */
         post: operations["restoreBackup"];
         delete?: never;
@@ -4579,7 +4579,7 @@ export interface components {
             type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail" | "status";
             /** @description A name for people to read, up to 100 characters. Leave it out and a type read answers the nearest one a type above names, else one made from the field's name, such as `Due At` for `due_at`. The type list answers only the declared label. */
             label?: string;
-            /** @description What the field holds. */
+            /** @description What the field holds. Registration, replacement, and normalization accept up to 300 Unicode code points. */
             description?: string;
             /** @description `true` if an item of the type must have a value for it. */
             required?: boolean;
@@ -4611,7 +4611,7 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** @description One word a `status` field takes, with its group. */
+        /** @description One word a `status` field takes, with its group and, optionally, what it means. */
         StatusValue: {
             /** @description The word, such as `in_review`: a lowercase letter, then up to 63 lowercase letters, digits and underscores. */
             value: string;
@@ -4620,6 +4620,8 @@ export interface components {
              * @enum {string}
              */
             group: "not_started" | "in_progress" | "completed" | "canceled";
+            /** @description What the word means. Registration, replacement, and normalization accept up to 120 Unicode code points. */
+            description?: string;
         };
         /** @description One member of the entries of an `array` field. */
         EntryMember: {
@@ -4630,7 +4632,7 @@ export interface components {
             type: "string" | "number" | "integer" | "boolean" | "url" | "email" | "datetime" | "date" | "enum" | "array" | "object" | "thumbnail" | "status";
             /** @description A name for people to read, up to 100 characters. Leave it out and a type read answers the nearest one a type above names, else one made from the member's name, such as `Due At` for `due_at`. The type list answers only the declared label. */
             label?: string;
-            /** @description What the member holds. */
+            /** @description What the member holds. Registration, replacement, and normalization accept up to 300 Unicode code points. */
             description?: string;
             /** @description `true` if every entry must have the member. */
             required?: boolean;
@@ -4674,8 +4676,10 @@ export interface components {
             label?: string;
             /** @description The type's plural name for people to read, such as `People`. Never inherited. Left out of the list of types where the type declares none. */
             plural?: string;
-            /** @description What the type is for. */
+            /** @description What the type is for. Registration, replacement, and normalization accept up to 200 Unicode code points. */
             description?: string;
+            /** @description Markdown that tells an agent or an app builder how to use the type. Present only where the type carries some. `GET /types/{id}` also lists the guidance of its ancestors. */
+            guidance?: string;
             /** @description The identifier of the type this one inherits from. */
             parent?: string;
             /** @description The types this one is a structural superset of. */
@@ -4704,6 +4708,18 @@ export interface components {
             /** @description The type's plural name for people to read, such as `People`: the one the type declares, else one made from its label. Never inherited. */
             plural: string;
             provenance: components["schemas"]["TypeProvenance"] & unknown;
+            /** @description The guidance of the types above this one, nearest first. Present only where one of them carries some. The type's own guidance is `guidance`. */
+            ancestor_guidance?: components["schemas"]["TypeGuidance"][];
+        };
+        /** @description One type's guidance, as read for a type below it. */
+        TypeGuidance: {
+            /**
+             * @description The identifier of the type that carries the guidance.
+             * @example user.order
+             */
+            type: string;
+            /** @description That type's own guidance. */
+            guidance: string;
         };
         /** @description An error response. */
         TypeNotFoundRefusal: {
@@ -4799,8 +4815,10 @@ export interface components {
             label?: string;
             /** @description The label's plural, up to 100 characters, such as `People`. Leave it out and Marfa adds `s`, `es` or `ies` to the label by the regular English rule. */
             plural?: string;
-            /** @description What the type is for. */
+            /** @description A sentence saying what the type is for, up to 200 Unicode code points. */
             description?: string;
+            /** @description Markdown on how to use the type, up to 1,000 Unicode code points. For registration, non-empty guidance needs `schema.write`. Omit it or send an empty string for no guidance. An `app.*` type takes no guidance. */
+            guidance?: string;
             /** @description The structural roles the type plays: `container`. An edge type's `role:<name>` constraint matches types by role. */
             roles?: string[];
             /** @description The names of the fields an item of the type must have. It means the same as `required: true` on each of them. */
@@ -4888,8 +4906,10 @@ export interface components {
             label?: string;
             /** @description The label's plural, up to 100 characters, such as `People`. Leave it out and Marfa adds `s`, `es` or `ies` to the label by the regular English rule. */
             plural?: string;
-            /** @description What the type is for. */
+            /** @description A sentence saying what the type is for, up to 200 Unicode code points. */
             description?: string;
+            /** @description Markdown on how to use the type, up to 1,000 Unicode code points. Omit it or send an empty string to clear it. Adding, changing, or removing it needs `schema.write`. An `app.*` type takes no guidance. */
+            guidance?: string;
             /** @description The structural roles the type plays: `container`. An edge type's `role:<name>` constraint matches types by role. */
             roles?: string[];
             /** @description The names of the fields an item of the type must have. It means the same as `required: true` on each of them. */
@@ -4908,6 +4928,8 @@ export interface components {
              * @example acme.deal
              */
             id?: string;
+            /** @description The guidance of the types above, accepted when replacing a read response. This field changes nothing. */
+            ancestor_guidance?: components["schemas"]["TypeGuidance"][];
         };
         /** @description An error response. */
         InvalidSchemaOrValidationErrorRefusal: {
@@ -18842,7 +18864,7 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `fields` is missing.
              *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.
-             *     - `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).
+             *     - `invalid_schema`: the schema is invalid, or has an unknown key or overlong text (`details.errors` names each path).
              *     - `property_shadows_field`: a field is named like one every item has.
              *     - `inheritance_violation`: the type reshapes an inherited field.
              */
@@ -18870,7 +18892,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you don't have `metadata.types:write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.
+             * @description - `forbidden`: you don't have `metadata.types:write`, the type has `guidance` and you lack `schema.write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.
              *     - `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` or `compatible_with` target (`details.grant` names it).
              */
             403: {
@@ -19249,8 +19271,8 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `fields` is missing.
-             *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes a bad chain.
-             *     - `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).
+             *     - `validation_error`: `id` is malformed, or `parent` isn't registered or chains badly.
+             *     - `invalid_schema`: the schema is invalid, or has an unknown key or overlong text (`details.errors` names each path).
              *     - `property_shadows_field`: a field has the name of one every item has.
              *     - `inheritance_violation`: a field's shape differs in a parent or subtype.
              */
@@ -19969,7 +19991,7 @@ export interface operations {
             /**
              * @description - `missing_required_field`: `fields` is missing.
              *     - `validation_error`: `id` is malformed, or `parent` isn't registered or makes too deep a chain.
-             *     - `invalid_schema`: the schema is invalid or has a key it doesn't define (`details.errors` names each path).
+             *     - `invalid_schema`: the schema is invalid, or has an unknown key or overlong text (`details.errors` names each path).
              *     - `property_shadows_field`: a field is named like one every item has.
              *     - `inheritance_violation`: the type reshapes an inherited field.
              */
@@ -38126,8 +38148,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you don't hold `backups.manage`, or the archive would store settings and you don't hold `config.manage`. `details.required_scope` names the missing permission. For `config.manage`, `details.settings` lists the settings.
-             *     - `app_sign_in_required`: you are an API key. A person restores from an app they signed in to, or with the private local command.
+             * @description - `forbidden`: `details.required_scope` names the missing permission. `details.settings` lists settings for `config.manage`, and `details.changes` lists `guidance` for `schema.write`.
+             *     - `app_sign_in_required`: you are using an API key. Use an app you signed in to or the private local command.
              */
             403: {
                 headers: {
@@ -38933,8 +38955,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you don't hold `backups.manage`, or the archive would store settings and you don't hold `config.manage`. `details.required_scope` names the missing permission. For `config.manage`, `details.settings` lists the settings.
-             *     - `app_sign_in_required`: you are an API key. A person restores from an app they signed in to, or with the private local command.
+             * @description - `forbidden`: `details.required_scope` names the missing permission. `details.settings` lists settings for `config.manage`, and `details.changes` lists `guidance` for `schema.write`.
+             *     - `app_sign_in_required`: you are using an API key. Use an app you signed in to or the private local command.
              */
             403: {
                 headers: {

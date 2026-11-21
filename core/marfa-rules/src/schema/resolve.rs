@@ -106,6 +106,25 @@ pub fn canonical(schema: Obj) -> Obj {
     schema
 }
 
+/// The guidance each type above `id` carries, as (type, guidance), nearest first. A type that carries none is left out.
+pub fn ancestor_guidance(
+    registry: &Registry,
+    id: &str,
+) -> Result<Vec<(String, String)>, ChainFault> {
+    let mut chain = chain(registry, id)?;
+    chain.pop();
+    Ok(chain
+        .iter()
+        .rev()
+        .filter_map(|row| {
+            Some((
+                text(row, "id")?.to_string(),
+                text(row, "guidance")?.to_string(),
+            ))
+        })
+        .collect())
+}
+
 pub fn roles_of(registry: &Registry, id: &str) -> Result<Option<Vec<String>>, ChainFault> {
     let mut roles: Vec<String> = chain(registry, id)?
         .iter()
@@ -209,6 +228,9 @@ pub fn resolve(
     }
     if let Some(value) = own.get("description") {
         out.insert("description".into(), value.clone());
+    }
+    if let Some(value) = own.get("guidance") {
+        out.insert("guidance".into(), value.clone());
     }
     if !hints.is_empty() {
         out.insert("display_hints".into(), Value::Object(hints));
@@ -344,6 +366,28 @@ mod tests {
         let fault = resolve(&held, "user.a", false).unwrap_err();
         assert_eq!(fault.type_id, "user.a");
         assert_eq!(fault.at, "user.a");
+    }
+
+    #[test]
+    fn guidance_of_the_types_above_comes_nearest_first_and_leaves_out_a_type_with_none() {
+        let held = registry(&[
+            json!({"id": "user.root", "guidance": "Root.", "fields": {}}),
+            json!({"id": "user.mid", "parent": "user.root", "fields": {}}),
+            json!({"id": "user.top", "parent": "user.mid", "guidance": "Top.", "fields": {}}),
+            json!({"id": "user.leaf", "parent": "user.top", "guidance": "Leaf.", "fields": {}}),
+        ]);
+        assert_eq!(
+            ancestor_guidance(&held, "user.leaf").unwrap(),
+            [
+                ("user.top".to_string(), "Top.".to_string()),
+                ("user.root".to_string(), "Root.".to_string())
+            ]
+        );
+        assert!(ancestor_guidance(&held, "user.root").unwrap().is_empty());
+        assert_eq!(
+            resolve(&held, "user.leaf", false).unwrap().unwrap()["guidance"],
+            "Leaf."
+        );
     }
 
     #[test]

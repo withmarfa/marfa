@@ -17,10 +17,11 @@ export interface Ran {
   stderr: string;
 }
 
-/** The binary with only the `MARFA_*` variables `env` names. */
+/** The binary with only the `MARFA_*` variables `env` names, run in `cwd` and given `input` on standard input. */
 export async function marfa(
   args: string[],
   env: Record<string, string> = {},
+  options: { cwd?: string; input?: string } = {},
 ): Promise<Ran> {
   const inherited: Record<string, string> = {};
   for (const [name, value] of Object.entries(process.env)) {
@@ -29,10 +30,13 @@ export async function marfa(
     }
   }
   try {
-    const { stdout, stderr } = await run(requireBinary(), args, {
+    const running = run(requireBinary(), args, {
       env: { ...inherited, ...env },
+      cwd: options.cwd,
       timeout: 30_000,
     });
+    running.child.stdin?.end(options.input ?? "");
+    const { stdout, stderr } = await running;
     return { code: 0, stdout, stderr };
   } catch (error) {
     const failed = error as { code?: number; stdout?: string; stderr?: string };

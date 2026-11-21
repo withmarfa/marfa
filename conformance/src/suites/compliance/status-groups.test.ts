@@ -79,6 +79,19 @@ describe("a status field's definition", () => {
       "fields.stage.status_values.0.value",
     ],
     [
+      "a word with a member beside value, group and description",
+      {
+        type: "status",
+        status_values: [{ value: "todo", group: "not_started", color: "red" }],
+      },
+      "fields.stage.status_values.0",
+    ],
+    [
+      "a word with no group",
+      { type: "status", status_values: [{ value: "todo" }] },
+      "fields.stage.status_values.0",
+    ],
+    [
       "a word twice",
       {
         type: "status",

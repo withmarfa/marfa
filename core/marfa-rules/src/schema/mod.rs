@@ -22,7 +22,8 @@ pub use chain::{
     descendant_depth, parent_chain_fault,
 };
 pub use check::{
-    FileVerdict, FolderVerdict, Problem, TypeFile, check_type_files, is_type_file, shipped_registry,
+    FileVerdict, FolderVerdict, GuidanceFileFault, Problem, TypeFile, check_type_files,
+    guidance_file_name, is_guidance_file, is_type_file, read_guidance_file, shipped_registry,
 };
 pub use compat::{ShapeConflict, stored_shape_conflicts};
 pub use edge::{
@@ -38,8 +39,8 @@ pub use order_key::{
 pub use registration::{Early, SchemaVerdict, early_refusal, invalid_id_message};
 pub use registry::Registry;
 pub use resolve::{
-    ChainFault, MAX_RESOLUTION_DEPTH, canonical, chain, label_or_default, labelled, plural_of,
-    read_back_free, resolve, roles_of, with_field_labels,
+    ChainFault, MAX_RESOLUTION_DEPTH, ancestor_guidance, canonical, chain, label_or_default,
+    labelled, plural_of, read_back_free, resolve, roles_of, with_field_labels,
 };
 pub use tables::{
     ADDS_UP, ITEM_KIND, KEYED_KINDS, MAX_COLUMNS_PER_TABLE, MAX_SEARCHABLE_COLUMNS,
@@ -48,15 +49,43 @@ pub use tables::{
     searchable_columns, with_set_stored, with_table_labels,
 };
 pub use type_def::{
-    declared_conflicts, validate_replacing_type, validate_restored_type, validate_type,
+    declared_conflicts, text_issues, validate_replacing_type, validate_restored_type, validate_type,
 };
 pub use unread::{unread_edge_keys, unread_keys};
+
+/// Restores keep text that predates the length limits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Limits {
+    Enforced,
+    Stored,
+}
+
+pub(crate) fn length_issue(
+    path: &str,
+    value: Option<&Value>,
+    max: usize,
+    hint: &str,
+) -> Option<Issue> {
+    let length = value?.as_str()?.chars().count();
+    (length > max).then(|| {
+        Issue::new(
+            path,
+            format!("a string of at most {max} characters"),
+            format!("a string of {length} characters"),
+            hint,
+        )
+    })
+}
 
 pub type Obj = Map<String, Value>;
 
 pub const TYPE_ROLES: [&str; 1] = ["container"];
 pub const ROLE_PREFIX: &str = "role:";
 pub const MAX_LABEL_LENGTH: usize = 100;
+pub const MAX_TYPE_DESCRIPTION_LENGTH: usize = 200;
+pub const MAX_FIELD_DESCRIPTION_LENGTH: usize = 300;
+pub const MAX_STATUS_WORD_DESCRIPTION_LENGTH: usize = 120;
+pub const MAX_GUIDANCE_LENGTH: usize = 1_000;
 pub const MAX_FEED_DAYS: i64 = 36_500;
 pub const MAX_POLICY_DAYS: i64 = 36_500;
 pub const MAX_POLICY_VERSIONS: i64 = 1_000_000;

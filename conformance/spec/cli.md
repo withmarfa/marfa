@@ -1380,7 +1380,7 @@ If `MARFA_DOCS_URL` holds more than white space and is not an `http` or `https` 
 
 ### `cli/types-scaffold-prints`
 
-When `marfa types scaffold` is given a type identifier, the CLI MUST print as JSON an object holding that `id`, the `parent` and `description` where given, and `fields` with one definition for each `--field`, in the order given, holding its `type`, `required: true` where `--required` names it, the `enum_values` of an `enum` and the `items_type` of an `array`.
+When `marfa types scaffold` is given a type identifier, the CLI MUST print as JSON an object holding that `id`, the `parent` where given, a `description` that is the one given or an empty string, and `fields` with one definition for each `--field`, in the order given, holding its `type`, `required: true` where `--required` names it, the `enum_values` of an `enum` and the `items_type` of an `array`.
 
 **Tests:** `device/types-scaffold.test.ts › prints the id, the fields in the order given, the parent and the description`.
 
@@ -1440,6 +1440,14 @@ If the `--parent` of `marfa types scaffold` breaks the type grammar or names the
 
 **Tests:** `device/types-scaffold.test.ts › refuses a parent that breaks the grammar or is the type itself`.
 
+### `cli/types-scaffold-description-refused`
+
+If the `--description` of `marfa types scaffold` is longer than 200 Unicode code points (`types/description-limit`), then the CLI MUST exit 1 with `invalid`, naming `description`.
+
+**Reason:** the server refuses to register a definition with a description over the limit.
+
+**Tests:** `device/types-scaffold.test.ts › refuses a description over 200 code points and prints one at the limit`.
+
 ### `cli/types-scaffold-parent-shape-refused`
 
 If a `--field` of `marfa types scaffold` redeclares a field of a parent Marfa ships with another `type`, `format`, `items_type`, `searchable`, `max_length`, `max_items` or `enum_values`, or makes a field the parent requires optional (`types/child-shape`), then the CLI MUST exit 1 with `invalid`, naming the reason.
@@ -1472,7 +1480,7 @@ The CLI MUST print, for `marfa types scaffold`, a definition that `marfa types r
 
 ## Checking a folder of type definitions
 
-`marfa types check` judges the item type definitions in a folder as a server judges each at registration. It names no server or key and sends nothing, so a repository that keeps type files can run it in its own checks. It reads each `*.json` file directly in the folder, named `<id>.json`, and leaves every other file, every subfolder and every file whose name starts with a dot alone. It does not read edge types. It makes the rules of registration that need no instance, and leaves to a server the rules that need one: whether the type already exists, what a key may register and how large a body an instance takes.
+`marfa types check` judges the item type definitions in a folder as a server judges each at registration. It names no server or key and sends nothing, so a repository that keeps type files can run it in its own checks. It reads each `*.json` file directly in the folder, named `<id>.json`, and the file named exactly `<id>.md` beside it as the type's guidance, as `marfa types register --file` does. It leaves every other file, every subfolder and every file whose name starts with a dot alone, except a Markdown file named for a type that no definition sits beside. A name is the same only when every byte is: `<id>.MD` is not `<id>.md`. It does not read edge types. It makes the rules of registration that need no instance, and leaves to a server the rules that need one: whether the type already exists, what a key may register and how large a body an instance takes.
 
 ### `cli/types-check-judges`
 
@@ -1556,11 +1564,151 @@ If `marfa types check` is given `--url`, `--key`, `--profile` or `--socket`, the
 
 **Tests:** `device/types-check.test.ts › refuses --url, --key, --profile and --socket with usage, sending nothing`.
 
+### `cli/types-check-guidance-file`
+
+When the folder given to `marfa types check` holds a file named exactly `<name>.md` beside `<name>.json` (a link is followed to the file it names), and the definition names no `guidance` and the file can be read and holds more than white space, the CLI MUST judge the definition in `<name>.json` as a server judges a registration of it that carries the text of `<name>.md`, with its trailing whitespace removed, as its `guidance`.
+
+**Reason:** `marfa types register --file` sends the Markdown file beside the definition as its guidance (`cli/types-guidance-file`), so a folder that passes must hold the guidance a registration would send. The text is trimmed so that an editor's final newline does not count toward the limit.
+
+**Tests:** `device/types-check-guidance.test.ts › judges a definition with the Markdown file beside it as its guidance, trimmed as a registration trims it`, `› reads only the entry named exactly after the definition as its guidance, and follows a link`.
+
+### `cli/types-check-guidance-refused`
+
+If the guidance in `<name>.md` is one a server refuses at registration, because it is longer than 1,000 characters or the definition is of an `app.*` type, then the CLI MUST refuse the definition in `marfa types check` with the path `guidance` and the code and message the server gives.
+
+**Reason:** guidance in a file is the author's own text, and a limit that only a server enforced would show only when the type is registered.
+
+**Tests:** `device/types-check-guidance.test.ts › refuses guidance over the limit and guidance on an app type, with the server's code and message`.
+
+### `cli/types-check-guidance-empty`
+
+When the file `<name>.md` beside `<name>.json` can be read, holds only white space and the definition names no `guidance`, the CLI MUST judge the definition in `marfa types check` with no `guidance`.
+
+**Tests:** `device/types-check-guidance.test.ts › judges a Markdown file that holds only whitespace as no guidance`.
+
+### `cli/types-check-guidance-twice`
+
+If the definition in `<name>.json` names `guidance` and the file `<name>.md` beside it can be read, then the CLI MUST refuse the definition in `marfa types check` with `guidance_named_twice`, whether or not the file holds more than white space.
+
+**Reason:** two places for one text cannot both be right (`cli/types-guidance-ambiguous`).
+
+**Tests:** `device/types-check-guidance.test.ts › refuses a definition that names guidance beside a Markdown file`.
+
+### `cli/types-check-guidance-unreadable`
+
+If the entry `<name>.md` beside `<name>.json` cannot be read, is not UTF-8, starts with a byte-order mark, or is not a regular file because it is a folder or a link that points at nothing or at something that is not a regular file, then the CLI MUST refuse the definition in `marfa types check` with `guidance_file_unreadable` and the reason, whether or not the definition names `guidance`, and check the other files.
+
+**Reason:** a definition whose guidance cannot be read cannot be registered with `marfa types register --file` either (`cli/types-guidance-file-refused`). An unreadable file is judged first, so that a file that cannot be read is never taken for one that holds nothing.
+
+**Tests:** `device/types-check-guidance.test.ts › refuses a Markdown file that cannot be read, is not UTF-8 or starts with a byte-order mark, and still checks the others`.
+
+### `cli/types-check-guidance-orphan`
+
+If a Markdown file in the folder has a name before `.md` that is a well-formed type identifier and no file `<name>.json` sits beside it, then the CLI MUST refuse that file in `marfa types check` with `guidance_file_without_definition` and exit 1.
+
+**Reason:** a person who wrote guidance for a type believes it is registered with the type, and a file left without its definition, or named for another type, would otherwise pass without a word.
+
+**Tests:** `device/types-check-guidance.test.ts › refuses a Markdown file named for a type that has no definition beside it`.
+
+### `cli/types-check-guidance-refused-pair`
+
+If `<name>.json` cannot be read or is not valid JSON and `<name>.md` sits beside it, then the CLI MUST report `<name>.md` in the `context` of the entry of `<name>.json` and give it no entry of its own.
+
+**Reason:** the Markdown file is the guidance of a definition that was refused, not guidance for no type (`cli/types-check-guidance-orphan`).
+
+**Tests:** `device/types-check-guidance.test.ts › reports a Markdown file beside a refused definition as paired with it, not as without a definition`.
+
+### `cli/types-check-guidance-parent-refused`
+
+If a type of the folder is refused for its guidance file and another type of the folder names it as its `parent`, then the CLI MUST say in the `context` of the other type that the parent was refused in this folder, and not that it is absent.
+
+**Reason:** the parent is in the folder, so a person told it is missing would look for a file they already have.
+
+**Tests:** `device/types-check-guidance.test.ts › tells a type whose parent was refused for its guidance file that the parent was refused in the folder`.
+
+### `cli/types-check-no-definitions`
+
+If the folder given to `marfa types check` holds no `*.json` file, then the CLI MUST exit 1 with `invalid` and a message that no `*.json` files were found, whether or not the folder holds Markdown files.
+
+**Reason:** a folder of guidance with no definitions is as empty of types as an empty folder, and the Markdown files it reports are not types that were checked.
+
+**Tests:** `device/types-check-guidance.test.ts › says no definitions were found for a folder that holds only Markdown files, and reports them`.
+
+### `cli/types-check-markdown-other`
+
+When a Markdown file in the folder has a name before `.md` that is not a well-formed type identifier, or its name ends in `.md` in any other letter case, the CLI MUST leave it alone in `marfa types check`.
+
+**Reason:** a folder of type files usually holds a `README.md`.
+
+**Tests:** `device/types-check-guidance.test.ts › leaves a Markdown file that is not named for a type alone`, `› reads only the entry named exactly after the definition as its guidance, and follows a link`.
+
+## Type guidance
+
+To keep a type's guidance in a separate Markdown file, name it `PATH.md` and place it beside `PATH.json`.
+
+### `cli/types-guidance-file`
+
+When `marfa types register`, `marfa types replace` or `marfa types normalize` reads a definition that names no `guidance` from `--file PATH.json`, and the folder holds an entry named exactly `PATH.md` that is a regular file or a link to one, is UTF-8 with no byte-order mark and holds more than white space, the CLI MUST send the text of `PATH.md` with its trailing whitespace removed as the definition's `guidance`.
+
+**Reason:** a folder that can be entered but not listed still opens `PATH.md` by its name, so its guidance is sent; there the CLI cannot tell `PATH.md` from a name that differs only by case.
+
+**Tests:** `device/types-guidance-live.test.ts › sends the Markdown file beside the definition as its guidance on register, replace and normalize`, `› reads only the entry named exactly PATH.md as guidance, and follows a link`, `› refuses a Markdown file that cannot be read, sending no request, and reads one in a folder that cannot be listed`.
+
+### `cli/types-guidance-no-file`
+
+When `marfa types register` or `marfa types replace` reads its definition from `--body` or from `--file -`, or from `--file PATH.json` with no entry named exactly `PATH.md` beside it (in a folder the CLI can list, a file `PATH.MD` is not that entry, on any file system), the CLI MUST send the definition as it is.
+
+**Reason:** a replacement without guidance removes it (`types/guidance-replace-permission`), so the command adds nothing the author did not write.
+
+**Tests:** `device/types-guidance-live.test.ts › sends a definition as it is when no Markdown file sits beside it, on register and replace, from a file, --body and --file -`, `› reads only the entry named exactly PATH.md as guidance, and follows a link`.
+
+### `cli/types-guidance-empty-file`
+
+When `marfa types register`, `marfa types replace` or `marfa types normalize` reads a definition that names no `guidance` from `--file PATH.json`, and the file `PATH.md` is UTF-8 with no byte-order mark and holds only white space, the CLI MUST send the definition with no `guidance`.
+
+**Tests:** `device/types-guidance-live.test.ts › sends no guidance for a Markdown file that holds only whitespace`.
+
+### `cli/types-guidance-ambiguous`
+
+If the definition of `--file PATH.json` names `guidance` and the file `PATH.md` can be read, then the CLI MUST exit 1 with `invalid` and a message that names `guidance_named_twice`, whether or not the file holds more than white space.
+
+**Reason:** two places for one text cannot both be right.
+
+**Tests:** `device/types-guidance-live.test.ts › exits 1 with invalid for a definition that names guidance beside a Markdown file, on register, replace and normalize`, `› judges an unreadable Markdown file before the definition's own guidance, and a readable empty one beside it as named twice`.
+
+### `cli/types-guidance-ambiguous-offline`
+
+If the definition of `--file PATH.json` names `guidance` and the file `PATH.md` can be read, then the CLI MUST send no request.
+
+**Tests:** `device/types-guidance-live.test.ts › sends no request for a definition that names guidance beside a Markdown file, though the same definition without the file sends one`.
+
+### `cli/types-guidance-file-refused`
+
+If the entry `PATH.md` beside `--file PATH.json` cannot be read, is not UTF-8, starts with a byte-order mark, or is not a regular file because it is a folder or a link that points at nothing or at something that is not a regular file, then the CLI MUST exit 1 with `invalid` and a message that names `guidance_file_unreadable`, whether or not the definition names `guidance`.
+
+**Reason:** a byte-order mark would be stored as the first character of the guidance, and text that is not UTF-8 cannot be sent. An unreadable file is judged first, so that a file that cannot be read is never taken for one that holds nothing.
+
+**Tests:** `device/types-guidance-live.test.ts › exits 1 with invalid for a Markdown file that is not UTF-8 or starts with a byte-order mark, on register, replace and normalize`, `› refuses a Markdown name that is a folder or a link to nothing, sending no request`, `› refuses a Markdown file that cannot be read, sending no request, and reads one in a folder that cannot be listed`, `› judges an unreadable Markdown file before the definition's own guidance, and a readable empty one beside it as named twice`.
+
+### `cli/types-guidance-file-offline`
+
+If the entry `PATH.md` beside `--file PATH.json` cannot be read, is not UTF-8, starts with a byte-order mark, or is not a regular file because it is a folder or a link that points at nothing or at something that is not a regular file, then the CLI MUST send no request.
+
+**Tests:** `device/types-guidance-live.test.ts › sends no request for a Markdown file that is not UTF-8 or starts with a byte-order mark, though a readable one sends one`, `› refuses a Markdown name that is a folder or a link to nothing, sending no request`, `› refuses a Markdown file that cannot be read, sending no request, and reads one in a folder that cannot be listed`.
+
+### `cli/types-get-guidance`
+
+When `marfa types get` reads a type that has guidance or ancestors that carry guidance, the CLI MUST print the type's `guidance` and its `ancestor_guidance`, as JSON members under `--json` and as text otherwise.
+
+**Tests:** `device/types-guidance-live.test.ts › prints a type's guidance and its ancestors' as members under --json and as text otherwise`.
+
 ## Normalizing a type definition
 
 ### `cli/normalize-cli`
 
-When a caller runs `marfa types normalize` with a definition supplied by `--body`, `--file PATH` or `--file -`, the CLI MUST send the declared input to `POST /types/normalize` and return its answer.
+When a caller runs `marfa types normalize` with a definition supplied by `--body`, `--file PATH` or `--file -`, the CLI MUST send the definition it read, with the `guidance` that `cli/types-guidance-file` takes from `PATH.md`, to `POST /types/normalize` and return its answer.
+
+**Reason:** a `PATH.md` the CLI refuses (`cli/types-guidance-ambiguous`, `cli/types-guidance-file-refused`) sends no request.
 
 **Tests:** `cli/doors.test.ts › normalizes an inline or stdin declaration with a read-only key and compares the registered definition`.
 

@@ -9,9 +9,11 @@ use super::field::{Shape, Stray, label_issue, normalize_field, validate_field_sh
 use super::registry::Ancestry;
 use super::tables::judge_tables;
 use super::{
-    Issue, MAX_FEED_DAYS, MAX_POLICY_DAYS, MAX_POLICY_VERSIONS, MERGE_STRATEGIES, Obj,
-    REFUSED_TYPE_KEYS, Registry, TYPE_ROLES, as_obj, describe, icon_issue, kind, names, number,
-    required, text, unread_keys, whole,
+    Issue, Limits, MAX_FEED_DAYS, MAX_FIELD_DESCRIPTION_LENGTH, MAX_GUIDANCE_LENGTH,
+    MAX_POLICY_DAYS, MAX_POLICY_VERSIONS, MAX_STATUS_WORD_DESCRIPTION_LENGTH,
+    MAX_TYPE_DESCRIPTION_LENGTH, MERGE_STRATEGIES, Obj, REFUSED_TYPE_KEYS, Registry, TYPE_ROLES,
+    as_obj, describe, icon_issue, kind, length_issue, names, number, required, text, unread_keys,
+    whole,
 };
 use crate::builtin;
 use crate::catalog::{Naming, merge_field_definition};
@@ -102,7 +104,13 @@ fn required_names(input: &Obj) -> Vec<String> {
 }
 
 pub fn validate_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issue>> {
-    judge_type(input, registry, Naming::Registered, Stray::Refuse)
+    judge_type(
+        input,
+        registry,
+        Naming::Registered,
+        Stray::Refuse,
+        Limits::Enforced,
+    )
 }
 
 /// `validate_type` for a type that replaces `held`: a member that keeps its type and `enum_values` as held is not refused for a list its type does not check.
@@ -116,12 +124,13 @@ pub fn validate_replacing_type(
         registry,
         Naming::Registered,
         Stray::UnlessChanged(held),
+        Limits::Enforced,
     )
 }
 
-/// `validate_type` for an archived type, which may keep a table column's name of a type a forced delete removed.
+/// Archives may contain dangling column targets or text from before the length limits.
 pub fn validate_restored_type(input: &Value, registry: &Registry) -> Result<Obj, Vec<Issue>> {
-    judge_type(input, registry, Naming::Any, Stray::Take)
+    judge_type(input, registry, Naming::Any, Stray::Take, Limits::Stored)
 }
 
 fn judge_type(
@@ -129,6 +138,7 @@ fn judge_type(
     registry: &Registry,
     naming: Naming,
     stray: Stray<'_>,
+    limits: Limits,
 ) -> Result<Obj, Vec<Issue>> {
     let Some(obj) = input.as_object() else {
         return Err(vec![Issue::new(
@@ -167,14 +177,7 @@ fn judge_type(
         &mut errors,
         "The name for more than one item, such as People. Omit it to make one from the label.",
     );
-    if obj.get("description").is_some_and(|d| !d.is_string()) {
-        errors.push(Issue::new(
-            "description",
-            "a string, or nothing",
-            describe(obj.get("description")),
-            "description is rendered on the consent screen and in the type catalog.",
-        ));
-    }
+    validate_text(obj, id, limits, &mut errors);
     if obj.get("parent").is_some_and(|p| !p.is_string()) {
         errors.push(Issue::new(
             "parent",
@@ -541,6 +544,12 @@ fn stored_form(
     if let Some(description) = obj.get("description").filter(|d| d.is_string()) {
         schema.insert("description".into(), description.clone());
     }
+    if let Some(guidance) = obj
+        .get("guidance")
+        .filter(|g| g.as_str().is_some_and(|text| !text.is_empty()))
+    {
+        schema.insert("guidance".into(), guidance.clone());
+    }
     if let Some(parent) = parent {
         schema.insert("parent".into(), json!(parent));
     }
@@ -610,6 +619,103 @@ fn thumbnail_names(fields: Option<&Obj>, ancestry: &Ancestry) -> HashSet<String>
             .map(|(name, _)| name.to_string()),
     );
     found
+}
+
+/// The faults in a type's description, guidance and nested descriptions, as a registration finds them.
+pub fn text_issues(obj: &Obj) -> Vec<Issue> {
+    let mut errors = Vec::new();
+    validate_text(
+        obj,
+        obj.get("id").and_then(Value::as_str),
+        Limits::Enforced,
+        &mut errors,
+    );
+    errors
+}
+
+fn validate_text(obj: &Obj, id: Option<&str>, limits: Limits, errors: &mut Vec<Issue>) {
+    let enforced = limits == Limits::Enforced;
+    if obj.get("description").is_some_and(|d| !d.is_string()) {
+        errors.push(Issue::new(
+            "description",
+            "a string, or nothing",
+            describe(obj.get("description")),
+            "description is rendered on the consent screen and in the type catalog.",
+        ));
+    }
+    if enforced {
+        errors.extend(length_issue(
+            "description",
+            obj.get("description"),
+            MAX_TYPE_DESCRIPTION_LENGTH,
+            "Say in one sentence what the type is for. Put anything longer in guidance.",
+        ));
+    }
+    match obj.get("guidance") {
+        None => {}
+        Some(Value::String(guidance)) => {
+            if !guidance.is_empty() && id.is_some_and(|id| id.split('.').next() == Some("app")) {
+                errors.push(Issue::new(
+                    "guidance",
+                    "no guidance on a type an app owns",
+                    format!("guidance of {} characters", guidance.chars().count()),
+                    "An app.* type is an app's own machinery, and agents are not told how to use it. Remove guidance.",
+                ));
+            }
+            if enforced {
+                errors.extend(length_issue(
+                    "guidance",
+                    obj.get("guidance"),
+                    MAX_GUIDANCE_LENGTH,
+                    "Keep guidance to what an agent needs to choose and fill the type.",
+                ));
+            }
+        }
+        Some(other) => errors.push(Issue::new(
+            "guidance",
+            "a string of Markdown, or nothing",
+            describe(Some(other)),
+            "Write guidance as Markdown text, or omit it.",
+        )),
+    }
+    if !enforced {
+        return;
+    }
+    for (name, definition) in as_obj(obj.get("fields")).into_iter().flatten() {
+        let Some(definition) = definition.as_object() else {
+            continue;
+        };
+        let path = format!("fields.{name}");
+        errors.extend(length_issue(
+            &format!("{path}.description"),
+            definition.get("description"),
+            MAX_FIELD_DESCRIPTION_LENGTH,
+            "Say what the field holds in a sentence or two.",
+        ));
+        for (member, held) in as_obj(definition.get("items_fields")).into_iter().flatten() {
+            let at = format!("{path}.items_fields.{member}.description");
+            errors.extend(length_issue(
+                &at,
+                held.get("description"),
+                MAX_FIELD_DESCRIPTION_LENGTH,
+                "Say what the member holds in a sentence or two.",
+            ));
+        }
+        for (index, word) in definition
+            .get("status_values")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            errors.extend(length_issue(
+                &format!("{path}.status_values.{index}.description"),
+                word.get("description"),
+                MAX_STATUS_WORD_DESCRIPTION_LENGTH,
+                "Say what the word means in a short phrase.",
+            ));
+        }
+    }
 }
 
 fn validate_roles(obj: &Obj, errors: &mut Vec<Issue>) {
@@ -1511,6 +1617,136 @@ mod tests {
         .into_iter()
         .map(|(field, _)| field)
         .collect()
+    }
+
+    fn text_of(count: usize, glyph: &str) -> String {
+        glyph.chars().cycle().take(count).collect()
+    }
+
+    fn limit_paths(input: Value) -> Vec<String> {
+        refused(input).into_iter().map(|(field, _)| field).collect()
+    }
+
+    #[test]
+    fn text_at_each_limit_is_taken_and_one_over_is_refused_by_code_points() {
+        for glyph in ["a", "\u{1F600}", "e\u{301}"] {
+            let at = |count: usize| {
+                json!({"id": "user.t", "description": text_of(count, glyph), "guidance": text_of(count + 800, glyph),
+                    "fields": {"title": {"type": "string", "description": text_of(count + 100, glyph)},
+                        "stage": {"type": "status", "status_values": [
+                            {"value": "open", "group": "not_started", "description": text_of(count - 80, glyph)}]}}})
+            };
+            assert!(validate_type(&at(200), &registry()).is_ok(), "{glyph:?}");
+            assert_eq!(
+                limit_paths(at(201)),
+                [
+                    "description",
+                    "guidance",
+                    "fields.title.description",
+                    "fields.stage.status_values.0.description"
+                ]
+                .map(String::from),
+                "{glyph:?}"
+            );
+        }
+        let exact = json!({"id": "user.t", "guidance": text_of(1000, "\u{1F600}"), "fields": {"title": {"type": "string"}}});
+        assert!(validate_type(&exact, &registry()).is_ok());
+        let over = json!({"id": "user.t", "guidance": text_of(1001, "\u{1F600}"), "fields": {"title": {"type": "string"}}});
+        assert_eq!(limit_paths(over), ["guidance"]);
+        let member = |count: usize| {
+            json!({"id": "user.t", "fields": {"rows": {"type": "array", "items_type": "object",
+                "items_fields": {"v": {"type": "string", "description": text_of(count, "a")}}}}})
+        };
+        assert!(validate_type(&member(300), &registry()).is_ok());
+        assert_eq!(
+            limit_paths(member(301)),
+            ["fields.rows.items_fields.v.description"]
+        );
+    }
+
+    #[test]
+    fn a_restore_takes_text_over_the_limits_and_keeps_it() {
+        let long = text_of(500, "a");
+        let stored = json!({"id": "user.t", "description": long, "guidance": text_of(2000, "a"),
+            "fields": {"title": {"type": "string", "description": long}}});
+        assert!(validate_type(&stored, &registry()).is_err());
+        let kept = validate_restored_type(&stored, &registry()).unwrap();
+        assert_eq!(kept["description"], long.as_str());
+        assert_eq!(kept["guidance"], text_of(2000, "a").as_str());
+        let app =
+            json!({"id": "app.acme.t", "guidance": "x", "fields": {"title": {"type": "string"}}});
+        assert!(validate_restored_type(&app, &registry()).is_err());
+    }
+
+    #[test]
+    fn guidance_is_refused_on_an_app_type_and_empty_guidance_is_none() {
+        let app = |guidance: Value| json!({"id": "app.acme.note", "guidance": guidance, "fields": {"title": {"type": "string"}}});
+        assert_eq!(limit_paths(app(json!("Use it."))), ["guidance"]);
+        let witness = json!({"id": "user.note", "guidance": "Use it.", "fields": {"title": {"type": "string"}}});
+        assert_eq!(
+            validate_type(&witness, &registry()).unwrap()["guidance"],
+            "Use it."
+        );
+        let empty = validate_type(&app(json!("")), &registry()).unwrap();
+        assert!(!empty.contains_key("guidance"));
+        let empty = validate_type(
+            &json!({"id": "user.note", "guidance": "", "fields": {"title": {"type": "string"}}}),
+            &registry(),
+        )
+        .unwrap();
+        assert!(!empty.contains_key("guidance"));
+        assert_eq!(limit_paths(app(json!(7))), ["guidance"]);
+        assert_eq!(limit_paths(app(Value::Null)), ["guidance"]);
+    }
+
+    #[test]
+    fn a_status_word_takes_a_text_description_and_no_other_key() {
+        let word = |entry: Value| json!({"id": "user.t", "fields": {"stage": {"type": "status", "status_values": [entry]}}});
+        let ok = validate_type(
+            &word(
+                json!({"value": "open", "group": "not_started", "description": "Not looked at."}),
+            ),
+            &registry(),
+        )
+        .unwrap();
+        assert_eq!(
+            ok["fields"]["stage"]["status_values"][0]["description"],
+            "Not looked at."
+        );
+        let bare = validate_type(
+            &word(json!({"value": "open", "group": "not_started", "description": ""})),
+            &registry(),
+        )
+        .unwrap();
+        assert!(
+            bare["fields"]["stage"]["status_values"][0]
+                .get("description")
+                .is_none()
+        );
+        assert_eq!(
+            limit_paths(word(
+                json!({"value": "open", "group": "not_started", "description": 3})
+            )),
+            ["fields.stage.status_values.0.description"]
+        );
+        assert_eq!(
+            limit_paths(word(
+                json!({"value": "open", "group": "not_started", "label": "Open"})
+            )),
+            ["fields.stage.status_values.0"]
+        );
+    }
+
+    #[test]
+    fn every_shipped_type_field_and_status_word_is_within_the_limits() {
+        let shipped = crate::builtin::shipped_types().unwrap();
+        assert!(!shipped.is_empty());
+        for definition in shipped {
+            let id = text(definition, "id").unwrap_or_default();
+            let mut errors = Vec::new();
+            validate_text(definition, Some(id), Limits::Enforced, &mut errors);
+            assert!(errors.is_empty(), "{id}: {errors:?}");
+        }
     }
 
     #[test]

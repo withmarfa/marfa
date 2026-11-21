@@ -77,7 +77,11 @@ pub async fn get(app: &App, id: String) -> Result<Value> {
                 return Err(unreadable_refusal(&id));
             }
             match resolve(&catalog.types, &id, false) {
-                Ok(Some(schema)) => Ok(presented(schema, catalog.provenance.get(&id))),
+                Ok(Some(schema)) => Ok(presented(
+                    schema,
+                    catalog.provenance.get(&id),
+                    &catalog.types,
+                )),
                 Ok(None) => Err(Refusal::new(
                     Code::TypeNotFound,
                     format!("Type \"{id}\" not found"),

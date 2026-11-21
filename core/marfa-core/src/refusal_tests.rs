@@ -596,6 +596,52 @@ fn a_status_field_with_no_words_in_its_chain_is_refused() {
 }
 
 #[test]
+fn a_declaration_is_held_to_the_text_rules_a_registration_applies() {
+    let core = copy(&Scripted::start());
+    let fields = serde_json::json!({ "title": { "type": "string" } });
+    let over = |count: usize| "t".repeat(count);
+    for (definition, refused) in [
+        (
+            serde_json::json!({ "id": "app.acme.note", "guidance": "Use it.", "fields": fields }),
+            "guidance",
+        ),
+        (
+            serde_json::json!({ "id": "user.note", "guidance": over(1001), "fields": fields }),
+            "guidance",
+        ),
+        (
+            serde_json::json!({ "id": "user.note", "guidance": 7, "fields": fields }),
+            "guidance",
+        ),
+        (
+            serde_json::json!({ "id": "user.note", "description": over(201), "fields": fields }),
+            "description",
+        ),
+        (
+            serde_json::json!({ "id": "user.note", "fields": { "title": { "type": "string", "description": over(301) } } }),
+            "fields.title.description",
+        ),
+        (
+            serde_json::json!({ "id": "user.note", "fields": { "stage": { "type": "status", "status_values": [{ "value": "open", "group": "not_started", "description": over(121) }] } } }),
+            "fields.stage.status_values.0.description",
+        ),
+    ] {
+        let Err(CoreError::Invalid(message)) =
+            core.declare_types(std::slice::from_ref(&definition))
+        else {
+            panic!("{definition} was declared");
+        };
+        assert!(message.contains(refused), "{definition}: {message}");
+    }
+    // The witness: the same text at its limit, and empty guidance on an app type, are declared.
+    core.declare_types(&[
+        serde_json::json!({ "id": "user.note", "description": over(200), "guidance": over(1000), "fields": fields }),
+        serde_json::json!({ "id": "app.acme.note", "guidance": "", "fields": fields }),
+    ])
+    .unwrap();
+}
+
+#[test]
 fn a_status_field_declared_with_words_the_server_refuses_is_refused() {
     let core = copy(&Scripted::start());
     for (status_values, refused) in [
@@ -608,10 +654,7 @@ fn a_status_field_declared_with_words_the_server_refuses_is_refused() {
             serde_json::json!([{ "value": "open", "group": "todo" }]),
             "not one of",
         ),
-        (
-            serde_json::json!([{ "value": "open" }]),
-            "exactly value and group",
-        ),
+        (serde_json::json!([{ "value": "open" }]), "value and group"),
         (
             serde_json::json!([{ "value": "open", "group": "not_started" }, { "value": "open", "group": "completed" }]),
             "more than once",

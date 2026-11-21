@@ -132,7 +132,11 @@ export interface FieldDefinition {
   /** Required on an `enum` field: the closed set of accepted values. */
   enum_values?: string[];
   /** Required on a `status` field: its words, each in one group. */
-  status_values?: { value: string; group: StatusGroup }[];
+  status_values?: {
+    value: string;
+    group: StatusGroup;
+    description?: string;
+  }[];
   /** Required on an `array` field: names the element type. */
   items_type?: FieldType;
   max_length?: number;
@@ -208,6 +212,9 @@ export interface TypeSchema {
   /** The label's plural; the server makes one from the label if omitted. */
   plural?: string;
   description?: string;
+  /** Markdown on how to use the type; `GET /types/{id}` also answers the guidance of its ancestors. */
+  guidance?: string;
+  ancestor_guidance?: { type: string; guidance: string }[];
   // Explicit parent in the inheritance chain. Dotted ids alone do not imply
   // inheritance — the server walks the `parent` reference to resolve
   // ancestors for field inheritance and for edge-constraint matching.

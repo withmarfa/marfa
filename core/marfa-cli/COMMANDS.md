@@ -1334,7 +1334,7 @@ marfa types list [OPTIONS]
 
 ### marfa types get
 
-One type by id, with its schema.
+One type by id, with its schema, its guidance and the guidance of the types above it.
 
 ```text
 marfa types get [OPTIONS] <ID>
@@ -1371,9 +1371,9 @@ marfa types scaffold [OPTIONS] <ID>
 
 Check a folder of type definitions the way a server checks each at registration, with no server.
 
-Reads each `*.json` file directly in the folder (not its subfolders, and not a file whose name starts with a dot) as an item type definition, in the body `types register --file` sends. The file is named `ID.json`, after the type's `id`. Other files are ignored. An edge type is not checked.
+Reads each `*.json` file directly in the folder (not its subfolders, and not a file whose name starts with a dot) as an item type definition, in the body `types register --file` sends. The file is named `ID.json`, after the type's `id`. The entry named exactly `ID.md` beside it (a link is followed, and `ID.MD` is not it) is read as the type's `guidance`, as `register --file` reads it: a regular file, UTF-8 with no byte-order mark, trailing whitespace removed, and no `guidance` also in the definition. An `ID.md` that cannot be read, or is a folder or a link to nothing, is refused first, whether or not the definition names `guidance`. A `.md` file named for a type with no `ID.json` beside it is refused. Other files are ignored. An edge type is not checked.
 
-Needs no server, key or keychain, sends nothing, and takes none of `--url`, `--key`, `--profile` and `--socket`. Each type is judged with the registration rules that need no instance, against the types Marfa ships and the types of the folder that passed before it: a type goes after the folder types it names, as its `parent`, in a `compatible_with` list of strings or in a table column's `type_constraints`, except a type that names itself and the types in a loop. A file refused for any reason supplies no type to the others. Types that name one another in a loop cannot be registered in any order, so each is judged with the others absent, which is the answer a server gives whichever it is given first. Every problem is reported, each with its file, its path in the definition, and the code and message a server gives for that file; a type whose parent or other named type is absent also says why, beside the server's answer. The command reports its own codes, `file_name_mismatch` and `file_unreadable`, first. What only an instance knows is left to it: whether the type already exists, what a key may register, and the body size an instance allows. Exits 1 when any file is refused or none is found, and 2 when the path is not a folder.
+Needs no server, key or keychain, sends nothing, and takes none of `--url`, `--key`, `--profile` and `--socket`. Each type is judged with the registration rules that need no instance, against the types Marfa ships and the types of the folder that passed before it: a type goes after the folder types it names, as its `parent`, in a `compatible_with` list of strings or in a table column's `type_constraints`, except a type that names itself and the types in a loop. A file refused for any reason supplies no type to the others. Types that name one another in a loop cannot be registered in any order, so each is judged with the others absent, which is the answer a server gives whichever it is given first. Every problem is reported, each with its file, its path in the definition, and the code and message a server gives for that file; a type whose parent or other named type is absent also says why, beside the server's answer. The command reports its own codes, `file_name_mismatch`, `file_unreadable`, `guidance_file_unreadable`, `guidance_named_twice` and `guidance_file_without_definition`, first. What only an instance knows is left to it: whether the type already exists, what a key may register, and the body size an instance allows. Exits 1 when any file is refused or none is found, and 2 when the path is not a folder.
 
 ```text
 marfa types check [OPTIONS] <FOLDER>
@@ -1385,7 +1385,9 @@ marfa types check [OPTIONS] <FOLDER>
 
 ### marfa types register
 
-Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map.
+Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map, and `schema.write` for a type that carries guidance.
+
+Given `--file PATH.json`, the entry named exactly `PATH.md` beside it (a link is followed, and `PATH.MD` is not it) is sent as the type's `guidance`, with its trailing whitespace removed. A `PATH.md` that is not UTF-8, starts with a byte-order mark, or is a folder or a link to nothing is refused first. Then a definition that also names `guidance` is refused, even if `PATH.md` is empty. A `PATH.md` with only white space and a definition with no `guidance` mean no guidance. `--body` and `--file -` read no Markdown file.
 
 ```text
 marfa types register [OPTIONS]
@@ -1398,7 +1400,7 @@ marfa types register [OPTIONS]
 
 ### marfa types normalize
 
-Normalize a definition and compare it with the registered type. Any authenticated key can use this command.
+Normalize a definition and compare it with the registered type. Any authenticated key can use this command. A `PATH.md` beside `--file PATH.json` is read as guidance, as `register` reads it.
 
 ```text
 marfa types normalize [OPTIONS]
@@ -1411,9 +1413,11 @@ marfa types normalize [OPTIONS]
 
 ### marfa types replace
 
-Replace a registered type's definition. Needs write on the type in the key's type map and `schema.write` or `metadata.types:write`.
+Replace a registered type's definition. Needs write on the type in the key's type map and `schema.write` or `metadata.types:write`. A `PATH.md` beside `--file PATH.json` is read as guidance, as `register` reads it.
 
-`metadata.types:write` alone covers adding optional fields that no stored item holds a value under, adding a table or an optional column, and changing the type's label, plural, description, display hints and version, or a field's, table's or column's label and description. Any other change, including removing a field, table or column, needs `schema.write`.
+A replacement without guidance removes the type's guidance, and adding, changing or removing guidance needs `schema.write`. A replacement that leaves it as it is needs nothing more.
+
+`metadata.types:write` alone covers adding optional fields that no stored item holds a value under, adding a table or an optional column, and naming an order for a table without one. It also covers changes to the type's label, plural, description, display hints and version, to field, table and column labels and descriptions, and to status word descriptions. Removing a field, table or column needs `schema.write`.
 
 ```text
 marfa types replace [OPTIONS] <ID>

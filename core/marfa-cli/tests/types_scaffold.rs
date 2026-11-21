@@ -125,6 +125,7 @@ fn run_recipe(extra: &[&str], env: &[(&str, &str)]) -> Ran {
 fn expected() -> Value {
     json!({
         "id": "user.recipe",
+        "description": "",
         "fields": {
             "title": { "type": "string", "required": true },
             "servings": { "type": "integer" },

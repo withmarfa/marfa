@@ -202,6 +202,14 @@ The server MUST carry in the `instance.ndjson.gz` of an archive a `type` line fo
 
 **Tests:** `compliance/export.test.ts › carries every registered type and edge type in an archive, whatever its selection and credential reach`.
 
+### `archive/archive-type-guidance`
+
+The server MUST carry the `guidance` of a type in the `type` line of an archive.
+
+**Reason:** guidance is part of the type's definition, so a backup that left it out would lose it on a move to a new instance.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › carries a type's guidance and status word descriptions through an export and a restore into a new instance`.
+
 ### `archive/archive-type-icons`
 
 The server MUST carry in the `instance.ndjson.gz` of an archive one `type_icon` line, holding the `type_id` and the `icon`, for each icon the owner has chosen for a type, and count them in the manifest's `type_icon_count`.
@@ -819,6 +827,72 @@ When an otherwise valid archive carries a set of registrations accepted through 
 **Reason:** an exported backup remains restorable when its registrations refer to each other, including mutual compatibility declarations and display hints, links, and merge policies that name inherited fields.
 
 **Tests:** `compliance/restore-compatible-types.test.ts › round-trips accepted registrations into an empty store (reversed: %s)`, `› refuses a target change that breaks a reader and restores the accepted registry`, `compliance/type-tables.test.ts › restores a subtype whose type line restates a table of its parent (reversed: %s)`.
+
+### `archive/restore-type-guidance`
+
+When a caller holding `schema.write` or local authority sends `POST /restore` for an archive with a `type` line of a type outside `app.*` that carries guidance, and the instance does not hold the type, the server MUST register the type with that guidance.
+
+**Reason:** a type the instance already holds the same way is skipped, and one it holds differently is a conflict (`archive/restore-type-conflict`), so a restore registers only a type the instance lacks.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › carries a type's guidance and status word descriptions through an export and a restore into a new instance`.
+
+### `archive/restore-type-guidance-app`
+
+If `POST /restore` reads a `type` line of an `app.*` type that carries non-empty `guidance`, then the server MUST answer `400 invalid_schema` with `details.errors` naming `guidance`.
+
+**Reason:** archives follow the same restriction on guidance as `types/guidance-app-refused`, and a restore judges every `type` line before it judges what the caller may set, so a caller without `schema.write` is answered `400`, not `403`.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › answers 400 invalid_schema naming guidance for an archive that gives an app type guidance`, `› answers 400 invalid_schema rather than 403 to an app without schema.write for an archive that gives an app type guidance`.
+
+### `archive/restore-type-guidance-app-no-write`
+
+If `POST /restore` reads a `type` line of an `app.*` type that carries non-empty `guidance`, then the server MUST NOT register any type of the archive.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › writes no type of an archive that gives an app type guidance, though the archive without that guidance writes them`.
+
+### `archive/restore-type-guidance-permission`
+
+If a caller without `schema.write` or local authority sends `POST /restore` for an archive with a `type` line of a type outside `app.*` that carries non-empty `guidance`, and the instance does not hold the type, and the restore refuses no line of the archive first (`archive/restore-type-guidance-app`, `archive/restore-type-conflict`), then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` and `details.changes` listing `guidance`.
+
+**Reason:** a restore registers types as `POST /types` does, and guidance tells agents how to fill a type (`types/guidance-register-permission`), so an app holding `backups.manage` alone could otherwise plant instructions that every agent reads. A type the instance holds the same way is skipped and needs no permission.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › answers 403 forbidden naming schema.write and guidance to an app holding backups.manage without schema.write`.
+
+### `archive/restore-type-guidance-denied-no-write`
+
+If a caller without `schema.write` or local authority sends `POST /restore` for an archive with a `type` line of a type outside `app.*` that carries non-empty `guidance`, and the instance does not hold the type, then the server MUST NOT register any type of the archive.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › writes no type of an archive that carries guidance for an app without schema.write, though an app holding schema.write restores it`.
+
+### `archive/restore-type-guidance-denied-no-blob`
+
+If a caller without `schema.write` or local authority sends `POST /restore` for an archive with a `type` line of a type outside `app.*` that carries non-empty `guidance`, and the instance does not hold the type, then the server MUST NOT place any blob bytes the archive carries.
+
+**Reason:** the refusal is decided before any bytes are placed, so a refused restore leaves nothing on disk for a cleanup to remove.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › places no blob bytes of an archive that carries guidance for an app without schema.write, though an app holding schema.write places them`.
+
+### `archive/restore-type-guidance-conflict-first`
+
+If a caller without `schema.write` or local authority sends `POST /restore` for an archive that carries guidance for a type outside `app.*` and registers a type the instance holds differently, then the server MUST answer `409 conflict` and not `403 forbidden`.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › answers 409 conflict rather than 403 to an app without schema.write for an archive that registers a type the instance holds differently`.
+
+### `archive/restore-type-empty-text`
+
+When `POST /restore` registers a type from a `type` line whose `guidance` is an empty string, or whose status word has a `description` that is an empty string, the server MUST register the type without that text.
+
+**Reason:** an empty `guidance` means none (`types/guidance-empty`), and a registration keeps no empty status word description. A type the instance holds the same way, with that text left out, is skipped.
+
+**Tests:** `compliance/type-guidance-restore.test.ts › registers a type with no guidance and no status word description where the archive holds them empty`.
+
+### `archive/restore-type-text-limits`
+
+When `POST /restore` registers a type from a `type` line whose `description`, a field's or member's `description`, a status word's `description` or `guidance` is longer than a registration takes, the server MUST register the type with that text unchanged.
+
+**Reason:** a type stored before the limits existed (`types/description-limit`) stays in a backup and restores, and its next replacement brings it within (`types/limits-replace-stored`). A guidance over the limit still needs `schema.write` (`archive/restore-type-guidance-permission`).
+
+**Tests:** `compliance/type-guidance-restore.test.ts › reads a type stored over the limits as it is, and refuses a replacement that keeps the text until it is within`.
 
 ### `archive/restore-type-conflict`
 

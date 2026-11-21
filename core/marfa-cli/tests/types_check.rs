@@ -652,3 +652,105 @@ fn it_refuses_the_options_that_name_a_server() {
         assert_eq!(ran.stdout, "");
     }
 }
+
+#[test]
+fn the_markdown_file_beside_a_definition_is_judged_as_its_guidance() {
+    let note = json!({ "id": "user.note", "fields": { "a": { "type": "string" } } });
+    let folder = folder_of(&[("user.note.json", note)]);
+    std::fs::write(
+        folder.path().join("user.note.md"),
+        format!("{}\n", "a".repeat(1000)),
+    )
+    .unwrap();
+    let (ran, verdict) = check_json(folder.path());
+    assert_eq!(ran.code, 0, "{}{}", ran.stdout, ran.stderr);
+    assert_eq!(verdict["checked"], 1);
+
+    std::fs::write(folder.path().join("user.note.md"), "a".repeat(1001)).unwrap();
+    let (ran, verdict) = check_json(folder.path());
+    assert_eq!(ran.code, 1, "{}", ran.stdout);
+    let found = problems(&verdict, "user.note.json");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0]["path"], "guidance");
+    assert_eq!(found[0]["code"], "invalid_schema");
+
+    std::fs::write(folder.path().join("user.note.md"), "Use it.").unwrap();
+    std::fs::write(folder.path().join("user.other.md"), "Use it.").unwrap();
+    std::fs::write(folder.path().join("README.md"), "About.").unwrap();
+    let (ran, verdict) = check_json(folder.path());
+    assert_eq!(ran.code, 1, "{}", ran.stdout);
+    assert_eq!(
+        problems(&verdict, "user.other.md")[0]["code"],
+        "guidance_file_without_definition"
+    );
+    assert_eq!(verdict["checked"], 2);
+}
+
+fn note_folder() -> TempDir {
+    folder_of(&[(
+        "user.note.json",
+        json!({ "id": "user.note", "fields": { "a": { "type": "string" } } }),
+    )])
+}
+
+#[test]
+fn a_markdown_name_that_differs_by_case_is_neither_guidance_nor_an_orphan() {
+    let folder = note_folder();
+    std::fs::write(folder.path().join("user.note.MD"), "a".repeat(1001)).unwrap();
+    std::fs::write(folder.path().join("user.other.MD"), "Use it.").unwrap();
+    let (ran, verdict) = check_json(folder.path());
+    assert_eq!(ran.code, 0, "{}{}", ran.stdout, ran.stderr);
+    assert_eq!(verdict["checked"], 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_markdown_link_is_followed_and_a_dangling_one_or_a_folder_is_unreadable() {
+    let folder = note_folder();
+    let elsewhere = TempDir::new().unwrap();
+    std::fs::write(elsewhere.path().join("text.md"), "a".repeat(1001)).unwrap();
+    let link = folder.path().join("user.note.md");
+    std::os::unix::fs::symlink(elsewhere.path().join("text.md"), &link).unwrap();
+    let (ran, verdict) = check_json(folder.path());
+    assert_eq!(ran.code, 1, "{}", ran.stdout);
+    assert_eq!(problems(&verdict, "user.note.json")[0]["path"], "guidance");
+    assert_eq!(
+        problems(&verdict, "user.note.json")[0]["code"],
+        "invalid_schema"
+    );
+
+    std::fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(elsewhere.path().join("missing.md"), &link).unwrap();
+    let (ran, verdict) = check_json(folder.path());
+    assert_eq!(ran.code, 1, "{}", ran.stdout);
+    assert_eq!(
+        problems(&verdict, "user.note.json")[0]["code"],
+        "guidance_file_unreadable"
+    );
+
+    std::fs::remove_file(&link).unwrap();
+    std::fs::create_dir(&link).unwrap();
+    let (ran, verdict) = check_json(folder.path());
+    assert_eq!(ran.code, 1, "{}", ran.stdout);
+    assert_eq!(
+        problems(&verdict, "user.note.json")[0]["code"],
+        "guidance_file_unreadable"
+    );
+}
+
+#[test]
+fn a_folder_of_only_orphan_markdown_files_says_so_and_that_no_definitions_were_found() {
+    let folder = TempDir::new().unwrap();
+    std::fs::write(folder.path().join("user.note.md"), "Use it.").unwrap();
+    let (ran, verdict) = check_json(folder.path());
+    assert_eq!(ran.code, 1);
+    assert_eq!(
+        problems(&verdict, "user.note.md")[0]["code"],
+        "guidance_file_without_definition"
+    );
+    assert!(
+        ran.stderr.contains("no *.json files found"),
+        "{}",
+        ran.stderr
+    );
+}

@@ -87,6 +87,19 @@ impl Caller {
         }
     }
 
+    /// Agents read guidance as instructions.
+    pub fn require_guidance(&self, stored: Option<&str>, next: Option<&str>) -> Result<()> {
+        if stored == next || self.holds(Permission::SchemaWrite) {
+            return Ok(());
+        }
+        Err(Refusal::new(
+            Code::Forbidden,
+            "Adding, changing, or removing type guidance requires schema.write.",
+        )
+        .with_detail("required_scope", Permission::SchemaWrite.word())
+        .with_detail("changes", vec!["guidance"]))
+    }
+
     pub fn require_type(&self, name: &str, level: Level) -> Result<()> {
         if self.key().is_some() && level == Level::Write && name.split('.').next() == Some("system")
         {

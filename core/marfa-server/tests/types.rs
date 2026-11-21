@@ -396,6 +396,70 @@ async fn the_folder_check_gives_each_definition_the_answer_a_registration_gets()
 }
 
 #[tokio::test]
+async fn the_folder_check_gives_guidance_in_a_markdown_file_the_answer_a_registration_gets() {
+    let instance = Instance::start().await;
+    let emoji = |count: usize| "\u{1F600}".repeat(count);
+    let accents = |count: usize| "e\u{301}".repeat(count / 2);
+    let cases = [
+        ("acme.within", emoji(1000), true),
+        ("acme.over", emoji(1001), false),
+        ("acme.accents-within", accents(1000), true),
+        ("acme.accents-over", accents(1002), false),
+        ("acme.plain", "Use it.\n\nTwo parts.".to_string(), true),
+        ("acme.empty", String::new(), true),
+        ("app.acme.note", "Use it.".to_string(), false),
+        ("app.acme.quiet", String::new(), true),
+    ];
+    let mut files: Vec<TypeFile> = Vec::new();
+    for (id, guidance, _) in &cases {
+        files.push(TypeFile {
+            name: format!("{id}.json"),
+            content: Ok(simple(id).to_string().into_bytes()),
+        });
+        files.push(TypeFile {
+            name: format!("{id}.md"),
+            content: Ok(format!("{guidance}\n\n").into_bytes()),
+        });
+    }
+    let verdict = check_type_files(&files, &shipped_registry().unwrap()).unwrap();
+    assert_eq!(verdict.files.len(), cases.len());
+
+    for (id, guidance, accepted) in cases {
+        let checked = verdict
+            .files
+            .iter()
+            .find(|file| file.file == format!("{id}.json"))
+            .unwrap();
+        let mut body = simple(id);
+        body["guidance"] = json!(guidance);
+        let reply = instance.register(body).await;
+        if accepted {
+            assert_eq!(reply.status, StatusCode::CREATED, "{id}: {}", reply.body);
+            assert!(checked.problems.is_empty(), "{id}: {:?}", checked.problems);
+            continue;
+        }
+        assert_eq!(
+            reply.status,
+            StatusCode::BAD_REQUEST,
+            "{id}: {}",
+            reply.body
+        );
+        let (code, said) = answered(&reply);
+        assert!(
+            checked.problems.iter().all(|problem| problem.code == code),
+            "{id}: server {code}, checker {:?}",
+            checked.problems
+        );
+        let heard: Vec<String> = checked
+            .problems
+            .iter()
+            .map(|problem| problem.message.clone())
+            .collect();
+        assert_eq!(heard, said, "{id}");
+    }
+}
+
+#[tokio::test]
 async fn a_type_under_a_file_the_folder_refused_gets_the_answer_a_registration_gets_without_it() {
     let parent = json!({ "id": "acme.parent", "fields": { "x": { "type": "string" } } });
     let kid = child(

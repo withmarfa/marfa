@@ -121,6 +121,12 @@ pub fn normalize_field(raw: &Obj, required: Option<bool>) -> Obj {
             if let Some(group) = entry.and_then(|e| e.get("group")) {
                 word.insert("group".into(), group.clone());
             }
+            if let Some(description) = entry
+                .and_then(|e| e.get("description"))
+                .filter(|d| d.as_str().is_some_and(|text| !text.is_empty()))
+            {
+                word.insert("description".into(), description.clone());
+            }
             Value::Object(word)
         });
         out.insert("status_values".into(), Value::Array(words.collect()));
@@ -563,10 +569,15 @@ fn validate_status_values(
             .collect();
         keys.sort_unstable();
         let keys = keys.join(",");
-        let Some(record) = record.filter(|_| keys == "group,value") else {
+        let Some(record) = record.filter(|r| {
+            r.contains_key("value")
+                && r.contains_key("group")
+                && r.keys()
+                    .all(|key| ["value", "group", "description"].contains(&key.as_str()))
+        }) else {
             errors.push(Issue::new(
                 at,
-                "an object with exactly \"value\" and \"group\"",
+                "an object with \"value\" and \"group\", and optionally \"description\"",
                 if entry.is_object() {
                     format!(
                         "an object with keys {}",
@@ -579,6 +590,14 @@ fn validate_status_values(
             ));
             continue;
         };
+        if record.get("description").is_some_and(|d| !d.is_string()) {
+            errors.push(Issue::new(
+                format!("{at}.description"),
+                "a string, or nothing",
+                describe(record.get("description")),
+                "A word's description says what the word means.",
+            ));
+        }
         match record.get("value").and_then(Value::as_str) {
             Some(word) if api_name(word) => {
                 if !seen.insert(word.to_string()) {

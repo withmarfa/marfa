@@ -91,6 +91,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             let id = text_of(&schema, "id")
                 .ok_or_else(|| Refusal::internal("a registered type has no id"))?
                 .to_string();
+            caller.require_guidance(None, text_of(&schema, "guidance"))?;
             require_reach(caller, &schema, None)?;
             if let Some(parent) = text_of(&schema, "parent")
                 && let Some(fault) = parent_chain_fault(&catalog.types, &id, parent, 0)
@@ -132,7 +133,11 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
                 origin: "user",
                 created_by: Some(creator),
             };
-            Ok(presented(schema, Some(&held)))
+            Ok(presented(
+                schema.clone(),
+                Some(&held),
+                &catalog.types.with(schema),
+            ))
         })
         .await?;
     app.publish_catalog().await;
@@ -275,6 +280,7 @@ async fn replacing(
                 }
             };
             definition.remove("provenance");
+            definition.remove("ancestor_guidance");
             definition.insert("id".into(), Value::String(id.clone()));
             let definition = Value::Object(definition);
             let judged = match stored {
@@ -289,6 +295,10 @@ async fn replacing(
                 }
                 None => schema,
             };
+            caller.require_guidance(
+                stored.and_then(|held| text_of(held, "guidance")),
+                text_of(&schema, "guidance"),
+            )?;
             let family = with_subtypes(unit.tx(), &id)?;
             require_evolution(unit.tx(), caller, &family, stored, &schema)?;
             require_reach(caller, &schema, stored)?;
@@ -331,7 +341,7 @@ async fn replacing(
             let shown = next
                 .owned(&id)
                 .ok_or_else(|| Refusal::internal("a replaced type is not in its registry"))?;
-            Ok(presented(shown, catalog.provenance.get(&id)))
+            Ok(presented(shown, catalog.provenance.get(&id), &next))
         })
         .await?;
     app.publish_catalog().await;
@@ -387,7 +397,7 @@ fn require_evolution(
     Err(Refusal::new(
         Code::Forbidden,
         format!(
-            "Changing {} requires schema.write. A credential holding metadata.types:write alone may add optional fields that no stored item holds a value under, add a table or an optional column, name an order for a table that names none, and change the type's label, plural, description, display hints and version, or a field's, table's or column's label and description.",
+            "Changing {} requires schema.write. A credential holding metadata.types:write alone may add optional fields that no stored item holds a value under, add a table or an optional column, and name an order for a table without one. It may also change the type's label, plural, description, display hints and version, field, table and column labels and descriptions, and status word descriptions.",
             changes.join(", ")
         ),
     )
@@ -536,7 +546,7 @@ async fn change_icon(
             let resolved = resolve(&registry, &id, false)
                 .map_err(|fault| chain_refusal(&fault))?
                 .ok_or_else(|| not_found(&id))?;
-            Ok(presented(resolved, catalog.provenance.get(&id)))
+            Ok(presented(resolved, catalog.provenance.get(&id), &registry))
         })
         .await?;
     app.publish_catalog().await;
@@ -544,6 +554,7 @@ async fn change_icon(
 }
 
 /// An archive's type line: the definition and who made it.
+#[derive(Clone)]
 pub struct Archived {
     pub definition: Value,
     pub created_by: Option<Value>,
@@ -559,6 +570,12 @@ pub struct Restoring {
 impl Restoring {
     pub fn registered(&self) -> usize {
         self.fresh.len()
+    }
+
+    pub fn require_guidance(&self, caller: &Caller) -> Result<()> {
+        self.fresh.iter().try_for_each(|(_, schema, _)| {
+            caller.require_guidance(None, text_of(schema, "guidance"))
+        })
     }
 
     /// The definitions the plan registers.

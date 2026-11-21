@@ -10,6 +10,7 @@ use super::{
 };
 use crate::builtin;
 use crate::error::RuleError;
+use crate::grammar;
 
 /// A file in the folder: its name, and its bytes or why they could not be read.
 #[derive(Debug, Clone)]
@@ -52,6 +53,47 @@ pub fn shipped_registry() -> Result<Registry, RuleError> {
 }
 
 const PARENT_PATH: &str = "parent";
+const GUIDANCE_PATH: &str = "guidance";
+
+/// Why the Markdown file beside a definition cannot be read as its guidance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuidanceFileFault {
+    ByteOrderMark,
+    NotUtf8,
+}
+
+impl GuidanceFileFault {
+    pub fn message(self, name: &str) -> String {
+        match self {
+            Self::ByteOrderMark => {
+                format!("{name} starts with a byte-order mark. Save it as UTF-8 without one.")
+            }
+            Self::NotUtf8 => format!("{name} is not UTF-8. Save it as UTF-8."),
+        }
+    }
+}
+
+/// The guidance a Markdown file holds: UTF-8 with no byte-order mark, and its trailing whitespace removed so an editor's final newline does not count.
+pub fn read_guidance_file(bytes: &[u8]) -> Result<String, GuidanceFileFault> {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return Err(GuidanceFileFault::ByteOrderMark);
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_| GuidanceFileFault::NotUtf8)?;
+    Ok(text.trim_end().to_string())
+}
+
+/// The name of the Markdown file that holds the guidance of the definition in `file`: the same name with `.md` for `.json`. `None` for a file that is not a definition.
+pub fn guidance_file_name(file: &str) -> Option<String> {
+    let stem = file.get(..file.len().checked_sub(".json".len())?)?;
+    file[stem.len()..]
+        .eq_ignore_ascii_case(".json")
+        .then(|| format!("{stem}.md"))
+}
+
+/// Whether `name` is the name of a Markdown file a definition's guidance can sit in: it ends in exactly `.md`, so `.MD` is not one.
+pub fn is_guidance_file(name: &str) -> bool {
+    !name.starts_with('.') && name.ends_with(".md")
+}
 
 pub fn is_type_file(name: &str) -> bool {
     !name.starts_with('.') && name.to_ascii_lowercase().ends_with(".json")
@@ -177,6 +219,8 @@ struct Entry {
     body: Obj,
     /// Refused by the folder's own checks, so never registered for a later type to name.
     misnamed: bool,
+    /// Refused for its guidance file before the registration rules judged it.
+    unjudged: bool,
 }
 
 /// The types of the folder in an order that registers each after the types it names, and the ones left that wait on a loop.
@@ -259,8 +303,19 @@ pub fn check_type_files(
             context: None,
         })
         .collect();
+    let guidance_files: HashMap<&str, &TypeFile> = files
+        .iter()
+        .filter(|file| is_guidance_file(&file.name))
+        .map(|file| (file.name.as_str(), file))
+        .collect();
+    let mut paired: Vec<String> = Vec::new();
     let mut entries: Vec<Entry> = Vec::new();
     for (at, file) in candidates.iter().enumerate() {
+        let sibling = guidance_file_name(&file.name)
+            .filter(|name| guidance_files.contains_key(name.as_str()));
+        if let Some(name) = &sibling {
+            paired.push(name.clone());
+        }
         let body = match &file.content {
             Err(why) => {
                 verdicts[at].problems.push(problem(
@@ -268,12 +323,14 @@ pub fn check_type_files(
                     "file_unreadable",
                     format!("Cannot read the file: {why}"),
                 ));
+                verdicts[at].context = unjudged_guidance(sibling.as_deref());
                 continue;
             }
             Ok(bytes) => match read(bytes) {
                 Ok(body) => body,
                 Err(refused) => {
                     verdicts[at].problems.push(refused);
+                    verdicts[at].context = unjudged_guidance(sibling.as_deref());
                     continue;
                 }
             },
@@ -303,13 +360,29 @@ pub fn check_type_files(
         if !id.is_empty() {
             verdicts[at].id = Some(id.clone());
         }
+        let mut body = body;
+        let mut unjudged = false;
+        if let Some(name) = &sibling
+            && let Some(guidance) = guidance_files.get(name.as_str())
+            && let Err(refused) = with_guidance(&mut body, name, guidance)
+        {
+            verdicts[at].problems.push(refused);
+            unjudged = true;
+        }
         entries.push(Entry {
             file: at,
             id,
             body,
-            misnamed,
+            misnamed: misnamed || unjudged,
+            unjudged,
         });
     }
+    let mut strays: Vec<&TypeFile> = guidance_files
+        .values()
+        .copied()
+        .filter(|file| !paired.contains(&file.name) && names_a_type(&file.name))
+        .collect();
+    strays.sort_by(|a, b| a.name.cmp(&b.name));
     let mut by_id: HashMap<&str, usize> = HashMap::new();
     for (index, entry) in entries.iter().enumerate() {
         if entry.id.is_empty() {
@@ -341,6 +414,9 @@ pub fn check_type_files(
     let mut working = shipped.clone();
     for &index in order.ready.iter().chain(&order.stuck) {
         let entry = &entries[index];
+        if entry.unjudged {
+            continue;
+        }
         let looped = loop_through(index, &links, &order.stuck);
         let held = judge(entry, &working)?;
         verdicts[entry.file].context =
@@ -351,7 +427,58 @@ pub fn check_type_files(
             Err(problems) => verdicts[entry.file].problems.extend(problems),
         }
     }
+    for file in strays {
+        let stem = &file.name[..file.name.len() - ".md".len()];
+        verdicts.push(FileVerdict {
+            file: file.name.clone(),
+            id: None,
+            problems: vec![problem(
+                "",
+                "guidance_file_without_definition",
+                format!(
+                    "No {stem}.json sits beside {}, so its text is guidance for no type. Add the definition, or rename the file if it belongs to another type.",
+                    file.name
+                ),
+            )],
+            context: None,
+        });
+    }
     Ok(FolderVerdict { files: verdicts })
+}
+
+fn unjudged_guidance(sibling: Option<&str>) -> Option<String> {
+    sibling.map(|name| {
+        format!("{name} sits beside this file as its guidance. It was not judged, because the definition was refused.")
+    })
+}
+
+/// Whether a Markdown file is named as guidance for a type: its name before `.md` is a well-formed type id.
+fn names_a_type(name: &str) -> bool {
+    let stem = &name[..name.len() - ".md".len()];
+    grammar::type_id(stem).unwrap_or(false)
+}
+
+/// Sets the definition's `guidance` from the Markdown file beside it, as `types register --file` does: an empty file sets none, and a definition that also names `guidance` is refused.
+fn with_guidance(body: &mut Obj, name: &str, file: &TypeFile) -> Result<(), Problem> {
+    let refused = |code: &'static str, message: String| problem(GUIDANCE_PATH, code, message);
+    let bytes = file.content.as_ref().map_err(|why| {
+        refused(
+            "guidance_file_unreadable",
+            format!("Cannot read {name}: {why}"),
+        )
+    })?;
+    let text = read_guidance_file(bytes)
+        .map_err(|fault| refused("guidance_file_unreadable", fault.message(name)))?;
+    if body.contains_key(GUIDANCE_PATH) {
+        return Err(refused(
+            "guidance_named_twice",
+            format!("The definition names guidance and {name} holds it too. Keep it in one place."),
+        ));
+    }
+    if !text.is_empty() {
+        body.insert(GUIDANCE_PATH.into(), Value::String(text));
+    }
+    Ok(())
 }
 
 fn context_of(
@@ -1219,5 +1346,228 @@ mod tests {
     fn a_folder_with_nothing_to_check_has_no_files() {
         assert!(check(&[]).files.is_empty());
         assert!(check(&[file("README.md", "x")]).files.is_empty());
+    }
+
+    fn markdown(id: &str, text: impl AsRef<[u8]>) -> TypeFile {
+        file(&format!("{id}.md"), text)
+    }
+
+    #[test]
+    fn a_markdown_file_beside_a_definition_is_its_guidance_trimmed_and_judged() {
+        let sample = || {
+            definition(
+                "user.note",
+                json!({ "fields": { "a": { "type": "string" } } }),
+            )
+        };
+        let at_limit = "\u{1F600}".repeat(1000);
+        let passed = check(&[sample(), markdown("user.note", format!("{at_limit}\n\n"))]);
+        assert_eq!(passed.problem_count(), 0, "{passed:?}");
+        let over = check(&[sample(), markdown("user.note", format!("{at_limit}x"))]);
+        assert_eq!(problems_of(&over, "user.note.json")[0].path, "guidance");
+        let app = definition(
+            "app.acme.note",
+            json!({ "fields": { "a": { "type": "string" } } }),
+        );
+        let refused = check(&[app, markdown("app.acme.note", "Use it.")]);
+        assert_eq!(
+            problems_of(&refused, "app.acme.note.json")[0].path,
+            "guidance"
+        );
+        let none = definition(
+            "app.acme.quiet",
+            json!({ "fields": { "a": { "type": "string" } } }),
+        );
+        assert_eq!(
+            check(&[none, markdown("app.acme.quiet", " \n")]).problem_count(),
+            0
+        );
+    }
+
+    #[test]
+    fn a_markdown_file_that_cannot_be_read_or_is_named_twice_refuses_the_definition() {
+        let sample = || {
+            definition(
+                "user.note",
+                json!({ "fields": { "a": { "type": "string" } } }),
+            )
+        };
+        let named = definition(
+            "user.note",
+            json!({ "guidance": "x", "fields": { "a": { "type": "string" } } }),
+        );
+        assert_eq!(check(std::slice::from_ref(&named)).problem_count(), 0);
+        let twice = check(&[named, markdown("user.note", "")]);
+        assert_eq!(
+            problems_of(&twice, "user.note.json")[0].code,
+            "guidance_named_twice"
+        );
+        for (bytes, said) in [
+            (vec![0xEF, 0xBB, 0xBF, b'x'], "byte-order mark"),
+            (vec![b'x', 0xE9], "not UTF-8"),
+        ] {
+            let refused = check(&[sample(), markdown("user.note", bytes)]);
+            let found = problems_of(&refused, "user.note.json");
+            assert_eq!(found[0].code, "guidance_file_unreadable");
+            assert!(found[0].message.contains(said), "{found:?}");
+        }
+        let unread = TypeFile {
+            name: "user.note.md".into(),
+            content: Err("denied".into()),
+        };
+        let refused = check(&[sample(), unread]);
+        assert!(
+            problems_of(&refused, "user.note.json")[0]
+                .message
+                .contains("denied")
+        );
+    }
+
+    #[test]
+    fn a_markdown_file_named_for_a_type_without_a_definition_is_refused_and_others_are_left() {
+        let sample = || {
+            definition(
+                "user.note",
+                json!({ "fields": { "a": { "type": "string" } } }),
+            )
+        };
+        let verdict = check(&[
+            sample(),
+            markdown("user.note", "x"),
+            markdown("user.other", "x"),
+            markdown("README", "x"),
+            file(".user.hidden.md", "x"),
+        ]);
+        assert_eq!(verdict.files.len(), 2, "{verdict:?}");
+        assert_eq!(
+            problems_of(&verdict, "user.other.md")[0].code,
+            "guidance_file_without_definition"
+        );
+        assert_eq!(problems_of(&verdict, "user.note.json").len(), 0);
+    }
+
+    fn said<'a>(verdict: &'a FolderVerdict, name: &str) -> &'a str {
+        context_of_file(verdict, name).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_markdown_file_beside_a_refused_definition_is_paired_with_it_not_orphaned() {
+        let sample = || {
+            definition(
+                "user.note",
+                json!({ "fields": { "a": { "type": "string" } } }),
+            )
+        };
+        let unreadable = TypeFile {
+            name: "user.broken.json".into(),
+            content: Err("denied".into()),
+        };
+        for broken in [file("user.broken.json", "{ not json"), unreadable] {
+            let verdict = check(&[sample(), broken, markdown("user.broken", "Use it.")]);
+            assert_eq!(verdict.files.len(), 2, "{verdict:?}");
+            assert!(
+                said(&verdict, "user.broken.json").contains("user.broken.md"),
+                "{verdict:?}"
+            );
+        }
+        let orphan = check(&[sample(), markdown("user.broken", "Use it.")]);
+        assert_eq!(
+            problems_of(&orphan, "user.broken.md")[0].code,
+            "guidance_file_without_definition"
+        );
+    }
+
+    #[test]
+    fn a_parent_refused_for_its_guidance_file_is_refused_in_the_folder_not_missing_from_it() {
+        let parent = definition(
+            "user.base",
+            json!({ "fields": { "a": { "type": "string" } } }),
+        );
+        let child = definition(
+            "user.leaf",
+            json!({ "parent": "user.base", "fields": { "b": { "type": "string" } } }),
+        );
+        let verdict = check(&[parent.clone(), child.clone(), markdown("user.base", [0xE9])]);
+        assert_eq!(
+            problems_of(&verdict, "user.base.json")[0].code,
+            "guidance_file_unreadable"
+        );
+        let text = said(&verdict, "user.leaf.json");
+        assert!(text.contains("was refused in this folder"), "{text}");
+        assert!(!text.contains("is not shipped or in this folder"), "{text}");
+        let witness = check(&[child]);
+        assert!(said(&witness, "user.leaf.json").contains("is not shipped or in this folder"));
+    }
+
+    #[test]
+    fn a_markdown_name_that_differs_by_case_is_not_the_guidance_file() {
+        let sample = definition(
+            "user.note",
+            json!({ "fields": { "a": { "type": "string" } } }),
+        );
+        let over = "a".repeat(1001);
+        let verdict = check(&[
+            sample.clone(),
+            file("user.note.MD", &over),
+            file("user.other.MD", &over),
+        ]);
+        assert_eq!(verdict.problem_count(), 0, "{verdict:?}");
+        assert_eq!(verdict.files.len(), 1);
+        let witness = check(&[sample, markdown("user.note", over)]);
+        assert_eq!(witness.problem_count(), 1);
+    }
+
+    #[test]
+    fn a_definition_with_a_markdown_file_is_judged_in_one_order() {
+        let named = |text: &str| {
+            definition(
+                "user.note",
+                json!({ "guidance": text, "fields": { "a": { "type": "string" } } }),
+            )
+        };
+        let code = |verdict: &FolderVerdict| {
+            let found = problems_of(verdict, "user.note.json");
+            assert_eq!(found.len(), 1, "{found:?}");
+            found[0].code
+        };
+        for sibling in [vec![], b" \n".to_vec(), b"Use it.".to_vec()] {
+            assert_eq!(
+                code(&check(&[named("x"), markdown("user.note", sibling)])),
+                "guidance_named_twice"
+            );
+        }
+        for sibling in [
+            vec![0xEF, 0xBB, 0xBF],
+            vec![0xEF, 0xBB, 0xBF, b'x'],
+            vec![0xE9],
+        ] {
+            assert_eq!(
+                code(&check(&[named("x"), markdown("user.note", sibling)])),
+                "guidance_file_unreadable"
+            );
+        }
+        let unread = TypeFile {
+            name: "user.note.md".into(),
+            content: Err("denied".into()),
+        };
+        assert_eq!(
+            code(&check(&[named("x"), unread])),
+            "guidance_file_unreadable"
+        );
+    }
+
+    #[test]
+    fn the_markdown_file_of_a_definition_has_the_same_name_with_md() {
+        assert_eq!(
+            guidance_file_name("user.note.json").as_deref(),
+            Some("user.note.md")
+        );
+        assert_eq!(guidance_file_name("User.JSON").as_deref(), Some("User.md"));
+        assert_eq!(guidance_file_name("user.note.md"), None);
+        assert_eq!(guidance_file_name("json"), None);
+        assert_eq!(
+            read_guidance_file(b"Use it.\r\n\n").as_deref(),
+            Ok("Use it.")
+        );
     }
 }

@@ -21,10 +21,7 @@ pub struct ScaffoldField {
     pub status_values: Vec<(String, String)>,
 }
 
-/// A type definition naming `id`, with `fields` in the order given, that a
-/// declaration takes unchanged and a key that may register `id` can register.
-/// `parent` is checked only for its grammar: a parent the instance or the
-/// declaration holds cannot be known here.
+/// A parent registered on the instance cannot be checked offline.
 pub fn scaffold_type(
     id: &str,
     parent: Option<&str>,
@@ -147,13 +144,14 @@ pub fn scaffold_type(
     }
     let mut row = Map::new();
     row.insert("id".into(), id.into());
-    if let Some(description) = description {
-        row.insert("description".into(), description.into());
-    }
+    row.insert("description".into(), description.unwrap_or_default().into());
     if let Some(parent) = parent {
         row.insert("parent".into(), parent.into());
     }
     row.insert("fields".into(), Value::Object(held));
+    if let Some(issue) = marfa_rules::schema::text_issues(&row).into_iter().next() {
+        return Err(invalid(format!("{}: {}", issue.field, issue.message())));
+    }
     Ok(Value::Object(row))
 }
 
@@ -386,10 +384,23 @@ mod tests {
     }
 
     #[test]
+    fn a_description_over_the_limit_is_refused_as_a_registration_would() {
+        let over = "d".repeat(201);
+        let Err(CoreError::Invalid(message)) = scaffold_type("user.recipe", None, Some(&over), &[])
+        else {
+            panic!("a description of 201 characters was printed");
+        };
+        assert!(message.contains("description"), "{message}");
+        assert!(message.contains("200"), "{message}");
+        let at = "d".repeat(200);
+        assert!(scaffold_type("user.recipe", None, Some(&at), &[]).is_ok());
+    }
+
+    #[test]
     fn a_bare_id_is_a_definition_with_no_fields() {
         assert_eq!(
             scaffold_type("user.recipe", None, None, &[]).unwrap(),
-            json!({ "id": "user.recipe", "fields": {} })
+            json!({ "id": "user.recipe", "description": "", "fields": {} })
         );
     }
 

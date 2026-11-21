@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use flate2::read::MultiGzDecoder;
+use marfa_rules::schema::Obj;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -19,7 +20,7 @@ use crate::app::access::{Caller, Permission};
 use crate::app::blobs::Kept;
 use crate::app::blobs::Scratch;
 use crate::app::blobs::restore as blobs;
-use crate::app::catalog::{self, Snapshot};
+use crate::app::catalog::{self, Catalog, Snapshot};
 use crate::app::edges::write::Writing;
 use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM, HOLD_RESTORE_SETTINGS};
 use crate::app::items::restored::{self, Restored};
@@ -282,6 +283,29 @@ fn lines(scratch: &Scratch) -> Result<impl Iterator<Item = Result<Value>>> {
     }))
 }
 
+/// Judges an archive's types and edge types on `before` and refuses in the order a restore does:
+/// a definition that cannot register, a conflict, then guidance the caller may not set.
+fn judge_types(
+    before: &Catalog,
+    types: &[types::write::Archived],
+    edge_types: &[Obj],
+    caller: &Caller,
+) -> Result<(types::write::Restoring, edge_types::Restoring)> {
+    let types_plan = types::write::plan_restored(before, types)?;
+    let edges_plan = edge_types::plan_restored(before, edge_types)?;
+    let conflicts: Vec<String> = types_plan
+        .conflicts
+        .iter()
+        .chain(&edges_plan.conflicts)
+        .cloned()
+        .collect();
+    if !conflicts.is_empty() {
+        return Err(conflicting(conflicts));
+    }
+    types_plan.require_guidance(caller)?;
+    Ok((types_plan, edges_plan))
+}
+
 impl App {
     /// Refuses a declared size the volume has no room for.
     pub async fn begin_restore(&self, declared: Option<u64>) -> Result<Receiving> {
@@ -351,12 +375,14 @@ impl App {
                 registrations.settings.clone(),
                 registrations.secrets.clone(),
                 registrations.enforcement.clone(),
+                registrations.types.clone(),
+                registrations.edge_types.clone(),
             );
             app.faults.hold(HOLD_RESTORE_SETTINGS, None).await;
             // On the writer, so every write admitted before the hold has landed.
             app.db
                 .write(Write::own().unsynced(), move |tx| {
-                    let (app, caller, settings, secrets, enforcement) = judged;
+                    let (app, caller, settings, secrets, enforcement, types, edge_types) = judged;
                     let caller = caller.current(tx, &app.clock.stamp())?;
                     caller.require_settings_restore(&stored::restoring(
                         tx,
@@ -364,7 +390,9 @@ impl App {
                         &settings,
                         &secrets,
                         enforcement.as_ref(),
-                    )?)
+                    )?)?;
+                    let before = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
+                    judge_types(&before, &types, &edge_types, &caller).map(drop)
                 })
                 .await?;
             let placed = app.place_restored(carried, absent).await?;
@@ -399,18 +427,12 @@ impl App {
                             registrations.enforcement.as_ref(),
                         )?)?;
                         let before = catalog::current(&cache, tx, Snapshot::Pending)?;
-                        let types_plan = types::write::plan_restored(&before, &registrations.types)?;
-                        let edges_plan =
-                            edge_types::plan_restored(&before, &registrations.edge_types)?;
-                        let conflicts: Vec<String> = types_plan
-                            .conflicts
-                            .iter()
-                            .chain(&edges_plan.conflicts)
-                            .cloned()
-                            .collect();
-                        if !conflicts.is_empty() {
-                            return Err(conflicting(conflicts));
-                        }
+                        let (types_plan, edges_plan) = judge_types(
+                            &before,
+                            &registrations.types,
+                            &registrations.edge_types,
+                            &unit.caller,
+                        )?;
                         let (types_registered, types_skipped) =
                             (types_plan.registered(), types_plan.skipped);
                         let (edge_types_registered, edge_types_skipped) =
