@@ -1075,7 +1075,7 @@ When a credential holding both `webhooks.manage` and `keys.manage` sends `GET /w
 
 When a credential holding both `webhooks.manage` and `keys.manage` sends `GET /webhooks/{id}` or `GET /webhooks/{id}/deliveries` for a subscription another key or app registered, the server MUST answer it as it answers the subscription's maker.
 
-**Reason:** a delivery's record carries its status, event type, the receiver's status code and an error, never the event it sent, so the record shows nothing the maker's reach on the instance guards.
+**Reason:** the delivery log response carries status, event type, the receiver's status code and a fixed error message, but omits the stored event payload, type and source. It exposes no content guarded by the maker's reach.
 
 **Tests:** `compliance/webhooks-owner-reach.test.ts › lists and gets another key's and an app's subscriptions with their maker`.
 

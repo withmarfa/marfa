@@ -175,7 +175,6 @@ pub fn run(command: WebhooksCommand, remote: &Remote, out: &Printer) -> Result<(
     }
 }
 
-/// A row for each webhook: its id, address, whether it is on, and the key or app that made it.
 fn listed_text(answer: &Value) -> String {
     let hooks = answer
         .get("data")

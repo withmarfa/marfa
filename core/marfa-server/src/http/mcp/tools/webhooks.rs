@@ -1,4 +1,4 @@
-//! `marfa_webhooks` and `marfa_manage_webhook`: the webhooks a credential made, and making, changing or deleting one.
+//! Listing, creating, changing and deleting webhooks through MCP.
 
 use std::sync::Arc;
 
@@ -174,7 +174,7 @@ fn stale(body: Map<String, Value>, expired: bool, made: bool) -> Stop {
             format!("The confirmation expired. {nothing}; here is a new preview.")
         } else {
             format!(
-                "The webhook, or the webhooks this credential reads, changed, or the confirmation is not this preview's, or it was already used. {nothing}; here is a new preview."
+                "The webhook, or the webhooks this credential registered, changed, or the confirmation is not this preview's, or it was already used. {nothing}; here is a new preview."
             )
         },
     );

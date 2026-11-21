@@ -124,8 +124,7 @@ fn not_found() -> Refusal {
     )
 }
 
-/// The subscription `maker` registered. One the caller reaches but did not register is refused
-/// as `forbidden`, since the caller can already see it.
+/// A visible subscription yields `forbidden` to a non-maker instead of hiding its existence.
 fn registered_by(
     tx: &Transaction<'_>,
     caller: &Caller,
@@ -287,12 +286,11 @@ pub fn insert_new(unit: &Unit<'_, '_>, request: Create) -> Result<Subscription> 
     Ok(subscription)
 }
 
-/// How many webhooks the caller has made or deleted: it moves with each, and with no one else's.
+/// Creation or deletion of the caller's subscriptions invalidates its creation previews.
 pub fn turns_of(tx: &Transaction<'_>, caller: &Caller) -> Result<i64> {
     store::turns(tx, &caller.webhook_maker()?)
 }
 
-/// One subscription the caller made, or `webhook_not_found`.
 pub fn made_by(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Subscription> {
     let maker = caller.webhook_maker()?;
     registered_by(tx, caller, id, &maker)

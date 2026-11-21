@@ -23217,7 +23217,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't have `webhooks.manage`, or another key or app registered the webhook. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`, or you hold `keys.manage` and another key or app registered the webhook. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23564,7 +23564,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't have `webhooks.manage`, or another key or app registered the webhook. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`, or you hold `keys.manage` and another key or app registered the webhook. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
