@@ -1,7 +1,6 @@
 #!/bin/sh
-# Install the `marfa` command line, the `marfa-server` program and, from a
-# release that carries it, the `cloudflared` tunnel connector from a GitHub
-# release.
+# Install the `marfa` command line, the `marfa-server` program and, when the
+# release carries it, the `cloudflared` tunnel connector, from a GitHub release.
 #
 #   curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/install.sh | sh
 #

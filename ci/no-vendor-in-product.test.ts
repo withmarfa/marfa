@@ -72,7 +72,7 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
   ],
   [
     "deploy/README.md",
-    "tells an operator the two stored settings and that no variable sets them",
+    "tells an operator the two stored settings and that no variable sets them, and that releases carry the cloudflared connector",
   ],
   [
     ".env.example",

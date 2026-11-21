@@ -827,7 +827,7 @@ describe("fetch-cloudflared.sh", () => {
       if (setup.codesign) {
         writeFileSync(
           join(bin, "codesign"),
-          `#!/bin/sh\nif [ "$1" = --verify ]; then exit ${setup.codesign.verifies ? 0 : 1}; fi\necho '${setup.codesign.details}' >&2\n`,
+          `#!/bin/sh\nif [ "$1" = --verify ]; then exit ${setup.codesign.verifies ? "0" : "1"}; fi\necho '${setup.codesign.details}' >&2\n`,
         );
         chmodSync(join(bin, "codesign"), 0o755);
       }
