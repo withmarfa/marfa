@@ -1072,7 +1072,7 @@ When the revocation of a key commits before an item write bearing that key begin
 
 The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/trash`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/tags`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke`, `POST /views`, `PATCH /views/{id}`, `DELETE /views/{id}`, `POST /items/bulk-actions` and the two doors `tables/rows-keyed` names, and on no other operation.
 
-**Reason:** a client resends a write whose answer it lost. A metadata or extension write checks no version, and a tag write checks one only when it names one, so one applied a second time would undo a change made between the two sends.
+**Reason:** a client resends a write whose answer it lost. A tag or extension write checks what its sender read only when it names it, so one applied a second time would undo a change made between the two sends.
 
 **Tests:** `sync/idempotency-replay.test.ts › guards the replay on every idempotent write operation`, `› takes no Idempotency-Key on the operations that do not list it, and runs each repeat`, `› a metadata or extension write sent again under its key`, `compliance/edge-move.test.ts › answers a move repeated under one Idempotency-Key from its record`, `compliance/views.test.ts › answers a view create repeated under one Idempotency-Key once`, `compliance/table-rows-keyed.test.ts › answers a batch sent again under its key from the record, keeping a change made between the two`.
 
@@ -2334,7 +2334,41 @@ When `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/
 
 When a key sends `PUT /items/{id}/extensions/{namespace}`, the server MUST replace that namespace's data whole and leave every other namespace as it stands.
 
-**Tests:** `compliance/extensions.test.ts › writes extension data to a namespace`, `› overwrites extension on second PUT`, `› writes multiple namespaces independently`.
+**Tests:** `compliance/extensions.test.ts › writes extension data to a namespace`, `› overwrites extension on second PUT`, `› writes multiple namespaces independently`, `› replaces and deletes a namespace as it stands when no revision is named`.
+
+### `items/extension-revision`
+
+When the server answers an extension namespace an item holds, the server MUST answer its `revision` as the same text for the same document, on any item, and as other text for another document.
+
+**Tests:** `compliance/extensions.test.ts › answers one revision for a namespace on every read and on the write answer, another once its document changes, and one fixed revision for an absent namespace`.
+
+### `items/extension-revision-absent`
+
+When a key reads an extension namespace an item does not hold, the server MUST answer one `revision` that is the same for every item and every namespace and that it answers for no document.
+
+**Reason:** a client that read a namespace absent names that revision to create the namespace only if no other writer created it first, and needs no value of its own for the case.
+
+**Tests:** `compliance/extensions.test.ts › answers one revision for a namespace on every read and on the write answer, another once its document changes, and one fixed revision for an absent namespace`, `› guards a create with the revision of the absent namespace, refused once another writer created it`.
+
+### `items/extension-read-revision-stale`
+
+If `PUT` or `DELETE /items/{id}/extensions/{namespace}` names a `read_revision` query parameter other than the namespace's revision now, then the server MUST answer `409 version_conflict` with the namespace now, as `namespace`, `document` and `revision`, in `current`, and change no extension.
+
+**Reason:** an extension write leaves the item's version as it is (`versions/metadata-keeps-version`), so only the namespace's own revision tells that another writer changed it since the client read it.
+
+**Tests:** `compliance/extensions.test.ts › refuses a replace naming a revision the namespace has moved on from with 409 version_conflict and the namespace as it stands, changing nothing`, `› guards a create with the revision of the absent namespace, refused once another writer created it`, `› refuses a delete naming a revision the namespace has moved on from, and deletes on the current one`.
+
+### `items/extension-read-revision-current`
+
+When `PUT` or `DELETE /items/{id}/extensions/{namespace}` names a `read_revision` query parameter that is the namespace's revision now, the server MUST apply the write, whatever changed in the item's other namespaces, tags or properties.
+
+**Tests:** `compliance/extensions.test.ts › replaces a namespace whose revision is the one named`, `› guards a create with the revision of the absent namespace, refused once another writer created it`, `› refuses a delete naming a revision the namespace has moved on from, and deletes on the current one`.
+
+### `items/extension-read-revision-malformed`
+
+If `PUT` or `DELETE /items/{id}/extensions/{namespace}` names the `read_revision` query parameter more than once, or names a value in a form the server answers no revision in, then the server MUST answer `400 validation_error` naming `read_revision`, and change no extension.
+
+**Tests:** `compliance/extensions.test.ts › refuses a read revision that is not one Marfa answers with 400 validation_error naming read_revision, changing nothing`.
 
 ### `items/extension-limit`
 
@@ -2352,15 +2386,15 @@ If `PUT /items/{id}/extensions/{namespace}` is refused under `items/extension-li
 
 ### `items/extension-answer`
 
-When the server answers a write or delete of an extension namespace, the server MUST answer under `data` every namespace on the item the key may read, each as `namespace` and `document`, in order of namespace, and no other.
+When the server answers a write or delete of an extension namespace, the server MUST answer under `data` every namespace on the item the key may read, each as `namespace`, `document` and `revision`, in order of namespace, and no other.
 
-**Tests:** `compliance/extensions.test.ts › answers a key only the namespaces its extension map reads, on the replace and delete doors as on the reads`.
+**Tests:** `compliance/extensions.test.ts › answers a key only the namespaces its extension map reads, on the replace and delete doors as on the reads`, `› answers one revision for a namespace on every read and on the write answer, another once its document changes, and one fixed revision for an absent namespace`.
 
 ### `items/extension-read`
 
-When a key reads an item's extensions, the server MUST answer every namespace it may read (`keys-and-oauth/extension-map-only`) under `data` as `namespace` and `document` on `GET /items/{id}/extensions`, as a map in the item's metadata, and `{ namespace, document }` on `GET /items/{id}/extensions/{namespace}`.
+When a key reads an item's extensions, the server MUST answer every namespace it may read (`keys-and-oauth/extension-map-only`) under `data` as `namespace`, `document` and `revision` on `GET /items/{id}/extensions`, as a map of documents by namespace in the item's metadata, and `{ namespace, document, revision }` on `GET /items/{id}/extensions/{namespace}`.
 
-**Tests:** `compliance/extensions.test.ts › reads all extensions`, `› reads a specific namespace`, `› extensions persist on the item's metadata read`.
+**Tests:** `compliance/extensions.test.ts › reads all extensions`, `› reads a specific namespace`, `› extensions persist on the item's metadata read`, `› answers one revision for a namespace on every read and on the write answer, another once its document changes, and one fixed revision for an absent namespace`.
 
 ### `items/extension-absent`
 

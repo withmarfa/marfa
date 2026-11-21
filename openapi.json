@@ -3987,11 +3987,17 @@
             ],
             "additionalProperties": {},
             "description": "The data the item holds in the namespace, or `null` if it holds none there."
+          },
+          "revision": {
+            "type": "string",
+            "description": "The namespace's revision: the same for the same document, and another once the document changes. Send it as `read_revision` to write only over what you read.",
+            "example": "9f2c41d07be35a68c1e04f9d2a7b8e16"
           }
         },
         "required": [
           "namespace",
-          "document"
+          "document",
+          "revision"
         ],
         "description": "One extension namespace on an item, with its document."
       },
@@ -4010,6 +4016,36 @@
           "data"
         ],
         "description": "An item's extension namespaces that you can read."
+      },
+      "ExtensionVersionConflict": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/VersionConflictError"
+              },
+              {
+                "description": "What went wrong."
+              }
+            ]
+          },
+          "current": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Extension"
+              },
+              {
+                "description": "The namespace as it stands now, with its revision."
+              }
+            ]
+          }
+        },
+        "required": [
+          "error",
+          "current"
+        ],
+        "description": "A guarded extension write's answer when the namespace changed since you read it: the refusal and the namespace now."
       },
       "InvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal": {
         "type": "object",
@@ -25269,7 +25305,7 @@
           "Extensions"
         ],
         "summary": "Get an extension namespace",
-        "description": "Returns the document in one extension namespace on the item, or `document: null` if the item has none there.",
+        "description": "Returns the document in one extension namespace on the item, or `document: null` if the item has none there, with the namespace's `revision`.",
         "security": [
           {
             "bearerAuth": []
@@ -25309,7 +25345,8 @@
                   "namespace": "acme.crm",
                   "document": {
                     "pipeline": "enterprise"
-                  }
+                  },
+                  "revision": "9f2c41d07be35a68c1e04f9d2a7b8e16"
                 }
               }
             },
@@ -25553,6 +25590,16 @@
             "in": "path"
           },
           {
+            "name": "read_revision",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "9f2c41d07be35a68c1e04f9d2a7b8e16",
+            "description": "The namespace's `revision` as you read it, absent included. If the namespace changed since, Marfa doesn't replace it and returns `409 version_conflict`. Leave it out to replace it as it stands."
+          },
+          {
             "name": "Idempotency-Key",
             "in": "header",
             "required": false,
@@ -25599,7 +25646,8 @@
                       "namespace": "acme.crm",
                       "document": {
                         "pipeline": "enterprise"
-                      }
+                      },
+                      "revision": "9f2c41d07be35a68c1e04f9d2a7b8e16"
                     }
                   ]
                 }
@@ -25618,7 +25666,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the body is not a JSON object, or its JSON is longer than 102,400 characters.\n- `invalid_id`: the ID is not a valid item ID.\n- `invalid_properties`: the body holds a whole number a 64-bit float can't keep.",
+            "description": "- `validation_error`: the body is not a JSON object, its JSON is longer than 102,400 characters, or `read_revision` is named more than once or is not a revision Marfa returns.\n- `invalid_id`: the ID is not a valid item ID.\n- `invalid_properties`: the body holds a whole number a 64-bit float can't keep.",
             "content": {
               "application/json": {
                 "schema": {
@@ -25729,11 +25777,14 @@
             }
           },
           "409": {
-            "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "description": "- `version_conflict`: the namespace's revision is not `read_revision`. `current` is the namespace now; nothing changed.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ExtensionVersionConflict"
+                    },
                     {
                       "$ref": "#/components/schemas/InstanceChangedRefusal"
                     },
@@ -25963,6 +26014,16 @@
             "in": "path"
           },
           {
+            "name": "read_revision",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "9f2c41d07be35a68c1e04f9d2a7b8e16",
+            "description": "The namespace's `revision` as you read it, absent included. If the namespace changed since, Marfa doesn't delete it and returns `409 version_conflict`. Leave it out to delete it as it stands."
+          },
+          {
             "name": "Idempotency-Key",
             "in": "header",
             "required": false,
@@ -25997,7 +26058,8 @@
                       "namespace": "acme.crm",
                       "document": {
                         "pipeline": "enterprise"
-                      }
+                      },
+                      "revision": "9f2c41d07be35a68c1e04f9d2a7b8e16"
                     }
                   ]
                 }
@@ -26016,7 +26078,7 @@
             }
           },
           "400": {
-            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "description": "- `invalid_id`: the ID is not a valid item ID.\n- `validation_error`: the query has a parameter this endpoint doesn't take, or `read_revision` is named more than once or is not a revision Marfa returns.",
             "content": {
               "application/json": {
                 "schema": {
@@ -26106,11 +26168,14 @@
             }
           },
           "409": {
-            "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "description": "- `version_conflict`: the namespace's revision is not `read_revision`. `current` is the namespace now; nothing changed.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ExtensionVersionConflict"
+                    },
                     {
                       "$ref": "#/components/schemas/InstanceChangedRefusal"
                     },
@@ -26346,7 +26411,8 @@
                       "namespace": "acme.crm",
                       "document": {
                         "pipeline": "enterprise"
-                      }
+                      },
+                      "revision": "9f2c41d07be35a68c1e04f9d2a7b8e16"
                     }
                   ]
                 }

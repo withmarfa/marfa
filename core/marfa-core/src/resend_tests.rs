@@ -152,12 +152,12 @@ fn replace_tags(core: &Core) -> QueuedWrite {
 }
 
 fn write_extension(core: &Core) -> QueuedWrite {
-    core.write_extension(EDITED, NAMESPACE, r#"{"pinned":true}"#)
+    core.write_extension(EDITED, NAMESPACE, r#"{"pinned":true}"#, None)
         .unwrap()
 }
 
 fn delete_extension(core: &Core) -> QueuedWrite {
-    core.delete_extension(EDITED, NAMESPACE).unwrap()
+    core.delete_extension(EDITED, NAMESPACE, None).unwrap()
 }
 
 fn edit_edge(core: &Core) -> QueuedWrite {

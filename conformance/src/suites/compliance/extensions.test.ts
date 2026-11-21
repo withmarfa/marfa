@@ -1,5 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { MarfaClient, extensionsOf } from "../../client/api.js";
+import {
+  MarfaClient,
+  extensionsOf,
+  type ItemExtension,
+} from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
   createTestContext,
@@ -608,5 +613,273 @@ describe("metadata extensions", () => {
     expect(after.data.item.updated_at).toBe(folder.data.item.updated_at);
     const held = await client.listItemExtensions(folderId);
     expect(extensionsOf(held.data)).not.toHaveProperty(ns);
+  });
+});
+
+describe("an extension namespace's revision", () => {
+  const seed = async (): Promise<string> => {
+    const note = await client.createItem(createNote({ source: ctx.source }));
+    expect(note.status, JSON.stringify(note.error)).toBe(201);
+    trackItem(ctx, note.data.item.id);
+    return note.data.item.id;
+  };
+  const revisionOf = (
+    page: { data: ItemExtension[] },
+    namespace: string,
+  ): string | undefined =>
+    page.data.find((entry) => entry.namespace === namespace)?.revision;
+
+  it("answers one revision for a namespace on every read and on the write answer, another once its document changes, and one fixed revision for an absent namespace", async () => {
+    const id = await seed();
+    const other = await seed();
+    const absent = await client.getItemExtension(id, "rev");
+    expect(absent.status).toBe(200);
+    expect(absent.data.document).toBeNull();
+    expect(typeof absent.data.revision).toBe("string");
+    expect(absent.data.revision.length).toBeGreaterThan(0);
+    const absentElsewhere = await client.getItemExtension(other, "elsewhere");
+    expect(absentElsewhere.data.revision).toBe(absent.data.revision);
+
+    const written = await client.setItemExtension(id, "rev", { a: 1 });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    await expectMatchesSchema(
+      "PUT",
+      "/items/{id}/extensions/{namespace}",
+      200,
+      written.data,
+    );
+    const first = revisionOf(written.data, "rev");
+    expect(typeof first).toBe("string");
+    expect(first).not.toBe(absent.data.revision);
+
+    const read = await client.getItemExtension(id, "rev");
+    await expectMatchesSchema(
+      "GET",
+      "/items/{id}/extensions/{namespace}",
+      200,
+      read.data,
+    );
+    expect(read.data.revision).toBe(first);
+    const listed = await client.listItemExtensions(id);
+    await expectMatchesSchema(
+      "GET",
+      "/items/{id}/extensions",
+      200,
+      listed.data,
+    );
+    expect(revisionOf(listed.data, "rev")).toBe(first);
+
+    // The same document written again keeps its revision, on any item.
+    const again = await client.setItemExtension(id, "rev", { a: 1 });
+    expect(revisionOf(again.data, "rev")).toBe(first);
+    const elsewhere = await client.setItemExtension(other, "rev", { a: 1 });
+    expect(revisionOf(elsewhere.data, "rev")).toBe(first);
+
+    const changed = await client.setItemExtension(id, "rev", { a: 2 });
+    const second = revisionOf(changed.data, "rev");
+    expect(second).not.toBe(first);
+    expect(second).not.toBe(absent.data.revision);
+
+    const removed = await client.deleteItemExtension(id, "rev");
+    expect(removed.status).toBe(200);
+    expect(revisionOf(removed.data, "rev")).toBeUndefined();
+    const gone = await client.getItemExtension(id, "rev");
+    expect(gone.data.revision).toBe(absent.data.revision);
+  });
+
+  it("refuses a replace naming a revision the namespace has moved on from with 409 version_conflict and the namespace as it stands, changing nothing", async () => {
+    const id = await seed();
+    await client.setItemExtension(id, "app", { mine: "read" });
+    const read = await client.getItemExtension(id, "app");
+    // Another writer changes the namespace after the reader read it.
+    const between = await client.setItemExtension(id, "app", {
+      theirs: "between",
+    });
+    expect(between.status).toBe(200);
+    const now = revisionOf(between.data, "app");
+
+    const stale = await client.setItemExtension(
+      id,
+      "app",
+      { mine: "written" },
+      read.data.revision,
+    );
+    expect(stale.status).toBe(409);
+    expect(stale.headers.get("X-Error-Code")).toBe("version_conflict");
+    expect(stale.error).toMatchObject({
+      error: { code: "version_conflict" },
+      current: {
+        namespace: "app",
+        document: { theirs: "between" },
+        revision: now,
+      },
+    });
+    await expectMatchesSchema(
+      "PUT",
+      "/items/{id}/extensions/{namespace}",
+      409,
+      stale.error,
+    );
+    const kept = await client.getItemExtension(id, "app");
+    expect(kept.data.document).toEqual({ theirs: "between" });
+  });
+
+  it("replaces a namespace whose revision is the one named", async () => {
+    const id = await seed();
+    await client.setItemExtension(id, "app", { mine: "read" });
+    const read = await client.getItemExtension(id, "app");
+    // A change to another namespace and to the item's content does not stop it.
+    await client.setItemExtension(id, "other-app", { theirs: 1 });
+    const version = (await client.getItem(id)).data.item.version;
+    const moved = await client.updateItem(id, {
+      version,
+      properties: { body: "changed since the read" },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+
+    const replaced = await client.setItemExtension(
+      id,
+      "app",
+      { mine: "written" },
+      read.data.revision,
+    );
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
+    expect(extensionsOf(replaced.data)["app"]).toEqual({ mine: "written" });
+  });
+
+  it("guards a create with the revision of the absent namespace, refused once another writer created it", async () => {
+    const id = await seed();
+    const absent = await client.getItemExtension(id, "app");
+    expect(absent.data.document).toBeNull();
+    const created = await client.setItemExtension(
+      id,
+      "app",
+      { first: true },
+      absent.data.revision,
+    );
+    expect(created.status, JSON.stringify(created.error)).toBe(200);
+
+    // A second reader read the namespace absent too, before the create.
+    const late = await client.setItemExtension(
+      id,
+      "app",
+      { second: true },
+      absent.data.revision,
+    );
+    expect(late.status).toBe(409);
+    expect(late.error).toMatchObject({
+      error: { code: "version_conflict" },
+      current: { namespace: "app", document: { first: true } },
+    });
+    expect((await client.getItemExtension(id, "app")).data.document).toEqual({
+      first: true,
+    });
+  });
+
+  it("refuses a delete naming a revision the namespace has moved on from, and deletes on the current one", async () => {
+    const id = await seed();
+    await client.setItemExtension(id, "app", { v: 1 });
+    const read = await client.getItemExtension(id, "app");
+    const between = await client.setItemExtension(id, "app", { v: 2 });
+    const now = revisionOf(between.data, "app");
+
+    const stale = await client.deleteItemExtension(
+      id,
+      "app",
+      read.data.revision,
+    );
+    expect(stale.status).toBe(409);
+    expect(stale.headers.get("X-Error-Code")).toBe("version_conflict");
+    expect(stale.error).toMatchObject({
+      current: { namespace: "app", document: { v: 2 }, revision: now },
+    });
+    await expectMatchesSchema(
+      "DELETE",
+      "/items/{id}/extensions/{namespace}",
+      409,
+      stale.error,
+    );
+    expect((await client.getItemExtension(id, "app")).data.document).toEqual({
+      v: 2,
+    });
+
+    const removed = await client.deleteItemExtension(id, "app", now);
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
+    const gone = await client.getItemExtension(id, "app");
+    expect(gone.data.document).toBeNull();
+
+    // A namespace deleted since it was read is refused, with no document.
+    const again = await client.deleteItemExtension(id, "app", now);
+    expect(again.status).toBe(409);
+    expect(again.error).toMatchObject({
+      current: {
+        namespace: "app",
+        document: null,
+        revision: gone.data.revision,
+      },
+    });
+  });
+
+  it("refuses a read revision that is not one Marfa answers with 400 validation_error naming read_revision, changing nothing", async () => {
+    const id = await seed();
+    await client.setItemExtension(id, "app", { kept: true });
+    const read = await client.getItemExtension(id, "app");
+    for (const query of [
+      "read_revision=",
+      "read_revision=not-a-revision",
+      `read_revision=${read.data.revision.toUpperCase()}`,
+      `read_revision=${read.data.revision}0`,
+      `read_revision=${read.data.revision}&read_revision=${read.data.revision}`,
+    ]) {
+      for (const method of ["PUT", "DELETE"] as const) {
+        const refused = await client.rawRequest(
+          `/items/${id}/extensions/app?${query}`,
+          {
+            method,
+            ...(method === "PUT" ? { body: { overwritten: true } } : {}),
+          },
+        );
+        expect(refused.status, `${method} ${query}`).toBe(400);
+        expect(refused.headers.get("X-Error-Code")).toBe("validation_error");
+        expect(JSON.stringify(refused.error)).toContain("read_revision");
+      }
+    }
+    expect((await client.getItemExtension(id, "app")).data.document).toEqual({
+      kept: true,
+    });
+  });
+
+  it("replaces and deletes a namespace as it stands when no revision is named", async () => {
+    const id = await seed();
+    await client.setItemExtension(id, "app", { v: 1 });
+    await client.setItemExtension(id, "app", { v: 2 });
+    const replaced = await client.setItemExtension(id, "app", { v: 3 });
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
+    expect(extensionsOf(replaced.data)["app"]).toEqual({ v: 3 });
+    const removed = await client.deleteItemExtension(id, "app");
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
+    expect((await client.getItemExtension(id, "app")).data.document).toBeNull();
+  });
+
+  it("answers a key reused with another read revision as another request, and replays the same request", async () => {
+    const id = await seed();
+    const absent = (await client.getItemExtension(id, "app")).data.revision;
+    const key = `read-revision-${ctx.runId}-${randomUUID()}`;
+    const send = (query: string) =>
+      client.rawRequest<{ data: ItemExtension[] }>(
+        `/items/${id}/extensions/app${query}`,
+        {
+          method: "PUT",
+          headers: { "Idempotency-Key": key },
+          body: { mine: true },
+        },
+      );
+    const first = await send(`?read_revision=${absent}`);
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const replayed = await send(`?read_revision=${absent}`);
+    expect(replayed.status, JSON.stringify(replayed.error)).toBe(200);
+    const other = await send("");
+    expect(other.status).toBe(422);
+    expect(other.headers.get("X-Error-Code")).toBe("idempotency_key_reused");
   });
 });

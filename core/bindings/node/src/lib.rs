@@ -3252,7 +3252,9 @@ impl MarfaCore {
         )
     }
 
-    /// Writes one extension namespace, as its own write.
+    /// Writes one extension namespace, as its own write. `readRevision` is
+    /// the namespace's `revision` as a read answered it; the server then
+    /// refuses the write if the namespace changed since.
     #[napi]
     pub fn write_extension(
         &self,
@@ -3260,22 +3262,30 @@ impl MarfaCore {
         id: String,
         namespace: String,
         #[napi(ts_arg_type = "Record<string, unknown>")] body: serde_json::Value,
+        read_revision: Option<String>,
     ) -> Result<QueuedWrite> {
         let body = serde_json::Value::Object(object(Some(body))?).to_string();
         queued(
             env,
             self.inner
-                .write_extension(&id, &namespace, &body)
+                .write_extension(&id, &namespace, &body, read_revision.as_deref())
                 .map_err(|error| failure(env, error))?,
         )
     }
 
+    /// Removes one extension namespace, guarded by `readRevision` as a write is.
     #[napi]
-    pub fn delete_extension(&self, env: Env, id: String, namespace: String) -> Result<QueuedWrite> {
+    pub fn delete_extension(
+        &self,
+        env: Env,
+        id: String,
+        namespace: String,
+        read_revision: Option<String>,
+    ) -> Result<QueuedWrite> {
         queued(
             env,
             self.inner
-                .delete_extension(&id, &namespace)
+                .delete_extension(&id, &namespace, read_revision.as_deref())
                 .map_err(|error| failure(env, error))?,
         )
     }

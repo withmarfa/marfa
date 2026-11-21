@@ -16,7 +16,8 @@ use super::removing::refuse_removing;
 use super::rows::WAITING;
 use super::time::{now_iso, now_millis};
 use super::write_state::{
-    cleared_time_key, forget_read_tags, forget_versions_named, forget_write_state, unsent,
+    cleared_time_key, forget_read_revision, forget_read_tags, forget_versions_named,
+    forget_write_state, unsent,
 };
 use crate::error::CoreError;
 use crate::model::{BlockedReason, QueuedWrite, Subject, Verdict, WriteKind};
@@ -474,6 +475,7 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         if kind.parse::<WriteKind>()? == WriteKind::ReplaceTags {
             forget_read_tags(conn, &batch[0])?;
         }
+        forget_read_revision(conn, &batch[0])?;
     }
     if rows {
         for write in &batch {

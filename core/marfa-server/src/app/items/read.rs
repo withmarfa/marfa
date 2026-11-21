@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use super::plan::{self, Act, Asked, Gate};
 use super::{
-    Door, Item, Keys, check_links, extension_documents_text, extensions_text, metadata_for,
-    name_of, not_found, rows, summary_of, with_blocks,
+    Door, Item, Keys, check_links, extension_documents_text, extension_text, extensions_text,
+    metadata_for, name_of, not_found, rows, summary_of, with_blocks,
 };
 use crate::app::App;
 use crate::app::access::reach::Demand;
@@ -614,11 +614,7 @@ pub async fn extension(
         read.caller.require_extension(&namespace, Level::Read)?;
         read.hydrating();
         let data = rows::extension(read.tx, row.seq, &namespace)?;
-        Ok(format!(
-            "{{\"namespace\":{},\"document\":{}}}",
-            Value::from(namespace),
-            data.as_deref().unwrap_or("null")
-        ))
+        Ok(extension_text(&namespace, data.as_deref()))
     })
     .await
 }

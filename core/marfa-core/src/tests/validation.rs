@@ -500,7 +500,7 @@ fn a_write_nested_past_what_the_server_reads_is_refused_before_it_is_queued() {
         ),
         (
             "extension",
-            core.write_extension("row", "acme.x", &extension(at + 2))
+            core.write_extension("row", "acme.x", &extension(at + 2), None)
                 .map(|_| ()),
         ),
     ] {
@@ -517,7 +517,7 @@ fn a_write_nested_past_what_the_server_reads_is_refused_before_it_is_queued() {
     assert!(core.create_edge(&edge(at)).is_ok());
     assert!(core.update_edge("link", &edge_edit(at)).is_ok());
     assert!(
-        core.write_extension("row", "acme.x", &extension(at + 1))
+        core.write_extension("row", "acme.x", &extension(at + 1), None)
             .is_ok()
     );
     assert_eq!(queued(&core), 6);
@@ -624,7 +624,8 @@ fn a_whole_number_a_float_would_change_is_refused_in_an_edge_and_an_extension() 
         r#"{"a":[1,{"b":-0}]}"#,
     ] {
         refused(
-            core.write_extension("row", "acme.x", body).map(|_| ()),
+            core.write_extension("row", "acme.x", body, None)
+                .map(|_| ()),
             "an extension",
         );
     }
@@ -644,6 +645,7 @@ fn a_whole_number_a_float_would_change_is_refused_in_an_edge_and_an_extension() 
         "row",
         "acme.x",
         r#"{"weight":1152921504606847000,"s":"9999999999999999999","zero":-0.0,"minus":-1}"#,
+        None,
     )
     .unwrap();
     assert_eq!(core.queue().unwrap().len(), 3);

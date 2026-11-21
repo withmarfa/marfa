@@ -66,6 +66,15 @@ impl Owned {
         Ok(self)
     }
 
+    /// Names the namespace's revision the caller read, so the server refuses
+    /// an extension write `version_conflict` over a namespace changed since.
+    pub(super) fn reading(mut self, revision: Option<String>) -> Owned {
+        if let Some(revision) = revision {
+            self.params.push(("read_revision".into(), revision));
+        }
+        self
+    }
+
     pub(super) fn outgoing(&self) -> Outgoing<'_> {
         Outgoing {
             method: self.method,

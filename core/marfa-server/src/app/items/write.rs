@@ -145,10 +145,12 @@ pub enum Change {
         id: String,
         namespace: String,
         data: Map<String, Value>,
+        read_revision: Option<String>,
     },
     ClearExtension {
         id: String,
         namespace: String,
+        read_revision: Option<String>,
     },
     Transition {
         id: String,
@@ -649,6 +651,18 @@ fn stale_tags(row: &Item) -> Result<Refusal> {
     .with_member("current", row.state_named()?))
 }
 
+fn stale_extension(namespace: &str, held: Option<&str>) -> Result<Refusal> {
+    let current: Value = serde_json::from_str(&super::extension_text(namespace, held))
+        .map_err(|_| Refusal::unread("a stored extension does not read"))?;
+    Ok(Refusal::new(
+        Code::VersionConflict,
+        "The namespace changed since the revision named as read. Re-read it and send again with \
+         the revision it answers."
+            .to_string(),
+    )
+    .with_member("current", current))
+}
+
 /// A state change writes no version, so a job checks the state it matched as well.
 fn left_state(matched: &str, now: &str) -> Refusal {
     Refusal::new(
@@ -847,8 +861,13 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 id,
                 namespace,
                 data,
-            } => self.set_extension(&id, &namespace, &data),
-            Change::ClearExtension { id, namespace } => self.clear_extension(&id, &namespace),
+                read_revision,
+            } => self.set_extension(&id, &namespace, &data, read_revision.as_deref()),
+            Change::ClearExtension {
+                id,
+                namespace,
+                read_revision,
+            } => self.clear_extension(&id, &namespace, read_revision.as_deref()),
             Change::Transition { id, state, version } => self.transition(&id, &state, version),
             Change::Delete { id, version } => self.delete(id, version),
             Change::Trash { ids, digest } => self.trash(ids, digest.as_deref()),
@@ -2023,7 +2042,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         self.tags_landed(&row, json!({ "tag": tag }))
     }
 
-    fn extension_row(&self, id: &str, namespace: &str) -> Result<Item> {
+    fn extension_row(&self, id: &str, namespace: &str, read: Option<&str>) -> Result<Item> {
         let row = self.gate().writable_row(id)?;
         if validation::extension_reserved(namespace) {
             return Err(Refusal::new(
@@ -2036,6 +2055,12 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             write: true,
         });
         self.caller().require_extension(namespace, Level::Write)?;
+        if let Some(read) = read {
+            let held = rows::extension(self.unit.tx(), row.seq, namespace)?;
+            if super::extension_revision(held.as_deref()) != read {
+                return Err(stale_extension(namespace, held.as_deref())?);
+            }
+        }
         Ok(row)
     }
 
@@ -2052,8 +2077,14 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         })
     }
 
-    fn set_extension(&self, id: &str, namespace: &str, data: &Map<String, Value>) -> Result<Done> {
-        let row = self.extension_row(id, namespace)?;
+    fn set_extension(
+        &self,
+        id: &str,
+        namespace: &str,
+        data: &Map<String, Value>,
+        read: Option<&str>,
+    ) -> Result<Done> {
+        let row = self.extension_row(id, namespace, read)?;
         let text = number::object(data);
         if validation::extension_too_long(&text) {
             return Err(Refusal::validation(
@@ -2073,8 +2104,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         self.extensions_landed(&row, namespace)
     }
 
-    fn clear_extension(&self, id: &str, namespace: &str) -> Result<Done> {
-        let row = self.extension_row(id, namespace)?;
+    fn clear_extension(&self, id: &str, namespace: &str, read: Option<&str>) -> Result<Done> {
+        let row = self.extension_row(id, namespace, read)?;
         rows::remove_extension(self.unit.tx(), row.seq, namespace)?;
         self.extensions_landed(&row, namespace)
     }

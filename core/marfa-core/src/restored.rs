@@ -802,6 +802,7 @@ pub(crate) fn keep(tx: &Connection, catalog: &Catalog, lost: Option<Lost>) -> Re
         if row.kind == WriteKind::ReplaceTags {
             store::forget_read_tags(tx, &row.id)?;
         }
+        store::forget_read_revision(tx, &row.id)?;
         let over_create = match row.kind {
             WriteKind::UpdateItem | WriteKind::DeleteItem => row
                 .item_id

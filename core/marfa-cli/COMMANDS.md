@@ -1722,6 +1722,7 @@ marfa extensions write [OPTIONS] <ID> <NAMESPACE>
 | --- | --- |
 | `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
 | `--body <JSON>` | The JSON body inline. |
+| `--read-revision <REVISION>` | The namespace's `revision` as `extensions get` printed it. If the namespace changed since, Marfa refuses the change. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa extensions delete
@@ -1739,6 +1740,7 @@ marfa extensions delete [OPTIONS] <ID> <NAMESPACE>
 
 | Option | Description |
 | --- | --- |
+| `--read-revision <REVISION>` | The namespace's `revision` as `extensions get` printed it. If the namespace changed since, Marfa refuses the change. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ## tables
@@ -4486,6 +4488,7 @@ marfa device extensions write [OPTIONS] <ID> <NAMESPACE>
 | Option | Description |
 | --- | --- |
 | `--body <JSON>` | The namespace's contents, as a JSON object. Default: `{}`. |
+| `--read-revision <REVISION>` | The namespace's `revision` as a read answered it, so the write is refused if the namespace changed since. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -4501,6 +4504,10 @@ marfa device extensions delete [OPTIONS] <ID> <NAMESPACE>
 | --- | --- |
 | `<ID>` | The item id. |
 | `<NAMESPACE>` | The extension namespace. |
+
+| Option | Description |
+| --- | --- |
+| `--read-revision <REVISION>` | The namespace's `revision` as a read answered it, so the delete is refused if the namespace changed since. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 

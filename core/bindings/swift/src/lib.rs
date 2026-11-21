@@ -3105,23 +3105,34 @@ guarded! {
             queued(self.inner.replace_tags(&id, &write)?)
         }
 
-        /// Writes one extension namespace, as its own write.
+        /// Writes one extension namespace, as its own write. `read_revision`
+        /// is the namespace's `revision` as a read answered it; the server
+        /// then refuses the write if the namespace changed since.
         pub fn write_extension(
             &self,
             id: String,
             namespace: String,
             body: JsonObject,
+            read_revision: Option<String>,
         ) -> Result<QueuedWrite, MarfaError> {
             let body = serde_json::Value::Object(body.into_map()?).to_string();
-            queued(self.inner.write_extension(&id, &namespace, &body)?)
+            queued(self.inner.write_extension(
+                &id,
+                &namespace,
+                &body,
+                read_revision.as_deref(),
+            )?)
         }
 
+        /// Removes one extension namespace, guarded by `read_revision` as a
+        /// write is.
         pub fn delete_extension(
             &self,
             id: String,
             namespace: String,
+            read_revision: Option<String>,
         ) -> Result<QueuedWrite, MarfaError> {
-            queued(self.inner.delete_extension(&id, &namespace)?)
+            queued(self.inner.delete_extension(&id, &namespace, read_revision.as_deref())?)
         }
 
         /// Every queued write and what became of it.
@@ -6089,7 +6100,7 @@ mod tests {
                     ..edit("{}", version)
                 },
             );
-            let extension = core.write_extension(id.clone(), "acme.x".into(), bad.clone());
+            let extension = core.write_extension(id.clone(), "acme.x".into(), bad.clone(), None);
             for refusal in [
                 created.map(|_| ()),
                 updated.map(|_| ()),

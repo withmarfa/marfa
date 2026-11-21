@@ -1075,13 +1075,38 @@ impl Core {
         })
     }
 
-    /// Queued and not applied: the copy holds no extension namespaces.
-    pub fn write_extension(&self, id: &str, namespace: &str, body: &str) -> Result<QueuedWrite> {
-        self.extension_write(id, namespace, WriteKind::WriteExtension, body)
+    /// Queued and not applied: the copy holds no extension namespaces, so
+    /// the caller names the namespace's `revision` it read, if any, for the
+    /// server to refuse the write over a namespace changed since.
+    pub fn write_extension(
+        &self,
+        id: &str,
+        namespace: &str,
+        body: &str,
+        read_revision: Option<&str>,
+    ) -> Result<QueuedWrite> {
+        self.extension_write(
+            id,
+            namespace,
+            WriteKind::WriteExtension,
+            body,
+            read_revision,
+        )
     }
 
-    pub fn delete_extension(&self, id: &str, namespace: &str) -> Result<QueuedWrite> {
-        self.extension_write(id, namespace, WriteKind::DeleteExtension, "{}")
+    pub fn delete_extension(
+        &self,
+        id: &str,
+        namespace: &str,
+        read_revision: Option<&str>,
+    ) -> Result<QueuedWrite> {
+        self.extension_write(
+            id,
+            namespace,
+            WriteKind::DeleteExtension,
+            "{}",
+            read_revision,
+        )
     }
 
     fn extension_write(
@@ -1090,6 +1115,7 @@ impl Core {
         namespace: &str,
         kind: WriteKind,
         payload: &str,
+        read_revision: Option<&str>,
     ) -> Result<QueuedWrite> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -1097,6 +1123,13 @@ impl Core {
         if namespace.is_empty() {
             return Err(CoreError::Invalid(
                 "an extension write names no namespace, and the namespace is where it goes".into(),
+            ));
+        }
+        if read_revision.is_some_and(str::is_empty) {
+            return Err(CoreError::Invalid(
+                "an extension write names an empty read revision; name the revision a read of \
+                 the namespace answered, or none"
+                    .into(),
             ));
         }
         if kind == WriteKind::WriteExtension {
@@ -1127,6 +1160,9 @@ impl Core {
                 depends_on: &depends_on,
             },
         )?;
+        if let Some(revision) = read_revision {
+            store::record_read_revision(&tx, &queued.id, revision)?;
+        }
         tx.commit()?;
         Ok(queued)
     }

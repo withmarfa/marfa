@@ -29,7 +29,8 @@ pub(super) enum Classified {
         source: String,
     },
     Trashed,
-    /// The write ran, and the server kept no answer to repeat.
+    /// The write ran, and the server kept no answer to repeat, or a guarded
+    /// write's refusal shows the server holds what the write leaves.
     Delivered,
 }
 
@@ -333,13 +334,20 @@ pub(super) fn refine(
     payload: &str,
     answer: &std::result::Result<Answer, CoreError>,
     class: Classified,
+    resent: bool,
 ) -> Classified {
-    if row.kind != WriteKind::CreateItem {
-        return class;
-    }
     let Ok(answer) = answer else {
         return class;
     };
+    if matches!(
+        row.kind,
+        WriteKind::WriteExtension | WriteKind::DeleteExtension
+    ) {
+        return refine_extension(row, payload, answer, class, resent);
+    }
+    if row.kind != WriteKind::CreateItem {
+        return class;
+    }
     let sent = serde_json::from_str::<serde_json::Value>(payload).unwrap_or_default();
     let body = serde_json::from_str::<serde_json::Value>(&answer.body).unwrap_or_default();
     let keyed = sent
@@ -405,6 +413,32 @@ pub(super) fn refine(
         }
         _ => class,
     }
+}
+
+/// A guarded extension write sent again after its answer was lost meets the
+/// revision its own first send made. Where the namespace now holds what the
+/// write leaves, the first send took.
+fn refine_extension(
+    row: &QueuedWrite,
+    payload: &str,
+    answer: &Answer,
+    class: Classified,
+    resent: bool,
+) -> Classified {
+    if !resent || class != Classified::Block(BlockedReason::ConflictUnresolved) {
+        return class;
+    }
+    let body = serde_json::from_str::<serde_json::Value>(&answer.body).unwrap_or_default();
+    let Some(held) = body.pointer("/current/document") else {
+        return class;
+    };
+    let holds = if row.kind == WriteKind::WriteExtension {
+        serde_json::from_str::<serde_json::Value>(payload)
+            .is_ok_and(|sent| marfa_rules::conflict::same(held, &sent))
+    } else {
+        held.is_null()
+    };
+    if holds { Classified::Delivered } else { class }
 }
 
 pub(super) fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
