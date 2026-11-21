@@ -1650,11 +1650,13 @@ To keep a type's guidance in a separate Markdown file, name it `PATH.md` and pla
 
 When `marfa types register`, `marfa types replace` or `marfa types normalize` reads a definition that names no `guidance` from `--file PATH.json`, and the folder holds an entry named exactly `PATH.md` that is a regular file or a link to one, is UTF-8 with no byte-order mark and holds more than white space, the CLI MUST send the text of `PATH.md` with its trailing whitespace removed as the definition's `guidance`.
 
-**Tests:** `device/types-guidance-live.test.ts › sends the Markdown file beside the definition as its guidance on register, replace and normalize`, `› reads only the entry named exactly PATH.md as guidance, and follows a link`.
+**Reason:** a folder that can be entered but not listed still opens `PATH.md` by its name, so its guidance is sent; there the CLI cannot tell `PATH.md` from a name that differs only by case.
+
+**Tests:** `device/types-guidance-live.test.ts › sends the Markdown file beside the definition as its guidance on register, replace and normalize`, `› reads only the entry named exactly PATH.md as guidance, and follows a link`, `› refuses a Markdown file that cannot be read, sending no request, and reads one in a folder that cannot be listed`.
 
 ### `cli/types-guidance-no-file`
 
-When `marfa types register` or `marfa types replace` reads its definition from `--body` or from `--file -`, or from `--file PATH.json` with no entry named exactly `PATH.md` beside it (a file `PATH.MD` is not that entry, on any file system), the CLI MUST send the definition as it is.
+When `marfa types register` or `marfa types replace` reads its definition from `--body` or from `--file -`, or from `--file PATH.json` with no entry named exactly `PATH.md` beside it (in a folder the CLI can list, a file `PATH.MD` is not that entry, on any file system), the CLI MUST send the definition as it is.
 
 **Reason:** a replacement without guidance removes it (`types/guidance-replace-permission`), so the command adds nothing the author did not write.
 
@@ -1682,17 +1684,17 @@ If the definition of `--file PATH.json` names `guidance` and the file `PATH.md` 
 
 ### `cli/types-guidance-file-refused`
 
-If the entry `PATH.md` beside `--file PATH.json` is not UTF-8, starts with a byte-order mark, or is not a regular file because it is a folder or a link that points at nothing or at something that is not a regular file, then the CLI MUST exit 1 with `invalid` and a message that names `guidance_file_unreadable`, whether or not the definition names `guidance`.
+If the entry `PATH.md` beside `--file PATH.json` cannot be read, is not UTF-8, starts with a byte-order mark, or is not a regular file because it is a folder or a link that points at nothing or at something that is not a regular file, then the CLI MUST exit 1 with `invalid` and a message that names `guidance_file_unreadable`, whether or not the definition names `guidance`.
 
 **Reason:** a byte-order mark would be stored as the first character of the guidance, and text that is not UTF-8 cannot be sent. An unreadable file is judged first, so that a file that cannot be read is never taken for one that holds nothing.
 
-**Tests:** `device/types-guidance-live.test.ts › exits 1 with invalid for a Markdown file that is not UTF-8 or starts with a byte-order mark, on register, replace and normalize`, `› refuses a Markdown name that is a folder or a link to nothing, sending no request`, `› judges an unreadable Markdown file before the definition's own guidance, and a readable empty one beside it as named twice`.
+**Tests:** `device/types-guidance-live.test.ts › exits 1 with invalid for a Markdown file that is not UTF-8 or starts with a byte-order mark, on register, replace and normalize`, `› refuses a Markdown name that is a folder or a link to nothing, sending no request`, `› refuses a Markdown file that cannot be read, sending no request, and reads one in a folder that cannot be listed`, `› judges an unreadable Markdown file before the definition's own guidance, and a readable empty one beside it as named twice`.
 
 ### `cli/types-guidance-file-offline`
 
-If the entry `PATH.md` beside `--file PATH.json` is not UTF-8, starts with a byte-order mark, or is not a regular file because it is a folder or a link that points at nothing or at something that is not a regular file, then the CLI MUST send no request.
+If the entry `PATH.md` beside `--file PATH.json` cannot be read, is not UTF-8, starts with a byte-order mark, or is not a regular file because it is a folder or a link that points at nothing or at something that is not a regular file, then the CLI MUST send no request.
 
-**Tests:** `device/types-guidance-live.test.ts › sends no request for a Markdown file that is not UTF-8 or starts with a byte-order mark, though a readable one sends one`, `› refuses a Markdown name that is a folder or a link to nothing, sending no request`.
+**Tests:** `device/types-guidance-live.test.ts › sends no request for a Markdown file that is not UTF-8 or starts with a byte-order mark, though a readable one sends one`, `› refuses a Markdown name that is a folder or a link to nothing, sending no request`, `› refuses a Markdown file that cannot be read, sending no request, and reads one in a folder that cannot be listed`.
 
 ### `cli/types-get-guidance`
 

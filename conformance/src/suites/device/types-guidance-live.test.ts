@@ -1,4 +1,4 @@
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -444,6 +444,37 @@ describe("a type's guidance beside its definition", () => {
       }
     }
     expect(heard.requests.length).toBe(before);
+  });
+
+  it("refuses a Markdown file that cannot be read, sending no request, and reads one in a folder that cannot be listed", async () => {
+    const shut = join(folder, "unlisted");
+    mkdirSync(shut, { recursive: true });
+    const listed = idOf("unlisted_guided");
+    const listedPath = join(shut, `${listed}.json`);
+    writeFileSync(listedPath, JSON.stringify({ id: listed, fields: FIELDS }));
+    writeFileSync(join(shut, `${listed}.md`), "Use it.");
+    const closed = idOf("closed_file");
+    const closedPath = write(closed, { id: closed, fields: FIELDS }, "Use it.");
+    chmodSync(join(folder, `${closed}.md`), 0o000);
+    chmodSync(shut, 0o300);
+    try {
+      // The witness: a folder that cannot be listed still gives its file to each command.
+      for (const command of COMMANDS) {
+        const body = await bodySent(command, listed, ["--file", listedPath]);
+        expect(body.guidance, command.verb).toBe("Use it.");
+      }
+      const before = heard.requests.length;
+      for (const ran of await onEach(closedPath, closed, quietEnv)) {
+        expect(ran.code, ran.stdout).toBe(1);
+        const said = refusal(ran).error;
+        expect(said.code).toBe("invalid");
+        expect(said.message).toContain("guidance_file_unreadable");
+      }
+      expect(heard.requests.length).toBe(before);
+    } finally {
+      chmodSync(shut, 0o700);
+      chmodSync(join(folder, `${closed}.md`), 0o600);
+    }
   });
 
   it("judges an unreadable Markdown file before the definition's own guidance, and a readable empty one beside it as named twice", async () => {

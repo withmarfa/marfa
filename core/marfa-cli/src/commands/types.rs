@@ -290,8 +290,15 @@ fn guidance_text(file: &Path) -> Result<Option<String>, CliError> {
         .filter(|folder| !folder.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let shown = folder.join(&name).display().to_string();
-    let found = folder_files(folder, |held| held == OsStr::new(&name))?;
-    let Some(sibling) = found.into_iter().next() else {
+    let sibling = if std::fs::read_dir(folder).is_ok() {
+        folder_files(folder, |held| held == OsStr::new(&name))?
+            .into_iter()
+            .next()
+            .map(|file| file.content)
+    } else {
+        unlisted_file(&folder.join(&name))
+    };
+    let Some(content) = sibling else {
         return Ok(None);
     };
     let refused = |why: String| {
@@ -299,10 +306,25 @@ fn guidance_text(file: &Path) -> Result<Option<String>, CliError> {
             "cannot read {shown} as guidance (guidance_file_unreadable): {why}"
         ))
     };
-    let bytes = sibling.content.map_err(refused)?;
+    let bytes = content.map_err(refused)?;
     read_guidance_file(&bytes)
         .map(Some)
         .map_err(|fault| refused(fault.message(&shown)))
+}
+
+/// A folder that can be entered but not listed still opens a file by its name,
+/// though a name differing only by case cannot be told apart there.
+fn unlisted_file(path: &Path) -> Option<Result<Vec<u8>, String>> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(error) => return Some(Err(error.to_string())),
+        Ok(_) => {}
+    }
+    Some(match std::fs::metadata(path) {
+        Ok(held) if held.is_file() => std::fs::read(path).map_err(|error| error.to_string()),
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => Err(error.to_string()),
+        _ => Err("it is not a regular file".to_string()),
+    })
 }
 
 fn definition(body: &BodySource) -> Result<Value, CliError> {
@@ -852,6 +874,31 @@ mod guidance_file_tests {
             body: Some(TYPE.into()),
         };
         assert!(definition(&inline).unwrap().get("guidance").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_that_cannot_be_listed_still_gives_its_markdown_file_as_guidance() {
+        let dir = tempfile::tempdir().unwrap();
+        let with = source(dir.path(), "user.note.json", TYPE, Some(b"Use it.\n"));
+        let other = dir.path().join("other");
+        std::fs::create_dir(&other).unwrap();
+        let without = source(&other, "user.note.json", TYPE, None);
+        let dangling = dir.path().join("dangling");
+        std::fs::create_dir(&dangling).unwrap();
+        let pointing = source(&dangling, "user.note.json", TYPE, None);
+        std::os::unix::fs::symlink(dangling.join("gone"), dangling.join("user.note.md")).unwrap();
+        let _with = marfa_acl::testing::locked(dir.path(), 0o300);
+        let _without = marfa_acl::testing::locked(&other, 0o300);
+        let _dangling = marfa_acl::testing::locked(&dangling, 0o300);
+        assert!(std::fs::read_dir(dir.path()).is_err());
+        assert_eq!(
+            definition(&with).unwrap().get("guidance"),
+            Some(&json!("Use it."))
+        );
+        assert!(definition(&without).unwrap().get("guidance").is_none());
+        let refused = definition(&pointing).unwrap_err().to_string();
+        assert!(refused.contains("guidance_file_unreadable"), "{refused}");
     }
 
     #[test]
