@@ -989,7 +989,7 @@ fn finish(text: &mut Vec<String>, page: &serde_json::Map<String, Value>) {
 
 /// The rows with `head` above them, each cell padded to its column. A column
 /// no row fills is left out, head and all.
-fn table_with_head(head: &[String], rows: &[Vec<String>]) -> Vec<String> {
+pub(crate) fn table_with_head(head: &[String], rows: &[Vec<String>]) -> Vec<String> {
     if rows.is_empty() {
         return Vec::new();
     }
