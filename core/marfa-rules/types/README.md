@@ -33,7 +33,6 @@ A type file is a JSON object. A key the rules do not read is refused, with the k
 - **`merge_policy`**: optional, `default` and `fields` (field name to strategy), each strategy `last_writer_wins` or `keep_both_copies`
 - **`version_policy`**: optional, `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days` (whole days from 0 to 36500, each at least the longest window before it) and `max_versions` (a whole number from 1 to 1000000)
 - **`retention_policy`**: optional, `feed_days`, a whole number of days from 1 to 36500, or `null`. A `system.*` type takes none
-- **`compatible_with`**: optional, the types whose readers can read this type's items: the field-by-field rules are in `conformance/spec/types.md`
 
 A type declares no `states`, `default_state` or `transitions`, and no field named for a first-class item field such as `state`, `source` or `occurred_at`.
 

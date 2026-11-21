@@ -29,10 +29,10 @@ async function send(key: string, method: string, path: string, body?: unknown) {
   };
 }
 
-it.each(["parent", "compatible_with"] as const)(
-  "permits connector label and optional-field updates retaining %s without target write permission",
-  async (kind) => {
-    const target = `other.base_${kind}`;
+it(
+  "permits connector label and optional-field updates retaining its parent without target write permission",
+  async () => {
+    const target = "other.base_parent";
     const fields = { title: { type: "string" } };
     expect(
       (
@@ -52,7 +52,7 @@ it.each(["parent", "compatible_with"] as const)(
           headers: ownerHeaders,
           body: JSON.stringify({
             label: "Connector",
-            source: `connector-${kind}-${String(narrowed)}`,
+            source: `connector-parent-${String(narrowed)}`,
             permissions: [],
             metadata_permissions: { types: "write" },
             type_permissions: {
@@ -67,14 +67,8 @@ it.each(["parent", "compatible_with"] as const)(
         key: string;
         id: string;
       };
-      const id = `app.cook.recipe_${kind}_${String(narrowed)}`;
-      const schema = {
-        label: "Recipe",
-        fields: kind === "parent" ? {} : fields,
-        ...(kind === "parent"
-          ? { parent: target }
-          : { compatible_with: [target] }),
-      };
+      const id = `app.cook.recipe_parent_${String(narrowed)}`;
+      const schema = { label: "Recipe", fields: {}, parent: target };
       expect(
         (
           await send(narrowed ? key : server.workingKey, "POST", "/types", {
@@ -155,40 +149,27 @@ it(
       const platform = {
         id: `foreign.platform_${grant ?? "absent"}`,
         parent: "core.note",
-        compatible_with: ["core.note"],
         fields: {},
       };
       expect((await send(key, "POST", "/types", platform)).status).toBe(201);
       expect(
         (await send(key, "PUT", `/types/${platform.id}`, platform)).status,
       ).toBe(200);
-      for (const kind of [
-        "compatibility",
-        "parent",
-        "display",
-        "link",
-        "merge",
-      ]) {
+      for (const kind of ["parent", "display", "link", "merge"]) {
         const suffix = sequence++ === 0 ? "" : `_${sequence}`;
         const target = `user.target${suffix}`;
         const reader = `foreign.reader${suffix}`;
         const fields = { title: { type: "string" } };
-        const dependency =
-          kind === "compatibility"
-            ? { compatible_with: [target] }
-            : {
-                parent: target,
-                ...(kind === "display"
-                  ? { display_hints: { title_field: "title" } }
-                  : {}),
-                ...(kind === "link" ? { link_field: "title" } : {}),
-                ...(kind === "merge"
-                  ? { merge_policy: { fields: { title: "last_writer_wins" } } }
-                  : {}),
-              };
         const schema = {
-          fields: kind === "compatibility" ? fields : {},
-          ...dependency,
+          fields: {},
+          parent: target,
+          ...(kind === "display"
+            ? { display_hints: { title_field: "title" } }
+            : {}),
+          ...(kind === "link" ? { link_field: "title" } : {}),
+          ...(kind === "merge"
+            ? { merge_policy: { fields: { title: "last_writer_wins" } } }
+            : {}),
         };
         expect(
           (
@@ -248,19 +229,17 @@ it(
             })
           ).status,
         ).toBe(201);
-        if (kind !== "compatibility") {
-          expect(
-            (
-              await send(server.workingKey, "PUT", `/types/${reader}`, {
-                fields: {},
-                parent: target,
-              })
-            ).status,
-          ).toBe(200);
-          expect(
-            (await send(key, "PUT", `/types/${reader}`, schema)).status,
-          ).toBe(200);
-        }
+        expect(
+          (
+            await send(server.workingKey, "PUT", `/types/${reader}`, {
+              fields: {},
+              parent: target,
+            })
+          ).status,
+        ).toBe(200);
+        expect(
+          (await send(key, "PUT", `/types/${reader}`, schema)).status,
+        ).toBe(200);
         expect(
           (await send(server.workingKey, "PUT", `/types/${reader}`, schema))
             .status,
@@ -276,44 +255,6 @@ it(
         expect(
           (await send(server.workingKey, "GET", `/types/${reader}`)).body,
         ).toMatchObject({ label: "Kept dependency" });
-        if (kind === "compatibility") {
-          const added = `${target}_additional`;
-          expect(
-            (
-              await send(server.workingKey, "POST", "/types", {
-                id: added,
-                fields,
-              })
-            ).status,
-          ).toBe(201);
-          const mixed = { ...schema, compatible_with: [target, added] };
-          const beforeMixed = await send(
-            server.workingKey,
-            "GET",
-            `/types/${reader}`,
-          );
-          const refused = await send(key, "PUT", `/types/${reader}`, mixed);
-          expect(refused.status).toBe(403);
-          expect(refused.body).toMatchObject({
-            error: {
-              code: "type_not_permitted",
-              details: { grant: { name: added, level: "write" } },
-            },
-          });
-          expect(
-            await send(server.workingKey, "GET", `/types/${reader}`),
-          ).toEqual(beforeMixed);
-          expect(
-            (await send(server.workingKey, "PUT", `/types/${reader}`, mixed))
-              .status,
-          ).toBe(200);
-          expect(
-            (await send(key, "PUT", `/types/${reader}`, schema)).status,
-          ).toBe(200);
-          expect(
-            (await send(server.workingKey, "DELETE", `/types/${added}`)).status,
-          ).toBe(200);
-        }
         expect(
           (await send(key, "PUT", `/types/${reader}`, { fields })).status,
         ).toBe(200);
@@ -356,10 +297,10 @@ it(
       "/types/foreign.reader",
     );
     expect(reader.status).toBe(200);
-    expect(reader.body).toMatchObject({ compatible_with: ["user.target"] });
+    expect(reader.body).toMatchObject({ parent: "user.target" });
     expect(
       (await send(server.workingKey, "DELETE", "/types/user.target")).status,
-    ).toBe(422);
+    ).toBe(409);
   },
   FRESH_SERVER_TIMEOUT_MS,
 );

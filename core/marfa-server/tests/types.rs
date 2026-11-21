@@ -229,12 +229,7 @@ fn holder(id: &str, target: &str) -> Value {
     } } } })
 }
 
-fn claimant(id: &str, target: &str, fields: Value) -> Value {
-    json!({ "id": id, "compatible_with": target, "fields": fields })
-}
-
 fn references_between_types() -> Vec<Value> {
-    let shape = json!({ "x": { "type": "string", "required": true } });
     let bad_enum = json!({ "x": { "type": "enum" } });
     vec![
         simple("acme.zz-person"),
@@ -245,20 +240,7 @@ fn references_between_types() -> Vec<Value> {
         holder("acme.tree", "acme.tree"),
         holder("acme.col-a", "acme.col-b"),
         holder("acme.col-b", "acme.col-a"),
-        json!({ "id": "acme.zz-shape", "fields": shape }),
-        claimant(
-            "acme.aa-claims",
-            "acme.zz-shape",
-            json!({ "x": { "type": "string", "required": true }, "y": { "type": "string" } }),
-        ),
-        claimant(
-            "acme.aa-short",
-            "acme.zz-shape",
-            json!({ "y": { "type": "string" } }),
-        ),
-        claimant("acme.aa-nowhere", "acme.absent", shape.clone()),
-        claimant("acme.loop-a", "acme.loop-b", shape.clone()),
-        claimant("acme.loop-b", "acme.loop-a", shape),
+        json!({ "id": "acme.claims", "compatible_with": ["core.note"], "fields": { "body": { "type": "string" } } }),
         json!({ "id": "core.unshipped", "parent": "core.unshipped", "fields": { "x": { "type": "string" } } }),
         child(
             "acme.self",
@@ -288,12 +270,6 @@ fn references_between_types() -> Vec<Value> {
             json!({ "y": { "type": "string" } }),
         ),
         child("acme.kid-enum", "acme.bad-parent", bad_enum),
-        json!({ "id": "acme.false-a", "compatible_with": ["acme.false-b", 1], "fields": { "x": { "type": "string" } } }),
-        child(
-            "acme.false-b",
-            "acme.false-a",
-            json!({ "x": { "type": "string" } }),
-        ),
     ]
 }
 
@@ -392,7 +368,7 @@ async fn the_folder_check_gives_each_definition_the_answer_a_registration_gets()
         heard.sort();
         assert_eq!(heard, said, "{id}");
     }
-    assert_eq!((accepted, refused), (13, 32));
+    assert_eq!((accepted, refused), (11, 27));
 }
 
 #[tokio::test]

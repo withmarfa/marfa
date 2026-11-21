@@ -178,33 +178,6 @@ describe("the committed OpenAPI document", () => {
     expect(offenders.sort()).toEqual([]);
   });
 
-  it("serves compatible_with on every type-resource response", () => {
-    // A client resolves a sibling type's read-as relationship from this
-    // field, and a generated client sees only what the document declares,
-    // so a field the runtime bodies carry and the document omits is a
-    // relationship no generated client can resolve.
-    //
-    // Scoped to `responses`, deliberately: the type-authoring bodies carry
-    // the field too, and a check over the whole operation would be
-    // satisfied by what a client sends when it is about what it receives.
-    // A move answers a job or a plan, not a type.
-    const typeOperations = [...published.entries()].filter(
-      ([key]) => /^(GET|POST|PUT) \/types/.test(key) && !key.endsWith("/move"),
-    );
-    expect(typeOperations.length).toBeGreaterThan(0);
-
-    const missing: string[] = [];
-    for (const [key, operation] of typeOperations) {
-      const responses = (operation as { responses?: unknown }).responses;
-      expect(responses, `${key} has no responses object`).toBeDefined();
-      // Followed through the registered components, because the type shape
-      // is one, so the field this pins is a reference away.
-      const text = JSON.stringify(inlineRefs(responses, document));
-      if (!text.includes('"compatible_with"')) missing.push(key);
-    }
-    expect(missing.sort()).toEqual([]);
-  });
-
   /**
    * Every object shape the document writes out, and where.
    *

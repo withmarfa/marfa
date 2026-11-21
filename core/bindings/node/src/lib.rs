@@ -513,7 +513,6 @@ pub struct ItemType {
     pub icon: Option<String>,
     pub link_field: Option<String>,
     pub roles: Vec<String>,
-    pub compatible_with: Vec<String>,
 }
 
 /// One end of an edge.
@@ -612,7 +611,6 @@ fn item_type(held: marfa_core::ItemType) -> ItemType {
         icon: held.icon,
         link_field: held.link_field,
         roles: held.roles,
-        compatible_with: held.compatible_with,
     }
 }
 

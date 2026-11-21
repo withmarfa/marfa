@@ -844,64 +844,6 @@ describe("filtering by status_group", () => {
   });
 });
 
-describe("compatible_with and a status field", () => {
-  it("reads a status field as a string, and as a status field holding its words in the same groups", async () => {
-    const text = nextId();
-    const wide = nextId();
-    const narrow = nextId();
-    await register({ id: text, fields: { stage: { type: "string" } } });
-    await register({
-      id: wide,
-      fields: {
-        stage: {
-          type: "status",
-          status_values: [...WORDS, { value: "blocked", group: "in_progress" }],
-        },
-      },
-    });
-    await register({
-      id: narrow,
-      fields: {
-        stage: {
-          type: "status",
-          status_values: [
-            ...WORDS.slice(0, 3),
-            { value: "dropped", group: "completed" },
-          ],
-        },
-      },
-    });
-    const stage = { type: "status", status_values: WORDS };
-
-    await register({
-      id: nextId(),
-      fields: { stage },
-      compatible_with: [text],
-    });
-    await register({
-      id: nextId(),
-      fields: { stage },
-      compatible_with: [wide],
-    });
-
-    const regrouped = await client.registerType({
-      id: nextId(),
-      fields: { stage },
-      compatible_with: [narrow],
-    } as never);
-    expect(regrouped.status).toBe(422);
-    expect(regrouped.error?.error.code).toBe("compatible_with_violation");
-
-    const loose = await client.registerType({
-      id: nextId(),
-      fields: { stage: { type: "string" } },
-      compatible_with: [wide],
-    } as never);
-    expect(loose.status).toBe(422);
-    expect(loose.error?.error.code).toBe("compatible_with_violation");
-  });
-});
-
 describe("core.task", () => {
   it("declares its status words in the four groups", async () => {
     const read = await client.getType("core.task");

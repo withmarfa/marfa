@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use super::{Issue, Obj, REFUSED_TYPE_KEYS, as_obj};
 
-const TYPE_KEYS: [&str; 17] = [
+const TYPE_KEYS: [&str; 16] = [
     "id",
     "parent",
     "label",
@@ -20,7 +20,6 @@ const TYPE_KEYS: [&str; 17] = [
     "version_policy",
     "merge_policy",
     "retention_policy",
-    "compatible_with",
     "required",
 ];
 const FIELD_KEYS: [&str; 14] = [

@@ -246,13 +246,6 @@ export interface TypeSchema {
   merge_policy?: MergePolicy;
   /** How long the type's items stay in the feed tier. `null` keeps them. */
   retention_policy?: { feed_days?: number | null };
-  /**
-   * Sibling-type compatibility declaration. When set, the type asserts a
-   * structural-superset relationship with the named target — the server
-   * validates at registration and rejects mismatched claims with
-   * `compatible_with_violation`.
-   */
-  compatible_with?: string | string[];
 }
 
 /** What a purge left of an item's link or natural key under its type. */
@@ -908,8 +901,6 @@ export interface TrackedResource {
    * declared parent is what the server answers on, not the dotted name.
    */
   parent?: string;
-  /** Compatibility targets must outlive the types that name them. */
-  compatibleWith?: string[];
   /** The types a column's `type_constraints` names, which outlive this type. */
   constrainedTo?: string[];
 }

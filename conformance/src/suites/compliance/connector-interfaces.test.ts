@@ -164,20 +164,11 @@ describe("connector interfaces", () => {
       { ...input, stray: true },
       { ...input, parent: "user.absent" },
       { ...input, fields: { title: { type: "number" } } },
+      { ...input, compatible_with: ["core.note"] },
     ])
       expect(
         (await call("/types/normalize", "POST", candidate, readKey)).status,
       ).toBe(400);
-    expect(
-      (
-        await call(
-          "/types/normalize",
-          "POST",
-          { ...input, compatible_with: ["user.absent_compat"] },
-          readKey,
-        )
-      ).status,
-    ).toBe(422);
     expect(await audit()).toEqual(witnessed);
   });
 

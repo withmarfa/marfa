@@ -1782,7 +1782,7 @@ If `POST /edge-types` names several properties that `edges/types-register-proper
 
 While a stored edge type holds a property that `edges/types-register-array-items`, `edges/types-register-enum-values`, `edges/types-register-enum-values-kind` or `edges/types-register-items-type` refuses, the server MUST answer a read of the edge type with the property as stored.
 
-**Reason:** preserving the stored property lets a client read the same definition the owner can export and restore (`archive/restore-compatible-types`).
+**Reason:** preserving the stored property lets a client read the same definition the owner can export and restore (`archive/restore-types-any-order`).
 
 **Tests:** `compliance/restore-edge-property-shapes.test.ts › restores from an archive and reads as a registration would have stored it`.
 

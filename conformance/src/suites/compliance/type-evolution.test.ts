@@ -258,16 +258,15 @@ describe("a key whose type map reaches a type evolves it", () => {
     };
   }
 
-  /** The replacement of `shaped` with one kept field's definition swapped,
-   *  or a member of the type changed. */
+  /** The replacement of `shaped` with one kept field's definition swapped. */
   function reshaped(
     id: string,
-    change: { field?: [string, Definition]; member?: Definition },
+    change: { field: [string, Definition] },
   ): Definition {
     const { id: _id, ...rest } = shaped(id);
     const fields = { ...(rest.fields as Definition) };
-    if (change.field) fields[change.field[0]] = change.field[1];
-    return { ...rest, fields, ...change.member };
+    fields[change.field[0]] = change.field[1];
+    return { ...rest, fields };
   }
 
   const KEPT_SHAPE_CHANGES: {
@@ -275,11 +274,6 @@ describe("a key whose type map reaches a type evolves it", () => {
     change: Parameters<typeof reshaped>[1];
     named: string;
   }[] = [
-    {
-      what: "compatible_with",
-      change: { member: { compatible_with: "core.note" } },
-      named: "compatible_with",
-    },
     {
       what: "a max_length",
       change: { field: ["notes", { type: "string", max_length: 50 }] },
@@ -334,7 +328,7 @@ describe("a key whose type map reaches a type evolves it", () => {
   ];
 
   it.each(KEPT_SHAPE_CHANGES)(
-    "refuses a change to compatible_with, a kept field's constraint, required or searchable to a key without schema.write, and lands it with it",
+    "refuses a change to a kept field's constraint, required or searchable to a key without schema.write, and lands it with it",
     async ({ what, change, named }) => {
       const ns = namespace("shape");
       const id = `${ns}.shaped`;

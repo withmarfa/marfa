@@ -498,50 +498,6 @@ When a listing names a type, the server MUST answer the items of that type, of e
 
 **Tests:** `compliance/entity-subtypes.test.ts › querying core.entity returns all entity subtypes`, `› querying core.entity.person returns only persons`, `compliance/types.test.ts › selects a type filter's items by identifier and by declared parent alike`.
 
-### `types/compatible-with`
-
-When a type names `compatible_with`, the server MUST take it only where the type requires every field the target requires, its own or inherited, and every target field the type declares or inherits is readable as the target's: the same type, or `url`, `email`, `datetime`, `date`, `thumbnail`, `enum` or `status` where the target's is `string`, or `integer` where it is `number`; for an `array`, the same `items_type`; for an `enum`, values drawn from the target's; for a `status`, words the target's status field also holds, each in the same group; and, where both name a `format`, the same one.
-
-**Tests:** `compliance/type-inheritance.test.ts › accepts compatible_with: core.note when fields satisfy the structural superset`, `› takes a compatible_with claim whose fields are readable as the target's, and refuses one that is not`, `compliance/thumbnails.test.ts › is read as the target's by a type claiming compatibility, and refused as text`, `compliance/status-groups.test.ts › reads a status field as a string, and as a status field holding its words in the same groups`.
-
-### `types/compatible-with-range`
-
-Where a type names `compatible_with` and the target's `number` or `integer` field has a `minimum` or a `maximum`, the server MUST take the claim only where the type's field has a `minimum` no lower, and a `maximum` no higher, than the target's.
-
-**Reason:** a reader of the target relies on every value being inside its range, and a looser range lets a value through that the reader never expects. A target with no range is read from any range.
-
-**Tests:** `compliance/field-rules.test.ts › reads a range as the target's only where it is inside the target's`.
-
-### `types/compatible-with-currency`
-
-Where a type names `compatible_with` and the target's field has the `format` `currency`, the server MUST take the claim only where the type's field has that `format`; a `string` field with the `format` `currency` is readable as a `string` field with no `format`.
-
-**Reason:** `currency` is the one string format whose value is checked, so a plain string holds values a reader of a currency field never expects, while a currency string is a string.
-
-**Tests:** `compliance/field-rules.test.ts › reads a currency string as a string, and a string not as a currency`.
-
-### `types/compatible-with-items-fields`
-
-Where a type names `compatible_with` and the target's `array` field names `items_fields`, or the type's does, the server MUST take the claim only where both name the same members, each defined alike.
-
-**Reason:** a list of entries means what its members say, and two lists whose members differ hold entries a reader of the other would misread.
-
-**Tests:** `compliance/field-rules.test.ts › reads a list of entries as the target's only where the members are identical`.
-
-### `types/compatible-with-refused`
-
-If a registration or replacement declares `compatible_with` naming a type nothing registered, or one the type is not compatible with, then the server MUST answer `422 compatible_with_violation`.
-
-**Tests:** `compliance/type-inheritance.test.ts › rejects compatible_with target that does not exist`, `› rejects compatible_with when a required ancestor field is missing`, `› refuses a compatible_with claim whose target field the type declares in another shape, or optional where the target requires it`, `compliance/types.test.ts › refuses a replacement that breaks its compatible_with claim, as registration does`.
-
-### `types/compatible-with-preserved`
-
-If an otherwise permitted `PUT /types/{id}` or `DELETE /types/{id}` would break a registered type's `compatible_with` claim, directly or through inherited fields on either side, then the server MUST refuse the change with `422 compatible_with_violation` naming the affected claimants in `details.dependent_type_ids`, including a deletion with `force=true`.
-
-**Reason:** compatibility is a maintained promise, so accepted registrations remain valid when exported and restored under `archive/restore-compatible-types`.
-
-**Tests:** `compliance/restore-compatible-types.test.ts › refuses a target change that breaks a reader and restores the accepted registry`.
-
 ### `types/custom-lifecycle`
 
 The server MUST hold an item of a registered type to the lifecycle of `items/transition`.
@@ -616,7 +572,7 @@ When `PUT /types/{id}`, or a change through the MCP tool `marfa_save_type`, leav
 
 When an archive restore carries a type that names `enum_values` on a field, a member of `items_fields` or a table column whose `type` is neither `enum` nor an `array` whose `items_type` is `enum`, the server MUST restore the type as the archive holds it, with every table it declares.
 
-**Reason:** a registration the server accepted before `types/enum-values-kind` stays valid when exported and restored (`archive/restore-compatible-types`).
+**Reason:** a registration the server accepted before `types/enum-values-kind` stays valid when exported and restored (`archive/restore-types-any-order`).
 
 **Tests:** `compliance/restore-enum-values.test.ts › restores from an archive, and its items read and take any string`.
 
@@ -635,6 +591,14 @@ If `POST /types` or `PUT /types/{id}` names a key the type schema does not defin
 **Reason:** a key the server ignored would let a misspelled rule, or an `exclusiveMinimum` on an `integer` field, register as though it held, and the type would then accept what its author meant it to refuse.
 
 **Tests:** `compliance/types.test.ts › refuses a key the type schema does not define, at the top level, in a field and in a block, naming each path`, `› refuses a key the type schema does not define on a replacement, and keeps the type as it was`.
+
+### `types/compatible-with-removed`
+
+If `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names `compatible_with`, then the server MUST answer `400 invalid_schema` with `details.errors` naming `compatible_with`.
+
+**Reason:** Marfa reads no such key now that a type's items are read as another's only through its `parent`, so a definition that kept it would claim a promise nothing holds.
+
+**Tests:** `compliance/types.test.ts › refuses compatible_with, which no type takes, on registration and replacement, naming it`, `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
 
 ### `types/range`
 
@@ -1102,7 +1066,7 @@ If `PUT /types/{id}` names a malformed identifier, then the server MUST answer `
 
 If a key whose type map grants write on a type registered at run time sends `PUT /types/{id}` for it naming a schema registration would refuse, then the server MUST answer the code registration answers for it.
 
-**Tests:** `compliance/types.test.ts › refuses a replacement whose property name shadows a first-class Item field, as registration does`, `› refuses a replacement that breaks its compatible_with claim, as registration does`, `compliance/type-versioning.test.ts › refuses a malformed identifier and a schema the validator refuses with 400`.
+**Tests:** `compliance/types.test.ts › refuses a replacement whose property name shadows a first-class Item field, as registration does`, `compliance/type-versioning.test.ts › refuses a malformed identifier and a schema the validator refuses with 400`.
 
 ### `types/replace-permission`
 
@@ -1186,11 +1150,11 @@ A connector's key holds `metadata.types:write` and not `schema.write`, so that a
 
 ### `types/evolve-free`
 
-When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `plural`, `description`, `display_hints`, `version`, or a kept field's `description` or the `label` of the field or of a member of its entries, or the `description` of a kept status word, and whose text is within the limits `types/limits-replace-stored` names, including when its retained parent or compatibility targets are outside the key's write permissions.
+When a key holding `metadata.types:write`, without `schema.write`, sends `PUT /types/{id}` for a type registered at run time its map grants write on, the server MUST take a replacement that only adds optional fields no stored item holds a value under, or changes the `label`, `plural`, `description`, `display_hints`, `version`, or a kept field's `description` or the `label` of the field or of a member of its entries, or the `description` of a kept status word, and whose text is within the limits `types/limits-replace-stored` names, including when its retained parent is outside the key's write permissions.
 
 **Reason:** each release of a connector adds fields, and these change no stored item and only how the type is presented. A status word's `description` changes nothing an item holds, as a field's does not. A type stored over a limit is replaced only with text within it (`types/limits-replace-stored`).
 
-**Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`, `› admits a change to the plural and to a kept field's labels on metadata.types:write alone`, `compliance/type-guidance.test.ts › lets a key with metadata.types:write alone change a status word's description and a guided type's description`, `compliance/type-dependency-permissions.test.ts › permits connector label and optional-field updates retaining %s without target write permission`.
+**Tests:** `compliance/type-evolution.test.ts › adds an optional field and changes the label, description and display hints, with metadata.types:write alone`, `› admits a change to the version and to a kept field's description on metadata.types:write alone`, `› admits a change to the plural and to a kept field's labels on metadata.types:write alone`, `compliance/type-guidance.test.ts › lets a key with metadata.types:write alone change a status word's description and a guided type's description`, `compliance/type-dependency-permissions.test.ts › permits connector label and optional-field updates retaining its parent without target write permission`.
 
 ### `types/evolve-held-name`
 
@@ -1204,9 +1168,9 @@ If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types
 
 If a key holding `metadata.types:write` and not `schema.write` sends `PUT /types/{id}` for a type registered at run time its map grants write on, changing anything `types/evolve-free` and `tables/evolve-free` do not name, then the server MUST answer `403 forbidden`.
 
-**Reason:** a removed field, a required one, a changed field shape, `parent`, `roles`, `link_field`, `version_policy`, `merge_policy`, `retention_policy` or `compatible_with` each acts beyond the type. Holding back whatever is not named free keeps a member added to the definition later from being opened to every connector's key.
+**Reason:** a removed field, a required one, a changed field shape, `parent`, `roles`, `link_field`, `version_policy`, `merge_policy` or `retention_policy` each acts beyond the type. Holding back whatever is not named free keeps a member added to the definition later from being opened to every connector's key.
 
-**Tests:** `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› refuses a change to compatible_with, a kept field's constraint, required or searchable to a key without schema.write, and lands it with it`, `› refuses a key on metadata.types:write alone a change of parent as a schema change`.
+**Tests:** `compliance/type-evolution.test.ts › refuses %s to a key without schema.write, naming it, and lands it for a key with schema.write`, `› refuses a change to a kept field's constraint, required or searchable to a key without schema.write, and lands it with it`, `› refuses a key on metadata.types:write alone a change of parent as a schema change`.
 
 ### `types/evolve-refusal-details`
 
@@ -1232,21 +1196,13 @@ If `POST /types`, or an otherwise permitted `PUT /types/{id}` that changes the s
 
 **Tests:** `compliance/type-evolution.test.ts › refuses a registration naming a parent the key may not write, and takes it once the map reaches the parent`, `› holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`, `› asks write on a parent nothing registered, before saying it is unknown`, `› asks write on a core parent the server does not ship`, `compliance/type-dependency-permissions.test.ts › requires target write permission for new dependencies but permits retained dependencies`.
 
-### `types/compatible-with-reach`
-
-If an otherwise valid `POST /types` or an otherwise permitted `PUT /types/{id}` names a non-platform `compatible_with` target absent from the type's stored `compatible_with` and the key's type map does not grant write on that target, then the server MUST answer `403 type_not_permitted` with `details.grant` naming that target.
-
-**Reason:** a new compatibility claim can prevent replacement or deletion of its target, so establishing the claim requires write permission on it.
-
-**Tests:** `compliance/type-dependency-permissions.test.ts › requires target write permission for new dependencies but permits retained dependencies`, `› permits connector label and optional-field updates retaining %s without target write permission`.
-
 ### `types/parent-kept`
 
-When a replacement retains its stored `parent` or a target in its stored `compatible_with`, the server MUST NOT require target write permission for retaining that relationship.
+When a replacement retains its stored `parent`, the server MUST NOT require write permission on that parent for retaining it.
 
 **Reason:** existing relationships remain valid after a target grant is narrowed, so connectors can continue updating their own types.
 
-**Tests:** `compliance/type-evolution.test.ts › holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`, `compliance/type-dependency-permissions.test.ts › requires target write permission for new dependencies but permits retained dependencies`, `› permits connector label and optional-field updates retaining %s without target write permission`.
+**Tests:** `compliance/type-evolution.test.ts › holds a replacement that changes the parent to the key's reach, and leaves one that keeps its parent`, `compliance/type-dependency-permissions.test.ts › requires target write permission for new dependencies but permits retained dependencies`, `› permits connector label and optional-field updates retaining its parent without target write permission`.
 
 ### `types/parent-shipped`
 
@@ -1426,7 +1382,7 @@ The server MUST NOT change a key's or app's type map when it moves a type's item
 
 ### `types/delete`
 
-When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}` for a type registered at run time that no item holds and no other type names as parent or compatibility target, the server MUST remove it.
+When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}` for a type registered at run time that no item holds and no other type names as parent, the server MUST remove it.
 
 **Tests:** `compliance/type-registry.test.ts › deletes a type with no items`.
 
@@ -1452,7 +1408,7 @@ If a key holding `schema.write` whose type map grants write on it sends `DELETE 
 
 ### `types/delete-force`
 
-When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}?force=true` for a type registered at run time that items hold or settings name but no other type names as parent or compatibility target, the server MUST remove the type and keep the items and the settings as they are.
+When a key holding `schema.write` whose type map grants write on it sends `DELETE /types/{id}?force=true` for a type registered at run time that items hold or settings name but no other type names as parent, the server MUST remove the type and keep the items and the settings as they are.
 
 **Tests:** `compliance/type-registry.test.ts › force-deletes a type that has items`, `› refuses a write to an item a forced delete left, until its type is registered again`, `compliance/type-move.test.ts › force-deletes a type a folder names, and leaves the folder as it is`.
 
@@ -1940,7 +1896,7 @@ When no name candidate produces nonblank text, the server MUST return `Untitled`
 
 ### `types/delete-owner`
 
-When the private local command sends `DELETE /types/{id}`, the server MUST apply the built-in type, existing-item, setting, subtype and compatibility-dependency checks before removing an unused custom type.
+When the private local command sends `DELETE /types/{id}`, the server MUST apply the built-in type, existing-item, setting and subtype checks before removing an unused custom type.
 
 **Tests:** `compliance/owner-trash.test.ts › lets the owner remove only unused custom types`.
 

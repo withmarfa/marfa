@@ -524,29 +524,6 @@ describe("type tracking records accepted dependencies", () => {
     expect(ctx.trackedTypes[0]?.parent).toBeUndefined();
   });
 
-  it("tracks accepted compatibility targets through replacement and removal", async () => {
-    const { trackRegisteredTypes } = await import("./setup.js");
-    const ctx = {
-      trackedTypes: [] as { id: string; compatibleWith?: string[] }[],
-    };
-    const client = clientStub();
-    trackRegisteredTypes(
-      ctx as Parameters<typeof trackRegisteredTypes>[0],
-      client as unknown as Parameters<typeof trackRegisteredTypes>[1],
-    );
-    const register = client.registerType as (s: unknown) => Promise<unknown>;
-    const replace = client.replaceType as (
-      id: string,
-      s: object,
-    ) => Promise<unknown>;
-    await register({ id: "reader", compatible_with: "target" });
-    expect(ctx.trackedTypes[0]?.compatibleWith).toEqual(["target"]);
-    await replace("reader", { compatible_with: ["a", "b"] });
-    expect(ctx.trackedTypes[0]?.compatibleWith).toEqual(["a", "b"]);
-    await replace("reader", { fields: {} });
-    expect(ctx.trackedTypes[0]?.compatibleWith).toBeUndefined();
-  });
-
   it("keeps automatic dependencies when a fixture also tracks the same type", async () => {
     const { trackRegisteredTypes, trackType } = await import("./setup.js");
     const ctx = { trackedTypes: [] } as unknown as Parameters<
@@ -560,16 +537,10 @@ describe("type tracking records accepted dependencies", () => {
     await (client.registerType as (s: unknown) => Promise<unknown>)({
       id: "reader",
       parent: "parent",
-      compatible_with: ["target"],
     });
     trackType(ctx, "reader", client);
     expect(ctx.trackedTypes).toEqual([
-      {
-        id: "reader",
-        createdBy: client,
-        parent: "parent",
-        compatibleWith: ["target"],
-      },
+      { id: "reader", createdBy: client, parent: "parent" },
     ]);
   });
 
@@ -584,40 +555,27 @@ describe("type tracking records accepted dependencies", () => {
       client as unknown as Parameters<typeof trackRegisteredTypes>[1],
     );
     const register = client.registerType as (s: unknown) => Promise<unknown>;
-    await register({
-      id: "reader",
-      parent: "parent",
-      compatible_with: ["target"],
-    });
+    await register({ id: "reader", parent: "parent" });
     await register({ id: "reader" });
     expect(ctx.trackedTypes).toEqual([
-      {
-        id: "reader",
-        createdBy: client,
-        parent: undefined,
-        compatibleWith: undefined,
-      },
+      { id: "reader", createdBy: client, parent: undefined },
     ]);
   });
 });
 
 describe("typeDeletionLevels", () => {
-  it("awaits compatibility dependents before either target and their parents", async () => {
+  it("awaits a child before its parent and the parent's own", async () => {
     const { cleanup } = await import("./setup.js");
     const ctx = contextWithFixtures() as { trackedTypes: unknown[] };
     ctx.trackedTypes = [
-      { id: "parent" },
-      { id: "target", parent: "parent" },
-      { id: "other" },
-      { id: "reader", compatibleWith: ["target", "other"] },
-      { id: "child", parent: "reader" },
+      { id: "root" },
+      { id: "parent", parent: "root" },
+      { id: "child", parent: "parent" },
     ];
     await cleanup(ctx as Parameters<typeof cleanup>[0]);
     for (const [dependent, target] of [
-      ["child", "reader"],
-      ["reader", "target"],
-      ["reader", "other"],
-      ["target", "parent"],
+      ["child", "parent"],
+      ["parent", "root"],
     ]) {
       expect(calls).toContain(`scoped-type-done:${dependent}`);
       expect(calls).toContain(`scoped-type:${target}`);

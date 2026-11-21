@@ -64,7 +64,6 @@ pub fn early_refusal(body: &Obj) -> Result<Option<Early>, RuleError> {
 pub enum SchemaVerdict {
     PropertyShadowsField,
     InheritanceViolation,
-    CompatibleWithViolation,
     InvalidSchema,
 }
 
@@ -75,8 +74,6 @@ impl SchemaVerdict {
             SchemaVerdict::PropertyShadowsField
         } else if has("inheritance_violation") {
             SchemaVerdict::InheritanceViolation
-        } else if has("compatible_with_violation") {
-            SchemaVerdict::CompatibleWithViolation
         } else {
             SchemaVerdict::InvalidSchema
         }
@@ -86,7 +83,6 @@ impl SchemaVerdict {
         match self {
             SchemaVerdict::PropertyShadowsField => "property_shadows_field",
             SchemaVerdict::InheritanceViolation => "inheritance_violation",
-            SchemaVerdict::CompatibleWithViolation => "compatible_with_violation",
             SchemaVerdict::InvalidSchema => "invalid_schema",
         }
     }
@@ -98,9 +94,6 @@ impl SchemaVerdict {
             }
             SchemaVerdict::InheritanceViolation => {
                 "Type gives a field a shape another type in its chain declares differently"
-            }
-            SchemaVerdict::CompatibleWithViolation => {
-                "Type does not satisfy the structural-superset of its compatible_with target"
             }
             SchemaVerdict::InvalidSchema => "Invalid type schema",
         }

@@ -1484,9 +1484,9 @@ The CLI MUST print, for `marfa types scaffold`, a definition that `marfa types r
 
 ### `cli/types-check-judges`
 
-When `marfa types check` is given a folder, the CLI MUST report, for each `*.json` file directly in it, every problem the server's registration of the type in that file would refuse it for, each with the file, the path in the definition and the code and message the server gives, judging the type against the types the server ships and the types of the folder that passed before it, taking each type after the types of the folder that it names as its `parent`, in a `compatible_with` list of strings or in a table column's `type_constraints`, except a type in a loop of such names and a type that names itself.
+When `marfa types check` is given a folder, the CLI MUST report, for each `*.json` file directly in it, every problem the server's registration of the type in that file would refuse it for, each with the file, the path in the definition and the code and message the server gives, judging the type against the types the server ships and the types of the folder that passed before it, taking each type after the types of the folder that it names as its `parent` or in a table column's `type_constraints`, except a type in a loop of such names and a type that names itself.
 
-**Reason:** a repository that keeps type files must learn at its own checks what a server would refuse, and learn all of it at once, not one refusal at a time. The files of a folder have no order, so a type is judged after the types it needs, as a person would register them. A server looks a name up only where it is a string in a well-formed list, so a name in a malformed `compatible_with` list orders nothing.
+**Reason:** a repository that keeps type files must learn at its own checks what a server would refuse, and learn all of it at once, not one refusal at a time. The files of a folder have no order, so a type is judged after the types it needs, as a person would register them. A server looks a name up only where it is a string, so a malformed name orders nothing.
 
 **Tests:** `device/types-check.test.ts › refuses each definition a registration refuses, naming the file, the path, the code and the message`, `› refuses a loosened minimum and a reserved root`, `› passes a folder whose types name a shipped parent and each other`.
 

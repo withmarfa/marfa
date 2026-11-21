@@ -9,27 +9,23 @@ import {
 
 let source: FreshServer;
 let archive: Uint8Array;
-const first = "user.compatible_first";
-const second = "user.compatible_second";
 const shape = {
-  label: "Compatible",
-  description: "A compatible type.",
+  label: "Restored",
+  description: "A restored type.",
   fields: { title: { type: "string" as const, required: true } },
 };
 const parent = "user.inherited_parent";
 const child = "user.inherited_child";
-const allTypes = [first, second, parent, child];
+const allTypes = [parent, child];
 const ids: string[] = [];
 
 beforeAll(async () => {
-  source = await bootFreshServer("compatible-source");
+  source = await bootFreshServer("restore-order-source");
   const client = new MarfaClient({
     baseUrl: source.apiUrl,
     apiKey: source.workingKey,
   });
   for (const schema of [
-    { id: first, ...shape },
-    { id: second, ...shape, compatible_with: [first] },
     { id: parent, ...shape },
     {
       id: child,
@@ -43,11 +39,6 @@ beforeAll(async () => {
     const registered = await client.registerType(schema);
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
   }
-  const replaced = await client.replaceType(first, {
-    ...shape,
-    compatible_with: [second],
-  });
-  expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
   for (const type of allTypes) {
     const created = await client.createItem({
       type,
@@ -67,81 +58,44 @@ afterAll(async () => {
   await source?.stop();
 });
 
-describe("compatible type archives", () => {
+describe("type archives", () => {
   it(
-    "refuses a target change that breaks a reader and restores the accepted registry",
+    "restores a type of an older archive that carries compatible_with, without the key",
     async () => {
-      const origin = await bootFreshServer("dependent-source");
-      const destination = await bootFreshServer("dependent-destination");
+      const destination = await bootFreshServer("restore-order-older");
       try {
-        const client = new MarfaClient({
-          baseUrl: origin.apiUrl,
-          apiKey: origin.workingKey,
-        });
-        expect(
-          (await client.registerType({ id: "user.target", ...shape })).status,
-        ).toBe(201);
-        expect(
-          (
-            await client.registerType({
-              id: "user.reader",
-              ...shape,
-              compatible_with: ["user.target"],
-            })
-          ).status,
-        ).toBe(201);
-        const refused = await client.replaceType("user.target", {
-          ...shape,
-          fields: { title: { type: "integer", required: true } },
-        });
-        expect(refused.status, JSON.stringify(refused.error)).toBe(422);
-        expect(refused.error?.error).toMatchObject({
-          code: "compatible_with_violation",
-          details: { dependent_type_ids: ["user.reader"] },
-        });
-        for (const force of [false, true]) {
-          const deleted = await client.deleteType("user.target", force);
-          expect(deleted.status).toBe(422);
-          expect(deleted.error?.error).toMatchObject({
-            code: "compatible_with_violation",
-            details: { dependent_type_ids: ["user.reader"] },
-          });
-        }
-        const exported = await fetch(`${origin.apiUrl}/export?format=archive`, {
-          headers: { Authorization: `Bearer ${origin.workingKey}` },
-        });
-        expect(exported.status).toBe(200);
-        const bytes = new Uint8Array(await exported.arrayBuffer());
         const owner = new MarfaClient({
           baseUrl: destination.apiUrl,
           controlSocket: destination.controlSocket,
         });
-        const restored = await owner.restoreArchive(bytes);
-        expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-        expect(restored.data).toMatchObject({ types_registered: 2 });
         const worker = new MarfaClient({
           baseUrl: destination.apiUrl,
           apiKey: destination.workingKey,
         });
-        expect((await worker.getType("user.target")).data).toMatchObject({
-          fields: shape.fields,
+        const older = editLineFile(archive, "instance", (text) => {
+          const lines = text
+            .trim()
+            .split("\n")
+            .map((line) => {
+              const row = JSON.parse(line) as {
+                type?: { id: string; compatible_with?: string[] };
+              };
+              if (row.type?.id === child) row.type.compatible_with = [parent];
+              return JSON.stringify(row);
+            });
+          return lines.join("\n") + "\n";
         });
-        expect((await worker.getType("user.reader")).data).toMatchObject({
-          compatible_with: ["user.target"],
+        const restored = await owner.restoreArchive(older);
+        expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+        expect(restored.data).toMatchObject({
+          types_registered: 2,
+          imported: 2,
         });
-        expect((await client.replaceType("user.reader", shape)).status).toBe(
-          200,
-        );
-        expect(
-          (
-            await client.replaceType("user.target", {
-              ...shape,
-              fields: { title: { type: "integer", required: true } },
-            })
-          ).status,
-        ).toBe(200);
+        const read = await worker.getType(child);
+        expect(read.status).toBe(200);
+        expect(read.data).toMatchObject({ id: child, parent });
+        expect(read.data).not.toHaveProperty("compatible_with");
       } finally {
-        await origin.stop();
         await destination.stop();
       }
     },
@@ -149,9 +103,6 @@ describe("compatible type archives", () => {
   );
 
   it.each([
-    "missing target",
-    "incompatible field",
-    "malformed declaration",
     "missing parent",
     "parent cycle",
     "display hint",
@@ -160,10 +111,11 @@ describe("compatible type archives", () => {
     "inherited shape",
     "inherited thumbnail",
     "unknown required field",
+    "unread key",
   ])(
     "refuses an archive with %s without leaving registrations behind",
     async (fault) => {
-      const destination = await bootFreshServer("compatible-refusal");
+      const destination = await bootFreshServer("restore-order-refusal");
       try {
         const owner = new MarfaClient({
           baseUrl: destination.apiUrl,
@@ -181,24 +133,16 @@ describe("compatible type archives", () => {
               const row = JSON.parse(line) as {
                 type?: {
                   id: string;
-                  compatible_with: unknown;
                   fields: Record<string, unknown>;
                   parent?: string;
                   display_hints?: { title_field: string };
                   link_field?: string;
                   merge_policy?: { fields: Record<string, string> };
                   required?: string[];
+                  unread_rule?: boolean;
                 };
               };
               if (row.type === undefined) return line;
-              if (row.type.id === first) {
-                if (fault === "missing target")
-                  row.type.compatible_with = ["user.absent_target"];
-                else if (fault === "incompatible field")
-                  row.type.fields.title = { type: "integer", required: true };
-                else if (fault === "malformed declaration")
-                  row.type.compatible_with = [42];
-              }
               if (row.type.id === child) {
                 if (fault === "missing parent")
                   row.type.parent = "user.absent_parent";
@@ -215,6 +159,7 @@ describe("compatible type archives", () => {
                   row.type.fields.preview = { type: "thumbnail" };
                 if (fault === "unknown required field")
                   row.type.required = ["absent"];
+                if (fault === "unread key") row.type.unread_rule = true;
               }
               if (row.type.id === parent) {
                 if (fault === "parent cycle") row.type.parent = child;
@@ -227,19 +172,13 @@ describe("compatible type archives", () => {
         });
         const refused = await owner.restoreArchive(broken);
         // The status and code `POST /types` answers the same definition with.
-        expect(refused.status, JSON.stringify(refused.error)).toBe(
-          fault === "missing target" || fault === "incompatible field"
-            ? 422
-            : 400,
-        );
+        expect(refused.status, JSON.stringify(refused.error)).toBe(400);
         expect(refused.error?.error.code).toBe(
           fault === "missing parent" || fault === "parent cycle"
             ? "validation_error"
-            : fault === "missing target" || fault === "incompatible field"
-              ? "compatible_with_violation"
-              : fault === "inherited shape"
-                ? "inheritance_violation"
-                : "invalid_schema",
+            : fault === "inherited shape"
+              ? "inheritance_violation"
+              : "invalid_schema",
         );
         for (const type of allTypes)
           expect((await worker.getType(type)).status).toBe(404);
@@ -248,8 +187,8 @@ describe("compatible type archives", () => {
         const restored = await owner.restoreArchive(archive);
         expect(restored.status, JSON.stringify(restored.error)).toBe(200);
         expect(restored.data).toMatchObject({
-          types_registered: 4,
-          imported: 4,
+          types_registered: 2,
+          imported: 2,
         });
       } finally {
         await destination.stop();
@@ -259,9 +198,9 @@ describe("compatible type archives", () => {
   );
 
   it.each([false, true])(
-    "merges compatible registrations into a non-empty store (conflict: %s)",
+    "merges registrations into a non-empty store (conflict: %s)",
     async (conflict) => {
-      const destination = await bootFreshServer("compatible-merge");
+      const destination = await bootFreshServer("restore-order-merge");
       try {
         const worker = new MarfaClient({
           baseUrl: destination.apiUrl,
@@ -281,16 +220,6 @@ describe("compatible type archives", () => {
             : {}),
         };
         expect((await worker.registerType(existing)).status).toBe(201);
-        const reader = "user.existing_reader";
-        expect(
-          (
-            await worker.registerType({
-              id: reader,
-              fields: existing.fields,
-              compatible_with: [parent],
-            })
-          ).status,
-        ).toBe(201);
         const restored = await owner.restoreArchive(archive);
         expect(restored.status, JSON.stringify(restored.error)).toBe(
           conflict ? 409 : 200,
@@ -300,20 +229,16 @@ describe("compatible type archives", () => {
             code: "conflict",
             details: { conflicting_ids: [parent] },
           });
-          for (const type of [first, second, child])
-            expect((await worker.getType(type)).status).toBe(404);
+          expect((await worker.getType(child)).status).toBe(404);
         } else {
           expect(restored.data).toMatchObject({
-            types_registered: 3,
+            types_registered: 1,
             types_skipped: 1,
-            imported: 4,
+            imported: 2,
           });
         }
         expect((await worker.getType(parent)).data).toMatchObject({
           fields: existing.fields,
-        });
-        expect((await worker.getType(reader)).data).toMatchObject({
-          compatible_with: [parent],
         });
       } finally {
         await destination.stop();
@@ -325,7 +250,7 @@ describe("compatible type archives", () => {
   it.each([false, true])(
     "round-trips accepted registrations into an empty store (reversed: %s)",
     async (reversed) => {
-      const destination = await bootFreshServer("compatible-destination");
+      const destination = await bootFreshServer("restore-order-destination");
       try {
         const owner = new MarfaClient({
           baseUrl: destination.apiUrl,
@@ -345,20 +270,9 @@ describe("compatible type archives", () => {
         const restored = await owner.restoreArchive(bytes);
         expect(restored.status, JSON.stringify(restored.error)).toBe(200);
         expect(restored.data).toMatchObject({
-          types_registered: 4,
-          imported: 4,
+          types_registered: 2,
+          imported: 2,
         });
-        for (const [type, target] of [
-          [first, second],
-          [second, first],
-        ]) {
-          const read = await worker.getType(type!);
-          expect(read.status).toBe(200);
-          expect(read.data).toMatchObject({
-            id: type,
-            compatible_with: [target],
-          });
-        }
         const inherited = await worker.getType(child);
         expect(inherited.status).toBe(200);
         expect(inherited.data).toMatchObject({
@@ -384,8 +298,8 @@ describe("compatible type archives", () => {
         expect(again.status, JSON.stringify(again.error)).toBe(200);
         expect(again.data).toMatchObject({
           types_registered: 0,
-          types_skipped: 4,
-          duplicates: 4,
+          types_skipped: 2,
+          duplicates: 2,
         });
       } finally {
         await destination.stop();

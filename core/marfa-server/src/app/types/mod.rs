@@ -30,28 +30,9 @@ fn schema_refusal(issues: Vec<Issue>) -> Refusal {
     let code = match verdict {
         SchemaVerdict::PropertyShadowsField => Code::PropertyShadowsField,
         SchemaVerdict::InheritanceViolation => Code::InheritanceViolation,
-        SchemaVerdict::CompatibleWithViolation => Code::CompatibleWithViolation,
         SchemaVerdict::InvalidSchema => Code::InvalidSchema,
     };
     Refusal::new(code, verdict.message()).with_detail("errors", issues_json(&issues))
-}
-
-fn dependents_refusal(broken: Vec<(String, Vec<Issue>)>) -> Refusal {
-    let ids: Vec<&str> = broken.iter().map(|(id, _)| id.as_str()).collect();
-    let message = format!("Change would break compatible_with for: {}", ids.join(", "));
-    let errors: Vec<Value> = broken
-        .iter()
-        .flat_map(|(id, issues)| {
-            issues.iter().map(move |issue| {
-                let mut issue = issue.clone();
-                issue.field = format!("types.{id}.{}", issue.field);
-                issue.to_json()
-            })
-        })
-        .collect();
-    Refusal::new(Code::CompatibleWithViolation, message)
-        .with_detail("dependent_type_ids", ids)
-        .with_detail("errors", errors)
 }
 
 pub fn missing_field(field: &str) -> Refusal {
@@ -94,27 +75,12 @@ fn chain_refusal(fault: &ChainFault) -> Refusal {
     .with_detail("type_id", fault.type_id.as_str())
 }
 
-fn names(value: Option<&Value>) -> Vec<&str> {
-    value
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .collect()
-}
-
 fn require_reach(caller: &Caller, next: &Obj, stored: Option<&Obj>) -> Result<()> {
     let held = |key: &str| stored.and_then(|stored| stored.get(key));
     if let Some(parent) = next.get("parent").and_then(Value::as_str)
         && held("parent").and_then(Value::as_str) != Some(parent)
     {
         caller.require_dependency(parent, Catalog::ships(parent))?;
-    }
-    let known = names(held("compatible_with"));
-    for target in names(next.get("compatible_with")) {
-        if !known.contains(&target) {
-            caller.require_dependency(target, Catalog::ships(target))?;
-        }
     }
     Ok(())
 }

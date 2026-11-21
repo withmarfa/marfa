@@ -271,48 +271,6 @@ mod status {
     }
 
     #[test]
-    fn compatible_with_reads_a_status_field_as_a_string_or_as_a_status_field_in_the_same_groups() {
-        let mut with_work = work_item();
-        with_work["id"] = json!("acme.work2");
-        let text = json!({"id": "acme.text", "fields": {"stage": {"type": "string"}}});
-        let wide = json!({"id": "acme.wide", "fields": {"stage": {"type": "status",
-            "status_values": words(&[WORDS[0], WORDS[1], WORDS[2], WORDS[3], ("blocked", "in_progress")])}}});
-        for (target, id) in [(&text, "acme.text"), (&wide, "acme.wide")] {
-            let mut claim = with_work.clone();
-            claim["compatible_with"] = json!([id]);
-            accepted(claim, &registry_with(std::slice::from_ref(target)));
-        }
-        for (what, narrow) in [
-            ("a word the target lacks", words(&WORDS[..3])),
-            (
-                "a word the target puts in another group",
-                words(&[WORDS[0], WORDS[1], WORDS[2], ("dropped", "completed")]),
-            ),
-        ] {
-            let target = json!({"id": "acme.narrow", "fields": {"stage": {"type": "status", "status_values": narrow}}});
-            let mut claim = with_work.clone();
-            claim["compatible_with"] = json!(["acme.narrow"]);
-            let issues = refused(claim, &registry_with(&[target]));
-            assert!(
-                issues
-                    .iter()
-                    .any(|i| i.code == Some("compatible_with_violation")),
-                "{what}: {issues:?}"
-            );
-        }
-        let issues = refused(
-            json!({"id": "acme.loose", "fields": {"stage": {"type": "string"}}, "compatible_with": ["acme.wide"]}),
-            &registry_with(&[wide]),
-        );
-        assert!(
-            issues
-                .iter()
-                .any(|i| i.code == Some("compatible_with_violation")),
-            "{issues:?}"
-        );
-    }
-
-    #[test]
     fn core_task_declares_its_status_in_the_four_groups_without_pending() {
         let task = shipped_rows()
             .into_iter()
@@ -1005,252 +963,6 @@ mod fields {
     }
 }
 
-mod compatible_with {
-    use super::*;
-
-    fn violations(issues: &[Issue]) -> Vec<&str> {
-        issues
-            .iter()
-            .filter(|issue| issue.code == Some("compatible_with_violation"))
-            .map(|issue| issue.field.as_str())
-            .collect()
-    }
-
-    #[test]
-    fn a_claim_takes_the_array_form_the_string_shorthand_and_several_targets() {
-        let held = registry_with(&[]);
-        let stored = accepted(
-            json!({"id": "acme.deal_note", "version": 1, "compatible_with": ["core.note"],
-                   "fields": {"body": {"type": "string"}, "amount": {"type": "number"}}, "required": ["body"]}),
-            &held,
-        );
-        assert_eq!(stored["compatible_with"], json!(["core.note"]));
-        let shorthand = accepted(
-            json!({"id": "acme.deal_note", "version": 1, "compatible_with": "core.note",
-                   "fields": {"body": {"type": "string", "required": true}}}),
-            &held,
-        );
-        assert_eq!(shorthand["compatible_with"], json!(["core.note"]));
-        accepted(
-            json!({"id": "acme.everything", "version": 1, "compatible_with": ["core.note", "core.bookmark"],
-                   "fields": {"body": {"type": "string", "required": true}, "url": {"type": "url", "required": true}}}),
-            &held,
-        );
-    }
-
-    #[test]
-    fn object_fields_compare_as_opaque_whatever_they_contain() {
-        let held = registry_with(&[json!({"id": "acme.box", "version": 1,
-            "fields": {"payload": {"type": "object", "required": true}}})]);
-        accepted(
-            json!({"id": "acme.crate", "version": 1, "compatible_with": ["acme.box"],
-                   "fields": {"payload": {"type": "object", "required": true}}}),
-            &held,
-        );
-    }
-
-    #[test]
-    fn a_claim_is_refused_where_the_target_requires_a_field_the_type_lacks() {
-        let issues = refused(
-            json!({"id": "acme.titleless", "version": 1, "compatible_with": ["core.task"],
-                   "fields": {"headline": {"type": "string"}}}),
-            &registry_with(&[]),
-        );
-        assert!(
-            violations(&issues).contains(&"compatible_with.core.task.title"),
-            "{issues:?}"
-        );
-    }
-
-    #[test]
-    fn a_claim_is_refused_where_the_target_field_has_another_type_or_the_field_stays_optional() {
-        let held = registry_with(&[]);
-        let issues = refused(
-            json!({"id": "acme.numeric_body", "version": 1, "compatible_with": ["core.note"],
-                   "fields": {"body": {"type": "number", "required": true}}}),
-            &held,
-        );
-        assert!(!violations(&issues).is_empty(), "{issues:?}");
-        let issues = refused(
-            json!({"id": "acme.optional_task", "version": 1, "compatible_with": ["core.task"],
-                   "fields": {"title": {"type": "string"}}}),
-            &held,
-        );
-        assert!(
-            violations(&issues).contains(&"compatible_with.core.task.title.required"),
-            "{issues:?}"
-        );
-    }
-
-    #[test]
-    fn a_claim_holds_the_type_to_the_required_fields_its_target_inherits() {
-        let issues = refused(
-            json!({"id": "acme.partial_audio", "version": 1, "compatible_with": ["core.file.audio"],
-                   "fields": {"duration": {"type": "number", "required": true}}}),
-            &registry_with(&[]),
-        );
-        let found = violations(&issues);
-        assert!(
-            found.contains(&"compatible_with.core.file.audio.blob_ref"),
-            "{issues:?}"
-        );
-        assert!(
-            found.contains(&"compatible_with.core.file.audio.mime_type"),
-            "{issues:?}"
-        );
-    }
-
-    #[test]
-    fn a_claim_is_met_by_required_fields_the_type_inherits() {
-        accepted(
-            json!({"id": "acme.annotated_note", "parent": "core.note", "version": 1,
-                   "compatible_with": ["core.note"], "fields": {"sentiment": {"type": "string"}}}),
-            &registry_with(&[]),
-        );
-    }
-
-    #[test]
-    fn a_claim_is_refused_for_incompatible_array_elements_and_enum_values_and_met_by_a_narrower_enum()
-     {
-        let held = registry_with(&[
-            json!({"id": "acme.collection", "version": 1, "fields": {
-                "tags": {"type": "array", "items_type": "string", "required": true},
-                "workflow_stage": {"type": "enum", "enum_values": ["open", "closed"], "required": true}}}),
-            json!({"id": "acme.workflow", "version": 1, "fields": {
-                "workflow_stage": {"type": "enum", "enum_values": ["open", "closed"], "required": true}}}),
-        ]);
-        let issues = refused(
-            json!({"id": "acme.unsafe_collection", "version": 1, "compatible_with": ["acme.collection"],
-                   "fields": {"tags": {"type": "array", "items_type": "number", "required": true},
-                              "workflow_stage": {"type": "enum", "enum_values": ["open", "closed", "deleted"], "required": true}}}),
-            &held,
-        );
-        let found = violations(&issues);
-        assert!(
-            found.contains(&"compatible_with.acme.collection.tags.items_type"),
-            "{issues:?}"
-        );
-        assert!(
-            found.contains(&"compatible_with.acme.collection.workflow_stage.enum_values"),
-            "{issues:?}"
-        );
-        accepted(
-            json!({"id": "acme.open_workflow", "version": 1, "compatible_with": ["acme.workflow"],
-                   "fields": {"workflow_stage": {"type": "enum", "enum_values": ["open"], "required": true}}}),
-            &held,
-        );
-    }
-
-    #[test]
-    fn a_claim_against_an_unregistered_target_is_refused() {
-        let issues = refused(
-            json!({"id": "acme.orphan_claim", "version": 1, "compatible_with": ["nope.nothing"],
-                   "fields": {"body": {"type": "string"}}}),
-            &registry_with(&[]),
-        );
-        assert!(!violations(&issues).is_empty(), "{issues:?}");
-    }
-
-    #[test]
-    fn the_targets_optional_fields_are_held_to_the_claim_but_may_be_absent_or_narrowed() {
-        let held = registry_with(&[]);
-        let numeric = refused(
-            json!({"id": "acme.numeric_priority_task", "version": 1, "compatible_with": ["core.task"],
-                   "fields": {"title": {"type": "string", "required": true}, "priority": {"type": "integer"}}}),
-            &held,
-        );
-        assert!(
-            violations(&numeric).contains(&"compatible_with.core.task.priority.type"),
-            "{numeric:?}"
-        );
-        let values = refused(
-            json!({"id": "acme.extra_precision_task", "version": 1, "compatible_with": ["core.task"],
-                   "fields": {"title": {"type": "string", "required": true},
-                              "precision": {"type": "enum", "enum_values": ["day", "century"]}}}),
-            &held,
-        );
-        assert!(
-            violations(&values).contains(&"compatible_with.core.task.precision.enum_values"),
-            "{values:?}"
-        );
-        accepted(
-            json!({"id": "acme.bare_task", "version": 1, "compatible_with": ["core.task"],
-                   "fields": {"title": {"type": "string", "required": true}}}),
-            &held,
-        );
-        accepted(
-            json!({"id": "acme.placed_task", "version": 1, "compatible_with": ["core.task"],
-                   "fields": {"title": {"type": "string", "required": true},
-                              "place": {"type": "enum", "enum_values": ["home", "office"]}}}),
-            &held,
-        );
-    }
-
-    #[test]
-    fn a_claim_is_refused_where_the_type_widens_the_targets_required_enum_to_a_string() {
-        let held = registry_with(&[json!({"id": "acme.staged", "version": 1, "fields": {
-            "stage": {"type": "enum", "enum_values": ["open", "closed"], "required": true}}})]);
-        let issues = refused(
-            json!({"id": "acme.freeform_staged", "version": 1, "compatible_with": ["acme.staged"],
-                   "fields": {"stage": {"type": "string", "required": true}}}),
-            &held,
-        );
-        assert!(
-            violations(&issues).contains(&"compatible_with.acme.staged.stage.type"),
-            "{issues:?}"
-        );
-    }
-
-    #[test]
-    fn an_annotation_that_adds_no_values_is_free_and_one_that_contradicts_the_targets_is_refused() {
-        let held = registry_with(&[]);
-        accepted(
-            json!({"id": "acme.plain_language_note", "version": 1, "compatible_with": ["core.note"],
-                   "fields": {"body": {"type": "string", "required": true}, "language": {"type": "string"}}}),
-            &held,
-        );
-        let issues = refused(
-            json!({"id": "acme.miscoded_note", "version": 1, "compatible_with": ["core.note"],
-                   "fields": {"body": {"type": "string", "required": true},
-                              "language": {"type": "string", "format": "iso3166"}}}),
-            &held,
-        );
-        assert!(
-            violations(&issues).contains(&"compatible_with.core.note.language.format"),
-            "{issues:?}"
-        );
-    }
-
-    #[test]
-    fn a_claim_takes_kinds_whose_values_are_a_subset_of_the_targets_and_refuses_the_widening() {
-        let held = registry_with(&[
-            json!({"id": "acme.loose", "version": 1, "fields": {
-                "href": {"type": "string"}, "contact": {"type": "string"}, "seen_at": {"type": "string"},
-                "born_on": {"type": "string"}, "score": {"type": "number"}}}),
-            json!({"id": "acme.tight_target", "version": 1, "fields": {
-                "href": {"type": "url"}, "score": {"type": "integer"}}}),
-        ]);
-        accepted(
-            json!({"id": "acme.tight", "version": 1, "compatible_with": ["acme.loose"], "fields": {
-                "href": {"type": "url"}, "contact": {"type": "email"}, "seen_at": {"type": "datetime"},
-                "born_on": {"type": "date"}, "score": {"type": "integer"}}}),
-            &held,
-        );
-        let issues = refused(
-            json!({"id": "acme.loose_candidate", "version": 1, "compatible_with": ["acme.tight_target"],
-                   "fields": {"href": {"type": "string"}, "score": {"type": "number"}}}),
-            &held,
-        );
-        for field in ["href", "score"] {
-            assert!(
-                violations(&issues)
-                    .contains(&format!("compatible_with.acme.tight_target.{field}.type").as_str()),
-                "{field}: {issues:?}"
-            );
-        }
-    }
-}
-
 mod explanations {
     use super::*;
 
@@ -1374,16 +1086,6 @@ mod explanations {
                 "fields.body.type",
             ),
             (
-                "compatible_with target missing a required field",
-                json!({"id": "acme.r", "compatible_with": ["core.task"], "fields": {"headline": {"type": "string"}}}),
-                "compatible_with.core.task.title",
-            ),
-            (
-                "compatible_with naming an unregistered target",
-                json!({"id": "acme.s", "compatible_with": ["nope.nothing"], "fields": {"title": {"type": "string"}}}),
-                "compatible_with.nope.nothing",
-            ),
-            (
                 "thumbnail named for a field search always indexes",
                 json!({"id": "acme.t", "fields": {"title": {"type": "thumbnail"}}}),
                 "fields.title",
@@ -1419,7 +1121,7 @@ mod explanations {
     #[test]
     fn every_refusal_names_where_it_happened_what_was_required_what_arrived_and_what_to_do() {
         let held = registry_with(&[]);
-        assert_eq!(classes().len(), 32);
+        assert_eq!(classes().len(), 30);
         for (name, input, at) in classes() {
             let issues = refused(input, &held);
             let found = issues
@@ -1449,8 +1151,7 @@ mod explanations {
     }
 
     #[test]
-    fn a_shadowed_first_class_field_an_inheritance_violation_and_a_compatibility_violation_carry_their_codes()
-     {
+    fn a_shadowed_first_class_field_and_an_inheritance_violation_carry_their_codes() {
         let held = registry_with(&[]);
         let shadow = refused(
             json!({"id": "acme.shadow", "fields": {"source_id": {"type": "string"}}}),
@@ -1471,16 +1172,6 @@ mod explanations {
                 .iter()
                 .any(|i| i.code == Some("inheritance_violation")),
             "{reshape:?}"
-        );
-        let claim = refused(
-            json!({"id": "acme.claim", "compatible_with": ["core.task"], "fields": {"headline": {"type": "string"}}}),
-            &held,
-        );
-        assert!(
-            claim
-                .iter()
-                .any(|i| i.code == Some("compatible_with_violation")),
-            "{claim:?}"
         );
     }
 }
@@ -1516,6 +1207,19 @@ mod unread {
         input["_deferred"] = json!(true);
         assert_eq!(paths(&unread_keys(&row(input.clone()))), ["_deferred"]);
         assert_eq!(fields_of(&refused(input, &base())), ["_deferred"]);
+    }
+
+    #[test]
+    fn compatible_with_is_named_and_refused_as_a_key_nothing_reads() {
+        for claim in [json!(["user.base"]), json!("user.base")] {
+            let mut input = recipe();
+            input["compatible_with"] = claim;
+            assert_eq!(
+                paths(&unread_keys(&row(input.clone()))),
+                ["compatible_with"]
+            );
+            assert_eq!(fields_of(&refused(input, &base())), ["compatible_with"]);
+        }
     }
 
     #[test]

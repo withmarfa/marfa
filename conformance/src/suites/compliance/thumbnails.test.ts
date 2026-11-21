@@ -719,40 +719,4 @@ describe("the thumbnail of a shipped type", () => {
       expect(plain.ok, JSON.stringify(plain.error)).toBe(true);
     }
   });
-
-  it("is read as the target's by a type claiming compatibility, and refused as text", async () => {
-    const targets = {
-      "core.media": { title: { type: "string", required: true } },
-      "core.file.image": {
-        blob_ref: { type: "string", required: true },
-        mime_type: { type: "string", required: true },
-      },
-    } as const;
-    for (const [target, required] of Object.entries(targets)) {
-      const slug = target.replace(/\./g, "-");
-      // The witness: a claim that declares no thumbnail is taken.
-      const bare = await client.registerType({
-        id: `user.claims-bare-${slug}-${ctx.runId}`,
-        fields: { ...required },
-        compatible_with: target,
-      });
-      expect(bare.ok, `${target}: ${JSON.stringify(bare.error)}`).toBe(true);
-      const typed = await client.registerType({
-        id: `user.claims-thumbnail-${slug}-${ctx.runId}`,
-        fields: { ...required, thumbnail: { type: "thumbnail" } },
-        compatible_with: target,
-      });
-      expect(typed.ok, `${target}: ${JSON.stringify(typed.error)}`).toBe(true);
-      const text = await client.registerType({
-        id: `user.claims-text-${slug}-${ctx.runId}`,
-        fields: { ...required, thumbnail: { type: "string" } },
-        compatible_with: target,
-      });
-      expect(
-        text.status,
-        `a type read its thumbnail as text and claimed ${target}, whose thumbnail is an image`,
-      ).toBe(422);
-      expect(text.error?.error.code).toBe("compatible_with_violation");
-    }
-  });
 });

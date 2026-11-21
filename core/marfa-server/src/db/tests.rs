@@ -1913,7 +1913,7 @@ async fn a_database_at_schema_version_1_gains_login_after_and_keeps_its_rows() {
     let version: u32 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, MIGRATIONS.len() as u32);
     let kept: String = conn
         .query_row("SELECT value FROM instance WHERE key = 'kept'", [], |row| {
             row.get(0)
@@ -1921,6 +1921,65 @@ async fn a_database_at_schema_version_1_gains_login_after_and_keeps_its_rows() {
         .unwrap();
     assert_eq!(kept, "yes");
     assert!(copy_of(&place.file).exists());
+}
+
+fn compatible_with_of(file: &Path, id: &str) -> Option<String> {
+    Connection::open(file)
+        .unwrap()
+        .query_row(
+            "SELECT json_extract(definition, '$.compatible_with') FROM types WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_database_at_schema_version_2_loses_compatible_with_and_keeps_the_rest_of_each_type() {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..2]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO types (id, parent, origin, definition, created_at, updated_at) VALUES \
+             ('user.reader', NULL, 'user', \
+              '{\"id\":\"user.reader\",\"label\":\"Reader\",\"compatible_with\":[\"core.note\"]}', 't', 't'), \
+             ('user.plain', NULL, 'user', '{\"id\":\"user.plain\",\"label\":\"Plain\"}', 't', 't');",
+        )
+        .unwrap();
+    assert_eq!(
+        compatible_with_of(&place.file, "user.reader").as_deref(),
+        Some("[\"core.note\"]")
+    );
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    assert_eq!(compatible_with_of(&place.file, "user.reader"), None);
+    let conn = Connection::open(&place.file).unwrap();
+    let kept: String = conn
+        .query_row(
+            "SELECT definition FROM types WHERE id = 'user.reader'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(kept, "{\"id\":\"user.reader\",\"label\":\"Reader\"}");
+    let plain: String = conn
+        .query_row(
+            "SELECT definition FROM types WHERE id = 'user.plain'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(plain, "{\"id\":\"user.plain\",\"label\":\"Plain\"}");
 }
 
 #[tokio::test]
