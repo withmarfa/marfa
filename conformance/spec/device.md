@@ -1128,6 +1128,22 @@ While a device's slice is `*` alone, a device MUST NOT apply an event for a hidd
 
 **Tests:** `device/hydrate-every-type.test.ts › takes no system item by event, but one that is pinned`, `device/hidden-types-live.test.ts › holds no app item in a slice of every type, by hydration or by event, and holds a user item the same way`.
 
+### `device/slice-hidden-subtype`
+
+While a device's slice names a visible type, a device MUST NOT hold an item of a hidden subtype of it that is not pinned, whether a hydration or an event brings it.
+
+**Reason:** naming a type opens only that type's own hidden items (`search-and-filters/type-hidden-exact`), so a copy that took a hidden subtype by event would hold what no hydration of the same slice holds.
+
+**Tests:** `device/hidden-types-slice.test.ts › takes no hidden subtype of a type it names by event, and takes the type's own item`.
+
+### `device/catch-up-lets-go-hidden`
+
+When a device catches up, a device MUST let go of each hidden item the copy holds that is not pinned, not named by a queued write and not taken by the slice, and keep every pinned item and queued write.
+
+**Reason:** a copy made before a hidden type was left out of a slice holds hidden items no event will correct, so the first catch-up after the upgrade lets them go, and a later one finds none.
+
+**Tests:** `device/hidden-types-slice.test.ts › lets go of an unpinned hidden item a copy holds on its first catch-up, and keeps a pinned one`.
+
 ### `device/hydrate-every-type-expected`
 
 While a hydration of a slice of every type has started and not completed, and the server counted the slice, a device MUST report as `items_expected` the count of every type but the hidden ones.
@@ -3770,7 +3786,7 @@ If a drain meets a refusal that names no contract, then a device MUST end the pa
 
 ## The oldest server a device works with
 
-A device works with servers from one release on. The oldest is a constant in the core, and a change that makes the core depend on a server change raises it. The release a server runs is the `version` its root answers (`instance/root-version`).
+A device works with servers from one release on. The oldest is a constant in the core, and a change that makes the core depend on a server change raises it. The oldest is release 0.0.90, the first that leaves `app.*` items out of the listings a slice reads and that takes `include=hidden`; a server older than that answers a slice an `app.*` item and refuses the `hidden` token. The release a server runs is the `version` its root answers (`instance/root-version`).
 
 ### `device/server-too-old`
 

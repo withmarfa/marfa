@@ -153,13 +153,20 @@ pub fn slice_types(types: &[String]) -> Vec<String> {
     }
 }
 
+/// Whether a type name takes a row of `row_type`: the type itself or a subtype of it. A hidden
+/// row is taken only by a hidden name, so naming a visible type opens none of its hidden subtypes
+/// and naming one hidden type opens no other.
+pub fn takes_type(catalog: &Catalog, named: &str, row_type: &str) -> bool {
+    catalog.matches(named, row_type) && (!is_hidden(row_type) || is_hidden(named))
+}
+
 /// Whether a declaration names the type: `*` names every type but the hidden ones.
 pub fn declares_type(catalog: &Catalog, declared: &[String], row_type: &str) -> bool {
     declared.iter().any(|declared| {
         if declared == EVERY_TYPE {
             !is_hidden(row_type)
         } else {
-            catalog.matches(declared, row_type)
+            takes_type(catalog, declared, row_type)
         }
     })
 }
@@ -335,6 +342,8 @@ mod tests {
             ("core.task", None),
             ("core.media", None),
             ("core.media.photo", Some("core.media")),
+            ("app.acme.setting", None),
+            ("app.other.setting", Some("core.note")),
         ];
         Catalog::from_wire(
             &entries
@@ -441,6 +450,29 @@ mod tests {
         }
         assert!(is_system("system.folder"));
         assert!(!is_system("app.acme.setting"));
+    }
+
+    #[test]
+    fn a_visible_type_takes_no_hidden_subtype_and_a_hidden_type_takes_only_its_own() {
+        let declared = lines(&["core.note"]);
+        assert!(declares_type(&catalog(), &declared, "core.note"));
+        assert!(
+            !declares_type(&catalog(), &declared, "app.other.setting"),
+            "a visible type took its hidden subtype"
+        );
+        let beside = lines(&["core.note", "app.acme.setting"]);
+        assert!(declares_type(&catalog(), &beside, "app.acme.setting"));
+        assert!(
+            !declares_type(&catalog(), &beside, "app.other.setting"),
+            "naming one hidden type opened another"
+        );
+        let named = lines(&["app.other.setting"]);
+        assert!(declares_type(&catalog(), &named, "app.other.setting"));
+        assert!(!holds_type(
+            &catalog(),
+            &lines(&["core.note"]),
+            "app.other.setting"
+        ));
     }
 
     #[test]

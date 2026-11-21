@@ -447,12 +447,12 @@ export function scriptHydration(
   };
   server.copyAnswer("GET", "/items", (request) => {
     const type = request.query.get("type");
-    // No type is every type the key reads, which leaves `system.*` out.
+    // No type is every type the key reads, which leaves hidden types out.
     const forType =
       type === null
         ? Object.values(items)
             .flat()
-            .filter((row) => !(row.item.type ?? "").startsWith("system."))
+            .filter((row) => !isHiddenType(row.item.type ?? ""))
         : (items[type] ?? []);
     // The state parameter is honored rather than ignored, because a
     // scripted server more generous than the real one lets a device that
@@ -663,12 +663,17 @@ export function foldedName(text: string): string {
   return lowered.normalize("NFC");
 }
 
+/** A type under `system` or `app`, which listings, counts and titles leave out. */
+function isHiddenType(type: string): boolean {
+  return type.startsWith("system.") || type.startsWith("app.");
+}
+
 /** The items one name answers with, as the server lists at most. */
 const TITLES_PER_NAME = 20;
 
 /**
  * What `POST /items/titles` answers for the items a fixture scripts: for each
- * name, the active and archived items outside `system.*` whose folded title
+ * name, the active and archived items of no hidden type whose folded title
  * is the name's folded, the first `TITLES_PER_NAME` of them, by id. `lookup`
  * answers a call that names a name it recognises with its own answer, as a
  * server that refuses the call would.
@@ -717,7 +722,7 @@ export function scriptTitles(
       .map((row) => wireItem(row.item))
       .filter(
         (item) =>
-          !String(item.type).startsWith("system.") &&
+          !isHiddenType(String(item.type)) &&
           (item.state === "active" || item.state === "archived"),
       );
     return answers.titles(
@@ -784,8 +789,7 @@ export function scriptStats(
     for (const held of Object.values(items)) {
       for (const row of held) {
         const type = String(wireItem(row.item).type);
-        if ((type.startsWith("system.") || type.startsWith("app.")) && !hidden)
-          continue;
+        if (isHiddenType(type) && !hidden) continue;
         if (
           tier !== null &&
           tier !== "all" &&

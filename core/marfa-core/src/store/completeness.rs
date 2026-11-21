@@ -96,7 +96,8 @@ pub fn slice_takes(
         if declared == EVERY_TYPE {
             !is_hidden(row_type) && tier.takes(row_tier)
         } else {
-            catalog.matches(declared, row_type) && (system || tier.takes(row_tier))
+            marfa_rules::folder::takes_type(catalog, declared, row_type)
+                && (system || tier.takes(row_tier))
         }
     })
 }
@@ -164,6 +165,14 @@ pub fn let_go_unless_kept(
     }
     evict_item(conn, id, &whole_edge_types(conn)?)?;
     Ok(true)
+}
+
+/// The ids of the rows the copy holds of a hidden type.
+pub fn hidden_item_ids(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    Ok(conn
+        .prepare_cached("SELECT id FROM items WHERE type GLOB 'system.*' OR type GLOB 'app.*'")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, SliceTier)>, CoreError> {
