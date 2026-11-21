@@ -82,7 +82,6 @@ it("lets go of an unpinned hidden item a copy holds on its first catch-up, and k
   const db = new DatabaseSync(device.store);
   try {
     db.prepare("DELETE FROM pins WHERE item_id = 's1'").run();
-    db.prepare("DELETE FROM meta WHERE key = 'hidden_judged'").run();
     db.prepare(
       "INSERT OR REPLACE INTO meta (key, value) VALUES ('item_listed/s1', 'true')",
     ).run();
