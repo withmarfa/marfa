@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 
 use super::catalog_file::{definitions, register_edges, register_types, shipped_sources};
 use crate::schema::{
-    EdgeIssues, Issue, Obj, Registry, edge_type_from_request, labelled, request_shape,
+    EdgeIssues, Issue, Judging, Obj, Registry, edge_type_from_request, labelled, request_shape,
     unread_edge_keys, unread_keys, validate_type,
 };
 
@@ -66,7 +66,7 @@ fn coded(issues: &[Issue], field: &str, code: &str) -> bool {
 fn edge(input: Value) -> Result<Obj, EdgeIssues> {
     let body = row(input);
     request_shape(&body)?;
-    edge_type_from_request(&body, &|_| None)
+    edge_type_from_request(&body, &|_| None, Judging::Register)
 }
 
 fn edge_field(refusal: &EdgeIssues) -> Option<String> {
