@@ -11,7 +11,7 @@ Marfa is a home for your personal data that you run yourself. You keep your note
 
 - **Your structure.** Define the kinds of things you keep and how they link. Marfa checks everything against them.
 - **Open to every app.** Apps from WithMarfa use the same interface as anything you build.
-- **Bring data in.** Connectors pull in data from other services, such as GitHub, Todoist, RSS, Readwise and Google Calendar. They are kept with WithMarfa's other plugins in [withmarfa/plugins](https://github.com/withmarfa/plugins).
+- **Bring data in.** Connectors pull in data from other services, such as GitHub, Todoist, RSS, Readwise and Google Calendar. Their source is in [withmarfa/plugins](https://github.com/withmarfa/plugins), WithMarfa's repository for plugins.
 - **Use it from anywhere.** A command-line tool, a [TypeScript SDK](./packages/client) and a [Swift SDK](https://github.com/withmarfa/marfa-swift), all built on one HTTP API.
 - **Works offline.** Apps built on the Swift SDK keep a copy of the data they need on the device and send their changes when they can reach your instance again.
 - **Open source.** Marfa is licensed under the [Apache License 2.0](./LICENSE). If you are interested, open an issue and say hello.
