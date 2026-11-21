@@ -14,7 +14,8 @@
 # committed bundle that `cloudflared.txt` pins, which is added to NOTICES.txt. This needs go.
 #
 # MARFA_CLOUDFLARED_DOWNLOADS and MARFA_CLOUDFLARED_LICENCE_URL replace the two addresses, and
-# MARFA_CLOUDFLARED_LICENCES the licence bundle, for the script's own tests.
+# MARFA_CLOUDFLARED_LICENCES the licence bundle, and MARFA_CLOUDFLARED_GO the go command, for
+# the script's own tests.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -59,6 +60,7 @@ fi
 downloads=${MARFA_CLOUDFLARED_DOWNLOADS:-https://github.com/cloudflare/cloudflared/releases/download/$version}
 licence_url=${MARFA_CLOUDFLARED_LICENCE_URL:-https://raw.githubusercontent.com/cloudflare/cloudflared/$version/LICENSE}
 licences=${MARFA_CLOUDFLARED_LICENCES:-$here/cloudflared-licences.txt}
+go=${MARFA_CLOUDFLARED_GO:-go}
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -104,9 +106,9 @@ case "$target" in
 esac
 
 echo "cloudflared: check the licences of its Go modules"
-command -v go > /dev/null 2>&1 || fail "go is needed to read the modules built into cloudflared."
+command -v "$go" > /dev/null 2>&1 || fail "go is needed to read the modules built into cloudflared."
 hold "$(basename "$licences")" "$licences" "$licences_sha"
-built=$(go version -m "$program") || fail "go cannot read the build information of the cloudflared program."
+built=$("$go" version -m "$program") || fail "go cannot read the build information of the cloudflared program."
 modules=$(go_modules <<< "$built")
 [ -n "$modules" ] || fail "go lists no modules for the cloudflared program."
 unlicensed=$({ echo "go $(go_release <<< "$built")"; printf '%s\n' "$modules"; } \

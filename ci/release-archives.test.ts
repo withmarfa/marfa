@@ -1078,11 +1078,10 @@ echo '${details}' >&2
         encoding: "utf8",
         env: {
           ...process.env,
-          // Without go, nothing past the system's own folders: a machine with go elsewhere has none here.
-          PATH:
-            setup.go === null
-              ? `${bin}:/usr/bin:/bin`
-              : `${bin}:${process.env.PATH ?? ""}`,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          // A runner may have go in a system folder, so a name nothing provides stands for none.
+          MARFA_CLOUDFLARED_GO:
+            setup.go === null ? "marfa-test-no-go" : join(bin, "go"),
           MARFA_CLOUDFLARED_PINS: join(directory, "pins.txt"),
           MARFA_CLOUDFLARED_DOWNLOADS: `file://${served}`,
           MARFA_CLOUDFLARED_LICENCE_URL: `file://${served}/LICENSE`,
