@@ -1517,7 +1517,7 @@ describe("the scripted answers match the server's", () => {
       method: "POST",
       body: {
         ids: [note.data.item.id],
-        include: ["edges", "metadata", "system"],
+        include: ["edges", "metadata", "hidden"],
       },
     });
     expect(left.status).toBe(200);
@@ -1526,7 +1526,7 @@ describe("the scripted answers match the server's", () => {
       { status: left.status, body: left.data },
       bulkGetOf([answers.itemNotFound()], {
         withReach: false,
-        system: true,
+        hidden: true,
       }),
       { same: ["items", "metadata"] },
     );
@@ -3493,7 +3493,7 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
     headers: { ...headers, "Content-Type": "application/json" },
     body: JSON.stringify({
       ids: [seeded.id, gone],
-      include: ["edges", "metadata", "system"],
+      include: ["edges", "metadata", "hidden"],
     }),
   });
   expect(bulk.status).toBe(200);
@@ -3509,25 +3509,25 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
         certifiedRead(answers.updated(wireItem({ id: seeded.id }))),
         certifiedRead(answers.itemNotFound()),
       ],
-      { withReach: true, system: true },
+      { withReach: true, hidden: true },
     ),
     { same: ["listed"], shape: ["items", "metadata"] },
   );
   // A pinned folder item is a `system.*` item, which the bulk read answers
-  // only where `include` names `system` (`items/bulk-get-system`).
+  // only where `include` names `hidden` (`items/bulk-get-system`).
   const folder = await client.createFolder({
     title: `fidelity ${ctx.runId}`,
     query: { types: ["core.note"], filter: `source eq "${ctx.source}"` },
   });
   expect(folder.ok, JSON.stringify(folder.error)).toBe(true);
   trackFolder(ctx, folder.data.item.id);
-  for (const system of [false, true]) {
+  for (const hidden of [false, true]) {
     const read = await fetch(`${apiUrl}/items/bulk-get`, {
       method: "POST",
       headers: { ...headers, "Content-Type": "application/json" },
       body: JSON.stringify({
         ids: [folder.data.item.id],
-        include: ["edges", "metadata", ...(system ? ["system"] : [])],
+        include: ["edges", "metadata", ...(hidden ? ["hidden"] : [])],
       }),
     });
     expect(read.status).toBe(200);
@@ -3541,16 +3541,16 @@ it("matches copy marker tuples and conditional listing proofs", async (context) 
           ),
         ),
       ],
-      { withReach: true, system },
+      { withReach: true, hidden },
     );
     expect(
       (scriptedBody(scripted) as { data: { id: string }[] }).data.map(
         (item) => item.id,
       ),
-      `the scripted bulk read and the server disagree on a system item ${system ? "with" : "without"} system`,
+      `the scripted bulk read and the server disagree on a system item ${hidden ? "with" : "without"} hidden`,
     ).toEqual(real.data.map((item) => item.id));
     expectFidelity(
-      `a bulk read of a system item ${system ? "with" : "without"} system`,
+      `a bulk read of a system item ${hidden ? "with" : "without"} hidden`,
       { status: read.status, body: real },
       scripted,
       { same: ["listed"], shape: ["items", "metadata"] },

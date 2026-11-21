@@ -594,7 +594,7 @@ The server MUST leave an empty list or an absent field out of the `GET /overview
 
 ### `instance/overview-types`
 
-When `GET /overview` is answered `200`, the server MUST list in `types` each type outside the `system` namespace that the credential may read, including a type registered while the server runs, with its `id`, its `description` when it has one and the `count` of its active items that the credential may read.
+When `GET /overview` is answered `200`, the server MUST list in `types` each type that is not a hidden type (`items/hidden-types`) and that the credential may read, including a type registered while the server runs, with its `id`, its `description` when it has one and the `count` of its active items that the credential may read.
 
 **Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
 

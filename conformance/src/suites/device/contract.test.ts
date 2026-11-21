@@ -2984,7 +2984,7 @@ describe("the contract the working copy was built for", () => {
       "/items/bulk-get",
       bulkGetOf([certifiedRead(answers.updated(pinned))], {
         withReach: true,
-        system: false,
+        hidden: false,
       }),
     );
     expect((await device.pin("pinned")).ok).toBe(true);

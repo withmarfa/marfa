@@ -757,7 +757,7 @@ export function scriptTitles(
  * hydration reads once for the count it reports while it fills
  * (`device/report-items-expected`). It counts as the server does: by type
  * under `by=type`, at the tier named, every state where none is named, and
- * `system.*` only under `include=system`. A request that carries the reach
+ * hidden types only under `include=hidden`. A request that carries the reach
  * is refused, as the server refuses one on a read that is not conditional.
  */
 export function scriptStats(
@@ -778,13 +778,14 @@ export function scriptStats(
     if (matches === undefined)
       return refusal(400, "validation_error", `no scripted filter: ${filter}`);
     const reached = beneathOf(request.query.get("beneath"), edges);
-    const system = request.query.get("include") === "system";
+    const hidden = request.query.get("include") === "hidden";
     const byType = request.query.get("by") === "type";
     const counts: Record<string, number> = {};
     for (const held of Object.values(items)) {
       for (const row of held) {
         const type = String(wireItem(row.item).type);
-        if (type.startsWith("system.") && !system) continue;
+        if ((type.startsWith("system.") || type.startsWith("app.")) && !hidden)
+          continue;
         if (
           tier !== null &&
           tier !== "all" &&

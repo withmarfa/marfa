@@ -438,7 +438,7 @@ async function lookedUnder(replaced: boolean) {
           BUILT_FOR,
         ),
       ],
-      { withReach: true, system: false },
+      { withReach: true, hidden: false },
     ),
   );
   value(await device.hydrate(["core.note"], "library"));

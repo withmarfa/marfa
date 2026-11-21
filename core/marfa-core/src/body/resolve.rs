@@ -34,7 +34,7 @@ impl Names {
     pub fn load(conn: &Connection, catalog: &Catalog, paths: &dyn Paths) -> Result<Names> {
         let mut ids: HashMap<String, BTreeSet<String>> = HashMap::new();
         let mut statement = conn.prepare(
-            "SELECT id, type, properties FROM items WHERE state IN ('active', 'archived') AND type NOT LIKE 'system.%'",
+            "SELECT id, type, properties FROM items WHERE state IN ('active', 'archived') AND type NOT LIKE 'system.%' AND type NOT LIKE 'app.%'",
         )?;
         let rows = statement.query_map([], |row| {
             Ok((
@@ -99,7 +99,7 @@ impl Names {
         let listed: Vec<&String> = ids.iter().collect();
         for chunk in listed.chunks(500) {
             let mut statement = conn.prepare(&format!(
-                "SELECT id, type, properties FROM items WHERE id IN ({}) AND state IN ('active', 'archived') AND type NOT LIKE 'system.%'",
+                "SELECT id, type, properties FROM items WHERE id IN ({}) AND state IN ('active', 'archived') AND type NOT LIKE 'system.%' AND type NOT LIKE 'app.%'",
                 vec!["?"; chunk.len()].join(", ")
             ))?;
             let rows = statement.query_map(rusqlite::params_from_iter(chunk), |row| {

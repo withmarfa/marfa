@@ -2127,7 +2127,7 @@ describe("what the approval pages offer and grant an app that names no scope", (
     expect(await call(bearer, "GET", "/edges?limit=1")).toBe(200);
     // Content leaves out the system types, which a person's own key reads.
     expect(
-      await call(bearer, "GET", "/items?type=system.folder&include=system"),
+      await call(bearer, "GET", "/items?type=system.folder&include=hidden"),
     ).toBe(403);
     expect(
       await call(bearer, "POST", "/keys", {

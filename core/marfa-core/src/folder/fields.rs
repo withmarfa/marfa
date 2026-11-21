@@ -305,7 +305,7 @@ pub fn uncarried(
 ) -> Vec<Uncarried> {
     let mut found: Vec<Uncarried> = catalog
         .declared()
-        .filter(|(r#type, _)| !r#type.starts_with("system.") && holds(r#type))
+        .filter(|(r#type, _)| !marfa_rules::folder::is_hidden(r#type) && holds(r#type))
         .flat_map(|(r#type, fields)| {
             fields
                 .iter()

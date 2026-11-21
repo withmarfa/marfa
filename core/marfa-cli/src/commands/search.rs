@@ -52,8 +52,8 @@ pub struct SearchArgs {
     /// `asc` or `desc`; the server's default is best match or newest first.
     #[arg(long)]
     pub direction: Option<SortDirection>,
-    /// Extra to include: `system` also returns `system.*` items, which are left
-    /// out by default.
+    /// Extra to include: `hidden` also returns `system.*` and `app.*` items, which are
+    /// left out by default.
     #[arg(long, value_name = "NAME")]
     pub include: Vec<String>,
     #[command(flatten)]

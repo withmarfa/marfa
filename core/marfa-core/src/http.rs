@@ -1386,17 +1386,17 @@ impl Http {
 
     /// `GET /items/stats?by=type`: the rows at `tier`, counted by type, of
     /// every state or of those `narrowing` names and filters, with
-    /// `system.*` counted only where `system` asks for it. The count is not
+    /// hidden types counted only where `hidden` asks for it. The count is not
     /// a conditional read, so a transport under a reach is refused it.
     pub(crate) fn counts_by_type(
         &self,
         tier: SliceTier,
-        system: bool,
+        hidden: bool,
         narrowing: Option<&crate::slice::Listing>,
     ) -> Result<std::collections::HashMap<String, u64>, CoreError> {
         let mut params = vec![("by", "type"), ("tier", tier.as_str())];
-        if system {
-            params.push(("include", "system"));
+        if hidden {
+            params.push(("include", "hidden"));
         }
         if let Some(narrowing) = narrowing {
             narrowed(&mut params, narrowing);
@@ -1773,8 +1773,8 @@ impl Http {
 
     /// `POST /items/bulk-get` for at most `BULK_GET_LIMIT` ids, each row with
     /// its metadata, the first page of its edges of each type and, under a
-    /// reach, `listed`. It asks for `system` because a pin can name a
-    /// `system.*` row, which the door otherwise leaves out
+    /// reach, `listed`. It asks for `hidden` because a pin can name a
+    /// hidden row, which the door otherwise leaves out
     /// (`items/bulk-get-system`). An id the answer leaves out names no row
     /// the key may read outside the bin (`items/bulk-get-omits`).
     pub(crate) fn items_by_id(
@@ -1817,7 +1817,7 @@ impl Http {
         }
         let body = serde_json::json!({
             "ids": ids,
-            "include": ["system"],
+            "include": ["hidden"],
         })
         .to_string();
         let answer: Answer = self.read_json(&["items", "bulk-get"], &[], Some(&body))?;
@@ -1850,7 +1850,7 @@ impl Http {
         }
         let body = serde_json::json!({
             "ids": ids,
-            "include": ["edges", "metadata", "system"],
+            "include": ["edges", "metadata", "hidden"],
         })
         .to_string();
         let answer: Answer = self.read_json(&["items", "bulk-get"], &[], Some(&body))?;
@@ -1901,7 +1901,7 @@ impl Http {
 
     /// Which of `source_ids` under `source` name a row on the server, in any
     /// state, by `POST /items/lookup`. A row of a type the credential may not
-    /// read, and a `system.*` row, are left out of the answer
+    /// read, and a hidden row, are left out of the answer
     /// (`search-and-filters/lookup-unreadable-left-out` and
     /// `search-and-filters/lookup-system-left-out`).
     pub(crate) fn keys_held(

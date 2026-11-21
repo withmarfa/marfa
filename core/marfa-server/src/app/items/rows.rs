@@ -615,12 +615,12 @@ pub(super) fn touch(tx: &Transaction<'_>, item: &Item, at: &str) -> Result<Item>
     stored(tx, &item.id)
 }
 
-/// How many items the bin holds of each type and source, leaving out `system.*` types.
+/// How many items the bin holds of each type and source, leaving out hidden types.
 pub(super) fn binned_counts(tx: &Transaction<'_>) -> Result<Vec<(String, String, i64)>> {
     Ok(tx
         .prepare_cached(
             "SELECT type, source, count(*) FROM items \
-             WHERE state = 'trashed' AND type NOT GLOB 'system.*' GROUP BY type, source",
+             WHERE state = 'trashed' AND type NOT GLOB 'system.*' AND type NOT GLOB 'app.*' GROUP BY type, source",
         )?
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
         .collect::<rusqlite::Result<_>>()?)
@@ -676,7 +676,7 @@ pub(super) fn newest(
         "?2 IS NULL AND ?3 IS NULL"
     };
     let sql = format!(
-        "{ITEM} WHERE {state} AND type NOT GLOB 'system.*' AND (?1 IS NULL OR type = ?1) AND {bound}
+        "{ITEM} WHERE {state} AND type NOT GLOB 'system.*' AND type NOT GLOB 'app.*' AND (?1 IS NULL OR type = ?1) AND {bound}
          ORDER BY created_at DESC, id DESC LIMIT ?4"
     );
     let (at, id) = after.map_or((None, None), |(at, id)| (Some(at), Some(id)));

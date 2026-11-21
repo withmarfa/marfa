@@ -2656,9 +2656,10 @@ guarded! {
         }
 
         /// Replaces the local copy with the declared types at `tier`, one tier or
-        /// `all` for both. `["*"]` alone is every type but `system.*`, hydrated in
+        /// `all` for both. `["*"]` alone is every type but the hidden ones (`system.*`
+        /// and `app.*`), hydrated in
         /// one pass with no need to read the catalog and name its types first;
-        /// beside `system.*` types it adds them, and beside any other type it is
+        /// beside hidden types it adds them, and beside any other type it is
         /// refused `invalid`.
         pub fn hydrate(
             &self,
@@ -2671,7 +2672,7 @@ guarded! {
 
         /// A hydration that also holds every edge of `edge_types` the key reads,
         /// whichever ends the copy holds. `types` reads as in `hydrate`, so
-        /// `["*"]` alone is every type but `system.*`.
+        /// `["*"]` alone is every type but the hidden ones.
         ///
         /// With `in_place_only`, it fills only a copy whose cursor aged out, and
         /// only in place: where the instance, the key's reach or the slice has

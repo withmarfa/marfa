@@ -65,8 +65,8 @@ fn known_type(value: &Value, path: &str, catalog: &Catalog) -> Result<()> {
         return Err(at(path, "A type is a string."));
     };
     check_id(type_id, path)?;
-    if type_id == "system" || type_id.starts_with("system.") {
-        return Err(at(path, "A folder holds no system type."));
+    if type_id == "system" || rules::is_hidden(type_id) {
+        return Err(at(path, "A folder holds no hidden type."));
     }
     if catalog.rules.known(type_id) {
         return Ok(());

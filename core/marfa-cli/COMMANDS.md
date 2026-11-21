@@ -1625,7 +1625,7 @@ marfa search [OPTIONS] <QUERY>
 | `--updated-before <TIME>` | Exclusive upper bound on the modification time, RFC 3339. |
 | `--sort <FIELD>` | What to order by: `relevance` (the default), `created-at`, `updated-at`, `occurred-at`, `last-activity-at` or `properties.<field>`. |
 | `--direction <DIRECTION>` | `asc` or `desc`; the server's default is best match or newest first. One of `asc`, `desc`. |
-| `--include <NAME>` | Extra to include: `system` also returns `system.*` items, which are left out by default. |
+| `--include <NAME>` | Extra to include: `hidden` also returns `system.*` and `app.*` items, which are left out by default. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
 | `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
@@ -3125,7 +3125,7 @@ marfa device hydrate [OPTIONS] --type <TYPE> --tier <TIER>
 
 | Option | Description |
 | --- | --- |
-| `--type <TYPE>` | A type identifier, repeatable, such as core.note, or `*` alone for every type but `system.*`, hydrated in one pass without reading the catalog first. |
+| `--type <TYPE>` | A type identifier, repeatable, such as core.note, or `*` alone for every type but the hidden ones (`system.*` and `app.*`), hydrated in one pass without reading the catalog first. |
 | `--tier <TIER>` | The tier to hold the slice at, or `all` for both. One of `library`, `feed`, `all`. |
 | `--edge-type <TYPE>` | An edge type to hold whole: every edge of it the key reads, whichever ends the copy holds. Repeatable. |
 | `--in-place-only` | Fill only a copy whose cursor aged out, and only in place. Where the instance, the key's reach or the slice has changed, the server was restored to an earlier point, or the copy is not waiting to be filled again, the hydration is refused copy_expired with the reason before it changes anything, and the copy, its queue and its files stay as they were. Where the server refuses the key or its reach, the stale copy still ends, keeping the queue: `device status` then shows its hydration as expired, where a refused fill leaves a stale copy stale. |

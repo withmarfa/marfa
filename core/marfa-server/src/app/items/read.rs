@@ -241,7 +241,7 @@ fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
     let mut omitted = 0;
     for id in far_ends {
         let Some(row) = rows::by_id(read.tx, id)?
-            .filter(|row| row.state != "trashed" && !super::is_system(&row.type_id))
+            .filter(|row| row.state != "trashed" && !super::is_hidden(&row.type_id))
         else {
             continue;
         };
@@ -359,7 +359,7 @@ pub struct Many {
     pub metadata: bool,
     pub extensions: bool,
     pub edges: bool,
-    pub system: bool,
+    pub hidden: bool,
 }
 
 pub async fn bulk_get(
@@ -380,7 +380,7 @@ pub async fn bulk_get(
                 continue;
             };
             if row.state == "trashed"
-                || (!include.system && super::is_system(&row.type_id))
+                || (!include.hidden && super::is_hidden(&row.type_id))
                 || !read.caller.may_read_type(&row.type_id)
             {
                 continue;
@@ -496,7 +496,7 @@ pub async fn titles(app: &App, caller: &Caller, names: Vec<String>) -> Result<St
                         break;
                     };
                     for row in batch {
-                        if super::is_system(&row.type_id)
+                        if super::is_hidden(&row.type_id)
                             || !read.caller.may_read_type(&row.type_id)
                             || !read
                                 .caller
@@ -546,7 +546,7 @@ pub async fn captions(
             let Some(row) = rows::by_id(read.tx, &id)? else {
                 continue;
             };
-            if super::is_system(&row.type_id) || !read.caller.may_read_type(&row.type_id) {
+            if super::is_hidden(&row.type_id) || !read.caller.may_read_type(&row.type_id) {
                 continue;
             }
             let shown = super::shown_of(read.tx, &read.catalog, &row, &|type_id| {
@@ -913,7 +913,7 @@ pub async fn purge_preview(app: &App, caller: &Caller, choosing: Choosing) -> Re
         let levers = read.caller.levers()?;
         let rules = &read.catalog.rules;
         let shows = |row: &Item| {
-            !super::is_system(&row.type_id)
+            !super::is_hidden(&row.type_id)
                 && read.caller.may_read_type(&row.type_id)
                 && levers.lists(rules, &row.type_id, &row.source)
         };
@@ -1019,7 +1019,7 @@ pub async fn lookup(
         let mut data = Vec::with_capacity(found.len());
         let mut seen = HashSet::new();
         for row in found {
-            if super::is_system(&row.type_id)
+            if super::is_hidden(&row.type_id)
                 || !read.caller.may_read_type(&row.type_id)
                 || !seen.insert(row.id.clone())
             {

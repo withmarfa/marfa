@@ -186,7 +186,7 @@ fn linked(
             "SELECT e.{anchor}, COUNT(*){groups}
                FROM edges e CROSS JOIN items ON items.id = e.{other}
               WHERE e.edge_type = ? AND e.{anchor} IN ({marks})
-                AND {counted} AND items.type NOT LIKE 'system.%' AND {listed}
+                AND {counted} AND items.type NOT LIKE 'system.%' AND items.type NOT LIKE 'app.%' AND {listed}
               GROUP BY e.{anchor}",
             listed = crate::query::LISTED
         );
@@ -407,7 +407,7 @@ mod tests {
         ids.iter().map(|id| id.to_string()).collect()
     }
 
-    /// The local list leaves nothing out by type, so `system.*` is removed here, as the count rule removes it.
+    /// The local list leaves nothing out by type, so hidden types are removed here, as the count rule removes it.
     fn listed(conn: &Connection, filter: &str) -> i64 {
         let catalog = crate::catalog::load(conn).unwrap();
         let filters = ListFilters {
@@ -417,7 +417,7 @@ mod tests {
         let items = crate::query::list(conn, &catalog, &filters, None).unwrap();
         items
             .iter()
-            .filter(|item| !item.r#type.starts_with("system."))
+            .filter(|item| !marfa_rules::folder::is_hidden(&item.r#type))
             .count() as i64
     }
 

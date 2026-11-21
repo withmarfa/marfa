@@ -123,7 +123,7 @@ fn choices(conn: &Connection) -> Result<Vec<(String, String)>> {
 
 fn names(pattern: &str, type_id: &str, catalog: &Catalog) -> bool {
     if pattern == marfa_rules::query::EVERY_TYPE {
-        !marfa_rules::folder::is_system(type_id)
+        !marfa_rules::folder::is_hidden(type_id)
     } else {
         catalog.matches(pattern, type_id)
     }

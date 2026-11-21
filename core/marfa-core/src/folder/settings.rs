@@ -298,7 +298,7 @@ impl Settings {
     }
 
     /// Whether the query names no type or names `*`: every type but
-    /// `system.*`. The one reading of the star, so a folder naming it holds,
+    /// the hidden types. The one reading of the star, so a folder naming it holds,
     /// writes and reports exactly what a folder naming no type does.
     pub(crate) fn names_every_type(&self) -> bool {
         marfa_rules::folder::names_every_type(&self.query.types)
@@ -312,7 +312,7 @@ impl Settings {
     /// folder's pass and a list or full-text search in a folder share, so the two
     /// cannot hold different items. `whole_edges` is the edge types the copy
     /// holds whole, which a view's `backref` term needs; a folder passes none,
-    /// as `Settings::of` has refused its `backref`. `system.*` is never held,
+    /// as `Settings::of` has refused its `backref`. A hidden type is never held,
     /// and nothing is beneath a path with no item yet.
     pub(crate) fn narrow(
         &self,
@@ -345,7 +345,7 @@ impl Settings {
             }
             clauses.push(format!("({})", alternatives.join(" OR ")));
         }
-        clauses.push("items.type NOT LIKE 'system.%'".into());
+        clauses.push("items.type NOT LIKE 'system.%' AND items.type NOT LIKE 'app.%'".into());
         if self.tier() != SliceTier::All {
             clauses.push("items.tier = ?".into());
             values.push(Value::String(self.tier().as_str().into()));
@@ -432,7 +432,7 @@ impl Settings {
             .declared()
             .map(|(id, _)| id)
             .filter(|id| {
-                !crate::store::is_system(id)
+                !crate::store::is_hidden(id)
                     && self.holds_type(catalog, id)
                     && !crate::store::slice_takes(
                         catalog,
@@ -458,7 +458,7 @@ impl Settings {
             let named = named.join(", ");
             return Err(unanswerable(if self.names_every_type() {
                 format!(
-                    "the folder holds every type but `system.*`, and this copy's slice does not take {named}; hydrate with them, or with every type the key reads"
+                    "the folder holds every type but the hidden ones, and this copy's slice does not take {named}; hydrate with them, or with every type the key reads"
                 )
             } else {
                 format!(

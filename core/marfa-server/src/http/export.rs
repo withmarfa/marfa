@@ -54,7 +54,7 @@ fn ask_of(params: &Params) -> Result<Ask> {
     let kept = States::Named(KEPT_STATES.iter().map(ToString::to_string).collect());
     Ok(Ask {
         types: params.one("type")?.map_or(Ok(Vec::new()), types_of)?,
-        system: true,
+        hidden: true,
         states: params.one("state")?.map_or(Ok(kept), states_of)?,
         source: params.one("source")?.map(str::to_string),
         occurred_after: params.time("occurred_after")?,

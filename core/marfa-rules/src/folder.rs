@@ -128,11 +128,17 @@ pub fn check_beneath_file(path: &str) -> Result<(), String> {
     }
 }
 
+/// A type only the server writes.
 pub fn is_system(type_id: &str) -> bool {
     type_id.starts_with("system.")
 }
 
-/// Whether the query names no type or names `*`: every type but `system.*`.
+/// A type every read leaves out unless asked: `system.*` and `app.*`.
+pub fn is_hidden(type_id: &str) -> bool {
+    is_system(type_id) || type_id.starts_with("app.")
+}
+
+/// Whether the query names no type or names `*`: every type but the hidden ones.
 pub fn names_every_type(types: &[String]) -> bool {
     types.is_empty() || types.iter().any(|named| named.trim() == EVERY_TYPE)
 }
@@ -147,11 +153,11 @@ pub fn slice_types(types: &[String]) -> Vec<String> {
     }
 }
 
-/// Whether a declaration names the type: `*` names every type but `system.*`.
+/// Whether a declaration names the type: `*` names every type but the hidden ones.
 pub fn declares_type(catalog: &Catalog, declared: &[String], row_type: &str) -> bool {
     declared.iter().any(|declared| {
         if declared == EVERY_TYPE {
-            !is_system(row_type)
+            !is_hidden(row_type)
         } else {
             catalog.matches(declared, row_type)
         }
@@ -422,6 +428,19 @@ mod tests {
         assert!(judged(&["core.media"], Some("core.media.photo")).is_ok());
         assert!(judged(&["core.media.photo"], Some("core.media")).is_err());
         assert!(judged(&[], Some("core.task")).is_ok());
+    }
+
+    #[test]
+    fn a_hidden_type_is_under_the_system_or_the_app_root_and_no_other() {
+        for hidden in ["system.folder", "app.acme.setting"] {
+            assert!(is_hidden(hidden), "{hidden}");
+            assert!(!holds_type(&catalog(), &lines(&["*"]), hidden), "{hidden}");
+        }
+        for shown in ["core.note", "user.recipe", "application.x", "apple.pie"] {
+            assert!(!is_hidden(shown), "{shown}");
+        }
+        assert!(is_system("system.folder"));
+        assert!(!is_system("app.acme.setting"));
     }
 
     #[test]
