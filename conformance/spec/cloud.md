@@ -60,6 +60,14 @@ While the server runs with no public listener, when a caller sends `POST /cloud/
 
 **Tests:** `compliance/cloud-link.test.ts › refuses a start where the server has no public listener`.
 
+### `cloud/start-not-on-loopback`
+
+While the server's public listener is bound to an address that `127.0.0.1` does not reach, being neither a loopback address of IPv4 nor an unspecified address, when a caller sends `POST /cloud/link`, the server MUST answer `409 no_public_listener` and send nothing to Marfa Cloud.
+
+**Reason:** Marfa Cloud's connector runs on the instance's machine and sends to `127.0.0.1` at the port the start sends.
+
+**Tests:** `compliance/cloud-link.test.ts › refuses a start where the public listener is not reached at 127.0.0.1, which Marfa Cloud's connector sends to`.
+
 ### `cloud/start-unavailable`
 
 If Marfa Cloud cannot be reached, does not answer in time, or answers a start other than with `201`, then the server MUST answer `503 cloud_unavailable` and keep no link.
@@ -110,11 +118,19 @@ When Marfa Cloud answers that a link is `denied`, `expired` or `refused`, the se
 
 **Tests:** `compliance/cloud-link.test.ts › fails a link Marfa Cloud denies, lets expire or refuses, and says why`.
 
+### `cloud/late-approval`
+
+While a link is linking and Marfa Cloud answers `pending`, the server MUST keep asking Marfa Cloud about it after its `expires_at`, until ten minutes after it.
+
+**Reason:** Marfa Cloud answers an approved link for ten minutes after the approval, even past `expires_at`, and answers `pending` until the name is ready.
+
+**Tests:** `compliance/cloud-link.test.ts › keeps asking past a link's time while Marfa Cloud answers pending, and links on the late approval`.
+
 ### `cloud/expires-unreached`
 
-If the `expires_at` of a link that is linking passes while Marfa Cloud cannot be reached, then the server MUST set `state` `failed` with `failure.reason` `expired`.
+If ten minutes past the `expires_at` of a link that is linking pass while Marfa Cloud has not approved it, then the server MUST set `state` `failed` with `failure.reason` `expired`, though Marfa Cloud cannot be reached.
 
-**Tests:** `compliance/cloud-link.test.ts › lets a link expire at its time though Marfa Cloud cannot be reached`.
+**Tests:** `compliance/cloud-link.test.ts › lets a link expire ten minutes past its time though Marfa Cloud cannot be reached`.
 
 ### `cloud/restart-resumes`
 
@@ -238,6 +254,36 @@ When a caller sends `DELETE /cloud/link` while a link is linking, the server MUS
 
 **Tests:** `compliance/cloud-link.test.ts › cancels a link waiting for approval, and unlinks it if Marfa Cloud approves it later`.
 
+## A link ended on Marfa Cloud
+
+### `cloud/ended-by-service`
+
+When Marfa Cloud no longer accepts the link credential of a link that is linked, the server MUST end the link and answer `state` `not_linked` with `ended.reason` `unlinked_by_service`.
+
+**Reason:** the owner can unlink on the Marfa Cloud account page while the instance is offline, and the name then no longer reaches the instance.
+
+**Tests:** `compliance/cloud-link.test.ts › notices a link ended on Marfa Cloud, puts back the sign-in address the link moved, and says why`.
+
+### `cloud/ended-puts-back`
+
+When the server ends a link that Marfa Cloud ended while the sign-in address is the link's `address`, the server MUST put back the sign-in address that was in force before the link moved it, as a confirmed move in `/config` does.
+
+**Reason:** the link's address no longer reaches the instance, so leaving it would lock the owner out.
+
+**Tests:** `compliance/cloud-link.test.ts › notices a link ended on Marfa Cloud, puts back the sign-in address the link moved, and says why`.
+
+### `cloud/ended-audited`
+
+When the server ends a link that Marfa Cloud ended, the server MUST record `details.reason` `unlinked_by_service` in the audit entry of the unlink.
+
+**Tests:** `compliance/cloud-link.test.ts › notices a link ended on Marfa Cloud, puts back the sign-in address the link moved, and says why`.
+
+### `cloud/ended-checked`
+
+While a link is linked, the server MUST ask Marfa Cloud whether it still stands when the server starts and at least once an hour.
+
+**Tests:** `compliance/cloud-link.test.ts › notices a link ended on Marfa Cloud, puts back the sign-in address the link moved, and says why`, `› checks a linked link as it starts again, and notices it was ended on Marfa Cloud while it was stopped`.
+
 ## Reading a link
 
 ### `cloud/status-not-linked`
@@ -270,6 +316,6 @@ The server MUST send a `cloud_link.changed` event only on a stream whose credent
 
 ### `cloud/audited`
 
-When a link is started, linked, failed or unlinked, or the server moves the sign-in address to a link's `address`, the server MUST record it in the audit log with the action `cloud.link_start`, `cloud.linked`, `cloud.link_failed`, `cloud.unlink` or `cloud.sign_in_address_move`.
+When a link is started, linked, failed or unlinked, or the server moves the sign-in address to or back from a link's `address`, the server MUST record it in the audit log with the action `cloud.link_start`, `cloud.linked`, `cloud.link_failed`, `cloud.unlink` or `cloud.sign_in_address_move`.
 
 **Tests:** `compliance/cloud-link.test.ts › records the start, the link, the move of the sign-in address and the unlink in the audit log`, `› fails a link Marfa Cloud denies, lets expire or refuses, and says why`.

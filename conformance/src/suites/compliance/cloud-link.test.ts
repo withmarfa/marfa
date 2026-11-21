@@ -161,6 +161,58 @@ async function audited(linkable: Linkable, action: string): Promise<any[]> {
   return read.body.data;
 }
 
+/** A server started straight from its program, reached through its private socket. */
+async function bootBare(env: Record<string, string>): Promise<{
+  cloud: FakeCloud;
+  socket: string;
+  output: () => string;
+}> {
+  const cloud = await fakeCloud();
+  clouds.push(cloud);
+  // Short names: a socket path is bounded at about 100 bytes.
+  const root = tempFolder("cl-");
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const socket = join(root, "c.sock");
+  const child = spawn(serverProgram(), [], {
+    env: {
+      PATH: process.env.PATH,
+      HOME: process.env.HOME,
+      MARFA_AUTH_SECRET: randomBytes(32).toString("hex"),
+      MARFA_CONTROL_SOCKET: socket,
+      MARFA_DATABASE_PATH: join(root, "marfa.db"),
+      MARFA_BLOB_PATH: join(root, "blobs"),
+      MARFA_ENRICHMENT_ENABLED: "false",
+      MARFA_ENRICHMENT_OCR_ENABLED: "false",
+      MARFA_CLOUD_URL: cloud.url,
+      ...env,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = "";
+  child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
+  child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
+  const exited = once(child, "exit");
+  cleanups.push(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGTERM");
+    }
+    await exited;
+  });
+  await waitFor("the control socket to answer", async () => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(`the server ended: ${output}`);
+    }
+    try {
+      return (await controlRequest(socket, "/health")).status === 200
+        ? true
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  });
+  return { cloud, socket, output: () => output };
+}
+
 const polls = (cloud: FakeCloud) =>
   cloud.requests.filter((request) => request.path === "/link/poll");
 
@@ -321,59 +373,43 @@ describe("starting a link", () => {
   it(
     "refuses a start where the server has no public listener",
     async () => {
-      const cloud = await fakeCloud();
-      clouds.push(cloud);
-      // Short names: a socket path is bounded at about 100 bytes.
-      const root = tempFolder("cl-");
-      cleanups.push(() => rm(root, { recursive: true, force: true }));
-      const socket = join(root, "c.sock");
-      const child = spawn(serverProgram(), [], {
-        env: {
-          PATH: process.env.PATH,
-          HOME: process.env.HOME,
-          MARFA_AUTH_SECRET: randomBytes(32).toString("hex"),
-          MARFA_CONTROL_ONLY: "true",
-          MARFA_CONTROL_SOCKET: socket,
-          MARFA_DATABASE_PATH: join(root, "marfa.db"),
-          MARFA_BLOB_PATH: join(root, "blobs"),
-          MARFA_ENRICHMENT_ENABLED: "false",
-          MARFA_ENRICHMENT_OCR_ENABLED: "false",
-          MARFA_CLOUD_URL: cloud.url,
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      let output = "";
-      child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
-      child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
-      const exited = once(child, "exit");
-      cleanups.push(async () => {
-        if (child.exitCode === null && child.signalCode === null) {
-          child.kill("SIGTERM");
-        }
-        await exited;
-      });
-      await waitFor("the control socket to answer", async () => {
-        if (child.exitCode !== null || child.signalCode !== null) {
-          throw new Error(`the server ended: ${output}`);
-        }
-        try {
-          return (await controlRequest(socket, "/health")).status === 200
-            ? true
-            : undefined;
-        } catch {
-          return undefined;
-        }
-      });
-      const refused = await controlRequest(socket, "/cloud/link", {
+      const bare = await bootBare({ MARFA_CONTROL_ONLY: "true" });
+      const refused = await controlRequest(bare.socket, "/cloud/link", {
         method: "POST",
         body: { sign_in_address: "keep" },
       });
       expect(refused.status, JSON.stringify(refused.body)).toBe(409);
       expect((refused.body as any).error.code).toBe("no_public_listener");
       // The witness: the same socket reads the link.
-      const read = await controlRequest(socket, "/cloud/link");
+      const read = await controlRequest(bare.socket, "/cloud/link");
       expect(read.status).toBe(200);
-      expect(cloud.requests).toEqual([]);
+      expect(bare.cloud.requests).toEqual([]);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "refuses a start where the public listener is not reached at 127.0.0.1, which Marfa Cloud's connector sends to",
+    async () => {
+      const bare = await bootBare({
+        MARFA_LISTEN_HOST: "::1",
+        MARFA_PORT: "0",
+      });
+      const port = await waitFor(
+        "the public listener's port",
+        async () => /listening on port (\d+)/.exec(bare.output())?.[1],
+      );
+      // The witness: the public listener answers, on ::1.
+      const health = await fetch(`http://[::1]:${port}/health`);
+      await health.body?.cancel();
+      expect(health.status).toBe(200);
+      const refused = await controlRequest(bare.socket, "/cloud/link", {
+        method: "POST",
+        body: { sign_in_address: "keep" },
+      });
+      expect(refused.status, JSON.stringify(refused.body)).toBe(409);
+      expect((refused.body as any).error.code).toBe("no_public_listener");
+      expect(bare.cloud.requests).toEqual([]);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -556,19 +592,41 @@ describe("while a link is linking", () => {
   );
 
   it(
-    "lets a link expire at its time though Marfa Cloud cannot be reached",
+    "lets a link expire ten minutes past its time though Marfa Cloud cannot be reached",
     async () => {
       const linkable = await boot("cloud-expires", { lifetimeMs: 600_000 });
       await start(linkable, "key", { sign_in_address: "keep" });
       linkable.cloud.down();
-      // The witness: the link is linking until its time passes.
       expect((await linkable.status()).state).toBe("linking");
+      // The witness: past its time, a link Marfa Cloud may still approve is linking.
       await linkable.server.advanceClock(601_000);
+      expect((await linkable.status()).state).toBe("linking");
+      await linkable.server.advanceClock(600_000);
       const failed = await linkable.until(
         "the link to expire",
         (s) => s.state === "failed",
       );
       expect(failed.failure.reason).toBe("expired");
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps asking past a link's time while Marfa Cloud answers pending, and links on the late approval",
+    async () => {
+      const linkable = await boot("cloud-late", { lifetimeMs: 600_000 });
+      await start(linkable, "key", { sign_in_address: "keep" });
+      linkable.cloud.approve({ name: "late", ready: false });
+      await linkable.server.advanceClock(601_000);
+      const before = polls(linkable.cloud).length;
+      await linkable.cloud.waitFor("/link/poll", before + 1);
+      expect((await linkable.status()).state).toBe("linking");
+      linkable.cloud.ready();
+      const linked = await linkable.until(
+        "the late link to be linked",
+        (s) => s.state === "linked",
+      );
+      expect(linked.name).toBe("late");
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -879,6 +937,59 @@ describe("unlinking", () => {
       const link = linkable.cloud.latest();
       expect(link.unlinked).toBe(true);
       expect(await linkable.status()).toEqual({ state: "not_linked" });
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("a link ended on Marfa Cloud", () => {
+  it(
+    "notices a link ended on Marfa Cloud, puts back the sign-in address the link moved, and says why",
+    async () => {
+      const { linkable, before } = await movedLink("cloud-ended");
+      const checks = () =>
+        linkable.cloud.requests.filter(
+          (request) => request.method === "GET" && request.path === "/link",
+        ).length;
+      // The witness: the server checks a linked link, and it stays linked.
+      const first = checks();
+      await linkable.server.advanceClock(61 * 60_000);
+      await linkable.cloud.waitFor("/link", first + 1);
+      expect((await linkable.status()).state).toBe("linked");
+
+      linkable.cloud.forget();
+      await linkable.server.advanceClock(61 * 60_000);
+      const ended = await linkable.until(
+        "the link to be ended",
+        (s) => s.state === "not_linked",
+      );
+      expect(ended.ended).toMatchObject({ reason: "unlinked_by_service" });
+      await expectMatchesSchema("GET", "/cloud/link", 200, ended);
+      expect(await signInAddress(linkable)).toBe(before);
+      expect(
+        (await audited(linkable, "cloud.unlink"))[0]?.details,
+      ).toMatchObject({ reason: "unlinked_by_service" });
+      expect(
+        await audited(linkable, "cloud.sign_in_address_move"),
+      ).toHaveLength(2);
+      // A new link can start once the last one ended.
+      await start(linkable, "key", { sign_in_address: "keep" });
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "checks a linked link as it starts again, and notices it was ended on Marfa Cloud while it was stopped",
+    async () => {
+      const linkable = await boot("cloud-ended-restart");
+      await linkedKeeping(linkable);
+      linkable.cloud.forget();
+      await linkable.server.restart();
+      const ended = await linkable.until(
+        "the link to be ended",
+        (s) => s.state === "not_linked",
+      );
+      expect(ended.ended).toMatchObject({ reason: "unlinked_by_service" });
     },
     FRESH_SERVER_TIMEOUT_MS,
   );

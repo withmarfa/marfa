@@ -16,16 +16,20 @@ import { waitFor } from "./wait.js";
  * every request it is sent, and is driven by the test through its methods
  * or, when it runs on its own, through `POST /_fake/<action>`:
  *
- * - `approve`, `deny`, `expire` and `refuse` decide the latest link.
+ * - `approve`, `deny`, `expire` and `refuse` decide the latest link. An
+ *   approval with `ready: false` answers `pending` until `ready`, as Marfa
+ *   Cloud does while it readies the name.
  * - `slow_down` answers the next poll with `slow_down` and a new interval.
  * - `lose_next_approved` makes a credential for the next `approved` answer
  *   and drops the connection before the answer is sent.
- * - `forget` makes Cloud forget the latest link, as an unlink elsewhere does.
+ * - `forget` makes Cloud forget the latest link, as an unlink on the Marfa
+ *   Cloud account page does.
  * - `down` and `up` stop and start answering the link API.
  *
  * Each `approved` answer before the first use of a credential makes a new
  * credential that replaces the last, so only the latest works, and once it
- * is used the poll secret stops working.
+ * is used the poll secret stops working. An approved link is answered for
+ * ten minutes after its approval, even past its `expires_at`.
  *
  * On its own: `tsx src/utils/fake-cloud.ts --port <port>`.
  */
@@ -37,7 +41,8 @@ export interface FakeCloud {
   /** The links started, oldest first. */
   links: FakeLink[];
   latest(): FakeLink;
-  approve(decided?: { name?: string; address?: string }): void;
+  approve(decided?: { name?: string; address?: string; ready?: boolean }): void;
+  ready(): void;
   deny(): void;
   expire(): void;
   refuse(message?: string): void;
@@ -72,6 +77,10 @@ export interface FakeLink {
   instanceId: string;
   instanceName: string | null;
   decision: "pending" | "approved" | "denied" | "refused";
+  /** When it was approved, if it was. */
+  approvedAt: number | null;
+  /** `false` while an approval is answered as `pending`. */
+  ready: boolean;
   refusedMessage: string;
   name: string;
   address: string;
@@ -97,6 +106,9 @@ export interface FakeCloudOptions {
   /** How long a link waits for approval. */
   lifetimeMs?: number;
 }
+
+/** How long past its approval an approved link is answered, even past `expires_at`. */
+const APPROVED_FOR_MS = 600_000;
 
 /** A poll this much sooner than the interval is still in time. */
 const POLL_GRACE_MS = 250;
@@ -129,6 +141,9 @@ export async function fakeCloud(
 
   const control: Record<string, (body: any) => void> = {
     approve: (body) => decide("approved", body),
+    ready: () => {
+      latest().ready = true;
+    },
     deny: () => decide("denied"),
     expire: () => {
       latest().expiresAt = Date.now() - 1;
@@ -157,7 +172,7 @@ export async function fakeCloud(
 
   function decide(
     decision: FakeLink["decision"],
-    decided: { name?: string; address?: string } = {},
+    decided: { name?: string; address?: string; ready?: boolean } = {},
   ): void {
     const link = latest();
     link.decision = decision;
@@ -167,6 +182,8 @@ export async function fakeCloud(
       link.address =
         decided.address ?? `http://127.0.0.1:${String(link.originPort)}`;
       link.linkedAt = new Date().toISOString();
+      link.approvedAt = Date.now();
+      link.ready = decided.ready ?? true;
     }
   }
 
@@ -207,9 +224,11 @@ export async function fakeCloud(
         message: link.refusedMessage,
       });
     }
-    if (now >= link.expiresAt)
+    const late =
+      link.approvedAt !== null && now < link.approvedAt + APPROVED_FOR_MS;
+    if (now >= link.expiresAt && !late)
       return json(response, 200, { status: "expired" });
-    if (link.decision === "pending") {
+    if (link.decision === "pending" || !link.ready) {
       return json(response, 200, {
         status: "pending",
         interval: link.interval,
@@ -245,6 +264,8 @@ export async function fakeCloud(
       instanceId: String(body?.instance_id),
       instanceName: body?.instance_name ?? null,
       decision: "pending",
+      approvedAt: null,
+      ready: true,
       refusedMessage: "",
       name: "",
       address: "",
@@ -351,6 +372,7 @@ export async function fakeCloud(
     links,
     latest,
     approve: (decided) => control.approve!(decided),
+    ready: () => control.ready!(null),
     deny: () => control.deny!(null),
     expire: () => control.expire!(null),
     refuse: (message) => control.refuse!({ message }),
