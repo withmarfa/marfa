@@ -59,6 +59,84 @@ While a credential's edge map grants `write` on an edge type, the server MUST le
 
 **Tests:** `compliance/edge-permissions.test.ts › an edge type granted write is readable without a read entry`.
 
+### `keys-and-oauth/content-excludes-app`
+
+The server MUST NOT let an app's `content:read`, `content:write`, `*:read` or `*:write` scope reach an item of a type under `app.*`.
+
+**Reason:** a type under `app.<vendor>` is the machinery the app that holds the vendor keeps for itself (`types/app-vendor-bound`), so another app reaches it only where the owner granted that vendor by name (`keys-and-oauth/app-vendor-explicit-grant`).
+
+**Tests:** `compliance/app-vendors.test.ts › keeps their items from another app's content grant in a read, a listing, a search and a copy stream`.
+
+### `keys-and-oauth/app-reaches-own-vendor`
+
+While an app holds a vendor (`types/app-vendor-bound`), the server MUST let the app's sign-ins reach the items of the types under the vendor at the most their scopes grant any type outside `app.*`, or at the level a scope naming `app.*` or the vendor grants where that is higher, without a scope that names the vendor.
+
+**Reason:** an app keeps its own machinery under its vendor without asking the owner for it again each time it registers a type there, and an app the owner approved for every app's data keeps that approval for its own.
+
+**Tests:** `compliance/app-vendors.test.ts › lets the app that registered them read, list, search and copy their items without a scope that names them`, `› lets an app approved for every app's data register its first type and reach its items`.
+
+### `keys-and-oauth/app-key-own-vendor`
+
+While an app holds a vendor, the server MUST let a key the app made reach the items of each type under the vendor only at the level the entries of the key's type map under `app.*` give it, and, while the app's grant stands, no higher than the app's sign-ins reach that type (`keys-and-oauth/app-reaches-own-vendor`).
+
+**Reason:** a key reaches an app's machinery only as its map names it there, so an entry such as `*` or `core.*` gives nothing under `app.*`, and an app that wants a key to reach its own vendor names `app.<vendor>.*` when it mints the key. A key never does more than the app may do there now, and a key the owner kept when ending the app keeps its own vendor as its map names it.
+
+**Tests:** `compliance/app-vendors.test.ts › keeps the own-vendor wildcard a key an app made asks for`, `› reaches nothing of its own vendor through a key whose map names nothing under app.*`, `› leaves a kept key an app made its own vendor as its map names it there once the grant ends, and nothing of other apps`, `› keeps a key an app made from other apps' data once the app's grant no longer names it, and leaves it its own vendor`, `› holds an owner's key an app made to what the app may do with its own vendor now`.
+
+### `keys-and-oauth/app-made-owner-key`
+
+When an app's sign-in, or a key an app made, mints a key, with or without `owner_key: true`, the server MUST treat the key as a key that app made wherever a statement on app vendors or their reach names one.
+
+**Reason:** `owner_key` and `oauth_client_id` decide only how long a key lives (`keys-and-oauth/owner-key-mint`, `keys-and-oauth/owner-key-direct`). A key that came from the app, or from a key the app made, reaches other apps' machinery only as the app's grant does, and it may not move a vendor.
+
+**Tests:** `compliance/app-vendors.test.ts › treats an owner's key minted through an app as the app's: refused a vendor move, and kept from other apps' data the app's grant no longer names`, `› holds an owner's key an app made to what the app may do with its own vendor now`, `› lets an owner's key an app made mint an owner's key by default and on request without keys.manage, each still the app's for vendors`.
+
+### `keys-and-oauth/unknown-maker`
+
+When the server upgrades a database written before it kept who made each key, the server MUST record as of unknown maker each key that carries no `oauth_client_id` and that no record of the instance shows the owner, or an app the instance can name, minted, directly or through the keys that minted it, whether or not those keys remain.
+
+**Reason:** an app could mint an owner's key, which carries no `oauth_client_id`, and the audit records that name its minter are kept for a limited time while the key can live forever. Treating such a key as the owner's would let the app it was given to reach other apps' machinery and move vendors. A grant's records pair the grant with its app, so they name the app where the mint record survives and the grant has ended. A database that already kept whether an app made each key holds a record of its own, which says the owner made a key where its mint records are gone.
+
+**Tests:** waiting on #2802.
+
+### `keys-and-oauth/unknown-maker-descendant`
+
+When a key of unknown maker (`keys-and-oauth/unknown-maker`) mints a key, the server MUST record the new key as of unknown maker.
+
+**Reason:** a key minted from one whose maker no record names is no more the owner's than its parent.
+
+**Tests:** waiting on #2802.
+
+### `keys-and-oauth/unknown-maker-reach`
+
+While a key of unknown maker (`keys-and-oauth/unknown-maker`) holds a type map, the server MUST let the key reach the items of a type under `app.*` only as the entries of its map under `app.*` give, only where the owner holds the type's vendor or no one holds it, and never where an app holds it.
+
+**Reason:** no record says the key is the owner's, so it reaches no app's machinery the owner did not approve, and an entry such as `*` gives nothing under `app.*`. The owner mints a new key with an owner credential to reach every vendor.
+
+**Tests:** waiting on #2802.
+
+### `keys-and-oauth/app-key-other-app-data`
+
+The server MUST let a key an app made reach an item of a type under `app.*` outside its app's own vendors only where both the entries of the key's type map under `app.*` and the app's standing grant reach it, judged when the key is used.
+
+**Reason:** only the owner lets an app reach another app's machinery, by naming it in the app's grant, so a key the app made reaches no more of it than the grant names now. An entry the key's map holds from before, or from a grant since narrowed or ended, gives nothing.
+
+**Tests:** `compliance/app-vendors.test.ts › keeps a key an app made from other apps' data once the app's grant no longer names it, and leaves it its own vendor`, `› keeps a key an app made, narrowed to what the app's narrowed grant reaches, when the owner narrows the grant`.
+
+### `keys-and-oauth/app-vendor-explicit-grant`
+
+When an app's grant names `app.<vendor>.*:read` or `app.<vendor>.*:write`, the server MUST let the app reach the items of the types under that vendor at that level, whichever app holds the vendor.
+
+**Tests:** `compliance/app-vendors.test.ts › lets another app reach their items through a grant that names the vendor`.
+
+### `keys-and-oauth/owner-key-reaches-app`
+
+While a key the owner made, which is neither a key an app made nor a key of unknown maker (`keys-and-oauth/unknown-maker`), holds a type map that reaches a type under `app.*`, the server MUST let the key reach the type's items as its map says, whichever app holds the vendor.
+
+**Reason:** the owner's own credentials reach everything the owner keeps, apps' machinery included.
+
+**Tests:** `compliance/app-vendors.test.ts › lets a key no app made read, list, search and copy their items as its map says`.
+
 ## How a type map is read
 
 A type map's keys are exact type identifiers, subtree wildcards such as `core.media.*` and the global `*`. These rules decide which entry sets a credential's level on a type, at every operation that reads or writes items.
@@ -211,6 +289,14 @@ When a working key mints a key from a body naming no permission, map or `sources
 
 **Tests:** `compliance/key-management.test.ts › a mint naming no permissions, maps or claims takes the creator's whole set`, `compliance/claimed-sources.test.ts › a mint naming nothing takes the creator's claims`.
 
+### `keys-and-oauth/app-mint-whole-set`
+
+When an app's sign-in mints a key from a body naming no permission, map or `sources`, the server MUST give the new key the type map its grant's scopes give, with no entry for the app's own vendors.
+
+**Reason:** a sign-in reaches its app's own vendors without a scope that names them (`keys-and-oauth/app-reaches-own-vendor`), but a key the app made reaches them only as its own map names them (`keys-and-oauth/app-key-own-vendor`), so a key minted by default stores only what the app was granted.
+
+**Tests:** `compliance/app-vendors.test.ts › mints a key naming no family with the app's grant map, and no entry for the app's own vendor`.
+
 ### `keys-and-oauth/mint-names-families`
 
 When a `POST /keys` body names any of `permissions`, the five maps or `sources`, the server MUST give the key exactly what the body names in each family it names, an empty value included, and nothing in each family it leaves out.
@@ -224,6 +310,14 @@ When a `POST /keys` body names any of `permissions`, the five maps or `sources`,
 If a working key's mint names a permission, or a type, edge, metadata or profile map entry, that the caller does not hold, then the server MUST answer `403 forbidden` with `details.required_scope` naming it.
 
 **Tests:** `compliance/key-management.test.ts › refuses a mint reaching past what the caller holds`.
+
+### `keys-and-oauth/mint-ceiling-stored`
+
+If a key mints or updates a key with a type map entry that matches a type the caller's own stored type map does not grant at that level, judging a wildcard entry by every type it can match, reading a map that names nothing under `app.*` as granting nothing there where an app or an unknown maker made the caller, then the server MUST answer `403 forbidden` with `details.required_scope` naming it, whatever the caller reaches now.
+
+**Reason:** a key an app made reaches under `app.*` only what its app's grant allows now, so a child judged only by that reach could store an entry its parent never held and gain it when the owner widens the grant.
+
+**Tests:** `compliance/app-vendors.test.ts › refuses a key an app made a mint or an update naming app data its own map does not grant`, `› refuses a parent holding only exact types under a vendor a child holding the vendor's wildcard`.
 
 ### `keys-and-oauth/namespace-ceiling`
 
@@ -297,7 +391,7 @@ When local authority, or a key that carries no `oauth_client_id`, sends `POST /k
 
 **Reason:** Such a caller mints only owner's keys already, so a client can send `owner_key` without first finding out what kind of credential it holds.
 
-**Tests:** `compliance/owner-keys.test.ts › accepts owner_key from a caller no app made and mints the key it would without it`.
+**Tests:** `compliance/owner-keys.test.ts › accepts owner_key from a caller no app made and mints the key it would without it`, `compliance/app-vendors.test.ts › lets an owner's key an app made mint an owner's key by default and on request without keys.manage, each still the app's for vendors`.
 
 ### `keys-and-oauth/owner-key-value`
 
@@ -557,7 +651,7 @@ When a request bears the secret of a key that is past its `expires_at` and not r
 
 **Reason:** a person whose key stopped working can tell an expired key from a mistyped one and knows to use another key. Only the key's own secret reaches this answer, so it tells nothing to anyone who does not already hold the key.
 
-**Tests:** `compliance/key-expiry.test.ts › names when it expired to a request bearing its own secret, and nothing to a secret no key holds`.
+**Tests:** `compliance/key-expiry.test.ts › names when it expired to a request bearing its own secret, and nothing to a secret no key holds`, `compliance/app-vendors.test.ts › names when the key expired at both vendor doors, as GET /keys/current does`.
 
 ### `keys-and-oauth/unknown-secret-unnamed`
 
@@ -1121,6 +1215,22 @@ When a caller acting through `keys.mint` sends `GET /keys`, the server MUST list
 
 **Tests:** `compliance/key-reach.test.ts › lists only the keys within its reach, itself included`.
 
+### `keys-and-oauth/reach-app-key-live`
+
+When a caller acting through `keys.mint` lists, updates or revokes keys, the server MUST judge each key an app made, and the caller itself where an app made it, by what it reaches when used (`keys-and-oauth/app-key-own-vendor`, `keys-and-oauth/app-key-other-app-data`), not by the type map it stores.
+
+**Reason:** a key an app made reaches no more under `app.*` than its app's grant reaches now, so its stored map can name more than it reaches.
+
+**Tests:** `compliance/app-vendors.test.ts › judges a key an app made by what it reaches when used, listing and revoking it only within that reach`.
+
+### `keys-and-oauth/key-map-as-stored`
+
+When a key sends `GET /keys/current`, or a caller lists keys with `GET /keys`, the server MUST show each key's `type_permissions` as the key stores them, with no entry the server derives when it judges what the key reaches.
+
+**Reason:** what a key reaches under `app.*` follows its app's grant and who holds each vendor now, which a stored map does not carry. Showing derived entries would name other apps' vendors to the key.
+
+**Tests:** `compliance/app-vendors.test.ts › reaches nothing of its own vendor through a key whose map names nothing under app.*`.
+
 ### `keys-and-oauth/reach-within`
 
 When a caller acting through `keys.mint` updates or revokes a key within its reach, a key holding the same as the caller and the caller itself included, the server MUST make the change.
@@ -1619,7 +1729,7 @@ When an authorization request names `<type>:read` or `<type>:write` for a type r
 
 When an authorization request names `app.<vendor>.*:read` or `app.<vendor>.*:write` and a type is registered under `app.<vendor>.`, from a client whose registration covers the scope, the server MUST offer the scope on the consent screen and grant it when the person accepts it.
 
-**Reason:** An app that registers types of its own over time asks for its vendor's namespace once, rather than for each type or for `app.*`, which reaches every vendor's app types.
+**Reason:** An app reaches another app's vendor only through a grant that names it (`keys-and-oauth/app-vendor-explicit-grant`), and asks for that vendor once rather than for each type or for `app.*`, which reaches every vendor's app types.
 
 **Tests:** `compliance/oauth-authorize.test.ts › is offered and granted for app.<vendor>.*, reaches that vendor's types registered before and after, and no other vendor's`.
 
@@ -1667,7 +1777,15 @@ When an authorization request names `common.*:read` or `common.*:write`, from a 
 
 ### `keys-and-oauth/approval-app-rows`
 
-When the consent screen offers `app.*` or `app.<vendor>.*`, the server MUST title the row "Every app's data" for `app.*` and "App data from <vendor>" for `app.<vendor>.*`.
+When the consent screen offers `app.*` or `app.<vendor>.*`, the server MUST title the row "Every app's own data" for `app.*` and "<vendor>'s own data" for `app.<vendor>.*`.
+
+**Tests:** `compliance/oauth-authorize.test.ts › titles the rows for every app's data and for one vendor's data on the consent screen`.
+
+### `keys-and-oauth/approval-app-row-reach`
+
+When the consent screen offers `app.*` or `app.<vendor>.*`, the server MUST describe the row as what other apps keep for themselves for `app.*`, and as what the `<vendor>` app keeps for itself for `app.<vendor>.*`, each read for a read and read and changed for a write.
+
+**Reason:** a grant that names another app's vendor reaches what that app keeps for itself, which the owner cannot otherwise tell from the row's title.
 
 **Tests:** `compliance/oauth-authorize.test.ts › titles the rows for every app's data and for one vendor's data on the consent screen`.
 
@@ -2005,9 +2123,9 @@ If an approval posted from the consent screen or the device approval page names 
 
 ### `keys-and-oauth/approval-all-data-types`
 
-Where a request names the all-data scope `*:read` or `*:write`, or the content scope `content:read` or `content:write`, the server MUST offer on the consent screen and the device approval page the choice to choose types beside the levels the request names for that scope, and one control for each item type registered on the instance that the app's registration can be approved for by name, except the types under the `system` and `marfa` roots and the types the app already holds in full.
+Where a request names the all-data scope `*:read` or `*:write`, or the content scope `content:read` or `content:write`, the server MUST offer on the consent screen and the device approval page the choice to choose types beside the levels the request names for that scope, and one control for each item type registered on the instance that the app's registration can be approved for by name, except the types under the `system`, `marfa` and `app` roots and the types the app already holds in full.
 
-**Reason:** All your data, including types added later, is one choice, and an owner who would give less chooses the types instead. Your content is all data but the `system` and `marfa` types, and it is what an app that names no scope is registered for (`keys-and-oauth/register-default-scope`), so its row offers the same types, and the owner of an app such as an MCP client can narrow it to some of them. A type under `system` or `marfa` holds the instance's own bookkeeping and is not data the person keeps, so it is never a choice, though all data reaches it. A type the app holds in full is shown under what the app already holds (`keys-and-oauth/approval-held-shown`) and offered no control. An app registered with a list of scopes is offered every registered type, because naming a type its list's all-data or content scope covers adds nothing to what it may ask for. An app registered with no list is offered only the types the server's supported scopes name, those it was started with, so a type registered since, such as a `user` or publisher type, gets no control and is reached only by all data or content. Registering through `POST /oauth/register` always stores a list, the scopes named or, where it names none, those `keys-and-oauth/register-default-scope` states, so only an app registered another way has none.
+**Reason:** All your data, including types added later, is one choice, and an owner who would give less chooses the types instead. Your content is all data but the `system`, `marfa` and `app` types, and it is what an app that names no scope is registered for (`keys-and-oauth/register-default-scope`), so its row offers the same types, and the owner of an app such as an MCP client can narrow it to some of them. A type under `system` or `marfa` holds the instance's own bookkeeping and is not data the person keeps, so it is never a choice, though all data reaches it. A type under `app` is an app's own machinery, which neither scope reaches (`keys-and-oauth/content-excludes-app`). A type the app holds in full is shown under what the app already holds (`keys-and-oauth/approval-held-shown`) and offered no control. An app registered with a list of scopes is offered every registered type, because naming a type its list's all-data or content scope covers adds nothing to what it may ask for. An app registered with no list is offered only the types the server's supported scopes name, those it was started with, so a type registered since, such as a `user` or publisher type, gets no control and is reached only by all data or content. Registering through `POST /oauth/register` always stores a list, the scopes named or, where it names none, those `keys-and-oauth/register-default-scope` states, so only an app registered another way has none.
 
 **Tests:** `compliance/approval-screens.test.ts › offers all data as one choice with the choice to choose types, and a control for each type, on both pages`, `› offers no choice of types for a request that does not name all data`, `› keeps the types an app holds when it asks again for all data, and shows them as held`, `› offers an app that names no scope the owner's content and links, read only beside read and edit or chosen types, and no permission`, `› offers content with the choice to choose types, at no level above the one asked, on both pages`.
 
@@ -2035,7 +2153,7 @@ When a person approves on the consent screen or the device approval page with al
 
 If an approval names, for a type chosen in place of all data or content, a scope that no all-data or content scope the request names covers, or a type the page did not offer, then the server MUST answer `400` and grant nothing.
 
-**Reason:** A form can only narrow the request: the write of a type is not covered by a request for `*:read` or `content:read`, and a `system` or `marfa` type or a permission is not a type the person was offered. The post is refused whole, as `keys-and-oauth/approval-beyond-shown` refuses one.
+**Reason:** A form can only narrow the request: the write of a type is not covered by a request for `*:read` or `content:read`, and a `system`, `marfa` or `app` type or a permission is not a type the person was offered. The post is refused whole, as `keys-and-oauth/approval-beyond-shown` refuses one.
 
 **Tests:** `compliance/approval-screens.test.ts › refuses a type the request does not reach, and grants nothing, on the consent screen`, `› refuses a type the request does not reach, and grants nothing, on the device approval page`, `› refuses a type that content read only does not reach, and grants nothing, on the consent screen`.
 
@@ -2321,11 +2439,19 @@ If a tool call to an MCP endpoint the server serves carries an app's access toke
 
 ### `keys-and-oauth/mcp-challenge-app-vendor`
 
-If a tool call to an MCP endpoint the server serves registers a new type `app.<vendor>.<name>` for a token that lacks a scope to write it, then the server MUST name `app.<vendor>.*:write` in the challenge's `scope` where a type is registered under `app.<vendor>.`, and `app.*:write` where none is.
+If a tool call to an MCP endpoint the server serves registers a new type `app.<vendor>.<name>` for a token that lacks a scope to write it, where the token's app holds the vendor or no one holds it, then the server MUST name `app.<vendor>.*:write` in the challenge's `scope` where a type is registered under `app.<vendor>.`, and `app.*:write` where none is.
 
 **Reason:** An app is asked for its own vendor's namespace where one can be granted, and never for every vendor's types when a narrower scope exists.
 
 **Tests:** `compliance/oauth-tokens.test.ts › asks for the vendor's own namespace where a type sits under it, and for app.* where none does`.
+
+### `keys-and-oauth/mcp-challenge-vendor-held`
+
+If a tool call to an MCP endpoint the server serves registers a new type `app.<vendor>.<name>` where the owner or an app other than the token's holds the vendor, then the server MUST answer with the tool's error and no `insufficient_scope` challenge, whatever scopes the token holds.
+
+**Reason:** no scope lets an app register under a vendor another holds (`types/app-vendor-claimed-refused`); only the owner gives a vendor to an app, so asking the person for a scope would not let the call succeed.
+
+**Tests:** `compliance/oauth-tokens.test.ts › answers a name under a vendor held for the owner with the tool's error, not a challenge, whatever the scope`.
 
 ### `keys-and-oauth/mcp-challenge-unregistered`
 
@@ -2401,6 +2527,54 @@ When a caller holding `grants.manage` sends `GET /grants`, the server MUST answe
 
 **Tests:** `compliance/auth-grants.test.ts › lists each app the person approved, with its client, scopes and status, in one page`.
 
+### `keys-and-oauth/app-vendors-list`
+
+When the owner's browser session, or a caller holding `grants.manage`, sends `GET /app-vendors`, the server MUST answer each vendor an app or the owner holds, with its `vendor`, the `client_id` of the app that holds it or `null` while the owner holds it, and `claimed_at`, in one page whose `next_cursor` is `null`.
+
+**Tests:** `compliance/app-vendors.test.ts › gives the vendor to the app that registered the first type under it`, `› moves the vendor to the app named, which then reaches its items in place of the app that held it`, `› holds a vendor two apps made types under for the owner, refuses it to either app, and gives it to the app the owner names`, `› lists and moves vendors for the owner's browser session`.
+
+### `keys-and-oauth/app-vendor-move`
+
+When the owner's browser session, or the local command or a key the owner made holding `grants.manage`, sends `PUT /app-vendors/{vendor}` with the `client_id` of an app registered on the instance, the server MUST give the vendor to that app in place of whoever held it, and answer `200` with the vendor as it now reads.
+
+**Reason:** an app that registers again gets a new client ID, and the owner moves its vendor to it so the app keeps reaching what it kept. A browser session holds no permission of its own, so it acts here as the owner.
+
+**Tests:** `compliance/app-vendors.test.ts › moves the vendor to the app named, which then reaches its items in place of the app that held it`, `› lists and moves vendors for the owner's browser session`.
+
+### `keys-and-oauth/app-vendor-move-permission`
+
+If a credential without `grants.manage` sends `GET /app-vendors` or `PUT /app-vendors/{vendor}`, then the server MUST answer `403 forbidden` with `details.required_scope` `grants.manage`.
+
+**Tests:** `compliance/app-vendors.test.ts › refuses a credential without grants.manage with 403 forbidden naming it`.
+
+### `keys-and-oauth/app-vendor-move-owner-only`
+
+If an app's sign-in or a key an app made sends `PUT /app-vendors/{vendor}`, then the server MUST answer `403 forbidden` and leave the vendor with whoever holds it, whatever permissions the credential holds.
+
+**Reason:** giving a vendor to an app hands it what another app keeps for itself, which only the owner may approve.
+
+**Tests:** `compliance/app-vendors.test.ts › refuses to give a vendor to an app's sign-in or a key an app made, whatever it holds`, `› treats an owner's key minted through an app as the app's: refused a vendor move, and kept from other apps' data the app's grant no longer names`.
+
+### `keys-and-oauth/app-vendor-move-unknown-maker`
+
+If a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `PUT /app-vendors/{vendor}`, then the server MUST answer `403 forbidden` and leave the vendor with whoever holds it, whatever permissions the key holds.
+
+**Reason:** no record says the key is the owner's, and only the owner gives a vendor to an app. A new key the owner mints moves vendors.
+
+**Tests:** waiting on #2802.
+
+### `keys-and-oauth/app-vendor-move-unknown-client`
+
+If `PUT /app-vendors/{vendor}` names a `client_id` no app registered on the instance, then the server MUST answer `404 not_found` and leave the vendor with the app that holds it.
+
+**Tests:** `compliance/app-vendors.test.ts › refuses a client no app registered with 404 not_found, a name that is no vendor and a missing client_id with 400`.
+
+### `keys-and-oauth/app-vendor-move-refused`
+
+If `PUT /app-vendors/{vendor}` names a vendor that is not an `app.<vendor>` namespace, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/app-vendors.test.ts › refuses a client no app registered with 404 not_found, a name that is no vendor and a missing client_id with 400`.
+
 ### `keys-and-oauth/grants-page-fields`
 
 When `GET /grants` lists a grant, the server MUST give it `client_name`, the name the app registered or `null`, and `origins`, the origin of each redirect URI a web client registered, empty for a native client.
@@ -2451,11 +2625,11 @@ When `PATCH /grants/{id}` reduces a grant, the server MUST end access tokens and
 
 ### `keys-and-oauth/grant-narrow-keys`
 
-When `PATCH /grants/{id}` reduces a grant, the server MUST revoke in the same write every live key whose `oauth_client_id` names the app and whose permissions or type, link, metadata or profile access reach beyond what the resulting scopes grant.
+When `PATCH /grants/{id}` reduces a grant, the server MUST revoke in the same write every live key whose `oauth_client_id` names the app and whose permissions or type, link, metadata or profile access reach beyond what the resulting scopes grant, each judged with the app's own vendors and the reduced grant applied as `keys-and-oauth/app-reaches-own-vendor`, `keys-and-oauth/app-key-own-vendor` and `keys-and-oauth/app-key-other-app-data` state.
 
-**Reason:** A key an app made holds no more than the app's access when it was made, so the owner who reduces that access takes it from the app's keys as from its tokens (`keys-and-oauth/grant-narrow-tokens`). A key is judged by what it reaches, as a token's scopes are.
+**Reason:** A key an app made holds no more than the app's access when it was made, so the owner who reduces that access takes it from the app's keys as from its tokens (`keys-and-oauth/grant-narrow-tokens`). A key is judged by what it reaches, as a token's scopes are, and a key whose reach of other apps' data the reduction already takes away is not beyond it.
 
-**Tests:** `compliance/auth-grants.test.ts › revokes the keys an app made that hold more than its narrowed access, a key's descendant included, and keeps the rest`, `› judges an app's keys by the access each reaches, as its tokens are judged`.
+**Tests:** `compliance/auth-grants.test.ts › revokes the keys an app made that hold more than its narrowed access, a key's descendant included, and keeps the rest`, `› judges an app's keys by the access each reaches, as its tokens are judged`, `compliance/app-vendors.test.ts › keeps a key an app made, narrowed to what the app's narrowed grant reaches, when the owner narrows the grant`.
 
 ### `keys-and-oauth/grant-narrow-keeps-keys`
 

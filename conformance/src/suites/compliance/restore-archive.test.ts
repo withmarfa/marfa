@@ -312,10 +312,28 @@ describe("restore", () => {
       );
     const without = (m: Record<string, unknown>, field: string) =>
       Object.fromEntries(Object.entries(m).filter(([key]) => key !== field));
+    const second = (m: Record<string, unknown>) => ({
+      ...m,
+      version: 2,
+      plugin_count: 0,
+      app_vendor_count: 0,
+    });
     const cases: {
       reshape: (m: Record<string, unknown>) => unknown;
       path: string;
     }[] = [
+      {
+        reshape: (m) => without(second(m), "plugin_count"),
+        path: "plugin_count",
+      },
+      {
+        reshape: (m) => without(second(m), "app_vendor_count"),
+        path: "app_vendor_count",
+      },
+      {
+        reshape: (m) => ({ ...second(m), app_vendor_count: "0" }),
+        path: "app_vendor_count",
+      },
       { reshape: (m) => without(m, "version"), path: "version" },
       { reshape: (m) => ({ ...m, version: "1" }), path: "version" },
       { reshape: (m) => ({ ...m, version: 0 }), path: "version" },
@@ -467,6 +485,34 @@ describe("restore", () => {
         );
       const refused = await owner.restoreArchive(
         archive((m) => ({ ...m, [count]: Number(m[count]) + 1 })),
+      );
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.field).toBe(count);
+      expect((await client.getItem(id)).status).toBe(404);
+
+      // The witness: the same archive counting what it holds restores.
+      const restored = await owner.restoreArchive(archive((m) => m));
+      expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+      trackItem(ctx, id);
+      expect(restored.data.imported).toBe(1);
+    },
+  );
+
+  it.each(["plugin_count", "app_vendor_count"])(
+    "refuses a version 2 archive whose %s is not the number of lines it holds, and writes nothing",
+    async (count) => {
+      const id = uuidv7();
+      const archive = (reshape: (m: Record<string, unknown>) => unknown) =>
+        itemsArchive(
+          [{ id, type: "core.note", source: ctx.source, properties: {} }],
+          [],
+          [],
+          (m) =>
+            reshape({ ...m, version: 2, plugin_count: 0, app_vendor_count: 0 }),
+        );
+      const refused = await owner.restoreArchive(
+        archive((m) => ({ ...m, [count]: 1 })),
       );
       expect(refused.status, JSON.stringify(refused.error)).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
@@ -1388,6 +1434,8 @@ describe("what a restore answers", () => {
         "connector_states_skipped",
         "connector_agreements_added",
         "connector_agreements_skipped",
+        "app_vendors_added",
+        "app_vendors_skipped",
         "rows_imported",
         "rows_skipped",
         "settings_without_receiver",
@@ -1435,6 +1483,8 @@ describe("what a restore answers", () => {
       connector_states_skipped: 0,
       connector_agreements_added: 0,
       connector_agreements_skipped: 0,
+      app_vendors_added: 0,
+      app_vendors_skipped: 0,
       rows_imported: 0,
       rows_skipped: 0,
       entries_skipped: [],
@@ -1492,6 +1542,8 @@ describe("what a restore answers", () => {
       connector_states_skipped: 0,
       connector_agreements_added: 0,
       connector_agreements_skipped: 0,
+      app_vendors_added: 0,
+      app_vendors_skipped: 0,
       rows_imported: 0,
       rows_skipped: 0,
       entries_skipped: [],

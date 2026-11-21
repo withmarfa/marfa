@@ -232,6 +232,28 @@ If `POST /types` or `PUT /types/{id}` names a `label` or `plural` for the type, 
 
 **Tests:** `compliance/type-label.test.ts › refuses a label or plural longer than 100 characters or not text`.
 
+### `types/app-vendor-bound`
+
+When an app's sign-in or a key an app made registers the first type under an `app.<vendor>` namespace no app holds, the server MUST give the vendor to the app's OAuth client in the same write.
+
+**Reason:** a vendor is an app's own machinery, so it belongs to the app that made it, and the owner moves it with `PUT /app-vendors/{vendor}` (`keys-and-oauth/app-vendor-move`).
+
+**Tests:** `compliance/app-vendors.test.ts › gives the vendor to the app that registered the first type under it`.
+
+### `types/app-vendor-owner-held`
+
+When a credential that is neither an app's sign-in nor a key an app made, a key of unknown maker included (`keys-and-oauth/unknown-maker`), registers the first type under an `app.<vendor>` namespace no one holds, the server MUST hold the vendor for the owner in the same write.
+
+**Reason:** an unheld vendor goes to the first app that registers under it, so a vendor left unheld after the owner's own type would let any app choose that name and reach the owner's items; upgrade and restore hold such a vendor the same way.
+
+**Tests:** `compliance/app-vendors.test.ts › holds for the owner a vendor whose first type a key no app made registers, and refuses it to an app`.
+
+### `types/app-vendor-claimed-refused`
+
+If an app's sign-in or a key an app made registers a type under an `app.<vendor>` namespace another app or the owner holds, or a key of unknown maker (`keys-and-oauth/unknown-maker`) registers one under a namespace an app holds, then the server MUST answer `403 forbidden` with `details.namespace` naming `app.<vendor>`.
+
+**Tests:** `compliance/app-vendors.test.ts › refuses another app a type under the vendor with 403 forbidden naming the namespace`, `› moves the vendor to the app named, which then reaches its items in place of the app that held it`, `› holds a vendor two apps made types under for the owner, refuses it to either app, and gives it to the app the owner names`.
+
 ## Descriptions and guidance
 
 A type's `description` says in one sentence what it is for. Its `guidance` is optional Markdown that tells an agent or an app builder how to use it. Lengths are counted in Unicode code points.
@@ -286,6 +308,14 @@ If `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names non-empty `
 
 **Tests:** `compliance/type-guidance.test.ts › refuses guidance on an app type and takes the same guidance on a user type`.
 
+### `types/guidance-unknown-maker`
+
+If a key of unknown maker (`keys-and-oauth/unknown-maker`) adds, changes or removes a type's `guidance`, then the server MUST answer `403 forbidden` and keep the type as it was, whatever permissions the key holds.
+
+**Reason:** agents read guidance as instructions, and no record says the key is the owner's rather than an app's. A new key the owner mints writes guidance.
+
+**Tests:** waiting on #2802.
+
 ### `types/guidance-empty`
 
 If `POST /types` or `PUT /types/{id}` names `guidance` that is an empty string, then the server MUST keep the type with no guidance.
@@ -304,7 +334,7 @@ If a key without `schema.write` sends `POST /types` naming non-empty `guidance` 
 
 If an app's access token, or a key an app made, including an owner's key an app minted with `owner_key: true`, that holds `schema.write` sends `POST /types`, `PUT /types/{id}` or `POST /restore` that would add, change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
 
-**Reason:** agents read guidance as instructions, so the owner writes it, directly or by installing a plugin (`plugins/install-guidance`): through the local command, or a key that no app made. An owner's key an app minted reaches what the owner gave it, but an app still chose what it says. A key made before the server recorded who made each key counts as one an app made unless its audit trail leads back to the local command or the owner's browser. An app the owner allowed `user.*` may still make and change the types themselves.
+**Reason:** agents read guidance as instructions, so the owner writes it, directly or by installing a plugin (`plugins/install-guidance`): through the local command, or a key that no app made. An owner's key an app minted reaches what the owner gave it, but an app still chose what it says. A key no record names a maker for counts as one an app made (`types/guidance-unknown-maker`). An app the owner allowed `user.*` may still make and change the types themselves.
 
 **Tests:** `compliance/plugins.test.ts › refuses guidance to an app holding user.*:write and schema.write, and takes the same registration without it`, `› refuses an app's replacement that adds guidance, and lets an owner's key add it`, `› refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it`, `compliance/type-guidance-restore.test.ts › answers 403 forbidden naming guidance to an app holding backups.manage and schema.write, and registers none of its types`.
 

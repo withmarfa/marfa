@@ -61,7 +61,8 @@ export interface ArchiveFileLine {
 
 /**
  * A manifest a restore accepts for an archive holding nothing, with `fields`
- * laid over it: the counts every manifest carries, each zero.
+ * laid over it: the counts every manifest carries, each zero, and at version 2
+ * the plugin and vendor counts.
  */
 export function emptyManifest(
   fields: Record<string, unknown> = {},
@@ -85,6 +86,7 @@ export function emptyManifest(
     enforcement_count: 0,
     connector_state_count: 0,
     connector_agreement_count: 0,
+    ...(fields.version === 2 ? { plugin_count: 0, app_vendor_count: 0 } : {}),
     ...fields,
   };
 }
@@ -109,6 +111,7 @@ const INSTANCE_KINDS: Record<string, string> = {
   connector_state: "connector_state_count",
   connector_agreement: "connector_agreement_count",
   plugin: "plugin_count",
+  app_vendor: "app_vendor_count",
 };
 
 /** The manifest's count of each kind of line in `instance.ndjson.gz`. */

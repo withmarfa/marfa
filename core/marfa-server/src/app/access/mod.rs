@@ -13,6 +13,7 @@ mod profile;
 pub mod reach;
 mod schema;
 mod tools;
+mod vendors;
 mod webhooks;
 
 use rusqlite::Transaction;
@@ -32,6 +33,10 @@ pub use maps::{Axis, Level, Map};
 pub use overview::Described;
 pub use schema::{Door, SchemaKind};
 pub use tools::AdminTask;
+pub use vendors::{
+    app_key_reach, as_stored, bind_app_key, bind_sign_in, key_reach, named_by, reach_of, reaching,
+    sign_in_reach, unknown_maker_reach,
+};
 pub use webhooks::{Listener, Maker, attention_listeners, standing_maker};
 
 macro_rules! permissions {
@@ -214,6 +219,8 @@ fn requires(permission: Permission) -> Refusal {
 #[derive(Debug)]
 pub struct Change<'a> {
     pub grants: &'a Grants,
+    /// The maps the key would store, read as its maker's rule reads them.
+    pub stored: &'a Grants,
     pub life: Option<Option<&'a str>>,
     pub levers: Option<Option<&'a Levers>>,
     pub narrow_only: bool,
@@ -328,11 +335,11 @@ impl Caller {
         }
     }
 
-    /// An app's sign-in, or a key an app made, whatever it was minted as.
+    /// An app's sign-in, or a key an app made or no record names a maker for.
     pub fn app_made(&self) -> bool {
         match self {
             Caller::App { .. } => true,
-            Caller::Key(key) => key.app_made,
+            Caller::Key(key) => key.made_by != crate::app::keys::Maker::Owner,
             Caller::Local(_) | Caller::Owner(_) | Caller::Server => false,
         }
     }
@@ -423,6 +430,34 @@ impl Caller {
         }
     }
 
+    /// What a key this caller mints by default stores: the caller's own stored maps.
+    pub fn stored_set(&self) -> Grants {
+        match self {
+            Caller::Key(key) | Caller::App { key, .. } => {
+                let mut stored = key.grants.clone();
+                if let Some(types) = &key.stored_types {
+                    stored.maps[Axis::Type as usize] = types.clone();
+                }
+                stored
+            }
+            Caller::Local(_) | Caller::Owner(_) | Caller::Server => self.whole_set(),
+        }
+    }
+
+    /// A key may not store more than the caller stores, whatever either reaches now.
+    pub fn check_stored_ceiling(&self, wanted: &Grants) -> Result<()> {
+        let held = match self {
+            Caller::Local(_) | Caller::Server => return Ok(()),
+            Caller::Owner(_) => Grants::default(),
+            Caller::Key(key) => as_stored(key),
+            Caller::App { key, .. } => key.grants.clone(),
+        };
+        match held.first_scope_beyond(wanted) {
+            Some(scope) => Err(Beyond::Scope(scope).into()),
+            None => Ok(()),
+        }
+    }
+
     pub fn check_ceiling(&self, wanted: &Grants) -> Result<()> {
         let nothing = Grants::default();
         let held = match self {
@@ -486,7 +521,10 @@ impl Caller {
         }
         let limit = target.expires_at.as_deref();
         let app_made = target.oauth_client_id.is_some();
-        let widening = target.grants.first_beyond(&target.source, change.grants);
+        let widening = target
+            .grants
+            .first_beyond(&target.source, change.grants)
+            .or_else(|| as_stored(target).first_beyond(&target.source, change.stored));
         let widens = widening.is_some();
         let lengthens = change.life.is_some_and(|wanted| outlives(wanted, limit));
         if let Some(beyond) = widening {
@@ -528,6 +566,7 @@ impl Caller {
         }
         self.require(Permission::KeysMint)?;
         self.check_ceiling(change.grants)?;
+        self.check_stored_ceiling(change.stored)?;
         match change.life {
             Some(wanted) => self.check_life(wanted),
             None if widens => self.check_life(limit),
@@ -573,6 +612,7 @@ impl Caller {
 }
 
 fn standing_key(tx: &Transaction<'_>, mut key: Key) -> Result<Key> {
+    bind_app_key(tx, &mut key)?;
     key.standing = match &key.levers {
         OwnLevers::Unread(text) => {
             report_unread(&key.id, text);
@@ -613,12 +653,13 @@ mod tests {
             source: source.into(),
             default_tier: "library".into(),
             oauth_client_id: None,
-            app_made: false,
+            made_by: crate::app::keys::Maker::Owner,
             grants: Grants {
                 permissions: permissions.to_vec(),
                 maps: Default::default(),
                 sources: sources.iter().map(ToString::to_string).collect(),
             },
+            stored_types: None,
             levers: OwnLevers::Unset,
             standing: Standing::default(),
             created_at: String::new(),
@@ -655,6 +696,191 @@ mod tests {
             refused.details.and_then(|d| d.get("max_age").cloned()),
             Some(json!(900))
         );
+    }
+
+    fn grants_of(value: Value) -> Grants {
+        let mut grants = Grants::default();
+        grants.maps[Axis::Type as usize] = map(Axis::Type, value);
+        grants
+    }
+
+    fn type_level(grants: &Grants, name: &str) -> Level {
+        Axis::Type.level(grants.map(Axis::Type), name)
+    }
+
+    #[test]
+    fn an_apps_sign_in_reaches_its_own_vendors_and_only_the_app_data_its_grant_names() {
+        let own = ["app.mine".to_string()];
+        let held = sign_in_reach(
+            &grants_of(json!({ "*": "write", "app.*": "none", "app.other.*": "read" })),
+            &own,
+        );
+        assert_eq!(type_level(&held, "app.mine.setting"), Level::Write);
+        assert_eq!(type_level(&held, "app.other.setting"), Level::Read);
+        assert_eq!(type_level(&held, "app.third.setting"), Level::None);
+
+        let reader = sign_in_reach(&grants_of(json!({ "core.note": "read" })), &own);
+        assert_eq!(type_level(&reader, "app.mine.setting"), Level::Read);
+        assert_eq!(type_level(&reader, "app.third.setting"), Level::None);
+
+        let every_app = sign_in_reach(&grants_of(json!({ "app.*": "write" })), &own);
+        assert_eq!(type_level(&every_app, "app.mine.setting"), Level::Write);
+        assert_eq!(type_level(&every_app, "app.other.setting"), Level::Write);
+    }
+
+    fn wide_key() -> Grants {
+        grants_of(json!({ "*": "write" }))
+    }
+
+    #[test]
+    fn a_key_an_app_made_reaches_app_data_only_as_its_map_names_it_there_within_its_apps_live_grant()
+     {
+        let own = ["app.mine".to_string()];
+        let content = grants_of(json!({ "*": "write", "app.*": "none" }));
+        let every_app = grants_of(json!({ "*": "write", "app.*": "write" }));
+
+        let unnamed = key_reach(&wide_key(), Some(&content), &own);
+        assert_eq!(type_level(&unnamed, "app.mine.setting"), Level::None);
+        assert_eq!(type_level(&unnamed, "core.note"), Level::Write);
+        let unnamed = key_reach(&wide_key(), Some(&every_app), &own);
+        assert_eq!(type_level(&unnamed, "app.mine.setting"), Level::None);
+        assert_eq!(type_level(&unnamed, "app.other.setting"), Level::None);
+        let disconnected = key_reach(&wide_key(), None, &own);
+        assert_eq!(type_level(&disconnected, "app.mine.setting"), Level::None);
+
+        let old = grants_of(json!({ "*": "write", "app.*": "write" }));
+        let reach = key_reach(&old, Some(&content), &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Write);
+        assert_eq!(type_level(&reach, "app.other.setting"), Level::None);
+        let reach = key_reach(&old, Some(&every_app), &own);
+        assert_eq!(type_level(&reach, "app.other.setting"), Level::Write);
+
+        let narrow = grants_of(json!({ "core.note": "read", "app.*": "read" }));
+        let reach = key_reach(&narrow, Some(&every_app), &own);
+        assert_eq!(type_level(&reach, "app.other.setting"), Level::Read);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Read);
+
+        let asked = grants_of(json!({ "app.mine.*": "write" }));
+        let reader = grants_of(json!({ "*": "read" }));
+        let reach = key_reach(&asked, Some(&reader), &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Read);
+        let reach = key_reach(&asked, Some(&content), &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Write);
+        let reach = key_reach(&asked, None, &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Write);
+        let moved = key_reach(&asked, Some(&content), &[]);
+        assert_eq!(type_level(&moved, "app.mine.setting"), Level::None);
+
+        let named = grants_of(json!({ "*": "read", "app.mine.setting": "write" }));
+        let reach = key_reach(&named, Some(&reader), &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Read);
+        assert_eq!(type_level(&reach, "app.mine.other"), Level::None);
+
+        let mine = grants_of(json!({ "*": "write", "app.mine.*": "write" }));
+        let fenced_grant = grants_of(json!({ "*": "write", "app.mine.secret": "none" }));
+        let reach = key_reach(&mine, Some(&fenced_grant), &own);
+        assert_eq!(type_level(&reach, "app.mine.secret"), Level::None);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Write);
+        let fenced = grants_of(json!({
+            "*": "write",
+            "app.mine.*": "write",
+            "app.mine.secret": "none",
+        }));
+        let reach = key_reach(&fenced, Some(&content), &own);
+        assert_eq!(type_level(&reach, "app.mine.secret"), Level::None);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Write);
+
+        let exact = grants_of(json!({ "*": "read", "app.other.setting": "read" }));
+        let granted =
+            grants_of(json!({ "*": "read", "app.*": "none", "app.other.setting": "read" }));
+        let reach = key_reach(&exact, Some(&granted), &own);
+        assert_eq!(type_level(&reach, "app.other.setting"), Level::Read);
+        assert_eq!(type_level(&reach, "app.other.else"), Level::None);
+    }
+
+    #[test]
+    fn a_kept_key_an_app_made_reaches_its_own_vendor_as_its_map_names_it_there() {
+        let own = ["app.mine".to_string()];
+        let stored = grants_of(json!({ "core.note": "read", "app.*": "write" }));
+        let kept = key_reach(&stored, None, &own);
+        assert_eq!(type_level(&kept, "app.mine.setting"), Level::Write);
+        assert_eq!(type_level(&kept, "app.other.setting"), Level::None);
+        let reader = grants_of(json!({ "core.note": "read" }));
+        let reach = key_reach(&stored, Some(&reader), &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Read);
+        assert_eq!(type_level(&reach, "app.other.setting"), Level::None);
+    }
+
+    #[test]
+    fn an_entry_that_covers_no_type_gives_a_key_an_app_made_nothing_under_app() {
+        let own = ["app.mine".to_string()];
+        let odd = grants_of(json!({ "core.note?": "write" }));
+        let writer = grants_of(json!({ "*": "write" }));
+        for grant in [Some(&writer), None] {
+            let reach = key_reach(&odd, grant, &own);
+            assert_eq!(type_level(&reach, "app.mine.setting"), Level::None);
+            assert_eq!(type_level(&reach, "core.note"), Level::None);
+        }
+    }
+
+    #[test]
+    fn a_key_of_unknown_maker_reaches_only_what_its_map_names_under_app_and_no_vendor_an_app_holds()
+    {
+        let held = ["app.held".to_string()];
+        let stored = grants_of(json!({
+            "*": "write",
+            "app.*": "write",
+            "app.held.setting": "write",
+            "app.held.*": "write",
+            "app.mine.setting": "read",
+        }));
+        let reach = unknown_maker_reach(&stored, &held);
+        assert_eq!(type_level(&reach, "app.held.setting"), Level::None);
+        assert_eq!(type_level(&reach, "app.held.other"), Level::None);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Read);
+        assert_eq!(type_level(&reach, "app.unheld.setting"), Level::Write);
+        assert_eq!(type_level(&reach, "core.note"), Level::Write);
+        for narrow in [json!({ "core.note": "write" }), json!({ "*": "write" })] {
+            let reach = unknown_maker_reach(&grants_of(narrow), &held);
+            assert_eq!(type_level(&reach, "app.unheld.setting"), Level::None);
+            assert_eq!(type_level(&reach, "app.held.setting"), Level::None);
+        }
+    }
+
+    #[test]
+    fn a_key_of_unknown_maker_moves_no_vendor_and_changes_no_guidance() {
+        let mut unknown = key(
+            "old",
+            "old",
+            &[Permission::GrantsManage, Permission::SchemaWrite],
+            &[],
+        );
+        unknown.made_by = crate::app::keys::Maker::Unknown;
+        let owners = key(
+            "owner",
+            "owner",
+            &[Permission::GrantsManage, Permission::SchemaWrite],
+            &[],
+        );
+        let unknown = Caller::Key(Box::new(unknown));
+        let owners = Caller::Key(Box::new(owners));
+        owners.require_vendor_move().unwrap();
+        owners.require_guidance(None, Some("Use it.")).unwrap();
+        assert_eq!(
+            unknown.require_vendor_move().unwrap_err().code,
+            Code::Forbidden
+        );
+        assert_eq!(
+            unknown
+                .require_guidance(None, Some("Use it."))
+                .unwrap_err()
+                .code,
+            Code::Forbidden
+        );
+        unknown
+            .require_guidance(Some("Kept."), Some("Kept."))
+            .unwrap();
+        assert_eq!(unknown.maker(), crate::app::keys::Maker::Unknown);
     }
 
     #[test]
@@ -860,6 +1086,38 @@ mod tests {
         assert!(Caller::local().reaches(&wide_types(key("t", "t", &[KeysManage], &["x"]))));
     }
 
+    #[test]
+    fn a_stored_map_holds_a_childs_pattern_only_where_it_covers_every_type_the_pattern_matches() {
+        let mut parent = app_key(key("parent", "oauth:client", &[], &[]));
+        parent.made_by = crate::app::keys::Maker::App("client".into());
+        let parent = with_map(
+            parent,
+            Axis::Type,
+            json!({ "core.note": "write", "app.v.a": "write", "app.v.b": "write" }),
+        );
+        let stored = |value: Value| vendors::named_by(&parent.made_by, &map(Axis::Type, value));
+        let child = |value: Value| {
+            let mut grants = Grants::default();
+            grants.maps[Axis::Type as usize] = stored(value);
+            grants
+        };
+        let caller = Caller::Key(Box::new(parent.clone()));
+        for (wanted, refused) in [
+            (json!({ "app.v.*": "write" }), true),
+            (json!({ "app.v.*": "read" }), true),
+            (json!({ "app.*": "read" }), true),
+            (json!({ "app.v.a.*": "write" }), true),
+            (json!({ "app.v.a": "write", "core.note": "read" }), false),
+            (json!({ "app.v.b": "read" }), false),
+        ] {
+            assert_eq!(
+                caller.check_stored_ceiling(&child(wanted.clone())).is_err(),
+                refused,
+                "{wanted}"
+            );
+        }
+    }
+
     fn app(key: Key) -> Caller {
         Caller::App {
             key: Box::new(key),
@@ -875,7 +1133,7 @@ mod tests {
     fn app_key(mut key: Key) -> Key {
         key.source = "oauth:client".into();
         key.oauth_client_id = Some("client".into());
-        key.app_made = true;
+        key.made_by = crate::app::keys::Maker::App("client".into());
         key
     }
 
@@ -892,6 +1150,7 @@ mod tests {
         let nothing = Grants::default();
         let change = |grants, narrow_only| Change {
             grants,
+            stored: grants,
             life: None,
             levers: None,
             narrow_only,
@@ -1084,6 +1343,7 @@ mod tests {
         let levers = Levers::from_row("{}").unwrap();
         let naming_levers = Change {
             grants: &target.grants,
+            stored: &target.grants,
             life: None,
             levers: Some(Some(&levers)),
             narrow_only: false,
@@ -1178,6 +1438,7 @@ mod tests {
         let narrower = Grants::default();
         let change = |grants, life| Change {
             grants,
+            stored: grants,
             life,
             levers: None,
             narrow_only: false,

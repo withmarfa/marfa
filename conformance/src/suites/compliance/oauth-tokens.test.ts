@@ -544,12 +544,19 @@ describe("the MCP endpoint", () => {
   });
 });
 
+/** Lowercase letters no earlier attempt used, for a vendor a retry must find unheld. */
+function letters(): string {
+  return Array.from({ length: 8 }, () =>
+    String.fromCharCode(97 + Math.floor(Math.random() * 26)),
+  ).join("");
+}
+
 describe("registering a type from /mcp/schema", () => {
   const SCHEMA_APP = "metadata.types:write core.note:read";
 
-  /** A token for `scope` issued for the schema endpoint. */
-  async function schemaToken(scope: string): Promise<string> {
-    const app = await registerApp(server, scope);
+  /** A token for `scope` issued for the schema endpoint, to `app` or to a new app. */
+  async function schemaToken(scope: string, given?: App): Promise<string> {
+    const app = given ?? (await registerApp(server, scope));
     const proof = pkce();
     const resource = `${origin}/mcp/schema`;
     const consent = await sentTo(
@@ -623,6 +630,33 @@ describe("registering a type from /mcp/schema", () => {
   });
 
   it("asks for the vendor's own namespace where a type sits under it, and for app.* where none does", async () => {
+    const tag = letters();
+    const vendor = `app.held${tag}`;
+    const wide = `${SCHEMA_APP} app.*:write`;
+    const app = await registerApp(server, wide);
+    const claimed = await register(
+      await schemaToken(wide, app),
+      `${vendor}.widget`,
+    );
+    expect(claimed.status).toBe(200);
+    expect(await claimed.text()).not.toContain('"isError":true');
+    const challenged = async (id: string): Promise<string> => {
+      const answer = await register(await schemaToken(SCHEMA_APP, app), id);
+      expect(answer.status, id).toBe(403);
+      await answer.body?.cancel();
+      return answer.headers.get("www-authenticate") ?? "";
+    };
+    expect(await challenged(`${vendor}.gizmo`)).toContain(
+      `scope="${vendor}.*:write"`,
+    );
+    expect(await challenged(`app.fresh${tag}.gizmo`)).toContain(
+      'scope="app.*:write"',
+    );
+  });
+
+  it("answers a name under a vendor held for the owner with the tool's error, not a challenge, whatever the scope", async () => {
+    const tag = letters();
+    const vendor = `app.owned${tag}`;
     const registered = await fetch(`${server.apiUrl}/types`, {
       method: "POST",
       headers: {
@@ -630,24 +664,23 @@ describe("registering a type from /mcp/schema", () => {
         authorization: `Bearer ${server.workingKey}`,
       },
       body: JSON.stringify({
-        id: "app.acme.widget",
+        id: `${vendor}.widget`,
         version: 1,
         fields: { title: { type: "string" } },
       }),
     });
     expect(registered.status).toBe(201);
-    const challenged = async (id: string): Promise<string> => {
-      const answer = await register(await schemaToken(SCHEMA_APP), id);
-      expect(answer.status, id).toBe(403);
-      await answer.body?.cancel();
-      return answer.headers.get("www-authenticate") ?? "";
-    };
-    expect(await challenged("app.acme.gizmo")).toContain(
-      'scope="app.acme.*:write"',
-    );
-    expect(await challenged("app.fresh.gizmo")).toContain(
-      'scope="app.*:write"',
-    );
+    for (const scope of [SCHEMA_APP, `${SCHEMA_APP} ${vendor}.*:write`]) {
+      const answer = await register(
+        await schemaToken(scope),
+        `${vendor}.gizmo`,
+      );
+      expect(answer.status, scope).toBe(200);
+      expect(answer.headers.get("www-authenticate"), scope).toBeNull();
+      const text = await answer.text();
+      expect(text, scope).toContain('"isError":true');
+      expect(text, scope).toContain(`/app-vendors/${vendor}`);
+    }
   });
 
   it("answers a name in a namespace nothing grants with the tool's error, not a challenge", async () => {

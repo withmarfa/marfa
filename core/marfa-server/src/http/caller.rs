@@ -195,6 +195,26 @@ impl FromRequestParts<Arc<App>> for OnPage {
     }
 }
 
+/// The owner's browser session or a credential; a credential that does not verify is refused as
+/// any door refuses it, an expired key's expiry named.
+pub struct OwnerOrCredential(pub Caller);
+
+impl FromRequestParts<Arc<App>> for OwnerOrCredential {
+    type Rejection = Stopped;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        app: &Arc<App>,
+    ) -> std::result::Result<OwnerOrCredential, Stopped> {
+        let presents_one = !matches!(presented(&parts.headers), Presented::Nothing);
+        match OnPage::from_request_parts(parts, app).await?.0 {
+            Some(caller) => Ok(OwnerOrCredential(caller)),
+            None if presents_one => Err(refused(parts).into()),
+            None => Err(unauthorized().into()),
+        }
+    }
+}
+
 async fn names_session(parts: &mut Parts, app: &Arc<App>) -> Result<bool> {
     let address = app.addresses().sign_in();
     let Some(token) = cookies::session_token(&parts.headers, &address) else {
@@ -229,7 +249,6 @@ pub async fn presents(
                 Ok(())
             }
             Some(_) => Err(unauthorized()),
-            None if asks == Asks::Session => Err(unauthorized()),
             None => Err(refused(parts)),
         },
     }

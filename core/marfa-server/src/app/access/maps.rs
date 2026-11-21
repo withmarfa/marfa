@@ -143,11 +143,108 @@ impl Map {
         json!([default, apart])
     }
 
+    /// The level `entry` is decided at, a wildcard by itself or a wider entry, never by a narrower one.
+    pub(super) fn entry_level(&self, entry: &str) -> Level {
+        let Some(mut root) = entry.strip_suffix(".*") else {
+            return self.most_specific(entry);
+        };
+        if let Some(level) = self.exact(entry) {
+            return level;
+        }
+        while let Some(at) = root.rfind('.') {
+            root = &root[..at];
+            if let Some(level) = self.exact(&format!("{root}.*")) {
+                return level;
+            }
+        }
+        self.exact("*").unwrap_or(Level::None)
+    }
+
+    /// The most the map grants any name outside `app`.
+    fn outside_apps(&self) -> Level {
+        self.patterns()
+            .filter(|(name, _)| !is_app(name))
+            .map(|(_, level)| level)
+            .max()
+            .unwrap_or(Level::None)
+    }
+
+    /// An app's sign-in: `app.*` only where its grant names it, and each of `own` at least at the
+    /// most it holds outside `app`.
+    pub(super) fn for_sign_in(&mut self, own: &[String]) {
+        let most = self.outside_apps();
+        self.0
+            .entry("app.*")
+            .or_insert_with(|| Level::None.word().into());
+        for vendor in own {
+            let name = format!("{vendor}.*");
+            let level = self.entry_level(&name).max(most);
+            self.0.insert(name, level.word().into());
+        }
+    }
+
+    /// A key no owner made: nothing under `app` that the map does not name there.
+    pub(super) fn naming_apps(&self) -> Map {
+        let mut named = self.clone();
+        named
+            .0
+            .entry("app.*")
+            .or_insert_with(|| Level::None.word().into());
+        named
+    }
+
+    /// Only `vendors` under `app`, at any level.
+    pub(super) fn only_vendors(vendors: &[String]) -> Map {
+        let mut entries = serde_json::Map::new();
+        entries.insert("app.*".into(), Level::None.word().into());
+        for vendor in vendors {
+            entries.insert(format!("{vendor}.*"), Level::Write.word().into());
+        }
+        Map(entries)
+    }
+
+    /// Each name under `app` at the lower of the two maps; every other name as `self` has it.
+    pub(super) fn within_apps(&self, ceiling: &Map) -> Map {
+        let mut held = self.clone();
+        for name in self
+            .0
+            .keys()
+            .chain(ceiling.0.keys())
+            .filter(|name| is_app(name))
+        {
+            let level = self.entry_level(name).min(ceiling.entry_level(name));
+            held.0.insert(name.clone(), level.word().into());
+        }
+        held
+    }
+
+    /// No name under any of `vendors`, whatever entry would reach it.
+    pub(super) fn without_vendors(&self, vendors: &[String]) -> Map {
+        let mut kept = self.clone();
+        kept.0.retain(|name, _| {
+            !vendors.iter().any(|vendor| {
+                name.strip_prefix(vendor.as_str())
+                    .is_some_and(|rest| rest.starts_with('.'))
+            })
+        });
+        for vendor in vendors {
+            kept.0
+                .insert(format!("{vendor}.*"), Level::None.word().into());
+        }
+        kept
+    }
+
     fn widest(&self, name: &str) -> Level {
         self.exact(name)
             .unwrap_or(Level::None)
             .max(self.exact("*").unwrap_or(Level::None))
     }
+}
+
+/// A name under the `app` root, each app's own machinery.
+fn is_app(name: &str) -> bool {
+    name.strip_prefix("app")
+        .is_some_and(|rest| rest.starts_with('.'))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1239,6 +1239,8 @@ const invocations: Record<string, () => string[]> = {
   "profile update": () => ["--name", "Profile"],
   "apps list": () => [],
   "apps revoke": () => [ID],
+  "apps vendors list": () => [],
+  "apps vendors move": () => ["app.fixture", "fixture-client"],
   "sign-ins list": () => [],
   "sign-ins rename": () => [ID, "n"],
   "sign-ins end": () => [ID],

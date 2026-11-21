@@ -29,7 +29,7 @@ use super::items::{self, Archived, Reader, reading, reading_background};
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
 use super::tables::archive::{ArchivedRow, CarriedTable, Rows};
-use super::{backups, connectors, edges, plugins, provenance, sources, stored, tables};
+use super::{backups, connectors, edges, plugins, provenance, sources, stored, tables, vendors};
 use crate::db::io_refusal;
 use crate::settings::registry;
 pub use spool::Sealed;
@@ -123,6 +123,8 @@ struct InstanceNeed {
     sources: BTreeMap<String, BTreeSet<String>>,
     /// The type and source of each row a line names.
     rows: BTreeSet<(String, String)>,
+    /// Each vendor a line names, judged at send on the types registered then.
+    vendors: BTreeSet<String>,
 }
 
 impl InstanceNeed {
@@ -783,6 +785,7 @@ fn select<W: RowSink>(
                     open.sources.entry(source).or_default().extend(types);
                 }
                 open.rows.extend(need.rows);
+                open.vendors.extend(need.vendors);
             })?;
         }
         Ok(())
@@ -847,6 +850,18 @@ fn select<W: RowSink>(
         })
         .collect::<Result<_>>()?;
     count("source_count", &mut instance, named)?;
+    let registered = catalog.types.ids();
+    let bound = vendors::list(read.tx)?
+        .into_iter()
+        .filter(|binding| caller.reads_vendor(&binding.vendor, registered.iter().copied()))
+        .map(|binding| {
+            let line = print(&json!({ "app_vendor": binding.to_json() }))?;
+            let mut need = needing(None);
+            need.vendors.insert(binding.vendor);
+            Ok((line, need))
+        })
+        .collect::<Result<_>>()?;
+    count("app_vendor_count", &mut instance, bound)?;
     let mut settings = Vec::new();
     if caller.holds(Permission::ConfigManage) {
         for (key, text) in stored::rows(read.tx)? {

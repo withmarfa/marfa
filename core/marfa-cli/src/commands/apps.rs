@@ -30,6 +30,31 @@ pub enum AppsCommand {
         #[arg(long)]
         revoke_keys: bool,
     },
+    /// The `app.<vendor>` namespaces apps hold. An app holds the namespace it
+    /// registered the first type under; the owner holds one no single app is
+    /// known to have made, until they give it to an app. Requires
+    /// `grants.manage`.
+    Vendors {
+        #[command(subcommand)]
+        command: VendorsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum VendorsCommand {
+    /// List each vendor and the client ID of the app that holds it, or `null`
+    /// for one the owner holds and has not given to an app.
+    List,
+    /// Give a vendor to an app, such as one that registered again and got a
+    /// new client ID, or one the owner holds. The app named then reaches the
+    /// vendor's items in place of whoever held it. Only the owner's own
+    /// credentials may: an app's sign-in or a key an app made is refused.
+    Move {
+        /// The namespace, such as `app.acme`.
+        vendor: String,
+        /// The client ID of the app to give it to, as `marfa apps list` shows it.
+        client_id: String,
+    },
 }
 
 pub fn list_request() -> Request {
@@ -42,6 +67,14 @@ pub fn narrow_request(id: &str, scopes: &[String], expected: &Value) -> Request 
 
 pub fn revoke_request(id: &str, revoke_keys: bool) -> Request {
     Request::delete(&["grants", id]).query_flag("revoke_keys", revoke_keys)
+}
+
+pub fn vendors_request() -> Request {
+    Request::get(&["app-vendors"])
+}
+
+pub fn move_request(vendor: &str, client_id: &str) -> Request {
+    Request::put(&["app-vendors", vendor]).json(json!({ "client_id": client_id }))
 }
 
 pub fn run(command: AppsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
@@ -73,6 +106,15 @@ pub fn run(command: AppsCommand, remote: &Remote, out: &Printer) -> Result<(), C
         AppsCommand::Revoke { id, revoke_keys } => {
             let answer = remote.json(&revoke_request(&id, revoke_keys))?;
             out.report(&answer, |_| format!("revoked the app {id}"))
+        }
+        AppsCommand::Vendors {
+            command: VendorsCommand::List,
+        } => out.value(&remote.json(&vendors_request())?),
+        AppsCommand::Vendors {
+            command: VendorsCommand::Move { vendor, client_id },
+        } => {
+            let answer = remote.json(&move_request(&vendor, &client_id))?;
+            out.report(&answer, |_| format!("gave {vendor} to the app {client_id}"))
         }
     }
 }

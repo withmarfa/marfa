@@ -26,7 +26,7 @@ pub mod tokens;
 use serde_json::{Value, json};
 
 use super::App;
-pub use bearer::{Granted, authenticate, grant_caller, grant_client, live_by_id};
+pub use bearer::{Granted, authenticate, grant_caller, grant_client, live_by_id, standing_reach};
 
 const ACCESS_TOKEN_SECONDS: i64 = 3_600;
 const CODE_SECONDS: i64 = 600;

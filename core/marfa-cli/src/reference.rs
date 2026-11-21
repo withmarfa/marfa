@@ -80,6 +80,10 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         &["apps list", "apps narrow", "apps revoke"],
     ),
     (
+        "List the app vendors, and give one to another app",
+        &["apps vendors list", "apps vendors move"],
+    ),
+    (
         "Manage the owner's passkeys",
         &[
             "owner passkeys list",

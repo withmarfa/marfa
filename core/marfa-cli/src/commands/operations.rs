@@ -173,6 +173,8 @@ pub const OPERATIONS: &[Operation] = &[
     reached("listAppGrants", "apps list"),
     reached("narrowAppGrant", "apps narrow"),
     reached("revokeAppGrant", "apps revoke"),
+    reached("listAppVendors", "apps vendors list"),
+    reached("giveAppVendor", "apps vendors move"),
     reached("listSignIns", "sign-ins list"),
     reached("renameSignIn", "sign-ins rename"),
     reached("endSignIn", "sign-ins end"),

@@ -25,7 +25,9 @@ use crate::app::edges::write::Writing;
 use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM, HOLD_RESTORE_SETTINGS};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::app::{connectors, edge_types, plugins, sources, stored, tables, types};
+use crate::app::{
+    connectors, edge_types, instance, plugins, sources, stored, tables, types, vendors,
+};
 use crate::app::{provenance, restore_running};
 use crate::db::Write;
 use crate::settings::registry;
@@ -284,8 +286,10 @@ fn lines(scratch: &Scratch) -> Result<impl Iterator<Item = Result<Value>>> {
 }
 
 /// Judges an archive's types and edge types on `before` and refuses in the order a restore does:
-/// a definition that cannot register, a conflict, then guidance the caller may not set.
+/// a definition that cannot register, a conflict, a vendor another holds, then guidance the
+/// caller may not set.
 fn judge_types(
+    tx: &rusqlite::Connection,
     before: &Catalog,
     types: &[types::write::Archived],
     edge_types: &[Obj],
@@ -308,6 +312,7 @@ fn judge_types(
     if !conflicts.is_empty() {
         return Err(conflicting(conflicts));
     }
+    caller.require_restored_vendors(tx, types_plan.ids())?;
     types_plan.require_guidance(caller)?;
     Ok((types_plan, edges_plan))
 }
@@ -408,7 +413,8 @@ impl App {
                         enforcement.as_ref(),
                     )?)?;
                     let before = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
-                    judge_types(&before, &types, &edge_types, &archived_plugins, &caller).map(drop)
+                    judge_types(tx, &before, &types, &edge_types, &archived_plugins, &caller)
+                        .map(drop)
                 })
                 .await?;
             let placed = app.place_restored(carried, absent).await?;
@@ -444,6 +450,7 @@ impl App {
                         )?)?;
                         let before = catalog::current(&cache, tx, Snapshot::Pending)?;
                         let (types_plan, edges_plan) = judge_types(
+                            tx,
                             &before,
                             &registrations.types,
                             &registrations.edge_types,
@@ -504,6 +511,20 @@ impl App {
                             } else {
                                 states.skip("already_set");
                             }
+                        }
+                        let mut bound = Counted::default();
+                        let by_app = unit.caller.app_client().is_some();
+                        for binding in &registrations.vendors {
+                            if by_app {
+                                bound.skip("app_credential");
+                            } else if vendors::restore(tx, binding)? {
+                                bound.added += 1;
+                            } else {
+                                bound.skip("already_set");
+                            }
+                        }
+                        if bound.added + vendors::claim_from_types(tx, by_app)? > 0 {
+                            instance::raise_reach(tx)?;
                         }
                         blobs::record(tx, &copies, replicates, &unit.caller.credential_handle(), &unit.at)?;
                         let held = restored::held_snapshots(tx, snapshots.each())?;
@@ -606,6 +627,8 @@ impl App {
                             "connector_states_skipped": states.skipped,
                             "connector_agreements_added": agreements.added,
                             "connector_agreements_skipped": agreements.skipped,
+                            "app_vendors_added": bound.added,
+                            "app_vendors_skipped": bound.skipped,
                             "rows_imported": rows_imported,
                             "rows_skipped": rows_skipped,
                             "entries_skipped": skipped,

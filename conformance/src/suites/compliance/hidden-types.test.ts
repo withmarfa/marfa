@@ -57,10 +57,9 @@ beforeAll(async () => {
     });
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
   }
-  const approved = await approvedApp(server, [
-    `${HIDDEN}:write`,
-    `${HIDDEN}:read`,
-  ]);
+  // `content` reaches no app type, so the client registers asking for this one.
+  const asked = [`${HIDDEN}:write`, `${HIDDEN}:read`];
+  const approved = await approvedApp(server, asked, asked.join(" "));
   app = new MarfaClient({ baseUrl: server.apiUrl, apiKey: approved.token });
   for (const tier of ["library", "feed"] as const) {
     hiddenIds.push(await write(app, HIDDEN, tier));
