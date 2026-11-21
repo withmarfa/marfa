@@ -120,10 +120,30 @@ export class Cli {
   /** Runs the binary and answers whatever it did, refusal or not. */
   async run(
     args: string[],
-    options: { stdin?: string } = {},
+    options: {
+      stdin?: string;
+      undecodable?: { name: string; text: string };
+    } = {},
   ): Promise<Outcome> {
+    // A Node environment holds only text, so a value ending in a byte that is not UTF-8
+    // is made by the shell the binary starts from.
+    const [program, argv] =
+      options.undecodable === undefined
+        ? [this.binary, this.args(args)]
+        : [
+            "/bin/sh",
+            [
+              "-c",
+              'export "$1=$(printf \'%s\\377\' "$2")"; shift 2; exec "$@"',
+              "sh",
+              options.undecodable.name,
+              options.undecodable.text,
+              this.binary,
+              ...this.args(args),
+            ],
+          ];
     return new Promise((resolve, reject) => {
-      const child = spawn(this.binary, this.args(args), {
+      const child = spawn(program, argv, {
         env: this.env(),
         stdio: [
           options.stdin === undefined ? "ignore" : "pipe",

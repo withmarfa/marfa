@@ -824,6 +824,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List plugins
+         * @description Returns every installed plugin, by name, with the types it installed.
+         */
+        get: operations["listPlugins"];
+        put?: never;
+        /**
+         * Install a plugin
+         * @description Installs a plugin's bundle in one write and records the plugin on each type. Needs `schema.write`, write on each type and edge type name, and `connectors.manage` for a `connector`. An app can't install guidance.
+         */
+        post: operations["installPlugin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/plugins/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a plugin
+         * @description Returns an installed plugin, with the types it installed.
+         */
+        get: operations["getPlugin"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove a plugin
+         * @description Removes a plugin's install record. Its types and edge types stay, with their items, edges and provenance; delete a type with `DELETE /types/{id}`. Needs `schema.write`.
+         */
+        delete: operations["removePlugin"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/types": {
         parameters: {
             query?: never;
@@ -2989,13 +3037,26 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** @description Whether Marfa ships the type, and the sign-in that first registered it when known. */
+        /** @description Where the type came from, the plugin that installed it, and the sign-in that first registered it when known. */
         TypeProvenance: {
             /**
-             * @description Where the type came from: shipped by Marfa, registered by a caller, or unknown.
+             * @description Where the type came from: shipped by Marfa, registered through `POST /types` or a restore, installed by a plugin, or unknown.
              * @enum {string}
              */
-            origin: "platform" | "user" | "unknown";
+            origin: "platform" | "registered" | "plugin" | "unknown";
+            /** @description The plugin that installed the type, or `null` for a type no plugin installed. It stays after the plugin is removed. */
+            plugin: {
+                /**
+                 * @description The plugin's name.
+                 * @example tickets
+                 */
+                name: string;
+                /**
+                 * @description The version of the plugin that last installed the type.
+                 * @example 1.2.0
+                 */
+                version: string;
+            } | null;
             /** @description The sign-in that first registered the type, or null when none is recorded. */
             created_by: {
                 /**
@@ -8479,6 +8540,312 @@ export interface components {
             consequences: components["schemas"]["AddressConsequence"][];
             /** @description What the owner does next, in order. */
             next_steps: components["schemas"]["AddressNextStep"][];
+        };
+        /** @description A plugin's bundle, `<name>.plugin.json`: its identity, version, types and edge types. */
+        PluginBundle: {
+            /**
+             * @description The bundle format.
+             * @enum {integer}
+             */
+            format: 1;
+            /**
+             * @description The plugin's name: lowercase words and numbers joined by hyphens.
+             * @example tickets
+             */
+            name: string;
+            /**
+             * @description The name people see for the plugin.
+             * @example Tickets
+             */
+            title: string;
+            /**
+             * @description What the plugin adds, in a sentence.
+             * @example Tickets for tracking work.
+             */
+            description: string;
+            /**
+             * @description The icon the plugin is shown by, an Iconify icon ID.
+             * @example lucide:ticket
+             */
+            mark: string;
+            /**
+             * @description Who made the plugin.
+             * @example Marfa
+             */
+            maker: string;
+            /**
+             * @description The oldest Marfa release the plugin works with.
+             * @example 0.0.90
+             */
+            marfa: string;
+            /**
+             * @description The plugin's version. `0.0.0` is a bundle built from a source folder with no version.
+             * @example 1.2.0
+             */
+            version: string;
+            /** @description The type definitions the plugin installs, each as `POST /types` takes it, with its `guidance`. */
+            types: {
+                [key: string]: unknown;
+            }[];
+            /** @description The edge types the plugin installs, each as `POST /edge-types` takes it. */
+            edge_types: {
+                [key: string]: unknown;
+            }[];
+            /** @description The plugin's connector. Marfa keeps it with the install record as it is. */
+            connector?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description An installed plugin. */
+        Plugin: {
+            /**
+             * @description The plugin's name: lowercase words and numbers joined by hyphens.
+             * @example tickets
+             */
+            name: string;
+            /**
+             * @description The name people see for the plugin.
+             * @example Tickets
+             */
+            title: string;
+            /**
+             * @description What the plugin adds, in a sentence.
+             * @example Tickets for tracking work.
+             */
+            description: string;
+            /**
+             * @description The icon the plugin is shown by, an Iconify icon ID.
+             * @example lucide:ticket
+             */
+            mark: string;
+            /**
+             * @description Who made the plugin.
+             * @example Marfa
+             */
+            maker: string;
+            /**
+             * @description The oldest Marfa release the plugin works with.
+             * @example 0.0.90
+             */
+            marfa: string;
+            /**
+             * @description The plugin's version. `0.0.0` is a bundle built from a source folder with no version.
+             * @example 1.2.0
+             */
+            version: string;
+            /** @description The IDs of the types the plugin installed, at any version. */
+            types: string[];
+            /** @description The IDs of the edge types any installed version of the plugin brought that the instance still holds. */
+            edge_types: string[];
+            /** @description The installed version's connector, as its bundle gave it, or `null`. */
+            connector: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * @description The SHA-256 of the bundle's bytes as the install that wrote this version received them, in lowercase hexadecimal.
+             * @example 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+             */
+            fingerprint: string;
+            /**
+             * Format: date-time
+             * @description When the plugin was first installed.
+             * @example 2026-11-21T10:00:00.000Z
+             */
+            installed_at: string;
+            /** @description The sign-in that first installed the plugin, or `null` when it is not known. */
+            installed_by: components["schemas"]["PluginInstaller"] | null;
+            /**
+             * Format: date-time
+             * @description When the installed version last changed.
+             * @example 2026-11-21T12:00:00.000Z
+             */
+            updated_at: string;
+        };
+        /** @description The installed plugin, and what installing did. */
+        PluginInstalled: {
+            /**
+             * @description The plugin's name: lowercase words and numbers joined by hyphens.
+             * @example tickets
+             */
+            name: string;
+            /**
+             * @description The name people see for the plugin.
+             * @example Tickets
+             */
+            title: string;
+            /**
+             * @description What the plugin adds, in a sentence.
+             * @example Tickets for tracking work.
+             */
+            description: string;
+            /**
+             * @description The icon the plugin is shown by, an Iconify icon ID.
+             * @example lucide:ticket
+             */
+            mark: string;
+            /**
+             * @description Who made the plugin.
+             * @example Marfa
+             */
+            maker: string;
+            /**
+             * @description The oldest Marfa release the plugin works with.
+             * @example 0.0.90
+             */
+            marfa: string;
+            /**
+             * @description The plugin's version. `0.0.0` is a bundle built from a source folder with no version.
+             * @example 1.2.0
+             */
+            version: string;
+            /** @description The IDs of the types the plugin installed, at any version. */
+            types: string[];
+            /** @description The IDs of the edge types any installed version of the plugin brought that the instance still holds. */
+            edge_types: string[];
+            /** @description The installed version's connector, as its bundle gave it, or `null`. */
+            connector: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * @description The SHA-256 of the bundle's bytes as the install that wrote this version received them, in lowercase hexadecimal.
+             * @example 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+             */
+            fingerprint: string;
+            /**
+             * Format: date-time
+             * @description When the plugin was first installed.
+             * @example 2026-11-21T10:00:00.000Z
+             */
+            installed_at: string;
+            /** @description The sign-in that first installed the plugin, or `null` when it is not known. */
+            installed_by: components["schemas"]["PluginInstaller"] | null;
+            /**
+             * Format: date-time
+             * @description When the installed version last changed.
+             * @example 2026-11-21T12:00:00.000Z
+             */
+            updated_at: string;
+            /**
+             * @description `installed` for a new plugin, `updated` for a newer version, or `unchanged` when this version is already installed.
+             * @enum {string}
+             */
+            outcome: "installed" | "updated" | "unchanged";
+        };
+        /** @description What removing the plugin removed, and what it kept. */
+        PluginRemoved: {
+            /** @description The install record Marfa removed. */
+            removed: {
+                /**
+                 * @description The plugin's name: lowercase words and numbers joined by hyphens.
+                 * @example tickets
+                 */
+                name: string;
+                /**
+                 * @description The plugin's version. `0.0.0` is a bundle built from a source folder with no version.
+                 * @example 1.2.0
+                 */
+                version: string;
+            };
+            /** @description What stays. */
+            kept: {
+                /** @description The types the plugin installed that the instance still holds, which stay with their items and provenance. */
+                types: string[];
+                /** @description The edge types any installed version of the plugin brought that the instance still holds, which stay with their edges. */
+                edge_types: string[];
+            };
+        };
+        /** @description An error response. */
+        PluginNotFoundRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "plugin_not_found";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        PluginBundleRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "validation_error" | "missing_required_field" | "invalid_schema" | "inheritance_violation" | "property_shadows_field" | "compatible_with_violation";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        PluginInstallForbiddenRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "forbidden" | "type_not_permitted" | "edge_type_not_permitted";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        PluginInstallConflictRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "conflict" | "type_exists" | "plugin_child_conflict" | "plugin_narrows" | "plugin_needs_newer_server" | "plugin_version_older" | "instance_changed";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description The sign-in that first installed a plugin. */
+        PluginInstaller: {
+            /**
+             * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
+             * @enum {string}
+             */
+            kind: "browser" | "app" | "key" | "local";
+            /**
+             * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
+             * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
+             */
+            id: string;
+            /**
+             * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
+             * @example Safari on macOS
+             */
+            name: string;
+        };
+        /** @description A page holding every installed plugin. */
+        PluginPage: {
+            /** @description Every installed plugin, by name. */
+            data: components["schemas"]["Plugin"][];
+            /** @description Always `null`: Marfa returns every installed plugin in one page. */
+            next_cursor: string | null;
         };
     };
     responses: never;
@@ -18590,6 +18957,731 @@ export interface operations {
             };
         };
     };
+    listPlugins: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the installed plugins. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "name": "tickets",
+                     *           "title": "Tickets",
+                     *           "description": "Tickets for tracking work.",
+                     *           "mark": "lucide:ticket",
+                     *           "maker": "Marfa",
+                     *           "marfa": "0.0.90",
+                     *           "version": "1.2.0",
+                     *           "types": [
+                     *             "common.ticket",
+                     *             "common.ticket.spike"
+                     *           ],
+                     *           "edge_types": [
+                     *             "blocks"
+                     *           ],
+                     *           "connector": null,
+                     *           "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                     *           "installed_at": "2026-11-21T10:00:00.000Z",
+                     *           "installed_by": {
+                     *             "kind": "key",
+                     *             "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *             "name": "laptop"
+                     *           },
+                     *           "updated_at": "2026-11-21T12:00:00.000Z"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PluginPage"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    installPlugin: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PluginBundle"];
+            };
+        };
+        responses: {
+            /** @description Returns the plugin after a newer version only added to it, or as it is when this version is already installed. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "name": "tickets",
+                     *       "title": "Tickets",
+                     *       "description": "Tickets for tracking work.",
+                     *       "mark": "lucide:ticket",
+                     *       "maker": "Marfa",
+                     *       "marfa": "0.0.90",
+                     *       "version": "1.2.0",
+                     *       "types": [
+                     *         "common.ticket",
+                     *         "common.ticket.spike"
+                     *       ],
+                     *       "edge_types": [
+                     *         "blocks"
+                     *       ],
+                     *       "connector": null,
+                     *       "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                     *       "installed_at": "2026-11-21T10:00:00.000Z",
+                     *       "installed_by": {
+                     *         "kind": "key",
+                     *         "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *         "name": "laptop"
+                     *       },
+                     *       "updated_at": "2026-11-21T12:00:00.000Z",
+                     *       "outcome": "updated"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PluginInstalled"];
+                };
+            };
+            /** @description Returns the newly installed plugin. */
+            201: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "name": "tickets",
+                     *       "title": "Tickets",
+                     *       "description": "Tickets for tracking work.",
+                     *       "mark": "lucide:ticket",
+                     *       "maker": "Marfa",
+                     *       "marfa": "0.0.90",
+                     *       "version": "1.0.0",
+                     *       "types": [
+                     *         "common.ticket",
+                     *         "common.ticket.spike"
+                     *       ],
+                     *       "edge_types": [
+                     *         "blocks"
+                     *       ],
+                     *       "connector": null,
+                     *       "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                     *       "installed_at": "2026-11-21T10:00:00.000Z",
+                     *       "installed_by": {
+                     *         "kind": "key",
+                     *         "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *         "name": "laptop"
+                     *       },
+                     *       "updated_at": "2026-11-21T10:00:00.000Z",
+                     *       "outcome": "installed"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PluginInstalled"];
+                };
+            };
+            /**
+             * @description - `validation_error`: the bundle has a key it does not hold, a field of the wrong shape, an ID named twice, or an edge type the rules refuse. `details.errors` names each.
+             *     - `missing_required_field`, `invalid_schema`, `inheritance_violation`, `property_shadows_field`, `compatible_with_violation`: a type is refused as `POST /types` refuses it. `details.type_id` names it.
+             */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginBundleRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /**
+             * @description - `forbidden`: no `schema.write`, no `connectors.manage` for a `connector` (`details.required_scope`), a type under `core`, `system`, `marfa`, `app` or `user` (`details.namespace`), or app guidance.
+             *     - `type_not_permitted`: no write on a type of the bundle, or on a parent outside it that isn't shipped or under `common`.
+             *     - `edge_type_not_permitted`: no write on an edge type name of the bundle.
+             */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginInstallForbiddenRefusal"];
+                };
+            };
+            /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
+            408: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
+                };
+            };
+            /**
+             * @description - `plugin_needs_newer_server`: the bundle needs a later Marfa.
+             *     - `plugin_version_older`: a later version is installed.
+             *     - `type_exists`: a type exists that the plugin did not install.
+             *     - `plugin_narrows`: a type loses or narrows a member. See `details.changes`.
+             *     - `plugin_child_conflict`: a type below clashes. See `details.conflicts`.
+             *     - `conflict`: an edge type is held in another shape.
+             */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginInstallConflictRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    getPlugin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The plugin's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the plugin. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "name": "tickets",
+                     *       "title": "Tickets",
+                     *       "description": "Tickets for tracking work.",
+                     *       "mark": "lucide:ticket",
+                     *       "maker": "Marfa",
+                     *       "marfa": "0.0.90",
+                     *       "version": "1.2.0",
+                     *       "types": [
+                     *         "common.ticket",
+                     *         "common.ticket.spike"
+                     *       ],
+                     *       "edge_types": [
+                     *         "blocks"
+                     *       ],
+                     *       "connector": null,
+                     *       "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+                     *       "installed_at": "2026-11-21T10:00:00.000Z",
+                     *       "installed_by": {
+                     *         "kind": "key",
+                     *         "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *         "name": "laptop"
+                     *       },
+                     *       "updated_at": "2026-11-21T12:00:00.000Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["Plugin"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description `plugin_not_found`: no plugin of this name is installed. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginNotFoundRefusal"];
+                };
+            };
+            /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReachChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    removePlugin: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path: {
+                /** @description The plugin's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns what Marfa removed and what it kept. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "removed": {
+                     *         "name": "tickets",
+                     *         "version": "1.2.0"
+                     *       },
+                     *       "kept": {
+                     *         "types": [
+                     *           "common.ticket",
+                     *           "common.ticket.spike"
+                     *         ],
+                     *         "edge_types": [
+                     *           "blocks"
+                     *         ]
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PluginRemoved"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description `forbidden`: you don't have `schema.write`. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description `plugin_not_found`: no plugin of this name is installed. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginNotFoundRefusal"];
+                };
+            };
+            /** @description `instance_changed`: another instance answers at this address. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
     listTypes: {
         parameters: {
             query?: never;
@@ -18631,7 +19723,8 @@ export interface operations {
                      *           "plural": "Contacts",
                      *           "own_roles": [],
                      *           "provenance": {
-                     *             "origin": "user",
+                     *             "origin": "registered",
+                     *             "plugin": null,
                      *             "created_by": {
                      *               "kind": "key",
                      *               "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -18670,7 +19763,8 @@ export interface operations {
                      *           "plural": "Deals",
                      *           "own_roles": [],
                      *           "provenance": {
-                     *             "origin": "user",
+                     *             "origin": "registered",
+                     *             "plugin": null,
                      *             "created_by": {
                      *               "kind": "key",
                      *               "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -18826,7 +19920,8 @@ export interface operations {
                      *         "title_field": "name"
                      *       },
                      *       "provenance": {
-                     *         "origin": "user",
+                     *         "origin": "registered",
+                     *         "plugin": null,
                      *         "created_by": {
                      *           "kind": "key",
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -19037,7 +20132,8 @@ export interface operations {
                      *         "title_field": "name"
                      *       },
                      *       "provenance": {
-                     *         "origin": "user",
+                     *         "origin": "registered",
+                     *         "plugin": null,
                      *         "created_by": {
                      *           "kind": "key",
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -19222,7 +20318,8 @@ export interface operations {
                      *         "title_field": "name"
                      *       },
                      *       "provenance": {
-                     *         "origin": "user",
+                     *         "origin": "registered",
+                     *         "plugin": null,
                      *         "created_by": {
                      *           "kind": "key",
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -20118,7 +21215,8 @@ export interface operations {
                      *         "icon": "simple-icons:github"
                      *       },
                      *       "provenance": {
-                     *         "origin": "user",
+                     *         "origin": "registered",
+                     *         "plugin": null,
                      *         "created_by": {
                      *           "kind": "key",
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -20339,7 +21437,8 @@ export interface operations {
                      *         "title_field": "name"
                      *       },
                      *       "provenance": {
-                     *         "origin": "user",
+                     *         "origin": "registered",
+                     *         "plugin": null,
                      *         "created_by": {
                      *           "kind": "key",
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -36577,7 +37676,8 @@ export interface operations {
                      *       },
                      *       "types": {
                      *         "core": 29,
-                     *         "registered": 3
+                     *         "registered": 3,
+                     *         "plugin": 0
                      *       },
                      *       "keys": {
                      *         "total": 1
@@ -36622,12 +37722,14 @@ export interface operations {
                             /** @description Total size of stored blobs, in bytes. */
                             total_bytes: number;
                         };
-                        /** @description Built-in and registered type counts. */
+                        /** @description Built-in, registered and plugin type counts. */
                         types: {
                             /** @description Number of built-in types. */
                             core: number;
-                            /** @description Number of registered types. */
+                            /** @description Number of types registered through `POST /types` or a restore. */
                             registered: number;
+                            /** @description Number of types a plugin installed. */
+                            plugin: number;
                         };
                         keys: components["schemas"]["MetricCount"];
                         webhooks: components["schemas"]["MetricCount"] & unknown;
@@ -37930,6 +39032,8 @@ export interface operations {
                      *       "sources_skipped_reasons": {
                      *         "already_set": 1
                      *       },
+                     *       "plugins_added": 0,
+                     *       "plugins_skipped": 0,
                      *       "settings_added": 0,
                      *       "settings_skipped": 0,
                      *       "settings_dropped": [],
@@ -38012,6 +39116,10 @@ export interface operations {
                         sources_skipped_reasons: {
                             [key: string]: number;
                         };
+                        /** @description Plugin install records the restore added. */
+                        plugins_added: number;
+                        /** @description Plugin install records the restore left as this instance holds them. */
+                        plugins_skipped: number;
                         /** @description How many settings Marfa stored, for settings the instance had not stored. */
                         settings_added: number;
                         /** @description How many settings Marfa skipped because the instance already stores them. */
@@ -38720,6 +39828,8 @@ export interface operations {
                      *       "sources_added": 0,
                      *       "sources_skipped": 0,
                      *       "sources_skipped_reasons": {},
+                     *       "plugins_added": 0,
+                     *       "plugins_skipped": 0,
                      *       "settings_added": 0,
                      *       "settings_skipped": 0,
                      *       "settings_dropped": [],
@@ -38796,6 +39906,10 @@ export interface operations {
                         sources_skipped_reasons: {
                             [key: string]: number;
                         };
+                        /** @description Plugin install records the restore added. */
+                        plugins_added: number;
+                        /** @description Plugin install records the restore left as this instance holds them. */
+                        plugins_skipped: number;
                         /** @description How many settings Marfa stored, for settings the instance had not stored. */
                         settings_added: number;
                         /** @description How many settings Marfa skipped because the instance already stores them. */

@@ -1,6 +1,6 @@
 # Archives
 
-An archive is the tar file that `GET /export?format=archive` writes and `POST /restore` reads. The statements on archives describe archive version 1 (`archive/archive-version`). An archive that holds a new entry, a new line file or a new field that a restore must read is a later version, because a restore skips an entry, a field or a line kind it does not know (`archive/restore-unread-entry`, `archive/restore-unknown-field`, `archive/restore-unknown-line-kind`) and an older build would restore such an archive without it.
+An archive is the tar file that `GET /export?format=archive` writes and `POST /restore` reads. The statements on archives describe archive version 2 (`archive/archive-version`), and a restore reads version 1 as `archive/restore-version-one` says. An archive that holds a new entry, a new line file or a new field that a restore must read is a later version, because a restore skips an entry, a field or a line kind it does not know (`archive/restore-unread-entry`, `archive/restore-unknown-field`, `archive/restore-unknown-line-kind`) and an older build would restore such an archive without it.
 
 ## What an archive is
 
@@ -14,7 +14,7 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 ### `archive/archive-version`
 
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 1.
+When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 2.
 
 **Reason:** the version is the one marker of the archive's layout, and a restore reads every version up to its own build's and refuses a later one (`archive/restore-version`). A field or a line kind added within a version is optional to a reader of that version (`archive/archive-version-additions`): a restore skips a field it does not read and a line kind it does not know, and names the kind (`archive/restore-unknown-field`, `archive/restore-unknown-line-kind`). An archive with a new entry, line file or field that a restore must read is a new version, because an older build would skip what it does not know.
 
@@ -878,7 +878,7 @@ If a caller without `schema.write` or local authority sends `POST /restore` for 
 
 If a caller without `schema.write` or local authority sends `POST /restore` for an archive with a `type` line of a type outside `app.*` that carries non-empty `guidance`, and the instance does not hold the type, then the server MUST NOT register any type of the archive.
 
-**Tests:** `compliance/type-guidance-restore.test.ts › writes no type of an archive that carries guidance for an app without schema.write, though an app holding schema.write restores it`.
+**Tests:** `compliance/type-guidance-restore.test.ts › writes no type of an archive that carries guidance for an app without schema.write, though the owner restores it`.
 
 ### `archive/restore-type-guidance-denied-no-blob`
 
@@ -886,7 +886,7 @@ If a caller without `schema.write` or local authority sends `POST /restore` for 
 
 **Reason:** the refusal is decided before any bytes are placed, so a refused restore leaves nothing on disk for a cleanup to remove.
 
-**Tests:** `compliance/type-guidance-restore.test.ts › places no blob bytes of an archive that carries guidance for an app without schema.write, though an app holding schema.write places them`.
+**Tests:** `compliance/type-guidance-restore.test.ts › places no blob bytes of an archive that carries guidance for an app without schema.write, though the owner places them`.
 
 ### `archive/restore-type-guidance-conflict-first`
 
@@ -990,6 +990,70 @@ If the `manifest.json` of an archive names a `version` greater than the archive 
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive with no format, another format or a later version, naming the build that wrote it`.
 
+### `archive/restore-version-one`
+
+When `POST /restore` reads an archive at version 1, the server MUST read its manifest without `plugin_count` and register a `type` line whose `provenance.origin` is `user` or missing as a type with the origin `registered`.
+
+**Reason:** version 1 named every registered type `user` and carried no plugin, so an older backup still restores.
+
+**Tests:** `compliance/plugins.test.ts › restores a version 1 archive whose type names the origin user as registered`.
+
+### `archive/restore-type-origin`
+
+If `POST /restore` reads an archive at version 2 with a `type` line whose `provenance.origin` is missing, is not text, is neither `registered` nor `plugin`, or is `plugin` without a `provenance.plugin` naming a plugin `name` and `version`, whose `provenance.plugin` is not `null` while `provenance.origin` is `registered`, or whose `provenance.created_by` is missing or is neither `null` nor a sign-in's `kind` (`browser`, `app`, `key` or `local`), `id` and `name`, then the server MUST answer `400 validation_error` and register no type of the archive.
+
+**Reason:** a restored type is read back as `types/provenance-read` says, so it holds only a provenance that answer's schema allows, never one that loses a field it was given. A type may name a plugin no `plugin` line holds: removing a plugin keeps its types and their provenance (`plugins/remove-keeps-types`).
+
+**Tests:** `compliance/plugins.test.ts › refuses a version 2 archive whose type names the origin user`, `› refuses a type whose origin or creator is mistyped, missing, outside the sign-in kinds or at odds with its plugin`.
+
+### `archive/restore-plugin-line`
+
+If `POST /restore` reads a `plugin` line whose `bundle` `POST /plugins` would refuse for its shape or for the definition of a type or an edge type it holds, whose `name` or `version` differs from its bundle's, whose `edge_types` is not a list naming each edge type of its bundle and each name once, whose `edge_types` names an empty string, a string that is not an edge type id or an edge type Marfa ships, whose `installed_at` or `updated_at` is not a time in the form the server writes, whose `installed_by` is neither `null` nor a sign-in's `kind` (`browser`, `app`, `key` or `local`), `id` and `name`, or whose `fingerprint` is not a SHA-256 in lowercase hexadecimal, then the server MUST answer `400 validation_error` naming the line and keep no record of the archive.
+
+**Reason:** a restored record is answered by `GET /plugins/{name}`, so it holds only what that answer's schema allows. A plugin may have brought an edge type the owner has since deleted, so `edge_types` is history and need not name an edge type the instance holds now, but no plugin can have brought a name that is no edge type id or one Marfa ships.
+
+**Tests:** `compliance/plugins.test.ts › refuses a plugin line whose times, installer, edge types, fingerprint or bundle definitions are not ones the server writes or installs`.
+
+### `archive/restore-plugin-history`
+
+When `POST /restore` reads a `plugin` line whose `bundle` is well formed, the server MUST keep the install record whether or not the instance or the archive holds a parent that a type of the bundle names.
+
+**Reason:** a stored bundle is history. The owner may delete a plugin's types and the types they name as parents, and the export that follows must restore as it was written, so a restore judges each definition of the bundle on its own and never against what the instance holds now.
+
+**Tests:** `compliance/plugins.test.ts › restores an export taken after the owner deleted the types a plugin's stored bundle names as parents`.
+
+### `archive/restore-plugin-type-root`
+
+If `POST /restore` reads a `type` line whose `provenance.origin` is `plugin` and whose `id` sits under `core`, `system`, `marfa`, `app` or `user`, then the server MUST answer `400 validation_error` and register no type of the archive.
+
+**Reason:** installing refuses a plugin's type under those roots (`plugins/install-reserved-root`), so no archive written by a server holds one, and a restored type is read back as `origin: plugin` only when a plugin could have registered it.
+
+**Tests:** `compliance/plugins.test.ts › refuses a type from a plugin under a root no plugin registers, which it restores under common`.
+
+### `archive/export-plugins`
+
+When a credential that may export sends `GET /export?format=archive`, the server MUST write a `plugin` line in `instance.ndjson.gz` for each installed plugin, holding its `name`, `version`, `bundle`, `edge_types` naming every edge type any installed version brought, `fingerprint`, `installed_at`, `installed_by` and `updated_at`, counted in the manifest's `plugin_count`.
+
+**Tests:** `compliance/plugins.test.ts › keeps plugin provenance and the install record through an export and a restore`, `› keeps reporting an edge type a newer version omits, through an export, a restore and the removal`.
+
+### `archive/export-plugin-provenance`
+
+When a credential that may export sends `GET /export?format=archive`, the server MUST write the `type` line of each type a plugin installed with `provenance.origin` `plugin` and `provenance.plugin` naming the plugin's `name` and `version`.
+
+**Tests:** `compliance/plugins.test.ts › keeps plugin provenance and the install record through an export and a restore`.
+
+### `archive/restore-plugins`
+
+When `POST /restore` reads a `plugin` line for a plugin the instance has no record of, the server MUST keep the install record as the line holds it, and count it in `plugins_added`.
+
+**Tests:** `compliance/plugins.test.ts › keeps plugin provenance and the install record through an export and a restore`.
+
+### `archive/restore-plugin-provenance`
+
+When `POST /restore` registers a `type` line whose `provenance.origin` is `plugin`, the server MUST register the type with the plugin `name` and `version` the line names.
+
+**Tests:** `compliance/plugins.test.ts › keeps plugin provenance and the install record through an export and a restore`.
+
 ### `archive/archive-version-additions`
 
 When a restore reads an archive that lacks a field or a line kind added to the archive's version after the first build that wrote that version, the server MUST restore the archive without it.
@@ -1000,7 +1064,7 @@ When a restore reads an archive that lacks a field or a line kind added to the a
 
 ### `archive/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count` or `connector_agreement_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
+If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` or, at version 2, `plugin_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
 
 **Reason:** a later version is free to lay out its fields differently, so a manifest naming one is refused for its version (`archive/restore-version`) and not its shape.
 

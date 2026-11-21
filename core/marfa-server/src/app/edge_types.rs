@@ -375,3 +375,113 @@ pub fn write_restored(unit: &Unit<'_, '_>, plan: Restoring) -> Result<()> {
     catalog::raise(unit.tx())?;
     instance::raise_reach(unit.tx())
 }
+
+/// Both names of each edge type a bundle names, and the reverse name the instance holds under its id.
+pub fn require_install_names(
+    caller: &Caller,
+    catalog: &Catalog,
+    definitions: &[Obj],
+) -> Result<()> {
+    for body in definitions {
+        let Some(id) = text_of(body, "id") else {
+            continue;
+        };
+        require_names(caller, id, text_of(body, "reverse_name"))?;
+        if let Some(held) = catalog.edge_type(id) {
+            require_names(caller, id, text_of(held, "reverse_name"))?;
+        }
+    }
+    Ok(())
+}
+
+/// A stored bundle's edge types judged as installing judges a definition, against each other's names.
+pub fn judge_bundle(definitions: &[Obj]) -> Result<()> {
+    let mut named: Vec<(String, String)> = Vec::new();
+    for body in definitions {
+        let id = text_of(body, "id").unwrap_or_default().to_string();
+        let taken = |name: &str| {
+            named
+                .iter()
+                .find(|(held, _)| held == name)
+                .map(|(_, owner)| owner.clone())
+        };
+        let built = marfa_rules::plugin::judge_edge_type(body, &taken)
+            .map_err(|issues| refusal_of(issues).with_detail("edge_type", id.as_str()))?;
+        named.push((id.clone(), id.clone()));
+        if let Some(reverse) = text_of(&built, "reverse_name") {
+            named.push((reverse.to_string(), id.clone()));
+        }
+    }
+    Ok(())
+}
+
+/// A plugin may only widen an edge type the instance holds; its names and labels stay.
+pub fn install(unit: &Unit<'_, '_>, catalog: &Catalog, definitions: &[Obj]) -> Result<()> {
+    let mut named: Vec<(String, String)> = Vec::new();
+    let mut changed = false;
+    for body in definitions {
+        let id = text_of(body, "id").unwrap_or_default().to_string();
+        let existing = catalog.edge_type(&id);
+        let taken = |name: &str| {
+            named
+                .iter()
+                .find(|(held, _)| held == name)
+                .map(|(_, owner)| owner.clone())
+                .or_else(|| holder_of(catalog, name).filter(|owner| *owner != id))
+        };
+        let built = marfa_rules::plugin::judge_edge_type(body, &taken)
+            .map_err(|issues| refusal_of(issues).with_detail("edge_type", id.as_str()))?;
+        named.push((id.clone(), id.clone()));
+        if let Some(reverse) = text_of(&built, "reverse_name") {
+            named.push((reverse.to_string(), id.clone()));
+        }
+        match existing {
+            Some(held) if *held == built => {}
+            Some(held) => {
+                let mut changes = constraint_evolution_changes(held, &built);
+                for key in ["label", "reverse_label"] {
+                    if presented(held.clone()).get(key) != presented(built.clone()).get(key) {
+                        changes.push(key);
+                    }
+                }
+                if !changes.is_empty() {
+                    return Err(Refusal::new(
+                        Code::Conflict,
+                        format!(
+                            "Edge type {id} is registered in another shape. A plugin may only widen the types its ends take."
+                        ),
+                    )
+                    .with_detail("edge_type", id.as_str())
+                    .with_detail("changes", changes));
+                }
+                unit.tx().execute(
+                    "UPDATE edge_types SET reverse_name = ?2, definition = ?3, updated_at = ?4 WHERE id = ?1",
+                    params![id, text_of(&built, "reverse_name"), Value::Object(built.clone()).to_string(), unit.at],
+                )?;
+                unit.audit_also("edge_type.update", "edge_type", &id, None)?;
+                changed = true;
+            }
+            None => {
+                require_stored_to_items(unit, &id, &built)?;
+                unit.tx().execute(
+                    "INSERT INTO edge_types (id, reverse_name, created_by, definition, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                    params![
+                        id,
+                        text_of(&built, "reverse_name"),
+                        unit.caller.actor().to_string(),
+                        Value::Object(built.clone()).to_string(),
+                        unit.at,
+                    ],
+                )?;
+                unit.audit_also("edge_type.register", "edge_type", &id, None)?;
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        catalog::raise(unit.tx())?;
+        instance::raise_reach(unit.tx())?;
+    }
+    Ok(())
+}

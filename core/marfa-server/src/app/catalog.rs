@@ -17,9 +17,42 @@ use super::refusal::{Refusal, Result};
 
 const GENERATION: &str = "catalog_generation";
 
+/// Where a type came from: Marfa itself, a registration, or a plugin's install.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Origin {
+    Platform,
+    Registered,
+    Plugin { name: String, version: String },
+}
+
+impl Origin {
+    pub fn word(&self) -> &'static str {
+        match self {
+            Origin::Platform => "platform",
+            Origin::Registered => "registered",
+            Origin::Plugin { .. } => "plugin",
+        }
+    }
+
+    pub fn plugin(&self) -> Option<&str> {
+        match self {
+            Origin::Plugin { name, .. } => Some(name),
+            _ => None,
+        }
+    }
+
+    /// The `plugin_name` and `plugin_version` a row stores.
+    pub fn columns(&self) -> (Option<&str>, Option<&str>) {
+        match self {
+            Origin::Plugin { name, version } => (Some(name), Some(version)),
+            _ => (None, None),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Provenance {
-    pub origin: &'static str,
+    pub origin: Origin,
     pub created_by: Option<Value>,
 }
 
@@ -113,7 +146,7 @@ impl Catalog {
             rows.retain(|held| held.get("id").and_then(Value::as_str) != Some(id));
             rows.push(row.clone());
             provenance.entry(id.to_string()).or_insert(Provenance {
-                origin: "user",
+                origin: Origin::Registered,
                 created_by: None,
             });
         }
@@ -182,23 +215,32 @@ fn load(tx: &Transaction<'_>, generation: i64) -> Result<Catalog> {
     let mut icons = HashMap::new();
     let mut provenance = HashMap::new();
     let mut unreadable = Vec::new();
-    let mut statement =
-        tx.prepare("SELECT id, origin, created_by, owner_icon, definition FROM types ORDER BY id")?;
+    let mut statement = tx.prepare(
+        "SELECT id, origin, plugin_name, plugin_version, created_by, owner_icon, definition \
+         FROM types ORDER BY id",
+    )?;
     let mut found = statement.query([])?;
     while let Some(row) = found.next()? {
         let id: String = row.get(0)?;
         let origin: String = row.get(1)?;
-        let created_by: Option<String> = row.get(2)?;
-        let icon: Option<String> = row.get(3)?;
-        let definition: String = row.get(4)?;
+        let plugin: (Option<String>, Option<String>) = (row.get(2)?, row.get(3)?);
+        let created_by: Option<String> = row.get(4)?;
+        let icon: Option<String> = row.get(5)?;
+        let definition: String = row.get(6)?;
+        let origin = match (origin.as_str(), plugin) {
+            ("platform", _) => Origin::Platform,
+            ("registered", _) => Origin::Registered,
+            ("plugin", (Some(name), Some(version))) => Origin::Plugin { name, version },
+            (other, _) => {
+                return Err(Refusal::internal(&format!(
+                    "type {id} stores the origin {other}, which does not read"
+                )));
+            }
+        };
         provenance.insert(
             id.clone(),
             Provenance {
-                origin: if origin == "platform" {
-                    "platform"
-                } else {
-                    "user"
-                },
+                origin,
                 created_by: created_by.and_then(|text| serde_json::from_str(&text).ok()),
             },
         );
@@ -363,10 +405,14 @@ impl App {
 pub fn provenance_json(held: Option<&Provenance>) -> Value {
     match held {
         Some(held) => json!({
-            "origin": held.origin,
+            "origin": held.origin.word(),
+            "plugin": match &held.origin {
+                Origin::Plugin { name, version } => json!({ "name": name, "version": version }),
+                _ => Value::Null,
+            },
             "created_by": held.created_by.clone().unwrap_or(Value::Null),
         }),
-        None => json!({ "origin": "unknown", "created_by": null }),
+        None => json!({ "origin": "unknown", "plugin": null, "created_by": null }),
     }
 }
 

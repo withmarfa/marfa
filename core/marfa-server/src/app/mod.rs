@@ -35,6 +35,7 @@ pub mod oauth;
 pub mod occurrences;
 pub mod outbound;
 pub mod overview;
+pub mod plugins;
 pub mod provenance;
 pub mod query;
 pub mod refusal;

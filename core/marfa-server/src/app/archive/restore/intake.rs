@@ -17,9 +17,9 @@ use crate::app::archive::{
 };
 use crate::app::blobs::Hash;
 use crate::app::blobs::restore::{Arriving, Named, Sealed, Spool};
-use crate::app::catalog::Catalog;
+use crate::app::catalog::{Catalog, Origin};
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::app::{edge_types, sources, stored, types};
+use crate::app::{edge_types, plugins, sources, stored, types};
 
 fn invalid(message: impl Into<String>) -> Refusal {
     Refusal::validation(message.into())
@@ -106,6 +106,8 @@ pub struct Manifest {
     pub instance_id: Option<String>,
     /// The stored values the writer left out because they did not read.
     pub unreadable: Vec<String>,
+    /// The archive version it names.
+    pub version: u64,
 }
 
 impl Manifest {
@@ -140,6 +142,7 @@ pub struct Registrations {
     /// Each type's icon, or `None` for one outside the pinned sets.
     pub icons: Vec<(String, Option<String>)>,
     pub sources: Vec<sources::Archived>,
+    pub plugins: Vec<plugins::Archived>,
     pub settings: Vec<(String, String)>,
     /// The secrets the archive's instance had set, by name.
     pub secrets: Vec<String>,
@@ -261,10 +264,13 @@ struct Rows {
     last_row: Option<checks::RowKey>,
     /// The item line and version of the last version line read, which the next must come after.
     last_version: Option<(usize, i64)>,
+    /// The archive version the manifest names.
+    version: u64,
+    plugin_names: HashSet<String>,
 }
 
 /// Each kind of `instance.ndjson.gz` line, with the manifest field that counts it.
-const KINDS: [(&str, &str); 8] = [
+const KINDS: [(&str, &str); 9] = [
     ("type", "type_count"),
     ("edge_type", "edge_type_count"),
     ("type_icon", "type_icon_count"),
@@ -273,10 +279,92 @@ const KINDS: [(&str, &str); 8] = [
     ("enforcement", "enforcement_count"),
     ("connector_state", "connector_state_count"),
     ("connector_agreement", "connector_agreement_count"),
+    ("plugin", "plugin_count"),
 ];
+
+/// The kinds a version 1 archive's manifest does not count, which it holds none of.
+const SINCE_VERSION_2: [&str; 1] = ["plugin"];
 
 /// The key beside a line's kind that says who registered it.
 const PROVENANCE: &str = "provenance";
+
+/// Where an archived type came from. Version 1 names a registered type `user`.
+fn archived_origin(line: &Value, version: u64, type_id: Option<&str>) -> Result<Origin> {
+    let refused = |message: String| invalid(message).with_detail("entry", INSTANCE);
+    let origin = match line.pointer("/provenance/origin") {
+        None => None,
+        Some(Value::String(origin)) => Some(origin.as_str()),
+        Some(_) => {
+            return Err(refused(
+                "The archive names a type's origin that is not text.".into(),
+            ));
+        }
+    };
+    if version >= 2
+        && origin != Some("plugin")
+        && line
+            .pointer("/provenance/plugin")
+            .is_some_and(|held| !held.is_null())
+    {
+        return Err(refused(
+            "The archive names a plugin for a type whose origin is not plugin.".into(),
+        ));
+    }
+    match (version, origin) {
+        (1, Some("platform")) => Err(Refusal::new(
+            Code::Forbidden,
+            "The archive claims a type is platform-shipped, which no archive can restore.",
+        )),
+        (1, None | Some("user")) => Ok(Origin::Registered),
+        (2.., Some("registered")) => Ok(Origin::Registered),
+        (2.., Some("plugin")) => {
+            let named = |key: &str| {
+                line.pointer(&format!("/provenance/plugin/{key}"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+            };
+            match (named("name"), named("version")) {
+                (Some(name), Some(version))
+                    if marfa_rules::plugin::is_name(&name)
+                        && marfa_rules::plugin::Version::parse(&version).is_some() =>
+                {
+                    if let Some(root) = type_id.and_then(marfa_rules::plugin::reserved_root) {
+                        return Err(refused(format!(
+                            "The archive names a type under {root}.* from a plugin, and no plugin registers one there."
+                        )));
+                    }
+                    Ok(Origin::Plugin { name, version })
+                }
+                _ => Err(refused(
+                    "The archive names a type from a plugin without the plugin's name and version."
+                        .into(),
+                )),
+            }
+        }
+        (_, None) => Err(refused(format!(
+            "The archive names a type with no origin, which an archive at version {version} holds."
+        ))),
+        (_, Some(other)) => Err(refused(format!(
+            "The archive names a type's origin {other}, which an archive at version {version} does not hold."
+        ))),
+    }
+}
+
+/// From version 2 a creator is `null` or a sign-in; version 1 keeps only a sign-in it holds.
+fn archived_creator(line: &Value, version: u64) -> Result<Option<Value>> {
+    let held = line.pointer("/provenance/created_by");
+    if version == 1 {
+        return Ok(held.filter(|by| plugins::is_actor(by)).cloned());
+    }
+    match held {
+        Some(Value::Null) => Ok(None),
+        Some(by) if plugins::is_actor(by) => Ok(Some(by.clone())),
+        None | Some(_) => Err(invalid(
+            "The archive names a type's creator as neither null nor a sign-in.",
+        )
+        .with_detail("entry", INSTANCE)),
+    }
+}
 
 fn kind_of(line: &Value) -> Option<usize> {
     let object = line.as_object()?;
@@ -492,28 +580,31 @@ impl Rows {
         let registrations = &mut self.registrations;
         match kind {
             "type" => {
-                if line
-                    .pointer("/provenance/origin")
-                    .and_then(Value::as_str)
-                    .is_some_and(|origin| origin == "platform")
-                {
-                    return Err(Refusal::new(
-                        Code::Forbidden,
-                        "The archive claims a type is platform-shipped, which no archive can restore.",
-                    ));
-                }
-                if let Some(id) = body.get("id").and_then(Value::as_str)
+                let id = body.get("id").and_then(Value::as_str);
+                let origin = archived_origin(line, self.version, id)?;
+                if let Some(id) = id
                     && !self.type_ids.insert(id.to_string())
                 {
                     return Err(registered_twice("type_id", id));
                 }
                 registrations.types.push(types::write::Archived {
                     definition: body.clone(),
-                    created_by: line
-                        .pointer("/provenance/created_by")
-                        .filter(|by| by.is_object())
-                        .cloned(),
+                    origin,
+                    created_by: archived_creator(line, self.version)?,
                 });
+            }
+            "plugin" => {
+                let archived = plugins::archived(body).map_err(|why| {
+                    invalid(format!(
+                        "Line {row} of {INSTANCE} holds a plugin that {why}."
+                    ))
+                    .with_detail("entry", INSTANCE)
+                    .with_detail("line", row)
+                })?;
+                if !self.plugin_names.insert(archived.name.clone()) {
+                    return Err(registered_twice("plugin", &archived.name));
+                }
+                registrations.plugins.push(archived);
             }
             "edge_type" => {
                 let definition = body.as_object().ok_or_else(|| {
@@ -925,6 +1016,8 @@ impl Intake {
                 kinds_seen: HashSet::new(),
                 last_row: None,
                 last_version: None,
+                version: VERSION,
+                plugin_names: HashSet::new(),
             }),
             spools,
             carried: Vec::new(),
@@ -1069,7 +1162,11 @@ impl Intake {
         match std::mem::replace(&mut self.entry, Entry::None) {
             Entry::None | Entry::Skip => Ok(()),
             Entry::Manifest(held) => {
-                self.manifest = Some(manifest(&held)?);
+                let read = manifest(&held)?;
+                if let Some(rows) = self.rows.as_mut() {
+                    rows.version = read.version;
+                }
+                self.manifest = Some(read);
                 Ok(())
             }
             Entry::Lines { decoder, mut spool } => {
@@ -1257,7 +1354,7 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
         .with_detail("entry", MANIFEST)
         .with_detail("version", version)
         .with_detail("written_by", written_by)),
-        Some(1) => first(&held),
+        Some(version @ 1..=VERSION) => first(&held, version),
         _ => Err(invalid(format!(
             "{MANIFEST} is missing or mistypes version, a whole number from 1 to {VERSION}."
         ))
@@ -1269,22 +1366,28 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
     }
 }
 
-/// Reads the counts a manifest of archive version 1 holds.
-fn first(held: &Map<String, Value>) -> Result<Manifest> {
+/// Version 1 predates the plugin count.
+fn first(held: &Map<String, Value>, version: u64) -> Result<Manifest> {
     let mut errors = Vec::new();
     let mut wrong =
         |path: String, message: &str| errors.push(json!({ "path": path, "message": message }));
     if !held.get("written_by").is_some_and(Value::is_string) {
         wrong("written_by".into(), "Must be a string.");
     }
-    let mut manifest = Manifest::default();
+    let mut manifest = Manifest {
+        version,
+        ..Manifest::default()
+    };
     for (at, (count, _)) in COUNTED.iter().enumerate() {
         match held.get(*count).and_then(Value::as_u64) {
             Some(counted) => manifest.counts[at] = counted,
             None => wrong((*count).into(), "Must be a non-negative integer."),
         }
     }
-    for (at, (_, count)) in KINDS.iter().enumerate() {
+    for (at, (kind, count)) in KINDS.iter().enumerate() {
+        if version == 1 && SINCE_VERSION_2.contains(kind) {
+            continue;
+        }
         match held.get(*count).and_then(Value::as_u64) {
             Some(counted) => manifest.instance_counts[at] = counted,
             None => wrong((*count).into(), "Must be a non-negative integer."),
@@ -1362,15 +1465,15 @@ mod tests {
 
     #[test]
     fn a_manifest_at_a_later_version_is_refused_and_one_at_none_is_mistyped() {
-        let text = r#"{"format":"marfa-archive","version":2,"written_by":"marfa-server 9.0.0"}"#;
+        let text = r#"{"format":"marfa-archive","version":3,"written_by":"marfa-server 9.0.0"}"#;
         let refused = manifest(text.as_bytes()).unwrap_err();
         assert!(
-            refused.message.contains("up to version 1"),
+            refused.message.contains("up to version 2"),
             "{}",
             refused.message
         );
         let details = refused.details.unwrap();
-        assert_eq!(details["version"], 2);
+        assert_eq!(details["version"], 3);
         assert_eq!(details["written_by"], "marfa-server 9.0.0");
         for version in ["0", "1.5", "\"1\"", "null"] {
             let text = format!(r#"{{"format":"marfa-archive","version":{version}}}"#);

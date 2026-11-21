@@ -113,6 +113,9 @@ pub enum CliError {
     DeviceCodeEnded,
     #[error("{0}")]
     Invalid(String),
+    /// A plugin source folder's definition file named other than its id.
+    #[error("{0}")]
+    FileNameMismatch(String),
     /// An export written whole but for the files it names and does not carry.
     #[error(
         "the archive lacks {} blob(s), which its files.ndjson.gz marks not_carried or lost: {}; it holds everything else it names",
@@ -176,6 +179,8 @@ pub enum CliError {
     },
     #[error("cannot read the docs site at {address}: {reason}")]
     DocsUnreachable { address: String, reason: String },
+    #[error("cannot read the plugins release at {address}: {reason}")]
+    PluginsUnreachable { address: String, reason: String },
     #[error(
         "{origin} answered {status}, a redirect to {}: name that address instead",
         location.as_deref().unwrap_or("nowhere it named")
@@ -383,6 +388,7 @@ own_codes! {
     CliError::CredentialEnded => "unauthorized",
     CliError::DeviceCodeEnded => "device_code_ended",
     CliError::Invalid(_) => "invalid",
+    CliError::FileNameMismatch(_) => "file_name_mismatch",
     CliError::ArchiveLacksBlobs(_)
     | CliError::ArchiveKeptApart { .. }
     | CliError::RestoreLacksBlobs(_) => "blobs_missing",
@@ -391,6 +397,7 @@ own_codes! {
     CliError::DocsPageNotFound { .. } => "docs_page_not_found",
     CliError::DocsSectionNotFound { .. } => "docs_section_not_found",
     CliError::DocsUnreachable { .. } => "docs_unreachable",
+    CliError::PluginsUnreachable { .. } => "plugins_unreachable",
 }
 
 /// What the server's own refusal is named by, from its status.
@@ -493,8 +500,10 @@ impl CliError {
             | CliError::Watch(..)
             | CliError::Install(_)
             | CliError::DeviceCodeEnded
-            | CliError::DocsUnreachable { .. } => Exit::Environment,
+            | CliError::DocsUnreachable { .. }
+            | CliError::PluginsUnreachable { .. } => Exit::Environment,
             CliError::Invalid(_)
+            | CliError::FileNameMismatch(_)
             | CliError::ArchiveLacksBlobs(_)
             | CliError::ArchiveKeptApart { .. }
             | CliError::RestoreLacksBlobs(_)
@@ -957,6 +966,8 @@ mod tests {
             "docs_page_not_found",
             "docs_section_not_found",
             "docs_unreachable",
+            "plugins_unreachable",
+            "file_name_mismatch",
             "blobs_missing",
             "install",
         ] {
@@ -1003,6 +1014,7 @@ mod tests {
             CliError::CredentialEnded,
             CliError::DeviceCodeEnded,
             CliError::Invalid(String::new()),
+            CliError::FileNameMismatch(String::new()),
             CliError::ContractMismatch {
                 origin: String::new(),
                 served: None,
@@ -1025,6 +1037,10 @@ mod tests {
                 headings: Vec::new(),
             },
             CliError::DocsUnreachable {
+                address: String::new(),
+                reason: String::new(),
+            },
+            CliError::PluginsUnreachable {
                 address: String::new(),
                 reason: String::new(),
             },

@@ -266,9 +266,34 @@ fn loop_through(
     None
 }
 
+/// Which door a folder's types are judged as passing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Door {
+    /// `POST /types`.
+    Register,
+    /// Installing a plugin: its own reserved roots, and `common.*` taken.
+    Install,
+}
+
 pub fn check_type_files(
     files: &[TypeFile],
     shipped: &Registry,
+) -> Result<FolderVerdict, RuleError> {
+    check_files(files, shipped, Door::Register)
+}
+
+/// Judges a plugin's `types/` folder as installing it would, against `registry`.
+pub fn check_plugin_type_files(
+    files: &[TypeFile],
+    registry: &Registry,
+) -> Result<FolderVerdict, RuleError> {
+    check_files(files, registry, Door::Install)
+}
+
+fn check_files(
+    files: &[TypeFile],
+    shipped: &Registry,
+    door: Door,
 ) -> Result<FolderVerdict, RuleError> {
     let mut candidates: Vec<&TypeFile> = files
         .iter()
@@ -399,7 +424,7 @@ pub fn check_type_files(
             continue;
         }
         let looped = loop_through(index, &links, &order.stuck);
-        let held = judge(entry, &working)?;
+        let held = judge(entry, &working, door)?;
         verdicts[entry.file].context =
             context_of(entry, &working, &by_id, looped.as_deref(), &entries);
         match held {
@@ -437,6 +462,11 @@ fn unjudged_guidance(sibling: Option<&str>) -> Option<String> {
 fn names_a_type(name: &str) -> bool {
     let stem = &name[..name.len() - ".md".len()];
     grammar::type_id(stem).unwrap_or(false)
+}
+
+/// Joins the guidance in `file`, named `name`, to `body`, as a plugin's bundle carries it.
+pub fn joined_guidance(body: &mut Obj, name: &str, file: &TypeFile) -> Result<(), Problem> {
+    with_guidance(body, name, file)
 }
 
 /// Sets the definition's `guidance` from the Markdown file beside it, as `types register --file` does: an empty file sets none, and a definition that also names `guidance` is refused.
@@ -503,8 +533,23 @@ fn context_of(
 }
 
 /// One type as the server registers it, against the types that registered before it: what it would store, or what it would be refused for.
-fn judge(entry: &Entry, working: &Registry) -> Result<Result<Obj, Vec<Problem>>, RuleError> {
-    if let Some(early) = early_refusal(&entry.body)? {
+fn judge(
+    entry: &Entry,
+    working: &Registry,
+    door: Door,
+) -> Result<Result<Obj, Vec<Problem>>, RuleError> {
+    if door == Door::Install
+        && let Some(root) = crate::plugin::reserved_root(&entry.id)
+    {
+        return Ok(Err(vec![problem(
+            "id",
+            "forbidden",
+            crate::plugin::reserved_message(root),
+        )]));
+    }
+    if let Some(early) = early_refusal(&entry.body)?
+        && (door == Door::Register || early.applies_to_install())
+    {
         return Ok(Err(vec![problem(
             early.path(),
             early.code(),

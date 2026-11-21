@@ -21,6 +21,7 @@ pub mod json_text;
 pub mod names;
 pub mod number;
 pub mod pattern;
+pub mod plugin;
 pub mod query;
 pub mod recurrence;
 pub mod release;

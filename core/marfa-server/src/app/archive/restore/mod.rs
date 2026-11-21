@@ -25,7 +25,7 @@ use crate::app::edges::write::Writing;
 use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM, HOLD_RESTORE_SETTINGS};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::app::{connectors, edge_types, sources, stored, tables, types};
+use crate::app::{connectors, edge_types, plugins, sources, stored, tables, types};
 use crate::app::{provenance, restore_running};
 use crate::db::Write;
 use crate::settings::registry;
@@ -289,8 +289,14 @@ fn judge_types(
     before: &Catalog,
     types: &[types::write::Archived],
     edge_types: &[Obj],
+    archived_plugins: &[plugins::Archived],
     caller: &Caller,
 ) -> Result<(types::write::Restoring, edge_types::Restoring)> {
+    let definitions: Vec<Obj> = types
+        .iter()
+        .filter_map(|held| held.definition.as_object().cloned())
+        .collect();
+    plugins::judge_restored(before, &definitions, archived_plugins)?;
     let types_plan = types::write::plan_restored(before, types)?;
     let edges_plan = edge_types::plan_restored(before, edge_types)?;
     let conflicts: Vec<String> = types_plan
@@ -377,12 +383,22 @@ impl App {
                 registrations.enforcement.clone(),
                 registrations.types.clone(),
                 registrations.edge_types.clone(),
+                registrations.plugins.clone(),
             );
             app.faults.hold(HOLD_RESTORE_SETTINGS, None).await;
             // On the writer, so every write admitted before the hold has landed.
             app.db
                 .write(Write::own().unsynced(), move |tx| {
-                    let (app, caller, settings, secrets, enforcement, types, edge_types) = judged;
+                    let (
+                        app,
+                        caller,
+                        settings,
+                        secrets,
+                        enforcement,
+                        types,
+                        edge_types,
+                        archived_plugins,
+                    ) = judged;
                     let caller = caller.current(tx, &app.clock.stamp())?;
                     caller.require_settings_restore(&stored::restoring(
                         tx,
@@ -392,7 +408,7 @@ impl App {
                         enforcement.as_ref(),
                     )?)?;
                     let before = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
-                    judge_types(&before, &types, &edge_types, &caller).map(drop)
+                    judge_types(&before, &types, &edge_types, &archived_plugins, &caller).map(drop)
                 })
                 .await?;
             let placed = app.place_restored(carried, absent).await?;
@@ -431,6 +447,7 @@ impl App {
                             &before,
                             &registrations.types,
                             &registrations.edge_types,
+                            &registrations.plugins,
                             &unit.caller,
                         )?;
                         let (types_registered, types_skipped) =
@@ -466,6 +483,7 @@ impl App {
                             icons.skip("already_set");
                         }
                         let named = sources::restore(tx, &unit.at, &registrations.sources)?;
+                        let (plugins_added, plugins_skipped) = plugins::restore(tx, &registrations.plugins)?;
                         let restored_settings =
                             stored::restore(
                                 tx,
@@ -575,6 +593,8 @@ impl App {
                             "sources_added": named.added,
                             "sources_skipped": named.skipped,
                             "sources_skipped_reasons": named.reasons,
+                            "plugins_added": plugins_added,
+                            "plugins_skipped": plugins_skipped,
                             "settings_added": settings_added,
                             "settings_skipped": settings_skipped,
                             "settings_dropped": registrations.dropped_settings,

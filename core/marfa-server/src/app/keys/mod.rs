@@ -36,6 +36,8 @@ pub struct Key {
     pub source: String,
     pub default_tier: String,
     pub oauth_client_id: Option<String>,
+    /// Kept when an app mints an owner's key, which drops `oauth_client_id`.
+    pub app_made: bool,
     pub grants: Grants,
     pub levers: OwnLevers,
     pub standing: Standing,
@@ -129,6 +131,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
         source: row.get("source")?,
         default_tier: row.get("default_tier")?,
         oauth_client_id: row.get("oauth_client_id")?,
+        app_made: row.get("app_made")?,
         grants: grants_of(row)?,
         levers: OwnLevers::from_row(row.get("enforcement_override")?),
         standing: Standing::default(),
@@ -322,8 +325,9 @@ fn insert(tx: &Transaction<'_>, key: &Key, hash: &str) -> Result<()> {
     tx.execute(
         "INSERT INTO api_keys (id, hash, label, source, default_tier, oauth_client_id, \
          permissions, type_permissions, edge_permissions, extension_permissions, \
-         metadata_permissions, profile_permissions, enforcement_override, created_at, expires_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+         metadata_permissions, profile_permissions, enforcement_override, created_at, expires_at, \
+         app_made) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             key.id,
             hash,
@@ -340,6 +344,7 @@ fn insert(tx: &Transaction<'_>, key: &Key, hash: &str) -> Result<()> {
             key.levers.row_text(),
             key.created_at,
             key.expires_at,
+            key.app_made,
         ],
     )?;
     store_claims(tx, &key.id, &key.grants.sources)
@@ -472,6 +477,7 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
                 source: request.source,
                 default_tier: request.default_tier,
                 oauth_client_id: app_origin.filter(|_| !request.owner_key),
+                app_made: caller.app_made(),
                 grants,
                 levers: request.levers.flatten().into(),
                 standing: Standing::default(),

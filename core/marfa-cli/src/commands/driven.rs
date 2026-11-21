@@ -184,6 +184,7 @@ fn skipped(words: &[String]) -> bool {
         // Prints a definition from its arguments, or judges a folder of them, and sends nothing.
         || words == ["types", "scaffold"]
         || words == ["types", "check"]
+        || matches!(words, [plugins, verb] if plugins == "plugins" && matches!(verb.as_str(), "check" | "bundle" | "index"))
         // Remote settings and health commands need no local folder. Other
         // folder commands use a working copy, driven by the device fixtures.
         || (first == Some("folders")
@@ -318,6 +319,9 @@ fn file_body(words: &[String]) -> &'static str {
         ["connectors", "agreements", "write"] => r#"{"clear":[]}"#,
         ["types", "register"] | ["types", "normalize"] | ["edge-types", "register"] => {
             r#"{"id":"user.x"}"#
+        }
+        ["plugins", "install"] => {
+            r#"{"format":1,"name":"x","title":"X","description":"X.","mark":"lucide:ticket","maker":"X","marfa":"0.0.1","version":"1.0.0","types":[],"edge_types":[]}"#
         }
         _ => "{}",
     }
