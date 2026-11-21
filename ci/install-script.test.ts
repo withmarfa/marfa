@@ -1,8 +1,8 @@
 /**
  * `scripts/install.sh` installs the `marfa` command line, `marfa-server` and the
  * tunnel connector from a release. It installs nothing it has not checked: the
- * archive must match its line in the release's checksum file, both programs in
- * it must run and report the release asked for, and a connector must run.
+ * archive must match its line in the release's checksum file, `marfa` and
+ * `marfa-server` in it must run and report the release asked for, and a connector must run.
  */
 import { spawnSync } from "node:child_process";
 import {
@@ -42,8 +42,8 @@ function folder(): string {
 }
 
 /**
- * A release folder with all three archives, each holding both programs and the
- * connector. Each program says `<program> <version>`, unless `says` gives another
+ * A release folder with all three archives, each holding `marfa`, `marfa-server`
+ * and the connector. Each program says `<program> <version>`, unless `says` gives another
  * answer for one, or `programs` leaves one out. The connector says what
  * Cloudflare's does unless `connector` is "broken" (it does not run) or "none"
  * (the release is from before it shipped).
@@ -124,7 +124,7 @@ function install(
 }
 
 describe("a release is installed after it is checked", () => {
-  it("puts both programs and the connector in the folder, runnable, and says what to do next", () => {
+  it("puts the programs and the connector in the folder, runnable, and says what to do next", () => {
     const done = install(release("0.0.23"));
     expect(done.status, done.err).toBe(0);
     expect(
@@ -133,7 +133,8 @@ describe("a release is installed after it is checked", () => {
       }).stdout,
     ).toContain("cloudflared version 2026.11.1");
     expect(statSync(join(done.dir, CONNECTOR)).mode & 0o111).not.toBe(0);
-    expect(done.out).toContain("Installed cloudflared beside them");
+    expect(done.out).toContain("Installed cloudflared beside them.");
+    expect(done.out).not.toContain("replacing");
     for (const program of PROGRAMS) {
       const installed = join(done.dir, program);
       expect(statSync(installed).mode & 0o111).not.toBe(0);
@@ -166,6 +167,7 @@ describe("a release is installed after it is checked", () => {
     );
     const done = install(release("0.0.23"), { dir });
     expect(done.status, done.err).toBe(0);
+    expect(done.out).toContain(`replacing the cloudflared that was in ${dir}`);
     for (const program of PROGRAMS) {
       expect(
         spawnSync(join(dir, program), ["--version"], {
@@ -176,6 +178,36 @@ describe("a release is installed after it is checked", () => {
     expect(
       spawnSync("ls", ["-A", dir], { encoding: "utf8" }).stdout.trim(),
     ).toBe("cloudflared\nmarfa\nmarfa-server");
+  });
+
+  it("says it replaced a cloudflared the person already kept in the folder, and replaces it", () => {
+    const dir = join(folder(), "bin");
+    mkdirSync(dir);
+    writeFileSync(join(dir, CONNECTOR), "#!/bin/sh\necho 'my own'\n");
+    chmodSync(join(dir, CONNECTOR), 0o755);
+    const done = install(release("0.0.23"), { dir });
+    expect(done.status, done.err).toBe(0);
+    expect(done.out).toContain(
+      `Installed cloudflared beside them, replacing the cloudflared that was in ${dir}.`,
+    );
+    expect(
+      spawnSync(join(dir, CONNECTOR), ["--version"], { encoding: "utf8" })
+        .stdout,
+    ).toContain("cloudflared version 2026.11.1");
+  });
+
+  it("does not claim a replacement when a release without the connector leaves the person's own alone", () => {
+    const dir = join(folder(), "bin");
+    mkdirSync(dir);
+    writeFileSync(join(dir, CONNECTOR), "#!/bin/sh\necho 'my own'\n");
+    chmodSync(join(dir, CONNECTOR), 0o755);
+    const done = install(release("0.0.22", { connector: "none" }), {
+      version: "0.0.22",
+      dir,
+    });
+    expect(done.status, done.err).toBe(0);
+    expect(done.out).not.toContain("replacing");
+    expect(readFileSync(join(dir, CONNECTOR), "utf8")).toContain("my own");
   });
 
   it("installs a release from before the connector shipped, so an earlier release can still be chosen", () => {

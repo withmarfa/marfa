@@ -14,6 +14,11 @@ use crate::settings::DatabasePath;
 /// The programs a release carries.
 pub const PROGRAMS: [&str; 2] = [SERVER, MARFA];
 
+/// Cloudflare's tunnel connector, which a release from the one that first carried it holds beside
+/// the programs. It has a release of its own, so it is neither named in the record of a swap
+/// nor put back with the programs.
+pub const CONNECTOR: &str = "cloudflared";
+
 pub fn record_of(database: &DatabasePath) -> Option<Folder> {
     database.file().map(|file| Folder::beside(&file))
 }

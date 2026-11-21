@@ -14,7 +14,7 @@ use url::Url;
 
 use super::feed::{Feed, RELEASE_HOSTS};
 use super::pending::{
-    self, ASK_LIMIT, Folder, MARFA, PROGRAMS, Pending, SERVER, run_within, sync_folder,
+    self, ASK_LIMIT, CONNECTOR, Folder, MARFA, PROGRAMS, Pending, SERVER, run_within, sync_folder,
 };
 use super::release::{self, Asset};
 use crate::db::volume;
@@ -78,13 +78,16 @@ fn expected(sums: &str, name: &str) -> Result<String, String> {
     }
 }
 
+/// Unpacks the programs, and the connector when the release carries one: a release from before
+/// the connector shipped holds none, and installs without it.
 fn unpack(archive: &Path, into: &Path) -> Result<(), String> {
     let unreadable =
         |error: &dyn std::fmt::Display| format!("The archive could not be unpacked: {error}");
+    let wanted: [&str; PROGRAMS.len() + 1] = [PROGRAMS[0], PROGRAMS[1], CONNECTOR];
     let mut tar = tar::Archive::new(GzDecoder::new(
         File::open(archive).map_err(|e| unreadable(&e))?,
     ));
-    let mut found = [false; PROGRAMS.len()];
+    let mut found = [false; PROGRAMS.len() + 1];
     for entry in tar.entries().map_err(|e| unreadable(&e))? {
         let mut entry = entry.map_err(|e| unreadable(&e))?;
         if !entry.header().entry_type().is_file() {
@@ -92,25 +95,19 @@ fn unpack(archive: &Path, into: &Path) -> Result<(), String> {
         }
         let path = entry.path().map_err(|e| unreadable(&e))?.into_owned();
         let name = path.strip_prefix("./").unwrap_or(&path);
-        let Some(at) = PROGRAMS
-            .iter()
-            .position(|program| Path::new(program) == name)
-        else {
+        let Some(at) = wanted.iter().position(|program| Path::new(program) == name) else {
             continue;
         };
         if entry.size() > MAX_PROGRAM_BYTES {
             return Err(format!(
                 "{} in the archive is larger than a program is.",
-                PROGRAMS[at]
+                wanted[at]
             ));
         }
         if found[at] {
-            return Err(format!(
-                "The archive holds {} more than once.",
-                PROGRAMS[at]
-            ));
+            return Err(format!("The archive holds {} more than once.", wanted[at]));
         }
-        let to = into.join(PROGRAMS[at]);
+        let to = into.join(wanted[at]);
         entry.unpack(&to).map_err(|e| unreadable(&e))?;
         set_executable(&to).map_err(|e| unreadable(&e))?;
         // Unsynced bytes renamed into place can be damaged by a power loss.
@@ -153,6 +150,23 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
         if reported.stdout.trim() != wanted {
             return Err(format!(
                 "The downloaded {name} reports '{}', not '{wanted}'.",
+                reported.stdout.trim()
+            ));
+        }
+    }
+    // Its release is Cloudflare's, so only that it runs here and says what it is is proved.
+    if staging.join(CONNECTOR).is_file() {
+        let reported = ask(&staging.join(CONNECTOR), &["--version".as_ref()])
+            .ok()
+            .filter(|ran| ran.status.success())
+            .ok_or_else(|| format!("The downloaded {CONNECTOR} does not run on this machine."))?;
+        if !reported
+            .stdout
+            .trim()
+            .starts_with(&format!("{CONNECTOR} version "))
+        {
+            return Err(format!(
+                "The downloaded {CONNECTOR} reports '{}', not a {CONNECTOR} version.",
                 reported.stdout.trim()
             ));
         }
@@ -208,7 +222,8 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
 
 /// Puts in only the new `marfa-server`, keeping the old one beside it, and stages the new
 /// `marfa` as `.marfa.next`: the running release's `marfa server run` supervises the new server
-/// until it settles. Undoes what it did when a step fails.
+/// until it settles. Then replaces the connector, when the release carries one; nothing runs it
+/// yet, so a put-back leaves the new one. Undoes what it did when a step fails.
 pub(super) fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(), String> {
     let pending = Pending {
         from: job.from.clone(),
@@ -246,6 +261,11 @@ pub(super) fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(),
         .map_err(|error| undo("keeping the old program", error, false))?;
     fs::rename(staging.join(SERVER), &live)
         .map_err(|error| undo("placing the new program", error, true))?;
+    let connector = staging.join(CONNECTOR);
+    if connector.is_file() {
+        fs::rename(&connector, job.programs.join(CONNECTOR))
+            .map_err(|error| undo("placing the new connector", error, true))?;
+    }
     let _ = sync_folder(&job.programs);
     Ok(())
 }

@@ -102,8 +102,8 @@ const LIMITS: Record<string, number> = {
   "release.yml:version": 5,
   // Eleven runs so far, the slowest 43.9 minutes.
   "release.yml:programs-macos": 90,
-  // `sign-binary.sh` waits up to 30 minutes for Apple's notary, for each of two programs.
-  "release.yml:sign": 75,
+  // `sign-binary.sh` waits up to 30 minutes for Apple's notary, for each of three programs.
+  "release.yml:sign": 105,
   "release.yml:programs-linux": 70,
   "release.yml:run-linux": 5,
   "release.yml:collect": 5,

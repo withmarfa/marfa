@@ -14,7 +14,7 @@ Each release has one archive per platform, `marfa-<version>-<platform>.tar.gz`, 
 curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/install.sh | sh
 ```
 
-The two programs must be the same release. `marfa` finds `marfa-server` only beside itself. Cloudflare's `cloudflared` is a release of its own, which the server will run only once its owner links the instance to Marfa Cloud.
+The two programs must be the same release. `marfa` finds `marfa-server` only beside itself. Cloudflare's `cloudflared` is a release of its own, which the server will run only once its owner links the instance to Marfa Cloud. The macOS archive carries it signed and notarized by Marfa's release, like the other programs. A server's own update installs it too, when the new release has one.
 
 ## Verify a download
 

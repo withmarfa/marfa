@@ -95,12 +95,32 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
     "pins the tunnel connector every release ships: its version and the SHA-256 of each download",
   ],
   [
+    "scripts/release/cloudflared-licences.txt",
+    "the licences of the Go modules built into the connector, which the notices carry",
+  ],
+  [
+    "scripts/release/cloudflared-licences.sh",
+    "gathers those licences for the pinned connector when the pin moves",
+  ],
+  [
+    "scripts/release/cloudflared-modules.sh",
+    "reads the modules and the Go release from a connector's build information",
+  ],
+  [
+    "core/marfa-server/src/app/updates/pending.rs",
+    "names the connector a release holds beside the programs, so that an update installs it",
+  ],
+  [
+    "core/marfa-server/src/app/updates/tests.rs",
+    "tests that an update installs the connector, and installs an older release without one",
+  ],
+  [
     "scripts/release/cloudflared-pins.sh",
     "reads that pin file for the scripts that fetch and check the connector",
   ],
   [
     "scripts/release/fetch-cloudflared.sh",
-    "downloads the connector, holds it to its pin and adds its licence to the notices",
+    "downloads the connector, holds it to its pin, removes its macOS signature for the release to sign again, and adds its licences to the notices",
   ],
   [
     "scripts/release/build-programs.sh",
@@ -112,7 +132,7 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
   ],
   [
     "scripts/release/check-archive.sh",
-    "refuses an archive whose connector is missing, is not the pinned program or does not run",
+    "refuses an archive whose connector is missing, unsigned, not executable, not the pinned release or does not run",
   ],
   [
     "scripts/release/image-context.sh",
@@ -136,7 +156,7 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
   ],
   [
     ".github/workflows/release.yml",
-    "carries the connector from the Mac build into its archive, which no job signs",
+    "carries the connector from the Mac build into its archive, and signs and notarizes it with the other programs",
   ],
 ];
 

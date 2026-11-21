@@ -26,16 +26,3 @@ pin_download() {
   fi
   printf '%s' "$line"
 }
-
-# target_of_this_machine: the build target whose programs run here.
-target_of_this_machine() {
-  case "$(uname -s)-$(uname -m)" in
-    Darwin-arm64) echo aarch64-apple-darwin ;;
-    Linux-x86_64) echo x86_64-unknown-linux-musl ;;
-    Linux-aarch64 | Linux-arm64) echo aarch64-unknown-linux-musl ;;
-    *)
-      echo "::error::$(uname -s) $(uname -m) runs none of the release's programs." >&2
-      return 1
-      ;;
-  esac
-}

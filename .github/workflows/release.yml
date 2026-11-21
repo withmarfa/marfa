@@ -351,7 +351,7 @@ jobs:
     needs: [version, programs-macos]
     runs-on: macos-26
     environment: ${{ github.event_name == 'push' && 'release' || '' }}
-    timeout-minutes: 75
+    timeout-minutes: 105
     permissions:
       contents: read
     env:
@@ -364,8 +364,8 @@ jobs:
           name: build-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/build
 
-      # cloudflared is not signed here. It keeps Cloudflare's signature, which the build
-      # checked against the pinned team, and `check-archive.sh` holds its bytes to the pin.
+      # Cloudflare's cloudflared is not notarized, so the build removed its signature and it is
+      # signed and notarized here, with the programs.
       - name: Sign and notarize the programs
         if: github.event_name == 'push'
         env:
@@ -376,7 +376,7 @@ jobs:
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          for program in marfa marfa-server; do
+          for program in marfa marfa-server cloudflared; do
             # An artifact keeps no file modes.
             chmod +x "$RUNNER_TEMP/build/$program"
             bash scripts/release/sign-binary.sh "$RUNNER_TEMP/build/$program"
@@ -386,13 +386,16 @@ jobs:
       - name: Sign the programs ad hoc, for a dry run
         if: github.event_name != 'push'
         run: |
-          for program in marfa marfa-server; do
+          for program in marfa marfa-server cloudflared; do
             chmod +x "$RUNNER_TEMP/build/$program"
             codesign --force --sign - "$RUNNER_TEMP/build/$program"
             codesign --verify --strict "$RUNNER_TEMP/build/$program"
           done
 
+      # A tag run holds every program in the archive to the release's team.
       - name: Pack the programs and run them from the archive
+        env:
+          MARFA_EXPECT_TEAM: ${{ github.event_name == 'push' && secrets.APPLE_TEAM_ID || '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/pack" "$RUNNER_TEMP/artifacts"
           cp "$RUNNER_TEMP/build/marfa" "$RUNNER_TEMP/build/marfa-server" "$RUNNER_TEMP/build/cloudflared" "$RUNNER_TEMP/build/NOTICES.txt" "$RUNNER_TEMP/pack/"

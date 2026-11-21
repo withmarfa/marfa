@@ -110,6 +110,11 @@ if [ -f "$work/unpack/cloudflared" ]; then
 fi
 
 mkdir -p "$dir" || fail "could not make $dir. Choose another with MARFA_INSTALL_DIR."
+# The connector may be one the person keeps here; a replaced one is said so.
+replaced=
+if [ -e "$dir/cloudflared" ] || [ -L "$dir/cloudflared" ]; then
+  replaced=1
+fi
 # A copy beside each target and a rename, so a stop part-way leaves the old ones.
 for program in $programs; do
   cp "$work/unpack/$program" "$dir/.$program.$$" || fail "could not write to $dir. Choose another with MARFA_INSTALL_DIR."
@@ -119,7 +124,14 @@ for program in $programs; do
 done
 say "Installed marfa $version and marfa-server $version to $dir."
 case "$programs" in
-  *cloudflared) say "Installed cloudflared beside them. Marfa does not run it unless you link this server to Marfa Cloud." ;;
+  *cloudflared)
+    if [ -n "$replaced" ]; then
+      say "Installed cloudflared beside them, replacing the cloudflared that was in $dir."
+    else
+      say "Installed cloudflared beside them."
+    fi
+    say "Marfa does not run it unless you link this server to Marfa Cloud."
+    ;;
 esac
 
 case ":$PATH:" in

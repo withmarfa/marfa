@@ -15,7 +15,9 @@ use sha2::{Digest, Sha256};
 
 use super::apply::{self, Job};
 use super::feed::Feed;
-use super::pending::{self, Folder, MARFA, PROGRAMS, Pending, SERVER, next_marfa, previous_of};
+use super::pending::{
+    self, CONNECTOR, Folder, MARFA, PROGRAMS, Pending, SERVER, next_marfa, previous_of,
+};
 use super::release::{Asset, archive_name};
 use super::{State, Updates};
 use crate::app::faults::Faults;
@@ -541,6 +543,96 @@ fn a_second_request_while_one_runs_joins_it_and_the_update_runs_once() {
 
 fn new_program(name: &str) -> String {
     program(name, "0.0.75", OPENS)
+}
+
+/// Cloudflare's `--version` line, as the connector of release `version` prints it.
+fn connector(version: &str) -> String {
+    format!("#!/bin/sh\necho 'cloudflared version {version} (built 2026-11-17-15:04 UTC)'\n")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_that_carries_the_connector_swaps_it_in_beside_the_programs() {
+    let case = Case::new("connector");
+    fs::write(case.bin().join(CONNECTOR), connector("2026.1.0")).unwrap();
+    apply_mode(&case.bin().join(CONNECTOR));
+    let mut files = good(OPENS);
+    files.push((CONNECTOR, connector("2026.11.1")));
+    case.run(case.release(&files, None, None)).await.unwrap();
+    assert_eq!(case.text(CONNECTOR), connector("2026.11.1"));
+    use std::os::unix::fs::PermissionsExt;
+    let mode = fs::metadata(case.bin().join(CONNECTOR))
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o111, 0o111, "the connector is executable");
+    assert_eq!(case.text(SERVER), new_program(SERVER));
+    assert!(!case.bin().join(".marfa-update-0.0.75").exists());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_release_from_before_the_connector_installs_without_one_and_leaves_an_existing_one() {
+    let case = Case::new("no-connector");
+    case.run(case.release(&good(OPENS), None, None))
+        .await
+        .unwrap();
+    assert!(
+        !case.bin().join(CONNECTOR).exists(),
+        "nothing is made up when the archive holds none"
+    );
+    assert_eq!(case.text(SERVER), new_program(SERVER));
+
+    let kept = Case::new("no-connector-kept");
+    fs::write(kept.bin().join(CONNECTOR), connector("2026.1.0")).unwrap();
+    apply_mode(&kept.bin().join(CONNECTOR));
+    kept.run(kept.release(&good(OPENS), None, None))
+        .await
+        .unwrap();
+    assert_eq!(kept.text(CONNECTOR), connector("2026.1.0"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_connector_that_will_not_run_or_is_not_cloudflareds_stops_the_update_with_nothing_changed()
+ {
+    let case = Case::new("connector-wrong");
+    for (text, said) in [
+        ("#!/nonexistent/interpreter\n".to_string(), "does not run"),
+        (
+            "#!/bin/sh\necho 'something else 1.0'\n".to_string(),
+            "something else 1.0",
+        ),
+    ] {
+        let mut files = good(OPENS);
+        files.push((CONNECTOR, text));
+        let refused = case
+            .run(case.release(&files, None, None))
+            .await
+            .unwrap_err();
+        assert!(
+            refused.contains(CONNECTOR) && refused.contains(said),
+            "{refused}"
+        );
+        assert!(!case.bin().join(CONNECTOR).exists());
+        case.untouched();
+    }
+}
+
+#[test]
+fn a_connector_that_cannot_be_placed_puts_the_old_server_back() {
+    let case = Case::new("connector-undo");
+    let job = case.release(&good(OPENS), None, None);
+    let staging = case.bin().join(".staging");
+    fs::create_dir(&staging).unwrap();
+    for name in PROGRAMS {
+        fs::write(staging.join(name), new_program(name)).unwrap();
+    }
+    fs::write(staging.join(CONNECTOR), connector("2026.11.1")).unwrap();
+    // A folder where the connector goes cannot be replaced by a file.
+    fs::create_dir(case.bin().join(CONNECTOR)).unwrap();
+    let failed = apply::swap(&staging, &job, Some(1)).unwrap_err();
+    assert!(failed.contains("placing the new connector"), "{failed}");
+    fs::remove_dir_all(&staging).unwrap();
+    fs::remove_dir(case.bin().join(CONNECTOR)).unwrap();
+    case.untouched();
 }
 
 #[tokio::test(flavor = "multi_thread")]
