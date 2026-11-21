@@ -252,7 +252,8 @@ describe("GET /overview", () => {
       id,
       version: 1,
       label: id,
-      description: long,
+      // The longest description a type takes, still over the overview's cut.
+      description: long.slice(0, 200),
       fields: { name: { type: "string" } },
     });
     for (let i = 0; i < 60; i++) {
