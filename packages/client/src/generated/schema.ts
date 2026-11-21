@@ -2960,7 +2960,7 @@ export interface components {
         DisplayHints: {
             /** @description The field that holds an item's title for display. */
             title_field?: string;
-            /** @description The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 UTF-16 code units unless its `max_length` says otherwise. */
+            /** @description The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 Unicode characters unless its `max_length` says otherwise. */
             body_field?: string;
             /** @description Whether an item with no title is named by the first line of its body. `false` where the body is not a name, such as a highlight's passage: such an item is named after what it comes from, or `Untitled`. Defaults to `true`. */
             name_from_body?: boolean;
@@ -4600,7 +4600,7 @@ export interface components {
             format?: "url" | "email" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description `false` if full-text search should skip the field. Items still return it. */
             searchable?: boolean;
-            /** @description The longest value a `string` or `enum` field allows, in UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other. */
+            /** @description The longest `string` value, in Unicode characters, not UTF-16 code units. Defaults to 1,000,000 on the field `display_hints.body_field` names, and to 100,000 on any other. Ignored on `enum` fields. */
             max_length?: number;
             /** @description The most elements an `array` field allows. */
             max_items?: number;
@@ -11312,7 +11312,7 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The titles to look for, at most 200, each at most 1000 UTF-16 code units. Case, Unicode form and surrounding white space do not matter. */
+                    /** @description The titles to look for, at most 200, each at most 1,000 Unicode characters, not UTF-16 code units. Case, Unicode form and surrounding white space do not matter. */
                     names: string[];
                 };
             };
@@ -11359,7 +11359,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: `names` is missing.
-             *     - `validation_error`: `names` is not a list of strings, has more than 200 names, has a name longer than 1,000 UTF-16 code units, or the body has a field this endpoint doesn't take.
+             *     - `validation_error`: `names` is not a list of strings, has more than 200 names, has a name longer than 1,000 Unicode characters, or the body has a field this endpoint doesn't take.
              */
             400: {
                 headers: {

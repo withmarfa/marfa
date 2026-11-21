@@ -15,7 +15,7 @@ import {
   ScriptedServer,
   type Answer,
 } from "../../device/scripted-server.js";
-import { keychainEnv } from "../../utils/keychain.js";
+import { keychainEnv, ownKeychain } from "../../utils/keychain.js";
 import {
   folderItem,
   hydratedHarness,
@@ -221,28 +221,6 @@ it("refuses a sign-in under an unsafe credential lock before asking for a code",
 });
 
 /**
- * A keychain file of the test's own: `keys keep`, a sign-in and a refresh
- * each make their origin the current one, which the run's shared keychain
- * must not be left holding while other files run.
- */
-function ownKeychain(): { path: string; remove: () => void } {
-  const folder = tempFolder("marfa-credential-keychain-");
-  const path = join(folder, "credentials.keychain-db");
-  const password = randomUUID();
-  execFileSync("security", ["create-keychain", "-p", password, path]);
-  // Unlocked, and never locking itself under the run: a locked keychain is
-  // one `security` would ask a person to unlock.
-  execFileSync("security", ["unlock-keychain", "-p", password, path]);
-  execFileSync("security", ["set-keychain-settings", path]);
-  return {
-    path,
-    remove: () => {
-      rmSync(folder, { recursive: true, force: true });
-    },
-  };
-}
-
-/**
  * Keeps `kept` for `origin` as a sign-in or `keys keep` would, readable by
  * any process. What the keychain holds is read back only through the
  * binary, which never asks a person: `security` reading the secret of an
@@ -406,7 +384,7 @@ describe("a kept credential", ON_MACOS, () => {
   let keychain: { path: string; remove: () => void };
   let server: ScriptedServer;
   beforeEach(async () => {
-    keychain = ownKeychain();
+    keychain = ownKeychain("marfa-credential-keychain-");
     server = await ScriptedServer.start();
   });
   afterEach(async () => {

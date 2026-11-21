@@ -105,7 +105,8 @@ Each job is named as GitHub shows it.
 
    When the variable is not `publish`, the tap stays at the last version it was given. Say so in the hand-back; it is not a failed release.
 
-6. Stop. Publishing starts WithMarfa's release automation, which writes the release notes, syncs and rewrites the docs from the open docs issues, and moves the Swift package and the connectors to the release. Do none of these yourself.
+6. The Railway template needs no change: its server image is `ghcr.io/withmarfa/marfa-server:latest` (`deploy/railway.md`, "Template configuration"), so a new deployment from it starts on this release once `latest` moves.
+7. Stop. Publishing starts WithMarfa's release automation, which writes the release notes, syncs and rewrites the docs from the open docs issues, and moves the Swift package and the connectors to the release. Do none of these yourself.
 
 ## Finish a failed or partial run
 

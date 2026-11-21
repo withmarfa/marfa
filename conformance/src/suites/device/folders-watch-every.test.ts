@@ -40,6 +40,7 @@ import {
   sentTitles,
   sentUpdates,
 } from "./folders.shared.js";
+import { ownKeychain } from "../../utils/keychain.js";
 import { ON_MACOS } from "../../utils/platform.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
@@ -680,7 +681,7 @@ describe("a watch of every folder", () => {
         answers.validation("invalid_grant", "the sign-in ended"),
       );
       scriptFolderWrites(b);
-      const keychain = ownKeychain();
+      const keychain = ownKeychain("marfa-every-keychain-");
       cleanups.push(keychain.remove);
       keepSignIn(keychain.path, b.server.url);
       return { b, keychain };
@@ -829,7 +830,7 @@ describe("a watch of every folder", () => {
       });
       made.push(b);
       scriptFolderWrites(b);
-      const keychain = ownKeychain();
+      const keychain = ownKeychain("marfa-every-keychain-");
       cleanups.push(keychain.remove);
       keepKey(keychain.path, b.server.url, "device-fixture-key-kept-for-b");
       // The server at b's address is replaced by another instance.
@@ -903,7 +904,7 @@ describe("a watch of every folder", () => {
       });
       made.push(b);
       scriptFolderWrites(b);
-      const keychain = ownKeychain();
+      const keychain = ownKeychain("marfa-every-keychain-");
       cleanups.push(keychain.remove);
       keepKey(keychain.path, b.server.url, "device-fixture-key-kept-for-b");
       let instance = "11111111-1111-7111-8111-111111111111";
@@ -969,7 +970,7 @@ describe("a watch of every folder", () => {
       made.push(b);
       scriptFolderWrites(b);
       expect(b.server.url).not.toBe(a.server.url);
-      const keychain = ownKeychain();
+      const keychain = ownKeychain("marfa-every-keychain-");
       cleanups.push(keychain.remove);
       const kept = "device-fixture-key-kept-for-b";
       keepKey(keychain.path, b.server.url, kept);
@@ -1021,30 +1022,6 @@ describe("a watch of every folder", () => {
     });
   });
 });
-
-/**
- * A keychain file of the test's own, so the run's shared one is left as it
- * is. The binary reads an item `security` made only where the item lets any
- * application read it, which is set as the item is made, never changed later.
- */
-function ownKeychain(): { path: string; remove: () => void } {
-  const folder = tempFolder("marfa-every-keychain-");
-  const path = join(folder, "credentials.keychain-db");
-  const password = randomUUID();
-  execFileSync("security", ["create-keychain", "-p", password, path]);
-  execFileSync("security", ["unlock-keychain", "-p", password, path]);
-  execFileSync("security", ["set-keychain-settings", path]);
-  return {
-    path,
-    remove: () => {
-      try {
-        execFileSync("security", ["delete-keychain", path]);
-      } finally {
-        rmSync(folder, { recursive: true, force: true });
-      }
-    },
-  };
-}
 
 /** Keeps a sign-in for `origin` as `login` would, whose renewal the server refuses. */
 function keepSignIn(keychain: string, origin: string): void {

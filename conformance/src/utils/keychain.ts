@@ -73,15 +73,44 @@ export function keychainEnv(): NodeJS.ProcessEnv {
  * file started and stopped. Removed with the file's temporary folders.
  */
 export function emptyKeychain(): string {
-  const folder = tempFolder("marfa-conformance-empty-keychain-");
-  if (process.platform !== "darwin") return join(folder, "none");
-  const path = join(folder, "empty.keychain-db");
+  return ownKeychain("marfa-conformance-empty-keychain-").path;
+}
+
+/** Isolates credentials that would otherwise change the run's current sign-in. */
+export function ownKeychain(prefix = "marfa-conformance-own-keychain-"): {
+  path: string;
+  remove: () => void;
+  lock: () => void;
+} {
+  const folder = tempFolder(prefix);
+  if (process.platform !== "darwin") {
+    return {
+      path: join(folder, "none"),
+      remove: () => {
+        removeTempFolder(folder);
+      },
+      lock: () => {},
+    };
+  }
+  const path = join(folder, "credentials.keychain-db");
   const password = randomUUID();
   execFileSync("security", ["create-keychain", "-p", password, path]);
-  // Unlocked and never locking itself: the binary may not ask a person to.
   execFileSync("security", ["unlock-keychain", "-p", password, path]);
+  // Automatic locking would require a dialog the binary must refuse.
   execFileSync("security", ["set-keychain-settings", path]);
-  return path;
+  return {
+    path,
+    remove: () => {
+      try {
+        execFileSync("security", ["delete-keychain", path]);
+      } finally {
+        removeTempFolder(folder);
+      }
+    },
+    lock: () => {
+      execFileSync("security", ["lock-keychain", path]);
+    },
+  };
 }
 
 function keychainFiles(): {
