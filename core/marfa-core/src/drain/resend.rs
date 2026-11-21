@@ -45,9 +45,11 @@ enum Holds {
 
 /// Whether `row` goes again only once its subject is read: a write sent
 /// before under a credential other than `credential`, or under one the copy
-/// kept no record of. A create naming its id, or an edge create, is answered
-/// for what it made whoever repeats it (`items/create-repeat`,
-/// `edges/id-repeat`), and a row write by its own key and values.
+/// kept no record of. A create naming its id and no natural key, or an edge
+/// create, is answered for what it made whoever repeats it
+/// (`items/create-repeat`, `edges/id-repeat`), and a row write by its own key
+/// and values. A natural key decides before the id, so a create naming both
+/// would be upserted over whatever was written since it landed.
 pub(super) fn owed(
     conn: &Connection,
     row: &QueuedWrite,
@@ -55,7 +57,7 @@ pub(super) fn owed(
     credential: &str,
 ) -> Result<bool> {
     let judged = match row.kind {
-        WriteKind::CreateItem => payload.get("id").is_none(),
+        WriteKind::CreateItem => payload.get("id").is_none() || payload.get("source_id").is_some(),
         WriteKind::CreateEdge
         | WriteKind::WriteRows
         | WriteKind::UndoRows
@@ -177,6 +179,23 @@ fn judged(
     };
     let state_of = |found: &Value| item_of(found).map(|item| item.state);
     Ok(match row.kind {
+        // Only a create naming the id makes an item under it.
+        WriteKind::CreateItem if let Some(id) = text(payload, "id") => {
+            let include = if payload.get("edges").is_some() {
+                "edges,metadata"
+            } else {
+                "metadata"
+            };
+            match read(
+                http,
+                stop,
+                &["items", id],
+                &[("include", include), ("state", "any")],
+            )? {
+                Read::Row(found) => Judged::Applied(Some(found)),
+                Read::Absent | Read::Refused => unread,
+            }
+        }
         WriteKind::CreateItem => {
             let named = text(payload, "source");
             let recorded = match named {
