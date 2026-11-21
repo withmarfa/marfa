@@ -100,8 +100,6 @@ pub struct Manifest {
     pub counts: [u64; COUNTED.len()],
     /// The lines it counts of each kind in `instance.ndjson.gz`, in the order of `KINDS`.
     pub instance_counts: [u64; KINDS.len()],
-    /// The kinds added within its version that it does not count.
-    pub uncounted: Vec<&'static str>,
     /// The `blobs/` entries it says the archive carries.
     pub blob_count: u64,
     /// The instance that wrote it, where the manifest names one in its canonical form.
@@ -288,9 +286,6 @@ const KINDS: [(&str, &str); 10] = [
 
 /// The kinds a version 1 archive's manifest does not count, which it holds none of.
 const SINCE_VERSION_2: [&str; 2] = ["plugin", "app_vendor"];
-
-/// Kinds added after the first build that wrote version 2, so a version 2 manifest may not count them.
-const WITHIN_VERSION_2: [&str; 1] = ["app_vendor"];
 
 /// The key beside a line's kind that says who registered it.
 const PROVENANCE: &str = "provenance";
@@ -1282,10 +1277,10 @@ impl Intake {
                 .with_detail("field", count));
             }
         }
-        for (((kind, count), lines), counted) in
+        for (((_, count), lines), counted) in
             KINDS.iter().zip(rows.kinds).zip(manifest.instance_counts)
         {
-            if lines != counted && !manifest.uncounted.contains(kind) {
+            if lines != counted {
                 return Err(invalid(format!(
                     "{MANIFEST} counts {counted} in {count}, and {INSTANCE} holds {lines} of them."
                 ))
@@ -1412,12 +1407,7 @@ fn first(held: &Map<String, Value>, version: u64) -> Result<Manifest> {
         if version == 1 && SINCE_VERSION_2.contains(kind) {
             continue;
         }
-        let value = held.get(*count);
-        if value.is_none() && WITHIN_VERSION_2.contains(kind) {
-            manifest.uncounted.push(*kind);
-            continue;
-        }
-        match value.and_then(Value::as_u64) {
+        match held.get(*count).and_then(Value::as_u64) {
             Some(counted) => manifest.instance_counts[at] = counted,
             None => wrong((*count).into(), "Must be a non-negative integer."),
         }
@@ -1531,31 +1521,13 @@ mod tests {
         let second =
             format!(r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS}}}"#);
         let refused = manifest(second.as_bytes()).unwrap_err();
-        assert!(
-            refused.message.contains("plugin_count"),
-            "{}",
-            refused.message
-        );
-        let mistyped = format!(
-            r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS},"plugin_count":0,"app_vendor_count":"0"}}"#
-        );
-        let refused = manifest(mistyped.as_bytes()).unwrap_err();
-        assert!(
-            refused.message.contains("app_vendor_count"),
-            "{}",
-            refused.message
-        );
-        let uncounted = format!(
-            r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS},"plugin_count":0}}"#
-        );
-        assert_eq!(
-            manifest(uncounted.as_bytes()).unwrap().uncounted,
-            ["app_vendor"]
-        );
+        for field in ["plugin_count", "app_vendor_count"] {
+            assert!(refused.message.contains(field), "{}", refused.message);
+        }
         let second = format!(
             r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS},"plugin_count":0,"app_vendor_count":0}}"#
         );
-        assert!(manifest(second.as_bytes()).unwrap().uncounted.is_empty());
+        assert!(manifest(second.as_bytes()).is_ok());
     }
 
     #[test]

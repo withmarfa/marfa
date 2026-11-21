@@ -266,13 +266,12 @@ function vendorArchive(
   const manifest = emptyManifest({
     version,
     type_count: lines.filter((line) => "type" in line).length,
-    ...(version === 1
-      ? {}
-      : {
-          plugin_count: 0,
-          app_vendor_count: lines.filter((line) => "app_vendor" in line).length,
-        }),
+    app_vendor_count: lines.filter((line) => "app_vendor" in line).length,
   });
+  if (version === 1) {
+    delete manifest.plugin_count;
+    delete manifest.app_vendor_count;
+  }
   if (version !== 1) {
     lines = lines.map((line) =>
       "provenance" in line
@@ -941,11 +940,10 @@ describe("vendors in an archive", () => {
     expect(await holder(vE)).toBe(holderApp.app.clientId);
   });
 
-  it("refuses a version 2 manifest that mistypes app_vendor_count or miscounts the app_vendor lines, and restores one that leaves the count out", async () => {
+  it("refuses a version 2 manifest that leaves out, mistypes or miscounts app_vendor_count", async () => {
     const counted = (vendor: string, count: unknown) => {
       const manifest = emptyManifest({
         version: 2,
-        plugin_count: 0,
         app_vendor_count: count,
       });
       if (count === undefined) delete manifest.app_vendor_count;
@@ -967,12 +965,14 @@ describe("vendors in an archive", () => {
       ]);
     };
     const vC = freshVendor();
-    const mistyped = await local.restoreArchive(counted(vC, "1"));
-    expect(mistyped.status, JSON.stringify(mistyped.error)).toBe(400);
-    expect(mistyped.error?.error.code).toBe("validation_error");
-    expect(mistyped.error?.error.details?.errors).toEqual([
-      expect.objectContaining({ path: "app_vendor_count" }),
-    ]);
+    for (const count of [undefined, "1"]) {
+      const refused = await local.restoreArchive(counted(vC, count));
+      expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.errors).toEqual([
+        expect.objectContaining({ path: "app_vendor_count" }),
+      ]);
+    }
     const miscounted = await local.restoreArchive(counted(vC, 2));
     expect(miscounted.status, JSON.stringify(miscounted.error)).toBe(400);
     expect(miscounted.error?.error.code).toBe("validation_error");
@@ -984,13 +984,6 @@ describe("vendors in an archive", () => {
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(restored.data.app_vendors_added).toBe(1);
     expect(await holder(vC)).toBeNull();
-
-    // Marfa 0.0.90 wrote version 2 with no app_vendor_count.
-    const vU = freshVendor();
-    const uncounted = await local.restoreArchive(counted(vU, undefined));
-    expect(uncounted.status, JSON.stringify(uncounted.error)).toBe(200);
-    expect(uncounted.data.app_vendors_added).toBe(1);
-    expect(await holder(vU)).toBeNull();
   });
 
   it("refuses an app_vendor line whose client_id is empty or whose claimed_at is no instant", async () => {
