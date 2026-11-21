@@ -1,4 +1,4 @@
-//! `marfa_webhooks` and `marfa_manage_webhook`: the webhooks a credential made, and making, changing or deleting one.
+//! Listing, creating, changing and deleting webhooks through MCP.
 
 use std::sync::Arc;
 
@@ -22,7 +22,7 @@ pub fn list_definition() -> Definition {
     Definition {
         name: LIST_NAME,
         title: "List webhooks",
-        description: "Use to see the webhooks this credential made: where each sends events, which events, and whether it is active.",
+        description: "Use to see webhooks: where each sends events, which events, whether it is active and which key or app made it. A credential that also manages keys sees every webhook; others see the ones they made.",
         input: json!({
             "type": "object",
             "properties": {},
@@ -174,7 +174,7 @@ fn stale(body: Map<String, Value>, expired: bool, made: bool) -> Stop {
             format!("The confirmation expired. {nothing}; here is a new preview.")
         } else {
             format!(
-                "The webhook, or the webhooks this credential reads, changed, or the confirmation is not this preview's, or it was already used. {nothing}; here is a new preview."
+                "The webhook, or the webhooks this credential registered, changed, or the confirmation is not this preview's, or it was already used. {nothing}; here is a new preview."
             )
         },
     );

@@ -1157,13 +1157,13 @@ export interface paths {
         };
         /**
          * List webhooks
-         * @description Returns webhooks and their makers, with secrets redacted. The local command sees every subscription; keys and apps see only their own.
+         * @description Returns webhooks and their makers, with secrets redacted. A key or app sees only its own, unless it also holds `keys.manage`: then, as the local command does, it sees every key's and app's.
          */
         get: operations["listWebhooks"];
         put?: never;
         /**
          * Create a webhook
-         * @description Creates a webhook that sends the events you name to `url`. It belongs to your key, or your app's grant: Marfa deletes it when that is revoked, and sends nothing while it lacks `webhooks.manage` or the key has expired.
+         * @description Creates a webhook that sends the events you name to `url`. It belongs to your key, or your app's grant: Marfa deletes it when the grant is revoked, and sends nothing while its key or app is revoked, lacks `webhooks.manage` or has expired.
          */
         post: operations["createWebhook"];
         delete?: never;
@@ -1181,21 +1181,21 @@ export interface paths {
         };
         /**
          * Get a webhook
-         * @description Returns a webhook and its maker, with its secret redacted. The local command can read any subscription; keys and apps can read only their own.
+         * @description Returns a webhook and its maker, with its secret redacted. A key or app reads only its own, unless it also holds `keys.manage`: then, as the local command does, it reads any.
          */
         get: operations["getWebhook"];
         put?: never;
         post?: never;
         /**
          * Delete a webhook
-         * @description Deletes a webhook and cancels its pending deliveries.
+         * @description Deletes a webhook and cancels its pending deliveries. A key or app deletes only its own, unless it also holds `keys.manage`: then, as the local command does, it deletes any, including one whose key was revoked or has expired.
          */
         delete: operations["deleteWebhook"];
         options?: never;
         head?: never;
         /**
          * Update a webhook
-         * @description Updates a webhook and returns it. Fields you leave out keep their values. Marfa cancels a pending delivery if you change `url`, set `active` to `false`, or change `events` or `type_filter` to exclude it. To change the secret, create a new webhook.
+         * @description Updates your webhook and returns it. Fields you leave out keep their values. Marfa cancels a pending delivery if you change `url`, set `active` to `false`, or change `events` or `type_filter` to exclude it. To change the secret, create a new webhook.
          */
         patch: operations["updateWebhook"];
         trace?: never;
@@ -1209,7 +1209,7 @@ export interface paths {
         };
         /**
          * List webhook deliveries
-         * @description Returns delivery metadata without event payloads, newest first. The local command can inspect any subscription; keys and apps can inspect only their own.
+         * @description Returns delivery metadata without event payloads, newest first. A key or app inspects only its own webhooks, unless it also holds `keys.manage`: then, as the local command does, it inspects any.
          */
         get: operations["listWebhookDeliveries"];
         put?: never;
@@ -1231,7 +1231,7 @@ export interface paths {
         put?: never;
         /**
          * Redeliver a webhook delivery
-         * @description Redelivers a failed delivery, queuing it again at the current URL. The local command can retry any subscription; keys and apps can retry only their own.
+         * @description Redelivers a failed delivery, queuing it again at the current URL. A key or app retries only webhooks it registered; the local command can retry any.
          */
         post: operations["redeliverWebhookDelivery"];
         delete?: never;
@@ -22896,7 +22896,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `webhook_not_found`: no webhook of yours has this ID. */
+            /** @description - `webhook_not_found`: no webhook you can reach has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23039,7 +23039,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `webhook_not_found`: no webhook of yours has this ID. */
+            /** @description - `webhook_not_found`: no webhook you can reach has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23217,7 +23217,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't have `webhooks.manage`. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`, or you hold `keys.manage` and another key or app registered the webhook. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23229,7 +23229,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `webhook_not_found`: no webhook of yours has this ID. */
+            /** @description - `webhook_not_found`: no webhook you can reach has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23423,7 +23423,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `webhook_not_found`: no webhook of yours has this ID. */
+            /** @description - `webhook_not_found`: no webhook you can reach has this ID. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23564,7 +23564,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't have `webhooks.manage`. */
+            /** @description - `forbidden`: you don't have `webhooks.manage`, or you hold `keys.manage` and another key or app registered the webhook. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23576,7 +23576,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `webhook_not_found`: no webhook of yours has this ID, or it has no delivery with this `delivery_id`. */
+            /** @description - `webhook_not_found`: no webhook you can reach has this ID, or it has no delivery with this `delivery_id`. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

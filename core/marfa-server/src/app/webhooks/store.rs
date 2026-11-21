@@ -124,7 +124,7 @@ fn turn(tx: &Transaction<'_>, maker: &Maker) -> Result<()> {
     Ok(())
 }
 
-/// How many webhooks `maker` has made or deleted.
+/// Counts changes to the maker's subscription set, including deletion by another credential.
 pub fn turns(tx: &Transaction<'_>, maker: &Maker) -> Result<i64> {
     let (key_id, grant_id) = maker_columns(maker);
     Ok(tx

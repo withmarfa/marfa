@@ -68,7 +68,7 @@ pub async fn delete(
     Path(id): Path<String>,
     uri: Uri,
 ) -> Answer {
-    caller.webhook_maker()?;
+    caller.webhook_reach()?;
     query::only(&uri, &[])?;
     webhooks::delete(&app, &caller, id).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
@@ -93,7 +93,7 @@ pub async fn redeliver(
     Path((id, delivery_id)): Path<(String, String)>,
     uri: Uri,
 ) -> Answer {
-    caller.webhook_reach()?;
+    caller.webhook_redelivery_reach()?;
     query::only(&uri, &[])?;
     let delivery = webhooks::redeliver(&app, &caller, id, delivery_id).await?;
     Ok(json_answer(StatusCode::ACCEPTED, &delivery))

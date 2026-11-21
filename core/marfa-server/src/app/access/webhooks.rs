@@ -14,7 +14,7 @@ pub enum Maker {
 }
 
 impl Caller {
-    /// Only a key or an app registers, changes or removes a subscription, since each belongs to one.
+    /// A subscription belongs to a key or grant, so local authority cannot make or change one.
     pub fn webhook_maker(&self) -> Result<Maker> {
         self.require(Permission::WebhooksManage)?;
         match self {
@@ -24,13 +24,31 @@ impl Caller {
         }
     }
 
-    /// Local authority reaches every maker for reads and redelivery.
+    /// `None` reaches every maker for reads and deletion.
     pub fn webhook_reach(&self) -> Result<Option<Maker>> {
+        if self.reaches_every_webhook() {
+            return Ok(None);
+        }
+        self.webhook_redelivery_reach()
+    }
+
+    /// Redelivery reaches only the caller's own subscriptions, or every one for local authority.
+    pub fn webhook_redelivery_reach(&self) -> Result<Option<Maker>> {
         self.require(Permission::WebhooksManage)?;
         match self {
             Caller::Local(_) => Ok(None),
             Caller::Owner(_) | Caller::Server => Err(unauthorized()),
             Caller::Key(_) | Caller::App { .. } => self.webhook_maker().map(Some),
+        }
+    }
+
+    pub fn reaches_every_webhook(&self) -> bool {
+        match self {
+            Caller::Local(_) => self.holds(Permission::WebhooksManage),
+            Caller::Key(_) | Caller::App { .. } => {
+                self.holds(Permission::WebhooksManage) && self.holds(Permission::KeysManage)
+            }
+            Caller::Owner(_) | Caller::Server => false,
         }
     }
 }

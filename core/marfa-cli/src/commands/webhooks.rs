@@ -4,13 +4,14 @@ use serde_json::{Map, Value, json};
 use super::{PageArgs, insert_opt};
 use crate::access;
 use crate::error::CliError;
-use crate::output::{Printer, printable};
+use crate::output::{Printer, printable, table_with_head};
 use crate::remote::Remote;
 use crate::remote::request::Request;
 
 /// Outbound subscriptions that send an instance's events out.
-/// Keys and apps need `webhooks.manage` and reach only their own subscriptions.
-/// With --socket, list, get, deliveries and redeliver reach every subscription.
+/// Keys and apps need `webhooks.manage` and reach their own subscriptions. With
+/// `keys.manage` too, list, get, deliveries and delete reach every subscription,
+/// and with --socket, every command but create and update does.
 #[derive(Debug, Subcommand)]
 pub enum WebhooksCommand {
     /// Register a subscription. The secret is answered once, in plaintext.
@@ -169,8 +170,52 @@ pub fn run(command: WebhooksCommand, remote: &Remote, out: &Printer) -> Result<(
             )
         }),
         WebhooksCommand::Delete { id } => out.report(&answer, |_| format!("removed webhook {id}")),
+        WebhooksCommand::List if !out.json => out.line(&listed_text(&answer)),
         _ => out.value(&answer),
     }
+}
+
+fn listed_text(answer: &Value) -> String {
+    let hooks = answer
+        .get("data")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if hooks.is_empty() {
+        return "no webhooks".to_string();
+    }
+    let text = |value: &Value, name: &str| {
+        value
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let head = ["id", "url", "active", "maker"].map(String::from);
+    let rows: Vec<Vec<String>> = hooks
+        .iter()
+        .map(|hook| {
+            let active = match hook.get("active").and_then(Value::as_bool) {
+                Some(true) => "on",
+                Some(false) => "off",
+                None => "",
+            };
+            let maker = hook.get("maker").unwrap_or(&Value::Null);
+            let named = match text(maker, "name") {
+                name if name.is_empty() => text(maker, "id"),
+                name => name,
+            };
+            vec![
+                text(hook, "id"),
+                text(hook, "url"),
+                active.to_string(),
+                format!("{} {named}", text(maker, "kind"))
+                    .trim()
+                    .to_string(),
+            ]
+        })
+        .collect();
+    table_with_head(&head, &rows).join("\n")
 }
 
 /// A created webhook, with the secret it answered on a line of its own,
@@ -217,6 +262,23 @@ mod tests {
             "secret": "whsec_PLAINTEXT",
             "active": true,
         })
+    }
+
+    #[test]
+    fn a_listing_names_each_webhooks_maker() {
+        let answer = json!({ "data": [
+            { "id": "wh_1", "url": "https://receiver.example/a", "active": true,
+              "maker": { "kind": "key", "id": "key_1", "name": "Backup" } },
+            { "id": "wh_2", "url": "https://receiver.example/b", "active": false,
+              "maker": { "kind": "app", "id": "client_1", "name": null } },
+        ], "next_cursor": null });
+        assert_eq!(
+            listed_text(&answer),
+            "id    url                         active  maker\n\
+             wh_1  https://receiver.example/a  on      key Backup\n\
+             wh_2  https://receiver.example/b  off     app client_1"
+        );
+        assert_eq!(listed_text(&json!({ "data": [] })), "no webhooks");
     }
 
     #[test]
