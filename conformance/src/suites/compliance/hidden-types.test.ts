@@ -254,7 +254,7 @@ describe("hidden app types", () => {
     expect(row(hiddenId), "the app item is in the bin").toBeDefined();
     expect(row(hiddenId)?.eligible_for_deletion_at).toBeTruthy();
     const scoped = await app.rawRequest<{ data: { id: string }[] }>(
-      "/trash?limit=100",
+      "/items?state=trashed&tier=all&include=hidden&limit=200",
     );
     expect(scoped.status, JSON.stringify(scoped.error)).toBe(200);
     expect(
