@@ -11,7 +11,7 @@ pub const INSTALL_DIR: &str = "MARFA_INSTALL_DIR";
 
 /// Names the `marfa` command reads from a shell, and `marfa server run` hands on, and the one
 /// a service unit sets, so a server that finds one in its environment has no setting to warn of.
-pub const COMMAND_LINE: [&str; 14] = [
+pub const COMMAND_LINE: [&str; 15] = [
     SERVICE,
     INSTALL_DIR,
     "MARFA_API_URL",
@@ -22,6 +22,7 @@ pub const COMMAND_LINE: [&str; 14] = [
     "MARFA_ALLOW_HTTP",
     "MARFA_DB",
     "MARFA_DOCS_URL",
+    "MARFA_PLUGINS_URL",
     "MARFA_DOCKER",
     "MARFA_TAILSCALE",
     "MARFA_FOLDER_REGISTRY",

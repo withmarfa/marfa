@@ -1983,6 +1983,106 @@ async fn a_database_at_schema_version_2_loses_compatible_with_and_keeps_the_rest
 }
 
 #[tokio::test]
+async fn a_database_at_schema_version_2_names_its_registered_types_and_keeps_every_row() {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..2]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO types (id, parent, origin, created_by, owner_icon, definition, created_at, updated_at) VALUES \
+             ('acme.deal', NULL, 'user', '{\"kind\":\"key\",\"id\":\"k1\",\"name\":\"Old\"}', 'lucide:coins', '{\"id\":\"acme.deal\",\"fields\":{}}', 'a', 'b'), \
+             ('acme.deal.big', 'acme.deal', 'user', NULL, NULL, '{\"id\":\"acme.deal.big\",\"parent\":\"acme.deal\",\"fields\":{}}', 'a', 'b'), \
+             ('core.note', NULL, 'platform', NULL, NULL, '{\"id\":\"core.note\",\"fields\":{}}', 'a', 'b');",
+        )
+        .unwrap();
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    let conn = Connection::open(&place.file).unwrap();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 3);
+    let rows: Vec<(
+        String,
+        Option<String>,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    )> = conn
+        .prepare(
+            "SELECT id, parent, origin, plugin_name, created_by, owner_icon FROM types ORDER BY id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
+        })
+        .unwrap()
+        .map(|row| row.unwrap())
+        .collect();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].0, "acme.deal");
+    assert_eq!(rows[0].2, "registered");
+    assert_eq!(rows[0].3, None);
+    assert!(rows[0].4.as_deref().unwrap().contains("\"k1\""));
+    assert_eq!(rows[0].5.as_deref(), Some("lucide:coins"));
+    assert_eq!(
+        (rows[1].1.as_deref(), rows[1].2.as_str()),
+        (Some("acme.deal"), "registered")
+    );
+    assert_eq!(rows[2].2, "platform");
+    let refused = conn.execute(
+        "INSERT INTO types (id, origin, definition, created_at, updated_at) VALUES ('x.y', 'user', '{}', 'a', 'a')",
+        [],
+    );
+    assert!(refused.is_err(), "the origin user is no longer stored");
+    let plugins: i64 = conn
+        .query_row("SELECT count(*) FROM plugins", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(plugins, 0);
+    let before: i64 = conn
+        .query_row(
+            "SELECT coalesce(max(changes), 0) FROM backup_state",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    conn.execute(
+        "UPDATE types SET updated_at = 'c' WHERE id = 'acme.deal'",
+        [],
+    )
+    .unwrap();
+    let after: i64 = conn
+        .query_row(
+            "SELECT coalesce(max(changes), 0) FROM backup_state",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        after,
+        before + 1,
+        "a change to a type still counts toward the next backup"
+    );
+}
+
+#[tokio::test]
 async fn a_new_database_is_made_with_login_after() {
     let place = folder();
     db_open(&options(&place.file, MIGRATIONS), Arc::default())
