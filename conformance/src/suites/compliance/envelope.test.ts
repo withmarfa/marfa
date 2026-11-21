@@ -219,16 +219,21 @@ describe("one envelope for every list and search", () => {
     { template: "/folders", path: () => "/folders", owner: true },
     { template: "/owner/sign-ins", path: () => "/owner/sign-ins", owner: true },
     { template: "/owner/passkeys", path: () => "/owner/passkeys", owner: true },
+    {
+      template: "/connector-hosts",
+      path: () => "/connector-hosts",
+      owner: true,
+    },
   ];
   const credentialOf = (door: (typeof doors)[number]) =>
     door.owner ? LOCAL : door.operator ? managementKey : apiKey;
 
-  it("names thirty-seven doors, every one the document publishes as a page", async () => {
+  it("names thirty-eight doors, every one the document publishes as a page", async () => {
     // The derived set holds the items to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
     // an item beside it turns this red too.
-    expect(doors).toHaveLength(37);
+    expect(doors).toHaveLength(38);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );
