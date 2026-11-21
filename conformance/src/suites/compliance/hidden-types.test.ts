@@ -156,7 +156,7 @@ describe("hidden app types", () => {
     expect(types).not.toContain(HIDDEN);
   });
 
-  it("leaves an app item out of a bulk read, a lookup and a title search unless the read asks for hidden items", async () => {
+  it("omits app items from lookup and title search and returns them in a bulk read with include=hidden", async () => {
     const ids = [...shownIds, ...hiddenIds];
     const plain = await owner.bulkGet(ids);
     expect(plain.status, JSON.stringify(plain.error)).toBe(200);
