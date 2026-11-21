@@ -195,8 +195,7 @@ async fn while_restoring(app: &Arc<App>) {
     }
 }
 
-/// Runs a job once with no claim and records nothing, so a run that ends late or fails leaves
-/// no trace in the schedule.
+/// Runs a job once with no claim, leaving no trace in the schedule.
 async fn run_unclaimed(app: &Arc<App>, job: &'static Job) {
     let run = Run {
         job: job.name,
@@ -226,9 +225,7 @@ async fn run_unclaimed(app: &Arc<App>, job: &'static Job) {
     }
 }
 
-/// While writes fail, a job that only reads and handles a failed write itself still runs, so
-/// what it finds is not left until someone looks. One run at a time, and the next waits for the
-/// job's interval, however often the scheduler tries again.
+/// While writes fail, runs each unclaimed job one at a time, paced by its interval.
 fn run_without_claim(app: &Arc<App>) {
     for job in JOBS
         .iter()
@@ -382,8 +379,7 @@ async fn record(app: &Arc<App>, job: &'static Job, ended: &Ended, again: bool) {
             }
         }
         if job.unclaimed {
-            // The claim stays marked as running until this record is written, so the job
-            // would not start again while writes fail.
+            // The job stays marked as running until this record lands.
             let interval = i64::try_from(job.interval.ms(job.name, app)).unwrap_or(i64::MAX);
             let finished = Stamp::parsed(&ended.finished_at).map_or(app.clock.now_ms(), Stamp::ms);
             app.housekeeping
@@ -676,8 +672,7 @@ mod tests {
     #[tokio::test]
     async fn a_pass_that_cannot_write_during_a_restore_runs_nothing() {
         let (_dir, app) = started().await;
-        // A hold refuses a caller's writes and lets the scheduler's own through, so the claim
-        // fails only because writes also fail.
+        // A hold refuses only a caller's writes, so the claim needs this fault to fail.
         app.faults.set("refuse:write", None).unwrap();
         let _holding = app
             .db

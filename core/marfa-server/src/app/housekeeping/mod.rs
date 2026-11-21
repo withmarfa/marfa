@@ -77,8 +77,7 @@ pub struct Job {
     deletes: bool,
     /// Whether a change to a file's record asks this job to run soon.
     wakes_on_files: bool,
-    /// Whether the job runs, recording nothing, when its claim cannot be written because writes
-    /// fail. Only for a job that writes nothing without handling a failed write.
+    /// Whether the job runs with no record while writes fail; only for one that reads only.
     unclaimed: bool,
     run: Body,
 }
@@ -227,8 +226,7 @@ pub struct Housekeeping {
     unclaimed: Arc<Unclaimed>,
 }
 
-/// Where each job that runs unclaimed stands: whether a run is under way, and when the next may
-/// start. It is memory only, since the runs it paces record nothing.
+/// Whether an unclaimed run is under way, and when the next may start, in memory only.
 #[derive(Debug, Default)]
 struct Unclaimed(Mutex<HashMap<&'static str, UnclaimedState>>);
 
@@ -238,8 +236,7 @@ struct UnclaimedState {
     next_ms: i64,
 }
 
-/// Holds the one unclaimed run of a job. Dropping it frees the job for the next run, which may
-/// start at `next_ms` and no sooner.
+/// The one unclaimed run of a job; dropping it frees the job for a run at `next_ms` or later.
 struct UnclaimedRun {
     held: Arc<Unclaimed>,
     name: &'static str,
