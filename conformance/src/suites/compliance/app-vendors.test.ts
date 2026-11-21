@@ -863,6 +863,32 @@ describe("vendors whose types only the owner made", () => {
     expect(error.details?.namespace).toBe("app.vendors");
   });
 
+  it("holds for the owner a vendor whose first type a key no app made registers, and refuses it to an app", async () => {
+    const tag = Array.from({ length: 6 }, () =>
+      String.fromCharCode(97 + Math.floor(Math.random() * 26)),
+    ).join("");
+    const claimed = `app.claimed${tag}`;
+    const owned = `app.owned${tag}`;
+    // The witness: an app's first type under a vendor no one holds claims it.
+    const app = await signedIn(REGISTERS);
+    expect(await registerType(app.token, `${claimed}.setting`)).toBe(201);
+    expect(await holder(claimed)).toBe(app.app.clientId);
+
+    expect(await registerType(server.workingKey, `${owned}.setting`)).toBe(201);
+    expect(await holder(owned)).toBeNull();
+    const error = forbidden(
+      await answer(app.token, "/types", {
+        method: "POST",
+        body: {
+          id: `${owned}.more`,
+          version: 1,
+          fields: { title: { type: "string" } },
+        },
+      }),
+    );
+    expect(error.details?.namespace).toBe(owned);
+  });
+
   it("refuses an app's restore a type under a vendor the owner or another app holds", async () => {
     const holderApp = await signedIn(REGISTERS);
     expect(await registerType(holderApp.token, "app.vendoru.setting")).toBe(

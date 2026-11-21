@@ -224,6 +224,14 @@ When an app's sign-in or a key an app made registers the first type under an `ap
 
 **Tests:** `compliance/app-vendors.test.ts › gives the vendor to the app that registered the first type under it`.
 
+### `types/app-vendor-owner-held`
+
+When a credential that is neither an app's sign-in nor a key an app made registers the first type under an `app.<vendor>` namespace no one holds, the server MUST hold the vendor for the owner in the same write.
+
+**Reason:** an unheld vendor goes to the first app that registers under it, so a vendor left unheld after the owner's own type would let any app choose that name and reach the owner's items; upgrade and restore hold such a vendor the same way.
+
+**Tests:** `compliance/app-vendors.test.ts › holds for the owner a vendor whose first type a key no app made registers, and refuses it to an app`.
+
 ### `types/app-vendor-claimed-refused`
 
 If an app's sign-in or a key an app made registers a type under an `app.<vendor>` namespace another app or the owner holds, then the server MUST answer `403 forbidden` with `details.namespace` naming `app.<vendor>`.

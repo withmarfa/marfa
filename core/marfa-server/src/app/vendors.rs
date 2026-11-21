@@ -197,6 +197,18 @@ pub fn restore(tx: &Connection, binding: &Binding) -> Result<bool> {
     Ok(added > 0)
 }
 
+/// Holds `vendor` for the owner unless someone holds it already.
+pub fn hold(tx: &Connection, vendor: &str, at: &str) -> Result<bool> {
+    restore(
+        tx,
+        &Binding {
+            vendor: vendor.to_string(),
+            holder: Holder::Owner,
+            claimed_at: at.to_string(),
+        },
+    )
+}
+
 pub fn set(tx: &Connection, vendor: &str, client_id: &str, at: &str) -> Result<()> {
     tx.execute(
         "INSERT INTO app_vendors (vendor, client_id, claimed_at) VALUES (?1, ?2, ?3) \

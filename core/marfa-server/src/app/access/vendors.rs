@@ -94,7 +94,13 @@ impl Caller {
 
     /// The registration needs the caller's new reach in the transaction that claims the vendor.
     pub fn claim_vendor(&self, tx: &Transaction<'_>, id: &str, at: &str) -> Result<Option<Caller>> {
-        let (Some(vendor), Some(client)) = (vendors::vendor_of(id), self.app_client()) else {
+        let Some(vendor) = vendors::vendor_of(id) else {
+            return Ok(None);
+        };
+        let Some(client) = self.app_client() else {
+            if !matches!(self, Caller::Server) {
+                vendors::hold(tx, vendor, at)?;
+            }
             return Ok(None);
         };
         if registrable(tx, vendor, client)? {
