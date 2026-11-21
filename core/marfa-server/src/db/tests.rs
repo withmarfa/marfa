@@ -2510,7 +2510,8 @@ async fn a_database_at_schema_version_2_upgrades_through_5_giving_a_vendor_only_
 }
 
 #[tokio::test]
-async fn a_database_at_schema_version_4_names_each_keys_maker_from_its_records_then_from_app_made() {
+async fn a_database_at_schema_version_4_names_each_keys_maker_from_its_records_then_from_app_made()
+{
     let place = folder();
     db_open(&options(&place.file, &MIGRATIONS[..4]), Arc::default())
         .map_err(|f| f.message)

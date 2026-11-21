@@ -1521,13 +1521,11 @@ mod tests {
         let second =
             format!(r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS}}}"#);
         let refused = manifest(second.as_bytes()).unwrap_err();
-        assert!(
-            refused.message.contains("app_vendor_count"),
-            "{}",
-            refused.message
-        );
+        for field in ["plugin_count", "app_vendor_count"] {
+            assert!(refused.message.contains(field), "{}", refused.message);
+        }
         let second = format!(
-            r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS},"app_vendor_count":0}}"#
+            r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS},"plugin_count":0,"app_vendor_count":0}}"#
         );
         assert!(manifest(second.as_bytes()).is_ok());
     }

@@ -25,7 +25,9 @@ use crate::app::edges::write::Writing;
 use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM, HOLD_RESTORE_SETTINGS};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::app::{connectors, edge_types, instance, plugins, sources, stored, tables, types, vendors};
+use crate::app::{
+    connectors, edge_types, instance, plugins, sources, stored, tables, types, vendors,
+};
 use crate::app::{provenance, restore_running};
 use crate::db::Write;
 use crate::settings::registry;
@@ -411,7 +413,8 @@ impl App {
                         enforcement.as_ref(),
                     )?)?;
                     let before = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
-                    judge_types(tx, &before, &types, &edge_types, &archived_plugins, &caller).map(drop)
+                    judge_types(tx, &before, &types, &edge_types, &archived_plugins, &caller)
+                        .map(drop)
                 })
                 .await?;
             let placed = app.place_restored(carried, absent).await?;
