@@ -116,6 +116,65 @@ pub(super) fn body(lead: &QueuedWrite, members: &[QueuedWrite]) -> String {
     json!({ "operations": operations }).to_string()
 }
 
+/// Whether a batch the pass judged ready, not yet sent, is held back now. A
+/// catch-up in the pass, or the follow stream, may since have set its table
+/// aside, queued a kept write ahead of it or built the copy again
+/// (`device/restored-rows-held`, `device/restored-rows-first`). Read in the
+/// transaction that would mark it sent.
+pub(super) fn held_since(
+    conn: &Connection,
+    lead: &QueuedWrite,
+    members: &[QueuedWrite],
+    generation: u64,
+) -> Result<bool> {
+    if !lead.kind.rows() || !store::unsent(conn, &lead.id)? {
+        return Ok(false);
+    }
+    if crate::reach::generation(conn)? != generation {
+        return Ok(true);
+    }
+    for write in batch_of(lead, members) {
+        if crate::restored_rows::holds_back(conn, write)?
+            || crate::restored_rows::kept_ahead(conn, write)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Holds every write of a batch `held_since` found held back, as waiting on
+/// what is ahead of it, which the next pass clears. A write answered since
+/// keeps its verdict. Each write's verdict now, and whether it was held here.
+pub(super) fn hold(
+    conn: &Connection,
+    lead: &QueuedWrite,
+    members: &[QueuedWrite],
+) -> Result<Vec<(String, Option<Verdict>, bool)>> {
+    let mut held = Vec::with_capacity(members.len() + 1);
+    for write in batch_of(lead, members) {
+        let Some(now) = store::queued_write(conn, &write.id)? else {
+            continue;
+        };
+        if now.verdict.is_some() {
+            held.push((now.id, now.verdict, false));
+            continue;
+        }
+        store::record_verdict(
+            conn,
+            &now.id,
+            &store::Answered {
+                verdict: Verdict::Blocked,
+                reason: Some(crate::model::AWAITING_DEPENDENCY),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+        held.push((now.id, Some(Verdict::Blocked), true));
+    }
+    Ok(held)
+}
+
 /// In the transaction that marks `lead` sent.
 pub(super) fn mark_joined(
     conn: &Connection,

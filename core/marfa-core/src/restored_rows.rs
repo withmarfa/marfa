@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 use crate::http::Http;
-use crate::model::{QueuedWrite, WriteKind};
+use crate::model::{BlockedReason, QueuedWrite, Verdict, WriteKind};
 use crate::row_writes::{self, Op};
 use crate::store::{self, Cached, restored::RECEIPTS_KEPT_MILLIS};
 use crate::wire::RowsEvent;
@@ -228,6 +228,29 @@ pub(crate) fn holds_back(conn: &Connection, write: &QueuedWrite) -> Result<bool>
         .optional()?
         .is_some();
     Ok(held && store::unsent(conn, &write.id)?)
+}
+
+/// Whether `write` is a row write not yet sent with a kept write to its table
+/// ahead of it in the queue, still blocked (`device/restored-rows-first`).
+pub(crate) fn kept_ahead(conn: &Connection, write: &QueuedWrite) -> Result<bool> {
+    if !write.kind.rows() {
+        return Ok(false);
+    }
+    Ok(conn.query_row_cached(
+        "SELECT EXISTS (
+           SELECT 1 FROM queue w JOIN queue k
+             ON k.item_id = w.item_id AND k.row_table = w.row_table AND k.seq < w.seq
+          WHERE w.id = ?1 AND w.sent = 0
+            AND k.kind IN (?2, ?3) AND k.verdict = ?4 AND k.reason = ?5)",
+        params![
+            write.id,
+            WriteKind::WriteRows.as_str(),
+            WriteKind::UndoRows.as_str(),
+            Verdict::Blocked.as_str(),
+            BlockedReason::ServerRestored.as_str(),
+        ],
+        |row| row.get(0),
+    )?)
 }
 
 struct Unseen {
