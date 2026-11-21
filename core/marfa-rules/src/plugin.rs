@@ -642,7 +642,7 @@ pub fn index_lookup<'a>(index: &'a Value, name: &str) -> Result<(&'a str, &'a st
     Ok((file, digest))
 }
 
-/// One change a newer version of a plugin makes to a type that only adding allows.
+/// A change that a newer plugin version cannot make to a type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Narrowing {
     /// Where in the definition, such as `fields.priority` or `fields.status.status_values.done`.

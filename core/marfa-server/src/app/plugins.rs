@@ -1,5 +1,4 @@
-//! Installed plugins: installing a bundle registers its edge types and types in one write and
-//! keeps its record; removing a plugin removes the record and keeps every type.
+//! A plugin's types outlive its install record.
 
 use marfa_rules::plugin::{self, Version};
 use marfa_rules::schema::{Obj, Problem};
@@ -13,7 +12,6 @@ use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
 use super::{edge_types, instance, types};
 
-/// An install record as the `plugins` table holds it.
 #[derive(Clone, Debug)]
 pub struct Installed {
     pub name: String,
@@ -143,7 +141,6 @@ fn rows(tx: &Transaction<'_>) -> Result<Vec<Installed>> {
     Ok(held)
 }
 
-/// The types the catalog holds from the plugin `name`, at any version.
 fn types_from(catalog: &Catalog, name: &str) -> Vec<String> {
     let mut ids: Vec<String> = catalog
         .provenance
@@ -198,7 +195,6 @@ fn problems_json(problems: &[Problem]) -> Vec<Value> {
         .collect()
 }
 
-/// Refuses a bundle whose shape is wrong, then one with a type under a reserved root.
 fn require_shape(bundle: &Obj) -> Result<()> {
     let faults = plugin::bundle_faults(bundle);
     let (reserved, shape): (Vec<Problem>, Vec<Problem>) = faults
@@ -275,7 +271,6 @@ fn require_server(bundle: &Obj) -> Result<()> {
     .with_detail("server", server.to_string()))
 }
 
-/// Install's permission: `schema.write`, and write on every type and edge type the bundle holds.
 fn require_install(caller: &Caller, bundle: &Obj) -> Result<()> {
     caller.require(Permission::SchemaWrite)?;
     for id in bundle_ids(bundle, "types") {
@@ -287,7 +282,6 @@ fn require_install(caller: &Caller, bundle: &Obj) -> Result<()> {
     Ok(())
 }
 
-/// What installing a bundle did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
     Installed,
@@ -405,14 +399,12 @@ pub async fn remove(app: &App, caller: &Caller, name: String) -> Result<Value> {
     .await
 }
 
-/// An archive's plugin line.
 #[derive(Clone, Debug)]
 pub struct Archived {
     pub name: String,
     line: Installed,
 }
 
-/// The archive's line for each installed plugin.
 pub fn archive_lines(tx: &Transaction<'_>) -> Result<Vec<Value>> {
     Ok(rows(tx)?
         .into_iter()
@@ -429,7 +421,6 @@ pub fn archive_lines(tx: &Transaction<'_>) -> Result<Vec<Value>> {
         .collect())
 }
 
-/// Reads an archive's plugin line, or says what is wrong with it.
 pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
     let line = body.as_object().ok_or("is not an object")?;
     let read = |key: &str| line.get(key).and_then(Value::as_str).map(str::to_string);
@@ -467,8 +458,6 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
     })
 }
 
-/// Restores each archived install record this instance lacks, and answers how many it added
-/// and how many it kept as held.
 pub fn restore(tx: &Transaction<'_>, archived: &[Archived]) -> Result<(usize, usize)> {
     let (mut added, mut held) = (0, 0);
     for line in archived {

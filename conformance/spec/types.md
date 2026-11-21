@@ -1936,15 +1936,15 @@ If the private local command sends `DELETE /types/{id}?force=true`, then the ser
 
 When a caller registers a type, the server MUST retain its canonical sign-in ID, kind and readable name in `provenance.created_by`, independently of the submitted definition and later replacements.
 
-**Reason:** `registered` names how a type arrived, not the `user.*` namespace (`GLOSSARY.md`).
-
-**Tests:** `compliance/types.test.ts › reports the creator after replacement and distinguishes built-in types`, `compliance/user-types.test.ts › registers a user type for an app the owner granted user.* write, recording the app as its creator`, `compliance/plugins.test.ts › reads a type a plugin installed with origin plugin, naming the plugin and its version`.
+**Tests:** `compliance/types.test.ts › reports the creator after replacement and distinguishes built-in types`, `compliance/user-types.test.ts › registers a user type for an app the owner granted user.* write, recording the app as its creator`.
 
 ### `types/provenance-read`
 
 When a caller reads or lists types, the server MUST return `provenance.origin` as `platform` for built-in types, `registered` for a type registered through `POST /types` or a restore, `plugin` for a type a plugin installed, or `unknown` for an unrecorded origin, with `provenance.plugin` naming the plugin's `name` and `version` for `plugin` and `null` otherwise, and `created_by` set to `null` where no creator is recorded.
 
-**Tests:** `compliance/types.test.ts › reports the creator after replacement and distinguishes built-in types`.
+**Reason:** A registered type can belong to any namespace that permits registration.
+
+**Tests:** `compliance/types.test.ts › reports the creator after replacement and distinguishes built-in types`, `compliance/plugins.test.ts › reads a type a plugin installed with origin plugin, naming the plugin and its version`.
 
 ### `types/creator-archive`
 
