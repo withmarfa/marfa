@@ -406,9 +406,7 @@ fn previous_sign_in(link: &Link) -> Result<Option<Address>> {
         .map_err(|_| Refusal::internal("the sign-in address the link moved does not read"))
 }
 
-/// Refuses an end planned on another sign-in address than `sign_in`, the one in force before
-/// the write: an end that puts it back needs it to be the link's address, and one that does not
-/// needs it not to be.
+/// Refuses an end whose put-back plan no longer fits `sign_in`, the address the write found.
 fn refuse_moved(link: &Link, sign_in: &Address, puts_back: bool) -> Result<()> {
     let on_link = status::cloud_address(link).is_some_and(|cloud| cloud == *sign_in);
     if on_link == puts_back {
