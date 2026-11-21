@@ -182,3 +182,70 @@ async fn a_view_saved_to_list_an_app_type_lists_no_app_item() {
         .await;
     assert_eq!(ids(&after), vec![shown], "{hidden} is not listed");
 }
+
+#[tokio::test]
+async fn a_view_lists_a_visible_item_beneath_a_hidden_one_as_a_listing_does() {
+    let instance = Instance::start().await;
+    for id in ["app.acme.setting", "user.probe"] {
+        let declared = json!({ "id": id, "fields": { "name": { "type": "string" } } });
+        instance
+            .local(Method::POST, "/types", Some(declared))
+            .await
+            .landed(StatusCode::CREATED);
+    }
+    let root = instance
+        .item(json!({ "type": "user.probe", "properties": { "name": "root" } }))
+        .await;
+    let middle = instance
+        .item(json!({ "type": "app.acme.setting", "properties": { "name": "middle" } }))
+        .await;
+    let leaf = instance
+        .item(json!({ "type": "user.probe", "properties": { "name": "leaf" } }))
+        .await;
+    for (from, to) in [(&root, &middle), (&middle, &leaf)] {
+        instance
+            .call(
+                Method::POST,
+                "/edges",
+                Some(json!({ "from_id": from, "to_id": to, "edge_type": "parent-of" })),
+            )
+            .await
+            .landed(StatusCode::CREATED);
+    }
+    let made = instance
+        .call(
+            Method::POST,
+            "/views",
+            Some(json!({ "title": "beneath", "query": { "beneath": root } })),
+        )
+        .await;
+    let view = made.landed(StatusCode::CREATED)["item"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let ids = |reply: &Reply| -> Vec<String> {
+        let mut ids: Vec<String> = reply.landed(StatusCode::OK)["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_string())
+            .collect();
+        ids.sort();
+        ids
+    };
+    let mut expected = vec![root.clone(), leaf];
+    expected.sort();
+
+    let listing = instance
+        .call(Method::GET, &format!("/items?beneath={root}"), None)
+        .await;
+    assert_eq!(
+        ids(&listing),
+        expected,
+        "the witness: the listing walks through it"
+    );
+    let viewed = instance
+        .call(Method::GET, &format!("/views/{view}/items"), None)
+        .await;
+    assert_eq!(ids(&viewed), expected, "{middle} cut the view's walk short");
+}

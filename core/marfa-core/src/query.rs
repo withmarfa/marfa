@@ -10,6 +10,9 @@ use marfa_rules::catalog::Catalog;
 use marfa_rules::query as rules;
 use marfa_rules::query::escape_like;
 
+/// A row of a type that is not hidden (`items/hidden-types`).
+pub(crate) const VISIBLE: &str = "items.type NOT GLOB 'system.*' AND items.type NOT GLOB 'app.*'";
+
 /// A local create has no listing mark until the server answers.
 pub(crate) const LISTED: &str = "NOT EXISTS (SELECT 1 FROM meta WHERE value = 'false'
        AND key IN ('item_listed/' || items.id, 'item_unlisted_before/' || items.id))";
@@ -35,7 +38,16 @@ pub(crate) fn list_with(
     let sort = ordered(filters, sort)?;
 
     clauses.push(LISTED.into());
-    narrow_by_types(catalog, filters.types.as_deref(), &mut clauses, &mut values)?;
+    // A list of the bin alone is the bin, which holds hidden items as the server's does
+    // (`items/hidden-types-bin`).
+    let bin = filters.states.as_deref() == Some(&[ItemState::Trashed]);
+    narrow_by_types(
+        catalog,
+        filters.types.as_deref(),
+        bin,
+        &mut clauses,
+        &mut values,
+    )?;
     narrow_by_states(
         filters.states.as_deref(),
         filters.all_states,
@@ -224,19 +236,30 @@ fn direction_sql(direction: SortDirection) -> &'static str {
 /// dropped and repeats removed before the list is counted, and each entry left
 /// is refused as it would be alone, in the order given. `*` is no type filter
 /// at all and is refused, as on the server; every type is the list left unset.
+/// Unless `hidden`, a hidden row is selected only by an entry naming its exact
+/// hidden type (`search-and-filters/type-hidden-exact`).
 pub(crate) fn narrow_by_types(
     catalog: &Catalog,
     types: Option<&[String]>,
+    hidden: bool,
     clauses: &mut Vec<String>,
     values: &mut Vec<Value>,
 ) -> Result<()> {
     let Some(types) = types else {
+        if !hidden {
+            clauses.push(VISIBLE.into());
+        }
         return Ok(());
     };
     let mut alternatives = Vec::new();
     for declared in rules::type_entries(types)? {
         rules::list_entry(declared)?;
-        narrow_by_type(catalog, Some(declared), &mut alternatives, values)?;
+        let mut selected = Vec::new();
+        narrow_by_type(catalog, Some(declared), &mut selected, values)?;
+        if !hidden && !marfa_rules::folder::opens_hidden(declared) {
+            selected.push(format!("({VISIBLE})"));
+        }
+        alternatives.push(format!("({})", selected.join(" AND ")));
         rules::refuse_unknown_type(catalog, Some(declared))?;
     }
     clauses.push(format!("({})", alternatives.join(" OR ")));
@@ -448,6 +471,78 @@ mod tests {
         };
         assert!(ids(&conn, filters, Sort::default()).is_empty());
         assert_eq!(ids(&conn, ListFilters::default(), Sort::default()).len(), 4);
+    }
+
+    /// A hidden row is answered only to a list naming its exact hidden type, as on the server.
+    #[test]
+    fn a_hidden_row_is_listed_only_where_its_exact_hidden_type_is_named() {
+        let conn = seeded();
+        store::replace_types(
+            &conn,
+            &[
+                wire_type("core.note", None, Some("title")),
+                wire_type("core.file", None, Some("title")),
+                wire_type("acme.memo", Some("core.note"), None),
+                wire_type("app.acme.setting", None, Some("title")),
+                wire_type("app.other.setting", Some("core.note"), Some("title")),
+            ],
+        )
+        .unwrap();
+        for (id, type_, state) in [
+            ("s", "app.acme.setting", "active"),
+            ("o", "app.other.setting", "active"),
+            ("t", "app.acme.setting", "trashed"),
+        ] {
+            let item = wire_item(id, type_, state, "2026-01-07T00:00:00.000Z", json!({}));
+            store::upsert_item(&conn, &item, None, &Indexing::default()).unwrap();
+        }
+        let named = |types: &[&str]| ListFilters {
+            types: Some(types.iter().map(|entry| entry.to_string()).collect()),
+            ..Default::default()
+        };
+        assert_eq!(
+            ids(&conn, named(&["app.acme.setting"]), Sort::default()),
+            vec!["s"],
+            "the witness: an exact hidden name lists its row"
+        );
+        assert_eq!(
+            ids(&conn, ListFilters::default(), Sort::default()),
+            vec!["f", "d", "c", "a"]
+        );
+        assert_eq!(
+            ids(
+                &conn,
+                named(&["core.note", "app.acme.setting"]),
+                Sort::default()
+            ),
+            vec!["s", "f", "c", "a"],
+            "a visible type opened its hidden subtype, or one hidden name another"
+        );
+        for wildcard in ["app.*", "app.acme.*"] {
+            assert!(
+                ids(&conn, named(&[wildcard]), Sort::default()).is_empty(),
+                "{wildcard} opened a hidden type"
+            );
+        }
+        let binned = |types: Option<Vec<String>>| ListFilters {
+            types,
+            states: Some(vec![ItemState::Trashed]),
+            ..Default::default()
+        };
+        assert_eq!(
+            ids(&conn, binned(None), Sort::default()),
+            vec!["t", "e"],
+            "the bin left out a hidden item"
+        );
+        assert_eq!(
+            ids(&conn, binned(Some(vec!["app.*".into()])), Sort::default()),
+            vec!["t"]
+        );
+        let both = ListFilters {
+            states: Some(vec![ItemState::Trashed, ItemState::Active]),
+            ..Default::default()
+        };
+        assert!(!ids(&conn, both, Sort::default()).contains(&"t".to_string()));
     }
 
     #[test]

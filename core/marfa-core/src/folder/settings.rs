@@ -345,7 +345,7 @@ impl Settings {
             }
             clauses.push(format!("({})", alternatives.join(" OR ")));
         }
-        clauses.push("items.type NOT LIKE 'system.%' AND items.type NOT LIKE 'app.%'".into());
+        clauses.push(crate::query::VISIBLE.into());
         if self.tier() != SliceTier::All {
             clauses.push("items.tier = ?".into());
             values.push(Value::String(self.tier().as_str().into()));

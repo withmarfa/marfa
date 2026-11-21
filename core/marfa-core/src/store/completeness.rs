@@ -167,14 +167,6 @@ pub fn let_go_unless_kept(
     Ok(true)
 }
 
-/// The ids of the rows the copy holds of a hidden type.
-pub fn hidden_item_ids(conn: &Connection) -> Result<Vec<String>, CoreError> {
-    Ok(conn
-        .prepare_cached("SELECT id FROM items WHERE type GLOB 'system.*' OR type GLOB 'app.*'")?
-        .query_map([], |row| row.get(0))?
-        .collect::<rusqlite::Result<_>>()?)
-}
-
 pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, SliceTier)>, CoreError> {
     let Some(tier) = meta_get(conn, META_SLICE_TIER)? else {
         return Ok(None);

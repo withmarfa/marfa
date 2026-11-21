@@ -1405,7 +1405,8 @@ impl Http {
     }
 
     /// A page of the bin: `GET /items?state=trashed`, newest binned first,
-    /// with each row's tags. `filter` is the listing grammar's.
+    /// with each row's tags and hidden rows (`items/hidden-types-bin`).
+    /// `filter` is the listing grammar's.
     pub fn bin_page(
         &self,
         r#type: Option<&str>,
@@ -1416,7 +1417,7 @@ impl Http {
         let limit = limit.to_string();
         let mut params: Vec<(&str, &str)> = vec![
             ("state", "trashed"),
-            ("include", "metadata"),
+            ("include", "metadata,hidden"),
             ("limit", &limit),
         ];
         if let Some(declared) = r#type {

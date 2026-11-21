@@ -97,7 +97,7 @@ class Listener {
           "x-marfa-contract": "0",
         });
         response.end(
-          JSON.stringify({ instance_id: randomUUID(), version: "0.0.90" }),
+          JSON.stringify({ instance_id: randomUUID(), version: "0.0.91" }),
         );
         return;
       }

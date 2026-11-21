@@ -3786,7 +3786,7 @@ If a drain meets a refusal that names no contract, then a device MUST end the pa
 
 ## The oldest server a device works with
 
-A device works with servers from one release on. The oldest is a constant in the core, and a change that makes the core depend on a server change raises it. The oldest is release 0.0.90, the first that leaves `app.*` items out of the listings a slice reads and that takes `include=hidden`; a server older than that answers a slice an `app.*` item and refuses the `hidden` token. The release a server runs is the `version` its root answers (`instance/root-version`).
+A device works with servers from one release on. The oldest is a constant in the core, and a change that makes the core depend on a server change raises it. The oldest is release 0.0.91, the first that leaves `app.*` items out of the listings a slice reads and that takes `include=hidden`; a server older than that answers a slice an `app.*` item and refuses the `hidden` token. The release a server runs is the `version` its root answers (`instance/root-version`).
 
 ### `device/server-too-old`
 

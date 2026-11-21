@@ -1,7 +1,7 @@
 use marfa_rules::filter;
 use serde_json::{Map, Value as Json, json};
 
-use super::compile::{Ask, Filter, Sql, States, judge_terms, selection};
+use super::compile::{Ask, Filter, Sql, States, judge_terms, selection_shown};
 use super::cursor::Position;
 use super::listing::{answered, found, page_sql};
 use super::order::{Key, Order, property_key};
@@ -144,7 +144,7 @@ fn order_of(id: &str, settings: &Map<String, Json>, catalog: &Catalog) -> Result
 }
 
 fn page(read: &Reader<'_, '_>, secret: &super::Secret, view: &ViewPage) -> Result<String> {
-    let reach = Reach::of(read)?.narrowed(|type_id| !items::is_hidden(type_id));
+    let reach = Reach::of(read)?;
     let row = items::row(read.tx, &view.id)?
         .filter(|row| {
             row.type_id == VIEW_TYPE
@@ -180,7 +180,13 @@ fn page(read: &Reader<'_, '_>, secret: &super::Secret, view: &ViewPage) -> Resul
             Position::from_payload(&payload, order.width())
         })
         .transpose()?;
-    let selected = selection(&reach, &ask, &read.catalog, order.walked())?;
+    let selected = selection_shown(
+        &reach,
+        |type_id| !items::is_hidden(type_id),
+        &ask,
+        &read.catalog,
+        order.walked(),
+    )?;
     let sql = page_sql(&selected, &ask, &order, position.as_ref(), view.limit);
     let rows = found(read.tx, &sql, order.width())?;
     answered(

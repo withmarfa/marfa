@@ -153,11 +153,17 @@ pub fn slice_types(types: &[String]) -> Vec<String> {
     }
 }
 
+/// Whether a type name opts in to the hidden type it names: an exact hidden name does, and a
+/// wildcard such as `app.acme.*` does not.
+pub fn opens_hidden(named: &str) -> bool {
+    is_hidden(named) && !named.ends_with(".*")
+}
+
 /// Whether a type name takes a row of `row_type`: the type itself or a subtype of it. A hidden
-/// row is taken only by a hidden name, so naming a visible type opens none of its hidden subtypes
-/// and naming one hidden type opens no other.
+/// row is taken only by an exact hidden name, so naming a visible type opens none of its hidden
+/// subtypes, naming one hidden type opens no other, and a wildcard opens none.
 pub fn takes_type(catalog: &Catalog, named: &str, row_type: &str) -> bool {
-    catalog.matches(named, row_type) && (!is_hidden(row_type) || is_hidden(named))
+    catalog.matches(named, row_type) && (!is_hidden(row_type) || opens_hidden(named))
 }
 
 /// Whether a declaration names the type: `*` names every type but the hidden ones.
@@ -468,6 +474,20 @@ mod tests {
         );
         let named = lines(&["app.other.setting"]);
         assert!(declares_type(&catalog(), &named, "app.other.setting"));
+        for (wildcard, hidden) in [
+            ("app.*", "app.acme.setting"),
+            ("app.acme.*", "app.acme.setting"),
+            ("system.*", "system.folder"),
+        ] {
+            assert!(
+                !declares_type(&catalog(), &lines(&[wildcard]), hidden),
+                "{wildcard} opened a hidden type"
+            );
+        }
+        assert!(
+            declares_type(&catalog(), &lines(&["core.*"]), "core.note"),
+            "a visible wildcard took nothing"
+        );
         assert!(!holds_type(
             &catalog(),
             &lines(&["core.note"]),

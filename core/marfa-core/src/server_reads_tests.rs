@@ -1163,6 +1163,36 @@ fn instance_changed(refusal: &CoreError) {
     }
 }
 
+/// The bin is for recovery, so its read asks for hidden items too (`items/hidden-types-bin`).
+#[test]
+fn the_bin_and_a_binned_item_are_read_with_hidden_items() {
+    let server = Scripted::start();
+    server.on(
+        "/items",
+        vec![
+            scripted::json(200, r#"{"data":[],"next_cursor":null}"#),
+            scripted::json(200, r#"{"data":[],"next_cursor":null}"#),
+        ],
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+
+    core.bin(None, None, 50).unwrap();
+    core.http().unwrap().trashed_item("a").unwrap();
+
+    let asked = server.seen("/items");
+    assert_eq!(asked.len(), 2);
+    for seen in &asked {
+        assert!(seen.query.contains("state=trashed"), "{}", seen.query);
+        assert!(
+            seen.query.contains("include=metadata%2Chidden")
+                || seen.query.contains("include=metadata,hidden"),
+            "{}",
+            seen.query
+        );
+    }
+}
+
 #[test]
 fn the_bin_is_read_of_no_other_instance_at_the_copys_origin() {
     let server = Scripted::start();
