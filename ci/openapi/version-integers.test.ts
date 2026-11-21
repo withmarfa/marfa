@@ -65,7 +65,11 @@ describe("the committed API description", () => {
   const positions = versionPositions(document).filter(
     // The release the instance runs, as `GET /`, `GET /health`, `GET /overview`
     // and `GET /metrics` answer it, not a version of a row.
+    // A plugin's version is its release, such as `1.2.0`, not a version of a row.
     (p) =>
+      !/^components\/schemas\/(PluginBundle|Plugin|PluginInstalled|PluginRemoved\/properties\/removed|TypeProvenance\/properties\/plugin)\/properties\/version$/.test(
+        p.where,
+      ) &&
       p.where !== "components/schemas/InstanceDescription/properties/version" &&
       p.where !== "components/schemas/Health/properties/version" &&
       p.where !==

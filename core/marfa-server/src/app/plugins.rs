@@ -1,7 +1,7 @@
 //! Installed plugins: installing a bundle registers its edge types and types in one write and
 //! keeps its record; removing a plugin removes the record and keeps every type.
 
-use marfa_rules::plugin::{self, ChildClash, Version};
+use marfa_rules::plugin::{self, Version};
 use marfa_rules::schema::{Obj, Problem};
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
@@ -287,34 +287,6 @@ fn require_install(caller: &Caller, bundle: &Obj) -> Result<()> {
     Ok(())
 }
 
-fn clashes_refusal(clashes: Vec<ChildClash>) -> Refusal {
-    let mut named: Vec<&str> = clashes.iter().map(|clash| clash.type_id.as_str()).collect();
-    named.dedup();
-    let message = format!(
-        "This version of the plugin gives a type a field or status word that {} already declares in another shape. Change or remove it on {}, then install again.",
-        named.join(", "),
-        if named.len() == 1 {
-            "that type"
-        } else {
-            "each of those types"
-        }
-    );
-    let conflicts: Vec<Value> = clashes
-        .iter()
-        .map(|clash| {
-            json!({
-                "type": clash.type_id,
-                "field": clash.field,
-                "attribute": clash.attribute,
-                "inherited_from": clash.inherited_from,
-                "inherited": clash.inherited,
-                "declared": clash.declared,
-            })
-        })
-        .collect();
-    Refusal::new(Code::PluginChildConflict, message).with_detail("conflicts", conflicts)
-}
-
 /// What installing a bundle did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -369,12 +341,6 @@ pub async fn install(app: &App, caller: &Caller, bundle: Obj) -> Result<(Outcome
                 version: version.to_string(),
             };
             let plan = types::write::plan_install(caller, &catalog, &name, &definitions)?;
-            let next = plan.next_registry(&catalog);
-            let changed: Vec<&str> = plan.ids();
-            let clashes = plugin::child_clashes(&next, &changed);
-            if !clashes.is_empty() {
-                return Err(clashes_refusal(clashes));
-            }
             edge_types::install(unit, &catalog, &bundle_objects(&bundle, "edge_types"))?;
             let before = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             types::write::write_install(unit, &cache, &before, plan, &origin)?;

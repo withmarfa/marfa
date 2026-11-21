@@ -715,24 +715,32 @@ pub struct InstallPlan {
     replaced: Vec<Obj>,
 }
 
-impl InstallPlan {
-    pub fn ids(&self) -> Vec<&str> {
-        self.fresh
-            .iter()
-            .chain(&self.replaced)
-            .filter_map(|schema| text_of(schema, "id"))
-            .collect()
-    }
-
-    /// The catalog's types with the plan's in place.
-    pub fn next_registry(&self, catalog: &Catalog) -> Registry {
-        self.fresh
-            .iter()
-            .chain(&self.replaced)
-            .fold(catalog.types.clone(), |held, schema| {
-                held.with(schema.clone())
+fn clashes_refusal(clashes: Vec<marfa_rules::plugin::ChildClash>) -> Refusal {
+    let mut named: Vec<&str> = clashes.iter().map(|clash| clash.type_id.as_str()).collect();
+    named.dedup();
+    let message = format!(
+        "This version of the plugin gives a type a field or status word that {} already declares in another shape. Change or remove it on {}, then install again.",
+        named.join(", "),
+        if named.len() == 1 {
+            "that type"
+        } else {
+            "each of those types"
+        }
+    );
+    let conflicts: Vec<Value> = clashes
+        .iter()
+        .map(|clash| {
+            json!({
+                "type": clash.type_id,
+                "field": clash.field,
+                "attribute": clash.attribute,
+                "inherited_from": clash.inherited_from,
+                "inherited": clash.inherited,
+                "declared": clash.declared,
             })
-    }
+        })
+        .collect();
+    Refusal::new(Code::PluginChildConflict, message).with_detail("conflicts", conflicts)
 }
 
 fn narrows_refusal(changes: Vec<Value>) -> Refusal {
@@ -798,6 +806,15 @@ pub fn plan_install(
         })
         .collect();
     let registry = with_set_stored(&catalog.types, definitions);
+    let shaped = definitions
+        .iter()
+        .fold(catalog.types.clone(), |held, definition| {
+            held.with(marfa_rules::plugin::provisional(definition))
+        });
+    let clashes = marfa_rules::plugin::child_clashes(&shaped, &ids);
+    if !clashes.is_empty() {
+        return Err(clashes_refusal(clashes));
+    }
     for definition in definitions {
         let id = text_of(definition, "id").unwrap_or_default();
         if let Some(parent) = text_of(definition, "parent") {

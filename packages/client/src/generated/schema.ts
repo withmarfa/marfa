@@ -8644,29 +8644,15 @@ export interface components {
             /**
              * Format: date-time
              * @description When the plugin was first installed.
+             * @example 2026-11-21T10:00:00.000Z
              */
             installed_at: string;
-            /** @description The sign-in that first installed the plugin, when known. */
-            installed_by: {
-                /**
-                 * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
-                 * @enum {string}
-                 */
-                kind: "browser" | "app" | "key" | "local";
-                /**
-                 * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
-                 * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
-                 */
-                id: string;
-                /**
-                 * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
-                 * @example Safari on macOS
-                 */
-                name: string;
-            } | null;
+            /** @description The sign-in that first installed the plugin, or `null` when it is not known. */
+            installed_by: components["schemas"]["PluginInstaller"] | null;
             /**
              * Format: date-time
              * @description When the installed version last changed.
+             * @example 2026-11-21T12:00:00.000Z
              */
             updated_at: string;
         };
@@ -8718,29 +8704,15 @@ export interface components {
             /**
              * Format: date-time
              * @description When the plugin was first installed.
+             * @example 2026-11-21T10:00:00.000Z
              */
             installed_at: string;
-            /** @description The sign-in that first installed the plugin, when known. */
-            installed_by: {
-                /**
-                 * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
-                 * @enum {string}
-                 */
-                kind: "browser" | "app" | "key" | "local";
-                /**
-                 * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
-                 * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
-                 */
-                id: string;
-                /**
-                 * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
-                 * @example Safari on macOS
-                 */
-                name: string;
-            } | null;
+            /** @description The sign-in that first installed the plugin, or `null` when it is not known. */
+            installed_by: components["schemas"]["PluginInstaller"] | null;
             /**
              * Format: date-time
              * @description When the installed version last changed.
+             * @example 2026-11-21T12:00:00.000Z
              */
             updated_at: string;
             /**
@@ -8748,13 +8720,6 @@ export interface components {
              * @enum {string}
              */
             outcome: "installed" | "updated" | "unchanged";
-        };
-        /** @description The installed plugins. */
-        PluginList: {
-            /** @description Every installed plugin, by name. */
-            data: components["schemas"]["Plugin"][];
-            /** @description Always `null`: the list is whole. */
-            next_cursor: null;
         };
         /** @description What removing the plugin removed, and what it kept. */
         PluginRemoved: {
@@ -8846,6 +8811,31 @@ export interface components {
                     [key: string]: unknown;
                 };
             };
+        };
+        /** @description The sign-in that first installed a plugin. */
+        PluginInstaller: {
+            /**
+             * @description The recorded sign-in kind. `browser`: the owner's browser. `app`: an app the owner approved. `key`: an API key. `local`: the local command on the server's machine.
+             * @enum {string}
+             */
+            kind: "browser" | "app" | "key" | "local";
+            /**
+             * @description The ID the sign-in has in `GET /owner/sign-ins`, `local` for the local command, or an app's client ID if its sign-in was already gone. It stays the same after the sign-in ends.
+             * @example 01a1011b-b5e5-7be6-8f3b-77492475b5a4
+             */
+            id: string;
+            /**
+             * @description The sign-in's name when the action happened, as `GET /owner/sign-ins` showed it. At most 200 characters.
+             * @example Safari on macOS
+             */
+            name: string;
+        };
+        /** @description A page holding every installed plugin. */
+        PluginPage: {
+            /** @description Every installed plugin, by name. */
+            data: components["schemas"]["Plugin"][];
+            /** @description Always `null`: Marfa returns every installed plugin in one page. */
+            next_cursor: string | null;
         };
     };
     responses: never;
@@ -18974,7 +18964,38 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PluginList"];
+                    /**
+                     * @example {
+                     *       "data": [
+                     *         {
+                     *           "name": "tickets",
+                     *           "title": "Tickets",
+                     *           "description": "Tickets for tracking work.",
+                     *           "mark": "lucide:ticket",
+                     *           "maker": "Marfa",
+                     *           "marfa": "0.0.90",
+                     *           "version": "1.2.0",
+                     *           "types": [
+                     *             "common.ticket",
+                     *             "common.ticket.spike"
+                     *           ],
+                     *           "edge_types": [
+                     *             "blocks"
+                     *           ],
+                     *           "connector": null,
+                     *           "installed_at": "2026-11-21T10:00:00.000Z",
+                     *           "installed_by": {
+                     *             "kind": "key",
+                     *             "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *             "name": "laptop"
+                     *           },
+                     *           "updated_at": "2026-11-21T12:00:00.000Z"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PluginPage"];
                 };
             };
             /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
@@ -19101,6 +19122,33 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "name": "tickets",
+                     *       "title": "Tickets",
+                     *       "description": "Tickets for tracking work.",
+                     *       "mark": "lucide:ticket",
+                     *       "maker": "Marfa",
+                     *       "marfa": "0.0.90",
+                     *       "version": "1.2.0",
+                     *       "types": [
+                     *         "common.ticket",
+                     *         "common.ticket.spike"
+                     *       ],
+                     *       "edge_types": [
+                     *         "blocks"
+                     *       ],
+                     *       "connector": null,
+                     *       "installed_at": "2026-11-21T10:00:00.000Z",
+                     *       "installed_by": {
+                     *         "kind": "key",
+                     *         "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *         "name": "laptop"
+                     *       },
+                     *       "updated_at": "2026-11-21T12:00:00.000Z",
+                     *       "outcome": "updated"
+                     *     }
+                     */
                     "application/json": components["schemas"]["PluginInstalled"];
                 };
             };
@@ -19112,12 +19160,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "name": "tickets",
+                     *       "title": "Tickets",
+                     *       "description": "Tickets for tracking work.",
+                     *       "mark": "lucide:ticket",
+                     *       "maker": "Marfa",
+                     *       "marfa": "0.0.90",
+                     *       "version": "1.0.0",
+                     *       "types": [
+                     *         "common.ticket",
+                     *         "common.ticket.spike"
+                     *       ],
+                     *       "edge_types": [
+                     *         "blocks"
+                     *       ],
+                     *       "connector": null,
+                     *       "installed_at": "2026-11-21T10:00:00.000Z",
+                     *       "installed_by": {
+                     *         "kind": "key",
+                     *         "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *         "name": "laptop"
+                     *       },
+                     *       "updated_at": "2026-11-21T10:00:00.000Z",
+                     *       "outcome": "installed"
+                     *     }
+                     */
                     "application/json": components["schemas"]["PluginInstalled"];
                 };
             };
             /**
-             * @description - `validation_error`: the bundle has a key it does not hold, a field of the wrong shape, an ID named twice, or a type or edge type the rules refuse for its shape. `details.errors` names each, and `details.type_id` or `details.edge_type` the definition.
-             *     - `missing_required_field`, `invalid_schema`, `inheritance_violation`, `property_shadows_field`, `compatible_with_violation`: a type is refused as `POST /types` refuses it. `details.type_id` names the type.
+             * @description - `validation_error`: the bundle has a key it does not hold, a field of the wrong shape, an ID named twice, or an edge type the rules refuse. `details.errors` names each.
+             *     - `missing_required_field`, `invalid_schema`, `inheritance_violation`, `property_shadows_field`, `compatible_with_violation`: a type is refused as `POST /types` refuses it. `details.type_id` names it.
              */
             400: {
                 headers: {
@@ -19171,13 +19246,12 @@ export interface operations {
                 };
             };
             /**
-             * @description - `plugin_needs_newer_server`: the bundle's `marfa` is newer than this server.
-             *     - `plugin_version_older`: a newer version of the plugin is installed.
-             *     - `type_exists`: a type of the bundle exists, and this plugin did not install it. `details.type_id` names it.
-             *     - `plugin_narrows`: a newer version removes or narrows what the installed one holds. `details.changes` names each type and path.
-             *     - `plugin_child_conflict`: a type below one the bundle changes declares a field or status word in another shape. `details.conflicts` names each type and field.
-             *     - `conflict`: an edge type is registered in another shape, beyond widening its ends, or is one Marfa ships.
-             *     - `instance_changed`: another instance answers at this address.
+             * @description - `plugin_needs_newer_server`: the bundle needs a later Marfa.
+             *     - `plugin_version_older`: a later version is installed.
+             *     - `type_exists`: a type exists that the plugin did not install.
+             *     - `plugin_narrows`: a type loses or narrows a member. See `details.changes`.
+             *     - `plugin_child_conflict`: a type below clashes. See `details.conflicts`.
+             *     - `conflict`: an edge type is held in another shape.
              */
             409: {
                 headers: {
@@ -19286,6 +19360,32 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "name": "tickets",
+                     *       "title": "Tickets",
+                     *       "description": "Tickets for tracking work.",
+                     *       "mark": "lucide:ticket",
+                     *       "maker": "Marfa",
+                     *       "marfa": "0.0.90",
+                     *       "version": "1.2.0",
+                     *       "types": [
+                     *         "common.ticket",
+                     *         "common.ticket.spike"
+                     *       ],
+                     *       "edge_types": [
+                     *         "blocks"
+                     *       ],
+                     *       "connector": null,
+                     *       "installed_at": "2026-11-21T10:00:00.000Z",
+                     *       "installed_by": {
+                     *         "kind": "key",
+                     *         "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
+                     *         "name": "laptop"
+                     *       },
+                     *       "updated_at": "2026-11-21T12:00:00.000Z"
+                     *     }
+                     */
                     "application/json": components["schemas"]["Plugin"];
                 };
             };
@@ -19424,6 +19524,23 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    /**
+                     * @example {
+                     *       "removed": {
+                     *         "name": "tickets",
+                     *         "version": "1.2.0"
+                     *       },
+                     *       "kept": {
+                     *         "types": [
+                     *           "common.ticket",
+                     *           "common.ticket.spike"
+                     *         ],
+                     *         "edge_types": [
+                     *           "blocks"
+                     *         ]
+                     *       }
+                     *     }
+                     */
                     "application/json": components["schemas"]["PluginRemoved"];
                 };
             };
@@ -19592,7 +19709,8 @@ export interface operations {
                      *           "plural": "Contacts",
                      *           "own_roles": [],
                      *           "provenance": {
-                     *             "origin": "user",
+                     *             "origin": "registered",
+                     *             "plugin": null,
                      *             "created_by": {
                      *               "kind": "key",
                      *               "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -19631,7 +19749,8 @@ export interface operations {
                      *           "plural": "Deals",
                      *           "own_roles": [],
                      *           "provenance": {
-                     *             "origin": "user",
+                     *             "origin": "registered",
+                     *             "plugin": null,
                      *             "created_by": {
                      *               "kind": "key",
                      *               "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -19787,7 +19906,8 @@ export interface operations {
                      *         "title_field": "name"
                      *       },
                      *       "provenance": {
-                     *         "origin": "user",
+                     *         "origin": "registered",
+                     *         "plugin": null,
                      *         "created_by": {
                      *           "kind": "key",
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -19998,7 +20118,8 @@ export interface operations {
                      *         "title_field": "name"
                      *       },
                      *       "provenance": {
-                     *         "origin": "user",
+                     *         "origin": "registered",
+                     *         "plugin": null,
                      *         "created_by": {
                      *           "kind": "key",
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -20183,7 +20304,8 @@ export interface operations {
                      *         "title_field": "name"
                      *       },
                      *       "provenance": {
-                     *         "origin": "user",
+                     *         "origin": "registered",
+                     *         "plugin": null,
                      *         "created_by": {
                      *           "kind": "key",
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -21079,7 +21201,8 @@ export interface operations {
                      *         "icon": "simple-icons:github"
                      *       },
                      *       "provenance": {
-                     *         "origin": "user",
+                     *         "origin": "registered",
+                     *         "plugin": null,
                      *         "created_by": {
                      *           "kind": "key",
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -21300,7 +21423,8 @@ export interface operations {
                      *         "title_field": "name"
                      *       },
                      *       "provenance": {
-                     *         "origin": "user",
+                     *         "origin": "registered",
+                     *         "plugin": null,
                      *         "created_by": {
                      *           "kind": "key",
                      *           "id": "01a1011b-b5e5-7be6-8f3b-77492475b5a4",
@@ -37538,7 +37662,8 @@ export interface operations {
                      *       },
                      *       "types": {
                      *         "core": 29,
-                     *         "registered": 3
+                     *         "registered": 3,
+                     *         "plugin": 0
                      *       },
                      *       "keys": {
                      *         "total": 1
