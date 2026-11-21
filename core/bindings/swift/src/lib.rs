@@ -5783,6 +5783,21 @@ mod tests {
 
     /// A copy with an app type that declares one field, so a property it
     /// does not declare is one the app has never seen.
+    /// The fixture's entries are `app.*`, which a listing shows only where it names the type.
+    fn entries() -> ListFilters {
+        ListFilters {
+            types: Some(vec!["app.test.entry".into()]),
+            ..ListFilters::default()
+        }
+    }
+
+    fn entry_search() -> SearchFilters {
+        SearchFilters {
+            types: Some(vec!["app.test.entry".into()]),
+            ..SearchFilters::default()
+        }
+    }
+
     fn copy_with_entries() -> (tempfile::TempDir, std::path::PathBuf, Arc<Core>) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");
@@ -5904,7 +5919,7 @@ mod tests {
         assert_eq!(member("nothing"), Some(JsonValue::Null));
         let listed = core
             .list(
-                ListFilters::default(),
+                entries(),
                 Some(Sort {
                     field: Some(SortField::CreatedAt),
                     direction: Some(SortDirection::Ascending),
@@ -6113,7 +6128,7 @@ mod tests {
             )
             .unwrap();
 
-        let listed = core.list(ListFilters::default(), None).unwrap().items();
+        let listed = core.list(entries(), None).unwrap().items();
         assert_eq!(listed.len(), 2, "one deep row takes down the listing");
         let held = listed.iter().find(|item| item.id == ids[1]).unwrap();
         assert!(held.properties.members.is_empty());
@@ -6151,10 +6166,7 @@ mod tests {
             field: Some(SortField::CreatedAt),
             direction: Some(SortDirection::Ascending),
         };
-        let listed = core
-            .list(ListFilters::default(), Some(by_creation))
-            .unwrap()
-            .items();
+        let listed = core.list(entries(), Some(by_creation)).unwrap().items();
         assert_eq!(listed.len(), 3);
         assert_eq!(listed[0].unreadable_properties, None);
         assert_eq!(text(&listed[0].properties), r#"{"title":"kept zebra"}"#);
@@ -6169,7 +6181,7 @@ mod tests {
             );
         }
         let hits = core
-            .search("zebra".into(), SearchFilters::default(), 10)
+            .search("zebra".into(), entry_search(), 10)
             .unwrap()
             .hits;
         assert_eq!(hits.len(), 3);
@@ -6186,7 +6198,7 @@ mod tests {
             .list(
                 ListFilters {
                     filter: filter.clone(),
-                    ..ListFilters::default()
+                    ..entries()
                 },
                 Some(Sort {
                     field: Some(SortField::CreatedAt),
@@ -6204,7 +6216,7 @@ mod tests {
                 "zebra".into(),
                 SearchFilters {
                     filter,
-                    ..SearchFilters::default()
+                    ..entry_search()
                 },
                 10,
             )
