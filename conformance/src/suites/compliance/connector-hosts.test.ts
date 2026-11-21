@@ -228,9 +228,9 @@ describe("redeeming a link", () => {
     const replacing = await owner.linkConnectorHost(replaced.data.host.id);
     expect(replacing.status).toBe(200);
     const removed = await owner.createConnectorHost(`removed ${fresh()}`);
-    expect(
-      (await owner.removeConnectorHost(removed.data.host.id)).status,
-    ).toBe(200);
+    expect((await owner.removeConnectorHost(removed.data.host.id)).status).toBe(
+      200,
+    );
     const made_up = "a".repeat(43);
     for (const code of [
       replaced.data.code,
@@ -276,12 +276,16 @@ describe("a host's key", () => {
     const doors: [string, () => Promise<{ status: number }>][] = [
       ["plugins", () => host.client.listPlugins()],
       ["plugin", () => host.client.getPlugin(name)],
-      ["install", () => host.client.installPlugin(connectorBundle("x", "x", "x"))],
+      [
+        "install",
+        () => host.client.installPlugin(connectorBundle("x", "x", "x")),
+      ],
       ["keys", () => host.client.listKeys()],
       ["current key", () => host.client.getCurrentKey()],
       [
         "mint",
-        () => host.client.createKey({ label: "x", source: "x", permissions: [] }),
+        () =>
+          host.client.createKey({ label: "x", source: "x", permissions: [] }),
       ],
       ["types", () => host.client.listTypes()],
       ["type", () => host.client.getType(type)],
@@ -297,7 +301,10 @@ describe("a host's key", () => {
       ["items", () => host.client.listItems()],
       ["item", () => host.client.createItem({ type, properties: {} })],
       ["connectors", () => host.client.listConnectors()],
-      ["register connector", () => host.client.registerConnector({ name: "x" })],
+      [
+        "register connector",
+        () => host.client.registerConnector({ name: "x" }),
+      ],
       ["hosts", () => host.client.listConnectorHosts()],
       ["host", () => host.client.getConnectorHost(host.id)],
       ["assign", () => host.client.assignConnector(name, null)],
@@ -319,12 +326,53 @@ describe("a host's key", () => {
     expect((await client().mintConnectorKey(name)).status).toBe(401);
   });
 
+  it("refuses connectors.host to a key mint or update, from local authority too", async () => {
+    const local = new MarfaClient({
+      baseUrl: server.apiUrl,
+      controlSocket: server.controlSocket,
+    });
+    for (const minter of [local, owner]) {
+      const refused = await minter.createKey({
+        label: "a host's power",
+        source: `host-power-${fresh()}`,
+        permissions: ["connectors.host"],
+      });
+      expect(refused.status).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+    }
+    const plain = await local.createKey({
+      label: "widened later",
+      source: `host-power-${fresh()}`,
+      permissions: ["audit.read"],
+    });
+    expect(plain.status, JSON.stringify(plain.error)).toBe(201);
+    const widened = await local.updateKey(plain.data.id, {
+      permissions: ["audit.read", "connectors.host"],
+    });
+    expect(widened.status).toBe(400);
+    expect(widened.error?.error.code).toBe("validation_error");
+    // The witness: the same update without it is taken, and a key minted with nothing named lacks it.
+    const kept = await local.updateKey(plain.data.id, {
+      permissions: ["audit.read", "connectors.manage"],
+    });
+    expect(kept.status, JSON.stringify(kept.error)).toBe(200);
+    const everything = await local.createKey({
+      label: "everything a key can be given",
+      source: `host-power-${fresh()}`,
+    });
+    expect(everything.status, JSON.stringify(everything.error)).toBe(201);
+    expect(everything.data.permissions).toHaveLength(14);
+    expect(everything.data.permissions).not.toContain("connectors.host");
+  });
+
   it("answers a host only the connectors assigned to it, and records when it was last seen", async () => {
     const mine = await plugin("mine");
     const theirs = await plugin("theirs");
     const host = await linkedHost(server, owner, `seen ${fresh()}`);
     const other = await linkedHost(server, owner, `other ${fresh()}`);
-    expect((await owner.getConnectorHost(host.id)).data.last_seen_at).toBeNull();
+    expect(
+      (await owner.getConnectorHost(host.id)).data.last_seen_at,
+    ).toBeNull();
     const assigned = await owner.assignConnector(mine.name, host.id);
     expect(assigned.status, JSON.stringify(assigned.error)).toBe(200);
     await expectMatchesSchema(
@@ -580,7 +628,9 @@ describe("the record of hosts", () => {
     const made = await owner.createConnectorHost(`audited ${fresh()}`);
     const id = made.data.host.id;
     const linked = await owner.linkConnectorHost(id);
-    const redeemed = await owner.redeemConnectorLink({ code: linked.data.code });
+    const redeemed = await owner.redeemConnectorLink({
+      code: linked.data.code,
+    });
     expect((await owner.assignConnector(name, id)).status).toBe(200);
     const host = client(redeemed.data.key);
     const minted = await host.mintConnectorKey(name);
@@ -600,9 +650,7 @@ describe("the record of hosts", () => {
       action: "plugin.connector_assign",
       resource_id: name,
     });
-    expect(assigned.data.data.map((entry) => entry.details.host)).toEqual([
-      id,
-    ]);
+    expect(assigned.data.data.map((entry) => entry.details.host)).toEqual([id]);
     const mints = await owner.listAudit({
       action: "connector.key_mint",
       resource_id: name,

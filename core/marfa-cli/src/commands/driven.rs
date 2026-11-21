@@ -332,6 +332,11 @@ fn file_body(words: &[String]) -> &'static str {
 fn given(words: &[String]) -> Vec<(String, Option<String>)> {
     match words.iter().map(String::as_str).collect::<Vec<_>>()[..] {
         ["config", "unset"] => vec![("<NAME>".into(), Some("version_recent_days".into()))],
+        // A host named by its ID is sent at once; a name is looked up first.
+        ["hosts", "get" | "link" | "remove"] => vec![(
+            "<HOST>".into(),
+            Some("0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b".into()),
+        )],
         _ => Vec::new(),
     }
 }

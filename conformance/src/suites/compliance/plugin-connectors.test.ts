@@ -443,7 +443,11 @@ describe("one source, one connector", () => {
       type_permissions: { "core.note": "write" },
     });
     expect(made.status, JSON.stringify(made.error)).toBe(201);
-    const bundle = connectorBundle(`selfmade-${part}`, `selfmade${part}`, source);
+    const bundle = connectorBundle(
+      `selfmade-${part}`,
+      `selfmade${part}`,
+      source,
+    );
     const byKey = await owner.installPlugin(bundle);
     expect(byKey.status).toBe(409);
     expect(byKey.error?.error.code).toBe("connector_source_held");
@@ -540,7 +544,10 @@ describe("one source, one connector", () => {
         sources: [source],
       });
       expect(claim.status).toBe(409);
-      expect(claim.error?.error.details).toMatchObject({ source, plugin: name });
+      expect(claim.error?.error.details).toMatchObject({
+        source,
+        plugin: name,
+      });
     }
     const plain = await local.createKey({
       label: "claims later",

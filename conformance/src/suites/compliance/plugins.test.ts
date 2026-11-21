@@ -871,6 +871,7 @@ describe("removing a plugin whose edge type the owner deleted", () => {
     expect(removed.data.kept).toEqual({
       types: ["edgeremoved.thing"],
       edge_types: ["edge-removed-b"],
+      connector: null,
     });
   });
 });
@@ -1420,7 +1421,9 @@ describe("installing a plugin with a connector", () => {
     expect(taken.body.fingerprint).toBe(digest);
     const read = await owner.getPlugin("wired-taken");
     expect(read.data.fingerprint).toBe(digest);
-    expect(read.data.connector).toEqual(connector("wired.taken", "wired-taken"));
+    expect(read.data.connector).toEqual(
+      connector("wired.taken", "wired-taken"),
+    );
     const listed = await owner.listPlugins();
     expect(
       listed.data.data.find((held) => held.name === "wired-taken")?.fingerprint,
@@ -1463,6 +1466,10 @@ describe("an edge type an earlier version brought", () => {
     expect((await elsewhere.getPlugin(plugin)).data.edge_types).toEqual([link]);
     const removed = await owner.removePlugin(plugin);
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
-    expect(removed.data.kept).toEqual({ types: [thing], edge_types: [link] });
+    expect(removed.data.kept).toEqual({
+      types: [thing],
+      edge_types: [link],
+      connector: null,
+    });
   });
 });

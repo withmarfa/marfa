@@ -653,7 +653,9 @@ export class MarfaClient {
     );
   }
 
-  async getConnectorHost(id: string): Promise<ApiResponse<Record<string, any>>> {
+  async getConnectorHost(
+    id: string,
+  ): Promise<ApiResponse<Record<string, any>>> {
     return this.request<Record<string, any>>(`/connector-hosts/${id}`);
   }
 

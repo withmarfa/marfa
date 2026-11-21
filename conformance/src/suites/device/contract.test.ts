@@ -1052,6 +1052,8 @@ class PrivateSocket {
  * the scripted server answers every door alike.
  */
 const ID = "01JAAAAAAAAAAAAAAAAAAAAAAA";
+/** A connector host named by its ID, which the CLI sends without looking a name up first. */
+const HOST_ID = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b";
 const HASH = `sha256:${"a".repeat(64)}`;
 /** The digest of the bytes the private socket's `/blobs/` answer holds. */
 const STREAMED_HASH = `sha256:${createHash("sha256").update("streamed bytes").digest("hex")}`;
@@ -1112,6 +1114,12 @@ const invocations: Record<string, () => string[]> = {
   "plugins list": () => [],
   "plugins get": () => ["fixture"],
   "plugins remove": () => ["fixture"],
+  "plugins assign": () => ["fixture", "--none"],
+  "hosts add": () => ["Studio"],
+  "hosts list": () => [],
+  "hosts get": () => [HOST_ID],
+  "hosts link": () => [HOST_ID],
+  "hosts remove": () => [HOST_ID],
   "plugins install": () => [
     fileOf(
       "fixture.plugin.json",

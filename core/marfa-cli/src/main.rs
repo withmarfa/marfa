@@ -37,7 +37,7 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 use crate::commands::{
     apps, attention, audit, backups, blobs, config, connectors, docs, edge_types, edges, events,
     export, extensions, housekeeping, items, keys, login, logout, metrics, operations, overview,
-    owner, plugins, profile, restore, rows, search, sign_ins, sources, status, tables, tags, types,
+    hosts, owner, plugins, profile, restore, rows, search, sign_ins, sources, status, tables, tags, types,
     update, views, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
@@ -208,7 +208,12 @@ enum Command {
         #[command(subcommand)]
         command: edge_types::EdgeTypesCommand,
     },
-    /// Plugins: install one, by name or from a file or folder, list and remove them, and check or build a plugin's source folder.
+    /// Connector hosts, the machines that run connectors: make one and print its one-time link, list, read, link again and remove them.
+    Hosts {
+        #[command(subcommand)]
+        command: hosts::HostsCommand,
+    },
+    /// Plugins: install one, by name or from a file or folder, assign its connector to a host, list and remove them, and check or build a plugin's source folder.
     Plugins {
         #[command(subcommand)]
         command: plugins::PluginsCommand,
@@ -727,6 +732,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Edges { command } => edges::run(command, &remote()?, &out),
         Command::EdgeTypes { command } => edge_types::run(command, &remote()?, &out),
         Command::Types { command } => types::run(command, remote, &out),
+        Command::Hosts { command } => hosts::run(command, &remote()?, &out),
         Command::Plugins { command } => plugins::run(command, remote, &out),
         Command::Search(args) => search::run(args, &remote()?, &out),
         Command::Tags => tags::run(&remote()?, &out),

@@ -177,6 +177,7 @@ describe("a device code", () => {
       "items.*:read",
       "schema.*:write",
       "items.purge:read",
+      "connectors.host",
     ]) {
       const refused = await code(scope);
       expect(refused.status, scope).toBe(400);
