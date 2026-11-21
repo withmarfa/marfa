@@ -2708,8 +2708,9 @@ guarded! {
         /// `fields` and whatever else a type carries. A copy that has never
         /// reached a server checks what it queues against them and the types
         /// Marfa ships, and a hydration registers the ones the instance lacks,
-        /// where the key may. The call is the app's whole set and replaces every
-        /// earlier declaration. A set that names one id twice throws `Invalid`.
+        /// where the key may. An app declares only types under `app.`. The call
+        /// is the app's whole set and replaces every earlier declaration. A set
+        /// that names a type outside `app.`, or one id twice, throws `Invalid`.
         pub fn declare_types(&self, types: Vec<JsonObject>) -> Result<(), MarfaError> {
             let parsed = types
                 .into_iter()

@@ -62,13 +62,14 @@ pub const FORMAT_FIELD_TYPES: [(&str, &str); 4] = [
     ("thumbnail", "thumbnail"),
 ];
 
-/// The first segments no type may take: the five namespace tiers, the root of each permission and scope family, and the one word the glossary bans.
-pub const RESERVED_TYPE_ROOTS: [&str; 22] = [
+/// The first segments no publisher may take: the six namespaces Marfa holds, the root of each permission and scope family, and the one word the glossary bans.
+pub const RESERVED_TYPE_ROOTS: [&str; 23] = [
     "core",
     "system",
     "app",
     "user",
     "marfa",
+    "common",
     "schema",
     "keys",
     "items",

@@ -814,6 +814,55 @@ describe("an app's own type namespace", () => {
     expect(text).toContain("App data from nstitled");
   });
 
+  it("is offered and granted for common.* where no common type is registered, titled Shared types", async () => {
+    const scope = "common.*:read";
+    const app = await registerApp(server, scope);
+
+    // The witness: a root no type sits under is dropped.
+    const dropped = await consentScreen(
+      authorizeQuery(app.clientId, `${scope} nowhere.*:read`, pkce()),
+    );
+    expect(dropped.searchParams.get("scope")).toBe(scope);
+
+    const proof = pkce();
+    const consent = await consentScreen(
+      authorizeQuery(app.clientId, scope, proof),
+    );
+    const page = await (await fetch(consent, { headers: { cookie } })).text();
+    expect(offeredValues(page, "scopes")).toContain(scope);
+    expect(visibleText(page)).toContain("Shared types");
+    const sent = await decide(server, origin, cookie, consent, true, [scope]);
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code: sent?.searchParams.get("code") ?? "",
+      redirect_uri: CALLBACK,
+      code_verifier: proof.verifier,
+      client_id: app.clientId,
+    });
+    expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
+    expect(exchanged.body.scope).toBe(scope);
+
+    // Shared types are item types: no edge scope under `common` is offered,
+    // while the same request names `edge.user.*`, which is.
+    const edgeScope = "common.*:read edge.common.*:read edge.user.*:read";
+    const both = await registerApp(server, edgeScope);
+    const narrowed = await consentScreen(
+      authorizeQuery(both.clientId, edgeScope, pkce()),
+    );
+    expect(narrowed.searchParams.get("scope")?.split(" ")).toEqual([
+      "common.*:read",
+      "edge.user.*:read",
+    ]);
+    const published = (
+      (await (
+        await fetch(`${server.apiUrl}/.well-known/oauth-authorization-server`)
+      ).json()) as { scopes_supported: string[] }
+    ).scopes_supported;
+    expect(published).toContain("common.*:read");
+    expect(published).toContain("edge.user.*:read");
+    expect(published).not.toContain("edge.common.*:read");
+  });
+
   it("is offered on a device code for app.<vendor>.*, and refused for a vendor no type sits under", async () => {
     await registerType("app.nsdevice.widget");
     const app = await registerApp(server, "app.nsdevice.*:write", {

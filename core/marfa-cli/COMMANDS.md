@@ -1346,7 +1346,9 @@ marfa types get [OPTIONS] <ID>
 
 ### marfa types scaffold
 
-Print a starting definition for a type, ready for `types register` or `device types declare`.
+Print a starting definition for an item type.
+
+Use a `common.*` definition in a plugin. Register other definitions with `types register`. An app can also declare an `app.*` definition with `device types declare`.
 
 Needs no server, working copy or key, sends nothing, and takes none of `--url`, `--key` and `--socket`. An id, field or parent the registry would refuse for its form is refused here with the reason. What only a server knows is left to it: whether a parent exists, and whether a key may register the type.
 
@@ -4050,7 +4052,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Declare the types this app saves, so a copy with no server checks what it queues against them and a hydration registers the ones the instance lacks, where the key may.
 
-Marfa's own types need no declaring. The call is the app's whole set, so it replaces every earlier declaration, and a set that names one id twice is refused `invalid`.
+An app declares only the types under `app.`, its own hidden machinery; Marfa's own types need no declaring, and a visible type comes from a plugin. The call is the app's whole set, so it replaces every earlier declaration, and a set that names a type outside `app.`, or one id twice, is refused `invalid`.
 
 ```text
 marfa device types declare [OPTIONS]

@@ -13,11 +13,12 @@ pub const LEVELS: [(&str, &str); 3] = [
 ];
 
 /// The title of a row that is not one item type, by its pattern.
-pub const ROWS: [(&str, &str); 14] = [
+pub const ROWS: [(&str, &str); 15] = [
     ("*", "All your data"),
     ("content", "Your content"),
     ("user.*", "Your custom types"),
     ("core.*", "Built-in types"),
+    ("common.*", "Shared types"),
     ("app.*", "Every app's data"),
     ("edge.*", "Links between items"),
     ("profile", "Profile"),

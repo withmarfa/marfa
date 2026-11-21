@@ -20,7 +20,8 @@ impl Core {
     /// or registered. A copy that has never reached a server checks what it
     /// queues against these and the types Marfa ships, and a hydration
     /// registers on the instance the ones it does not hold, and replaces each
-    /// `app.*` one it holds in another definition, where the key may.
+    /// one it holds in another definition, where the key may. An app declares
+    /// only types under `app.`: a set that names another is refused `Invalid`.
     /// On a copy that holds a server's catalog the set waits for the next
     /// hydration. A set that names one id twice, or a `status` field with no
     /// words anywhere in its chain, or a table a server would refuse, or a
@@ -46,6 +47,7 @@ impl Core {
         let mut seen = HashSet::new();
         for definition in types {
             let row = marfa_rules::catalog::declaration(definition, &known)?;
+            marfa_rules::catalog::app_declaration(&row.0)?;
             if !seen.insert(row.0.clone()) {
                 return Err(CoreError::Invalid(format!(
                     "{} is declared twice; a set declares each type once",

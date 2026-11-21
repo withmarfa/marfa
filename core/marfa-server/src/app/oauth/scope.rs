@@ -42,6 +42,9 @@ const CLAIMED_ROOTS: [&str; 13] = [
 /// Roots an app may ask for whole whether or not a type sits under them yet.
 const STANDING_ROOTS: [&str; 3] = ["app", "core", "user"];
 
+/// Roots an app may ask for whole on the item type axis only, before any type sits under them.
+const STANDING_ITEM_ROOTS: [&str; 1] = ["common"];
+
 /// The order the approval pages show permissions in.
 const PERMISSIONS: [Permission; 14] = [
     Permission::WebhooksManage,
@@ -426,6 +429,12 @@ impl Registries {
                     verb,
                 });
             }
+            for root in STANDING_ITEM_ROOTS {
+                add(Scope::Type {
+                    pattern: format!("{root}.*"),
+                    verb,
+                });
+            }
             for vendor in vendors(&self.types) {
                 add(Scope::Type {
                     pattern: format!("{vendor}.*"),
@@ -507,7 +516,8 @@ impl Registries {
             .types
             .iter()
             .filter(|id| platform_root(id).is_none())
-            .filter_map(|id| id.split('.').next());
+            .filter_map(|id| id.split('.').next())
+            .filter(|root| !STANDING_ITEM_ROOTS.contains(root));
         STANDING_ROOTS.into_iter().chain(publishers).collect()
     }
 }
@@ -984,6 +994,34 @@ mod tests {
         for literal in published.literals() {
             let scope = Scope::parse(literal).unwrap_or_else(|| panic!("{literal} did not parse"));
             assert_eq!(&scope.literal(), literal);
+        }
+    }
+
+    #[test]
+    fn a_grant_may_reach_common_before_any_common_type_exists() {
+        let allowed = Registries::new([], []).allowed();
+        let narrowed = narrow(&set("common.*:read common.*:write"), &allowed);
+        assert_eq!(
+            narrowed.kept.literals(),
+            ["common.*:read", "common.*:write"]
+        );
+        assert!(narrowed.dropped.is_empty());
+        let witness = narrow(&set("nowhere.*:read"), &allowed);
+        assert_eq!(witness.dropped, ["nowhere.*:read"]);
+    }
+
+    #[test]
+    fn common_is_offered_for_item_types_and_for_no_edge_type() {
+        for allowed in [
+            Registries::new([], []).allowed(),
+            Registries::new(["common.ticket"], []).allowed(),
+        ] {
+            for offered in ["common.*:read", "common.*:write", "edge.user.*:read"] {
+                assert!(allowed.contains(offered), "{offered} is not offered");
+            }
+            for withheld in ["edge.common.*:read", "edge.common.*:write"] {
+                assert!(!allowed.contains(withheld), "{withheld} is offered");
+            }
         }
     }
 

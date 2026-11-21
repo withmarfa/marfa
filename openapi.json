@@ -31951,7 +31951,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `metadata.types:write`, the type has `guidance` and you lack `schema.write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.\n- `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` (`details.grant` names it).",
+            "description": "- `forbidden`: you lack `metadata.types:write`, guidance needs `schema.write`, or the identifier is under `core.*`, `system.*`, `marfa.*` or `common.*`. Install the plugin to register its `common.*` types.\n- `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` (`details.grant` names it).",
             "content": {
               "application/json": {
                 "schema": {

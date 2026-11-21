@@ -382,16 +382,36 @@ fn a_declaration_refuses_reserved_type_roots() {
 }
 
 #[test]
-fn a_declaration_accepts_publisher_prefixes_depth_and_the_identifier_boundary() {
+fn a_declaration_holds_to_app_types_alone() {
     let core = Core::open_in_memory(None).unwrap();
-    let boundary = format!("acme.{}", "a".repeat(123));
+    for id in [
+        "user.x",
+        "common.ticket",
+        "acme.calendar.event",
+        "acme-publisher.recipe",
+    ] {
+        match core.declare_types(&[serde_json::json!({ "id": id, "fields": {} })]) {
+            Err(CoreError::Invalid(message)) => assert!(
+                message.contains("app."),
+                "{id}: the refusal does not say what a declaration holds to: {message}"
+            ),
+            other => panic!("{id} was declared: {other:?}"),
+        }
+    }
+    assert!(core.declared_types().unwrap().is_empty());
+    core.declare_types(&[serde_json::json!({ "id": "app.acme.setting", "fields": {} })])
+        .unwrap();
+    assert_eq!(core.declared_types().unwrap().len(), 1);
+}
+
+#[test]
+fn a_declaration_accepts_depth_and_the_identifier_boundary() {
+    let core = Core::open_in_memory(None).unwrap();
+    let boundary = format!("app.acme.{}", "a".repeat(119));
     let ids = [
         "app.recipe.entry",
-        "user.recipe.entry",
-        "acme-publisher.recipe",
-        "acme.calendar.event",
-        "keys-publisher.entry",
-        "schema_tools.entry",
+        "app.acme.calendar_event",
+        "app.acme-publisher.recipe",
         boundary.as_str(),
     ];
     let definitions: Vec<_> = ids

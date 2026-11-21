@@ -2037,6 +2037,26 @@ describe("type creator provenance in archives", () => {
   });
 });
 
+describe("a type under common in an archive", () => {
+  it("restores although POST /types refuses a new one", async () => {
+    const id = `common.restoreshared${ctx.runId}`;
+    trackType(ctx, id);
+    const body = { id, label: "Shared", version: 1, fields: {} };
+    // The witness: the same definition is refused when registered directly.
+    const refused = await client.registerType(body);
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.details?.namespace).toBe("common");
+    const archive = withLines(
+      itemsArchive([]),
+      "instance",
+      JSON.stringify({ type: body }) + "\n",
+    );
+    const result = await owner.restoreArchive(archive);
+    expect(result.ok, JSON.stringify(result.error)).toBe(true);
+    expect((await client.getType(id)).ok).toBe(true);
+  });
+});
+
 describe("a restore refused while its body is still arriving", () => {
   /** A manifest the restore refuses on reading it, then `size` bytes more. */
   const refusedEarly = (size: number): Uint8Array =>

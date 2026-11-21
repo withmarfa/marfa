@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import type { Outcome } from "../../device/protocol.js";
 import { refusal, typeCatalog, wireType } from "../../device/marfa-answers.js";
@@ -174,7 +175,7 @@ describe("a hydration of a copy that declared types", () => {
     expect(report.cursor).not.toBe("");
   });
 
-  it("replaces no type outside the app's own namespace, and refuses to declare one of Marfa's", async () => {
+  it("refuses to declare a type outside the app's own namespace or one of Marfa's, and replaces the app's own", async () => {
     const { server, device } = await started("declare-replace-own", [
       OLDER(ENTRY.id),
       OLDER(SHARED.id),
@@ -193,7 +194,9 @@ describe("a hydration of a copy that declared types", () => {
       { id: "core.note", fields: { extra: { type: "string" } } },
     ]);
     expect(mistaken.ok ? "declared" : mistaken.refusal.code).toBe("invalid");
-    value(await device.declareTypes([ENTRY, SHARED]));
+    const shared = await device.declareTypes([ENTRY, SHARED]);
+    expect(shared.ok ? "declared" : shared.refusal.code).toBe("invalid");
+    value(await device.declareTypes([ENTRY]));
     const report = value(await device.hydrate(["core.note"], "library"));
     // The witness: the app's own type was replaced under the same conditions.
     expect(report.replaced_types).toEqual([ENTRY.id]);
@@ -202,6 +205,79 @@ describe("a hydration of a copy that declared types", () => {
       server.requests.some((request) => request.body.includes(SHARED.id)),
       "a type outside `app.*` was compared or written",
     ).toBe(false);
+  });
+
+  it("registers and replaces no type outside app.* that an earlier build stored as declared, says it refused it, and keeps what the copy queued", async () => {
+    const { server, device } = await started("declare-stored-outside-app", [
+      OLDER(ENTRY.id),
+      OLDER(SHARED.id),
+    ]);
+    const owners = {
+      id: "user.note_owned",
+      fields: { title: { type: "string" } },
+    };
+    server.answer(
+      "POST",
+      "/types/normalize",
+      normalizing([ENTRY.id, SHARED.id], []),
+    );
+    server.answer("PUT", /^\/types\//, (request) => ({
+      kind: "json",
+      status: 200,
+      body: { type: JSON.parse(request.body) },
+    }));
+    server.answer("POST", "/types", (request) => ({
+      kind: "json",
+      status: 201,
+      body: { type: JSON.parse(request.body) },
+    }));
+    server.answer(
+      "GET",
+      /^\/items\//,
+      refusal(404, "not_found", "no such item"),
+    );
+    value(await device.hydrate(["core.note"], "library"));
+    const queued = value(
+      await device.create({
+        type: "core.note",
+        properties: { title: "Queued before the upgrade", body: "kept" },
+      }),
+    );
+    value(await device.declareTypes([ENTRY]));
+    // What a build that let an app declare `user.*` left in the store.
+    const store = new DatabaseSync(device.store);
+    try {
+      const insert = store.prepare(
+        "INSERT INTO declared_types (id, json) VALUES (?, ?)",
+      );
+      for (const stored of [SHARED, owners]) {
+        insert.run(stored.id, JSON.stringify(stored));
+      }
+    } finally {
+      store.close();
+    }
+    const report = value(await device.hydrate(["core.note"], "library"));
+    expect(report.replaced_types).toEqual([ENTRY.id]);
+    expect(report.registered_types).toEqual([]);
+    expect(
+      report.unregistered_types.map((refused) => [refused.id, refused.code]),
+    ).toEqual([
+      [owners.id, "invalid"],
+      [SHARED.id, "invalid"],
+    ]);
+    expect(
+      server.requests.filter(
+        (request) =>
+          request.method !== "GET" &&
+          (request.body.includes(SHARED.id) ||
+            request.body.includes(owners.id)),
+      ),
+      "a type outside `app.*` was compared, registered or written",
+    ).toEqual([]);
+    expect(replaced(harness!)).toEqual([`/types/${ENTRY.id}`]);
+    expect(value(await device.queue()).map((row) => row.id)).toEqual([
+      queued.id,
+    ]);
   });
 
   it("fails the hydration when the server fails mid-way, and replaces on the next one", async () => {

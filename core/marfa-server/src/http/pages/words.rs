@@ -158,6 +158,7 @@ pub fn title(reach: Reach, pattern: &str, label: Option<&str>) -> String {
         (Reach::Type, "*") => Some("All your data"),
         (Reach::Type, "user.*") => Some("Your custom types"),
         (Reach::Type, "core.*") => Some("Built-in types"),
+        (Reach::Type, "common.*") => Some("Shared types"),
         (Reach::Type, "app.*") => Some("Every app's data"),
         (Reach::Content, _) => Some("Your content"),
         (Reach::Edge, "edge.*") => Some("Links between items"),

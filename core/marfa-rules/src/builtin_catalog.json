@@ -2855,6 +2855,7 @@
   "audit",
   "backups",
   "blobs",
+  "common",
   "config",
   "connectors",
   "content",

@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn a_status_field_prints_its_words_with_their_groups() {
         let definition = scaffold_type(
-            "user.ticket",
+            "app.acme.ticket",
             None,
             None,
             &[status(
@@ -322,7 +322,7 @@ mod tests {
         );
         // A subtype of a type Marfa ships adds words to the field it inherits.
         let chore = scaffold_type(
-            "user.chore",
+            "app.acme.chore",
             Some("core.task"),
             None,
             &[status("status", &[("waiting", "in_progress")])],
@@ -332,7 +332,7 @@ mod tests {
         core.declare_types(&[definition, chore]).unwrap();
         assert!(
             scaffold_type(
-                "user.chore",
+                "app.acme.chore",
                 Some("core.task"),
                 None,
                 &[field("status", "status")]
@@ -425,7 +425,7 @@ mod tests {
             })
             .collect();
         assert!(fields.len() >= 12, "the field types were not read");
-        let definition = scaffold_type("user.everything", None, None, &fields).unwrap();
+        let definition = scaffold_type("app.acme.everything", None, None, &fields).unwrap();
         let core = Core::open_in_memory(None).unwrap();
         core.declare_types(std::slice::from_ref(&definition))
             .unwrap();
@@ -437,8 +437,9 @@ mod tests {
 
     #[test]
     fn a_parent_is_declared_with_its_child_in_either_order() {
-        let child = scaffold_type("user.child", Some("user.parent"), None, &[]).unwrap();
-        let parent = scaffold_type("user.parent", None, None, &[field("title", "string")]).unwrap();
+        let child = scaffold_type("app.acme.child", Some("app.acme.parent"), None, &[]).unwrap();
+        let parent =
+            scaffold_type("app.acme.parent", None, None, &[field("title", "string")]).unwrap();
         let core = Core::open_in_memory(None).unwrap();
         core.declare_types(&[child, parent]).unwrap();
     }

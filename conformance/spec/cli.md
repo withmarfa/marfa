@@ -1464,9 +1464,9 @@ If a `--field` of `marfa types scaffold` is not `NAME:TYPE` or gives a third par
 
 ### `cli/types-scaffold-declared`
 
-The CLI MUST print, for `marfa types scaffold`, a definition that `marfa device types declare` takes unchanged.
+The CLI MUST print, for `marfa types scaffold` given an identifier under `app`, a definition that `marfa device types declare` takes unchanged.
 
-**Reason:** a definition written for an app's working copy is declared as it stands.
+**Reason:** a definition written for an app's working copy is declared as it stands. A device declares only `app.*` (`device/declaration-refused`).
 
 **Tests:** `device/types-scaffold.test.ts › declares what it printed on a working copy, unchanged`.
 

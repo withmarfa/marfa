@@ -450,7 +450,7 @@ fn a_stale_keyed_create_judges_the_status_word_against_the_row_it_lands_on() {
 fn a_move_into_a_type_that_does_not_declare_the_status_word_is_refused() {
     let core = copy(&Scripted::start());
     core.declare_types(&[serde_json::json!({
-        "id": "acme.chore",
+        "id": "app.acme.chore",
         "parent": "core.task",
         "fields": { "status": { "type": "status", "status_values": [
             { "value": "waiting", "group": "in_progress" }
@@ -462,7 +462,7 @@ fn a_move_into_a_type_that_does_not_declare_the_status_word_is_refused() {
         let conn = core.conn().unwrap();
         let row = crate::store::testing::wire_item(
             &id,
-            "acme.chore",
+            "app.acme.chore",
             "active",
             "2026-01-01T00:00:00.000Z",
             serde_json::json!({ "title": "Sweep", "status": status }),
@@ -490,7 +490,10 @@ fn a_move_into_a_type_that_does_not_declare_the_status_word_is_refused() {
     assert_eq!(code, "invalid_properties");
     assert!(message.starts_with("status: "), "{message}");
     assert_eq!(core.queue().unwrap().len(), queued);
-    assert_eq!(core.get(&waiting).unwrap().unwrap().r#type, "acme.chore");
+    assert_eq!(
+        core.get(&waiting).unwrap().unwrap().r#type,
+        "app.acme.chore"
+    );
     // The witness: a row holding a word the type declares moves.
     let open = held("completed");
     core.update_item(&open, &to_task).unwrap();
@@ -502,7 +505,7 @@ fn a_subtype_adds_status_words_after_the_ones_it_inherits() {
     // A copy that has never reached a server holds the types it declares.
     let core = Core::open_in_memory(None).unwrap();
     core.declare_types(&[serde_json::json!({
-        "id": "acme.chore",
+        "id": "app.acme.chore",
         "parent": "core.task",
         "fields": { "status": { "type": "status", "status_values": [
             { "value": "waiting", "group": "in_progress" }
@@ -510,7 +513,7 @@ fn a_subtype_adds_status_words_after_the_ones_it_inherits() {
     })])
     .unwrap();
     let chore = |status: &str| crate::Draft {
-        r#type: "acme.chore".into(),
+        r#type: "app.acme.chore".into(),
         properties: serde_json::json!({ "title": "Sweep", "status": status })
             .as_object()
             .unwrap()
@@ -543,7 +546,7 @@ fn a_status_field_with_no_words_in_its_chain_is_refused() {
     let declare = |types: Vec<serde_json::Value>| core.declare_types(&types);
     let ticket = |extra: serde_json::Value| {
         let mut definition = serde_json::json!({
-            "id": "acme.ticket",
+            "id": "app.acme.ticket",
             "fields": { "stage": { "type": "status" } }
         });
         definition
@@ -559,15 +562,15 @@ fn a_status_field_with_no_words_in_its_chain_is_refused() {
         (vec![ticket(serde_json::json!({}))], "no parent"),
         (
             vec![
-                ticket(serde_json::json!({ "parent": "acme.base" })),
-                serde_json::json!({ "id": "acme.base", "fields": {} }),
+                ticket(serde_json::json!({ "parent": "app.acme.base" })),
+                serde_json::json!({ "id": "app.acme.base", "fields": {} }),
             ],
             "a declared parent without the field",
         ),
         (
             vec![
-                ticket(serde_json::json!({ "parent": "acme.base" })),
-                serde_json::json!({ "id": "acme.base", "fields": { "stage": { "type": "status" } } }),
+                ticket(serde_json::json!({ "parent": "app.acme.base" })),
+                serde_json::json!({ "id": "app.acme.base", "fields": { "stage": { "type": "status" } } }),
             ],
             "a declared parent also without words",
         ),
@@ -583,12 +586,12 @@ fn a_status_field_with_no_words_in_its_chain_is_refused() {
     }
     // The witnesses: a chain that gives the field its words, declared or shipped.
     declare(vec![
-        serde_json::json!({ "id": "acme.base", "fields": words }),
-        ticket(serde_json::json!({ "parent": "acme.base" })),
+        serde_json::json!({ "id": "app.acme.base", "fields": words }),
+        ticket(serde_json::json!({ "parent": "app.acme.base" })),
     ])
     .unwrap();
     declare(vec![serde_json::json!({
-        "id": "acme.chore",
+        "id": "app.acme.chore",
         "parent": "core.task",
         "fields": { "status": { "type": "status", "description": "Where it stands" } }
     })])
@@ -606,23 +609,23 @@ fn a_declaration_is_held_to_the_text_rules_a_registration_applies() {
             "guidance",
         ),
         (
-            serde_json::json!({ "id": "user.note", "guidance": over(1001), "fields": fields }),
+            serde_json::json!({ "id": "app.acme.note", "guidance": over(1001), "fields": fields }),
             "guidance",
         ),
         (
-            serde_json::json!({ "id": "user.note", "guidance": 7, "fields": fields }),
+            serde_json::json!({ "id": "app.acme.note", "guidance": 7, "fields": fields }),
             "guidance",
         ),
         (
-            serde_json::json!({ "id": "user.note", "description": over(201), "fields": fields }),
+            serde_json::json!({ "id": "app.acme.note", "description": over(201), "fields": fields }),
             "description",
         ),
         (
-            serde_json::json!({ "id": "user.note", "fields": { "title": { "type": "string", "description": over(301) } } }),
+            serde_json::json!({ "id": "app.acme.note", "fields": { "title": { "type": "string", "description": over(301) } } }),
             "fields.title.description",
         ),
         (
-            serde_json::json!({ "id": "user.note", "fields": { "stage": { "type": "status", "status_values": [{ "value": "open", "group": "not_started", "description": over(121) }] } } }),
+            serde_json::json!({ "id": "app.acme.note", "fields": { "stage": { "type": "status", "status_values": [{ "value": "open", "group": "not_started", "description": over(121) }] } } }),
             "fields.stage.status_values.0.description",
         ),
     ] {
@@ -635,7 +638,7 @@ fn a_declaration_is_held_to_the_text_rules_a_registration_applies() {
     }
     // The witness: the same text at its limit, and empty guidance on an app type, are declared.
     core.declare_types(&[
-        serde_json::json!({ "id": "user.note", "description": over(200), "guidance": over(1000), "fields": fields }),
+        serde_json::json!({ "id": "app.acme.entry", "description": over(200), "fields": fields }),
         serde_json::json!({ "id": "app.acme.note", "guidance": "", "fields": fields }),
     ])
     .unwrap();
@@ -661,7 +664,7 @@ fn a_status_field_declared_with_words_the_server_refuses_is_refused() {
         ),
     ] {
         let Err(CoreError::Invalid(message)) = core.declare_types(&[serde_json::json!({
-            "id": "acme.ticket",
+            "id": "app.acme.ticket",
             "fields": { "stage": { "type": "status", "status_values": status_values } }
         })]) else {
             panic!("{status_values} was declared");
@@ -678,14 +681,16 @@ fn a_status_field_declared_with_words_the_server_refuses_is_refused() {
     ] {
         assert!(
             matches!(
-                core.declare_types(&[serde_json::json!({ "id": "acme.ticket", "fields": fields })]),
+                core.declare_types(&[
+                    serde_json::json!({ "id": "app.acme.ticket", "fields": fields })
+                ]),
                 Err(CoreError::Invalid(_))
             ),
             "{fields}"
         );
     }
     core.declare_types(&[serde_json::json!({
-        "id": "acme.ticket",
+        "id": "app.acme.ticket",
         "fields": { "stage": { "type": "status", "status_values": [
             { "value": "open", "group": "not_started" },
             { "value": "closed_9", "group": "completed" }

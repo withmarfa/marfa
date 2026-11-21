@@ -211,6 +211,16 @@ impl EdgeType {
 
 const SHIPPED_ROOTS: [&str; 3] = ["core", "system", "marfa"];
 
+/// An app's device declares only `app.*`, the machinery an app keeps hidden for itself. This is a check at the client, not the boundary: the server decides what a credential may register.
+pub fn app_declaration(id: &str) -> Result<(), RuleError> {
+    if id.starts_with("app.") {
+        return Ok(());
+    }
+    Err(RuleError::invalid(format!(
+        "{id} is not an app type: an app declares only types under `app.`, such as `app.<app>.<name>`. An owner's own types go under `user.`, and shared types come from a plugin"
+    )))
+}
+
 /// An object naming an identifier outside Marfa's, whose fields each have a type and whose parent this copy knows. Answers its id and the JSON it is kept as, with what a registration requires filled in.
 pub fn declaration(
     definition: &Value,
@@ -234,7 +244,7 @@ pub fn declaration(
     }
     if SHIPPED_ROOTS.contains(&root) || crate::builtin::ships(id)? {
         return Err(invalid(format!(
-            "{id} is Marfa's, and an app declares types under its own namespace: `app.`, `user.` or a name of its own"
+            "{id} is Marfa's, and no type of yours goes under `core.`, `system.` or `marfa.`"
         )));
     }
     if let Some(issue) = crate::schema::text_issues(row).into_iter().next() {

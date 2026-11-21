@@ -1320,16 +1320,16 @@ fn waiting_on_each_other(rows: &[(String, String)], waits: &[Vec<String>]) -> Co
 
 /// Brings the instance's types up to what the app declared, each after the
 /// types it needs: registers the ones it does not hold, then replaces each
-/// `app.*` type it holds in another definition. A key that may not register or
+/// type it holds in another definition. A key that may not register or
 /// replace is no reason to refuse the hydration: what it queued waits for the
 /// server's verdict like any write, and the type stays as the server holds it.
 ///
 /// "Another definition" is the server's judgement: it normalizes the
 /// declaration and the registered type alike (`POST /types/normalize`), so key
 /// order, a default written out or left out, and a label the server derives
-/// never make a declaration differ. Only an `app.*` type is replaced: the
-/// namespace an app owns, where a type under `user.*` or a publisher's is
-/// shared with whoever else writes there.
+/// never make a declaration differ. A declaration an earlier build stored
+/// outside `app.`, the namespace an app owns, is neither registered nor
+/// replaced: it is reported as `invalid` like a declaration refused today.
 fn declare_on_instance(
     core: &Core,
     http: &Http,
@@ -1340,14 +1340,24 @@ fn declare_on_instance(
         let conn = core.conn()?;
         store::declared_type_rows(&conn)?
     };
+    let mut done = Declared::default();
+    let mut owned = Vec::new();
+    for (id, json) in declared {
+        match marfa_rules::catalog::app_declaration(&id) {
+            Ok(()) => owned.push((id, json)),
+            Err(refusal) => done.unregistered.push(UnregisteredType {
+                id,
+                code: refusal.code.as_str().to_string(),
+                message: refusal.message,
+            }),
+        }
+    }
     let held = |id: &str| catalog.types.iter().any(|held| held.id == id);
-    let (present, missing): (Vec<_>, Vec<_>) = declared.into_iter().partition(|(id, _)| held(id));
+    let (present, missing): (Vec<_>, Vec<_>) = owned.into_iter().partition(|(id, _)| held(id));
     let missing = in_order_of_registration(missing)?;
     // The server judges each replacement, a parent loop included.
-    let own = present.into_iter().filter(|(id, _)| id.starts_with("app."));
-    let (mut own, looped) = in_order_of_need(own.collect(), parent_need);
+    let (mut own, looped) = in_order_of_need(present, parent_need);
     own.extend(looped);
-    let mut done = Declared::default();
     for (id, json) in missing {
         crate::catch_up::refuse_if_stopped(stop)?;
         match http.register_type(&json)? {
