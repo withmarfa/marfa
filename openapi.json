@@ -934,7 +934,7 @@
           },
           "body_field": {
             "type": "string",
-            "description": "The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 UTF-16 code units unless its `max_length` says otherwise."
+            "description": "The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 Unicode characters unless its `max_length` says otherwise."
           },
           "name_from_body": {
             "type": "boolean",
@@ -4736,7 +4736,7 @@
           },
           "max_length": {
             "type": "integer",
-            "description": "The longest value a `string` or `enum` field allows, in UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other."
+            "description": "The longest value a `string` or `enum` field allows, in Unicode characters, not UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other."
           },
           "max_items": {
             "type": "integer",
@@ -18407,7 +18407,7 @@
                       "maxLength": 1000
                     },
                     "maxItems": 200,
-                    "description": "The titles to look for, at most 200, each at most 1000 UTF-16 code units. Case, Unicode form and surrounding white space do not matter."
+                    "description": "The titles to look for, at most 200, each at most 1,000 Unicode characters, not UTF-16 code units. Case, Unicode form and surrounding white space do not matter."
                   }
                 },
                 "required": [
@@ -18488,7 +18488,7 @@
             }
           },
           "400": {
-            "description": "- `missing_required_field`: `names` is missing.\n- `validation_error`: `names` is not a list of strings, has more than 200 names, has a name longer than 1,000 UTF-16 code units, or the body has a field this endpoint doesn't take.",
+            "description": "- `missing_required_field`: `names` is missing.\n- `validation_error`: `names` is not a list of strings, has more than 200 names, has a name longer than 1,000 Unicode characters, or the body has a field this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {

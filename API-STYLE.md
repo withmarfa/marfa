@@ -74,6 +74,7 @@ A person reading the API reference, and an agent or a code generator reading the
   - A boolean: "`true` if …", and, if it can be absent, what that means.
   - An optional field: when it is present.
 - **(checked: at most 250 characters)**
+- **A limit on a string counts Unicode characters**, as the server counts them. Don't write "UTF-16 code units" as the unit of a limit; the phrase "not UTF-16 code units" is allowed. **(checked)**
 - **Property names are snake_case, and a refusal's `error` object holds `code`, `message` and, where there is one, `details`**, never the HTTP status. A name that belongs to JSON Schema, such as `maxLength` in a schema, keeps its spelling.
 - **An object declares its shape unless it is open on purpose.** `ci/openapi/open-objects.test.ts` lists each object whose `additionalProperties` takes any value, with the reason it stays open.
 - An enum's own description says what each value means, one clause each. For a list of values, that description goes on `items`.

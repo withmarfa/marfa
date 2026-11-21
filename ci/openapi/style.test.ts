@@ -559,6 +559,16 @@ describe("the API description follows API-STYLE.md", () => {
     expect(prose().filter((value) => banned.test(value))).toEqual([]);
   });
 
+  it("counts a limit in Unicode characters, never in UTF-16 code units", () => {
+    const unit = /(?<!not )UTF-16 code units/;
+    // The witness: the rule catches the wording it refuses.
+    expect(unit.test("holds up to 1,000 UTF-16 code units")).toBe(true);
+    expect(unit.test("counted as characters and not UTF-16 code units")).toBe(
+      false,
+    );
+    expect(prose().filter((value) => unit.test(value))).toEqual([]);
+  });
+
   it("uses no em dashes anywhere", () => {
     expect(JSON.stringify(document).includes("\u2014")).toBe(false);
   });
