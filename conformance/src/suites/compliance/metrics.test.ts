@@ -51,7 +51,7 @@ describe("the instance's metrics", () => {
       "uptime_seconds",
       "webhooks",
     ]);
-    expect(sorted(r.data.types)).toEqual(["core", "registered"]);
+    expect(sorted(r.data.types)).toEqual(["core", "plugin", "registered"]);
     expect(sorted(r.data.items)).toEqual(["by_state", "total"]);
     expect(sorted(r.data.blobs)).toEqual(["count", "total_bytes"]);
     expect(typeof r.data.types.registered).toBe("number");

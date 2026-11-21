@@ -844,6 +844,26 @@ pub struct ChildClash {
     pub declared: String,
 }
 
+/// A bundle's definition with its fields in the shape a registration stores, before it is
+/// judged, so a clash below it can be named before the registration rules refuse it.
+pub fn provisional(definition: &Obj) -> Obj {
+    let mut shaped = definition.clone();
+    if let Some(Value::Object(fields)) = definition.get("fields") {
+        let normalized: Map<String, Value> = fields
+            .iter()
+            .map(|(name, field)| match field.as_object() {
+                Some(field) => (
+                    name.clone(),
+                    Value::Object(crate::schema::normalize_field(field, None)),
+                ),
+                None => (name.clone(), field.clone()),
+            })
+            .collect();
+        shaped.insert("fields".into(), Value::Object(normalized));
+    }
+    shaped
+}
+
 /// Each clash `next`, the catalog with the bundle's types in it, holds below the types in `changed`.
 pub fn child_clashes(next: &Registry, changed: &[&str]) -> Vec<ChildClash> {
     let mut clashes = Vec::new();

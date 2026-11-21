@@ -106,7 +106,7 @@ let origin: FreshServer;
 let destination: FreshServer;
 let owner: MarfaClient;
 let elsewhere: MarfaClient;
-let minted = 0;
+let keysMinted = 0;
 
 /** A key minted by local authority: an owner's key, holding what it names. */
 async function ownerKey(
@@ -121,10 +121,11 @@ async function ownerKey(
   });
   const minted = await local.createKey({
     label: "plugins fixture",
-    source: `plugins-${String(++minted)}`,
+    source: `plugins-${String(++keysMinted)}`,
     permissions,
     type_permissions: types,
     edge_permissions: edges,
+    metadata_permissions: { "*": "write" },
   });
   expect(minted.status, JSON.stringify(minted.error)).toBe(201);
   return new MarfaClient({ baseUrl: server.apiUrl, apiKey: minted.data.key! });
@@ -663,6 +664,12 @@ describe("who writes a type's guidance", () => {
   });
 
   it("lets an app holding schema.write install a plugin whose types carry guidance", async () => {
+    // A grant names a root the instance holds a type under.
+    const anchor = await owner.registerType({
+      id: "guided.anchor",
+      fields: { title: { type: "string" } },
+    } as never);
+    expect(anchor.status, JSON.stringify(anchor.error)).toBe(201);
     const app = await appToken(origin, "guided.*:write schema.write");
     const installed = await app.installPlugin(
       single("guided-by-app", "guided.thing", {

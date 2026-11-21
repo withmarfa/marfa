@@ -4,7 +4,7 @@ A plugin is what an owner adds to Marfa: types under `common.*` or a root of its
 
 A bundle holds `format`, which is 1,, the plugin's identity (`name`, `title`, `description`, `mark`, `maker` and `marfa`, the oldest Marfa release it works with), its `version`, `types` (each a definition as `POST /types` takes it, with its `guidance`), `edge_types` (each as `POST /edge-types` takes it) and an optional `connector` object, which the server keeps with the install record and does not read. `openapi.json` gives each field's shape as `PluginBundle`.
 
-`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, a type under a reserved root, the Marfa release it needs, the caller's permission, the version installed, a type the plugin did not install, each type's definition, what a newer version narrows, a clash with a type below, and each edge type.
+`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, a type under a reserved root, the Marfa release it needs, the caller's permission, the version installed, a type the plugin did not install, a clash with a type below, a parent outside the bundle the caller may not write, each type's definition, what a newer version narrows, and each edge type.
 
 ## Installing
 

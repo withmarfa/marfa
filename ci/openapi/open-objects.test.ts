@@ -60,6 +60,16 @@ const OPEN_ON_PURPOSE: readonly { pattern: RegExp; reason: string }[] = [
       "A row's values, whose shape the columns of its table declare at runtime.",
   },
   {
+    pattern: /^PluginBundle\.(types|edge_types)$/,
+    reason:
+      "A plugin's type and edge type definitions, which installing judges with the registration doors' own rules and codes.",
+  },
+  {
+    pattern: /^(PluginBundle|Plugin|PluginInstalled)\.connector$/,
+    reason:
+      "A plugin's connector, which installing keeps as the bundle gives it and does not read.",
+  },
+  {
     pattern: /^AuditEntry\.details$/,
     reason: "What an audited action records, which differs by action.",
   },

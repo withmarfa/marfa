@@ -47,6 +47,7 @@ describe("type registration and listing", () => {
       label: "Changed",
       provenance: {
         origin: "platform",
+        plugin: null,
         created_by: { kind: "key", id: "forged", name: "Forged" },
       },
     });
@@ -58,6 +59,7 @@ describe("type registration and listing", () => {
     ).toEqual(provenance);
     expect((await client.getType("core.note")).data.provenance).toEqual({
       origin: "platform",
+      plugin: null,
       created_by: null,
     });
   });
