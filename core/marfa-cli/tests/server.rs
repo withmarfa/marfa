@@ -5421,6 +5421,19 @@ fn an_install_and_a_run_under_an_open_umask_keep_the_folders_on_the_way_private(
     assert_eq!(made, ["700", "700", "700", "600"]);
 }
 
+/// A Docker install under an open umask keeps its folder private, so that the next install
+/// admits it.
+#[test]
+fn a_docker_install_under_an_open_umask_makes_a_folder_the_next_install_admits() {
+    let rig = Rig::new("u-umask-docker");
+    rig.umask.set(Some(0o002));
+    rig.installed(&[]);
+    let mode = fs::metadata(&rig.dir).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o700);
+    let (code, stdout, stderr) = rig.install(&[]);
+    assert_eq!(code, 0, "{stdout}\n{stderr}");
+}
+
 /// What `marfa server run` makes with a plain create call is private whatever umask it starts
 /// under: here the folder of the server's log, which an install makes before and a reinstall
 /// leaves. Only on a Mac does `run` make that folder; on Linux the log goes to the journal.
@@ -5459,18 +5472,24 @@ fn a_run_under_an_open_umask_makes_what_it_creates_private() {
 #[test]
 fn folders_made_above_the_install_folder_are_not_writable_by_others_under_any_umask() {
     for mask in [0o002, 0o077] {
-        let mut rig = Rig::new(&format!("u-parents-{mask:o}"));
-        rig.isolate();
-        rig.umask.set(Some(mask));
-        let above = rig.root.join("srv");
-        rig.dir = above.join("marfa");
-        rig.native_installed(&["--access", "local"]);
-        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
-        assert_eq!(
-            (mode(&above), mode(&rig.dir)),
-            (0o755, 0o700),
-            "under umask {mask:o}"
-        );
+        for docker in [false, true] {
+            let mut rig = Rig::new(&format!("u-parents-{mask:o}-{docker}"));
+            rig.isolate();
+            rig.umask.set(Some(mask));
+            let above = rig.root.join("srv");
+            rig.dir = above.join("marfa");
+            if docker {
+                rig.installed(&[]);
+            } else {
+                rig.native_installed(&["--access", "local"]);
+            }
+            let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(
+                (mode(&above), mode(&rig.dir)),
+                (0o755, 0o700),
+                "under umask {mask:o}, with docker {docker}"
+            );
+        }
     }
 }
 
