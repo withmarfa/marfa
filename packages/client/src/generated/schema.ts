@@ -2588,6 +2588,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/cloud/link": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the link to Marfa Cloud
+         * @description Returns this instance's link to Marfa Cloud: whether it is linking, linked or failed, and where the sign-in address stands. Requires `config.manage`.
+         */
+        get: operations["getCloudLink"];
+        put?: never;
+        /**
+         * Start a link to Marfa Cloud
+         * @description Starts linking this instance to Marfa Cloud and returns the link, with the code to approve it on Marfa Cloud. Once linked, the sign-in address moves to the Marfa Cloud address unless you keep it. Requires `config.manage`.
+         */
+        post: operations["startCloudLink"];
+        /**
+         * Unlink from Marfa Cloud
+         * @description Ends the link to Marfa Cloud, or cancels one that is linking, and tells Marfa Cloud. If the sign-in address is the Marfa Cloud address, it moves back to the one before. Requires `config.manage`.
+         */
+        delete: operations["unlinkCloud"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -7955,7 +7983,7 @@ export interface components {
             event_type: "reach_changed";
         };
         /** @description One frame of `GET /events`. Its `event_type` is also its `event:`. */
-        EventStreamFrame: components["schemas"]["StreamCursorFrame"] | components["schemas"]["ItemEventFrame"] | components["schemas"]["RowsChangedFrame"] | components["schemas"]["EdgeEventFrame"] | components["schemas"]["AttentionEventFrame"] | components["schemas"]["StreamLiveFrame"] | components["schemas"]["StreamIncompleteFrame"] | components["schemas"]["CatchupTooOldFrame"] | components["schemas"]["CursorAheadFrame"] | components["schemas"]["ReachChangedFrame"];
+        EventStreamFrame: components["schemas"]["StreamCursorFrame"] | components["schemas"]["ItemEventFrame"] | components["schemas"]["RowsChangedFrame"] | components["schemas"]["EdgeEventFrame"] | components["schemas"]["AttentionEventFrame"] | components["schemas"]["CloudLinkEventFrame"] | components["schemas"]["StreamLiveFrame"] | components["schemas"]["StreamIncompleteFrame"] | components["schemas"]["CatchupTooOldFrame"] | components["schemas"]["CursorAheadFrame"] | components["schemas"]["ReachChangedFrame"];
         /** @description The body of a webhook delivery of an item event. */
         WebhookItemEvent: components["schemas"]["ItemEventFrame"] & {
             /**
@@ -8846,6 +8874,205 @@ export interface components {
             consequences: components["schemas"]["AddressConsequence"][];
             /** @description What the owner does next, in order. */
             next_steps: components["schemas"]["AddressNextStep"][];
+        };
+        /** @description An error response. */
+        CloudLinkExistsOrConflictOrInstanceChangedOrNoPublicListenerOrSignInAddressChangeUnconfirmedRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "cloud_link_exists" | "conflict" | "instance_changed" | "no_public_listener" | "sign_in_address_change_unconfirmed";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        CloudUnavailableOrWriteContentionRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "cloud_unavailable" | "write_contention";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description What a link does with the sign-in address. */
+        CloudLinkStart: {
+            /**
+             * @description `move` makes the Marfa Cloud address the sign-in address once linked, which signs everyone out. `keep` leaves the sign-in address as it is.
+             * @default move
+             * @enum {string}
+             */
+            sign_in_address: "move" | "keep";
+            /**
+             * @description `true` to confirm the move of the sign-in address. Without it, a move by a recent sign-in on an instance with an owner is refused.
+             * @default false
+             */
+            confirm_sign_in_address_change: boolean;
+        };
+        /** @description This instance's link to Marfa Cloud, which gives it a public name and address. */
+        CloudLink: {
+            /**
+             * @description `not_linked`: no link, or Marfa Cloud ended it, as `ended` says. `linking`: waiting for approval on Marfa Cloud. `linked`: approved, with a name and address. `failed`: the link ended without linking, as `failure` says.
+             * @enum {string}
+             */
+            state: "not_linked" | "linking" | "linked" | "failed";
+            /** @description `false` while Marfa Cloud hasn't been told of an unlink, which Marfa keeps trying to tell it. Present only then, while `state` is `not_linked`. */
+            service_told?: boolean;
+            /** @description Why the last link ended without an unlink here. Present while `state` is `not_linked` after Marfa Cloud ended the link. */
+            ended?: {
+                /**
+                 * @description `unlinked_by_service`: the link was ended on Marfa Cloud. Marfa put back the sign-in address if the link had moved it.
+                 * @enum {string}
+                 */
+                reason: "unlinked_by_service";
+                /**
+                 * Format: date-time
+                 * @description When Marfa found the link ended, in UTC.
+                 * @example 2026-11-21T10:15:00.000Z
+                 */
+                ended_at?: string;
+            };
+            /** @description How to approve the link. Present while `state` is `linking`. */
+            linking?: {
+                /**
+                 * @description The code to enter on Marfa Cloud to approve the link.
+                 * @example WDJB-MJHT
+                 */
+                user_code: string;
+                /**
+                 * Format: uri
+                 * @description Where to approve the link on Marfa Cloud.
+                 */
+                approval_url: string;
+                /**
+                 * Format: date-time
+                 * @description When the link stops waiting for approval, in UTC, timed on this instance's clock from when it started the link.
+                 * @example 2026-11-21T09:45:00.000Z
+                 */
+                expires_at: string;
+            };
+            /**
+             * @description The name Marfa Cloud gave this instance. Present while `state` is `linked`.
+             * @example river
+             */
+            name?: string;
+            /**
+             * Format: uri
+             * @description The address Marfa Cloud gave this instance. Present while `state` is `linked`.
+             * @example https://river.marfa.so
+             */
+            address?: string;
+            /**
+             * Format: date-time
+             * @description When Marfa Cloud linked this instance, in UTC. Present while `state` is `linked`.
+             * @example 2026-11-21T09:31:00.000Z
+             */
+            linked_at?: string;
+            /** @description The connector that carries traffic through Marfa Cloud. Present while `state` is `linked`. */
+            connector?: {
+                /**
+                 * @description `stopped`: the connector isn't running.
+                 * @enum {string}
+                 */
+                state: "stopped";
+                /**
+                 * Format: date-time
+                 * @description Since when the connector has been in this state, in UTC.
+                 * @example 2026-11-21T09:00:00.000Z
+                 */
+                since: string;
+            };
+            /** @description Where the sign-in address stands. Present while `state` is `linking` or `linked`, and while failed if the sign-in address is the Marfa Cloud address. */
+            sign_in_address?: {
+                /**
+                 * @description `moved`: it is the Marfa Cloud address. `kept`: it stays as it is. `pending`: Marfa moves it once linked. `waiting`: it moves when you take `next_step`.
+                 * @enum {string}
+                 */
+                state: "moved" | "kept" | "pending" | "waiting";
+                /**
+                 * Format: uri
+                 * @description The sign-in address in force.
+                 * @example https://marfa.example.com
+                 */
+                address: string;
+                /** @description How to move the sign-in address yourself. Present while linked and `state` is `waiting`. */
+                next_step?: {
+                    /** @description The request that moves it, sent from an app someone signed in to recently. */
+                    request: {
+                        /**
+                         * @description The request's method.
+                         * @enum {string}
+                         */
+                        method: "PATCH";
+                        /**
+                         * @description The request's path.
+                         * @enum {string}
+                         */
+                        path: "/config";
+                        /** @description The request's body. */
+                        body: {
+                            /**
+                             * Format: uri
+                             * @description The Marfa Cloud address.
+                             */
+                            sign_in_address: string;
+                            /**
+                             * @description Always `true`: the move signs everyone out.
+                             * @enum {boolean}
+                             */
+                            confirm_sign_in_address_change: true;
+                        };
+                    };
+                    /**
+                     * @description The `marfa` command that moves it, run where the server runs.
+                     * @example marfa config set sign_in_address https://river.marfa.so --confirm-address-change
+                     */
+                    command: string;
+                };
+            };
+            /** @description Why the link failed. Present while `state` is `failed`. */
+            failure?: {
+                /**
+                 * @description `denied`: the approval was declined. `expired`: it wasn't approved in time. `refused`: Marfa Cloud refused it, as `message` says. `unlinked`: Marfa Cloud ended it. `unreadable`: a secret of the link no longer opens.
+                 * @enum {string}
+                 */
+                reason: "denied" | "expired" | "refused" | "unlinked" | "unreadable";
+                /** @description Marfa Cloud's reason for a refusal. Present when `reason` is `refused`. */
+                message?: string;
+            };
+        };
+        /** @description What an unlink did. */
+        CloudUnlinked: {
+            /**
+             * @description Always `not_linked`.
+             * @enum {string}
+             */
+            state: "not_linked";
+            /** @description `true` if Marfa Cloud was told, or took the cancel of a link that was linking. `false` if it couldn't be reached, and Marfa keeps trying. Present when a link was linking or linked. */
+            service_told?: boolean;
+        };
+        /** @description A change to the link to Marfa Cloud. You receive it only with `config.manage`, and only on a stream that names no `type` and isn't a copy stream. */
+        CloudLinkEventFrame: {
+            /**
+             * @description The event, which is also the frame's `event:`.
+             * @constant
+             */
+            event_type: "cloud_link.changed";
+            cloud_link: components["schemas"]["CloudLink"] & unknown;
         };
         /** @description A plugin's bundle, `<name>.plugin.json`: its identity, version, types and edge types. */
         PluginBundle: {
@@ -41550,6 +41777,495 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    getCloudLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the link. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "state": "linked",
+                     *       "name": "river",
+                     *       "address": "https://river.marfa.so",
+                     *       "linked_at": "2026-11-21T09:31:00.000Z",
+                     *       "connector": {
+                     *         "state": "stopped",
+                     *         "since": "2026-11-21T09:00:00.000Z"
+                     *       },
+                     *       "sign_in_address": {
+                     *         "state": "waiting",
+                     *         "address": "https://marfa.example.com",
+                     *         "next_step": {
+                     *           "request": {
+                     *             "method": "PATCH",
+                     *             "path": "/config",
+                     *             "body": {
+                     *               "sign_in_address": "https://river.marfa.so",
+                     *               "confirm_sign_in_address_change": true
+                     *             }
+                     *           },
+                     *           "command": "marfa config set sign_in_address https://river.marfa.so --confirm-address-change"
+                     *         }
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CloudLink"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description Caller lacks the required management permission. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    startCloudLink: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloudLinkStart"];
+            };
+        };
+        responses: {
+            /** @description Returns the link, which is linking. */
+            201: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "state": "linking",
+                     *       "linking": {
+                     *         "user_code": "WDJB-MJHT",
+                     *         "approval_url": "https://cloud.marfa.so/link",
+                     *         "expires_at": "2026-11-21T09:45:00.000Z"
+                     *       },
+                     *       "sign_in_address": {
+                     *         "state": "pending",
+                     *         "address": "https://marfa.example.com"
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CloudLink"];
+                };
+            };
+            /** @description - `validation_error`: the body names a field Marfa doesn't know or a value of the wrong kind, or the query has a parameter. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description Caller lacks the required management permission. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
+            408: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
+                };
+            };
+            /**
+             * @description - `cloud_link_exists`: a link is linking or linked.
+             *     - `conflict`: the instance changed during the start. Send it again.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance.
+             *     - `no_public_listener`: this server has no public listener on 127.0.0.1.
+             *     - `sign_in_address_change_unconfirmed`: the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists the effects.
+             */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudLinkExistsOrConflictOrInstanceChangedOrNoPublicListenerOrSignInAddressChangeUnconfirmedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /**
+             * @description - `cloud_unavailable`: Marfa Cloud couldn't be reached, didn't answer in time, or didn't start the link. `details.reason` says which. Nothing was kept. Try again later.
+             *     - `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.
+             */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudUnavailableOrWriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    unlinkCloud: {
+        parameters: {
+            query?: {
+                /** @description `true` to confirm that the sign-in address moves back from the Marfa Cloud address, which signs everyone out. Needed only when the sign-in address is the Marfa Cloud address. */
+                confirm_sign_in_address_change?: boolean;
+            };
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns `not_linked`. An instance with no link answers the same. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "state": "not_linked",
+                     *       "service_told": true
+                     *     }
+                     */
+                    "application/json": components["schemas"]["CloudUnlinked"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take, or `confirm_sign_in_address_change` is not `true` or `false`. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /**
+             * @description - `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.
+             *     - `insufficient_user_authentication`: your app's owner signed in more than fifteen minutes ago. Send them through `GET /oauth/authorize` with `max_age`.
+             */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "WWW-Authenticate": components["headers"]["WWW-Authenticate"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientUserAuthenticationOrUnauthorizedRefusal"];
+                };
+            };
+            /**
+             * @description - `forbidden`: you don't hold `config.manage`, which `details.required_scope` names.
+             *     - `app_sign_in_required`: the sign-in address moves back, which needs a recent sign-in, and you are an API key. A person unlinks from an app they signed in to, or with the private local command.
+             */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSignInRequiredOrForbiddenRefusal"];
+                };
+            };
+            /**
+             * @description - `conflict`: the link changed while it was unlinked. Send it again.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance.
+             *     - `sign_in_address_change_unconfirmed`: the query lacks `confirm_sign_in_address_change=true`. `details.consequences` lists the effects.
+             *     - `sign_in_address_check_failed`: the address to put back did not answer as this instance.
+             */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflictOrInstanceChangedOrSignInAddressChangeUnconfirmedOrSignInAddressCheckFailedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

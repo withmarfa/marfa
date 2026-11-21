@@ -3,7 +3,7 @@
 use marfa_rules::catalog::Catalog as Rules;
 use serde_json::{Map, Value};
 
-use crate::app::access::{Caller, Holding};
+use crate::app::access::{Caller, Holding, Permission};
 use crate::app::connectors::ReadOnly;
 use crate::app::refusal::{Refusal, Result};
 
@@ -23,6 +23,7 @@ pub enum Kind {
     Edge,
     Rows,
     Attention,
+    CloudLink,
 }
 
 /// The columns of a logged event, which decide whether its payload is read.
@@ -61,6 +62,11 @@ impl Judge<'_> {
         if entry.event_type == crate::app::attention::RAISED {
             let unfiltered = !self.filter.copy && self.filter.types.is_empty();
             return (unfiltered && self.caller.reads_attention()).then_some(Kind::Attention);
+        }
+        if entry.event_type == crate::app::cloud::CHANGED {
+            let unfiltered = !self.filter.copy && self.filter.types.is_empty();
+            return (unfiltered && self.caller.holds(Permission::ConfigManage))
+                .then_some(Kind::CloudLink);
         }
         let kind = if entry.event_type.starts_with("edge.") {
             if !self.filter.edges {
@@ -110,7 +116,7 @@ impl Judge<'_> {
         let Ok(Value::Object(mut body)) = serde_json::from_str(payload) else {
             return Ok(Judged::Unreadable);
         };
-        if kind == Kind::Attention {
+        if matches!(kind, Kind::Attention | Kind::CloudLink) {
             let mut data = Map::new();
             data.insert("event_type".into(), entry.event_type.into());
             data.extend(body);
@@ -130,7 +136,7 @@ impl Judge<'_> {
         let shown = match kind {
             Kind::Item => self.item(entry, &mut body)?,
             Kind::Edge => self.edge(entry, &body),
-            Kind::Rows | Kind::Attention => None,
+            Kind::Rows | Kind::Attention | Kind::CloudLink => None,
         };
         Ok(match shown {
             Some(true) => {
