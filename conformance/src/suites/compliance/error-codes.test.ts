@@ -263,6 +263,7 @@ const WHOLE_INSTANCE_WRITES: Record<string, string> = {
     "empties the bin of every type the key reads, other files' items with it",
   "POST /clock/confirm": "takes the server's clock as right",
   "POST /backups": "puts a backup of the whole instance",
+  "DELETE /cloud/link": "ends the instance's link to Marfa Cloud",
 };
 const HOLDS_THEIR_PERMISSION = ["a key", "a key holding management grants"];
 
