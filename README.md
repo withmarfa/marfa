@@ -11,7 +11,7 @@ Marfa is a home for your personal data that you run yourself. You keep your note
 
 - **Your structure.** Define the kinds of things you keep and how they link. Marfa checks everything against them.
 - **Open to every app.** Apps from WithMarfa use the same interface as anything you build.
-- **Bring data in.** [Connectors](https://github.com/withmarfa/marfa-connectors) pull in data from other services. GitHub, Todoist and RSS exist today.
+- **Bring data in.** Connectors pull in data from other services, such as GitHub, Todoist, RSS, Readwise and Google Calendar. They are kept with WithMarfa's other plugins in [withmarfa/plugins](https://github.com/withmarfa/plugins).
 - **Use it from anywhere.** A command-line tool, a [TypeScript SDK](./packages/client) and a [Swift SDK](https://github.com/withmarfa/marfa-swift), all built on one HTTP API.
 - **Works offline.** Apps built on the Swift SDK keep a copy of the data they need on the device and send their changes when they can reach your instance again.
 - **Open source.** Marfa is licensed under the [Apache License 2.0](./LICENSE). If you are interested, open an issue and say hello.
@@ -29,7 +29,7 @@ The documentation is at [docs.marfa.so](https://docs.marfa.so).
 One running Marfa server and its data is an **instance**, and it belongs to one person, its owner. It keeps everything in one SQLite database and a folder of files, so there is no database server to set up. Everything else runs outside the server and reaches it over its HTTP API, with a credential that reaches only the data it was given.
 
 - **Native clients** embed the Rust core in [`core/`](./core). It sends their requests, and it can keep a local working copy of the data a client needs and a queue of its writes, so the client keeps working offline. The [Swift SDK](https://github.com/withmarfa/marfa-swift) and the `marfa` CLI are built on it. The Node binding in [`core/bindings/node`](./core/bindings/node) is what the contract's device fixtures drive; it is not published to npm. Most CLI commands, such as the ones scripts and AI agents run, go straight to the API; `marfa device` keeps a working copy, and `marfa folders` keeps a folder on your computer in step with the instance, one Markdown file for each note.
-- **Online clients** send each request straight to the API, usually through the TypeScript SDK, [`@withmarfa/client`](./packages/client). The [connectors](https://github.com/withmarfa/marfa-connectors) for Todoist, RSS and GitHub are built this way.
+- **Online clients** send each request straight to the API, usually through the TypeScript SDK, [`@withmarfa/client`](./packages/client). The [connectors](https://github.com/withmarfa/plugins/tree/main/connectors) are built this way.
 
 The instance is the source of truth. Clients never talk to each other, only to the instance, and the instance decides what happens when two of them change the same thing. [How Marfa works](https://docs.marfa.so/build/how-marfa-works) explains each part.
 
