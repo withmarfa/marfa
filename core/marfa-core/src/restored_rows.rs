@@ -230,9 +230,7 @@ pub(crate) fn holds_back(conn: &Connection, write: &QueuedWrite) -> Result<bool>
     Ok(held && store::unsent(conn, &write.id)?)
 }
 
-/// Whether an unsent row write to the table queued ahead of `write` must go
-/// first: one blocked `server_restored`, or one the drain never `read`, as a
-/// fill keeps and a release then lets go while the drain runs.
+/// A new predecessor still goes first after release clears its reason.
 pub(crate) fn kept_ahead(
     conn: &Connection,
     write: &QueuedWrite,

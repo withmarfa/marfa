@@ -976,11 +976,7 @@ function put(id: string, count: number): Operation {
   return { op: "put", id, values: { count } };
 }
 
-/**
- * A row write queued after one whose event names the rows alone, and the
- * drain that comes to it: its own catch-up re-reads those rows, which the
- * proxy refuses where `failRead` is set.
- */
+/** The earlier rows-only event forces this drain to re-read the rows. */
 async function drainAfterRowsEvent(label: string, failRead: boolean) {
   const w = await world(label);
   const row = uuidv7();
