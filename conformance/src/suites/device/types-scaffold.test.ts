@@ -424,7 +424,7 @@ describe("a starting definition for a type", () => {
 
   it("declares what it printed on a working copy, unchanged", async () => {
     const printed = await scaffold([
-      "user.recipe",
+      "app.recipe.entry",
       "--field",
       "title:string",
       "--field",

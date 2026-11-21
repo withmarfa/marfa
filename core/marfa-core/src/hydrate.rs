@@ -1320,16 +1320,15 @@ fn waiting_on_each_other(rows: &[(String, String)], waits: &[Vec<String>]) -> Co
 
 /// Brings the instance's types up to what the app declared, each after the
 /// types it needs: registers the ones it does not hold, then replaces each
-/// `app.*` type it holds in another definition. A key that may not register or
+/// type it holds in another definition. A key that may not register or
 /// replace is no reason to refuse the hydration: what it queued waits for the
 /// server's verdict like any write, and the type stays as the server holds it.
 ///
 /// "Another definition" is the server's judgement: it normalizes the
 /// declaration and the registered type alike (`POST /types/normalize`), so key
 /// order, a default written out or left out, and a label the server derives
-/// never make a declaration differ. Only an `app.*` type is replaced: the
-/// namespace an app owns, where a type under `user.*` or a publisher's is
-/// shared with whoever else writes there.
+/// never make a declaration differ. Every declared type is under `app.`, the
+/// namespace an app owns (`Core::declare_types`).
 fn declare_on_instance(
     core: &Core,
     http: &Http,
@@ -1344,8 +1343,7 @@ fn declare_on_instance(
     let (present, missing): (Vec<_>, Vec<_>) = declared.into_iter().partition(|(id, _)| held(id));
     let missing = in_order_of_registration(missing)?;
     // The server judges each replacement, a parent loop included.
-    let own = present.into_iter().filter(|(id, _)| id.starts_with("app."));
-    let (mut own, looped) = in_order_of_need(own.collect(), parent_need);
+    let (mut own, looped) = in_order_of_need(present, parent_need);
     own.extend(looped);
     let mut done = Declared::default();
     for (id, json) in missing {

@@ -5700,11 +5700,11 @@ If a write names a type the copy was never told of, then a device MUST refuse it
 
 ### `device/declaration-refused`
 
-If an app declares a type whose identifier breaks the type grammar or uses a reserved root, that names a type Marfa ships, that names a parent the copy does not know, that declares more than one status field, that declares a status field with no words anywhere in its chain of declared and shipped types, that has a field `device/declaration-field-refused` names, that has text `device/declaration-text-refused` names, or that the same declaration names already, then a device MUST refuse the declaration `invalid`.
+If an app declares a type whose identifier breaks the type grammar or uses a reserved root, that names a type Marfa ships, that is not under `app.`, that names a parent the copy does not know, that declares more than one status field, that declares a status field with no words anywhere in its chain of declared and shipped types, that has a field `device/declaration-field-refused` names, that has text `device/declaration-text-refused` names, or that the same declaration names already, then a device MUST refuse the declaration `invalid`.
 
-**Reason:** the server refuses such a status field when the type is registered (`types/status-refused`, `types/status-parent-wordless`), and a status field with no words takes no value.
+**Reason:** the server refuses such a status field when the type is registered (`types/status-refused`, `types/status-parent-wordless`), and a status field with no words takes no value. An app declares only `app.*`, its own machinery: an owner's own types go under `user.*` and shared types come from a plugin. This is the client's check, not the access boundary, which the server keeps by what a credential may register and reach (`types/register-reach`).
 
-**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, a parent it does not know, or one type twice`, `› refuses a declaration whose status field has no words in its chain, naming the field`.
+**Tests:** `device/save-before-sync.test.ts › refuses a declaration that names a type of Marfa's, one it cannot read, a parent it does not know, or one type twice`, `› refuses a declaration of a type outside app.*, saying an app declares only types under it, and declares one under it`, `› refuses a declaration whose status field has no words in its chain, naming the field`, `device/declare-replaces.test.ts › refuses to declare a type outside the app's own namespace or one of Marfa's, and replaces the app's own`.
 
 ### `device/declaration-field-refused`
 
@@ -5780,7 +5780,7 @@ When an app stops declaring a type, a device MUST keep a write already queued un
 
 When a device hydrates, a device MUST register on the instance each type its app declared that the instance does not hold, where the key may.
 
-**Reason:** a slice can then name the type, and the server holds a write to it to the type's rules.
+**Reason:** a slice can then name the type, and the server holds a write to it to the type's rules. Every declared type is under `app.` (`device/declaration-refused`), so a device registers only an app's own machinery.
 
 **Tests:** `device/save-before-sync-live.test.ts › sends what it saved with no server once it has joined, after registering the type the key may`.
 
@@ -5841,14 +5841,6 @@ When a hydration finds that the instance holds a declared `app.*` type in the de
 **Reason:** the server's normalization ignores key order and any default written out or left out, so a declaration written untidily never causes a write, an audit entry or an event.
 
 **Tests:** `device/declare-replaces.test.ts › replaces a declared app type the instance holds in another definition, and writes none it holds as declared`, `device/declare-replaces-live.test.ts › replaces a type the app changed, and writes none the server already holds as declared, however the app wrote it`.
-
-### `device/hydrate-replace-own`
-
-A device MUST NOT replace a declared type outside the `app.*` namespace.
-
-**Reason:** a type under `user.*` or a publisher's namespace may be written by others, and `device/declaration-refused` keeps Marfa's own out of a declaration.
-
-**Tests:** `device/declare-replaces.test.ts › replaces no type outside the app's own namespace, and refuses to declare one of Marfa's`.
 
 ### `device/hydrate-replace-refused`
 

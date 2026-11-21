@@ -48,7 +48,7 @@ Every instance ships these types, core and `system`, each a row of the table bel
 
 The server MUST take as a type identifier two or more dot-separated segments, each starting with a lowercase letter and holding only lowercase letters, digits, hyphens and underscores, at most 128 characters in all, with exactly two segments after an `app` root.
 
-**Tests:** `compliance/type-identifier-validation.test.ts › accepts a three-part app-namespaced type identifier (app.example.bookmark)`, `› rejects a non-tiered three-part type identifier (com.example.bookmark)`, `› accepts underscores in type identifier segments (eval.custom_type)`, `› accepts hyphens in type identifier segments (local.my-custom-type)`, `› accepts community type format (acme.deal)`, `› accepts a two-part type identifier (core.bookmark)`, `compliance/validation.test.ts › rejects deep multi-segment type identifiers as unknown`, `› accepts type identifier at exactly 128 characters (grammar boundary)`, `› accepts hyphens in type identifier segments (grammar boundary)`, `› accepts type identifier with exactly 2 segments`, `compliance/namespace.test.ts › accepts user.<type>`, `compliance/publisher-types.test.ts › accepts a two-segment publisher type identifier`.
+**Tests:** `compliance/type-identifier-validation.test.ts › accepts a three-part app-namespaced type identifier (app.example.bookmark)`, `› rejects a non-tiered three-part type identifier (com.example.bookmark)`, `› accepts underscores in type identifier segments (eval.custom_type)`, `› accepts hyphens in type identifier segments (local.my-custom-type)`, `› accepts community type format (acme.deal)`, `› accepts a two-part type identifier (core.bookmark)`, `compliance/validation.test.ts › rejects deep multi-segment type identifiers as unknown`, `› accepts type identifier at exactly 128 characters (grammar boundary)`, `› accepts hyphens in type identifier segments (grammar boundary)`, `› accepts type identifier with exactly 2 segments`, `compliance/namespace.test.ts › accepts user.<type>`, `› accepts common.<type> as a well-formed identifier`, `compliance/publisher-types.test.ts › accepts a two-segment publisher type identifier`.
 
 ### `types/id-malformed`
 
@@ -76,11 +76,19 @@ If `POST /types` names an identifier under `core`, `system` or `marfa`, then the
 
 **Tests:** `compliance/namespace.test.ts › refuses %s.* registration from the broadest credential the suite holds`, `› refuses a reserved-namespace registration from a narrower credential too`.
 
+### `types/id-reserved-common`
+
+If `POST /types` names an identifier under `common`, then the server MUST answer `403 forbidden` with `details.namespace` `common` and a message naming `marfa plugins install`, whatever the credential.
+
+**Reason:** `common.*` holds the shared types a plugin brings, so the only way to add a new one is to install that plugin. A type already registered under `common` is changed under the ordinary rules, and an archive that holds one restores it (`archive/restore-common-types`). `marfa types check` judges an identifier as this statement does (`cli/types-check-judges`).
+
+**Tests:** `compliance/namespace.test.ts › refuses common.* registration from the broadest credential and a narrower one, naming the way in, where the same body under user.* registers`, `device/types-check.test.ts › refuses a loosened minimum and a reserved root`.
+
 ### `types/id-root-not-prefix`
 
-The server MUST judge a reserved root by the whole first segment, so `core-pub` or `keys-pub` is an ordinary root.
+The server MUST judge a reserved root by the whole first segment, so `core-pub`, `keys-pub` or `common-pub` is an ordinary root.
 
-**Tests:** `compliance/publisher-types.test.ts › reserved-root prefix-match heuristic does not false-positive`, `› registers a publisher type whose root only looks reserved`, `compliance/namespace.test.ts › still answers unknown_type for a publisher root that merely looks reserved`.
+**Tests:** `compliance/publisher-types.test.ts › reserved-root prefix-match heuristic does not false-positive`, `› registers a publisher type whose root only looks reserved`, `compliance/namespace.test.ts › still answers unknown_type for a publisher root that merely looks reserved`, `› refuses common.* registration from the broadest credential and a narrower one, naming the way in, where the same body under user.* registers`.
 
 ## Registering a type
 
@@ -101,6 +109,14 @@ When a type is registered, the server MUST list it at `GET /types`, answer it at
 If a key without `metadata.types:write` sends `POST /types`, then the server MUST answer `403 forbidden` with `details.metadata_subresource` `types`.
 
 **Tests:** `compliance/type-registry.test.ts › rejects type registration from a key without metadata.types:write`.
+
+### `types/user-namespace`
+
+Where a credential may register types and its type map grants write on `user.*`, the server MUST register each `user.<name>` type it sends, whether the credential is a key or an app's sign-in.
+
+**Reason:** `user.*` holds the owner's own types on this Marfa. The owner's approval of an app's `user.*` grant is the control, and `provenance.created_by` records which sign-in made a type (`types/creator-snapshot`). Nothing else restricts who registers one.
+
+**Tests:** `compliance/user-types.test.ts › registers a user type for an app the owner granted user.* write, recording the app as its creator`, `› refuses the same registration to an app the owner granted no user.* write`.
 
 ### `types/register-reach`
 
@@ -1912,7 +1928,7 @@ If the private local command sends `DELETE /types/{id}?force=true`, then the ser
 
 When a caller registers a type, the server MUST retain its canonical sign-in ID, kind and readable name in `provenance.created_by`, independently of the submitted definition and later replacements.
 
-**Tests:** `compliance/types.test.ts › reports the creator after replacement and distinguishes built-in types`.
+**Tests:** `compliance/types.test.ts › reports the creator after replacement and distinguishes built-in types`, `compliance/user-types.test.ts › registers a user type for an app the owner granted user.* write, recording the app as its creator`.
 
 ### `types/provenance-read`
 

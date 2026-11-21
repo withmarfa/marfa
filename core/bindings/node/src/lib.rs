@@ -2923,7 +2923,9 @@ impl MarfaCore {
     /// `fields` and whatever else a type carries. A copy that has never
     /// reached a server checks what it queues against them and the types
     /// Marfa ships, and a hydration registers the ones the instance
-    /// lacks, where the key may. The call is the app's whole set and replaces every earlier declaration.
+    /// lacks, where the key may. An app declares only types under `app.`, and a
+    /// set that names another is refused. The call is the app's whole set and
+    /// replaces every earlier declaration.
     #[napi]
     pub fn declare_types(
         &self,

@@ -174,7 +174,7 @@ describe("a hydration of a copy that declared types", () => {
     expect(report.cursor).not.toBe("");
   });
 
-  it("replaces no type outside the app's own namespace, and refuses to declare one of Marfa's", async () => {
+  it("refuses to declare a type outside the app's own namespace or one of Marfa's, and replaces the app's own", async () => {
     const { server, device } = await started("declare-replace-own", [
       OLDER(ENTRY.id),
       OLDER(SHARED.id),
@@ -193,7 +193,9 @@ describe("a hydration of a copy that declared types", () => {
       { id: "core.note", fields: { extra: { type: "string" } } },
     ]);
     expect(mistaken.ok ? "declared" : mistaken.refusal.code).toBe("invalid");
-    value(await device.declareTypes([ENTRY, SHARED]));
+    const shared = await device.declareTypes([ENTRY, SHARED]);
+    expect(shared.ok ? "declared" : shared.refusal.code).toBe("invalid");
+    value(await device.declareTypes([ENTRY]));
     const report = value(await device.hydrate(["core.note"], "library"));
     // The witness: the app's own type was replaced under the same conditions.
     expect(report.replaced_types).toEqual([ENTRY.id]);

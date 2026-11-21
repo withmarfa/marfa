@@ -820,6 +820,14 @@ If an archive registers a type with a `link_field` in which two items that a for
 
 **Tests:** `compliance/links.test.ts › stops a restore registering a link the items a forced delete left share`.
 
+### `archive/restore-common-types`
+
+When a restore reads an archive whose types include one under `common`, the server MUST restore it.
+
+**Reason:** an archive is the owner's own data, and `POST /types` refuses a new `common.*` type only because installing a plugin is the way to add one (`types/id-reserved-common`).
+
+**Tests:** `compliance/restore-archive.test.ts › restores although POST /types refuses a new one`.
+
 ### `archive/restore-types-any-order`
 
 When an otherwise valid archive carries a set of registrations accepted through the server's registration and replacement routes, the server MUST restore those registrations into an empty store regardless of their order in the archive.

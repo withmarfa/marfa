@@ -23,7 +23,7 @@ pub fn definition() -> Definition {
             "properties": {
                 "action": { "type": "string", "enum": ["register", "change"] },
                 "id": { "type": "string", "minLength": 1,
-                    "description": "The type's identifier, such as `user.recipe`. A new type goes under `user.*` or `app.*`." },
+                    "description": "The type's identifier, such as `user.recipe`. An owner's own type goes under `user.*`. An app's own state goes under `app.<app>.*` and is hidden. Shared types come from a plugin, so a new `common.*` type is refused." },
                 "label": { "type": "string", "minLength": 1 },
                 "description": { "type": "string" },
                 "fields": { "type": "object",

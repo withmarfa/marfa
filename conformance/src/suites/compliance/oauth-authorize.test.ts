@@ -814,6 +814,35 @@ describe("an app's own type namespace", () => {
     expect(text).toContain("App data from nstitled");
   });
 
+  it("is offered and granted for common.* where no common type is registered, titled Shared types", async () => {
+    const scope = "common.*:read";
+    const app = await registerApp(server, scope);
+
+    // The witness: a root no type sits under is dropped.
+    const dropped = await consentScreen(
+      authorizeQuery(app.clientId, `${scope} nowhere.*:read`, pkce()),
+    );
+    expect(dropped.searchParams.get("scope")).toBe(scope);
+
+    const proof = pkce();
+    const consent = await consentScreen(
+      authorizeQuery(app.clientId, scope, proof),
+    );
+    const page = await (await fetch(consent, { headers: { cookie } })).text();
+    expect(offeredValues(page, "scopes")).toContain(scope);
+    expect(visibleText(page)).toContain("Shared types");
+    const sent = await decide(server, origin, cookie, consent, true, [scope]);
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code: sent?.searchParams.get("code") ?? "",
+      redirect_uri: CALLBACK,
+      code_verifier: proof.verifier,
+      client_id: app.clientId,
+    });
+    expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
+    expect(exchanged.body.scope).toBe(scope);
+  });
+
   it("is offered on a device code for app.<vendor>.*, and refused for a vendor no type sits under", async () => {
     await registerType("app.nsdevice.widget");
     const app = await registerApp(server, "app.nsdevice.*:write", {

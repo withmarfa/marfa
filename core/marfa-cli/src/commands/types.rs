@@ -25,7 +25,7 @@ pub enum TypesCommand {
         /// The type id, such as `core.note` or `user.recipe`.
         id: String,
     },
-    /// Print a starting definition for a type, ready for `types register` or `device types declare`.
+    /// Print a starting definition for a type, ready for `types register`, or for `device types declare` where the id is under `app.`.
     ///
     /// Needs no server, working copy or key, sends nothing, and takes none of `--url`, `--key` and `--socket`. An id, field or parent the registry would refuse for its form is refused here with the reason. What only a server knows is left to it: whether a parent exists, and whether a key may register the type.
     ///

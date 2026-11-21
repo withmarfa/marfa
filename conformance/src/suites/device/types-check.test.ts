@@ -226,6 +226,20 @@ describe("a folder of type definitions, checked offline", () => {
     expect(problemsOf(reserved, "core.x.json")).toMatchObject([
       { path: "id", code: "forbidden" },
     ]);
+
+    // The witness: a user type of the same shape passes where a common one is
+    // refused, so the refusal is the root, as POST /types refuses it.
+    const shared = await verdictOf(
+      folderOf([
+        { id: "common.x", fields: { x: note } },
+        { id: "user.x", fields: { x: note } },
+      ]),
+      1,
+    );
+    expect(problemsOf(shared, "common.x.json")).toMatchObject([
+      { path: "id", code: "forbidden" },
+    ]);
+    expect(problemsOf(shared, "user.x.json")).toEqual([]);
   });
 
   it("gives a type that names an absent type the server's answer and says why beside it", async () => {

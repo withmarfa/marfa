@@ -12,6 +12,7 @@ pub enum Early {
     NoFields,
     InvalidId,
     Reserved(&'static str),
+    Installed,
 }
 
 impl Early {
@@ -19,14 +20,23 @@ impl Early {
         match self {
             Early::NoFields => "missing_required_field",
             Early::InvalidId => "validation_error",
-            Early::Reserved(_) => "forbidden",
+            Early::Reserved(_) | Early::Installed => "forbidden",
         }
     }
 
     pub fn path(self) -> &'static str {
         match self {
             Early::NoFields => "fields",
-            Early::InvalidId | Early::Reserved(_) => "id",
+            Early::InvalidId | Early::Reserved(_) | Early::Installed => "id",
+        }
+    }
+
+    /// The root a refusal names in `details.namespace`.
+    pub fn namespace(self) -> Option<&'static str> {
+        match self {
+            Early::Reserved(root) => Some(root),
+            Early::Installed => Some(grammar::COMMON_ROOT),
+            Early::NoFields | Early::InvalidId => None,
         }
     }
 
@@ -36,6 +46,10 @@ impl Early {
             Early::InvalidId => invalid_id_message(),
             Early::Reserved(root) => format!(
                 "Reserved namespace: {root}.* types are platform-shipped and cannot be registered at runtime"
+            ),
+            Early::Installed => format!(
+                "Reserved namespace: {}.* types are shared types, which arrive by installing a plugin (`marfa plugins install`) and cannot be registered directly",
+                grammar::COMMON_ROOT
             ),
         }
     }
@@ -56,7 +70,10 @@ pub fn early_refusal(body: &Obj) -> Result<Option<Early>, RuleError> {
     if !grammar::type_id(id)? {
         return Ok(Some(Early::InvalidId));
     }
-    Ok(grammar::platform_root(id).map(Early::Reserved))
+    if let Some(root) = grammar::platform_root(id) {
+        return Ok(Some(Early::Reserved(root)));
+    }
+    Ok(grammar::is_common(id).then_some(Early::Installed))
 }
 
 /// What `validate_type`'s faults are answered as: the first of these a fault carries, else `invalid_schema`.
@@ -97,5 +114,37 @@ impl SchemaVerdict {
             }
             SchemaVerdict::InvalidSchema => "Invalid type schema",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn refused(id: &str) -> Option<Early> {
+        let body = json!({ "id": id, "fields": {} });
+        early_refusal(body.as_object().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_new_common_type_is_refused_by_name_and_a_user_type_is_not() {
+        for id in ["common.ticket", "common.ticket.spike"] {
+            let early = refused(id).unwrap_or_else(|| panic!("{id} was not refused"));
+            assert_eq!(early.code(), "forbidden");
+            assert_eq!(early.path(), "id");
+            assert_eq!(early.namespace(), Some("common"));
+            assert!(early.message().contains("marfa plugins install"));
+        }
+        assert_eq!(refused("user.ticket"), None);
+        assert_eq!(refused("common-pub.ticket"), None);
+    }
+
+    #[test]
+    fn a_platform_root_is_refused_with_its_own_namespace() {
+        assert_eq!(refused("core.x").and_then(Early::namespace), Some("core"));
+        assert_eq!(refused("marfa.x").and_then(Early::namespace), Some("marfa"));
+        assert_eq!(Early::InvalidId.namespace(), None);
     }
 }

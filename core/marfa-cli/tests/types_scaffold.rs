@@ -97,7 +97,7 @@ fn envelope(stderr: &str) -> Value {
 const RECIPE: [&str; 12] = [
     "types",
     "scaffold",
-    "user.recipe",
+    "app.acme.recipe",
     "--field",
     "title:string",
     "--field",
@@ -124,7 +124,7 @@ fn run_recipe(extra: &[&str], env: &[(&str, &str)]) -> Ran {
 
 fn expected() -> Value {
     json!({
-        "id": "user.recipe",
+        "id": "app.acme.recipe",
         "description": "",
         "fields": {
             "title": { "type": "string", "required": true },
@@ -385,7 +385,7 @@ fn a_working_copy_declares_what_it_printed_unchanged() {
     );
     assert_eq!(held.code, 0, "{}", held.stderr);
     let held: Value = serde_json::from_str(&held.stdout).unwrap();
-    assert_eq!(held["data"][0]["id"], "user.recipe");
+    assert_eq!(held["data"][0]["id"], "app.acme.recipe");
     assert_eq!(held["data"][0]["fields"], expected()["fields"]);
     // Witness: the same copy refuses a definition the command would not print.
     let refused = marfa(
@@ -415,7 +415,7 @@ fn a_working_copy_reads_a_status_field_with_every_word_its_chain_gives_it() {
         &[
             "types",
             "scaffold",
-            "user.chore",
+            "app.acme.chore",
             "--parent",
             "core.task",
             "--field",
@@ -438,13 +438,13 @@ fn a_working_copy_reads_a_status_field_with_every_word_its_chain_gives_it() {
     );
     assert_eq!(declared.code, 0, "{}", declared.stderr);
     let read = marfa(
-        &["device", "--db", store, "types", "get", "user.chore"],
+        &["device", "--db", store, "types", "get", "app.acme.chore"],
         &[],
     );
     assert_eq!(read.code, 0, "{}", read.stderr);
     assert!(
         read.stdout.contains(
-            "  status  status  from user.chore  words not_started=not_started, in_progress=in_progress, completed=completed, canceled=canceled, waiting=in_progress"
+            "  status  status  from app.acme.chore  words not_started=not_started, in_progress=in_progress, completed=completed, canceled=canceled, waiting=in_progress"
         ),
         "{}",
         read.stdout
@@ -474,15 +474,19 @@ fn a_working_copy_refuses_a_definition_with_a_whole_number_a_float_would_change(
         )
     };
     // Witness: the same definition with a number a float keeps is declared.
-    let kept = declare(r#"{"id":"user.note","version":1152921504606847000,"fields":{}}"#);
+    let kept = declare(r#"{"id":"app.acme.note","version":1152921504606847000,"fields":{}}"#);
     assert_eq!(kept.code, 0, "{}", kept.stderr);
     for (definition, number, served) in [
         (
-            r#"{"id":"user.note","version":99999999999999999999999,"fields":{}}"#,
+            r#"{"id":"app.acme.note","version":99999999999999999999999,"fields":{}}"#,
             "99999999999999999999999",
             "1e+23",
         ),
-        (r#"{"id":"user.note","version":-0,"fields":{}}"#, "-0", "0"),
+        (
+            r#"{"id":"app.acme.note","version":-0,"fields":{}}"#,
+            "-0",
+            "0",
+        ),
     ] {
         let refused = declare(definition);
         assert_eq!(refused.code, 1, "{}", refused.stderr);

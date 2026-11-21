@@ -1657,6 +1657,14 @@ If a device code request names only `app.<vendor>.*:read` or `app.<vendor>.*:wri
 
 **Tests:** `compliance/oauth-authorize.test.ts › is offered on a device code for app.<vendor>.*, and refused for a vendor no type sits under`.
 
+### `keys-and-oauth/authorize-common`
+
+When an authorization request names `common.*:read` or `common.*:write`, from a client whose registration covers the scope, the server MUST offer the scope on the consent screen, titled "Shared types", and grant it when the person accepts it, whether or not a type is registered under `common.`.
+
+**Reason:** an app that installs a plugin and then reads its shared types asks for the namespace once, before any type sits under it.
+
+**Tests:** `compliance/oauth-authorize.test.ts › is offered and granted for common.* where no common type is registered, titled Shared types`.
+
 ### `keys-and-oauth/approval-app-rows`
 
 When the consent screen offers `app.*` or `app.<vendor>.*`, the server MUST title the row "Every app's data" for `app.*` and "App data from <vendor>" for `app.<vendor>.*`.

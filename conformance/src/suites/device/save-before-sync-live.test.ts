@@ -54,7 +54,7 @@ async function appKey(label: string, registers: boolean, namespace: string) {
 }
 
 it("sends what it saved with no server once it has joined, after registering the type the key may", async () => {
-  const type = `user.recipe_${ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
+  const type = `app.live.recipe_${ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
   const key = await appKey("registers", true, type);
   const store = newStore("save-live");
   const offline = new CliDevice({ binary: requireBinary(), store });
@@ -109,7 +109,7 @@ it("sends what it saved with no server once it has joined, after registering the
 });
 
 it("says which declared types the key could not register, and the server refuses the write that names one", async () => {
-  const type = `user.unregistered_${ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
+  const type = `app.live.unregistered_${ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
   const key = await appKey("cannot-register", false, type);
   const store = newStore("save-live-unregistered");
   const offline = new CliDevice({ binary: requireBinary(), store });
@@ -172,8 +172,8 @@ function linking(id: string, types: string[]) {
 
 it("registers a declared type after a type its table column names, though the declaration names it first", async () => {
   const run = ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase();
-  const referring = `user.areferring_${run}`;
-  const referenced = `user.zreferenced_${run}`;
+  const referring = `app.live.areferring_${run}`;
+  const referenced = `app.live.zreferenced_${run}`;
   const key = await registeringKey("referring", [referring, referenced]);
   const offline = new CliDevice({
     binary: requireBinary(),
@@ -201,8 +201,8 @@ it("registers a declared type after a type its table column names, though the de
 
 it("refuses a hydration whose declared types each need the other registered first, naming them and registering neither", async () => {
   const run = ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase();
-  const first = `user.ringa_${run}`;
-  const second = `user.ringb_${run}`;
+  const first = `app.live.ringa_${run}`;
+  const second = `app.live.ringb_${run}`;
   const key = await registeringKey("ring", [first, second]);
   const offline = new CliDevice({
     binary: requireBinary(),
@@ -268,7 +268,7 @@ it("refuses a drain before its first hydration, sending nothing and keeping the 
 
 it("reads the server's catalog before its first hydration, leaving the copy's own as it was", async () => {
   const registered = `user.served_${ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
-  const declared = `${registered}_declared`;
+  const declared = `app.live.${ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase()}_declared`;
   const made = await client.registerType({
     id: registered,
     fields: { title: { type: "string" } },

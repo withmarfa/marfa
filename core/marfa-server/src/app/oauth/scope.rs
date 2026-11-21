@@ -40,7 +40,7 @@ const CLAIMED_ROOTS: [&str; 13] = [
 ];
 
 /// Roots an app may ask for whole whether or not a type sits under them yet.
-const STANDING_ROOTS: [&str; 3] = ["app", "core", "user"];
+const STANDING_ROOTS: [&str; 4] = ["app", "common", "core", "user"];
 
 /// The order the approval pages show permissions in.
 const PERMISSIONS: [Permission; 14] = [
@@ -985,6 +985,19 @@ mod tests {
             let scope = Scope::parse(literal).unwrap_or_else(|| panic!("{literal} did not parse"));
             assert_eq!(&scope.literal(), literal);
         }
+    }
+
+    #[test]
+    fn a_grant_may_reach_common_before_any_common_type_exists() {
+        let allowed = Registries::new([], []).allowed();
+        let narrowed = narrow(&set("common.*:read common.*:write"), &allowed);
+        assert_eq!(
+            narrowed.kept.literals(),
+            ["common.*:read", "common.*:write"]
+        );
+        assert!(narrowed.dropped.is_empty());
+        let witness = narrow(&set("nowhere.*:read"), &allowed);
+        assert_eq!(witness.dropped, ["nowhere.*:read"]);
     }
 
     #[test]

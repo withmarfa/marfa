@@ -1,16 +1,18 @@
 /**
- * Conformance for the five-tier namespace grammar.
+ * Conformance for the namespace grammar.
  *
  * The grammar:
  *   core.<segment>...         — two or more segments
  *   system.<segment>...       — two or more segments
  *   app.<app-name>.<type>     — exactly three segments
  *   user.<segment>...         — two or more segments
+ *   common.<segment>...       — two or more segments, registered only by
+ *                                installing a plugin
  *   <publisher>.<type>...     — two or more segments where the first is a
  *                                non-reserved-root handle
  *
- * Reserved roots (`core`, `system`, `app`, `user`, `marfa`) cannot be
- * claimed as publisher handles. `core.*` and `system.*` types ship with the
+ * Reserved roots (`core`, `system`, `app`, `user`, `marfa`, `common`) cannot
+ * be claimed as publisher handles. `core.*` and `system.*` types ship with the
  * server's type package, `marfa.*` is held for the platform, and none of the
  * three can be registered over HTTP at all:
  * the refusal is unconditional, which keeps registration and archive restore
@@ -20,7 +22,12 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import { createTestContext, trackKey, cleanup } from "../../utils/setup.js";
+import {
+  createTestContext,
+  trackKey,
+  trackType,
+  cleanup,
+} from "../../utils/setup.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -64,6 +71,19 @@ describe("namespace grammar", () => {
     // the namespace.
     expect(r.status).toBe(400);
     expect(r.error?.error.code).toBe("unknown_type");
+  });
+
+  it("accepts common.<type> as a well-formed identifier", async () => {
+    for (const type of [
+      "common.namespace-accept-common",
+      "common.namespace-accept-common.spike",
+    ]) {
+      const r = await client.createItem({ type, properties: {} });
+      // As for `user.*`, stopping at the registration gate proves the grammar
+      // took the root.
+      expect(r.status, type).toBe(400);
+      expect(r.error?.error.code, type).toBe("unknown_type");
+    }
   });
 
   it("rejects app.<X> with only one segment after app.", async () => {
@@ -219,6 +239,47 @@ describe("namespace grammar", () => {
       expect(r.error?.error.details?.namespace).toBe(tier);
     },
   );
+
+  it("refuses common.* registration from the broadest credential and a narrower one, naming the way in, where the same body under user.* registers", async () => {
+    const fields = { body: { type: "string" as const, required: true } };
+    const narrow = await narrowClient("np-common");
+    for (const [who, caller] of [
+      ["the broadest credential", client],
+      ["a narrower credential", narrow],
+    ] as const) {
+      for (const id of [
+        `common.shared-registration-probe-${ctx.runId}`,
+        `common.shared-registration-probe.spike-${ctx.runId}`,
+      ]) {
+        const r = await caller.registerType({ id, version: 1, fields });
+        expect(r.status, `${who}: ${id}`).toBe(403);
+        expect(r.error?.error.code).toBe("forbidden");
+        expect(r.error?.error.details?.namespace).toBe("common");
+        expect(r.error?.error.message).toContain("marfa plugins install");
+      }
+    }
+    // The witness: the same body under `user.*` registers, so what was
+    // refused is the root, not the credential or the body.
+    const accepted = await client.registerType({
+      id: `user.shared-registration-witness-${ctx.runId}`,
+      version: 1,
+      fields,
+    });
+    expect(accepted.status).toBe(201);
+    trackType(ctx, `user.shared-registration-witness-${ctx.runId}`, client);
+    // A root that only begins with `common` is an ordinary publisher root.
+    const publisher = await client.registerType({
+      id: `common-pub.shared-registration-witness-${ctx.runId}`,
+      version: 1,
+      fields,
+    });
+    expect(publisher.status).toBe(201);
+    trackType(
+      ctx,
+      `common-pub.shared-registration-witness-${ctx.runId}`,
+      client,
+    );
+  });
 
   it("refuses a reserved-namespace registration from a narrower credential too", async () => {
     const np = await narrowClient("np-core");

@@ -835,9 +835,11 @@ pub enum TypesCommand {
     /// it queues against them and a hydration registers the ones the
     /// instance lacks, where the key may.
     ///
-    /// Marfa's own types need no declaring. The call is the app's whole set,
-    /// so it replaces every earlier declaration, and a set that names one id
-    /// twice is refused `invalid`.
+    /// An app declares only the types under `app.`, its own hidden machinery;
+    /// Marfa's own types need no declaring, and a visible type comes from a
+    /// plugin. The call is the app's whole set, so it replaces every earlier
+    /// declaration, and a set that names a type outside `app.`, or one id
+    /// twice, is refused `invalid`.
     Declare {
         /// A type definition, or an array of them, as JSON.
         #[arg(

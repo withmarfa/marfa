@@ -462,6 +462,27 @@ describe("a copy no server has been named for", () => {
     }
   });
 
+  it("refuses a declaration of a type outside app.*, saying an app declares only types under it, and declares one under it", async () => {
+    const device = await offline("save-declare-app-only");
+    for (const id of [
+      "user.x",
+      "common.ticket",
+      "acme.setting",
+      "acme-publisher.recipe",
+    ]) {
+      const refused = await device.declareTypes([{ id, fields: {} }]);
+      expect(
+        refused.ok ? "declared" : refused.refusal.code,
+        `${id} was declared`,
+      ).toBe("invalid");
+      if (!refused.ok) expect(refused.refusal.raw, id).toContain("app.");
+    }
+    expect(value(await device.declaredTypes())).toEqual([]);
+    // The witness: the same body under `app.` is declared.
+    value(await device.declareTypes([{ id: "app.acme.setting", fields: {} }]));
+    expect(value(await device.declaredTypes())).toHaveLength(1);
+  });
+
   it("refuses a declaration whose status field has no words in its chain, naming the field", async () => {
     const device = await offline("save-declare-wordless-status");
     const wordless = { type: "status" };
@@ -635,23 +656,23 @@ describe("a copy no server has been named for", () => {
       [
         "guidance over 1,000 code points",
         "guidance",
-        { id: "user.note", guidance: over(1001), fields },
+        { id: "app.ticket.note", guidance: over(1001), fields },
       ],
       [
         "guidance that is not text",
         "guidance",
-        { id: "user.note", guidance: 7, fields },
+        { id: "app.ticket.note", guidance: 7, fields },
       ],
       [
         "a type description over 200 code points",
         "description",
-        { id: "user.note", description: over(201), fields },
+        { id: "app.ticket.note", description: over(201), fields },
       ],
       [
         "a field description over 300 code points",
         "fields.title.description",
         {
-          id: "user.note",
+          id: "app.ticket.note",
           fields: { title: { type: "string", description: over(301) } },
         },
       ],
@@ -659,7 +680,7 @@ describe("a copy no server has been named for", () => {
         "a status word description over 120 code points",
         "fields.stage.status_values.0.description",
         {
-          id: "user.note",
+          id: "app.ticket.note",
           fields: {
             stage: {
               type: "status",
@@ -684,9 +705,8 @@ describe("a copy no server has been named for", () => {
     value(
       await device.declareTypes([
         {
-          id: "user.note",
+          id: "app.ticket.entry",
           description: over(200),
-          guidance: over(1000),
           fields: {
             title: { type: "string", description: over(300) },
             stage: {

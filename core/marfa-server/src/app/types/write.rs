@@ -64,6 +64,8 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             Early::Reserved(root) => {
                 Refusal::new(Code::Forbidden, early.message()).with_detail("namespace", root)
             }
+            Early::Installed => Refusal::new(Code::Forbidden, early.message())
+                .with_detail("namespace", grammar::COMMON_ROOT),
         });
     }
     let named = text_of(&body, "id").map(str::to_string);

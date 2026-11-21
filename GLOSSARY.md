@@ -9,7 +9,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 ### Items and types
 
 - **item**: One record, the unit everything else hangs off. It has a type, a state, properties, the time it occurred at and, except for an item of a `system.*` type, a tier.
-- **type**: What an item is, named in the namespace grammar, such as `core.note`, `user.recipe` or `<publisher>.<name>`. The first segment is its **namespace**: `core` and `system` hold the types Marfa ships, `marfa` is reserved to Marfa, and `app`, `user` and a publisher's root hold the types registered at run time. A namespace is never called a tier.
+- **type**: What an item is, named in the namespace grammar, such as `core.note`, `user.recipe` or `<publisher>.<name>`. The first segment is its **namespace**: `core` and `system` hold the types Marfa ships, `marfa` is reserved to Marfa, `common` holds the shared types a plugin brings (no one registers one directly), `user` holds the owner's own types on this Marfa, `app` holds an app's own types, and a publisher's root holds the types registered at run time. A namespace is never called a tier.
 - **display hints**: What a type says about how to show its items: `title_field`, the field that names an item; `body_field`, the field that holds its text as Markdown; `name_from_body`, false where that text never names an item; and `icon`.
 - **icon**: The picture a type is shown by: an Iconify icon ID, `<set>:<name>`, such as `lucide:calendar-days` or `simple-icons:github`. A type's author sets it as `display_hints.icon`. The owner's icon for a type is a separate choice, kept beside the definition.
 - **state**: Where an item is in its lifecycle: `active`, `archived`, `trashed` or `revoked`. Not a tier and not a status word. A connector's **state document**, the JSON object it keeps on the instance under its source, is another thing; name it in full.
@@ -105,6 +105,7 @@ Access is read the same way wherever a person sees it: on the pages where they a
 | `content`             | Your content               |
 | `user.*`              | Your custom types          |
 | `core.*`              | Built-in types             |
+| `common.*`            | Shared types               |
 | `app.*`               | Every app's data           |
 | `edge.*`              | Links between items        |
 | `profile`             | Profile                    |
