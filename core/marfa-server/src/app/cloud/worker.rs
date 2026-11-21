@@ -694,3 +694,71 @@ async fn requeue(app: &Arc<App>, unlink: &Unlink, credential: Option<String>) ->
     })
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_failure_waits_twice_as_long_each_time_up_to_the_most() {
+        let mut due = Due::now(0);
+        let mut waits = Vec::new();
+        for _ in 0..9 {
+            due = due.failed(0, MOVE_FIRST_WAIT_MS);
+            waits.push(due.at_ms);
+        }
+        assert_eq!(
+            waits,
+            [
+                5_000, 10_000, 20_000, 40_000, 80_000, 160_000, 300_000, 300_000, 300_000
+            ]
+        );
+        assert_eq!(Due::after(7, 1_000).failed(7, 1_000).at_ms, 1_007);
+    }
+
+    #[test]
+    fn reads_each_poll_answer_and_refuses_an_untidy_one() {
+        let read = |body: Value| match polled_of(&body) {
+            Polled::Waiting(ms) => format!("waiting {ms}"),
+            Polled::Approved(approved) => format!("approved {}", approved.address.origin()),
+            Polled::Ended(reason, message) => format!("ended {reason} {message:?}"),
+            Polled::Unknown => "unknown".into(),
+            Polled::Later(ms) => format!("later {ms}"),
+            Polled::Failed => "failed".into(),
+        };
+        let approved = json!({
+            "status": "approved",
+            "name": "river",
+            "address": "https://river.example.com",
+            "tunnel_token": "t",
+            "link_credential": "c",
+        });
+        assert_eq!(
+            read(json!({"status": "pending", "interval": 5})),
+            "waiting 5000"
+        );
+        assert_eq!(
+            read(json!({"status": "slow_down", "interval": 0})),
+            "waiting 1000"
+        );
+        assert_eq!(
+            read(json!({"status": "pending", "interval": 9999})),
+            "waiting 300000"
+        );
+        assert_eq!(read(json!({"status": "pending"})), "failed");
+        assert_eq!(read(approved.clone()), "approved https://river.example.com");
+        let mut plain = approved.clone();
+        plain["address"] = json!("http://river.example.com");
+        assert_eq!(read(plain), "failed");
+        let mut nameless = approved;
+        nameless["name"] = json!("");
+        assert_eq!(read(nameless), "failed");
+        assert_eq!(read(json!({"status": "denied"})), "ended denied None");
+        assert_eq!(
+            read(json!({"status": "refused", "message": "One instance only."})),
+            "ended refused Some(\"One instance only.\")"
+        );
+        assert_eq!(read(json!({"status": "linked"})), "failed");
+        assert_eq!(read(json!("approved")), "failed");
+    }
+}

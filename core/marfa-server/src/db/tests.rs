@@ -1913,7 +1913,7 @@ async fn a_database_at_schema_version_1_gains_login_after_and_keeps_its_rows() {
     let version: u32 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version as usize, MIGRATIONS.len());
     let kept: String = conn
         .query_row("SELECT value FROM instance WHERE key = 'kept'", [], |row| {
             row.get(0)
