@@ -1674,7 +1674,7 @@ When a device fills whole again a table of a copy it hydrated under `device/rest
 
 While a row write queued under `device/restored-rows-kept` waits, a device MUST NOT send another row write to the same table before it.
 
-**Reason:** the kept rows are what the person wrote before the restore was found, so the writes queued to the table since go after them: a kept put sent after a later patch of the row would replace the columns the patch changed. They do not depend on the kept rows, so withdrawing those refuses none of them.
+**Reason:** the kept rows are what the person wrote before the restore was found, so the writes queued to the table since go after them: a kept put sent after a later patch of the row would replace the columns the patch changed. They do not depend on the kept rows, so withdrawing those refuses none of them. The device checks again as it sends a row write, since a fill on another thread can queue a kept write to the table after the drain judged the write ready.
 
 **Tests:** `device/server-restored-live.test.ts › sends a row write queued before the restore once the kept rows are withdrawn, refusing none of it`.
 
@@ -1682,9 +1682,9 @@ While a row write queued under `device/restored-rows-kept` waits, a device MUST 
 
 While the rows a copy held of a table are set aside under `device/restored-rows-kept` and not yet compared, a device MUST NOT send a row write to that table.
 
-**Reason:** the server would take the write at a later `updated_at`, and the comparison would read the row as moved on by another writer and keep nothing of the columns the write did not name, which the restored server lost. A drain between the hydration and the fill that compares the table therefore leaves its row writes unsent, and they go after the rows kept (`device/restored-rows-first`).
+**Reason:** the server would take the write at a later `updated_at`, and the comparison would read the row as moved on by another writer and keep nothing of the columns the write did not name, which the restored server lost. A drain between the hydration and the fill that compares the table therefore leaves its row writes unsent, and they go after the rows kept (`device/restored-rows-first`). The device checks this again as it sends a row write, since a catch-up during the drain, its own or one on another thread, can set the rows aside after the drain judged the write ready.
 
-**Tests:** `device/server-restored-live.test.ts › holds a row write queued before the restore until the rows set aside are compared, so the values the restored server lost in the row's other columns are kept`.
+**Tests:** `device/server-restored-live.test.ts › holds a row write queued before the restore until the rows set aside are compared, so the values the restored server lost in the row's other columns are kept`, `› sends no row write a drain judged ready before its own catch-up set the table's rows aside`.
 
 ### `device/restored-kept-interrupted`
 
