@@ -8160,7 +8160,7 @@ A device MUST match each item it holds by what the types of its current catalog 
 
 A device MUST order hits by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags, best first, counting a word in the `title` three times as much as the same word in any other of them.
 
-**Reason:** a person names a thing by its title, so an item titled for the query comes before one that only mentions it. BM25 is relative to the items of the index it ranks in, so a device that holds a slice of the instance scores by that slice: its order equals the server's only where the items they hold are the same.
+**Reason:** a person names a thing by its title, so an item that holds the query in its title comes before one that holds it only elsewhere, other things equal. BM25 is relative to the items of the index it ranks in, so a device that holds a slice of the instance scores by that slice: its order equals the server's only where the items they hold are the same.
 
 **Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
 

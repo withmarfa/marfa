@@ -1530,7 +1530,7 @@ When a type is registered, replaced, or deleted with `force`, the server MUST ma
 
 When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank an item's own hit by BM25 over the `title`, `body`, `description`, `name`, extra properties and tags, counting a word in the `title` three times as much as the same word in any other of them.
 
-**Reason:** a person names a thing by its title, so an item titled for the query comes before one that only mentions it. A device ranks by the same measure over the items it holds (`device/rank-bm25`), so a device that holds what its key may read orders as the server orders for that key.
+**Reason:** a person names a thing by its title, so an item that holds the query in its title comes before one that holds it only elsewhere, other things equal. A device ranks by the same measure over the items it holds (`device/rank-bm25`), so a device that holds what its key may read orders as the server orders for that key.
 
 **Tests:** `compliance/search-matching.test.ts › $name: $query`, `› scores a hit by its rank and gives the better hit the higher score`.
 
