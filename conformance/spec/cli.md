@@ -2149,3 +2149,169 @@ If the stream of `marfa export --output <path>` ends early, then the CLI MUST le
 **Reason:** a file cut short, kept anywhere the person looks for backups, would pass for one. Only a process killed outright leaves its partial file, which no code can prevent.
 
 **Tests:** `cli/archive-blobs.test.ts › leaves the path as it was when the export is cut short, and the next export names the struck blob`.
+
+## Marfa Cloud
+
+`marfa cloud link`, `marfa cloud status` and `marfa cloud unlink` drive the owner's link to Marfa Cloud (`cloud.md`). Each needs `config.manage`.
+
+### `cli/cloud-status-readable`
+
+When a person runs `marfa cloud status`, the CLI MUST print the link's state, and for a link that is waiting, made or failed its code and page, its name and address, or its reason, and exit 0 whatever the state.
+
+**Tests:** `cli/cloud.test.ts › reads the link in every state, prints it plainly, and under --json prints the server's answer unchanged`.
+
+### `cli/cloud-status-json`
+
+When a person runs `marfa cloud status --json`, the CLI MUST print the answer of `GET /cloud/link` unchanged.
+
+**Reason:** a script reads the link from the server's own shape, not from the CLI's wording.
+
+**Tests:** `cli/cloud.test.ts › reads the link in every state, prints it plainly, and under --json prints the server's answer unchanged`.
+
+### `cli/cloud-link-start`
+
+When a person runs `marfa cloud link` and no link is waiting or made, the CLI MUST start one with `sign_in_address` set to `move`, or to `keep` when `--keep-sign-in-address` is given.
+
+**Tests:** `cli/cloud.test.ts › starts a link to move the sign-in address, prints the code and the page, opens nothing, waits through the server's reads until it is approved, and leaves the move waiting with the command that makes it`, `› keeps the sign-in address with --keep-sign-in-address, says plainly what to approve and check, and ends once the link is made`.
+
+### `cli/cloud-link-code-printed`
+
+When a link has started, the CLI MUST print the link's user code and approval URL, and tell the person to approve only if the code on the approval page matches, before it waits.
+
+**Reason:** a person who approves a page whose code differs could link another instance.
+
+**Tests:** `cli/cloud.test.ts › keeps the sign-in address with --keep-sign-in-address, says plainly what to approve and check, and ends once the link is made`.
+
+### `cli/cloud-link-browser-local`
+
+Where the CLI reaches the server through its local socket, when it has started a link, the CLI MUST open the approval URL in a browser.
+
+**Tests:** `cli/cloud.test.ts › opens the approval page and moves the sign-in address when it reaches the server through the private socket, as the confirmation allowed`.
+
+### `cli/cloud-link-browser-never-else`
+
+If the CLI does not reach the server through its local socket, then the CLI MUST NOT open the approval URL in a browser.
+
+**Reason:** an address the server sends is not known to be this instance's own, and a browser opened on it could lead an owner to approve another instance.
+
+**Tests:** `cli/cloud.test.ts › starts a link to move the sign-in address, prints the code and the page, opens nothing, waits through the server's reads until it is approved, and leaves the move waiting with the command that makes it`.
+
+### `cli/cloud-link-waits`
+
+While the link is waiting for approval, the CLI MUST keep reading the link until the server says it is made, failed or gone.
+
+**Reason:** the server decides when a link has expired, so the CLI ends on no time limit of its own.
+
+**Tests:** `cli/cloud.test.ts › starts a link to move the sign-in address, prints the code and the page, opens nothing, waits through the server's reads until it is approved, and leaves the move waiting with the command that makes it`.
+
+### `cli/cloud-link-made`
+
+When the link is made, the CLI MUST print its name and where the sign-in address stands, and exit 0.
+
+**Tests:** `cli/cloud.test.ts › keeps the sign-in address with --keep-sign-in-address, says plainly what to approve and check, and ends once the link is made`, `› opens the approval page and moves the sign-in address when it reaches the server through the private socket, as the confirmation allowed`.
+
+### `cli/cloud-link-move-waits`
+
+When the link is made and the move of the sign-in address waits, the CLI MUST print the command the server names to make the move.
+
+**Tests:** `cli/cloud.test.ts › starts a link to move the sign-in address, prints the code and the page, opens nothing, waits through the server's reads until it is approved, and leaves the move waiting with the command that makes it`.
+
+### `cli/cloud-link-json-records`
+
+When a person runs `marfa cloud link --json`, the CLI MUST print the link as it stands once it is waiting, and then the link as the wait ended, each as one line of JSON.
+
+**Reason:** a script reads the code as soon as it exists, and the outcome once it is decided.
+
+**Tests:** `cli/cloud.test.ts › starts a link to move the sign-in address, prints the code and the page, opens nothing, waits through the server's reads until it is approved, and leaves the move waiting with the command that makes it`.
+
+### `cli/cloud-link-failed`
+
+If the link fails or ends before it is made, then the CLI MUST exit 1 with the code `cloud_link_failed`, naming the reason.
+
+**Tests:** `cli/cloud.test.ts › exits 1 with cloud_link_failed naming why when the link is refused on the approval page or expires`.
+
+### `cli/cloud-link-interrupt`
+
+If Ctrl-C ends `marfa cloud link` while it waits, then the CLI MUST leave the link waiting, say how to wait on it again and how to cancel it, and exit 130.
+
+**Tests:** `cli/cloud.test.ts › leaves a link pending when Ctrl-C ends it with 130, waits on the pending link when run again, starts no other, and refuses a link that is already made`.
+
+### `cli/cloud-link-resume`
+
+If a link is waiting for approval when a person runs `marfa cloud link`, then the CLI MUST wait on that link instead of starting another.
+
+**Tests:** `cli/cloud.test.ts › leaves a link pending when Ctrl-C ends it with 130, waits on the pending link when run again, starts no other, and refuses a link that is already made`.
+
+### `cli/cloud-link-already-made`
+
+If the link is already made when a person runs `marfa cloud link`, then the CLI MUST exit 1 and start no link.
+
+**Tests:** `cli/cloud.test.ts › leaves a link pending when Ctrl-C ends it with 130, waits on the pending link when run again, starts no other, and refuses a link that is already made`.
+
+### `cli/cloud-link-confirm-flag`
+
+When a person runs `marfa cloud link --confirm-address-change`, the CLI MUST send `confirm_sign_in_address_change` set to `true` with the start.
+
+**Reason:** the server holds a move of the sign-in address until it is confirmed, and a person confirms it by naming the flag after reading what the move does.
+
+**Tests:** `cli/cloud.test.ts › opens the approval page and moves the sign-in address when it reaches the server through the private socket, as the confirmation allowed`.
+
+### `cli/cloud-link-unconfirmed`
+
+If the server holds a start for confirmation and the CLI has no terminal, then the CLI MUST exit 1 without starting a link, naming the consequences the server lists and the flags that go on.
+
+**Tests:** `cli/cloud.test.ts › refuses a move that needs confirming when it has no terminal, names the consequences and the flags, and starts nothing`.
+
+### `cli/cloud-link-ask`
+
+If the server holds a start for confirmation and the CLI has a terminal, then the CLI MUST print the consequences and ask before it sends the start again confirmed.
+
+**Tests:** `cli/cloud.test.ts › asks at a terminal before moving the sign-in address, and starts nothing on a no`.
+
+### `cli/cloud-link-ask-no`
+
+If the person answers anything but yes to the question about moving the sign-in address, then the CLI MUST exit 1 without starting a link.
+
+**Tests:** `cli/cloud.test.ts › asks at a terminal before moving the sign-in address, and starts nothing on a no`.
+
+### `cli/cloud-unlink-told`
+
+When a person runs `marfa cloud unlink`, the CLI MUST say whether the link was ended or cancelled, and when the answer says `service_told` is `false`, that Marfa Cloud could not be told.
+
+**Tests:** `cli/cloud.test.ts › unlinks, says whether Marfa Cloud was told, cancels a link waiting for approval and answers when nothing is linked`.
+
+### `cli/cloud-unlink-json`
+
+When a person runs `marfa cloud unlink --json`, the CLI MUST print the answer of `DELETE /cloud/link` unchanged.
+
+**Tests:** `cli/cloud.test.ts › unlinks, says whether Marfa Cloud was told, cancels a link waiting for approval and answers when nothing is linked`.
+
+### `cli/cloud-unlink-none`
+
+If nothing is linked when a person runs `marfa cloud unlink`, then the CLI MUST say so and exit 0.
+
+**Tests:** `cli/cloud.test.ts › unlinks, says whether Marfa Cloud was told, cancels a link waiting for approval and answers when nothing is linked`.
+
+### `cli/cloud-unlink-confirm`
+
+When a person runs `marfa cloud unlink --confirm-address-change`, the CLI MUST send `confirm_sign_in_address_change` set to `true` with the request.
+
+**Tests:** `cli/cloud.test.ts › puts back the sign-in address only on confirmation, asks at a terminal, and refuses a key`.
+
+### `cli/cloud-unlink-unconfirmed`
+
+If the server holds an unlink for confirmation and the CLI has no terminal, then the CLI MUST exit 1, change nothing, and name the flag that confirms.
+
+**Tests:** `cli/cloud.test.ts › puts back the sign-in address only on confirmation, asks at a terminal, and refuses a key`.
+
+### `cli/cloud-unlink-ask`
+
+If the server holds an unlink for confirmation and the CLI has a terminal, then the CLI MUST print the consequences and ask before it sends the request again confirmed.
+
+**Tests:** `cli/cloud.test.ts › puts back the sign-in address only on confirmation, asks at a terminal, and refuses a key`.
+
+### `cli/cloud-unlink-ask-no`
+
+If the person answers anything but yes to the question about putting the sign-in address back, then the CLI MUST exit 1 and change nothing.
+
+**Tests:** `cli/cloud.test.ts › puts back the sign-in address only on confirmation, asks at a terminal, and refuses a key`.
