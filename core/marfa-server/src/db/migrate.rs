@@ -38,6 +38,14 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0004_plugins.sql"),
         done: Some("SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE name = 'plugins')"),
     },
+    Migration {
+        version: 5,
+        sql: include_str!("migrations/0005_app_vendors.sql"),
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('api_keys') \
+             WHERE name = 'made_by_client')",
+        ),
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

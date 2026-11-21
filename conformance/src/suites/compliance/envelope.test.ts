@@ -215,6 +215,7 @@ describe("one envelope for every list and search", () => {
       siblings: ["window", "scan"],
     },
     { template: "/grants", path: () => "/grants", owner: true },
+    { template: "/app-vendors", path: () => "/app-vendors", owner: true },
     { template: "/folders", path: () => "/folders", owner: true },
     { template: "/owner/sign-ins", path: () => "/owner/sign-ins", owner: true },
     { template: "/owner/passkeys", path: () => "/owner/passkeys", owner: true },

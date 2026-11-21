@@ -44,7 +44,7 @@ export const LINE_FILES: LineFile[] = [
 ];
 
 /** The version a restore reads, and the build that wrote the archive. */
-export const ARCHIVE_VERSION = 1;
+export const ARCHIVE_VERSION = 2;
 
 /** What every manifest names itself as. */
 export const ARCHIVE_FORMAT = "marfa-archive";
@@ -85,6 +85,7 @@ export function emptyManifest(
     enforcement_count: 0,
     connector_state_count: 0,
     connector_agreement_count: 0,
+    app_vendor_count: 0,
     ...fields,
   };
 }
@@ -109,6 +110,7 @@ const INSTANCE_KINDS: Record<string, string> = {
   connector_state: "connector_state_count",
   connector_agreement: "connector_agreement_count",
   plugin: "plugin_count",
+  app_vendor: "app_vendor_count",
 };
 
 /** The manifest's count of each kind of line in `instance.ndjson.gz`. */

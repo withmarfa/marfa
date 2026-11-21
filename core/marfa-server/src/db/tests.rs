@@ -2298,3 +2298,212 @@ async fn upgraded_by_uri(file: &Path, uri: &str) {
     assert!(has_login_after(file));
     assert!(copy_of(file).exists());
 }
+
+fn vendors_of(file: &Path) -> Vec<(String, Option<String>)> {
+    Connection::open(file)
+        .unwrap()
+        .prepare("SELECT vendor, client_id FROM app_vendors ORDER BY vendor")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+fn backup_changes(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT coalesce((SELECT changes FROM backup_state WHERE id = 1), 0)",
+        [],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_database_at_schema_version_2_gives_a_vendor_to_an_app_only_when_one_known_app_made_all_its_types()
+ {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..2]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    let client = |id: &str| {
+        format!(
+            "INSERT INTO oauth_clients (client_id, application_type, redirect_uris, grant_types, \
+             response_types, scopes, contacts, created_at) \
+             VALUES ('{id}', 'native', '[]', '[]', '[]', '', '[]', '2026-11-01T00:00:00.000Z');"
+        )
+    };
+    let made = |id: &str, by: &str, at: &str| {
+        format!(
+            "INSERT INTO types (id, origin, created_by, definition, created_at, updated_at) \
+             VALUES ('{id}', 'user', {by}, '{{}}', '{at}', '{at}');"
+        )
+    };
+    let by_app = |grant: &str| format!(r#"'{{"kind":"app","id":"{grant}","name":"App"}}'"#);
+    let by_key = |key: &str| format!(r#"'{{"kind":"key","id":"{key}","name":"Key"}}'"#);
+    let local = r#"'{"kind":"local","id":"local","name":"Local command"}'"#;
+    let batch = [
+        client("client-a"),
+        client("client-b"),
+        "INSERT INTO owner (id, name, username, password, created_at, updated_at) \
+         VALUES ('owner', 'Owner', 'owner', 'x', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z');"
+            .to_string(),
+        "INSERT INTO oauth_consents (client_id, owner_id, grant_id, scopes, created_at, updated_at) VALUES \
+         ('client-a', 'owner', 'grant-a', 'content:write', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'), \
+         ('client-b', 'owner', 'grant-b', 'content:write', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z');"
+            .to_string(),
+        "INSERT INTO api_keys (id, hash, label, source, oauth_client_id, permissions, type_permissions, \
+         edge_permissions, extension_permissions, metadata_permissions, profile_permissions, created_at) \
+         VALUES ('key-b', 'hash-b', 'B', 'b', 'client-b', '[]', '{}', '{}', '{}', '{}', '{}', \
+         '2026-11-01T00:00:00.000Z'), ('key-owner', 'hash-o', 'O', 'o', NULL, '[]', '{}', '{}', '{}', \
+         '{}', '{}', '2026-11-01T00:00:00.000Z'), ('key-through-a', 'hash-ta', 'TA', 'ta', NULL, '[]', \
+         '{}', '{}', '{}', '{}', '{}', '2026-11-01T00:00:00.000Z'), ('key-through-b', 'hash-tb', 'TB', \
+         'tb', NULL, '[]', '{}', '{}', '{}', '{}', '{}', '2026-11-01T00:00:00.000Z'), ('key-chained', \
+         'hash-c', 'C', 'c', NULL, '[]', '{}', '{}', '{}', '{}', '{}', '2026-11-01T00:00:00.000Z'), \
+         ('key-local', 'hash-l', 'L', 'l', NULL, '[]', '{}', '{}', '{}', '{}', '{}', \
+         '2026-11-01T00:00:00.000Z'), ('key-of-local', 'hash-ol', 'OL', 'ol', NULL, '[]', '{}', '{}', \
+         '{}', '{}', '{}', '2026-11-01T00:00:00.000Z'), ('key-of-unknown', 'hash-ou', 'OU', 'ou', NULL, \
+         '[]', '{}', '{}', '{}', '{}', '{}', '2026-11-01T00:00:00.000Z'), ('key-ended-grant', 'hash-eg', \
+         'EG', 'eg', NULL, '[]', '{}', '{}', '{}', '{}', '{}', '2026-11-01T00:00:00.000Z'), \
+         ('key-unknown-grant', 'hash-ug', 'UG', 'ug', NULL, '[]', '{}', '{}', '{}', '{}', '{}', \
+         '2026-11-01T00:00:00.000Z'), ('key-under-gone-app', 'hash-uga', 'UGA', 'uga', NULL, '[]', \
+         '{}', '{}', '{}', '{}', '{}', '2026-11-01T00:00:00.000Z'), ('key-under-gone-owner', \
+         'hash-ugo', 'UGO', 'ugo', NULL, '[]', '{}', '{}', '{}', '{}', '{}', \
+         '2026-11-01T00:00:00.000Z'), ('key-under-gone-through', 'hash-ugt', 'UGT', 'ugt', NULL, \
+         '[]', '{}', '{}', '{}', '{}', '{}', '2026-11-01T00:00:00.000Z'), ('key-under-gone-unknown', \
+         'hash-ugu', 'UGU', 'ugu', NULL, '[]', '{}', '{}', '{}', '{}', '{}', \
+         '2026-11-01T00:00:00.000Z');"
+            .to_string(),
+        "INSERT INTO audit_log (id, created_at, key_id, actor, action, kind, resource_type, \
+         resource_id, details) VALUES \
+         ('audit-1', '2026-11-01T00:00:00.000Z', 'token-a', '{\"kind\":\"app\",\"id\":\"grant-a\",\"name\":\"A\"}', \
+         'key.create', 'access', 'key', 'key-through-a', '{\"owner_key\":true}'), \
+         ('audit-2', '2026-11-01T00:00:00.000Z', 'key-b', '{\"kind\":\"key\",\"id\":\"key-b\",\"name\":\"B\"}', \
+         'key.create', 'access', 'key', 'key-through-b', '{\"owner_key\":true}'), \
+         ('audit-3', '2026-11-01T00:00:00.000Z', 'key-through-b', \
+         '{\"kind\":\"key\",\"id\":\"key-through-b\",\"name\":\"TB\"}', \
+         'key.create', 'access', 'key', 'key-chained', '{}'), \
+         ('audit-4', '2026-11-01T00:00:00.000Z', 'key-owner', '{\"kind\":\"key\",\"id\":\"key-owner\",\"name\":\"O\"}', \
+         'key.create', 'access', 'key', 'key-b', '{}'), \
+         ('audit-5', '2026-11-01T00:00:00.000Z', NULL, '{\"kind\":\"local\",\"id\":\"local\",\"name\":\"Local\"}', \
+         'key.create', 'access', 'key', 'key-local', '{}'), \
+         ('audit-6', '2026-11-01T00:00:00.000Z', 'key-local', '{\"kind\":\"key\",\"id\":\"key-local\",\"name\":\"L\"}', \
+         'key.create', 'access', 'key', 'key-of-local', '{}'), \
+         ('audit-7', '2026-11-01T00:00:00.000Z', 'key-owner', '{\"kind\":\"key\",\"id\":\"key-owner\",\"name\":\"O\"}', \
+         'key.create', 'access', 'key', 'key-of-unknown', '{}'), \
+         ('audit-8', '2026-11-01T00:00:00.000Z', NULL, '{\"kind\":\"browser\",\"id\":\"s\",\"name\":\"Owner\"}', \
+         'auth.grant.revoked', 'access', 'oauth_grant', 'client-c', '{\"grant_item_id\":\"grant-ended\"}'), \
+         ('audit-9', '2026-11-01T00:00:00.000Z', 'token-c', '{\"kind\":\"app\",\"id\":\"grant-ended\",\"name\":\"C\"}', \
+         'key.create', 'access', 'key', 'key-ended-grant', '{\"owner_key\":true}'), \
+         ('audit-10', '2026-11-01T00:00:00.000Z', 'token-u', '{\"kind\":\"app\",\"id\":\"grant-unnamed\",\"name\":\"U\"}', \
+         'key.create', 'access', 'key', 'key-unknown-grant', '{\"owner_key\":true}'), \
+         ('audit-11', '2026-11-01T00:00:00.000Z', 'token-b', '{\"kind\":\"app\",\"id\":\"grant-b\",\"name\":\"B\"}', \
+         'key.create', 'access', 'key', 'key-gone-app', '{}'), \
+         ('audit-12', '2026-11-01T00:00:00.000Z', 'key-gone-app', '{\"kind\":\"key\",\"id\":\"key-gone-app\",\"name\":\"GA\"}', \
+         'key.create', 'access', 'key', 'key-under-gone-app', '{}'), \
+         ('audit-13', '2026-11-01T00:00:00.000Z', NULL, '{\"kind\":\"local\",\"id\":\"local\",\"name\":\"Local\"}', \
+         'key.create', 'access', 'key', 'key-gone-owner', '{}'), \
+         ('audit-14', '2026-11-01T00:00:00.000Z', 'key-gone-owner', '{\"kind\":\"key\",\"id\":\"key-gone-owner\",\"name\":\"GO\"}', \
+         'key.create', 'access', 'key', 'key-under-gone-owner', '{}'), \
+         ('audit-15', '2026-11-01T00:00:00.000Z', 'token-a', '{\"kind\":\"app\",\"id\":\"grant-a\",\"name\":\"A\"}', \
+         'key.create', 'access', 'key', 'key-gone-through', '{\"owner_key\":true}'), \
+         ('audit-16', '2026-11-01T00:00:00.000Z', 'key-gone-through', '{\"kind\":\"key\",\"id\":\"key-gone-through\",\"name\":\"GT\"}', \
+         'key.create', 'access', 'key', 'key-under-gone-through', '{}'), \
+         ('audit-17', '2026-11-01T00:00:00.000Z', 'key-gone-unknown', '{\"kind\":\"key\",\"id\":\"key-gone-unknown\",\"name\":\"GU\"}', \
+         'key.create', 'access', 'key', 'key-under-gone-unknown', '{}');"
+            .to_string(),
+        made("app.alpha.setting", &by_app("grant-a"), "2026-11-02T00:00:00.000Z"),
+        made("app.alpha.later", &by_app("grant-b"), "2026-11-03T00:00:00.000Z"),
+        made("app.beta.setting", &by_key("key-b"), "2026-11-02T00:00:00.000Z"),
+        made("app.beta.later", &by_app("grant-b"), "2026-11-03T00:00:00.000Z"),
+        made("app.gamma.setting", &by_key("key-owner"), "2026-11-02T00:00:00.000Z"),
+        made("app.delta.setting", local, "2026-11-02T00:00:00.000Z"),
+        made("app.epsilon.setting", &by_app("grant-gone"), "2026-11-02T00:00:00.000Z"),
+        made("app.zeta.setting", &by_key("key-owner"), "2026-11-01T00:00:00.000Z"),
+        made("app.zeta.later", &by_app("grant-a"), "2026-11-03T00:00:00.000Z"),
+        made("app.eta.setting", "NULL", "2026-11-02T00:00:00.000Z"),
+        made("app.theta.setting", &by_key("key-gone"), "2026-11-02T00:00:00.000Z"),
+        made("app.iota.setting", &by_key("key-through-a"), "2026-11-02T00:00:00.000Z"),
+        made("app.kappa.setting", &by_key("key-chained"), "2026-11-02T00:00:00.000Z"),
+        made("acme.widget", &by_app("grant-a"), "2026-11-02T00:00:00.000Z"),
+    ]
+    .concat();
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch(&batch)
+        .unwrap();
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    assert_eq!(version_of(&place.file), super::migrate::latest(MIGRATIONS));
+    let owner = |vendor: &str| (vendor.to_string(), None);
+    let app = |vendor: &str, client: &str| (vendor.to_string(), Some(client.to_string()));
+    assert_eq!(
+        vendors_of(&place.file),
+        [
+            owner("app.alpha"),
+            app("app.beta", "client-b"),
+            owner("app.delta"),
+            owner("app.epsilon"),
+            owner("app.eta"),
+            owner("app.gamma"),
+            app("app.iota", "client-a"),
+            app("app.kappa", "client-b"),
+            owner("app.theta"),
+            owner("app.zeta"),
+        ]
+    );
+
+    let conn = Connection::open(&place.file).unwrap();
+    let makers: Vec<(String, Option<String>, Option<String>, bool)> = conn
+        .prepare(
+            "SELECT id, oauth_client_id, made_by_client, maker_unknown FROM api_keys ORDER BY id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    let key = |id: &str, client: Option<&str>, maker: Option<&str>, unknown: bool| {
+        (
+            id.to_string(),
+            client.map(str::to_string),
+            maker.map(str::to_string),
+            unknown,
+        )
+    };
+    assert_eq!(
+        makers,
+        [
+            key("key-b", Some("client-b"), Some("client-b"), false),
+            key("key-chained", None, Some("client-b"), false),
+            key("key-ended-grant", None, Some("client-c"), false),
+            key("key-local", None, None, false),
+            key("key-of-local", None, None, false),
+            key("key-of-unknown", None, None, true),
+            key("key-owner", None, None, true),
+            key("key-through-a", None, Some("client-a"), false),
+            key("key-through-b", None, Some("client-b"), false),
+            key("key-under-gone-app", None, Some("client-b"), false),
+            key("key-under-gone-owner", None, None, false),
+            key("key-under-gone-through", None, Some("client-a"), false),
+            key("key-under-gone-unknown", None, None, true),
+            key("key-unknown-grant", None, None, true),
+        ]
+    );
+    let before = backup_changes(&conn);
+    conn.execute(
+        "UPDATE app_vendors SET client_id = 'client-a' WHERE vendor = 'app.alpha'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(backup_changes(&conn), before + 1);
+}

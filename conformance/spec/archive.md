@@ -62,7 +62,7 @@ The server MUST name no entry of an archive with a colon, naming the `blobs/` en
 
 ### `archive/archive-manifest`
 
-The server MUST write into the manifest of an archive its `version`, its `format`, its `written_by`, a `created_at` instant, and in `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count` and `connector_agreement_count` the number of each kind of entry or line the archive holds.
+The server MUST write into the manifest of an archive its `version`, its `format`, its `written_by`, a `created_at` instant, and in `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` and `app_vendor_count` the number of each kind of entry or line the archive holds.
 
 **Reason:** `archive/archive-version`, `archive/archive-format`, `archive/archive-written-by` and `archive/id-in-archive` state the version, the format, the writing build and the instance's name in the manifest, and a restore checks every count against what it read (`archive/restore-line-counts`).
 
@@ -438,6 +438,66 @@ When the credential requesting `GET /export?format=archive` holds `connectors.ma
 
 **Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`.
 
+### `archive/archive-app-vendors`
+
+When a credential sends `GET /export?format=archive`, the server MUST write an `app_vendor` line in `instance.ndjson.gz` for each vendor an app or the owner holds where the credential reads the vendor's wildcard `app.<vendor>.*` or a type then registered under it, both when the export selects the line and when it sends it, with its `vendor`, `client_id` (`null` while the owner holds it) and `claimed_at`, and count them in the manifest's `app_vendor_count`.
+
+**Reason:** a type map entry for the bare name `app.<vendor>` is no wildcard and names no type under it, so it neither carries a binding nor masks a wildcard that reads the vendor. At send, the types registered then decide, so a binding whose only readable type was removed meanwhile is not sent.
+
+**Tests:** `compliance/app-vendors.test.ts › carries each vendor binding to a credential that reads the vendor, and none to one that does not`, `› decides a binding on the vendor's wildcard, never on an entry for the bare namespace`, `› ends an export whose credential reads no type under a vendor by the time it sends the vendor's binding`.
+
+### `archive/restore-app-vendor`
+
+When the local command sends `POST /restore` with an `app_vendor` line for a vendor no one holds on the instance, the server MUST give the vendor to the `client_id` the line names, or hold it for the owner where that is `null`, and count it in `app_vendors_added`.
+
+**Tests:** `compliance/app-vendors.test.ts › restores a binding for a vendor no app holds, and skips one for a vendor an app holds`.
+
+### `archive/restore-app-vendor-held`
+
+When `POST /restore` reads an `app_vendor` line for a vendor an app or the owner holds on the instance, the server MUST leave the vendor with whoever holds it and count the line in `app_vendors_skipped`.
+
+**Reason:** a restore never takes an app's machinery from the app that holds it.
+
+**Tests:** `compliance/app-vendors.test.ts › restores a binding for a vendor no app holds, and skips one for a vendor an app holds`.
+
+### `archive/restore-vendor-from-types`
+
+When `POST /restore` leaves a vendor no one holds with a type under it, the server MUST give the vendor to an app where every type under it carries a `created_by` naming that app's grant or a key minted through that app and the instance knows the app, and otherwise hold the vendor for the owner.
+
+**Reason:** an archive of version 1 carries no `app_vendor` line, and an owner's archive carries none for a vendor no one held, so a restore gives each vendor to the one app that made all its types, as an upgraded database does. Where the owner made a type under it, or several apps, or an app the instance no longer knows, no order of making says whose machinery it is, and an app that claimed it first would reach what the owner keeps there, so the owner gives it (`keys-and-oauth/app-vendor-move`).
+
+**Tests:** `compliance/app-vendors.test.ts › restores a version 1 archive, giving a vendor no one holds to the one app that made its types`, `› holds a vendor two apps made types under for the owner, refuses it to either app, and gives it to the app the owner names`, `› holds for the owner a vendor whose types only the owner made, from an archive of either version, and refuses it to an app`.
+
+### `archive/restore-app-vendor-by-app`
+
+When an app's sign-in sends `POST /restore`, the server MUST write no `app_vendor` line the archive carries, count each in `app_vendors_skipped`, and hold for the owner each vendor no one holds with a type under it.
+
+**Reason:** giving a vendor to an app is the owner's to approve (`keys-and-oauth/app-vendor-move-owner-only`), and an archive an app sends could name any app. A key is refused a restore whatever it holds (`keys-and-oauth/step-up-key-refused`), so an app's sign-in and the local command are the only credentials that restore.
+
+**Tests:** `compliance/app-vendors.test.ts › writes no vendor binding from a restore an app sends, and holds the vendors of its types for the owner`.
+
+### `archive/restore-app-vendor-type-held`
+
+If an app's sign-in sends `POST /restore` with a type the instance does not register under an `app.<vendor>` namespace another app or the owner holds, then the server MUST answer `403 forbidden` with `details.namespace` naming `app.<vendor>`, and restore nothing.
+
+**Reason:** a restore registers a type under a held vendor only where registering it directly would (`types/app-vendor-claimed-refused`), whether the archive is sent or is a named backup.
+
+**Tests:** `compliance/app-vendors.test.ts › refuses an app's restore a type under a vendor the owner or another app holds`.
+
+### `archive/restore-app-vendor-invalid`
+
+If an `app_vendor` line in `instance.ndjson.gz` lacks a `vendor` that is an `app.<vendor>` namespace, a `client_id` that is a non-empty string or `null`, or a `claimed_at` that is an RFC 3339 instant without a leap second, then the server MUST answer `400 validation_error` naming the line and, in `details.field`, the field, and restore nothing.
+
+**Reason:** Marfa stores an instant as milliseconds since 1970, which has no second 60, so a `claimed_at` inside a leap second (RFC 3339 section 5.7) is refused rather than moved to another instant.
+
+**Tests:** `compliance/app-vendors.test.ts › refuses an app_vendor line whose client_id is empty or whose claimed_at is no instant`, `› refuses a claimed_at inside a leap second with 400 naming the field`.
+
+### `archive/restore-app-vendor-time`
+
+When `POST /restore` writes an `app_vendor` line whose `claimed_at` is an RFC 3339 instant without a leap second in any form, with or without fractional seconds and with `Z` or a numeric offset, the server MUST store the vendor's `claimed_at` as that instant in UTC with milliseconds, as `GET /app-vendors` then answers it.
+
+**Tests:** `compliance/app-vendors.test.ts › restores a claimed_at in any RFC 3339 form and keeps it as the instant`.
+
 ### `archive/restore-connector-state`
 
 When `POST /restore` reads a `connector_state` line, the server MUST store that state document only where the instance holds none for the source, and replace none it holds.
@@ -654,7 +714,7 @@ When a caller the operation admits sends `POST /restore` with an archive that `G
 
 ### `archive/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `secrets_to_set`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts, and the lists `enforcement_added` and `enforcement_skipped`, each naming the enforcement settings it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `secrets_to_set`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `app_vendors_added`, `app_vendors_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts, and the lists `enforcement_added` and `enforcement_skipped`, each naming the enforcement settings it counts.
 
 **Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
 
@@ -992,9 +1052,9 @@ If the `manifest.json` of an archive names a `version` greater than the archive 
 
 ### `archive/restore-version-one`
 
-When `POST /restore` reads an archive at version 1, the server MUST read its manifest without `plugin_count` and register a `type` line whose `provenance.origin` is `user` or missing as a type with the origin `registered`.
+When `POST /restore` reads an archive at version 1, the server MUST read its manifest without `plugin_count` or `app_vendor_count` and register a `type` line whose `provenance.origin` is `user` or missing as a type with the origin `registered`.
 
-**Reason:** version 1 named every registered type `user` and carried no plugin, so an older backup still restores.
+**Reason:** version 1 named every registered type `user` and carried no plugin and no vendor binding, so an older backup still restores.
 
 **Tests:** `compliance/plugins.test.ts › restores a version 1 archive whose type names the origin user as registered`.
 
@@ -1064,7 +1124,7 @@ When a restore reads an archive that lacks a field or a line kind added to the a
 
 ### `archive/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` or, at version 2, `plugin_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
+If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` or, at version 2, `plugin_count` and `app_vendor_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
 
 **Reason:** a later version is free to lay out its fields differently, so a manifest naming one is refused for its version (`archive/restore-version`) and not its shape.
 

@@ -35,6 +35,11 @@ const PINS: &[Pin] = &[
         file: "2fe7f6ae043cb6472d2c8e23578252719cdabe9091e0c718b0d6dfd329a9eb72",
         holds: "707eb5de769b9af0dae84fb38470844f5776ebdda3fd78d537834015857cd334",
     },
+    Pin {
+        version: 5,
+        file: "2398a0f663f00cb3fd0e9341ae64ab803f5573b44018b0b2e23da19b5ce8ca01",
+        holds: "faa3d061d3f6ddef93029290eae3d9fce86afff144a7a5cbf85d56e5a5576720",
+    },
 ];
 
 const BEFORE_0_1: &str = "Before Marfa 0.1, no release promises that its databases keep opening: \

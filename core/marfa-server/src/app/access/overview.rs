@@ -18,7 +18,11 @@ impl Caller {
             Caller::Local(_) | Caller::Owner(_) | Caller::Server => return None,
         };
         let mut types: [Vec<String>; 3] = Default::default();
-        for (pattern, level) in key.grants.map(Axis::Type).patterns() {
+        let stored = key
+            .stored_types
+            .as_ref()
+            .unwrap_or(key.grants.map(Axis::Type));
+        for (pattern, level) in stored.patterns() {
             let at = match level {
                 Level::Write => 0,
                 Level::Read => 1,

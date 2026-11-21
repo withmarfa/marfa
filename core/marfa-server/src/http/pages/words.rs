@@ -159,7 +159,7 @@ pub fn title(reach: Reach, pattern: &str, label: Option<&str>) -> String {
         (Reach::Type, "user.*") => Some("Your custom types"),
         (Reach::Type, "core.*") => Some("Built-in types"),
         (Reach::Type, "common.*") => Some("Shared types"),
-        (Reach::Type, "app.*") => Some("Every app's data"),
+        (Reach::Type, "app.*") => Some("Every app's own data"),
         (Reach::Content, _) => Some("Your content"),
         (Reach::Edge, "edge.*") => Some("Links between items"),
         (Reach::Metadata, "metadata") => Some("Definitions on your server"),
@@ -182,7 +182,7 @@ pub fn title(reach: Reach, pattern: &str, label: Option<&str>) -> String {
         (Reach::Type, Some(root))
             if root.strip_prefix("app.").is_some_and(|v| !v.contains('.')) =>
         {
-            format!("App data from {}", &root["app.".len()..])
+            format!("{}'s own data", &root["app.".len()..])
         }
         (Reach::Type, Some(root)) => format!("All types under {root}"),
         (Reach::Edge, Some(root)) => {
@@ -226,6 +226,22 @@ pub fn description(row: &LevelRow) -> Option<String> {
         .choices
         .iter()
         .any(|choice| choice.level == Level::Write);
+    let verb = if writes { "Read and change" } else { "Read" };
+    match (row.reach, row.pattern.as_str()) {
+        (Reach::Type, "app.*") => {
+            return Some(format!("{verb} what other apps keep for themselves"));
+        }
+        (Reach::Type, pattern) => {
+            if let Some(vendor) = pattern
+                .strip_prefix("app.")
+                .and_then(|rest| rest.strip_suffix(".*"))
+                .filter(|vendor| !vendor.contains('.'))
+            {
+                return Some(format!("{verb} what the {vendor} app keeps for itself"));
+            }
+        }
+        _ => {}
+    }
     let text = match (row.reach, row.pattern.as_str()) {
         (Reach::Edge, pattern) => {
             return edge_line(pattern).map(str::to_string).or_else(|| {
@@ -261,8 +277,8 @@ mod tests {
 
     #[test]
     fn an_app_namespace_row_says_whose_data_it_covers() {
-        assert_eq!(title(Reach::Type, "app.*", None), "Every app's data");
-        assert_eq!(title(Reach::Type, "app.acme.*", None), "App data from acme");
+        assert_eq!(title(Reach::Type, "app.*", None), "Every app's own data");
+        assert_eq!(title(Reach::Type, "app.acme.*", None), "acme's own data");
         assert_eq!(
             title(Reach::Type, "app.acme.widget", Some("Widget")),
             "Widget"

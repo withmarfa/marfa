@@ -580,6 +580,14 @@ When `GET /overview` is answered `200`, the server MUST give `instance` with the
 
 **Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
 
+### `instance/overview-credential-map`
+
+When `GET /overview` or the `marfa_overview` tool is answered for a key or an app's token, the server MUST give in `credential.type_permissions` the type map the key stores, or the one the app's grant's scopes give, with no entry the server derives when it judges what the credential reaches.
+
+**Reason:** what a credential reaches under `app.*` follows its app's grant and who holds each vendor now, so a derived entry would name an app's vendors to the credential. The key endpoints show the stored map the same way (`keys-and-oauth/key-map-as-stored`).
+
+**Tests:** `compliance/app-vendors.test.ts › shows a credential's stored type map in the overview, over the API and MCP, with no derived entry`.
+
 ### `instance/overview-no-reach`
 
 When the credential may read no type, the server MUST answer `GET /overview` with `200`, `instance` and `credential`, and no list and no `total`, whatever its edge permissions.
@@ -1101,6 +1109,14 @@ When a scheduled backup run finds that nothing a backup holds has changed since 
 The server MUST count a change to a stored setting as a change a backup holds.
 
 **Tests:** `compliance/backups.test.ts › skips a scheduled run when nothing changed, counts a settings change as a change, and puts one when asked`.
+
+### `instance/backup-app-vendor-change`
+
+The server MUST count giving a vendor to an app, or a vendor coming to be held, as a change a backup holds.
+
+**Reason:** a backup carries who holds each vendor (`archive/archive-app-vendors`), so a restore from an older one would give a vendor back to the app that held it before.
+
+**Tests:** `compliance/backups.test.ts › counts giving a vendor to an app as a change a scheduled backup takes`.
 
 ### `instance/backup-run-now`
 

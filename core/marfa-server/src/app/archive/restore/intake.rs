@@ -151,6 +151,7 @@ pub struct Registrations {
     /// Names of settings this instance does not have, which the restore leaves out.
     pub dropped_settings: Vec<String>,
     pub states: Vec<(String, Map<String, Value>)>,
+    pub vendors: Vec<crate::app::vendors::Binding>,
 }
 
 /// A body read to its end and checked, ready for the restore's write.
@@ -270,7 +271,7 @@ struct Rows {
 }
 
 /// Each kind of `instance.ndjson.gz` line, with the manifest field that counts it.
-const KINDS: [(&str, &str); 9] = [
+const KINDS: [(&str, &str); 10] = [
     ("type", "type_count"),
     ("edge_type", "edge_type_count"),
     ("type_icon", "type_icon_count"),
@@ -280,10 +281,11 @@ const KINDS: [(&str, &str); 9] = [
     ("connector_state", "connector_state_count"),
     ("connector_agreement", "connector_agreement_count"),
     ("plugin", "plugin_count"),
+    ("app_vendor", "app_vendor_count"),
 ];
 
 /// The kinds a version 1 archive's manifest does not count, which it holds none of.
-const SINCE_VERSION_2: [&str; 1] = ["plugin"];
+const SINCE_VERSION_2: [&str; 2] = ["plugin", "app_vendor"];
 
 /// The key beside a line's kind that says who registered it.
 const PROVENANCE: &str = "provenance";
@@ -690,6 +692,23 @@ impl Rows {
                 registrations
                     .states
                     .push((source.to_string(), state.clone()));
+            }
+            "app_vendor" => {
+                let binding =
+                    crate::app::vendors::Binding::archived(body).map_err(|(field, why)| {
+                        invalid(format!(
+                            "Line {row} of {INSTANCE} holds an app vendor whose {why}."
+                        ))
+                        .with_detail("field", field)
+                    })?;
+                if registrations
+                    .vendors
+                    .iter()
+                    .any(|held| held.vendor == binding.vendor)
+                {
+                    return Err(registered_twice("vendor", &binding.vendor));
+                }
+                registrations.vendors.push(binding);
             }
             _ => {
                 let held = body.get("source").is_some_and(Value::is_string)
@@ -1366,7 +1385,7 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
     }
 }
 
-/// Version 1 predates the plugin count.
+/// Version 1 predates the plugin and vendor counts.
 fn first(held: &Map<String, Value>, version: u64) -> Result<Manifest> {
     let mut errors = Vec::new();
     let mut wrong =
@@ -1499,6 +1518,18 @@ mod tests {
         let whole =
             format!(r#"{{"format":"marfa-archive","version":1,"written_by":"x",{COUNTS}}}"#);
         assert!(manifest(whole.as_bytes()).is_ok());
+        let second =
+            format!(r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS}}}"#);
+        let refused = manifest(second.as_bytes()).unwrap_err();
+        assert!(
+            refused.message.contains("app_vendor_count"),
+            "{}",
+            refused.message
+        );
+        let second = format!(
+            r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS},"app_vendor_count":0}}"#
+        );
+        assert!(manifest(second.as_bytes()).is_ok());
     }
 
     #[test]

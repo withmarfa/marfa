@@ -19,7 +19,7 @@ pub const ROWS: [(&str, &str); 15] = [
     ("user.*", "Your custom types"),
     ("core.*", "Built-in types"),
     ("common.*", "Shared types"),
-    ("app.*", "Every app's data"),
+    ("app.*", "Every app's own data"),
     ("edge.*", "Links between items"),
     ("profile", "Profile"),
     ("profile.name", "Name"),

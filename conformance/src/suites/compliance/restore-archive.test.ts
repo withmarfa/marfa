@@ -333,6 +333,10 @@ describe("restore", () => {
         path: "connector_agreement_count",
       },
       {
+        reshape: (m) => without(m, "app_vendor_count"),
+        path: "app_vendor_count",
+      },
+      {
         reshape: (m) => without(m, "enforcement_count"),
         path: "enforcement_count",
       },
@@ -454,6 +458,7 @@ describe("restore", () => {
     "enforcement_count",
     "connector_state_count",
     "connector_agreement_count",
+    "app_vendor_count",
   ])(
     "refuses an archive whose %s is not the number of lines its file holds, and writes nothing",
     async (count) => {
@@ -583,7 +588,7 @@ describe("restore", () => {
         (m) => reshape({ ...m, written_by: "marfa-server 0.0.1" }),
       );
 
-    // The witness: the same archive at version 1 restores, so what is
+    // The witness: the same archive at version 2 restores, so what is
     // refused below is the manifest's format or version and nothing else.
     const restored = await owner.restoreArchive(archiveWith((m) => m, witness));
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
@@ -1388,6 +1393,8 @@ describe("what a restore answers", () => {
         "connector_states_skipped",
         "connector_agreements_added",
         "connector_agreements_skipped",
+        "app_vendors_added",
+        "app_vendors_skipped",
         "rows_imported",
         "rows_skipped",
         "settings_without_receiver",
@@ -1435,6 +1442,8 @@ describe("what a restore answers", () => {
       connector_states_skipped: 0,
       connector_agreements_added: 0,
       connector_agreements_skipped: 0,
+      app_vendors_added: 0,
+      app_vendors_skipped: 0,
       rows_imported: 0,
       rows_skipped: 0,
       entries_skipped: [],
@@ -1492,6 +1501,8 @@ describe("what a restore answers", () => {
       connector_states_skipped: 0,
       connector_agreements_added: 0,
       connector_agreements_skipped: 0,
+      app_vendors_added: 0,
+      app_vendors_skipped: 0,
       rows_imported: 0,
       rows_skipped: 0,
       entries_skipped: [],

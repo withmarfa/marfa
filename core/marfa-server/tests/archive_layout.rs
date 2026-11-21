@@ -494,6 +494,7 @@ async fn the_layout_is_pinned_to_its_version() {
     assert_eq!(
         sorted_keys(&Value::Object(manifest_of(&held))),
         [
+            "app_vendor_count",
             "blob_count",
             "connector_agreement_count",
             "connector_state_count",
@@ -533,6 +534,7 @@ async fn the_layout_is_pinned_to_its_version() {
             .any(|held| held["type"]["id"] == "user.pinned")
     );
     let kinds = [
+        "app_vendor",
         "connector_agreement",
         "connector_state",
         "edge_type",

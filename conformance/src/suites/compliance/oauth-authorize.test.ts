@@ -810,8 +810,10 @@ describe("an app's own type namespace", () => {
     const text = visibleText(
       await (await fetch(consent, { headers: { cookie } })).text(),
     );
-    expect(text).toContain("Every app's data");
-    expect(text).toContain("App data from nstitled");
+    expect(text).toContain("Every app's own data");
+    expect(text).toContain("Read what other apps keep for themselves");
+    expect(text).toContain("nstitled's own data");
+    expect(text).toContain("Read what the nstitled app keeps for itself");
   });
 
   it("is offered and granted for common.* where no common type is registered, titled Shared types", async () => {
