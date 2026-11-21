@@ -302,11 +302,11 @@ If a key without `schema.write` sends `POST /types` naming non-empty `guidance` 
 
 ### `types/guidance-app-made`
 
-If an app's access token, or a key an app made, that holds `schema.write` sends `POST /types`, `PUT /types/{id}` or `POST /restore` that would add, change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
+If an app's access token, or a key an app made, including an owner's key an app minted with `owner_key: true`, that holds `schema.write` sends `POST /types`, `PUT /types/{id}` or `POST /restore` that would add, change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
 
-**Reason:** agents read guidance as instructions, so it is written by installing a plugin (`plugins/install-guidance`) or by the owner: the local command, the owner's browser, or an owner's key. An app the owner allowed `user.*` may still make and change the types themselves.
+**Reason:** agents read guidance as instructions, so the owner writes it, directly or by installing a plugin (`plugins/install-guidance`): through the local command, or a key that no app made. An owner's key an app minted reaches what the owner gave it, but an app still chose what it says. A key made before the server recorded who made each key counts as one an app made unless its audit trail leads back to the local command or the owner's browser. An app the owner allowed `user.*` may still make and change the types themselves.
 
-**Tests:** `compliance/plugins.test.ts › refuses guidance to an app holding user.*:write and schema.write, and takes the same registration without it`, `› refuses an app's replacement that adds guidance, and lets an owner's key add it`, `compliance/type-guidance-restore.test.ts › answers 403 forbidden naming guidance to an app holding backups.manage and schema.write, and registers none of its types`.
+**Tests:** `compliance/plugins.test.ts › refuses guidance to an app holding user.*:write and schema.write, and takes the same registration without it`, `› refuses an app's replacement that adds guidance, and lets an owner's key add it`, `› refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it`, `compliance/type-guidance-restore.test.ts › answers 403 forbidden naming guidance to an app holding backups.manage and schema.write, and registers none of its types`.
 
 ### `types/guidance-register-no-write`
 

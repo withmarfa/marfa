@@ -62,3 +62,20 @@ END;
 CREATE TRIGGER backup_plugins_deleted AFTER DELETE ON plugins BEGIN
     INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;
 END;
+
+-- An app that mints an owner's key drops oauth_client_id, so who made a key is kept apart.
+ALTER TABLE api_keys ADD COLUMN app_made INTEGER NOT NULL DEFAULT 1 CHECK (app_made IN (0, 1));
+
+-- A key counts as the owner's only where its audit trail leads back to the local command or the
+-- owner's browser; a trail the audit log no longer holds counts as an app's.
+WITH RECURSIVE owners (id) AS (
+    SELECT resource_id FROM audit_log
+    WHERE action = 'key.create' AND resource_type = 'key'
+        AND json_extract(actor, '$.kind') IN ('local', 'browser')
+    UNION
+    SELECT a.resource_id FROM audit_log a JOIN owners o ON a.key_id = o.id
+    WHERE a.action = 'key.create' AND a.resource_type = 'key'
+        AND json_extract(a.actor, '$.kind') = 'key'
+)
+UPDATE api_keys SET app_made = 0
+WHERE oauth_client_id IS NULL AND id IN (SELECT id FROM owners);

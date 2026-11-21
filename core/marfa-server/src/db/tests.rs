@@ -1983,7 +1983,8 @@ async fn a_database_at_schema_version_2_loses_compatible_with_and_keeps_the_rest
 }
 
 #[tokio::test]
-async fn a_database_at_schema_version_2_names_its_registered_types_and_keeps_every_row() {
+async fn a_database_at_schema_version_2_upgrades_through_4_naming_registered_types_and_who_made_each_key()
+ {
     let place = folder();
     db_open(&options(&place.file, &MIGRATIONS[..2]), Arc::default())
         .map_err(|f| f.message)
@@ -1994,9 +1995,51 @@ async fn a_database_at_schema_version_2_names_its_registered_types_and_keeps_eve
         .unwrap()
         .execute_batch(
             "INSERT INTO types (id, parent, origin, created_by, owner_icon, definition, created_at, updated_at) VALUES \
-             ('acme.deal', NULL, 'user', '{\"kind\":\"key\",\"id\":\"k1\",\"name\":\"Old\"}', 'lucide:coins', '{\"id\":\"acme.deal\",\"fields\":{}}', 'a', 'b'), \
+             ('acme.deal', NULL, 'user', '{\"kind\":\"key\",\"id\":\"k1\",\"name\":\"Old\"}', 'lucide:coins', '{\"id\":\"acme.deal\",\"compatible_with\":[\"core.note\"],\"fields\":{}}', 'a', 'b'), \
              ('acme.deal.big', 'acme.deal', 'user', NULL, NULL, '{\"id\":\"acme.deal.big\",\"parent\":\"acme.deal\",\"fields\":{}}', 'a', 'b'), \
              ('core.note', NULL, 'platform', NULL, NULL, '{\"id\":\"core.note\",\"fields\":{}}', 'a', 'b');",
+        )
+        .unwrap();
+    let keyed = |id: &str, client: Option<&str>| {
+        format!(
+            "INSERT INTO api_keys (id, hash, label, source, oauth_client_id, permissions, \
+             type_permissions, edge_permissions, extension_permissions, metadata_permissions, \
+             profile_permissions, created_at) VALUES ('{id}', '{id}', '{id}', '{id}', {}, '[]', \
+             '{{}}', '{{}}', '{{}}', '{{}}', '{{}}', 'a');",
+            client.map_or("NULL".to_string(), |client| format!("'{client}'"))
+        )
+    };
+    let made = |id: &str, key_id: &str, actor: &str| {
+        format!(
+            "INSERT INTO audit_log (id, created_at, key_id, actor, action, kind, resource_type, \
+             resource_id, details) VALUES ('audit-{id}', 'a', '{key_id}', '{actor}', \
+             'key.create', 'access', 'key', '{id}', '{{}}');"
+        )
+    };
+    let local = r#"{"kind":"local","id":"local","name":"Local command"}"#;
+    let by_key = |id: &str| format!(r#"{{"kind":"key","id":"{id}","name":"{id}"}}"#);
+    let app = r#"{"kind":"app","id":"grant","name":"An app"}"#;
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch(
+            &[
+                keyed("by-local", None),
+                made("by-local", "local:process", local),
+                keyed("by-owners-key", None),
+                made("by-owners-key", "by-local", &by_key("by-local")),
+                keyed("apps-key", Some("client")),
+                made("apps-key", "token", app),
+                keyed("owner-key-by-app", None),
+                made("owner-key-by-app", "token", app),
+                keyed("by-that-key", None),
+                made(
+                    "by-that-key",
+                    "owner-key-by-app",
+                    &by_key("owner-key-by-app"),
+                ),
+                keyed("no-trail", None),
+            ]
+            .concat(),
         )
         .unwrap();
 
@@ -2010,15 +2053,42 @@ async fn a_database_at_schema_version_2_names_its_registered_types_and_keeps_eve
     let version: u32 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 3);
-    let rows: Vec<(
+    assert_eq!(version, 4);
+    let app_made: Vec<(String, bool)> = conn
+        .prepare("SELECT id, app_made FROM api_keys ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .map(|row| row.unwrap())
+        .collect();
+    assert_eq!(
+        app_made,
+        [
+            ("apps-key".to_string(), true),
+            ("by-local".to_string(), false),
+            ("by-owners-key".to_string(), false),
+            ("by-that-key".to_string(), true),
+            ("no-trail".to_string(), true),
+            ("owner-key-by-app".to_string(), true),
+        ]
+    );
+    let cleaned: String = conn
+        .query_row(
+            "SELECT definition FROM types WHERE id = 'acme.deal'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(!cleaned.contains("compatible_with"), "{cleaned}");
+    type Row = (
         String,
         Option<String>,
         String,
         Option<String>,
         Option<String>,
         Option<String>,
-    )> = conn
+    );
+    let rows: Vec<Row> = conn
         .prepare(
             "SELECT id, parent, origin, plugin_name, created_by, owner_icon FROM types ORDER BY id",
         )

@@ -93,12 +93,7 @@ impl Caller {
             return Ok(());
         }
         if self.holds(Permission::SchemaWrite) {
-            let app_made = match self {
-                Caller::App { .. } => true,
-                Caller::Key(key) => key.oauth_client_id.is_some(),
-                Caller::Local(_) | Caller::Owner(_) | Caller::Server => false,
-            };
-            if !app_made {
+            if !self.app_made() {
                 return Ok(());
             }
             return Err(Refusal::new(
