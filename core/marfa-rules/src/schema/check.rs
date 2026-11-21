@@ -90,8 +90,9 @@ pub fn guidance_file_name(file: &str) -> Option<String> {
         .then(|| format!("{stem}.md"))
 }
 
+/// Whether `name` is the name of a Markdown file a definition's guidance can sit in: it ends in exactly `.md`, so `.MD` is not one.
 pub fn is_guidance_file(name: &str) -> bool {
-    !name.starts_with('.') && name.to_ascii_lowercase().ends_with(".md")
+    !name.starts_with('.') && name.ends_with(".md")
 }
 
 pub fn is_type_file(name: &str) -> bool {
@@ -218,6 +219,8 @@ struct Entry {
     body: Obj,
     /// Refused by the folder's own checks, so never registered for a later type to name.
     misnamed: bool,
+    /// Refused for its guidance file before the registration rules judged it.
+    unjudged: bool,
 }
 
 /// The types of the folder in an order that registers each after the types it names, and the ones left that wait on a loop.
@@ -308,6 +311,11 @@ pub fn check_type_files(
     let mut paired: Vec<String> = Vec::new();
     let mut entries: Vec<Entry> = Vec::new();
     for (at, file) in candidates.iter().enumerate() {
+        let sibling = guidance_file_name(&file.name)
+            .filter(|name| guidance_files.contains_key(name.as_str()));
+        if let Some(name) = &sibling {
+            paired.push(name.clone());
+        }
         let body = match &file.content {
             Err(why) => {
                 verdicts[at].problems.push(problem(
@@ -315,12 +323,14 @@ pub fn check_type_files(
                     "file_unreadable",
                     format!("Cannot read the file: {why}"),
                 ));
+                verdicts[at].context = unjudged_guidance(sibling.as_deref());
                 continue;
             }
             Ok(bytes) => match read(bytes) {
                 Ok(body) => body,
                 Err(refused) => {
                     verdicts[at].problems.push(refused);
+                    verdicts[at].context = unjudged_guidance(sibling.as_deref());
                     continue;
                 }
             },
@@ -351,23 +361,20 @@ pub fn check_type_files(
             verdicts[at].id = Some(id.clone());
         }
         let mut body = body;
-        if let Some(name) = guidance_file_name(&file.name)
+        let mut unjudged = false;
+        if let Some(name) = &sibling
             && let Some(guidance) = guidance_files.get(name.as_str())
+            && let Err(refused) = with_guidance(&mut body, name, guidance)
         {
-            paired.push(name.clone());
-            match with_guidance(&mut body, &name, guidance) {
-                Ok(()) => {}
-                Err(refused) => {
-                    verdicts[at].problems.push(refused);
-                    continue;
-                }
-            }
+            verdicts[at].problems.push(refused);
+            unjudged = true;
         }
         entries.push(Entry {
             file: at,
             id,
             body,
-            misnamed,
+            misnamed: misnamed || unjudged,
+            unjudged,
         });
     }
     let mut strays: Vec<&TypeFile> = guidance_files
@@ -407,6 +414,9 @@ pub fn check_type_files(
     let mut working = shipped.clone();
     for &index in order.ready.iter().chain(&order.stuck) {
         let entry = &entries[index];
+        if entry.unjudged {
+            continue;
+        }
         let looped = loop_through(index, &links, &order.stuck);
         let held = judge(entry, &working)?;
         verdicts[entry.file].context =
@@ -434,6 +444,12 @@ pub fn check_type_files(
         });
     }
     Ok(FolderVerdict { files: verdicts })
+}
+
+fn unjudged_guidance(sibling: Option<&str>) -> Option<String> {
+    sibling.map(|name| {
+        format!("{name} sits beside this file as its guidance. It was not judged, because the definition was refused.")
+    })
 }
 
 /// Whether a Markdown file is named as guidance for a type: its name before `.md` is a well-formed type id.
@@ -1428,6 +1444,116 @@ mod tests {
             "guidance_file_without_definition"
         );
         assert_eq!(problems_of(&verdict, "user.note.json").len(), 0);
+    }
+
+    fn said<'a>(verdict: &'a FolderVerdict, name: &str) -> &'a str {
+        context_of_file(verdict, name).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_markdown_file_beside_a_refused_definition_is_paired_with_it_not_orphaned() {
+        let sample = || {
+            definition(
+                "user.note",
+                json!({ "fields": { "a": { "type": "string" } } }),
+            )
+        };
+        let unreadable = TypeFile {
+            name: "user.broken.json".into(),
+            content: Err("denied".into()),
+        };
+        for broken in [file("user.broken.json", "{ not json"), unreadable] {
+            let verdict = check(&[sample(), broken, markdown("user.broken", "Use it.")]);
+            assert_eq!(verdict.files.len(), 2, "{verdict:?}");
+            assert!(
+                said(&verdict, "user.broken.json").contains("user.broken.md"),
+                "{verdict:?}"
+            );
+        }
+        let orphan = check(&[sample(), markdown("user.broken", "Use it.")]);
+        assert_eq!(
+            problems_of(&orphan, "user.broken.md")[0].code,
+            "guidance_file_without_definition"
+        );
+    }
+
+    #[test]
+    fn a_parent_refused_for_its_guidance_file_is_refused_in_the_folder_not_missing_from_it() {
+        let parent = definition(
+            "user.base",
+            json!({ "fields": { "a": { "type": "string" } } }),
+        );
+        let child = definition(
+            "user.leaf",
+            json!({ "parent": "user.base", "fields": { "b": { "type": "string" } } }),
+        );
+        let verdict = check(&[parent.clone(), child.clone(), markdown("user.base", [0xE9])]);
+        assert_eq!(
+            problems_of(&verdict, "user.base.json")[0].code,
+            "guidance_file_unreadable"
+        );
+        let text = said(&verdict, "user.leaf.json");
+        assert!(text.contains("was refused in this folder"), "{text}");
+        assert!(!text.contains("is not shipped or in this folder"), "{text}");
+        let witness = check(&[child]);
+        assert!(said(&witness, "user.leaf.json").contains("is not shipped or in this folder"));
+    }
+
+    #[test]
+    fn a_markdown_name_that_differs_by_case_is_not_the_guidance_file() {
+        let sample = definition(
+            "user.note",
+            json!({ "fields": { "a": { "type": "string" } } }),
+        );
+        let over = "a".repeat(1001);
+        let verdict = check(&[
+            sample.clone(),
+            file("user.note.MD", &over),
+            file("user.other.MD", &over),
+        ]);
+        assert_eq!(verdict.problem_count(), 0, "{verdict:?}");
+        assert_eq!(verdict.files.len(), 1);
+        let witness = check(&[sample, markdown("user.note", over)]);
+        assert_eq!(witness.problem_count(), 1);
+    }
+
+    #[test]
+    fn a_definition_with_a_markdown_file_is_judged_in_one_order() {
+        let named = |text: &str| {
+            definition(
+                "user.note",
+                json!({ "guidance": text, "fields": { "a": { "type": "string" } } }),
+            )
+        };
+        let code = |verdict: &FolderVerdict| {
+            let found = problems_of(verdict, "user.note.json");
+            assert_eq!(found.len(), 1, "{found:?}");
+            found[0].code
+        };
+        for sibling in [vec![], b" \n".to_vec(), b"Use it.".to_vec()] {
+            assert_eq!(
+                code(&check(&[named("x"), markdown("user.note", sibling)])),
+                "guidance_named_twice"
+            );
+        }
+        for sibling in [
+            vec![0xEF, 0xBB, 0xBF],
+            vec![0xEF, 0xBB, 0xBF, b'x'],
+            vec![0xE9],
+        ] {
+            assert_eq!(
+                code(&check(&[named("x"), markdown("user.note", sibling)])),
+                "guidance_file_unreadable"
+            );
+        }
+        let unread = TypeFile {
+            name: "user.note.md".into(),
+            content: Err("denied".into()),
+        };
+        assert_eq!(
+            code(&check(&[named("x"), unread])),
+            "guidance_file_unreadable"
+        );
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -275,39 +276,47 @@ pub fn run(
     }
 }
 
-fn guidance_path(file: &Path) -> Option<PathBuf> {
-    let name = guidance_file_name(file.file_name()?.to_str()?)?;
-    Some(file.with_file_name(name))
-}
-
-fn guidance_text(path: &Path) -> Result<Option<String>, CliError> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => {
-            return Err(CliError::Invalid(format!(
-                "cannot read {}: {error}",
-                path.display()
-            )));
-        }
+/// The Markdown file beside `file`: the entry of its folder named exactly `<stem>.md`, followed if it is a link.
+fn guidance_text(file: &Path) -> Result<Option<String>, CliError> {
+    let Some(name) = file
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(guidance_file_name)
+    else {
+        return Ok(None);
     };
+    let folder = file
+        .parent()
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let shown = folder.join(&name).display().to_string();
+    let found = folder_files(folder, |held| held == OsStr::new(&name))?;
+    let Some(sibling) = found.into_iter().next() else {
+        return Ok(None);
+    };
+    let refused = |why: String| {
+        CliError::Invalid(format!(
+            "cannot read {shown} as guidance (guidance_file_unreadable): {why}"
+        ))
+    };
+    let bytes = sibling.content.map_err(refused)?;
     read_guidance_file(&bytes)
         .map(Some)
-        .map_err(|fault| CliError::Invalid(fault.message(&path.display().to_string())))
+        .map_err(|fault| refused(fault.message(&shown)))
 }
 
 fn definition(body: &BodySource) -> Result<Value, CliError> {
     let mut definition = body.read()?;
-    let Some(path) = body.file.as_deref().and_then(guidance_path) else {
+    let Some(file) = body.file.as_deref() else {
         return Ok(definition);
     };
-    let (Some(text), Value::Object(held)) = (guidance_text(&path)?, &mut definition) else {
+    let (Some(text), Value::Object(held)) = (guidance_text(file)?, &mut definition) else {
         return Ok(definition);
     };
     if held.contains_key("guidance") {
         return Err(CliError::Invalid(format!(
-            "the definition names guidance and {} holds it too. Keep it in one place.",
-            path.display()
+            "the definition names guidance and the Markdown file beside {} holds it too (guidance_named_twice). Keep it in one place.",
+            file.display()
         )));
     }
     if !text.is_empty() {
@@ -582,27 +591,26 @@ fn scaffold(args: &ScaffoldArgs, out: &Printer) -> Result<(), CliError> {
     out.raw(&format!("{}\n", serde_json::to_string_pretty(&definition)?))
 }
 
-fn type_files(folder: &PathBuf) -> Result<Vec<TypeFile>, CliError> {
-    let entries = std::fs::read_dir(folder).map_err(|error| {
+/// The files of `folder` that `wanted` names, read as the folder check and `register --file` both read them: a link is followed, a folder or anything else that is not a regular file at a Markdown name is a file that cannot be read, and one at a definition's name is left alone.
+fn folder_files(folder: &Path, wanted: impl Fn(&OsStr) -> bool) -> Result<Vec<TypeFile>, CliError> {
+    let cannot = |error: std::io::Error| {
         CliError::Invalid(format!(
             "cannot read the folder {}: {error}",
             folder.display()
         ))
-    })?;
+    };
     let mut files = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|error| {
-            CliError::Invalid(format!(
-                "cannot read the folder {}: {error}",
-                folder.display()
-            ))
-        })?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if !is_type_file(&name) && !is_guidance_file(&name) {
+    for entry in std::fs::read_dir(folder).map_err(cannot)? {
+        let entry = entry.map_err(cannot)?;
+        if !wanted(&entry.file_name()) {
             continue;
         }
+        let name = entry.file_name().to_string_lossy().into_owned();
         let path = entry.path();
         let content = match std::fs::metadata(&path) {
+            Ok(held) if !held.is_file() && is_guidance_file(&name) => {
+                Err("it is not a regular file".to_string())
+            }
             Ok(held) if !held.is_file() => continue,
             Ok(_) => std::fs::read(&path).map_err(|error| error.to_string()),
             Err(error) => Err(error.to_string()),
@@ -610,6 +618,13 @@ fn type_files(folder: &PathBuf) -> Result<Vec<TypeFile>, CliError> {
         files.push(TypeFile { name, content });
     }
     Ok(files)
+}
+
+fn type_files(folder: &Path) -> Result<Vec<TypeFile>, CliError> {
+    folder_files(folder, |held| {
+        let name = held.to_string_lossy();
+        is_type_file(&name) || is_guidance_file(&name)
+    })
 }
 
 fn problem_json(problem: &Problem) -> Value {
@@ -694,6 +709,10 @@ fn verdict_words(answer: &Value) -> String {
     lines.join("\n")
 }
 
+fn no_definitions(folder: &Path) -> CliError {
+    CliError::Invalid(format!("no *.json files found in {}", folder.display()))
+}
+
 fn check(args: &CheckArgs, out: &Printer) -> Result<(), CliError> {
     let folder = &args.folder;
     match std::fs::metadata(folder) {
@@ -717,14 +736,15 @@ fn check(args: &CheckArgs, out: &Printer) -> Result<(), CliError> {
         &shipped_registry().map_err(marfa_core::CoreError::from)?,
     )
     .map_err(marfa_core::CoreError::from)?;
-    if verdict.files.is_empty() {
-        return Err(CliError::Invalid(format!(
-            "no *.json files found in {}",
-            folder.display()
-        )));
+    let found_definitions = files.iter().any(|file| is_type_file(&file.name));
+    if verdict.files.is_empty() && !found_definitions {
+        return Err(no_definitions(folder));
     }
     let answer = verdict_json(&verdict);
     out.report(&answer, verdict_words)?;
+    if !found_definitions {
+        return Err(no_definitions(folder));
+    }
     match count(&answer, "refused") {
         0 => Ok(()),
         refused => Err(CliError::Invalid(format!(
@@ -882,5 +902,72 @@ mod guidance_file_tests {
             Some("Use it. é 😀".as_bytes()),
         );
         assert_eq!(definition(&witness).unwrap()["guidance"], "Use it. é 😀");
+    }
+
+    fn named(dir: &std::path::Path, name: &str) -> BodySource {
+        let path = dir.join(name);
+        std::fs::write(&path, TYPE).unwrap();
+        BodySource {
+            file: Some(path),
+            body: None,
+        }
+    }
+
+    #[test]
+    fn a_markdown_name_that_differs_by_case_is_not_the_guidance_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let body = named(dir.path(), "user.note.json");
+        std::fs::write(dir.path().join("user.note.MD"), "Use it.").unwrap();
+        assert!(definition(&body).unwrap().get("guidance").is_none());
+        let witness = source(dir.path(), "user.other.json", TYPE, Some(b"Use it."));
+        assert_eq!(definition(&witness).unwrap()["guidance"], "Use it.");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_markdown_link_is_followed_and_a_dangling_one_or_a_folder_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        std::fs::write(elsewhere.path().join("text.md"), "Use it.").unwrap();
+        let body = named(dir.path(), "user.note.json");
+        let link = dir.path().join("user.note.md");
+        std::os::unix::fs::symlink(elsewhere.path().join("text.md"), &link).unwrap();
+        assert_eq!(definition(&body).unwrap()["guidance"], "Use it.");
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(elsewhere.path().join("missing.md"), &link).unwrap();
+        let refused = definition(&body).unwrap_err().to_string();
+        assert!(refused.contains("guidance_file_unreadable"), "{refused}");
+        std::fs::remove_file(&link).unwrap();
+        std::fs::create_dir(&link).unwrap();
+        let refused = definition(&body).unwrap_err().to_string();
+        assert!(refused.contains("guidance_file_unreadable"), "{refused}");
+        assert!(refused.contains("not a regular file"), "{refused}");
+    }
+
+    #[test]
+    fn an_unreadable_markdown_file_is_refused_before_the_definition_is_found_to_name_guidance() {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, bytes) in [
+            ("user.a.json", &b"\xEF\xBB\xBF"[..]),
+            ("user.b.json", &b"\xFF"[..]),
+        ] {
+            let path = dir.path().join(name);
+            std::fs::write(&path, r#"{"id": "user.x", "fields": {}, "guidance": "x"}"#).unwrap();
+            std::fs::write(path.with_extension("md"), bytes).unwrap();
+            let body = BodySource {
+                file: Some(path),
+                body: None,
+            };
+            let refused = definition(&body).unwrap_err().to_string();
+            assert!(refused.contains("guidance_file_unreadable"), "{refused}");
+        }
+        let empty = source(
+            dir.path(),
+            "user.c.json",
+            r#"{"id": "user.x", "fields": {}, "guidance": "x"}"#,
+            Some(b""),
+        );
+        let refused = definition(&empty).unwrap_err().to_string();
+        assert!(refused.contains("guidance_named_twice"), "{refused}");
     }
 }
