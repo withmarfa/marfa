@@ -151,6 +151,14 @@ fn confirm_address(aim: &Aim, details: Option<&Value>) -> String {
         "marfa config update" | "marfa config replace"
     ) {
         text.push_str("\nRun it again with --confirm-address-change to make the change.");
+    } else if aim.command == "marfa cloud link" {
+        text.push_str(
+            "\nRun it again with --confirm-address-change to move the sign-in address, or with --keep-sign-in-address to link without moving it.",
+        );
+    } else if aim.command == "marfa cloud unlink" {
+        text.push_str(
+            "\nRun it again with --confirm-address-change to put the sign-in address back and unlink.",
+        );
     } else {
         text.push_str(
             "\nSend `confirm_sign_in_address_change` set to true with the change to make it.",

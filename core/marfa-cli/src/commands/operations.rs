@@ -179,19 +179,17 @@ pub const OPERATIONS: &[Operation] = &[
     reached("renameSignIn", "sign-ins rename"),
     reached("endSignIn", "sign-ins end"),
     reached("createOwner", "setup claim"),
+    reached("startCloudLink", "cloud link"),
+    reached("getCloudLink", "cloud status"),
+    reached("unlinkCloud", "cloud unlink"),
 ];
 
 /// Published operations no command sends, each with why.
 #[cfg(test)]
-pub const NO_COMMAND: &[(&str, &str)] = &[
-    (
-        "authorizeApp",
-        "an app opens it in a person's browser; `login` signs in with a device code",
-    ),
-    ("startCloudLink", "`marfa cloud link` is not built yet"),
-    ("getCloudLink", "`marfa cloud status` is not built yet"),
-    ("unlinkCloud", "`marfa cloud unlink` is not built yet"),
-];
+pub const NO_COMMAND: &[(&str, &str)] = &[(
+    "authorizeApp",
+    "an app opens it in a person's browser; `login` signs in with a device code",
+)];
 
 pub fn run(out: &Printer) -> Result<(), CliError> {
     let rows: Vec<serde_json::Value> = OPERATIONS

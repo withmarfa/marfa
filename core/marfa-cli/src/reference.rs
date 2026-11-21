@@ -76,6 +76,10 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
     ("End one sign-in", &["sign-ins end"]),
     ("End every sign-in of a kind at once", &["sign-ins end-all"]),
     (
+        "Link the instance to Marfa Cloud, read the link and unlink",
+        &["cloud link", "cloud status", "cloud unlink"],
+    ),
+    (
         "List, narrow and revoke a connected app",
         &["apps list", "apps narrow", "apps revoke"],
     ),
