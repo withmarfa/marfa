@@ -314,13 +314,29 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // `ci/access-words.test.ts` holds the glossary's access words to the CLI's
   // and the server's.
   [/^GLOSSARY\.md$/, ["workspace"]],
+  // The rules crate embeds the icon sets, so every build of the core, the
+  // command line, the server and the image reads them.
+  [
+    /^core\/marfa-rules\/icons\/icon-set-[\w-]+\.json$/,
+    [
+      "workspace",
+      "conformance-offline",
+      "types-freshness",
+      "clients-freshness",
+      ...RUST,
+    ],
+  ],
+  // The folder holds the icon sets and nothing else, and the freshness job
+  // fails for a file it finds there. This comes before the Markdown rule so a
+  // note left in the folder reaches that job too.
+  [/^core\/marfa-rules\/icons\//, ["types-freshness"]],
   // Markdown anywhere else is read only by Prettier and the contract's
   // reference check, which `Quick checks` runs for every change, and a
   // package's README by the version check. A fixture is test input and a
   // generated tree is checked file by file, so those fall through to their
   // folder's rule.
   [
-    /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/types\/generated\/|packages\/client\/src\/generated\/).*\.md$/i,
+    /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/client\/src\/generated\/).*\.md$/i,
     [],
   ],
   // `ci/env-example.test.ts` holds it to the contract's settings table.
@@ -335,39 +351,23 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^deploy\/Dockerfile$/, ["workspace", "image"]],
   [/^deploy\//, []],
 
-  // The rules crate embeds the icon sets, so every build of the core, the
-  // command line, the server and the image reads them.
-  [
-    /^packages\/types\/generated\/icon-set-[\w-]+\.json$/,
-    [
-      "workspace",
-      "conformance-offline",
-      "types-freshness",
-      "clients-freshness",
-      ...RUST,
-    ],
-  ],
   // The rules crate's tests read each shipped definition and hold it to the
-  // rules for a registered type.
+  // rules for a registered type, the offline lane reads them too, and they are
+  // part of the crate the cached servers are keyed on.
   [
-    /^packages\/types\/core\/.*\.json$/,
+    /^core\/marfa-rules\/types\/.*\.json$/,
     [
       "workspace",
-      "conformance-offline",
       "types-freshness",
       "clients-freshness",
-      "core-checks-linux",
+      "core",
+      ...RUST_LINUX,
     ],
   ],
-  // The core's catalog is written from the shipped types.
+  // The shapes' digest, which the rules crate's tests hold to the definitions.
   [
-    /^packages\/types\//,
-    [
-      "workspace",
-      "conformance-offline",
-      "types-freshness",
-      "clients-freshness",
-    ],
+    /^core\/marfa-rules\/types\/shipped-shapes\.sha256$/,
+    ["types-freshness", "core", ...RUST_LINUX],
   ],
   [/^packages\/client\//, ["workspace", "clients-freshness"]],
 
@@ -726,10 +726,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The release builds the programs with it, and the image job runs it.
   [/^scripts\/release\/build-programs\.sh$/, ["workspace", "image"]],
   [/^ci\//, ["workspace"]],
-  [
-    /^scripts\/generate-core-(contract|catalog)\.ts$/,
-    ["workspace", "clients-freshness"],
-  ],
+  [/^scripts\/generate-core-contract\.ts$/, ["workspace", "clients-freshness"]],
   // The icon sets' writer and the pins it checks each download against.
   [/^scripts\/icon-sets(\.test)?\.(sh|txt)$/, ["workspace", "types-freshness"]],
   [/^scripts\//, ["workspace"]],
@@ -783,7 +780,7 @@ const LINT_SETTINGS =
  * from the import graph and fails when this list is not exactly them.
  */
 const LINT_IMPORTED =
-  /^(conformance\/(vitest\.config\.ts|scripts\/(catalogue-sources|mcp-conformance)\.ts|src\/utils\/(catalogue-tables|rust-score|shard-sequencer|shard-weights|target|temp-folder)\.ts)|packages\/client\/src\/generated\/.+|packages\/types\/generated\/icon-set-[\w-]+\.json)$/;
+  /^(conformance\/(vitest\.config\.ts|scripts\/(catalogue-sources|mcp-conformance)\.ts|src\/utils\/(catalogue-tables|rust-score|shard-sequencer|shard-weights|target|temp-folder)\.ts)|packages\/client\/src\/generated\/.+)$/;
 
 /** Whether a change to the path can change what `Lint` reports. */
 function lintReads(path: string): boolean {

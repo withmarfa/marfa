@@ -6,7 +6,7 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 pins="${ICON_SET_PINS:-${root}/scripts/icon-sets.txt}"
 registry="${ICON_SET_REGISTRY:-https://registry.npmjs.org}"
-out="${1:-${root}/packages/types/generated}"
+out="${1:-${root}/core/marfa-rules/icons}"
 prefixes="${ICON_SET_PREFIXES:-lucide simple-icons}"
 
 proto='=https'

@@ -64,9 +64,9 @@ These rules add to the root `AGENTS.md` for work under `core/`. Under `core/marf
 
 ## The shipped catalog
 
-- `marfa-rules/src/builtin_catalog.json` and `packages/types/shipped-shapes.sha256` are written by the rules crate from the definitions in `packages/types/core`; never edit them. After changing a definition, or a rule that judges one, regenerate both with `MARFA_WRITE_CATALOG=1 cargo nextest run -p marfa-rules builtin::catalog_file` and commit. Without the variable the same tests fail when a file differs.
+- `marfa-rules/types/` holds the shipped type definitions, and `marfa-rules/types/README.md` says how to write one. The rules crate writes `marfa-rules/src/builtin_catalog.json` and `marfa-rules/types/shipped-shapes.sha256` from them; never edit either. After changing a definition, or a rule that judges one, regenerate both with `MARFA_WRITE_CATALOG=1 cargo nextest run -p marfa-rules builtin::catalog_file` and commit. Without the variable the same tests fail when a file differs.
 - The lists the catalog carries (field types, reserved names and the rest) are constants in `marfa-rules/src/builtin.rs`, which the rules read and the catalog is written from.
-- `packages/types/generated/icon-set-*.json` are written by `scripts/icon-sets.sh` from the Iconify releases pinned, with their integrity hashes, in `scripts/icon-sets.txt`. The script checks each download against its hash and runs `marfa-rules/examples/icon_set.rs`.
+- `marfa-rules/icons/icon-set-*.json` are written by `scripts/icon-sets.sh` from the Iconify releases pinned, with their integrity hashes, in `scripts/icon-sets.txt`. The script checks each download against its hash and runs `marfa-rules/examples/icon_set.rs`.
 
 ## Bindings
 

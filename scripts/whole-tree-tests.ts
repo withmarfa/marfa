@@ -24,8 +24,6 @@ export const ROOT_FILTERS: readonly string[] = [
   "packages/client/src/client.test.ts",
   // Builds the package and loads it as a consumer would, through its manifest.
   "packages/client/scripts/packaging.test.ts",
-  // The schema and registry files under `packages/types/`, read from disk.
-  "packages/types/src/",
   // Everything under `ci/` checks the workflows and manifests, not a package.
   "ci/",
 ];

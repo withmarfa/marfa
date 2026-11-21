@@ -87,7 +87,7 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
     "generated from openapi.json, with the same descriptions",
   ],
   [
-    "packages/types/generated/icon-set-simple-icons.json",
+    "core/marfa-rules/icons/icon-set-simple-icons.json",
     "a brand icon an item can show, which is not telemetry",
   ],
 ];
@@ -185,7 +185,7 @@ describe("product code names no vendor outside its allowlist", () => {
     // The witness: the scan finds the vendor where it is allowed.
     expect(found).toContain("core/marfa-server/src/telemetry/sinks.rs");
     expect(found).toContain(
-      "packages/types/generated/icon-set-simple-icons.json",
+      "core/marfa-rules/icons/icon-set-simple-icons.json",
     );
   });
 

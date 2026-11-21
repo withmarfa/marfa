@@ -1,18 +1,13 @@
 /**
  * The rows of the contract's catalogues, read from where the server keeps
- * them: the shipped type and edge type definitions in `@withmarfa/types`, and
- * the permission list, the event names in the webhook vocabulary and the
- * stream's frame schema in `openapi.json`, the document the server is held to. Like the repository's other generators, this reads
- * files by path; nothing under `src/suites/` may.
+ * them: the shipped type and edge type definitions in the rules crate's
+ * `builtin_catalog.json`, and the permission list, the event names in the
+ * webhook vocabulary and the stream's frame schema in `openapi.json`, the
+ * document the server is held to. Like the repository's other generators, this
+ * reads files by path; nothing under `src/suites/` may.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import {
-  ALL_EDGE_TYPES,
-  ALL_SYSTEM_TYPES,
-  ALL_TYPES,
-  type TypeSchema,
-} from "../../packages/types/src/index.js";
 import {
   edgeTypesTable,
   eventTypesTable,
@@ -25,6 +20,44 @@ import {
 } from "../src/utils/catalogue-tables.js";
 
 const OPENAPI = fileURLToPath(new URL("../../openapi.json", import.meta.url));
+const CATALOG = fileURLToPath(
+  new URL("../../core/marfa-rules/src/builtin_catalog.json", import.meta.url),
+);
+
+/** What the rows below take from a shipped type in the catalog. */
+export interface TypeSchema {
+  id: string;
+  parent?: string;
+  description?: string;
+  fields: Record<string, { required?: boolean }>;
+}
+
+/** What the rows below take from a shipped edge type in the catalog. */
+export interface EdgeTypeSchema {
+  id: string;
+  label: string;
+  reverse_label?: string;
+  reverse_name?: string;
+  cardinality: string;
+  cascade_on_delete: string;
+  from_type_constraints: string[];
+  to_type_constraints: string[];
+}
+
+/** The shipped types and edge types, in the order the catalog lists them. */
+export function shippedCatalog(): {
+  types: TypeSchema[];
+  edgeTypes: EdgeTypeSchema[];
+} {
+  const catalog = JSON.parse(readFileSync(CATALOG, "utf8")) as {
+    types?: TypeSchema[];
+    edge_types?: EdgeTypeSchema[];
+  };
+  if (!catalog.types?.length || !catalog.edge_types?.length) {
+    throw new Error("builtin_catalog.json lists no shipped type or edge type");
+  }
+  return { types: catalog.types, edgeTypes: catalog.edge_types };
+}
 
 /** The required properties of a type, its ancestors' first. */
 function requiredOf(
@@ -50,9 +83,10 @@ function requiredOf(
 }
 
 export function typeRows(): TypeRow[] {
-  const shipped = new Map(
-    [...ALL_TYPES, ...ALL_SYSTEM_TYPES].map((schema) => [schema.id, schema]),
-  );
+  const all = shippedCatalog().types;
+  const shipped = new Map(all.map((schema) => [schema.id, schema]));
+  const system = all.filter((schema) => schema.id.startsWith("system."));
+  const core = all.filter((schema) => !schema.id.startsWith("system."));
   const rows = (
     schemas: readonly TypeSchema[],
     family: TypeRow["family"],
@@ -66,11 +100,11 @@ export function typeRows(): TypeRow[] {
         ? {}
         : { description: schema.description }),
     }));
-  return [...rows(ALL_TYPES, "core"), ...rows(ALL_SYSTEM_TYPES, "system")];
+  return [...rows(core, "core"), ...rows(system, "system")];
 }
 
 export function edgeTypeRows(): EdgeTypeRow[] {
-  return ALL_EDGE_TYPES.map((schema) => ({
+  return shippedCatalog().edgeTypes.map((schema) => ({
     id: schema.id,
     label: schema.label,
     reverseLabel: schema.reverse_label ?? schema.label,

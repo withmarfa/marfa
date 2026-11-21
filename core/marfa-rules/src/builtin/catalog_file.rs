@@ -39,7 +39,7 @@ const LARGEST_WHOLE: f64 = 9_007_199_254_740_991.0;
 pub(super) type Source = (String, Obj);
 
 pub(super) fn definitions() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/types/core")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("types")
 }
 
 pub(super) fn catalog_path() -> PathBuf {
@@ -47,7 +47,7 @@ pub(super) fn catalog_path() -> PathBuf {
 }
 
 pub(super) fn digest_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/types/shipped-shapes.sha256")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("types/shipped-shapes.sha256")
 }
 
 /// Holds each number as JavaScript would read it: a whole number up to 2^53 stays whole, and a larger one is the double JavaScript reads it as.
@@ -197,8 +197,20 @@ pub(super) fn register_types(types: &[Source]) -> Result<Vec<Registered>, Vec<St
     let mut registry = Registry::default();
     let mut refused: Vec<String> = Vec::new();
     let mut held: HashMap<String, Registered> = HashMap::new();
+    let ids: BTreeSet<&str> = types
+        .iter()
+        .filter_map(|(_, row)| row.get("id").and_then(Value::as_str))
+        .collect();
     for (file, row) in ordered {
         let id = id_of(file, row).map_err(|e| vec![e])?;
+        if let Some(parent) = row.get("parent").and_then(Value::as_str)
+            && !ids.contains(parent)
+        {
+            refused.push(format!(
+                "{file}: {id}: parent: {parent} is not a shipped type"
+            ));
+            continue;
+        }
         let stored =
             match validate_type(&Value::Object(row.clone()), &registry) {
                 Ok(stored) => stored,
@@ -264,6 +276,17 @@ pub(super) fn register_types(types: &[Source]) -> Result<Vec<Registered>, Vec<St
     Ok(held.into_values().collect())
 }
 
+/// A lowercase word, or words joined by single hyphens, that starts with a letter.
+fn is_kebab_word(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name.split('-').all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+}
+
 pub(super) fn register_edges(edges: &[Source]) -> Result<Vec<Obj>, Vec<String>> {
     let mut refused: Vec<String> = Vec::new();
     let mut found: Vec<Obj> = Vec::new();
@@ -287,6 +310,33 @@ pub(super) fn register_edges(edges: &[Source]) -> Result<Vec<Obj>, Vec<String>> 
         }
         if !edge_id(&id) {
             problems.push("not an edge type identifier".into());
+        } else if !is_kebab_word(&id) {
+            problems.push("a shipped edge type is one lowercase kebab word".into());
+        }
+        for key in ["label", "reverse_label"] {
+            if !row
+                .get(key)
+                .and_then(Value::as_str)
+                .is_some_and(|text| !text.trim().is_empty())
+            {
+                problems.push(format!("{key}: a shipped edge type names its {key}"));
+            }
+        }
+        if let Some(reverse) = row.get("reverse_name").and_then(Value::as_str)
+            && !is_kebab_word(reverse)
+        {
+            problems.push(format!(
+                "reverse_name: \"{reverse}\" is not one lowercase kebab word"
+            ));
+        }
+        for side in ["from_type_constraints", "to_type_constraints"] {
+            if row
+                .get(side)
+                .and_then(Value::as_array)
+                .is_some_and(Vec::is_empty)
+            {
+                problems.push(format!("{side} is empty. Use [\"*\"] to allow every type."));
+            }
         }
         let taken = |name: &str| {
             found.iter().find_map(|edge| {
@@ -560,8 +610,14 @@ pub(super) struct Written {
 
 pub(super) fn write(root: &Path) -> Result<Written, Vec<String>> {
     let (type_sources, edge_sources) = shipped_sources(root).map_err(|e| vec![e])?;
-    let types = register_types(&type_sources)?;
-    let edges = register_edges(&edge_sources)?;
+    let (types, edges) = match (register_types(&type_sources), register_edges(&edge_sources)) {
+        (Ok(types), Ok(edges)) => (types, edges),
+        (types, edges) => {
+            let mut refused = types.err().unwrap_or_default();
+            refused.extend(edges.err().unwrap_or_default());
+            return Err(refused);
+        }
+    };
     let tables: HashMap<String, Value> = type_sources
         .iter()
         .filter_map(|(_, row)| {
@@ -820,6 +876,23 @@ mod tests {
             refused.contains("note.json: core.note: fields.body"),
             "{refused}"
         );
+    }
+
+    #[test]
+    fn a_bad_item_type_and_a_bad_edge_type_are_both_named_with_every_fault() {
+        let copy = Copy::new();
+        copy.edit("note.json", |row| {
+            row["fields"]["body"]["type"] = Value::String("no-such-kind".into());
+        });
+        copy.edit("edges/about.json", |row| {
+            row["cardinality"] = Value::String("sideways".into());
+        });
+        let refused = write(&copy.0).err().unwrap().join("\n");
+        assert!(
+            refused.contains("note.json: core.note: fields.body"),
+            "{refused}"
+        );
+        assert!(refused.contains("about.json: about:"), "{refused}");
     }
 
     #[test]
