@@ -912,7 +912,10 @@ async function linkedOnCloudFirst(label: string): Promise<{
 async function endedByCloud(linkable: Linkable): Promise<any> {
   linkable.cloud.forget();
   await linkable.server.advanceClock(61 * 60_000);
-  return linkable.until("the link to be ended", (s) => s.state === "not_linked");
+  return linkable.until(
+    "the link to be ended",
+    (s) => s.state === "not_linked",
+  );
 }
 
 async function opens(linkable: Linkable, cookie: string): Promise<number> {
@@ -1347,7 +1350,10 @@ describe("unlinking", () => {
         await gate(linkable.server.apiUrl),
         await gate(linkable.server.apiUrl),
       ];
-      cleanups.push(() => first.close(), () => other.close());
+      cleanups.push(
+        () => first.close(),
+        () => other.close(),
+      );
       first.open();
       other.open();
       await setSignIn(linkable, first.address);
@@ -1490,9 +1496,8 @@ describe("a link ended on Marfa Cloud", () => {
   it(
     "puts back an address left in addresses on an end by Marfa Cloud where the link found the sign-in address already at its Cloud address",
     async () => {
-      const { linkable, other, linked } = await linkedOnCloudFirst(
-        "cloud-ended-found",
-      );
+      const { linkable, other, linked } =
+        await linkedOnCloudFirst("cloud-ended-found");
       const ended = await endedByCloud(linkable);
       expect(ended.ended).toMatchObject({ reason: "unlinked_by_service" });
       expect(ended).not.toHaveProperty("sign_in_address");

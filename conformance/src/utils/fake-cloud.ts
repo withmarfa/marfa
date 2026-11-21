@@ -334,7 +334,12 @@ export async function fakeCloud(
     if (nextUse !== null) {
       const { status, code } = nextUse;
       nextUse = null;
-      return error(response, status, code, "The fake Cloud was told to refuse this use.");
+      return error(
+        response,
+        status,
+        code,
+        "The fake Cloud was told to refuse this use.",
+      );
     }
     const link = byCredential(request.authorization);
     if (link === undefined) {
@@ -425,8 +430,7 @@ export async function fakeCloud(
     slowDown: (to) => control.slow_down!({ interval: to }),
     loseNextApproved: () => control.lose_next_approved!(null),
     forget: () => control.forget!(null),
-    answerNextUse: (status, code) =>
-      control.answer_next_use!({ status, code }),
+    answerNextUse: (status, code) => control.answer_next_use!({ status, code }),
     failCancels: () => control.fail_cancels!(null),
     down: () => control.down!(null),
     up: () => control.up!(null),
