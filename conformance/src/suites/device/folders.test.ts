@@ -1750,7 +1750,7 @@ describe("what a folder's query holds", () => {
 
 describe("a query naming no type", () => {
   it("takes every type, and any default type, where its query names no type or the star", async () => {
-    // The star is every type but `system.*`, so a folder naming it holds,
+    // The star excludes hidden types, so a folder naming it holds,
     // writes and takes exactly what a folder naming no type does.
     for (const query of [{}, { types: ["*"] }, { types: [" * "] }]) {
       const system = "01a00000-0000-7000-8000-0000000002c1";

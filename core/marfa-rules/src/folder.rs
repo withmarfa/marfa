@@ -133,7 +133,7 @@ pub fn is_system(type_id: &str) -> bool {
     type_id.starts_with("system.")
 }
 
-/// A type every read leaves out unless asked: `system.*` and `app.*`.
+/// The server and app namespaces that ordinary item listings omit.
 pub fn is_hidden(type_id: &str) -> bool {
     is_system(type_id) || type_id.starts_with("app.")
 }

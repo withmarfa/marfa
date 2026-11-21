@@ -36,7 +36,7 @@ function listings(h: Harness): string[] {
 }
 
 describe("a slice of every type", () => {
-  it("hydrates every type but system.* from the listing naming no type", async () => {
+  it("hydrates a visible type and omits a system type from the listing naming no type", async () => {
     harness = await startHarness("every-type");
     const { server, device } = harness;
     scriptHydration(server, { head: "10", items: ROWS });
@@ -77,7 +77,7 @@ describe("a slice of every type", () => {
     ).toBe(true);
   });
 
-  it("refuses the star beside a type that is not a system type before any request, and takes it said twice", async () => {
+  it("refuses the star beside a visible type before any request, and takes it said twice", async () => {
     harness = await startHarness("every-type-mixed");
     const { server, device } = harness;
     scriptHydration(server, { head: "10", items: ROWS });
@@ -174,7 +174,7 @@ describe("a slice of every type", () => {
     ).toBe("changed");
   });
 
-  it("counts every type but system.* as the items expected, and leaves the count out where the server gave none", async () => {
+  it("omits system items from the expected count, and leaves the count out where the server gave none", async () => {
     harness = await startHarness("every-type-expected");
     const { server, device } = harness;
     scriptHydration(server, {
