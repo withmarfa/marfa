@@ -1,6 +1,6 @@
 # Archives
 
-An archive is the tar file that `GET /export?format=archive` writes and `POST /restore` reads. The statements on archives describe archive version 2 (`archive/archive-version`), and a restore reads version 1 as `archive/restore-version-one` says. An archive that holds a new entry, a new line file or a new field that a restore must read is a later version, because a restore skips an entry, a field or a line kind it does not know (`archive/restore-unread-entry`, `archive/restore-unknown-field`, `archive/restore-unknown-line-kind`) and an older build would restore such an archive without it.
+An archive is the tar file that `GET /export?format=archive` writes and `POST /restore` reads. The statements on archives describe archive version 3 (`archive/archive-version`), and a restore reads version 1 and version 2 as `archive/restore-version-one` and `archive/restore-version-two` say. An archive that holds a new entry, a new line file or a new field that a restore must read is a later version, because a restore skips an entry, a field or a line kind it does not know (`archive/restore-unread-entry`, `archive/restore-unknown-field`, `archive/restore-unknown-line-kind`) and an older build would restore such an archive without it.
 
 ## What an archive is
 
@@ -14,7 +14,7 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 ### `archive/archive-version`
 
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 2.
+When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 3.
 
 **Reason:** the version is the one marker of the archive's layout, and a restore reads every version up to its own build's and refuses a later one (`archive/restore-version`). A field or a line kind added within a version is optional to a reader of that version (`archive/archive-version-additions`): a restore skips a field it does not read and a line kind it does not know, and names the kind (`archive/restore-unknown-field`, `archive/restore-unknown-line-kind`). An archive with a new entry, line file or field that a restore must read is a new version, because an older build would skip what it does not know.
 
@@ -1058,6 +1058,14 @@ When `POST /restore` reads an archive at version 1, the server MUST read its man
 
 **Tests:** `compliance/plugins.test.ts › restores a version 1 archive whose type names the origin user as registered`.
 
+### `archive/restore-version-two`
+
+When `POST /restore` reads an archive at version 2, the server MUST read its manifest without `connector_setting_count`.
+
+**Reason:** version 2 carried no setting of a plugin's connector, so a backup taken before version 3 still restores.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses a version 3 manifest that leaves out or mistypes connector_setting_count, and restores a version 2 archive without it`.
+
 ### `archive/restore-type-origin`
 
 If `POST /restore` reads an archive at version 2 with a `type` line whose `provenance.origin` is missing, is not text, is neither `registered` nor `plugin`, or is `plugin` without a `provenance.plugin` naming a plugin `name` and `version`, whose `provenance.plugin` is not `null` while `provenance.origin` is `registered`, or whose `provenance.created_by` is missing or is neither `null` nor a sign-in's `kind` (`browser`, `app`, `key` or `local`), `id` and `name`, then the server MUST answer `400 validation_error` and register no type of the archive.
@@ -1114,6 +1122,44 @@ When `POST /restore` registers a `type` line whose `provenance.origin` is `plugi
 
 **Tests:** `compliance/plugins.test.ts › keeps plugin provenance and the install record through an export and a restore`.
 
+### `archive/archive-connector-setting`
+
+When the credential requesting `GET /export?format=archive` holds `connectors.manage`, the server MUST carry in `instance.ndjson.gz` one `connector_setting` line holding the `plugin`, the setting's `name` and its `value` for each value set for a setting of a plugin's connector that is not secret, counted in the manifest's `connector_setting_count`.
+
+**Reason:** the owner's settings are work a move to a new machine keeps.
+
+**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`.
+
+### `archive/archive-connector-secret-named`
+
+When the credential requesting `GET /export?format=archive` holds `connectors.manage`, the server MUST carry in `instance.ndjson.gz` one `connector_setting` line holding the `plugin`, the setting's `name` and `secret` `true`, and no `value`, for each secret setting of a plugin's connector that holds a stored value, counted in the manifest's `connector_setting_count`.
+
+**Reason:** an archive leaves the machine, and the key that seals a secret never does, so the line says only that the secret was set, for a restore to report (`archive/restore-connector-secrets-to-set`).
+
+**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`, `› is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds a connector's secret, where a setting that is no secret is shown`.
+
+### `archive/archive-connector-setting-withheld`
+
+If the credential requesting `GET /export?format=archive` lacks `connectors.manage`, then the server MUST carry no `connector_setting` line.
+
+**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`.
+
+### `archive/restore-connector-settings`
+
+When `POST /restore` keeps the install record of a plugin with a connector that the instance had no record of, the server MUST store each value a `connector_setting` line for that plugin gives a setting its connector declares, is not secret and fits its `kind` and `choices`.
+
+**Reason:** a plugin the instance already held keeps the settings its owner set there, as a restore keeps each instance setting the instance holds (`archive/restore-settings`).
+
+**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`.
+
+### `archive/restore-connector-secrets-to-set`
+
+When `POST /restore` keeps the install record of a plugin with a connector that the instance had no record of, and reads a `connector_setting` line for that plugin naming a secret setting its connector declares, the server MUST answer an entry in `connector_secrets_to_set` holding the `plugin` and the setting's `name`, and keep the setting as one the server cannot open.
+
+**Reason:** the owner learns from the restore's answer which of a connector's secrets to set again on this machine, and the attention list keeps saying so until they are (`plugins/attention-secret-to-set`).
+
+**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`.
+
 ### `archive/archive-version-additions`
 
 When a restore reads an archive that lacks a field or a line kind added to the archive's version after the first build that wrote that version, the server MUST restore the archive without it.
@@ -1124,11 +1170,11 @@ When a restore reads an archive that lacks a field or a line kind added to the a
 
 ### `archive/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` or, at version 2, `plugin_count` and `app_vendor_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
+If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` or, from version 2, `plugin_count` and `app_vendor_count`, or, from version 3, `connector_setting_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
 
 **Reason:** a later version is free to lay out its fields differently, so a manifest naming one is refused for its version (`archive/restore-version`) and not its shape.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses a manifest missing or mistyping a field the restore reads, naming the field, and writes nothing`, `compliance/app-vendors.test.ts › refuses a version 2 manifest that leaves out, mistypes or miscounts app_vendor_count`.
+**Tests:** `compliance/restore-archive.test.ts › refuses a manifest missing or mistyping a field the restore reads, naming the field, and writes nothing`, `compliance/app-vendors.test.ts › refuses a version 2 manifest that leaves out, mistypes or miscounts app_vendor_count`, `compliance/connector-settings.test.ts › refuses a version 3 manifest that leaves out or mistypes connector_setting_count, and restores a version 2 archive without it`.
 
 ### `archive/restore-manifest-created`
 

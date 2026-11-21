@@ -624,6 +624,150 @@ If `PUT /plugins/{name}/connector` names no `host`, or a `host` that is neither 
 
 **Tests:** `compliance/connector-hosts.test.ts › refuses 404 assigning a plugin with no connector or a host that does not exist`.
 
+## A connector's settings
+
+Each setting a plugin's connector section declares holds the value the owner sets, or its `default` while none is set. A secret setting's value is sealed, never answered to the owner, and read only by the connector's own key (`connectors/settings-read`).
+
+`GET /plugins/{name}/connector/settings` judges the caller's permission, the plugin, then its connector. `PATCH /plugins/{name}/connector/settings` judges the caller's permission, the body, the plugin, its connector, then each setting the body names.
+
+### `plugins/settings-list`
+
+When a caller holding `connectors.manage` sends `GET /plugins/{name}/connector/settings` for a plugin with a connector, the server MUST answer `200` with `plugin`, `settings` holding an entry for each setting the connector declares, in the order it declares them, with its `name`, `label`, `kind`, `choices`, `secret`, `required`, `default`, `value`, `set` and `unreadable`, and `missing`.
+
+**Tests:** `compliance/connector-settings.test.ts › lists each declared setting with its default, sets values of each kind, clears one with null, and names a required setting with no value as missing`.
+
+### `plugins/settings-value`
+
+When the server answers a setting of a plugin's connector that is not secret, the server MUST answer `value` as the value set for it, or its `default` while none is set, and `set` saying whether a value is set.
+
+**Tests:** `compliance/connector-settings.test.ts › lists each declared setting with its default, sets values of each kind, clears one with null, and names a required setting with no value as missing`.
+
+### `plugins/settings-secret-listed`
+
+When the server answers a secret setting of a plugin's connector to `GET /plugins/{name}/connector/settings` or `PATCH /plugins/{name}/connector/settings`, the server MUST answer `value` and `default` as `null`, and `set` saying whether a value the server can open is set.
+
+**Tests:** `compliance/connector-settings.test.ts › lists each declared setting with its default, sets values of each kind, clears one with null, and names a required setting with no value as missing`.
+
+### `plugins/settings-missing`
+
+When the server answers the settings of a plugin's connector, the server MUST answer `missing` naming each setting whose `required` is `true` that has no value set it can read and no `default`, in the order the connector declares them.
+
+**Reason:** a connector told a required setting is missing says so to its owner rather than run without it.
+
+**Tests:** `compliance/connector-settings.test.ts › lists each declared setting with its default, sets values of each kind, clears one with null, and names a required setting with no value as missing`.
+
+### `plugins/settings-set`
+
+When a caller holding `connectors.manage` sends `PATCH /plugins/{name}/connector/settings` with an object whose keys name settings the plugin's connector declares, the server MUST store each value the object gives and answer `200` as `plugins/settings-list` says.
+
+**Tests:** `compliance/connector-settings.test.ts › lists each declared setting with its default, sets values of each kind, clears one with null, and names a required setting with no value as missing`.
+
+### `plugins/settings-clear`
+
+When `PATCH /plugins/{name}/connector/settings` gives `null` for a setting, the server MUST remove the value set for it, so that the setting answers `set` `false`, whether or not it is required.
+
+**Tests:** `compliance/connector-settings.test.ts › lists each declared setting with its default, sets values of each kind, clears one with null, and names a required setting with no value as missing`.
+
+### `plugins/settings-unknown`
+
+If `PATCH /plugins/{name}/connector/settings` names a setting the plugin's connector does not declare, then the server MUST answer `400 validation_error` with `details.errors` holding an entry whose `path` is each such name.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses 400 validation_error an unknown setting, a value of another kind, a choice outside its choices and a padded secret, naming each setting and storing nothing`.
+
+### `plugins/settings-kind`
+
+If `PATCH /plugins/{name}/connector/settings` gives a setting a value other than `null` that does not fit its `kind`, being for `text` other than text of 1 to 4096 characters, for `number` other than a number, for `boolean` other than `true` or `false`, and for `choice` other than one of its `choices`, then the server MUST answer `400 validation_error` with `details.errors` holding an entry whose `path` is the setting's name.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses 400 validation_error an unknown setting, a value of another kind, a choice outside its choices and a padded secret, naming each setting and storing nothing`.
+
+### `plugins/settings-secret-padded`
+
+If `PATCH /plugins/{name}/connector/settings` gives a secret setting text with Unicode `White_Space` at either end, then the server MUST answer `400 validation_error` with `details.errors` holding an entry whose `path` is the setting's name.
+
+**Reason:** a secret is used as written, so white space a paste carried would make it fail at the service, far from where it was set.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses 400 validation_error an unknown setting, a value of another kind, a choice outside its choices and a padded secret, naming each setting and storing nothing`.
+
+### `plugins/settings-body`
+
+If `PATCH /plugins/{name}/connector/settings` sends a body that is not a JSON object, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses 400 validation_error an unknown setting, a value of another kind, a choice outside its choices and a padded secret, naming each setting and storing nothing`.
+
+### `plugins/settings-refused-nothing`
+
+If the server refuses `PATCH /plugins/{name}/connector/settings`, then the server MUST store none of the values the body gives.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses 400 validation_error an unknown setting, a value of another kind, a choice outside its choices and a padded secret, naming each setting and storing nothing`.
+
+### `plugins/settings-permission`
+
+If a caller without `connectors.manage` sends `GET /plugins/{name}/connector/settings` or `PATCH /plugins/{name}/connector/settings`, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage`.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses 403 the settings doors to a key without connectors.manage, and 404 a plugin not installed or with no connector`.
+
+### `plugins/settings-no-plugin`
+
+If a caller sends `GET /plugins/{name}/connector/settings` or `PATCH /plugins/{name}/connector/settings` for a plugin that is not installed, then the server MUST answer `404 plugin_not_found`.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses 403 the settings doors to a key without connectors.manage, and 404 a plugin not installed or with no connector`.
+
+### `plugins/settings-no-connector`
+
+If a caller sends `GET /plugins/{name}/connector/settings` or `PATCH /plugins/{name}/connector/settings` for an installed plugin with no connector, then the server MUST answer `404 connector_not_found` with `details.plugin`.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses 403 the settings doors to a key without connectors.manage, and 404 a plugin not installed or with no connector`.
+
+### `plugins/settings-audited`
+
+When the server stores a `PATCH /plugins/{name}/connector/settings` that names a setting, the server MUST record one `connector.settings_change` audit entry against the plugin's name whose `details.settings` names each setting the write set or cleared.
+
+**Tests:** `compliance/connector-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds a connector's secret, where a setting that is no secret is shown`.
+
+### `plugins/settings-update-keeps`
+
+When `POST /plugins` updates a plugin with a connector, the server MUST keep the value set for each setting the newer version declares with the same `kind` and `secret` and, for a `choice`, among its `choices`, and remove every other value set.
+
+**Reason:** a value kept under a setting that changed its kind or secrecy would reach the connector as something it no longer is.
+
+**Tests:** `compliance/connector-settings.test.ts › keeps through a newer version each value whose setting keeps its kind and secrecy, and drops the rest`.
+
+### `plugins/settings-removed`
+
+When the server removes a plugin with a connector, the server MUST remove every value set for its connector's settings in the same write, so that the plugin installed again answers each setting `set` `false`.
+
+**Tests:** `compliance/connector-settings.test.ts › removes every setting and secret with the plugin, so the plugin installed again starts with none`.
+
+## A connector's secrets
+
+### `plugins/secret-sealed`
+
+The server MUST NOT write the value of a secret setting of a plugin's connector into its database file other than sealed with the settings key it keeps in `marfa.settings.key` beside the database.
+
+**Tests:** `compliance/connector-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds a connector's secret, where a setting that is no secret is shown`.
+
+### `plugins/secret-bound`
+
+If the value stored for a secret setting of a plugin's connector was sealed for another setting, for another plugin's connector, or for the connector of an earlier install of the plugin, then the server MUST answer the setting with `set` `false` and `unreadable` `true`.
+
+**Reason:** a sealed value is bound to the setting it was set for and to the one install of the connector, so a copy of the database edited by hand cannot move a secret to a connector the owner did not give it to.
+
+**Tests:** `compliance/connector-settings.test.ts › does not open a sealed value copied to another setting's row or to another plugin's connector`.
+
+### `plugins/secret-unreadable`
+
+If the server cannot open the value stored for a secret setting of a plugin's connector with its settings key, then the server MUST answer the setting's entry in `GET /plugins/{name}/connector/settings` with `set` `false` and `unreadable` `true`.
+
+**Reason:** the value came from another machine, or the key was lost, and a secret the server cannot read is never reported as set. The row stays, so a key put back opens it again.
+
+**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`, `› does not open a sealed value copied to another setting's row or to another plugin's connector`.
+
+### `plugins/attention-secret-to-set`
+
+While a secret setting of a plugin's connector holds a stored value the server cannot open, when `GET /attention` completes its checks, the server MUST include one entry of kind `setting` whose `reference` is the plugin's name, `/`, and the setting's name.
+
+**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`.
+
 ## Removing a host
 
 ### `plugins/host-remove`

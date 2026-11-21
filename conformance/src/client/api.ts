@@ -704,6 +704,33 @@ export class MarfaClient {
     );
   }
 
+  async getConnectorSettings(
+    plugin: string,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(
+      `/plugins/${plugin}/connector/settings`,
+    );
+  }
+
+  async setConnectorSettings(
+    plugin: string,
+    body: unknown,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(
+      `/plugins/${plugin}/connector/settings`,
+      { method: "PATCH", body: body as object },
+    );
+  }
+
+  /** The settings a plugin's connector reads, its secrets opened, by its registration. */
+  async readOwnConnectorSettings(
+    registration: string,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(
+      `/connectors/${registration}/settings`,
+    );
+  }
+
   async registerType(schema: TypeSchema): Promise<ApiResponse<TypeSchema>> {
     return this.request<TypeSchema>("/types", {
       method: "POST",
