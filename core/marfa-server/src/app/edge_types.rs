@@ -375,3 +375,92 @@ pub fn write_restored(unit: &Unit<'_, '_>, plan: Restoring) -> Result<()> {
     catalog::raise(unit.tx())?;
     instance::raise_reach(unit.tx())
 }
+
+/// Registers a plugin's edge types: a new one as `POST /edge-types` takes it, one registered
+/// alike is kept, and one registered otherwise may only widen its endpoint constraints.
+pub fn install(unit: &Unit<'_, '_>, catalog: &Catalog, definitions: &[Obj]) -> Result<()> {
+    let mut named: Vec<(String, String)> = Vec::new();
+    let mut changed = false;
+    for body in definitions {
+        let id = text_of(body, "id").unwrap_or_default().to_string();
+        if shipped(&id)? {
+            return Err(Refusal::new(
+                Code::Conflict,
+                format!("{id} is a core edge type and cannot be redefined"),
+            )
+            .with_detail("edge_type", id.as_str()));
+        }
+        request_shape(body).map_err(refusal_of)?;
+        if !edge_id(&id) {
+            return Err(Refusal::validation("Invalid edge-type identifier")
+                .with_detail("edge_type", id.as_str()));
+        }
+        if body.contains_key("extends") || body.contains_key("evolve_constraints") {
+            return Err(Refusal::validation(
+                "A plugin's edge type does not support `extends` or `evolve_constraints`",
+            )
+            .with_detail("edge_type", id.as_str()));
+        }
+        let unread = unread_edge_keys(body);
+        if !unread.is_empty() {
+            return Err(refusal_of(EdgeIssues::Schema(unread)));
+        }
+        let existing = catalog.edge_type(&id);
+        let taken = |name: &str| {
+            named
+                .iter()
+                .find(|(held, _)| held == name)
+                .map(|(_, owner)| owner.clone())
+                .or_else(|| holder_of(catalog, name).filter(|owner| *owner != id))
+        };
+        let built =
+            edge_type_from_request(body, &taken, Judging::Register).map_err(refusal_of)?;
+        named.push((id.clone(), id.clone()));
+        if let Some(reverse) = text_of(&built, "reverse_name") {
+            named.push((reverse.to_string(), id.clone()));
+        }
+        match existing {
+            Some(held) if *held == built => {}
+            Some(held) => {
+                let changes = constraint_evolution_changes(held, &built);
+                if !changes.is_empty() {
+                    return Err(Refusal::new(
+                        Code::Conflict,
+                        format!(
+                            "Edge type {id} is registered in another shape. A plugin may only widen the types its ends take."
+                        ),
+                    )
+                    .with_detail("edge_type", id.as_str())
+                    .with_detail("changes", changes));
+                }
+                unit.tx().execute(
+                    "UPDATE edge_types SET reverse_name = ?2, definition = ?3, updated_at = ?4 WHERE id = ?1",
+                    params![id, text_of(&built, "reverse_name"), Value::Object(built.clone()).to_string(), unit.at],
+                )?;
+                unit.audit_also("edge_type.update", "edge_type", &id, None)?;
+                changed = true;
+            }
+            None => {
+                require_stored_to_items(unit, &id, &built)?;
+                unit.tx().execute(
+                    "INSERT INTO edge_types (id, reverse_name, created_by, definition, created_at, updated_at) \
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+                    params![
+                        id,
+                        text_of(&built, "reverse_name"),
+                        unit.caller.actor().to_string(),
+                        Value::Object(built.clone()).to_string(),
+                        unit.at,
+                    ],
+                )?;
+                unit.audit_also("edge_type.register", "edge_type", &id, None)?;
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        catalog::raise(unit.tx())?;
+        instance::raise_reach(unit.tx())?;
+    }
+    Ok(())
+}

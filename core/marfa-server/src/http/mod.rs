@@ -43,6 +43,7 @@ mod oauth;
 pub mod observe;
 mod occurrences;
 mod overview;
+mod plugins;
 pub mod pages;
 mod profile;
 mod query;
@@ -123,6 +124,11 @@ fn webhook_doors(app: Arc<App>) -> Routes {
 
 fn schema_doors() -> Routes {
     Doors::new()
+        .route("/plugins", get(plugins::list).post(plugins::install))
+        .route(
+            "/plugins/{name}",
+            get(plugins::read).delete(plugins::remove),
+        )
         .route("/types", get(types::list).post(types::register))
         .route("/types/normalize", post(types::normalize))
         .route(

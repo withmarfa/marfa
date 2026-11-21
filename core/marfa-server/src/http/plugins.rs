@@ -1,0 +1,64 @@
+use std::sync::Arc;
+
+use axum::extract::{Path, State};
+use axum::http::{StatusCode, Uri};
+use serde_json::json;
+
+use super::answer::{Answer, json_answer};
+use super::body::JsonBody;
+use super::query;
+use crate::app::App;
+use crate::app::access::Caller;
+use crate::app::plugins::{self, Outcome};
+
+pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
+    query::only(&uri, &[])?;
+    let data = plugins::list(&app, &caller).await?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &json!({ "data": data, "next_cursor": null }),
+    ))
+}
+
+pub async fn read(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+) -> Answer {
+    query::only(&uri, &[])?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &plugins::get(&app, &caller, name).await?,
+    ))
+}
+
+pub async fn install(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
+    let (outcome, mut installed) =
+        plugins::install(&app, &caller, body.open_object().await?).await?;
+    installed["outcome"] = json!(outcome.word());
+    let status = match outcome {
+        Outcome::Installed => StatusCode::CREATED,
+        Outcome::Updated | Outcome::Unchanged => StatusCode::OK,
+    };
+    Ok(json_answer(status, &installed))
+}
+
+pub async fn remove(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+) -> Answer {
+    query::only(&uri, &[])?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &plugins::remove(&app, &caller, name).await?,
+    ))
+}
