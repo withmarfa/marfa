@@ -76,6 +76,7 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | See what needs attention | `marfa attention` |
 | Check the instance's health | `marfa status` |
 | Read the instance's metrics | `marfa metrics` |
+| Install a plugin with a connector | `marfa plugins install` |
 | See what a key can read | `marfa overview` |
 | Read the instance's name and enforcement | `marfa config get` |
 | Change one setting, or return it to its default | `marfa config set`, `marfa config unset` |
@@ -1326,7 +1327,7 @@ marfa plugins [OPTIONS] <COMMAND>
 
 ### marfa plugins install
 
-Install a plugin: by name from the latest release of the plugins repository, or from a bundle file or a source folder on this machine. Needs `schema.write` and write on each of its types and edge types. A newer version of an installed plugin may only add to its types.
+Install a plugin by name from the latest plugins release, from a bundle file, or from a source folder. Requires `schema.write` and write access to each type and each forward and reverse edge name. A bundle with a connector also requires `connectors.manage`. A newer version may only add to its types.
 
 ```text
 marfa plugins install [OPTIONS] <NAME_OR_PATH>

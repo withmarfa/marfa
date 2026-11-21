@@ -45,6 +45,7 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
     ("See what needs attention", &["attention"]),
     ("Check the instance's health", &["status"]),
     ("Read the instance's metrics", &["metrics"]),
+    ("Install a plugin with a connector", &["plugins install"]),
     ("See what a key can read", &["overview"]),
     ("Read the instance's name and enforcement", &["config get"]),
     (

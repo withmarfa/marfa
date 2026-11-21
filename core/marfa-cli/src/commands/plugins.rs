@@ -24,7 +24,7 @@ const BODY_LIMIT: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Subcommand)]
 pub enum PluginsCommand {
-    /// Install a plugin: by name from the latest release of the plugins repository, or from a bundle file or a source folder on this machine. Needs `schema.write` and write on each of its types and edge types. A newer version of an installed plugin may only add to its types.
+    /// Install a plugin by name from the latest plugins release, from a bundle file, or from a source folder. Requires `schema.write` and write access to each type and each forward and reverse edge name. A bundle with a connector also requires `connectors.manage`. A newer version may only add to its types.
     Install(InstallArgs),
     /// Every installed plugin.
     List,
