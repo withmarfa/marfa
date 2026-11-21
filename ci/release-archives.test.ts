@@ -6,9 +6,11 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
@@ -21,6 +23,8 @@ const PACK = join(RELEASE, "pack-programs.sh");
 const CHECK = join(RELEASE, "check-archive.sh");
 const CONTEXT = join(RELEASE, "image-context.sh");
 const CHECKSUMS = join(RELEASE, "write-checksums.sh");
+const FETCH = join(RELEASE, "fetch-cloudflared.sh");
+const PINS = join(RELEASE, "cloudflared.txt");
 
 interface Step {
   name?: string;
@@ -165,6 +169,39 @@ describe("the workflow builds the programs for every platform", () => {
     expect(pack).toBeGreaterThanOrEqual(0);
     expect(sign[pack]?.run).toContain("check-archive.sh");
   });
+
+  it("carries cloudflared from the Mac build into the archive, and signs it nowhere", () => {
+    const steps = (name: string) => jobs[name]?.steps ?? [];
+    const copy = (name: string, text: string) =>
+      steps(name).find(
+        (step) =>
+          (step.run ?? "").includes("cp ") &&
+          (step.run ?? "").includes(text) &&
+          (step.run ?? "").includes("cloudflared"),
+      );
+    expect(copy("programs-macos", "$RUNNER_TEMP/artifacts/")).toBeDefined();
+    expect(copy("sign", "$RUNNER_TEMP/pack/")).toBeDefined();
+    for (const step of steps("sign")) {
+      if ((step.run ?? "").includes("sign-binary.sh")) {
+        expect(step.run).not.toContain("cloudflared");
+      }
+      if ((step.run ?? "").includes("codesign --force")) {
+        expect(step.run).not.toContain("cloudflared");
+      }
+    }
+  });
+
+  it("fetches cloudflared in the program build of every target, after the notices it adds to", () => {
+    const script = readFileSync(join(RELEASE, "build-programs.sh"), "utf8");
+    const notices = script.indexOf("licenses.sh");
+    const fetched = script.indexOf(
+      '"$REPO/scripts/release/fetch-cloudflared.sh" "$TARGET" "$OUT"',
+    );
+    expect(notices).toBeGreaterThanOrEqual(0);
+    expect(fetched).toBeGreaterThan(notices);
+    // After the Linux build that runs inside the image and exits early, so it runs outside it.
+    expect(fetched).toBeGreaterThan(script.indexOf("exit 0"));
+  });
 });
 
 describe("a release is published only when every archive built", () => {
@@ -266,14 +303,24 @@ function archiveOf(
   return { directory, folder, archive: join(directory, "out.tar.gz") };
 }
 
+/** The release the pin file names. */
+const PINNED = /^version (\S+)$/m.exec(readFileSync(PINS, "utf8"))![1]!;
+
+const connector = (version: string = PINNED) =>
+  `#!/bin/sh\necho "cloudflared version ${version} (built 2026-11-17-15:04 UTC)"\n`;
+
+const sha256 = (text: string | Buffer) =>
+  createHash("sha256").update(text).digest("hex");
+
 const good = (version: string) => ({
   marfa: reports("marfa", version),
   "marfa-server": reports("marfa-server", version),
+  cloudflared: connector(),
   "NOTICES.txt": "licenses",
 });
 
 describe("pack-programs.sh", () => {
-  it("packs the two programs and the notice, flat, and nothing else", () => {
+  it("packs the three programs and the notice, flat, and nothing else", () => {
     const { directory, folder, archive } = archiveOf(good("0.0.9"), {
       "marfa-enrichment-read": reports("marfa-enrichment-read", "0.0.9"),
     });
@@ -285,6 +332,7 @@ describe("pack-programs.sh", () => {
       const listed = spawnSync("tar", ["-tzf", archive], { encoding: "utf8" });
       expect(listed.stdout.trim().split("\n").sort()).toEqual([
         "NOTICES.txt",
+        "cloudflared",
         "marfa",
         "marfa-server",
       ]);
@@ -293,7 +341,7 @@ describe("pack-programs.sh", () => {
     }
   });
 
-  it.each(["marfa", "marfa-server", "NOTICES.txt"])(
+  it.each(["marfa", "marfa-server", "cloudflared", "NOTICES.txt"])(
     "refuses a folder with %s missing or empty",
     (name) => {
       for (const empty of [false, true]) {
@@ -320,12 +368,40 @@ describe("pack-programs.sh", () => {
   );
 });
 
+/**
+ * A pin file naming `version` and, for every target, `program` as the connector's hash, so that
+ * a script run on any machine finds its line.
+ */
+function pinsFile(directory: string, program: string, version = PINNED) {
+  const file = join(directory, "pins.txt");
+  const hash = (text: string) => sha256(text);
+  writeFileSync(
+    file,
+    [
+      `version ${version}`,
+      `licence ${hash("licence")}`,
+      "team ABCDE12345",
+      ...[
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-musl",
+        "x86_64-unknown-linux-musl",
+      ].map(
+        (target) =>
+          `download ${target} cloudflared-${target} ${hash(target)} ${hash(program)}`,
+      ),
+      "",
+    ].join("\n"),
+  );
+  return file;
+}
+
 describe("check-archive.sh", () => {
   function check(
     programs: Record<string, string>,
     version: string,
     options: string[] = [],
     extra: Record<string, string> = {},
+    pinned: { program?: string; version?: string } = {},
   ) {
     const { directory, folder, archive } = archiveOf(programs, extra);
     try {
@@ -335,8 +411,14 @@ describe("check-archive.sh", () => {
         { encoding: "utf8" },
       );
       expect(tarred.status).toBe(0);
+      const pins = pinsFile(
+        directory,
+        pinned.program ?? connector(),
+        pinned.version,
+      );
       return spawnSync("bash", [CHECK, archive, version, ...options], {
         encoding: "utf8",
+        env: { ...process.env, MARFA_CLOUDFLARED_PINS: pins },
       });
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -348,6 +430,9 @@ describe("check-archive.sh", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("out.tar.gz: marfa 0.0.9");
     expect(result.stdout).toContain("out.tar.gz: marfa-server 0.0.9");
+    expect(result.stdout).toContain(
+      `out.tar.gz: cloudflared version ${PINNED} (built`,
+    );
   });
 
   it.each(["marfa", "marfa-server"])(
@@ -372,6 +457,56 @@ describe("check-archive.sh", () => {
     const lacking = check(files, "0.0.9");
     expect(lacking.status).toBe(1);
     expect(lacking.stdout).toContain("does not hold exactly");
+  });
+
+  it("refuses an archive without cloudflared", () => {
+    const files = good("0.0.9") as Record<string, string>;
+    delete files.cloudflared;
+    const result = check(files, "0.0.9");
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain("does not hold exactly");
+    expect(result.stdout).toContain("cloudflared");
+  });
+
+  it("refuses a cloudflared whose bytes are not the pinned program's, naming both hashes", () => {
+    const files = good("0.0.9");
+    // Same version line, other bytes: only the checksum can tell it from the pin.
+    files.cloudflared = `${connector()}# changed\n`;
+    const result = check(files, "0.0.9");
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      `cloudflared in out.tar.gz is ${sha256(files.cloudflared)}, not the ${sha256(connector())} that cloudflared.txt names`,
+    );
+  });
+
+  it("refuses a cloudflared of another release even when its bytes are the pinned ones", () => {
+    const other = connector("2020.1.1");
+    const files = { ...good("0.0.9"), cloudflared: other };
+    const result = check(files, "0.0.9", [], {}, { program: other });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      `cloudflared in out.tar.gz reports 'cloudflared version 2020.1.1 (built 2026-11-17-15:04 UTC)', not version ${PINNED}`,
+    );
+  });
+
+  it("holds the real pin file to the same check: a stand-in is not the pinned program", () => {
+    const { directory, folder, archive } = archiveOf(good("0.0.9"));
+    try {
+      spawnSync("tar", [
+        "-czf",
+        archive,
+        "-C",
+        folder,
+        ...readdirSync(folder),
+      ]);
+      const result = spawnSync("bash", [CHECK, archive, "0.0.9"], {
+        encoding: "utf8",
+      });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain("that cloudflared.txt names");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("refuses an option it does not know, after it has checked the programs", () => {
@@ -489,7 +624,7 @@ describe("image-context.sh", () => {
   }
 
   it("lays the x86_64 archive under amd64 and the aarch64 archive under arm64", () => {
-    const names = ["marfa", "marfa-server", "NOTICES.txt"];
+    const names = ["marfa", "marfa-server", "cloudflared", "NOTICES.txt"];
     const directory = mkdtempSync(join(tmpdir(), "marfa-context-"));
     try {
       const archives = join(directory, "archives");
@@ -529,9 +664,12 @@ describe("image-context.sh", () => {
     const missing = context([]);
     expect(missing.ran.status).toBe(1);
     expect(missing.ran.stdout).toContain("is missing or empty");
-    const lacking = context(["marfa", "NOTICES.txt"]);
+    const lacking = context(["marfa", "cloudflared", "NOTICES.txt"]);
     expect(lacking.ran.status).toBe(1);
     expect(lacking.ran.stdout).toContain("holds no marfa-server");
+    const noConnector = context(["marfa", "marfa-server", "NOTICES.txt"]);
+    expect(noConnector.ran.status).toBe(1);
+    expect(noConnector.ran.stdout).toContain("holds no cloudflared");
   });
 });
 
@@ -572,5 +710,301 @@ describe("write-checksums.sh", () => {
     const result = run({ "a.tar.gz": "one" }, ["a.tar.gz", "missing.tar.gz"]);
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("missing.tar.gz is missing or empty");
+  });
+});
+
+describe("cloudflared.txt", () => {
+  const pins = readFileSync(PINS, "utf8");
+  const lines = pins
+    .split("\n")
+    .filter((line) => line.trim() !== "" && !line.startsWith("#"));
+  const downloads = lines
+    .filter((line) => line.startsWith("download "))
+    .map((line) => line.split(/\s+/));
+
+  it("names one release, one licence hash and one signing team", () => {
+    for (const kind of ["version", "licence", "team"]) {
+      expect(
+        lines.filter((line) => line.startsWith(`${kind} `)),
+        kind,
+      ).toHaveLength(1);
+    }
+    expect(PINNED).toMatch(/^\d{4}\.\d{1,2}\.\d+$/);
+    expect(lines.find((line) => line.startsWith("licence "))).toMatch(
+      /^licence [0-9a-f]{64}$/,
+    );
+    expect(lines.find((line) => line.startsWith("team "))).toMatch(
+      /^team [A-Z0-9]{10}$/,
+    );
+  });
+
+  it("pins a download and a program hash for exactly the targets the release builds", () => {
+    const targets = /SUPPORTED_TARGETS="([^"]*)"/.exec(
+      readFileSync(
+        join(ROOT, "core", "marfa-enrichment", "native", "lib.sh"),
+        "utf8",
+      ),
+    )![1]!;
+    expect(downloads.map((fields) => fields[1]).sort()).toEqual(
+      targets.split(" ").sort(),
+    );
+    for (const [, , asset, download, program, extra] of downloads) {
+      expect(asset).toMatch(/^cloudflared-[a-z0-9-]+(\.tgz)?$/);
+      expect(download).toMatch(/^[0-9a-f]{64}$/);
+      expect(program).toMatch(/^[0-9a-f]{64}$/);
+      expect(extra).toBeUndefined();
+    }
+  });
+
+  it("takes a Linux program as its own download and a Mac program from an archive", () => {
+    for (const [, target, asset, download, program] of downloads) {
+      if (target!.endsWith("-apple-darwin")) {
+        expect(asset).toMatch(/\.tgz$/);
+        expect(download).not.toBe(program);
+      } else {
+        expect(asset).not.toMatch(/\./);
+        expect(download).toBe(program);
+      }
+    }
+  });
+});
+
+describe("fetch-cloudflared.sh", () => {
+  const TARGET = "x86_64-unknown-linux-musl";
+  const MAC = "aarch64-apple-darwin";
+  const PROGRAM = connector();
+  const LICENCE = "Apache License\nVersion 2.0\n";
+
+  interface Setup {
+    /** What the download serves, by the asset's name. */
+    served?: Record<string, string | Buffer>;
+    /** The pin file's text, from the folder that holds the served files. */
+    pins?: (served: string) => string;
+    notices?: string | null;
+    target?: string;
+    env?: Record<string, string>;
+    /** A `codesign` stand-in's output and status, put first on the path. */
+    codesign?: { details: string; verifies: boolean };
+  }
+
+  /** A tarball holding `files`, as the Mac download is. */
+  function tarball(directory: string, files: Record<string, string>) {
+    const inner = join(directory, "inner");
+    mkdirSync(inner);
+    for (const [name, text] of Object.entries(files)) {
+      writeFileSync(join(inner, name), text);
+    }
+    const file = join(directory, "made.tgz");
+    spawnSync("tar", ["-czf", file, "-C", inner, ...Object.keys(files)]);
+    return readFileSync(file);
+  }
+
+  function fetchWith(setup: Setup = {}) {
+    const directory = mkdtempSync(join(tmpdir(), "marfa-fetch-"));
+    try {
+      const served = join(directory, "served");
+      const out = join(directory, "out");
+      const bin = join(directory, "bin");
+      mkdirSync(served);
+      mkdirSync(out);
+      mkdirSync(bin);
+      const target = setup.target ?? TARGET;
+      const mac = target === MAC;
+      const archive = mac ? tarball(directory, { cloudflared: PROGRAM }) : null;
+      const asset = mac ? "cloudflared-mac.tgz" : "cloudflared-linux";
+      const files = setup.served ?? { [asset]: archive ?? PROGRAM };
+      for (const [name, content] of Object.entries(files)) {
+        writeFileSync(join(served, name), content);
+      }
+      writeFileSync(join(served, "LICENSE"), LICENCE);
+      const pins =
+        setup.pins?.(served) ??
+        [
+          `version ${PINNED}`,
+          `licence ${sha256(LICENCE)}`,
+          "team ABCDE12345",
+          `download ${target} ${asset} ${sha256(archive ?? PROGRAM)} ${sha256(PROGRAM)}`,
+          "",
+        ].join("\n");
+      writeFileSync(join(directory, "pins.txt"), pins);
+      if (setup.notices !== null) {
+        writeFileSync(join(out, "NOTICES.txt"), setup.notices ?? "notices\n");
+      }
+      if (setup.codesign) {
+        writeFileSync(
+          join(bin, "codesign"),
+          `#!/bin/sh\nif [ "$1" = --verify ]; then exit ${setup.codesign.verifies ? 0 : 1}; fi\necho '${setup.codesign.details}' >&2\n`,
+        );
+        chmodSync(join(bin, "codesign"), 0o755);
+      }
+      const ran = spawnSync("bash", [FETCH, target, out], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH ?? ""}`,
+          MARFA_CLOUDFLARED_PINS: join(directory, "pins.txt"),
+          MARFA_CLOUDFLARED_DOWNLOADS: `file://${served}`,
+          MARFA_CLOUDFLARED_LICENCE_URL: `file://${served}/LICENSE`,
+          ...setup.env,
+        },
+      });
+      const placed = join(out, "cloudflared");
+      return {
+        ran,
+        placed: readdirSync(out).includes("cloudflared")
+          ? readFileSync(placed, "utf8")
+          : null,
+        executable: readdirSync(out).includes("cloudflared")
+          ? (statSync(placed).mode & 0o111) !== 0
+          : false,
+        leftovers: readdirSync(out).sort(),
+        notices: readdirSync(out).includes("NOTICES.txt")
+          ? readFileSync(join(out, "NOTICES.txt"), "utf8")
+          : null,
+      };
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }
+
+  const signed = {
+    details: "TeamIdentifier=ABCDE12345\nflags=0x10000(runtime)",
+    verifies: true,
+  };
+
+  it("places the pinned program, executable, beside the notices, and adds the licence to them", () => {
+    const done = fetchWith();
+    expect(done.ran.status, done.ran.stdout + done.ran.stderr).toBe(0);
+    expect(done.placed).toBe(PROGRAM);
+    expect(done.executable).toBe(true);
+    expect(done.leftovers).toEqual(["NOTICES.txt", "cloudflared"]);
+    expect(done.notices?.startsWith("notices\n")).toBe(true);
+    expect(done.notices).toContain(`cloudflared ${PINNED}: Apache-2.0`);
+    expect(done.notices).toContain("Apache License\nVersion 2.0\n");
+  });
+
+  it("unpacks the Mac archive, and accepts it only when the program is signed by the pinned team under the hardened runtime", () => {
+    const done = fetchWith({ target: MAC, codesign: signed });
+    expect(done.ran.status, done.ran.stdout + done.ran.stderr).toBe(0);
+    expect(done.placed).toBe(PROGRAM);
+    for (const codesign of [
+      { ...signed, verifies: false },
+      { ...signed, details: "TeamIdentifier=ZZZZZZZZZZ\nflags=0x10000(runtime)" },
+      { ...signed, details: "TeamIdentifier=ABCDE12345\nflags=0x0(none)" },
+    ]) {
+      const refused = fetchWith({ target: MAC, codesign });
+      expect(refused.ran.status).toBe(1);
+      expect(refused.ran.stdout).toMatch(
+        /signature does not verify|is not signed by team ABCDE12345/,
+      );
+      expect(refused.placed).toBeNull();
+    }
+  });
+
+  it("refuses a download whose hash is not the pinned one, and places nothing", () => {
+    const done = fetchWith({
+      served: { "cloudflared-linux": `${PROGRAM}# tampered\n` },
+    });
+    expect(done.ran.status).toBe(1);
+    expect(done.ran.stdout).toContain(
+      `cloudflared-linux is ${sha256(`${PROGRAM}# tampered\n`)}, not the ${sha256(PROGRAM)} that pins.txt names`,
+    );
+    expect(done.placed).toBeNull();
+    expect(done.notices).toBe("notices\n");
+  });
+
+  it("refuses a Mac archive whose program is not the pinned one, though the archive matches", () => {
+    const done = fetchWith({
+      target: MAC,
+      codesign: signed,
+      pins: (served) => {
+        const archive = readFileSync(join(served, "cloudflared-mac.tgz"));
+        return [
+          `version ${PINNED}`,
+          `licence ${sha256(LICENCE)}`,
+          "team ABCDE12345",
+          `download ${MAC} cloudflared-mac.tgz ${sha256(archive)} ${sha256("another program")}`,
+          "",
+        ].join("\n");
+      },
+    });
+    expect(done.ran.status).toBe(1);
+    expect(done.ran.stdout).toContain(
+      "the cloudflared program in cloudflared-mac.tgz is",
+    );
+    expect(done.placed).toBeNull();
+  });
+
+  it("refuses a Mac archive that holds anything but the program", () => {
+    const directory = mkdtempSync(join(tmpdir(), "marfa-fetch-extra-"));
+    try {
+      const extra = tarball(directory, { cloudflared: PROGRAM, stray: "x" });
+      const done = fetchWith({
+        target: MAC,
+        codesign: signed,
+        served: { "cloudflared-mac.tgz": extra },
+        pins: () =>
+          [
+            `version ${PINNED}`,
+            `licence ${sha256(LICENCE)}`,
+            "team ABCDE12345",
+            `download ${MAC} cloudflared-mac.tgz ${sha256(extra)} ${sha256(PROGRAM)}`,
+            "",
+          ].join("\n"),
+      });
+      expect(done.ran.status).toBe(1);
+      expect(done.ran.stdout).toContain("not just cloudflared");
+      expect(done.placed).toBeNull();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a licence that is not the pinned one, and leaves no program behind", () => {
+    const done = fetchWith({
+      pins: () =>
+        [
+          `version ${PINNED}`,
+          `licence ${sha256("another licence")}`,
+          "team ABCDE12345",
+          `download ${TARGET} cloudflared-linux ${sha256(PROGRAM)} ${sha256(PROGRAM)}`,
+          "",
+        ].join("\n"),
+    });
+    expect(done.ran.status).toBe(1);
+    expect(done.ran.stdout).toContain("cloudflared's LICENSE is");
+    expect(done.placed).toBeNull();
+    expect(done.notices).toBe("notices\n");
+  });
+
+  it("refuses a download that cannot be fetched", () => {
+    const done = fetchWith({
+      env: { MARFA_CLOUDFLARED_DOWNLOADS: "file:///no/such/folder" },
+    });
+    expect(done.ran.status).toBe(1);
+    expect(done.ran.stdout).toContain("could not download");
+    expect(done.placed).toBeNull();
+  });
+
+  it("refuses a target the pins do not name, a malformed hash, and a folder with no notices", () => {
+    const target = fetchWith({ target: "x86_64-apple-darwin" });
+    expect(target.ran.status).not.toBe(0);
+    const hash = fetchWith({
+      pins: () =>
+        `version ${PINNED}\nlicence ${"a".repeat(64)}\nteam ABCDE12345\ndownload ${TARGET} cloudflared-linux ${"A".repeat(64)} ${"a".repeat(64)}\n`,
+    });
+    expect(hash.ran.status).toBe(1);
+    expect(hash.ran.stdout).toContain("not 64 lowercase hexadecimal digits");
+    const bare = fetchWith({ notices: null });
+    expect(bare.ran.status).toBe(1);
+    expect(bare.ran.stdout).toContain("NOTICES.txt is not a non-empty file");
+  });
+
+  it("refuses to add the notice twice", () => {
+    const first = fetchWith();
+    expect(first.ran.status).toBe(0);
+    const twice = fetchWith({ notices: first.notices });
+    expect(twice.ran.status).toBe(1);
+    expect(twice.ran.stdout).toContain("already carries the cloudflared notice");
   });
 });

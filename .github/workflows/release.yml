@@ -326,13 +326,13 @@ jobs:
               exit 1
             fi
           done
-          cp "$out/marfa" "$out/marfa-server" "$out/NOTICES.txt" "$RUNNER_TEMP/artifacts/"
+          cp "$out/marfa" "$out/marfa-server" "$out/cloudflared" "$out/NOTICES.txt" "$RUNNER_TEMP/artifacts/"
 
       - name: Hold the build to the programs and the package
         working-directory: ${{ runner.temp }}/artifacts
         run: |
           bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
-            NOTICES.txt marfa marfa-server \
+            NOTICES.txt cloudflared marfa marfa-server \
             "withmarfa-client-$VERSION.tgz"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -364,6 +364,8 @@ jobs:
           name: build-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/build
 
+      # cloudflared is not signed here. It keeps Cloudflare's signature, which the build
+      # checked against the pinned team, and `check-archive.sh` holds its bytes to the pin.
       - name: Sign and notarize the programs
         if: github.event_name == 'push'
         env:
@@ -393,7 +395,7 @@ jobs:
       - name: Pack the programs and run them from the archive
         run: |
           mkdir -p "$RUNNER_TEMP/pack" "$RUNNER_TEMP/artifacts"
-          cp "$RUNNER_TEMP/build/marfa" "$RUNNER_TEMP/build/marfa-server" "$RUNNER_TEMP/build/NOTICES.txt" "$RUNNER_TEMP/pack/"
+          cp "$RUNNER_TEMP/build/marfa" "$RUNNER_TEMP/build/marfa-server" "$RUNNER_TEMP/build/cloudflared" "$RUNNER_TEMP/build/NOTICES.txt" "$RUNNER_TEMP/pack/"
           bash scripts/release/pack-programs.sh "$RUNNER_TEMP/pack" "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz"
           bash scripts/release/check-archive.sh "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" "$VERSION" --boot
           bash scripts/release/prove-reading.sh "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" \

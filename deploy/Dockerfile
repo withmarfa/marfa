@@ -3,7 +3,7 @@
 # The Marfa server, from the release's own static Linux programs. Nothing is compiled
 # here, so the image runs the bytes in the release's archives. The build context is
 # a folder holding, for each platform, `amd64/` and `arm64/` with `marfa`,
-# `marfa-server` and `NOTICES.txt`:
+# `marfa-server`, `cloudflared` and `NOTICES.txt`:
 #
 #   docker buildx build -f deploy/Dockerfile --platform linux/amd64 -t marfa-server <context>
 #
@@ -26,7 +26,7 @@ LABEL org.opencontainers.image.title="Marfa server" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-COPY --chmod=0755 ${TARGETARCH}/marfa ${TARGETARCH}/marfa-server /usr/local/bin/
+COPY --chmod=0755 ${TARGETARCH}/marfa ${TARGETARCH}/marfa-server ${TARGETARCH}/cloudflared /usr/local/bin/
 COPY ${TARGETARCH}/NOTICES.txt /usr/share/doc/marfa/NOTICES.txt
 
 # The server listens on every interface of the container; the volume mounted at /data

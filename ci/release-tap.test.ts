@@ -84,9 +84,14 @@ describe("the formula is written from the release's checksum file", () => {
     expect(out).toContain("depends_on arch: :arm64");
   });
 
-  it("installs both programs and checks both versions", () => {
+  it("installs the programs, checks their versions, and keeps cloudflared off the path", () => {
     const { out } = formula("0.0.23", SUMS);
-    expect(out).toContain('bin.install "marfa", "marfa-server"');
+    expect(out).toContain('libexec.install "marfa", "marfa-server", "cloudflared"');
+    expect(out).toContain(
+      'bin.install_symlink libexec/"marfa", libexec/"marfa-server"',
+    );
+    expect(out).not.toMatch(/bin\.install\b.*cloudflared/);
+    expect(out).toContain('"cloudflared version"');
     expect(out).toContain('doc.install "NOTICES.txt"');
     expect(out).toContain("marfa server install");
     expect(out).toContain('"marfa #{version}"');

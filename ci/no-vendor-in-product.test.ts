@@ -90,10 +90,58 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
     "core/marfa-rules/icons/icon-set-simple-icons.json",
     "a brand icon an item can show, which is not telemetry",
   ],
+  [
+    "scripts/release/cloudflared.txt",
+    "pins the tunnel connector every release ships: its version and the SHA-256 of each download",
+  ],
+  [
+    "scripts/release/cloudflared-pins.sh",
+    "reads that pin file for the scripts that fetch and check the connector",
+  ],
+  [
+    "scripts/release/fetch-cloudflared.sh",
+    "downloads the connector, holds it to its pin and adds its licence to the notices",
+  ],
+  [
+    "scripts/release/build-programs.sh",
+    "runs the fetch so that the programs' folder holds the connector",
+  ],
+  [
+    "scripts/release/pack-programs.sh",
+    "packs the connector beside the two programs in each release archive",
+  ],
+  [
+    "scripts/release/check-archive.sh",
+    "refuses an archive whose connector is missing, is not the pinned program or does not run",
+  ],
+  [
+    "scripts/release/image-context.sh",
+    "lays the connector out for the image from the Linux archives",
+  ],
+  [
+    "scripts/release/write-formula.sh",
+    "installs the connector beside the two programs, off the path, in the Homebrew formula",
+  ],
+  [
+    "scripts/release/install-proof.sh",
+    "runs the connector the installer put in place",
+  ],
+  [
+    "scripts/install.sh",
+    "installs the connector beside the two programs, where the server looks for it",
+  ],
+  [
+    "deploy/Dockerfile",
+    "copies the connector into the image beside the two programs",
+  ],
+  [
+    ".github/workflows/release.yml",
+    "carries the connector from the Mac build into its archive, which no job signs",
+  ],
 ];
 
-/** A vendor token starts `phc_`; the name is matched in any case. */
-const VENDOR = ["-e", "posthog", "-e", "phc_"];
+/** A vendor token starts `phc_`; a name is matched in any case. */
+const VENDOR = ["-e", "posthog", "-e", "phc_", "-e", "cloudflared"];
 
 function allows(path: string): boolean {
   return ALLOWED.some(([entry]) =>
@@ -172,7 +220,7 @@ export function lockedCrates(lock: string): string[] {
   return [...lock.matchAll(/^name = "([^"]+)"$/gm)].map((match) => match[1]!);
 }
 
-const isVendor = (name: string) => /posthog/i.test(name);
+const isVendor = (name: string) => /posthog|cloudflared/i.test(name);
 
 describe("product code names no vendor outside its allowlist", () => {
   const found = hits();

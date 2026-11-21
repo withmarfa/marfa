@@ -65,7 +65,10 @@ class Marfa < Formula
   end
 
   def install
-    bin.install "marfa", "marfa-server"
+    # The server looks for cloudflared beside itself, so the three programs stay together
+    # in libexec and only the two commands are linked. Homebrew's own cloudflared is left alone.
+    libexec.install "marfa", "marfa-server", "cloudflared"
+    bin.install_symlink libexec/"marfa", libexec/"marfa-server"
     doc.install "NOTICES.txt"
   end
 
@@ -79,6 +82,7 @@ class Marfa < Formula
   test do
     assert_match "marfa #{version}", shell_output("#{bin}/marfa --version")
     assert_match "marfa-server #{version}", shell_output("#{bin}/marfa-server --version")
+    assert_match "cloudflared version", shell_output("#{libexec}/cloudflared --version")
   end
 end
 FORMULA

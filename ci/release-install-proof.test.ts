@@ -120,6 +120,10 @@ describe("the proof script", () => {
     expect(script).toContain('"$repo/scripts/install.sh"');
   });
 
+  it("runs the connector the installer put beside the server", () => {
+    expect(script).toContain('"$dir/cloudflared" --version');
+  });
+
   it("pins Caddy by version and by the SHA-256 of each archive it can run, and checks the download", () => {
     expect(script).toMatch(/^caddy_version=\d+\.\d+\.\d+$/m);
     for (const platform of ["mac_arm64", "linux_amd64", "linux_arm64"]) {

@@ -302,6 +302,11 @@ install_programs() {
   marfa=$dir/marfa
   [ "$("$marfa" --version)" = "marfa $version" ] || fail "The installed marfa does not report $version."
   [ "$("$dir/marfa-server" --version)" = "marfa-server $version" ] || fail "The installed marfa-server does not report $version."
+  # Beside marfa-server, where the server looks for it.
+  case "$("$dir/cloudflared" --version)" in
+    "cloudflared version "*) ;;
+    *) fail "The installed cloudflared does not run." ;;
+  esac
 }
 
 # Tagged as the install names it, so the installer pulls nothing.

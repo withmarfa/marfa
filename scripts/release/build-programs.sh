@@ -1,11 +1,12 @@
 #!/bin/bash
-# Builds `marfa-server` and `marfa` for one target, with the native readers linked in, and checks them.
+# Builds `marfa-server` and `marfa` for one target, with the native readers linked in, and checks them,
+# then puts the pinned `cloudflared` beside them (fetch-cloudflared.sh).
 #
 #   MARFA_NATIVE_ROOT=<folder> scripts/release/build-programs.sh <target>
 #
 #   <target>   aarch64-apple-darwin, aarch64-unknown-linux-musl or x86_64-unknown-linux-musl
 #
-# The result is in $MARFA_NATIVE_ROOT/out/<target>/: marfa, marfa-server and NOTICES.txt.
+# The result is in $MARFA_NATIVE_ROOT/out/<target>/: marfa, marfa-server, cloudflared and NOTICES.txt.
 # MARFA_RELEASE_PREFIX and MARFA_KEEP_WORK are read by native/release.sh.
 set -euo pipefail
 
@@ -138,7 +139,10 @@ case "$TARGET" in
     ;;
 esac
 
-for program in "${PROGRAMS[@]}"; do
+echo "programs: the tunnel connector and its licence (fetch-cloudflared.sh)"
+"$REPO/scripts/release/fetch-cloudflared.sh" "$TARGET" "$OUT"
+
+for program in "${PROGRAMS[@]}" cloudflared; do
   echo "programs: $(wc -c <"$OUT/$program") bytes $OUT/$program"
 done
 echo "programs: licences  $OUT/NOTICES.txt"

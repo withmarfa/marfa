@@ -1,8 +1,8 @@
 /**
- * `scripts/install.sh` installs the `marfa` command line and `marfa-server`
- * from a release. It installs nothing it has not checked: the archive must
- * match its line in the release's checksum file, and both programs in it must
- * run and report the release asked for.
+ * `scripts/install.sh` installs the `marfa` command line, `marfa-server` and the
+ * tunnel connector from a release. It installs nothing it has not checked: the
+ * archive must match its line in the release's checksum file, both programs in
+ * it must run and report the release asked for, and a connector must run.
  */
 import { spawnSync } from "node:child_process";
 import {
@@ -26,6 +26,7 @@ const SCRIPT = join(ROOT, "scripts", "install.sh");
 
 const NAMES = ["darwin-arm64", "linux-x86_64", "linux-aarch64"];
 const PROGRAMS = ["marfa", "marfa-server"];
+const CONNECTOR = "cloudflared";
 
 const cleanup: string[] = [];
 afterEach(() => {
@@ -41,22 +42,39 @@ function folder(): string {
 }
 
 /**
- * A release folder with all three archives, each holding both programs.
- * Each says `<program> <version>`, unless `says` gives another answer for one,
- * or `programs` leaves one out.
+ * A release folder with all three archives, each holding both programs and the
+ * connector. Each program says `<program> <version>`, unless `says` gives another
+ * answer for one, or `programs` leaves one out. The connector says what
+ * Cloudflare's does unless `connector` is "broken" (it does not run) or "none"
+ * (the release is from before it shipped).
  */
 function release(
   version: string,
-  options: { says?: Record<string, string>; programs?: string[] } = {},
+  options: {
+    says?: Record<string, string>;
+    programs?: string[];
+    connector?: "broken" | "none";
+  } = {},
 ) {
-  const programs = options.programs ?? PROGRAMS;
+  const programs = [
+    ...(options.programs ?? PROGRAMS),
+    ...(options.connector === "none" ? [] : [CONNECTOR]),
+  ];
   const base = folder();
   const lines: string[] = [];
   for (const name of NAMES) {
     const work = folder();
     for (const program of programs) {
-      const says = options.says?.[program] ?? `${program} ${version}`;
-      writeFileSync(join(work, program), `#!/bin/sh\necho "${says}"\n`);
+      const says =
+        program === CONNECTOR
+          ? "cloudflared version 2026.11.1 (built 2026-11-17-15:04 UTC)"
+          : (options.says?.[program] ?? `${program} ${version}`);
+      writeFileSync(
+        join(work, program),
+        program === CONNECTOR && options.connector === "broken"
+          ? "#!/bin/sh\nexit 7\n"
+          : `#!/bin/sh\necho "${says}"\n`,
+      );
       chmodSync(join(work, program), 0o755);
     }
     writeFileSync(join(work, "NOTICES.txt"), "licences\n");
@@ -106,9 +124,16 @@ function install(
 }
 
 describe("a release is installed after it is checked", () => {
-  it("puts both programs in the folder, runnable, and says what to do next", () => {
+  it("puts both programs and the connector in the folder, runnable, and says what to do next", () => {
     const done = install(release("0.0.23"));
     expect(done.status, done.err).toBe(0);
+    expect(
+      spawnSync(join(done.dir, CONNECTOR), ["--version"], {
+        encoding: "utf8",
+      }).stdout,
+    ).toContain("cloudflared version 2026.11.1");
+    expect(statSync(join(done.dir, CONNECTOR)).mode & 0o111).not.toBe(0);
+    expect(done.out).toContain("Installed cloudflared beside them");
     for (const program of PROGRAMS) {
       const installed = join(done.dir, program);
       expect(statSync(installed).mode & 0o111).not.toBe(0);
@@ -150,7 +175,17 @@ describe("a release is installed after it is checked", () => {
     }
     expect(
       spawnSync("ls", ["-A", dir], { encoding: "utf8" }).stdout.trim(),
-    ).toBe("marfa\nmarfa-server");
+    ).toBe("cloudflared\nmarfa\nmarfa-server");
+  });
+
+  it("installs a release from before the connector shipped, so an earlier release can still be chosen", () => {
+    const done = install(release("0.0.22", { connector: "none" }), {
+      version: "0.0.22",
+    });
+    expect(done.status, done.err).toBe(0);
+    expect(existsSync(join(done.dir, CONNECTOR))).toBe(false);
+    expect(done.out).toContain("Installed marfa 0.0.22 and marfa-server 0.0.22");
+    expect(done.out).not.toContain("cloudflared");
   });
 });
 
@@ -158,7 +193,7 @@ describe("it installs nothing it cannot vouch for", () => {
   const refused = (done: ReturnType<typeof install>, said: string) => {
     expect(done.status, done.out).not.toBe(0);
     expect(done.err).toContain(said);
-    for (const program of PROGRAMS) {
+    for (const program of [...PROGRAMS, CONNECTOR]) {
       expect(existsSync(join(done.dir, program))).toBe(false);
     }
   };
@@ -209,6 +244,13 @@ describe("it installs nothing it cannot vouch for", () => {
         release("0.0.23", { says: { "marfa-server": "marfa-server 0.0.99" } }),
       ),
       "reports 'marfa-server 0.0.99'",
+    );
+  });
+
+  it("refuses a connector that does not run, installing none of the programs", () => {
+    refused(
+      install(release("0.0.23", { connector: "broken" })),
+      "the downloaded cloudflared does not run on this machine",
     );
   });
 

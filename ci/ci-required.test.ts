@@ -611,6 +611,11 @@ describe("what a change runs", () => {
       ["quick-checks", "workspace", "image"],
     ],
     [
+      "the connector's pins and the script that fetches them, which the image job's build runs",
+      ["scripts/release/cloudflared.txt", "scripts/release/fetch-cloudflared.sh"],
+      ["quick-checks", "workspace", "image"],
+    ],
+    [
       "the native readers' scripts, which the image's programs and the Rust server are built with",
       ["core/marfa-enrichment/native/lib.sh"],
       ["quick-checks", "core-native", "image", ...RUST_SERVER],

@@ -188,7 +188,12 @@ describe("the build hands on exactly the programs and the package", () => {
     }
   }
 
-  const build = ["NOTICES.txt", ...PROGRAMS, "withmarfa-client-0.0.9.tgz"];
+  const build = [
+    "NOTICES.txt",
+    ...PROGRAMS,
+    "cloudflared",
+    "withmarfa-client-0.0.9.tgz",
+  ];
 
   it("accepts the unsigned programs beside the package", () => {
     expect(holdBuild(build)).toBe(0);
@@ -197,6 +202,9 @@ describe("the build hands on exactly the programs and the package", () => {
   it("refuses a build missing a program, or carrying an archive already", () => {
     expect(holdBuild(build.slice(1))).not.toBe(0);
     expect(holdBuild(build.filter((name) => name !== "marfa-server"))).not.toBe(
+      0,
+    );
+    expect(holdBuild(build.filter((name) => name !== "cloudflared"))).not.toBe(
       0,
     );
     expect(holdBuild([...build, "marfa-0.0.9-darwin-arm64.tar.gz"])).not.toBe(

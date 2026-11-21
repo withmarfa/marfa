@@ -8,13 +8,13 @@ This page covers a server on a Mac or a Linux machine, natively or in Docker, an
 
 Each release has one archive per platform, `marfa-<version>-<platform>.tar.gz`, where `<platform>` is `darwin-arm64`, `linux-x86_64` or `linux-aarch64`. An archive holds `marfa`, `marfa-server` and `NOTICES.txt`, the licenses of what the programs contain. Intel Macs aren't supported.
 
-`scripts/install.sh` downloads the archive for your machine, checks it against the release's checksum file, and installs both programs side by side, in `~/.local/bin` unless `MARFA_INSTALL_DIR` names another folder. `MARFA_VERSION` chooses a release; without it, the script installs the latest.
+`scripts/install.sh` downloads the archive for your machine, checks it against the release's checksum file, and installs `marfa`, `marfa-server` and the tunnel connector `cloudflared` side by side, in `~/.local/bin` unless `MARFA_INSTALL_DIR` names another folder. `MARFA_VERSION` chooses a release; without it, the script installs the latest.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/install.sh | sh
 ```
 
-The two programs must be the same release. `marfa` finds `marfa-server` only beside itself.
+The two programs must be the same release. `marfa` finds `marfa-server` only beside itself. Cloudflare's `cloudflared` is a release of its own, which the server will run only once its owner links the instance to Marfa Cloud.
 
 ## Verify a download
 
