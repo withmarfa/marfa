@@ -626,7 +626,7 @@ pub fn open(options: &Options, lock: Lock, faults: &Faults) -> Result<Opened, Fa
 
     let readers = (0..options.readers)
         .map(|_| {
-            let conn = target.open(OpenFlags::SQLITE_OPEN_READ_WRITE)?;
+            let conn = target.open(write_flags)?;
             prepare_reader(&conn, options)?;
             Ok(conn)
         })
