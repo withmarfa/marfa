@@ -143,7 +143,6 @@ pub fn optional_text<'a>(fields: &'a Map<String, Value>, name: &str) -> Result<O
     }
 }
 
-/// A claim's email: none where the body leaves it out or sends null, refused where it is not a string.
 pub fn optional_email(fields: &Map<String, Value>) -> Result<Option<&str>> {
     match fields.get("email") {
         None | Some(Value::Null) => Ok(None),
