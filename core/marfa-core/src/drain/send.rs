@@ -187,7 +187,7 @@ pub(super) fn send_queue(
         tested.extend(deferred);
     }
 
-    loop {
+    'walk: loop {
         crate::catch_up::refuse_if_stopped(stop)?;
         // A page refused for its credential parked the queue.
         if report.stopped.is_some() {
@@ -630,11 +630,29 @@ pub(super) fn send_queue(
             // The connection is not held across the send, or `queue`, read while
             // a drain runs, would wait on the network.
             crate::catch_up::refuse_if_stopped(stop)?;
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| format!("drain-sending:{}", row.id));
             let (resent, named_version) = {
                 // Before the send: one whose answer never arrives has still
                 // reached the server, and treating it as unsent would write twice.
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
+                if rows::held_since(&tx, row, &batched, generation, |id| rows.contains_key(id))? {
+                    if let Some(stuck) = &resending {
+                        leave_waiting(stuck, report);
+                        continue 'walk;
+                    }
+                    let held = rows::hold(&tx, row, &batched)?;
+                    tx.commit()?;
+                    for (id, verdict, newly) in held {
+                        if verdict == Some(Verdict::Blocked) {
+                            waiting.insert(id.clone());
+                        }
+                        answers.insert(id, verdict);
+                        report.held += usize::from(newly);
+                    }
+                    continue 'walk;
+                }
                 let resent = !store::unsent(&tx, &row.id)?;
                 store::mark_sent(&tx, &row.id)?;
                 rows::mark_joined(&tx, row, &batched)?;

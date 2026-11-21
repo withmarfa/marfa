@@ -116,6 +116,60 @@ pub(super) fn body(lead: &QueuedWrite, members: &[QueuedWrite]) -> String {
     json!({ "operations": operations }).to_string()
 }
 
+/// Recheck inside the transaction that marks the batch sent.
+pub(super) fn held_since(
+    conn: &Connection,
+    lead: &QueuedWrite,
+    members: &[QueuedWrite],
+    generation: u64,
+    read: impl Fn(&str) -> bool,
+) -> Result<bool> {
+    if !lead.kind.rows() || !store::unsent(conn, &lead.id)? {
+        return Ok(false);
+    }
+    if crate::reach::generation(conn)? != generation {
+        return Ok(true);
+    }
+    for write in batch_of(lead, members) {
+        if crate::restored_rows::holds_back(conn, write)?
+            || crate::restored_rows::kept_ahead(conn, write, &read)?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Preserve verdicts another thread recorded after readiness.
+pub(super) fn hold(
+    conn: &Connection,
+    lead: &QueuedWrite,
+    members: &[QueuedWrite],
+) -> Result<Vec<(String, Option<Verdict>, bool)>> {
+    let mut held = Vec::with_capacity(members.len() + 1);
+    for write in batch_of(lead, members) {
+        let Some(now) = store::queued_write(conn, &write.id)? else {
+            continue;
+        };
+        if now.verdict.is_some() {
+            held.push((now.id, now.verdict, false));
+            continue;
+        }
+        store::record_verdict(
+            conn,
+            &now.id,
+            &store::Answered {
+                verdict: Verdict::Blocked,
+                reason: Some(crate::model::AWAITING_DEPENDENCY),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+        held.push((now.id, Some(Verdict::Blocked), true));
+    }
+    Ok(held)
+}
+
 /// In the transaction that marks `lead` sent.
 pub(super) fn mark_joined(
     conn: &Connection,

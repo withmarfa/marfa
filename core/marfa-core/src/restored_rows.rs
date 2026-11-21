@@ -10,7 +10,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::Value;
 
 use crate::http::Http;
-use crate::model::{QueuedWrite, WriteKind};
+use crate::model::{BlockedReason, QueuedWrite, Verdict, WriteKind};
 use crate::row_writes::{self, Op};
 use crate::store::{self, Cached, restored::RECEIPTS_KEPT_MILLIS};
 use crate::wire::RowsEvent;
@@ -228,6 +228,48 @@ pub(crate) fn holds_back(conn: &Connection, write: &QueuedWrite) -> Result<bool>
         .optional()?
         .is_some();
     Ok(held && store::unsent(conn, &write.id)?)
+}
+
+/// A new predecessor still goes first after release clears its reason.
+pub(crate) fn kept_ahead(
+    conn: &Connection,
+    write: &QueuedWrite,
+    read: impl Fn(&str) -> bool,
+) -> Result<bool> {
+    if !write.kind.rows() {
+        return Ok(false);
+    }
+    let mut query = conn.prepare_cached(
+        "SELECT k.id, k.verdict, k.reason FROM queue w JOIN queue k
+           ON k.item_id = w.item_id AND k.row_table = w.row_table AND k.seq < w.seq
+        WHERE w.id = ?1 AND w.sent = 0 AND k.sent = 0 AND k.kind IN (?2, ?3)
+          AND (k.verdict IS NULL OR k.verdict IN (?4, ?5))",
+    )?;
+    let ahead = query.query_map(
+        params![
+            write.id,
+            WriteKind::WriteRows.as_str(),
+            WriteKind::UndoRows.as_str(),
+            Verdict::Blocked.as_str(),
+            Verdict::Dead.as_str(),
+        ],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        },
+    )?;
+    for ahead in ahead {
+        let (id, verdict, reason) = ahead?;
+        let kept = verdict.as_deref() == Some(Verdict::Blocked.as_str())
+            && reason.as_deref() == Some(BlockedReason::ServerRestored.as_str());
+        if kept || !read(&id) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 struct Unseen {

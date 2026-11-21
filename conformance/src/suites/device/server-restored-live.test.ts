@@ -976,6 +976,66 @@ function put(id: string, count: number): Operation {
   return { op: "put", id, values: { count } };
 }
 
+/** The earlier rows-only event forces this drain to re-read the rows. */
+async function drainAfterRowsEvent(label: string, failRead: boolean) {
+  const w = await world(label);
+  const row = uuidv7();
+  const { type, items } = await steps(w.client(), label, [[put(row, 1)]]);
+  const item = items[0] ?? "";
+  value(await w.device.hydrate([type], "library"));
+  value(await w.device.holdTable(type, "steps"));
+  value(await w.device.catchUp());
+  // Past what an event carries of values, so its event names the rows alone.
+  const note = "x".repeat(1024);
+  value(
+    await w.device.writeRows(
+      item,
+      "steps",
+      Array.from({ length: 80 }, () => ({
+        op: "put",
+        id: uuidv7(),
+        values: { count: 1, note },
+      })),
+    ),
+  );
+  expect(value(await w.device.drain()).answered).toBe(1);
+  const later = value(
+    await w.device.writeRows(item, "steps", [
+      { op: "patch", id: row, values: { note: "later" } },
+    ]),
+  );
+  const read = `GET /items/${item}/tables/steps/rows`;
+  const rows = `POST /items/${item}/tables/steps/rows`;
+  if (failRead)
+    w.answerInstead((method, path) =>
+      `${method} ${path}` === read
+        ? {
+            status: 400,
+            body: {
+              error: {
+                code: "validation_failed",
+                message: "the request does not read",
+              },
+            },
+          }
+        : undefined,
+    );
+  const before = w.sent.length;
+  const report = value(await w.device.drain());
+  const during = w.sent.slice(before);
+  expect(during, "the drain's catch-up did not re-read the rows").toContain(
+    read,
+  );
+  return {
+    w,
+    item,
+    row,
+    later,
+    report,
+    sentRows: during.filter((line) => line === rows),
+  };
+}
+
 describe("table rows a server restored behind lost", () => {
   it(
     "keeps the rows this device wrote and removed since the backup, blocked until released, where the copy had not caught up past them",
@@ -1202,6 +1262,61 @@ describe("table rows a server restored behind lost", () => {
       ).toMatchObject({ verdict: "accepted" });
     },
     TIMEOUT,
+  );
+
+  it(
+    "sends no row write a drain judged ready before its own catch-up set the table's rows aside",
+    async () => {
+      // The witness: with the re-read answered, the same drain sends the write.
+      const sent = await drainAfterRowsEvent("rows-sent-mid-drain", false);
+      expect(
+        sent.sentRows,
+        "the drain did not send the row write",
+      ).toHaveLength(1);
+      expect(
+        (await queue(sent.w.device)).find(
+          (write) => write.id === sent.later.id,
+        ),
+      ).toMatchObject({ verdict: "accepted" });
+
+      const { w, item, row, later, report, sentRows } =
+        await drainAfterRowsEvent("rows-held-mid-drain", true);
+      expect(
+        sentRows,
+        "a row write went out after the drain's catch-up set its table's rows aside",
+      ).toEqual([]);
+      expect(report).toMatchObject({
+        held: 1,
+        stopped: null,
+        unavailable: null,
+      });
+      expect(
+        (await queue(w.device)).find((write) => write.id === later.id),
+      ).toMatchObject({
+        verdict: "blocked",
+        reason: "awaiting_dependency",
+        batched_with: null,
+      });
+      expect(value(await w.device.unsent()).map((write) => write.id)).toContain(
+        later.id,
+      );
+
+      w.answerInstead(() => undefined);
+      value(await w.device.fillTables());
+      value(await w.device.drain());
+      expect(
+        (await queue(w.device)).find((write) => write.id === later.id),
+      ).toMatchObject({ verdict: "accepted" });
+      const held = await w.client().rawRequest<{
+        data: { id: string; values: Record<string, unknown> }[];
+      }>(`/items/${item}/tables/steps/rows?limit=1000`);
+      expect(held.data.data.find((one) => one.id === row)?.values).toEqual({
+        count: 1,
+        note: "later",
+      });
+    },
+    // Two servers of its own: the witness's and the held case's.
+    TIMEOUT * 2,
   );
 
   it(
