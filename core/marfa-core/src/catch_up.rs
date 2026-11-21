@@ -2263,6 +2263,27 @@ fn in_slice(catalog: &Catalog, slice: &Slice, item: &WireItem) -> Result<bool> {
     ))
 }
 
+/// Whether the slice takes the row, or keeps it as a row the copy holds
+/// (`store::slice_keeps_held`).
+fn keeps(
+    tx: &rusqlite::Connection,
+    catalog: &Catalog,
+    slice: &Slice,
+    item: &WireItem,
+) -> Result<bool> {
+    if in_slice(catalog, slice, item)? {
+        return Ok(true);
+    }
+    Ok(store::item_held(tx, &item.id)?
+        && store::slice_keeps_held(
+            catalog,
+            &slice.types,
+            slice.tier,
+            &item.r#type,
+            Tier::parse_wire(item.tier.as_deref())?,
+        ))
+}
+
 /// What a row entering the copy brings that its frame does not: the edges it
 /// draws, and its tags where the frame carries none.
 #[derive(Default)]
@@ -2677,7 +2698,7 @@ fn apply(
                 reach::set_listed(tx, &item.id, listed)?;
                 return Ok(false);
             }
-            if (listed && in_slice(catalog, slice, item)?) || store::pinned(tx, &item.id)? {
+            if (listed && keeps(tx, catalog, slice, item)?) || store::pinned(tx, &item.id)? {
                 reach::set_listed(tx, &item.id, listed)?;
                 let tags = payload
                     .metadata
@@ -5344,6 +5365,93 @@ mod tests {
         )
     }
 
+    /// A copy of every type takes no `app.*` row by event, and takes the note
+    /// beside it.
+    #[test]
+    fn a_copy_of_every_type_takes_no_app_row() {
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![types(&[(NOTE, None), ("app.acme.setting", None)])],
+        );
+        let events = || {
+            stream(
+                vec![
+                    event(
+                        "11",
+                        "item.created",
+                        &item_payload("item.created", "setting", "app.acme.setting", 1),
+                    ),
+                    event(
+                        "12",
+                        "item.created",
+                        &item_payload("item.created", "note", NOTE, 1),
+                    ),
+                    stream_live(Some("12")),
+                ],
+                Then::End,
+            )
+        };
+        server.on("/events", vec![events(), events()]);
+        let (_dir, core) = hydrated(&server);
+        store::meta_set(&core.conn().unwrap(), store::META_SLICE_TYPES, "[\"*\"]").unwrap();
+
+        core.catch_up().unwrap();
+
+        assert!(
+            core.get("note").unwrap().is_some(),
+            "the witness was dropped"
+        );
+        assert_eq!(
+            core.get("setting").unwrap(),
+            None,
+            "a slice of every type took an app row"
+        );
+        assert_eq!(stored_cursor(&core).as_deref(), Some("12"));
+    }
+
+    /// A copy naming a visible type takes no hidden subtype of it by event.
+    #[test]
+    fn a_copy_naming_a_visible_type_takes_no_hidden_subtype_of_it() {
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![types(&[(NOTE, None), ("app.other.setting", Some(NOTE))])],
+        );
+        let events = || {
+            stream(
+                vec![
+                    event(
+                        "11",
+                        "item.created",
+                        &item_payload("item.created", "setting", "app.other.setting", 1),
+                    ),
+                    event(
+                        "12",
+                        "item.created",
+                        &item_payload("item.created", "note", NOTE, 1),
+                    ),
+                    stream_live(Some("12")),
+                ],
+                Then::End,
+            )
+        };
+        server.on("/events", vec![events(), events()]);
+        let (_dir, core) = hydrated(&server);
+
+        core.catch_up().unwrap();
+
+        assert!(
+            core.get("note").unwrap().is_some(),
+            "the witness was dropped"
+        );
+        assert_eq!(
+            core.get("setting").unwrap(),
+            None,
+            "a copy naming a visible type took its hidden subtype"
+        );
+    }
+
     /// A copy of every type takes no `system.*` row by event, unless the row
     /// is pinned, which keeps taking its updates whatever the slice.
     #[test]
@@ -5369,6 +5477,100 @@ mod tests {
         assert!(
             core.get("pinned").unwrap().is_some(),
             "a pinned system row stopped taking its updates"
+        );
+        assert_eq!(stored_cursor(&core).as_deref(), Some("13"));
+    }
+
+    /// A copy of every type made before `app.*` was hidden holds app rows,
+    /// one with a queued edit. Their updates reach them; neither leaves.
+    #[test]
+    fn a_copy_keeps_the_app_rows_it_held_before_they_were_hidden() {
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![types(&[(NOTE, None), ("app.acme.setting", None)])],
+        );
+        let events = || {
+            stream(
+                vec![
+                    event(
+                        "11",
+                        "item.updated",
+                        &item_payload("item.updated", "quiet", "app.acme.setting", 2),
+                    ),
+                    event(
+                        "12",
+                        "item.updated",
+                        &item_payload("item.updated", "edited", "app.acme.setting", 2),
+                    ),
+                    event(
+                        "13",
+                        "item.updated",
+                        &item_payload("item.updated", "note", NOTE, 2),
+                    ),
+                    stream_live(Some("13")),
+                ],
+                Then::End,
+            )
+        };
+        server.on("/events", vec![events(), events()]);
+        let (_dir, core) = hydrated(&server);
+        {
+            let conn = core.conn().unwrap();
+            store::meta_set(&conn, store::META_SLICE_TYPES, "[\"*\"]").unwrap();
+            store::replace_catalog(
+                &conn,
+                &WireCatalog {
+                    types: vec![
+                        store::testing::wire_type(NOTE, None, Some("title")),
+                        store::testing::wire_type("app.acme.setting", None, Some("title")),
+                    ],
+                    edge_types: Vec::new(),
+                },
+            )
+            .unwrap();
+            let catalog = crate::catalog::load(&conn).unwrap();
+            for (id, ty) in [
+                ("quiet", "app.acme.setting"),
+                ("edited", "app.acme.setting"),
+                ("note", NOTE),
+            ] {
+                let row = store::testing::wire_item(
+                    id,
+                    ty,
+                    "active",
+                    "2026-01-01T00:00:00Z",
+                    serde_json::json!({ "title": id }),
+                );
+                store::put_server_item(&conn, &row, Some(&[]), &catalog).unwrap();
+                reach::set_listed(&conn, id, true).unwrap();
+            }
+        }
+        let mut properties = serde_json::Map::new();
+        properties.insert("title".into(), "waiting".into());
+        core.update_item(
+            "edited",
+            &crate::Edit {
+                properties,
+                base_version: Some(1),
+                ..crate::Edit::default()
+            },
+        )
+        .unwrap();
+        // The old slice declared the row, so its edit pinned nothing.
+        store::unpin(&core.conn().unwrap(), "edited").unwrap();
+
+        core.catch_up().unwrap();
+
+        assert_eq!(core.get("note").unwrap().unwrap().version, 2);
+        assert_eq!(
+            core.get("quiet").unwrap().map(|row| row.version),
+            Some(2),
+            "a held app row left the copy or missed its update"
+        );
+        assert!(
+            core.get("edited").unwrap().is_some(),
+            "an app row with a queued edit left the copy"
         );
         assert_eq!(stored_cursor(&core).as_deref(), Some("13"));
     }

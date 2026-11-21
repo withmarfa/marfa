@@ -913,15 +913,15 @@ export function certifiedRead(
  * What `POST /items/bulk-get` answers for ids whose reads by id answer
  * `reads`, in the order the request named them. The server resolves each id
  * as a read by id does, so a `200` gives the id's item and a `404` leaves the
- * id out (`items/bulk-get` and `items/bulk-get-omits`), but for a `system.*`
- * item, which it leaves out unless `include` names `system`
+ * id out (`items/bulk-get` and `items/bulk-get-omits`), but for a hidden
+ * item, which it leaves out unless `include` names `hidden`
  * (`items/bulk-get-system`). Any other answer is the whole request's. Under a
  * reach the answer is certified only where every read was, and then
  * carries `listed` beside `data` (`reach/listed-bulk-get`).
  */
 export function bulkGetOf(
   reads: Answer[],
-  options: { withReach: boolean; system: boolean },
+  options: { withReach: boolean; hidden: boolean },
 ): Answer {
   const gated = reads.filter((read) => read.kind === "gated");
   if (gated.length > 0)
@@ -953,9 +953,9 @@ export function bulkGetOf(
       listed?: unknown;
     };
     if (
-      !options.system &&
+      !options.hidden &&
       typeof row.item.type === "string" &&
-      row.item.type.startsWith("system.")
+      (row.item.type.startsWith("system.") || row.item.type.startsWith("app."))
     )
       continue;
     items.push(row.item);

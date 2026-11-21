@@ -241,7 +241,7 @@ fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
     let mut omitted = 0;
     for id in far_ends {
         let Some(row) = rows::by_id(read.tx, id)?
-            .filter(|row| row.state != "trashed" && !super::is_system(&row.type_id))
+            .filter(|row| row.state != "trashed" && !super::is_hidden(&row.type_id))
         else {
             continue;
         };
@@ -359,7 +359,7 @@ pub struct Many {
     pub metadata: bool,
     pub extensions: bool,
     pub edges: bool,
-    pub system: bool,
+    pub hidden: bool,
 }
 
 pub async fn bulk_get(
@@ -380,7 +380,7 @@ pub async fn bulk_get(
                 continue;
             };
             if row.state == "trashed"
-                || (!include.system && super::is_system(&row.type_id))
+                || (!include.hidden && super::is_hidden(&row.type_id))
                 || !read.caller.may_read_type(&row.type_id)
             {
                 continue;
@@ -496,7 +496,7 @@ pub async fn titles(app: &App, caller: &Caller, names: Vec<String>) -> Result<St
                         break;
                     };
                     for row in batch {
-                        if super::is_system(&row.type_id)
+                        if super::is_hidden(&row.type_id)
                             || !read.caller.may_read_type(&row.type_id)
                             || !read
                                 .caller
@@ -546,7 +546,7 @@ pub async fn captions(
             let Some(row) = rows::by_id(read.tx, &id)? else {
                 continue;
             };
-            if super::is_system(&row.type_id) || !read.caller.may_read_type(&row.type_id) {
+            if super::is_hidden(&row.type_id) || !read.caller.may_read_type(&row.type_id) {
                 continue;
             }
             let shown = super::shown_of(read.tx, &read.catalog, &row, &|type_id| {
@@ -570,7 +570,8 @@ pub(crate) fn readable_tags(read: &Reader<'_, '_>) -> Result<Vec<(String, i64)>>
     let rules = &read.catalog.rules;
     let mut counts: BTreeMap<String, i64> = BTreeMap::new();
     for (tag, type_id, source, count) in rows::active_tags(read.tx)? {
-        if read.caller.may_read_type(&type_id)
+        if !super::is_hidden(&type_id)
+            && read.caller.may_read_type(&type_id)
             && read.caller.levers()?.lists(rules, &type_id, &source)
         {
             *counts.entry(tag).or_default() += count;
@@ -1019,7 +1020,7 @@ pub async fn lookup(
         let mut data = Vec::with_capacity(found.len());
         let mut seen = HashSet::new();
         for row in found {
-            if super::is_system(&row.type_id)
+            if super::is_hidden(&row.type_id)
                 || !read.caller.may_read_type(&row.type_id)
                 || !seen.insert(row.id.clone())
             {

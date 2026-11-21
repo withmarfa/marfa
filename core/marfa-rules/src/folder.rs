@@ -128,11 +128,17 @@ pub fn check_beneath_file(path: &str) -> Result<(), String> {
     }
 }
 
+/// A type only the server writes.
 pub fn is_system(type_id: &str) -> bool {
     type_id.starts_with("system.")
 }
 
-/// Whether the query names no type or names `*`: every type but `system.*`.
+/// The server and app namespaces that ordinary item listings omit.
+pub fn is_hidden(type_id: &str) -> bool {
+    is_system(type_id) || type_id.starts_with("app.")
+}
+
+/// Whether the query names no type or names `*`: every type but the hidden ones.
 pub fn names_every_type(types: &[String]) -> bool {
     types.is_empty() || types.iter().any(|named| named.trim() == EVERY_TYPE)
 }
@@ -147,13 +153,25 @@ pub fn slice_types(types: &[String]) -> Vec<String> {
     }
 }
 
-/// Whether a declaration names the type: `*` names every type but `system.*`.
+/// Whether a type name opts in to the hidden type it names: an exact hidden name does, and a
+/// wildcard such as `app.acme.*` does not.
+pub fn opens_hidden(named: &str) -> bool {
+    is_hidden(named) && !named.ends_with(".*")
+}
+
+/// Whether a type name takes a row of `row_type`: the type itself or a subtype of it. A hidden
+/// row needs an exact name for its type or a hidden ancestor.
+pub fn takes_type(catalog: &Catalog, named: &str, row_type: &str) -> bool {
+    catalog.matches(named, row_type) && (!is_hidden(row_type) || opens_hidden(named))
+}
+
+/// Whether a declaration names the type: `*` names every type but the hidden ones.
 pub fn declares_type(catalog: &Catalog, declared: &[String], row_type: &str) -> bool {
     declared.iter().any(|declared| {
         if declared == EVERY_TYPE {
-            !is_system(row_type)
+            !is_hidden(row_type)
         } else {
-            catalog.matches(declared, row_type)
+            takes_type(catalog, declared, row_type)
         }
     })
 }
@@ -329,6 +347,8 @@ mod tests {
             ("core.task", None),
             ("core.media", None),
             ("core.media.photo", Some("core.media")),
+            ("app.acme.setting", None),
+            ("app.other.setting", Some("core.note")),
         ];
         Catalog::from_wire(
             &entries
@@ -422,6 +442,56 @@ mod tests {
         assert!(judged(&["core.media"], Some("core.media.photo")).is_ok());
         assert!(judged(&["core.media.photo"], Some("core.media")).is_err());
         assert!(judged(&[], Some("core.task")).is_ok());
+    }
+
+    #[test]
+    fn a_hidden_type_is_under_the_system_or_the_app_root_and_no_other() {
+        for hidden in ["system.folder", "app.acme.setting"] {
+            assert!(is_hidden(hidden), "{hidden}");
+            assert!(!holds_type(&catalog(), &lines(&["*"]), hidden), "{hidden}");
+        }
+        for shown in ["core.note", "user.recipe", "application.x", "apple.pie"] {
+            assert!(!is_hidden(shown), "{shown}");
+        }
+        assert!(is_system("system.folder"));
+        assert!(!is_system("app.acme.setting"));
+    }
+
+    #[test]
+    fn a_visible_type_takes_no_hidden_subtype_and_a_hidden_type_takes_only_its_own() {
+        let declared = lines(&["core.note"]);
+        assert!(declares_type(&catalog(), &declared, "core.note"));
+        assert!(
+            !declares_type(&catalog(), &declared, "app.other.setting"),
+            "a visible type took its hidden subtype"
+        );
+        let beside = lines(&["core.note", "app.acme.setting"]);
+        assert!(declares_type(&catalog(), &beside, "app.acme.setting"));
+        assert!(
+            !declares_type(&catalog(), &beside, "app.other.setting"),
+            "naming one hidden type opened another"
+        );
+        let named = lines(&["app.other.setting"]);
+        assert!(declares_type(&catalog(), &named, "app.other.setting"));
+        for (wildcard, hidden) in [
+            ("app.*", "app.acme.setting"),
+            ("app.acme.*", "app.acme.setting"),
+            ("system.*", "system.folder"),
+        ] {
+            assert!(
+                !declares_type(&catalog(), &lines(&[wildcard]), hidden),
+                "{wildcard} opened a hidden type"
+            );
+        }
+        assert!(
+            declares_type(&catalog(), &lines(&["core.*"]), "core.note"),
+            "a visible wildcard took nothing"
+        );
+        assert!(!holds_type(
+            &catalog(),
+            &lines(&["core.note"]),
+            "app.other.setting"
+        ));
     }
 
     #[test]

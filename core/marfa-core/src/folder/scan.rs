@@ -2486,7 +2486,7 @@ impl Folder {
     }
 
     fn holds_bytes(&self, item: &Item, file: &Scanned, catalog: &Catalog) -> bool {
-        if item.r#type.starts_with("system.") || !suited(item, &file.key, catalog) {
+        if marfa_rules::folder::is_hidden(&item.r#type) || !suited(item, &file.key, catalog) {
             return false;
         }
         match bytes_of(item, catalog) {

@@ -84,7 +84,7 @@ pub struct Filter {
 #[derive(Clone, Debug, Default)]
 pub struct Ask {
     pub types: Vec<String>,
-    pub system: bool,
+    pub hidden: bool,
     pub states: States,
     pub source: Option<String>,
     pub tier: Option<String>,
@@ -119,7 +119,7 @@ impl Ask {
         };
         json!([
             sorted(&self.types),
-            self.system,
+            self.hidden,
             states,
             self.source,
             self.tier,
@@ -170,8 +170,21 @@ pub fn judge_terms(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
 }
 
 pub fn selection(reach: &Reach, ask: &Ask, catalog: &Catalog, walked: bool) -> Result<Sql> {
+    selection_shown(reach, |_| true, ask, catalog, walked)
+}
+
+/// `selection` answering only rows of the types `shown` keeps, while the filter's relations and
+/// the walk beneath an item still reach every type in `reach`.
+pub fn selection_shown(
+    reach: &Reach,
+    shown: impl Fn(&str) -> bool,
+    ask: &Ask,
+    catalog: &Catalog,
+    walked: bool,
+) -> Result<Sql> {
     let rules = &catalog.rules;
-    let rows = reach.narrowed(|type_id| keeps_type(rules, &ask.types, ask.system, type_id));
+    let rows = reach
+        .narrowed(|type_id| shown(type_id) && keeps_type(rules, &ask.types, ask.hidden, type_id));
     let mut sql = Sql::default();
     let by_type = ask.leaves_few() && !walked && !rows.narrows_by_source();
     rows.clause(&mut sql, "i", !by_type);

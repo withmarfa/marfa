@@ -1091,6 +1091,63 @@ mod tests {
         );
     }
 
+    /// As on the server: a hidden item is never listed, and the walk beneath an item still passes
+    /// through one to a visible item below it.
+    #[test]
+    fn a_view_lists_a_visible_item_beneath_a_hidden_one_and_never_the_hidden_one() {
+        const ROOT: &str = "01a00000-0000-7000-8000-0000000000a1";
+        const MIDDLE: &str = "01a00000-0000-7000-8000-0000000000a2";
+        const LEAF: &str = "01a00000-0000-7000-8000-0000000000a3";
+        let core = copy();
+        {
+            let conn = core.conn().unwrap();
+            store::replace_types(
+                &conn,
+                &[
+                    wire_type("core.note", None, Some("title")),
+                    wire_type("app.acme.setting", Some("core.note"), Some("title")),
+                    wire_type("system.view", None, None),
+                ],
+            )
+            .unwrap();
+        }
+        put(&core, ROOT, json!({}), &[]);
+        put(&core, LEAF, json!({}), &[]);
+        {
+            let conn = core.conn().unwrap();
+            let middle = wire_item(
+                MIDDLE,
+                "app.acme.setting",
+                "active",
+                "2026-01-01T00:00:00Z",
+                json!({}),
+            );
+            store::put_server_item(
+                &conn,
+                &middle,
+                Some(&[]),
+                &crate::catalog::load(&conn).unwrap(),
+            )
+            .unwrap();
+            store::meta_set(&conn, store::META_SLICE_EDGE_TYPES, r#"["parent-of"]"#).unwrap();
+            for (id, from, to) in [("e1", ROOT, MIDDLE), ("e2", MIDDLE, LEAF)] {
+                conn.execute(
+                    "INSERT INTO edges (id, from_id, to_id, edge_type, properties, version, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, 'parent-of', '{}', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                    [id, from, to],
+                )
+                .unwrap();
+            }
+        }
+        view(
+            &core,
+            json!({ "query": { "types": ["core.note"], "beneath": ROOT } }),
+        );
+        let mut held = ids(&core);
+        held.sort();
+        assert_eq!(held, [ROOT, LEAF]);
+    }
+
     #[test]
     fn grouping_honors_hidden_values() {
         let core = copy();

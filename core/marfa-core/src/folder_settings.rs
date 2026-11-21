@@ -710,7 +710,10 @@ mod tests {
             FOLDER_TYPE,
             Tier::Library
         ));
-        assert!(takes(&["system.*"], Tier::Feed, FOLDER_TYPE, Tier::Library));
+        assert!(
+            !takes(&["system.*"], Tier::Feed, FOLDER_TYPE, Tier::Library),
+            "a wildcard opened a hidden type"
+        );
         assert!(!takes(&["*"], Tier::Library, FOLDER_TYPE, Tier::Library));
         // The witness that the tier still holds for every other type.
         assert!(!takes(

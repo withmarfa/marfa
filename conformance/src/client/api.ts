@@ -96,7 +96,7 @@ export interface CreateItemInput {
    * written and so have no precondition to fail.
    */
   version?: number;
-  tier?: "library" | "feed"; // Items are curated library content or transient feed content; system.* items have no tier
+  tier?: "library" | "feed"; // Items are curated library content or transient feed content
   occurred_at?: string;
   capture_latitude?: number;
   capture_longitude?: number;
@@ -803,7 +803,7 @@ export class MarfaClient {
    */
   async bulkGet(
     ids: string[],
-    include?: Array<"edges" | "metadata" | "extensions" | "system">,
+    include?: Array<"edges" | "metadata" | "extensions" | "hidden">,
   ): Promise<ApiResponse<{ data: MarfaItem[]; metadata?: MarfaMetadata[] }>> {
     return this.request<{ data: MarfaItem[]; metadata?: MarfaMetadata[] }>(
       "/items/bulk-get",

@@ -1417,12 +1417,12 @@ fn counted(
     if query.is_some_and(|query| query.nothing) {
         return Some(HashMap::new());
     }
-    let system = types.iter().any(|declared| store::is_system(declared));
-    if system && tier != SliceTier::All {
+    if tier != SliceTier::All && types.iter().any(|declared| store::is_system(declared)) {
         return None;
     }
+    let hidden = types.iter().any(|declared| store::is_hidden(declared));
     let narrowing = query.map(|query| query.listing(false));
-    http.counts_by_type(tier, system, narrowing.as_ref()).ok()
+    http.counts_by_type(tier, hidden, narrowing.as_ref()).ok()
 }
 
 /// The counts were read at the slice's tier, so only the types are matched.
@@ -1451,7 +1451,7 @@ fn listed_tier(declared: Option<&str>, tier: SliceTier) -> SliceTier {
     }
 }
 
-/// `*` is every type but `system.*`, so it stands beside `system.*` types,
+/// `*` is every type but the hidden ones, so it stands beside hidden types,
 /// which it adds, and beside no other.
 fn declared_types(types: &[String]) -> Result<Vec<String>> {
     let mut declared = Vec::new();
@@ -1473,10 +1473,10 @@ fn declared_types(types: &[String]) -> Result<Vec<String>> {
     if declared.iter().any(|name| name == store::EVERY_TYPE)
         && declared
             .iter()
-            .any(|name| name != store::EVERY_TYPE && !store::is_system(name))
+            .any(|name| name != store::EVERY_TYPE && !store::is_hidden(name))
     {
         return Err(CoreError::Invalid(format!(
-            "`{}` is every type but system.*, so it stands beside system.* types only: leave out the other types, or name the types without it",
+            "`{}` is every type but the hidden ones (system.* and app.*), so it stands beside hidden types only: leave out the other types, or name the types without it",
             store::EVERY_TYPE
         )));
     }
@@ -2373,7 +2373,7 @@ mod tests {
         for seen in &asked {
             assert_eq!(seen.reach.as_deref(), Some(scripted::FENCE));
             let body: Value = serde_json::from_slice(&seen.body).unwrap();
-            assert_eq!(body["include"], json!(["edges", "metadata", "system"]));
+            assert_eq!(body["include"], json!(["edges", "metadata", "hidden"]));
             let ids: Vec<String> = body["ids"]
                 .as_array()
                 .unwrap()
@@ -3466,6 +3466,47 @@ mod tests {
     }
 
     #[test]
+    fn a_slice_of_every_type_takes_a_named_app_type_beside_it_and_refuses_a_visible_one() {
+        let server = Scripted::start();
+        let core = copy(&server);
+        server.on(
+            "/types",
+            vec![scripted::certified(scripted::types(&[
+                ("core.note", None),
+                ("app.acme.setting", None),
+            ]))],
+        );
+        server.on(
+            "/keys/current",
+            vec![scripted::certified(scripted::refusal(403, "forbidden"))],
+        );
+        server.on(
+            "/items",
+            vec![
+                page_of(&[]),
+                page_of(&[("a", "core.note")]),
+                page_of(&[("s", "app.acme.setting")]),
+            ],
+        );
+        at_head(&server);
+        let beside: Vec<String> = ["*", "app.acme.setting"].map(String::from).to_vec();
+
+        core.hydrate_until(&beside, SliceTier::Library, &[], &AtomicBool::new(false))
+            .unwrap();
+
+        assert!(core.get("a").unwrap().is_some());
+        assert!(
+            core.get("s").unwrap().is_some(),
+            "an app type named beside the star was left out"
+        );
+        let visible: Vec<String> = ["*", "core.note"].map(String::from).to_vec();
+        assert!(
+            core.hydrate_until(&visible, SliceTier::Library, &[], &AtomicBool::new(false))
+                .is_err()
+        );
+    }
+
+    #[test]
     fn a_slice_of_every_type_takes_named_system_types_beside_it() {
         for types in [vec!["*", "system.folder"], vec!["system.folder", " * "]] {
             let server = Scripted::start();
@@ -3552,7 +3593,7 @@ mod tests {
         );
         let asked = server.seen("/items/stats");
         assert!(
-            !asked[0].query.contains("include=system"),
+            !asked[0].query.contains("include=hidden"),
             "{}",
             asked[0].query
         );

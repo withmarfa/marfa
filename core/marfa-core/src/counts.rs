@@ -186,9 +186,10 @@ fn linked(
             "SELECT e.{anchor}, COUNT(*){groups}
                FROM edges e CROSS JOIN items ON items.id = e.{other}
               WHERE e.edge_type = ? AND e.{anchor} IN ({marks})
-                AND {counted} AND items.type NOT LIKE 'system.%' AND {listed}
+                AND {counted} AND {visible} AND {listed}
               GROUP BY e.{anchor}",
-            listed = crate::query::LISTED
+            listed = crate::query::LISTED,
+            visible = crate::query::VISIBLE
         );
         let mut params: Vec<rusqlite::types::Value> = values.iter().map(store::sql_value).collect();
         params.extend(bound(ids, edge_type));
@@ -407,18 +408,15 @@ mod tests {
         ids.iter().map(|id| id.to_string()).collect()
     }
 
-    /// The local list leaves nothing out by type, so `system.*` is removed here, as the count rule removes it.
     fn listed(conn: &Connection, filter: &str) -> i64 {
         let catalog = crate::catalog::load(conn).unwrap();
         let filters = ListFilters {
             filter: Some(filter.into()),
             ..ListFilters::default()
         };
-        let items = crate::query::list(conn, &catalog, &filters, None).unwrap();
-        items
-            .iter()
-            .filter(|item| !item.r#type.starts_with("system."))
-            .count() as i64
+        crate::query::list(conn, &catalog, &filters, None)
+            .unwrap()
+            .len() as i64
     }
 
     #[test]

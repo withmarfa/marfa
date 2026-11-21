@@ -20,7 +20,13 @@ pub(crate) fn search(
     let mut clauses: Vec<String> = Vec::new();
     let mut values: Vec<Value> = Vec::new();
     clauses.push(query::LISTED.into());
-    query::narrow_by_types(catalog, filters.types.as_deref(), &mut clauses, &mut values)?;
+    query::narrow_by_types(
+        catalog,
+        filters.types.as_deref(),
+        false,
+        &mut clauses,
+        &mut values,
+    )?;
     query::narrow_by_states(
         filters.states.as_deref(),
         filters.all_states,

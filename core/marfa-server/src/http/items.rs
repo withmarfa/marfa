@@ -623,7 +623,7 @@ fn many_of(sent: &Map<String, Value>) -> Result<Many> {
             "metadata" => many.metadata = true,
             "extensions" => many.extensions = true,
             "edges" => many.edges = true,
-            "system" => many.system = true,
+            "hidden" => many.hidden = true,
             other => {
                 return Err(invalid_field(
                     "include",

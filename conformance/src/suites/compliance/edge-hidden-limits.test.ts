@@ -584,7 +584,7 @@ describe("a delete refused for a live grant it would take with it", () => {
           await as(
             server.workingKey,
             "GET",
-            "/items?type=system.connection&include=system",
+            "/items?type=system.connection&include=hidden",
           )
         ).json()) as { data: { id: string; properties: { status: string } }[] };
         const grant = grants.data.find(

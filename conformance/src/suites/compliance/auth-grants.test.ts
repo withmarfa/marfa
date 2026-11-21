@@ -748,16 +748,16 @@ describe("the apps a person approved, read as items", () => {
       (credential) =>
         answered(credential, path, body);
     return [
-      ["GET /items", get("/items?include=system&limit=200")],
+      ["GET /items", get("/items?include=hidden&limit=200")],
       ["GET /items/{id}", get(`/items/${connectionId}`)],
       [
         "POST /items/bulk-get",
         post("/items/bulk-get", {
           ids: [connectionId],
-          include: ["system"],
+          include: ["hidden"],
         }),
       ],
-      ["GET /items/stats", get("/items/stats?by=type&include=system")],
+      ["GET /items/stats", get("/items/stats?by=type&include=hidden")],
       ["GET /export", get("/export")],
       [
         "GET /events, replayed",
@@ -801,7 +801,7 @@ describe("the apps a person approved, read as items", () => {
     manager = await readingKey("connections-manager", ["grants.manage"]);
     const listed = await answered(
       manager,
-      "/items?type=system.connection&include=system&limit=100",
+      "/items?type=system.connection&include=hidden&limit=100",
     );
     expect(listed.status, listed.text).toBe(200);
     const row = (
@@ -834,7 +834,7 @@ describe("the apps a person approved, read as items", () => {
   });
 
   it("refuses a listing of system.connection to a credential without grants.manage, naming the permission", async () => {
-    const path = "/items?type=system.connection&include=system";
+    const path = "/items?type=system.connection&include=hidden";
     const shown = await answered(manager, path);
     expect(shown.status, shown.text).toBe(200);
     expect(shown.text).toContain(connectionId);
@@ -851,7 +851,7 @@ describe("the apps a person approved, read as items", () => {
   });
 
   it("shows an app's system.connection items only where it holds grants.manage, whatever data scope it holds", async () => {
-    const path = "/items?include=system&limit=200";
+    const path = "/items?include=hidden&limit=200";
     const holding = await registerApp(server, "*:read grants.manage");
     const manages = await connect(
       server,

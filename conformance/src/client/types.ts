@@ -13,7 +13,7 @@ export interface MarfaItem {
   /** The later of the item's last write and its rows' last change. */
   last_activity_at?: string;
   occurred_at: string | null; // When the item's content happened (nullable, defaults to created_at)
-  tier?: "library" | "feed"; // Items are either curated library content or transient feed content. Optional — system.* items have no tier.
+  tier?: "library" | "feed"; // Items are either curated library content or transient feed content.
   version: number; // Revision number, starts at 1, increments on update
   schema_version: number; // Type schema version this item was validated against
   capture_latitude: number | null;

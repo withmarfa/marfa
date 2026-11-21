@@ -59,7 +59,7 @@ pub enum DeviceCommand {
     /// against.
     Hydrate {
         /// A type identifier, repeatable, such as core.note, or `*` alone for
-        /// every type but `system.*`, hydrated in one pass without reading the
+        /// every type but the hidden ones (`system.*` and `app.*`), hydrated in one pass without reading the
         /// catalog first.
         #[arg(long = "type", required = true, value_name = "TYPE")]
         types: Vec<String>,
@@ -214,6 +214,7 @@ pub enum DeviceCommand {
         #[arg(long)]
         state: Vec<StateFilter>,
         /// A type identifier, with its subtypes; repeat it for more, up to ten.
+        /// To find a hidden item (`system.*` or `app.*`), name its type or a hidden ancestor exactly.
         #[arg(long = "type", value_name = "TYPE")]
         type_: Vec<String>,
         /// Only hits at this tier.
@@ -1038,6 +1039,8 @@ pub struct UpdateArgs {
 #[derive(Debug, Args)]
 pub struct ListArgs {
     /// A type identifier, with its subtypes; repeat it for more, up to ten.
+    /// To list a hidden item (`system.*` or `app.*`), name its type or a hidden ancestor exactly.
+    /// Listing the bin alone also includes hidden items.
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Vec<String>,
     /// A state to answer; repeat it for more. `any` is every state, and is
