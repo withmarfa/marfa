@@ -1706,7 +1706,7 @@ When a device fills whole again a table of a copy it hydrated under `device/rest
 
 While a row write queued under `device/restored-rows-kept` waits, a device MUST NOT send another row write to the same table before it.
 
-**Reason:** the kept rows are what the person wrote before the restore was found, so the writes queued to the table since go after them: a kept put sent after a later patch of the row would replace the columns the patch changed. They do not depend on the kept rows, so withdrawing those refuses none of them. The device checks again as it sends a row write, since a fill on another thread can queue a kept write to the table after the drain judged the write ready.
+**Reason:** the kept rows are what the person wrote before the restore was found, so the writes queued to the table since go after them: a kept put sent after a later patch of the row would replace the columns the patch changed. They do not depend on the kept rows, so withdrawing those refuses none of them. The device checks again as it sends a row write, since a fill on another thread can queue a kept write to the table after the drain judged the write ready. A kept write released and not yet sent still goes first.
 
 **Tests:** `device/server-restored-live.test.ts › sends a row write queued before the restore once the kept rows are withdrawn, refusing none of it`.
 
