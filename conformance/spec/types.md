@@ -72,13 +72,13 @@ If a type identifier's first segment is `schema`, `keys`, `items`, `webhooks`, `
 
 ### `types/id-reserved-namespace`
 
-If `POST /types` names an identifier under `core`, `system` or `marfa`, then the server MUST answer `403 forbidden` with `details.namespace` naming the root, whatever the credential.
+If a credential holding `metadata.types:write` sends `POST /types` with `fields` and a valid identifier under `core`, `system` or `marfa`, then the server MUST answer `403 forbidden` with `details.namespace` naming the root, whatever its type map grants.
 
 **Tests:** `compliance/namespace.test.ts › refuses %s.* registration from the broadest credential the suite holds`, `› refuses a reserved-namespace registration from a narrower credential too`.
 
 ### `types/id-reserved-common`
 
-If a credential holding `metadata.types:write` sends `POST /types` naming an identifier under `common`, then the server MUST answer `403 forbidden` with `details.namespace` `common` and a message naming `marfa plugins install`, whatever its type map grants.
+If a credential holding `metadata.types:write` sends `POST /types` with `fields` and a valid identifier under `common`, then the server MUST answer `403 forbidden` with `details.namespace` `common` and a message naming `marfa plugins install`, whatever its type map grants.
 
 **Reason:** `common.*` holds the shared types a plugin brings, so the only way to add a new one is to install that plugin. The permission check comes first: a credential without `metadata.types:write` is refused as `types/register-permission` says, naming the permission and not the namespace. A type already registered under `common` is changed under the ordinary rules, and an archive that holds one restores it (`archive/restore-common-types`). `marfa types check` judges an identifier as this statement does (`cli/types-check-judges`).
 
