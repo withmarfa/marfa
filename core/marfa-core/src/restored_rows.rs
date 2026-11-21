@@ -230,8 +230,7 @@ pub(crate) fn holds_back(conn: &Connection, write: &QueuedWrite) -> Result<bool>
     Ok(held && store::unsent(conn, &write.id)?)
 }
 
-/// Whether `write` is a row write not yet sent with a kept write to its table
-/// ahead of it in the queue, still blocked (`device/restored-rows-first`).
+/// A fill can insert kept writes after a drain snapshots the queue.
 pub(crate) fn kept_ahead(conn: &Connection, write: &QueuedWrite) -> Result<bool> {
     if !write.kind.rows() {
         return Ok(false);

@@ -116,11 +116,7 @@ pub(super) fn body(lead: &QueuedWrite, members: &[QueuedWrite]) -> String {
     json!({ "operations": operations }).to_string()
 }
 
-/// Whether a batch the pass judged ready, not yet sent, is held back now. A
-/// catch-up in the pass, or the follow stream, may since have set its table
-/// aside, queued a kept write ahead of it or built the copy again
-/// (`device/restored-rows-held`, `device/restored-rows-first`). Read in the
-/// transaction that would mark it sent.
+/// Recheck inside the transaction that marks the batch sent.
 pub(super) fn held_since(
     conn: &Connection,
     lead: &QueuedWrite,
@@ -143,9 +139,7 @@ pub(super) fn held_since(
     Ok(false)
 }
 
-/// Holds every write of a batch `held_since` found held back, as waiting on
-/// what is ahead of it, which the next pass clears. A write answered since
-/// keeps its verdict. Each write's verdict now, and whether it was held here.
+/// Preserve verdicts another thread recorded after readiness.
 pub(super) fn hold(
     conn: &Connection,
     lead: &QueuedWrite,

@@ -1,6 +1,4 @@
-//! A drain that judged a row write ready checks again, as it marks it sent,
-//! that nothing since held it back (`device/restored-rows-held`,
-//! `device/restored-rows-first`).
+//! Restore holds can change between readiness and marking a write sent.
 
 #![cfg(debug_assertions)]
 
@@ -16,8 +14,6 @@ fn put(id: &str, count: i64) -> Value {
     json!({ "op": "put", "id": id, "values": { "count": count } })
 }
 
-/// A copy of one note with the table `steps`, and an unsent row write for
-/// each of `writes`, each following the one before it.
 fn copy_with(server: &Scripted, writes: &[(&str, &str)]) -> std::sync::Arc<Core> {
     let core = crate::stop_tests::copy(server);
     let conn = core.conn().unwrap();
@@ -70,8 +66,6 @@ fn copy_with(server: &Scripted, writes: &[(&str, &str)]) -> std::sync::Arc<Core>
     core
 }
 
-/// Drains, pausing where the write `lead` has been judged ready and is about
-/// to be marked sent, to run `meanwhile` there as another thread would.
 fn drain_pausing(core: &Core, lead: &str, meanwhile: impl FnOnce(&rusqlite::Connection)) {
     let point = format!("drain-sending:{lead}");
     crate::fault::arm(&point);
@@ -97,9 +91,7 @@ fn unsent(core: &Core, id: &str) -> bool {
     write.batched_with.is_none() && store::unsent(&conn, id).unwrap()
 }
 
-/// Runs `meanwhile` at the pause, and first, as the witness, a drain with
-/// nothing done there, which sends every write in one request. Answers the
-/// server and the copy the held drain left.
+/// The unchanged control must send before the changed case can assert silence.
 fn held_by(
     writes: &[(&str, &str)],
     meanwhile: impl Fn(&rusqlite::Connection),

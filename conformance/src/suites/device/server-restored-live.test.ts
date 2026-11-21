@@ -1253,8 +1253,6 @@ describe("table rows a server restored behind lost", () => {
       const before = w.sent.length;
       await w.device.drain();
       const during = w.sent.slice(before);
-      // The witness: the drain judged the write ready, so it caught up before
-      // sending it, and that catch-up owed the table again.
       expect(during).toContain(read);
       expect(
         during.filter((line) => line === rows),
