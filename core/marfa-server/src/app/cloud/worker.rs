@@ -1,5 +1,4 @@
-//! Follows a started link: asks Marfa Cloud about it, carries out a confirmed move of the
-//! sign-in address, and tells Marfa Cloud of unlinks. With no link it waits to be woken.
+//! Follows a started link and the unlinks Marfa Cloud has not been told of; idle with neither.
 
 use std::collections::HashMap;
 use std::sync::Arc;

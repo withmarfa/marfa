@@ -702,7 +702,7 @@ pub enum Authority {
     Caller,
     /// The server, carrying out a move a caller who could make it confirmed earlier.
     Confirmed,
-    /// The server, putting back the sign-in address an address that no longer answers replaced.
+    /// The server, putting back the sign-in address that a link's address replaced.
     Restored,
 }
 

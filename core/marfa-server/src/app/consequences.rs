@@ -99,8 +99,7 @@ pub fn of_change(
     Ok(found)
 }
 
-/// What moving the sign-in address to a host not yet known does, as a link to Marfa Cloud
-/// does before Marfa Cloud names the address.
+/// What moving the sign-in address to a host not yet known does.
 pub fn of_move_to_unknown_host(tx: &Transaction<'_>, now_ms: i64) -> Result<Vec<Consequence>> {
     of_sign_in_move(tx, "", now_ms)
 }

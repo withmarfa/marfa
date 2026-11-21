@@ -1,5 +1,4 @@
-//! The instance's link to Marfa Cloud: started, read and ended by the owner, and followed
-//! by a worker that sends to Marfa Cloud only while a link is started.
+//! The instance's link to Marfa Cloud, which the owner starts, reads and ends.
 
 mod client;
 pub mod connector;
