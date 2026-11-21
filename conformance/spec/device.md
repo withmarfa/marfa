@@ -5842,6 +5842,14 @@ When a hydration finds that the instance holds a declared `app.*` type in the de
 
 **Tests:** `device/declare-replaces.test.ts › replaces a declared app type the instance holds in another definition, and writes none it holds as declared`, `device/declare-replaces-live.test.ts › replaces a type the app changed, and writes none the server already holds as declared, however the app wrote it`.
 
+### `device/hydrate-declared-outside-app`
+
+If a copy's store holds a declaration outside `app.*`, then a device MUST report the type in `unregistered_types` as `invalid` when it hydrates, and neither register nor replace it.
+
+**Reason:** a copy an earlier build made may hold a declaration under `user.*` or a publisher's namespace, which `device/declaration-refused` no longer lets an app make. The type belongs to its owner and to whoever else writes there, so a copy that registered or replaced it would change another's work on the strength of a stale declaration. The hydration completes, and the writes the copy queued stay queued.
+
+**Tests:** `device/declare-replaces.test.ts › registers and replaces no type outside app.* that an earlier build stored as declared, says it refused it, and keeps what the copy queued`.
+
 ### `device/hydrate-replace-refused`
 
 If the server refuses to replace a declared type, then a device MUST leave the type as the server holds it, report it in `unreplaced_types` with the server's code and message, and complete the hydration.

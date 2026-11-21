@@ -281,6 +281,31 @@ describe("namespace grammar", () => {
     );
   });
 
+  it("refuses a common.* registration from a key that holds read only on type metadata, naming the permission and not the namespace", async () => {
+    const resp = await client.createKey({
+      label: "np-common-read",
+      source: `${ctx.source}-np-common-read`,
+      type_permissions: { "*": "write" },
+      metadata_permissions: { "*": "read" },
+    });
+    expect(resp.ok).toBe(true);
+    trackKey(ctx, resp.data.id);
+    const readOnly = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: resp.data.key,
+    });
+    const r = await readOnly.registerType({
+      id: `common.shared-registration-readonly-${ctx.runId}`,
+      version: 1,
+      fields: { body: { type: "string", required: true } },
+    });
+    expect(r.status).toBe(403);
+    expect(r.error?.error.code).toBe("forbidden");
+    expect(r.error?.error.details?.metadata_subresource).toBe("types");
+    expect(r.error?.error.details?.required).toBe("write");
+    expect(r.error?.error.details?.namespace).toBeUndefined();
+  });
+
   it("refuses a reserved-namespace registration from a narrower credential too", async () => {
     const np = await narrowClient("np-core");
     const r = await np.registerType({

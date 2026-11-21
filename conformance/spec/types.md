@@ -78,11 +78,11 @@ If `POST /types` names an identifier under `core`, `system` or `marfa`, then the
 
 ### `types/id-reserved-common`
 
-If `POST /types` names an identifier under `common`, then the server MUST answer `403 forbidden` with `details.namespace` `common` and a message naming `marfa plugins install`, whatever the credential.
+If a credential holding `metadata.types:write` sends `POST /types` naming an identifier under `common`, then the server MUST answer `403 forbidden` with `details.namespace` `common` and a message naming `marfa plugins install`, whatever its type map grants.
 
-**Reason:** `common.*` holds the shared types a plugin brings, so the only way to add a new one is to install that plugin. A type already registered under `common` is changed under the ordinary rules, and an archive that holds one restores it (`archive/restore-common-types`). `marfa types check` judges an identifier as this statement does (`cli/types-check-judges`).
+**Reason:** `common.*` holds the shared types a plugin brings, so the only way to add a new one is to install that plugin. The permission check comes first: a credential without `metadata.types:write` is refused as `types/register-permission` says, naming the permission and not the namespace. A type already registered under `common` is changed under the ordinary rules, and an archive that holds one restores it (`archive/restore-common-types`). `marfa types check` judges an identifier as this statement does (`cli/types-check-judges`).
 
-**Tests:** `compliance/namespace.test.ts › refuses common.* registration from the broadest credential and a narrower one, naming the way in, where the same body under user.* registers`, `device/types-check.test.ts › refuses a loosened minimum and a reserved root`.
+**Tests:** `compliance/namespace.test.ts › refuses common.* registration from the broadest credential and a narrower one, naming the way in, where the same body under user.* registers`, `› refuses a common.* registration from a key that holds read only on type metadata, naming the permission and not the namespace`, `device/types-check.test.ts › refuses a loosened minimum and a reserved root`.
 
 ### `types/id-root-not-prefix`
 

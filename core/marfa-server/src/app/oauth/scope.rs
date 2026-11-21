@@ -40,7 +40,10 @@ const CLAIMED_ROOTS: [&str; 13] = [
 ];
 
 /// Roots an app may ask for whole whether or not a type sits under them yet.
-const STANDING_ROOTS: [&str; 4] = ["app", "common", "core", "user"];
+const STANDING_ROOTS: [&str; 3] = ["app", "core", "user"];
+
+/// Roots an app may ask for whole on the item type axis only, before any type sits under them.
+const STANDING_ITEM_ROOTS: [&str; 1] = ["common"];
 
 /// The order the approval pages show permissions in.
 const PERMISSIONS: [Permission; 14] = [
@@ -422,6 +425,12 @@ impl Registries {
                     verb,
                 });
                 add(Scope::Edge {
+                    pattern: format!("{root}.*"),
+                    verb,
+                });
+            }
+            for root in STANDING_ITEM_ROOTS {
+                add(Scope::Type {
                     pattern: format!("{root}.*"),
                     verb,
                 });
@@ -998,6 +1007,17 @@ mod tests {
         assert!(narrowed.dropped.is_empty());
         let witness = narrow(&set("nowhere.*:read"), &allowed);
         assert_eq!(witness.dropped, ["nowhere.*:read"]);
+    }
+
+    #[test]
+    fn common_is_offered_for_item_types_and_for_no_edge_type() {
+        let allowed = Registries::new([], []).allowed();
+        for offered in ["common.*:read", "common.*:write", "edge.user.*:read"] {
+            assert!(allowed.contains(offered), "{offered} is not offered");
+        }
+        for withheld in ["edge.common.*:read", "edge.common.*:write"] {
+            assert!(!allowed.contains(withheld), "{withheld} is offered");
+        }
     }
 
     #[test]

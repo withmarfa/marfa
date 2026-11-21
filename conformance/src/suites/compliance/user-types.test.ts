@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -32,14 +33,17 @@ describe("user.* types", () => {
         await approvedApp(server, ["metadata.types:write", "user.*:write"])
       ).token,
     });
+    // A fresh id each run of the body: the shard's retry meets a server that
+    // already holds the first attempt's type.
+    const id = `user.recipe-${randomUUID().slice(0, 8)}`;
     const created = await app.registerType({
-      id: "user.recipe",
+      id,
       fields: FIELDS,
     });
     expect(created.status, JSON.stringify(created.error)).toBe(201);
     expect(created.data.provenance?.created_by?.kind).toBe("app");
 
-    const read = await app.getType("user.recipe");
+    const read = await app.getType(id);
     expect(read.data.provenance?.created_by).toEqual(
       created.data.provenance?.created_by,
     );

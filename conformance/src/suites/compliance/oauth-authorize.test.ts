@@ -841,6 +841,26 @@ describe("an app's own type namespace", () => {
     });
     expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
     expect(exchanged.body.scope).toBe(scope);
+
+    // Shared types are item types: no edge scope under `common` is offered,
+    // while the same request names `edge.user.*`, which is.
+    const edgeScope = "common.*:read edge.common.*:read edge.user.*:read";
+    const both = await registerApp(server, edgeScope);
+    const narrowed = await consentScreen(
+      authorizeQuery(both.clientId, edgeScope, pkce()),
+    );
+    expect(narrowed.searchParams.get("scope")?.split(" ")).toEqual([
+      "common.*:read",
+      "edge.user.*:read",
+    ]);
+    const published = (
+      (await (
+        await fetch(`${server.apiUrl}/.well-known/oauth-authorization-server`)
+      ).json()) as { scopes_supported: string[] }
+    ).scopes_supported;
+    expect(published).toContain("common.*:read");
+    expect(published).toContain("edge.user.*:read");
+    expect(published).not.toContain("edge.common.*:read");
   });
 
   it("is offered on a device code for app.<vendor>.*, and refused for a vendor no type sits under", async () => {

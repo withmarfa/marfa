@@ -251,6 +251,11 @@ stays because that thing is what it checks.
   fault `volume-full`, which stands for the volume a device finds full when
   it tries to make a file there. No door or fault makes a store of another
   build's version, and a fixture cannot fill the volume its runner writes to.
+- `device/declare-replaces.test.ts`, "registers and replaces no type outside
+  app.* that an earlier build stored as declared, says it refused it, and keeps
+  what the copy queued", writes a declaration under `user.*` into a device's
+  store. Declaring one is refused now, so no door makes the state an earlier
+  build left behind.
 - `device/folders-open-writer.test.ts`, "deletes a file it set aside unchanged
   a week after it could not tell whether a program writes to it", moves back
   the time a folder's store records for a file it keeps. The command line has

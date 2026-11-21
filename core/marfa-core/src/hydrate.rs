@@ -1327,8 +1327,9 @@ fn waiting_on_each_other(rows: &[(String, String)], waits: &[Vec<String>]) -> Co
 /// "Another definition" is the server's judgement: it normalizes the
 /// declaration and the registered type alike (`POST /types/normalize`), so key
 /// order, a default written out or left out, and a label the server derives
-/// never make a declaration differ. Every declared type is under `app.`, the
-/// namespace an app owns (`Core::declare_types`).
+/// never make a declaration differ. A declaration an earlier build stored
+/// outside `app.`, the namespace an app owns, is neither registered nor
+/// replaced: it is reported as `invalid` like a declaration refused today.
 fn declare_on_instance(
     core: &Core,
     http: &Http,
@@ -1339,13 +1340,24 @@ fn declare_on_instance(
         let conn = core.conn()?;
         store::declared_type_rows(&conn)?
     };
+    let mut done = Declared::default();
+    let mut owned = Vec::new();
+    for (id, json) in declared {
+        match marfa_rules::catalog::app_declaration(&id) {
+            Ok(()) => owned.push((id, json)),
+            Err(refusal) => done.unregistered.push(UnregisteredType {
+                id,
+                code: refusal.code.as_str().to_string(),
+                message: refusal.message,
+            }),
+        }
+    }
     let held = |id: &str| catalog.types.iter().any(|held| held.id == id);
-    let (present, missing): (Vec<_>, Vec<_>) = declared.into_iter().partition(|(id, _)| held(id));
+    let (present, missing): (Vec<_>, Vec<_>) = owned.into_iter().partition(|(id, _)| held(id));
     let missing = in_order_of_registration(missing)?;
     // The server judges each replacement, a parent loop included.
     let (mut own, looped) = in_order_of_need(present, parent_need);
     own.extend(looped);
-    let mut done = Declared::default();
     for (id, json) in missing {
         crate::catch_up::refuse_if_stopped(stop)?;
         match http.register_type(&json)? {
