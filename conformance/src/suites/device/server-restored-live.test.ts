@@ -1205,6 +1205,80 @@ describe("table rows a server restored behind lost", () => {
   );
 
   it(
+    "sends no row write a drain judged ready before its own catch-up set the table's rows aside",
+    async () => {
+      const w = await world("rows-held-mid-drain");
+      const row = uuidv7();
+      const { type, items } = await steps(w.client(), "rows-held-mid-drain", [
+        [put(row, 1)],
+      ]);
+      const item = items[0] ?? "";
+      value(await w.device.hydrate([type], "library"));
+      value(await w.device.holdTable(type, "steps"));
+      value(await w.device.catchUp());
+      // Past what an event carries of values, so its event names the rows alone.
+      const note = "x".repeat(1024);
+      value(
+        await w.device.writeRows(
+          item,
+          "steps",
+          Array.from({ length: 80 }, () => ({
+            op: "put",
+            id: uuidv7(),
+            values: { count: 1, note },
+          })),
+        ),
+      );
+      expect(value(await w.device.drain()).answered).toBe(1);
+      const later = value(
+        await w.device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { note: "later" } },
+        ]),
+      );
+      const read = `GET /items/${item}/tables/steps/rows`;
+      const rows = `POST /items/${item}/tables/steps/rows`;
+      w.answerInstead((method, path) =>
+        `${method} ${path}` === read
+          ? {
+              status: 400,
+              body: {
+                error: {
+                  code: "validation_failed",
+                  message: "the request does not read",
+                },
+              },
+            }
+          : undefined,
+      );
+      const before = w.sent.length;
+      await w.device.drain();
+      const during = w.sent.slice(before);
+      // The witness: the drain judged the write ready, so it caught up before
+      // sending it, and that catch-up owed the table again.
+      expect(during).toContain(read);
+      expect(
+        during.filter((line) => line === rows),
+        "a row write went out after the drain's catch-up set its table's rows aside",
+      ).toEqual([]);
+
+      w.answerInstead(() => undefined);
+      value(await w.device.fillTables());
+      value(await w.device.drain());
+      expect(
+        (await queue(w.device)).find((write) => write.id === later.id),
+      ).toMatchObject({ verdict: "accepted" });
+      const held = await w.client().rawRequest<{
+        data: { id: string; values: Record<string, unknown> }[];
+      }>(`/items/${item}/tables/steps/rows?limit=1000`);
+      expect(held.data.data.find((one) => one.id === row)?.values).toEqual({
+        count: 1,
+        note: "later",
+      });
+    },
+    TIMEOUT,
+  );
+
+  it(
     "sets aside a row write whose rows the restored server answers 400 validation_failed, and reads them no more",
     async () => {
       const w = await world("restored-rows-unreadable");
