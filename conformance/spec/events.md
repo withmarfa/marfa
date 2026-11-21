@@ -807,7 +807,7 @@ When the write that announces a new entry in what needs the owner's attention fa
 
 ### `events/attention-check-unclaimed`
 
-While every write fails for a reason other than a restore holding writes, the server MUST run the `attention-check` housekeeping job when it is due, without recording the run.
+While every write fails for a reason other than a restore holding writes, the server MUST run the `attention-check` housekeeping job each time its interval passes, without recording the run, including after a run whose record could not be written.
 
 **Reason:** the server records that a job has started before it runs it, and that record is a write. A job that waited for it would not run on a full volume, which is when an owner most needs to hear of it. The job only reads, and its announcement already handles a failed write (`events/attention-memory`).
 
