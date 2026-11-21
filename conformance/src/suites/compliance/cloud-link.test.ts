@@ -323,9 +323,10 @@ describe("starting a link", () => {
     async () => {
       const cloud = await fakeCloud();
       clouds.push(cloud);
-      const root = tempFolder("cloud-control-only-");
+      // Short names: a socket path is bounded at about 100 bytes.
+      const root = tempFolder("cl-");
       cleanups.push(() => rm(root, { recursive: true, force: true }));
-      const socket = join(root, "control.sock");
+      const socket = join(root, "c.sock");
       const child = spawn(serverProgram(), [], {
         env: {
           PATH: process.env.PATH,
@@ -339,8 +340,11 @@ describe("starting a link", () => {
           MARFA_ENRICHMENT_OCR_ENABLED: "false",
           MARFA_CLOUD_URL: cloud.url,
         },
-        stdio: ["ignore", "ignore", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
+      let output = "";
+      child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
+      child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
       const exited = once(child, "exit");
       cleanups.push(async () => {
         if (child.exitCode === null && child.signalCode === null) {
@@ -349,6 +353,9 @@ describe("starting a link", () => {
         await exited;
       });
       await waitFor("the control socket to answer", async () => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          throw new Error(`the server ended: ${output}`);
+        }
         try {
           return (await controlRequest(socket, "/health")).status === 200
             ? true
