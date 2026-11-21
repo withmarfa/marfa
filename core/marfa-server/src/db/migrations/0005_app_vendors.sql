@@ -25,7 +25,7 @@ END;
 
 -- Who minted each key: an app (an owner's key minted through it too, which
 -- oauth_client_id leaves out), the owner, or, for a key made before this
--- column, no one where no record says.
+-- column, no one where no record says. It replaces app_made.
 ALTER TABLE api_keys ADD COLUMN made_by_client TEXT;
 ALTER TABLE api_keys ADD COLUMN maker_unknown INTEGER NOT NULL DEFAULT 0
     CHECK (maker_unknown IN (0, 1));
@@ -79,10 +79,14 @@ UPDATE api_keys
 SET made_by_client = (SELECT nullif(maker, '') FROM temp.key_makers WHERE id = api_keys.id)
 WHERE oauth_client_id IS NULL;
 
+-- Where no record names a maker, app_made, which 0004 set, says whether the owner made the key.
 UPDATE api_keys SET maker_unknown = 1
-WHERE oauth_client_id IS NULL AND id NOT IN (SELECT id FROM temp.key_makers);
+WHERE oauth_client_id IS NULL AND app_made = 1
+    AND id NOT IN (SELECT id FROM temp.key_makers);
 
 DROP TABLE temp.key_makers;
+
+ALTER TABLE api_keys DROP COLUMN app_made;
 
 -- A vendor goes to an app only when that one known app made every type under
 -- it; otherwise the owner holds it until they give it to an app. Keep in step

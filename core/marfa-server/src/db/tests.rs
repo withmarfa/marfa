@@ -2043,7 +2043,7 @@ async fn a_database_at_schema_version_2_upgrades_through_4_naming_registered_typ
         )
         .unwrap();
 
-    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+    db_open(&options(&place.file, &MIGRATIONS[..4]), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -2320,7 +2320,7 @@ fn backup_changes(conn: &Connection) -> i64 {
 }
 
 #[tokio::test]
-async fn a_database_at_schema_version_2_gives_a_vendor_to_an_app_only_when_one_known_app_made_all_its_types()
+async fn a_database_at_schema_version_2_upgrades_through_5_giving_a_vendor_only_to_the_one_known_app_that_made_its_types()
  {
     let place = folder();
     db_open(&options(&place.file, &MIGRATIONS[..2]), Arc::default())
@@ -2499,6 +2499,7 @@ async fn a_database_at_schema_version_2_gives_a_vendor_to_an_app_only_when_one_k
             key("key-unknown-grant", None, None, true),
         ]
     );
+    assert!(!columns_of(&place.file, "api_keys").contains(&"app_made".to_string()));
     let before = backup_changes(&conn);
     conn.execute(
         "UPDATE app_vendors SET client_id = 'client-a' WHERE vendor = 'app.alpha'",
@@ -2506,4 +2507,96 @@ async fn a_database_at_schema_version_2_gives_a_vendor_to_an_app_only_when_one_k
     )
     .unwrap();
     assert_eq!(backup_changes(&conn), before + 1);
+}
+
+#[tokio::test]
+async fn a_database_at_schema_version_4_names_each_keys_maker_from_its_records_then_from_app_made() {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..4]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    let keyed = |id: &str, client: Option<&str>, app_made: bool| {
+        format!(
+            "INSERT INTO api_keys (id, hash, label, source, oauth_client_id, permissions, \
+             type_permissions, edge_permissions, extension_permissions, metadata_permissions, \
+             profile_permissions, created_at, app_made) VALUES ('{id}', '{id}', '{id}', '{id}', \
+             {}, '[]', '{{}}', '{{}}', '{{}}', '{{}}', '{{}}', 'a', {});",
+            client.map_or("NULL".to_string(), |client| format!("'{client}'")),
+            i32::from(app_made)
+        )
+    };
+    let made = |id: &str, actor: &str| {
+        format!(
+            "INSERT INTO audit_log (id, created_at, key_id, actor, action, kind, resource_type, \
+             resource_id, details) VALUES ('audit-{id}', 'a', NULL, '{actor}', 'key.create', \
+             'access', 'key', '{id}', '{{}}');"
+        )
+    };
+    let local = r#"{"kind":"local","id":"local","name":"Local command"}"#;
+    let app = r#"{"kind":"app","id":"grant-a","name":"A"}"#;
+    let by_key = |id: &str| format!(r#"{{"kind":"key","id":"{id}","name":"{id}"}}"#);
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch(
+            &[
+                "INSERT INTO owner (id, name, username, password, created_at, updated_at) \
+                 VALUES ('owner', 'Owner', 'owner', 'x', 'a', 'a'); \
+                 INSERT INTO oauth_clients (client_id, application_type, redirect_uris, \
+                 grant_types, response_types, scopes, contacts, created_at) \
+                 VALUES ('client-a', 'native', '[]', '[]', '[]', '', '[]', 'a'); \
+                 INSERT INTO oauth_consents (client_id, owner_id, grant_id, scopes, created_at, \
+                 updated_at) VALUES ('client-a', 'owner', 'grant-a', 'content:write', 'a', 'a');"
+                    .to_string(),
+                keyed("apps-key", Some("client-a"), true),
+                keyed("owner-no-trail", None, false),
+                keyed("app-made-no-trail", None, true),
+                keyed("app-made-by-local", None, true),
+                made("app-made-by-local", local),
+                keyed("owner-made-by-app", None, false),
+                made("owner-made-by-app", app),
+                keyed("app-made-by-app", None, true),
+                made("app-made-by-app", app),
+                keyed("child-of-owner-no-trail", None, false),
+                made("child-of-owner-no-trail", &by_key("owner-no-trail")),
+                keyed("child-of-app-made-no-trail", None, true),
+                made("child-of-app-made-no-trail", &by_key("app-made-no-trail")),
+            ]
+            .concat(),
+        )
+        .unwrap();
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    assert_eq!(version_of(&place.file), super::migrate::latest(MIGRATIONS));
+    assert!(!columns_of(&place.file, "api_keys").contains(&"app_made".to_string()));
+    let makers: Vec<(String, Option<String>, bool)> = Connection::open(&place.file)
+        .unwrap()
+        .prepare("SELECT id, made_by_client, maker_unknown FROM api_keys ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    let key = |id: &str, maker: Option<&str>, unknown: bool| {
+        (id.to_string(), maker.map(str::to_string), unknown)
+    };
+    assert_eq!(
+        makers,
+        [
+            key("app-made-by-app", Some("client-a"), false),
+            key("app-made-by-local", None, false),
+            key("app-made-no-trail", None, true),
+            key("apps-key", Some("client-a"), false),
+            key("child-of-app-made-no-trail", None, true),
+            key("child-of-owner-no-trail", None, false),
+            key("owner-made-by-app", Some("client-a"), false),
+            key("owner-no-trail", None, false),
+        ]
+    );
 }

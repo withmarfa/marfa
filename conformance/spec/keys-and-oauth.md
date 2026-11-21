@@ -95,7 +95,7 @@ When an app's sign-in, or a key an app made, mints a key, with or without `owner
 
 When the server upgrades a database written before it kept who made each key, the server MUST record as of unknown maker each key that carries no `oauth_client_id` and that no record of the instance shows the owner, or an app the instance can name, minted, directly or through the keys that minted it, whether or not those keys remain.
 
-**Reason:** an app could mint an owner's key, which carries no `oauth_client_id`, and the audit records that name its minter are kept for a limited time while the key can live forever. Treating such a key as the owner's would let the app it was given to reach other apps' machinery and move vendors. A grant's records pair the grant with its app, so they name the app where the mint record survives and the grant has ended.
+**Reason:** an app could mint an owner's key, which carries no `oauth_client_id`, and the audit records that name its minter are kept for a limited time while the key can live forever. Treating such a key as the owner's would let the app it was given to reach other apps' machinery and move vendors. A grant's records pair the grant with its app, so they name the app where the mint record survives and the grant has ended. A database that already kept whether an app made each key holds a record of its own, which says the owner made a key where its mint records are gone.
 
 **Tests:** waiting on #2802.
 

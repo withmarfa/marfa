@@ -114,7 +114,7 @@ When `POST /plugins` installs or updates a type, the server MUST record the plug
 
 ### `plugins/install-guidance`
 
-When a caller that is neither an app's access token nor a key an app made sends `POST /plugins` with a type whose definition carries `guidance`, the server MUST store the guidance as the bundle gives it.
+When a caller that is neither an app's access token, a key an app made nor a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `POST /plugins` with a type whose definition carries `guidance`, the server MUST store the guidance as the bundle gives it.
 
 **Reason:** installing a plugin is the owner's way to give a type guidance, besides writing it directly (`types/guidance-app-made`).
 
@@ -122,7 +122,7 @@ When a caller that is neither an app's access token nor a key an app made sends 
 
 ### `plugins/install-guidance-app`
 
-If an app's access token, or a key an app made, sends `POST /plugins` with a bundle whose types carry `guidance`, or a later version that would change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
+If an app's access token, a key an app made or a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `POST /plugins` with a bundle whose types carry `guidance`, or a later version that would change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
 
 **Reason:** installing is an owner action, and an app may not write guidance by any door (`types/guidance-app-made`). The same app installs the same plugin without guidance.
 

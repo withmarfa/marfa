@@ -37,8 +37,8 @@ const PINS: &[Pin] = &[
     },
     Pin {
         version: 5,
-        file: "2398a0f663f00cb3fd0e9341ae64ab803f5573b44018b0b2e23da19b5ce8ca01",
-        holds: "faa3d061d3f6ddef93029290eae3d9fce86afff144a7a5cbf85d56e5a5576720",
+        file: "0388d422fd71468a9a0871233c9d9d9e2e276f61e3abf7b89b10512d970c3b28",
+        holds: "1f2509b7a45e66505c567debc64a669acd7bc509e1f921e6c4655d98115ebfb7",
     },
 ];
 
