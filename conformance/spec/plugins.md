@@ -4,13 +4,13 @@ A plugin is what an owner adds to Marfa: types under `common.*` or a root of its
 
 A bundle sets `format` to 1 and identifies the plugin by its `name`, `title`, `description`, `mark`, `maker` and `version`. The `marfa` field names the oldest Marfa release it supports. The `types` array holds type definitions with their guidance, and `edge_types` holds edge type definitions. The server stores the optional `connector` object with the install record. `PluginBundle` in `openapi.json` defines each field.
 
-`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, a type under a reserved root, the Marfa release it needs, the caller's permission, guidance an app sends, the version installed, a type the plugin did not install, a clash with a type below, a parent outside the bundle the caller may not write, each type's definition, what a newer version narrows, and each edge type.
+`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, a type under a reserved root, the Marfa release it needs, the caller's permission, a connector without `connectors.manage`, guidance an app sends, the version installed, a type the plugin did not install, a clash with a type below, a parent outside the bundle the caller may not write, each type's definition, what a newer version narrows, and each edge type.
 
 ## Installing
 
 ### `plugins/install-created`
 
-When a caller holding `schema.write` and write on every type and edge type of a bundle sends `POST /plugins` with a plugin not installed, the server MUST answer `201` with the plugin's `name`, `version`, `title`, `description`, `mark`, `maker`, `marfa`, `types`, `edge_types`, `connector`, `installed_at`, `installed_by`, `updated_at` and `outcome` `installed`.
+When a caller holding `schema.write` and write on every type and edge type of a bundle sends `POST /plugins` with a plugin not installed, the server MUST answer `201` with the plugin's `name`, `version`, `title`, `description`, `mark`, `maker`, `marfa`, `types`, `edge_types`, `connector`, `fingerprint`, `installed_at`, `installed_by`, `updated_at` and `outcome` `installed`.
 
 **Tests:** `compliance/plugins.test.ts › installs a bundle and answers 201 with the plugin, its types and its edge types`.
 
@@ -127,6 +127,22 @@ If an app's access token, or a key an app made, sends `POST /plugins` with a bun
 **Reason:** installing is an owner action, and an app may not write guidance by any door (`types/guidance-app-made`). The same app installs the same plugin without guidance.
 
 **Tests:** `compliance/plugins.test.ts › refuses 403 an app installing a plugin whose types carry guidance, and installs the same plugin without it`, `› refuses an app's newer version that would remove guidance the owner's install wrote`, `› refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it`.
+
+### `plugins/install-connector-permission`
+
+If a caller without `connectors.manage` sends `POST /plugins` with a bundle that has a `connector` object, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage`, and write nothing.
+
+**Reason:** a connector reaches outside the instance on the owner's behalf, which `connectors.manage` grants; installing types alone keeps needing `schema.write`. Any credential holding both may install it.
+
+**Tests:** `compliance/plugins.test.ts › refuses 403 a bundle with a connector to a key without connectors.manage, which installs the same bundle without one, and takes it with both, recording the SHA-256 of the bytes sent`.
+
+### `plugins/install-fingerprint`
+
+When `POST /plugins` installs or updates a plugin, the server MUST record as its `fingerprint` the SHA-256 of the request body's bytes as received, in lowercase hexadecimal, and answer it as `fingerprint` from `POST /plugins`, `GET /plugins` and `GET /plugins/{name}`.
+
+**Reason:** a connector host checks later that the bundle it runs is the one installed. The digest is of the bytes the server received, so it equals another digest only of the same bytes.
+
+**Tests:** `compliance/plugins.test.ts › refuses 403 a bundle with a connector to a key without connectors.manage, which installs the same bundle without one, and takes it with both, recording the SHA-256 of the bytes sent`, `› keeps plugin provenance and the install record through an export and a restore`.
 
 ### `plugins/install-edge-types`
 

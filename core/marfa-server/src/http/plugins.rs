@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, Uri};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 use super::answer::{Answer, json_answer};
 use super::body::JsonBody;
@@ -40,8 +41,9 @@ pub async fn install(
     body: JsonBody,
 ) -> Answer {
     query::only(&uri, &[])?;
-    let (outcome, mut installed) =
-        plugins::install(&app, &caller, body.open_object().await?).await?;
+    let (bundle, bytes) = body.open_object_and_bytes().await?;
+    let fingerprint = hex::encode(Sha256::digest(&bytes));
+    let (outcome, mut installed) = plugins::install(&app, &caller, bundle, fingerprint).await?;
     installed["outcome"] = json!(outcome.word());
     let status = match outcome {
         Outcome::Installed => StatusCode::CREATED,

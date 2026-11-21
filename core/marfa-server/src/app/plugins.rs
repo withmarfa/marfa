@@ -18,6 +18,8 @@ pub struct Installed {
     pub name: String,
     pub version: String,
     pub manifest: Obj,
+    /// The SHA-256 of the bundle's bytes as `POST /plugins` received them.
+    pub fingerprint: String,
     pub installed_at: String,
     pub installed_by: Option<Value>,
     pub updated_at: String,
@@ -52,46 +54,43 @@ fn not_found(name: &str) -> Refusal {
 }
 
 fn row(tx: &Transaction<'_>, name: &str) -> Result<Option<Installed>> {
-    let held: Option<(String, String, String, Option<String>, String)> = tx
+    let held: Option<Stored> = tx
         .query_row(
-            "SELECT version, manifest, installed_at, installed_by, updated_at FROM plugins \
-             WHERE name = ?1",
+            "SELECT name, version, manifest, fingerprint, installed_at, installed_by, updated_at \
+             FROM plugins WHERE name = ?1",
             [name],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
+            stored,
         )
         .optional()?;
-    held.map(
-        |(version, manifest, installed_at, installed_by, updated_at)| {
-            read_row(
-                name,
-                version,
-                &manifest,
-                installed_at,
-                installed_by,
-                updated_at,
-            )
-        },
-    )
-    .transpose()
+    held.map(read_row).transpose()
+}
+
+type Stored = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+);
+
+fn stored(row: &rusqlite::Row<'_>) -> rusqlite::Result<Stored> {
+    Ok((
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+    ))
 }
 
 fn read_row(
-    name: &str,
-    version: String,
-    manifest: &str,
-    installed_at: String,
-    installed_by: Option<String>,
-    updated_at: String,
+    (name, version, manifest, fingerprint, installed_at, installed_by, updated_at): Stored,
 ) -> Result<Installed> {
-    let Ok(Value::Object(manifest)) = serde_json::from_str::<Value>(manifest) else {
+    let Ok(Value::Object(manifest)) = serde_json::from_str::<Value>(&manifest) else {
         return Err(Refusal::internal(&format!(
             "the stored bundle of plugin {name} does not read"
         )));
@@ -102,10 +101,16 @@ fn read_row(
             Refusal::internal(&format!("who installed plugin {name} does not read"))
         })?),
     };
+    if !plugin::is_sha256(&fingerprint) {
+        return Err(Refusal::internal(&format!(
+            "the stored fingerprint of plugin {name} does not read"
+        )));
+    }
     Ok(Installed {
-        name: name.to_string(),
+        name,
         version,
         manifest,
+        fingerprint,
         installed_at,
         installed_by,
         updated_at,
@@ -114,30 +119,13 @@ fn read_row(
 
 fn rows(tx: &Transaction<'_>) -> Result<Vec<Installed>> {
     let mut statement = tx.prepare(
-        "SELECT name, version, manifest, installed_at, installed_by, updated_at FROM plugins \
-         ORDER BY name",
+        "SELECT name, version, manifest, fingerprint, installed_at, installed_by, updated_at \
+         FROM plugins ORDER BY name",
     )?;
-    let found = statement.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, Option<String>>(4)?,
-            row.get::<_, String>(5)?,
-        ))
-    })?;
+    let found = statement.query_map([], stored)?;
     let mut held = Vec::new();
     for read in found {
-        let (name, version, manifest, installed_at, installed_by, updated_at) = read?;
-        held.push(read_row(
-            &name,
-            version,
-            &manifest,
-            installed_at,
-            installed_by,
-            updated_at,
-        )?);
+        held.push(read_row(read?)?);
     }
     Ok(held)
 }
@@ -174,6 +162,7 @@ fn presented(installed: &Installed, catalog: &Catalog) -> Value {
         "types": types_from(catalog, &installed.name),
         "edge_types": edge_types_held(installed, catalog),
         "connector": installed.manifest.get("connector").cloned().unwrap_or(Value::Null),
+        "fingerprint": installed.fingerprint,
         "installed_at": installed.installed_at,
         "installed_by": installed.installed_by.clone().unwrap_or(Value::Null),
         "updated_at": installed.updated_at,
@@ -283,6 +272,9 @@ fn require_server(bundle: &Obj) -> Result<()> {
 
 fn require_install(caller: &Caller, bundle: &Obj) -> Result<()> {
     caller.require(Permission::SchemaWrite)?;
+    if bundle.get("connector").is_some_and(|held| !held.is_null()) {
+        caller.require(Permission::ConnectorsManage)?;
+    }
     for id in bundle_ids(bundle, "types") {
         caller.require_type(id, Level::Write)?;
     }
@@ -325,7 +317,12 @@ impl Outcome {
     }
 }
 
-pub async fn install(app: &App, caller: &Caller, bundle: Obj) -> Result<(Outcome, Value)> {
+pub async fn install(
+    app: &App,
+    caller: &Caller,
+    bundle: Obj,
+    fingerprint: String,
+) -> Result<(Outcome, Value)> {
     require_shape(&bundle)?;
     require_server(&bundle)?;
     let cache = app.catalog_handle();
@@ -374,12 +371,13 @@ pub async fn install(app: &App, caller: &Caller, bundle: Obj) -> Result<(Outcome
             let by = caller.actor().to_string();
             unit.tx().execute(
                 "INSERT INTO plugins (name, version, title, description, mark, maker, marfa, \
-                 manifest, installed_at, installed_by, updated_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?9) \
+                 manifest, installed_at, installed_by, updated_at, fingerprint) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?9, ?11) \
                  ON CONFLICT (name) DO UPDATE SET version = excluded.version, \
                  title = excluded.title, description = excluded.description, \
                  mark = excluded.mark, maker = excluded.maker, marfa = excluded.marfa, \
-                 manifest = excluded.manifest, updated_at = excluded.updated_at",
+                 manifest = excluded.manifest, updated_at = excluded.updated_at, \
+                 fingerprint = excluded.fingerprint",
                 params![
                     name,
                     version.to_string(),
@@ -391,6 +389,7 @@ pub async fn install(app: &App, caller: &Caller, bundle: Obj) -> Result<(Outcome
                     manifest,
                     unit.at,
                     by,
+                    fingerprint,
                 ],
             )?;
             unit.audit("plugin", &name, Some(json!({ "version": version.to_string() })))?;
@@ -445,6 +444,7 @@ pub fn archive_lines(tx: &Transaction<'_>) -> Result<Vec<Value>> {
                 "name": held.name,
                 "version": held.version,
                 "bundle": held.manifest,
+                "fingerprint": held.fingerprint,
                 "installed_at": held.installed_at,
                 "installed_by": held.installed_by,
                 "updated_at": held.updated_at,
@@ -491,6 +491,9 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
             .filter(|at| Stamp::parsed(at).is_some())
             .ok_or_else(|| format!("names no {key} time in the stored form"))
     };
+    let fingerprint = read("fingerprint")
+        .filter(|held| plugin::is_sha256(held))
+        .ok_or("names no fingerprint as a SHA-256 in lowercase hexadecimal")?;
     let installed_at = stamped("installed_at")?;
     let updated_at = stamped("updated_at")?;
     let installed_by = match line.get("installed_by") {
@@ -504,6 +507,7 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
             name,
             version,
             manifest: bundle,
+            fingerprint,
             installed_at,
             installed_by,
             updated_at,
@@ -521,8 +525,8 @@ pub fn restore(tx: &Transaction<'_>, archived: &[Archived]) -> Result<(usize, us
         }
         tx.execute(
             "INSERT INTO plugins (name, version, title, description, mark, maker, marfa, \
-             manifest, installed_at, installed_by, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             manifest, installed_at, installed_by, updated_at, fingerprint) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 installed.name,
                 installed.version,
@@ -535,6 +539,7 @@ pub fn restore(tx: &Transaction<'_>, archived: &[Archived]) -> Result<(usize, us
                 installed.installed_at,
                 installed.installed_by.as_ref().map(Value::to_string),
                 installed.updated_at,
+                installed.fingerprint,
             ],
         )?;
         added += 1;

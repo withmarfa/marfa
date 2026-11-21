@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
@@ -155,7 +156,11 @@ beforeAll(async () => {
     bootFreshServer("plugins-origin"),
     bootFreshServer("plugins-destination"),
   ]);
-  owner = await ownerKey(origin, ["schema.write", "backups.manage"]);
+  owner = await ownerKey(origin, [
+    "schema.write",
+    "backups.manage",
+    "connectors.manage",
+  ]);
   elsewhere = await ownerKey(destination, ["schema.write", "backups.manage"]);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -827,9 +832,12 @@ describe("plugins in an archive", () => {
     });
     const record = await elsewhere.getPlugin("tickets");
     expect(record.status).toBe(200);
+    const held = await owner.getPlugin("tickets");
+    expect(held.data.fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(record.data).toMatchObject({
       version: "1.3.0",
       types: [TICKET, SPIKE],
+      fingerprint: held.data.fingerprint,
     });
     expect(
       (await elsewhere.getType("user.registered-beside")).data.provenance
@@ -961,7 +969,7 @@ describe("a version 2 archive's provenance and install records", () => {
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
   });
 
-  it("refuses a plugin line whose times are not in the stored form, or whose installer is not a sign-in", async () => {
+  it("refuses a plugin line whose times are not in the stored form, whose installer is not a sign-in, or whose fingerprint is not a SHA-256", async () => {
     const plugin = single("archived-record", "archivedrecord.thing");
     const line = (fields: Record<string, unknown>) => ({
       plugin: {
@@ -971,6 +979,7 @@ describe("a version 2 archive's provenance and install records", () => {
         installed_at: "2026-11-01T10:00:00.000Z",
         installed_by: null,
         updated_at: "2026-11-01T10:00:00.000Z",
+        fingerprint: "ab".repeat(32),
         ...fields,
       },
     });
@@ -978,6 +987,9 @@ describe("a version 2 archive's provenance and install records", () => {
       { installed_at: "yesterday" },
       { updated_at: "2026-11-01" },
       { installed_by: {} },
+      { fingerprint: "AB".repeat(32) },
+      { fingerprint: "ab" },
+      { fingerprint: null },
     ]) {
       const refused = await restore(archiveOf([line(fields)], 1));
       expect(refused.status, JSON.stringify(fields)).toBe(400);
@@ -998,6 +1010,7 @@ describe("a version 2 archive's provenance and install records", () => {
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     const read = await elsewhere.getPlugin(plugin.name);
     expect(read.status).toBe(200);
+    expect(read.data.fingerprint).toBe("ab".repeat(32));
     await expectMatchesSchema("GET", "/plugins/{name}", 200, read.data);
   });
 });
@@ -1161,5 +1174,75 @@ describe("who writes a type's guidance", () => {
     expect(plain.status, JSON.stringify(plain.error)).toBe(201);
     const bare = await key.installPlugin(single("minted", "minted.thing"));
     expect(bare.status, JSON.stringify(bare.error)).toBe(201);
+  });
+});
+
+describe("installing a plugin with a connector", () => {
+  /** Sends `text` as the body, so the test knows the bytes the server received. */
+  async function sent(key: string, text: string) {
+    const response = await fetch(`${origin.apiUrl}/plugins`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${key}`,
+        "content-type": "application/json",
+      },
+      body: text,
+    });
+    return {
+      status: response.status,
+      body: (await response.json()) as Record<string, any>,
+    };
+  }
+
+  async function keyWith(permissions: string[]): Promise<string> {
+    const local = new MarfaClient({
+      baseUrl: origin.apiUrl,
+      controlSocket: origin.controlSocket,
+    });
+    const minted = await local.createKey({
+      label: "plugins connector fixture",
+      source: `plugins-${String(++keysMinted)}`,
+      permissions,
+      type_permissions: { "wired.*": "write" },
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    return minted.data.key!;
+  }
+
+  it("refuses 403 a bundle with a connector to a key without connectors.manage, which installs the same bundle without one, and takes it with both, recording the SHA-256 of the bytes sent", async () => {
+    const connector = { reads: "a service" };
+    const schemaOnly = await keyWith(["schema.write"]);
+    // The witness: schema.write alone installs a bundle with no connector.
+    const bare = await sent(
+      schemaOnly,
+      JSON.stringify(single("wired-bare", "wired.bare")),
+    );
+    expect(bare.status, JSON.stringify(bare.body)).toBe(201);
+    const refused = await sent(
+      schemaOnly,
+      JSON.stringify(single("wired-refused", "wired.refused", { connector })),
+    );
+    expect(refused.status, JSON.stringify(refused.body)).toBe(403);
+    expect(refused.body.error.details.required_scope).toBe("connectors.manage");
+    expect((await owner.getPlugin("wired-refused")).status).toBe(404);
+    expect((await owner.getType("wired.refused")).status).toBe(404);
+    const both = await keyWith(["schema.write", "connectors.manage"]);
+    // Spacing the server does not keep, so the digest is of the bytes as sent.
+    const text = JSON.stringify(
+      single("wired-taken", "wired.taken", { connector }),
+      null,
+      3,
+    );
+    const taken = await sent(both, text);
+    expect(taken.status, JSON.stringify(taken.body)).toBe(201);
+    const digest = createHash("sha256").update(text).digest("hex");
+    expect(taken.body.fingerprint).toBe(digest);
+    const read = await owner.getPlugin("wired-taken");
+    expect(read.data.fingerprint).toBe(digest);
+    expect(read.data.connector).toEqual(connector);
+    const listed = await owner.listPlugins();
+    expect(
+      listed.data.data.find((held) => held.name === "wired-taken")?.fingerprint,
+    ).toBe(digest);
   });
 });

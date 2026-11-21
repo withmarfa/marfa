@@ -393,10 +393,15 @@ impl JsonBody {
     }
 
     pub async fn open_object(self) -> Result<Map<String, Value>, Stopped> {
+        Ok(self.open_object_and_bytes().await?.0)
+    }
+
+    pub async fn open_object_and_bytes(self) -> Result<(Map<String, Value>, Bytes), Stopped> {
         if !self.declares_json() {
             return Err(not_json().into());
         }
-        Ok(parsed_object(&self.bytes().await?, None)?)
+        let bytes = self.bytes().await?;
+        Ok((parsed_object(&bytes, None)?, bytes))
     }
 }
 
