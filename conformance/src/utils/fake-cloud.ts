@@ -28,6 +28,8 @@ import { waitFor } from "./wait.js";
  * - `answer_next_use` answers the next request made with a link credential
  *   with the `status` and error `code` given, and leaves the credential unused.
  * - `fail_cancels` answers every cancel `500` until `up`.
+ * - `rotate_token` gives the latest link a new tunnel token, which `POST
+ *   /link/token` answers from then on, as Marfa Cloud does when it rotates it.
  * - `down` and `up` stop and start answering the link API.
  *
  * Each `approved` answer before the first use of a credential makes a new
@@ -56,6 +58,8 @@ export interface FakeCloud {
   forget(): void;
   answerNextUse(status: number, code: string): void;
   failCancels(): void;
+  /** Gives the latest link a new tunnel token and returns it. */
+  rotateToken(): string;
   down(): void;
   up(): void;
   /** Waits until the link API has been sent `count` requests to `path`. */
@@ -178,6 +182,9 @@ export async function fakeCloud(
     },
     fail_cancels: () => {
       cancelsFail = true;
+    },
+    rotate_token: () => {
+      latest().tunnelToken = `tunnel-${secret()}`;
     },
     down: () => {
       unreachable = true;
@@ -432,6 +439,10 @@ export async function fakeCloud(
     forget: () => control.forget!(null),
     answerNextUse: (status, code) => control.answer_next_use!({ status, code }),
     failCancels: () => control.fail_cancels!(null),
+    rotateToken: () => {
+      control.rotate_token!(null);
+      return latest().tunnelToken;
+    },
     down: () => control.down!(null),
     up: () => control.up!(null),
     async waitFor(path, count = 1, timeoutMs = 30_000) {

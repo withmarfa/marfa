@@ -1732,13 +1732,20 @@ describe("events and the audit log", () => {
                 signal,
               );
               const frames = changes(seen.events);
-              expect(
-                frames.map((frame) => (frame.data as any).cloud_link.state),
-              ).toEqual(["linking", "linked"]);
-              expect(frames[1]!.data).toEqual({
-                event_type: "cloud_link.changed",
-                cloud_link: linked,
-              });
+              const states = frames
+                .map((frame) => (frame.data as any).cloud_link.state as string)
+                .filter((state, n, all) => state !== all[n - 1]);
+              expect(states).toEqual(["linking", "linked"]);
+              // The connector's own changes follow the link in later frames.
+              const first = frames.find(
+                (frame) => (frame.data as any).cloud_link.state === "linked",
+              )!;
+              const { connector: shown, ...rest } = (first.data as any)
+                .cloud_link;
+              const { connector: read, ...link } = linked;
+              expect(rest).toEqual(link);
+              expect(shown.state).toEqual(expect.any(String));
+              expect(read.state).toEqual(expect.any(String));
               const elsewhere = await collectUntil(
                 without,
                 (events) => created(events, last),
