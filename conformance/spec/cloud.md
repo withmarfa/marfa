@@ -572,11 +572,11 @@ When the connector prints that no ingress rules were defined, the server MUST NO
 
 ### `cloud/connector-refused`
 
-When the connector is refused for its tunnel token, the server MUST ask Marfa Cloud for the link's current tunnel token with `POST /link/token` and its link credential.
+When the connector's output says that its tunnel token is refused (`Unauthorized: Invalid tunnel secret`) or that there is no tunnel to get for it (`Failed to get tunnel`), the server MUST ask Marfa Cloud for the link's current tunnel token with `POST /link/token` and its link credential.
 
-**Reason:** Marfa Cloud can give the link a new tunnel token, after which the connector is refused for the old one.
+**Reason:** Marfa Cloud can give the link a new tunnel token, after which the connector is refused for the old one. The connector does not end on either refusal: it retries with the same token until it is stopped.
 
-**Tests:** `compliance/cloud-connector.test.ts › asks for the current tunnel token when the connector is refused, and runs it with the new one`.
+**Tests:** `compliance/cloud-connector.test.ts › asks for the current tunnel token when the connector is refused, and runs it with the new one`, `compliance/cloud-connector.test.ts › asks for the current tunnel token when the edge has no tunnel for the connector's token`.
 
 ### `cloud/connector-rotated`
 

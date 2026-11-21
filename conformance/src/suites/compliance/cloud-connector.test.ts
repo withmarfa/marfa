@@ -620,6 +620,30 @@ describe("a refused tunnel token", () => {
   );
 
   it(
+    "asks for the current tunnel token when the edge has no tunnel for the connector's token",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true, refusal: "Failed to get tunnel" }]);
+      const linked = await boot("connector-no-tunnel", {
+        MARFA_CLOUDFLARED: fake.path,
+      });
+      await linked.link();
+      const old = tokenOf(linked);
+      await linked.connector("connected");
+      const fresh = linked.cloud.rotateToken();
+      fake.refuseNow([old]);
+      const starts = await fake.waitForStarts(2);
+      expect(starts[1]!.tokenFile!.text).toBe(fresh);
+      expect(
+        linked.cloud.requests.filter((each) => each.path === "/link/token"),
+      ).toHaveLength(1);
+      await gone(starts[0]!.pid);
+      await linked.connector("connected");
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "reports a connector refused for the token Marfa Cloud still gives as failed, and asks again no faster than it restarts",
     async () => {
       const fake = fakeCloudflared();

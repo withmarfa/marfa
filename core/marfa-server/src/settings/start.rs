@@ -165,7 +165,7 @@ pub struct Fixed {
     pub owner_recovery: bool,
     pub cloud_url: Address,
     /// The tunnel connector the server runs while linked, where the owner named one.
-    pub cloudflared: Option<PathBuf>,
+    pub connector: Option<PathBuf>,
 }
 
 pub struct Start {
@@ -316,7 +316,7 @@ impl Fixed {
         let cloud_url = reader
             .take("MARFA_CLOUD_URL", https_or_loopback)
             .unwrap_or_else(default_cloud_url);
-        let cloudflared = reader.take("MARFA_CLOUDFLARED", absolute_path);
+        let connector = reader.take("MARFA_CLOUDFLARED", absolute_path);
         let owner_recovery = reader.flag("MARFA_OWNER_RECOVERY");
         #[cfg(feature = "test-hooks")]
         let clock_offset_ms = reader
@@ -376,7 +376,7 @@ impl Fixed {
             claim_address,
             owner_recovery,
             cloud_url,
-            cloudflared,
+            connector,
         };
         (!failed).then_some((fixed, given))
     }

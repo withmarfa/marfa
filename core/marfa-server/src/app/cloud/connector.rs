@@ -40,7 +40,11 @@ const POLL_WHILE_READY: Duration = Duration::from_secs(5);
 const POLL_TIMEOUT: Duration = Duration::from_secs(1);
 const DRAIN_FOR: Duration = Duration::from_millis(500);
 const MOST_LINE: usize = 2_000;
-const REFUSED: &str = "Unauthorized: Invalid tunnel secret";
+/// What the connector prints when the edge refuses its token or has no tunnel for it.
+const REFUSALS: [&str; 2] = [
+    "Unauthorized: Invalid tunnel secret",
+    "Failed to get tunnel",
+];
 /// The only variables of the server's own environment the connector gets.
 const KEPT_ENVIRONMENT: [&str; 5] = ["HOME", "TMPDIR", "TZ", "SSL_CERT_FILE", "SSL_CERT_DIR"];
 
@@ -377,7 +381,7 @@ async fn keep(app: &Arc<App>, link_id: &str, fresh: String) -> Renewed {
 
 /// Runs the connector once, and leaves it ended and its token file removed.
 async fn attempt(app: &Arc<App>, watching: &mut Watching, link_id: &str, token: &Secret) -> Ended {
-    let configured = app.settings.start.cloudflared.clone();
+    let configured = app.settings.start.connector.clone();
     let Ok(Some(program)) =
         tokio::task::spawn_blocking(move || locate(configured.as_deref())).await
     else {
@@ -498,7 +502,7 @@ impl<'a> Output<'a> {
 
     fn note(&mut self, text: &str) -> bool {
         let line = tidy(text, self.token.expose());
-        if line.contains(REFUSED) {
+        if REFUSALS.iter().any(|text| line.contains(text)) {
             self.refused = true;
         }
         if line.contains(" ERR ") || line.contains(" WRN ") {

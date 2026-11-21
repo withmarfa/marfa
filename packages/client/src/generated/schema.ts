@@ -8719,12 +8719,12 @@ export interface components {
             /** @description The connector that carries traffic through Marfa Cloud. Present while `state` is `linked`. */
             connector?: {
                 /**
-                 * @description `stopped`: the connector isn't running. `starting`: it is running and isn't ready yet. `connected`: it is ready and carries traffic. `reconnecting`: it ended or stopped being ready, and the server is bringing it back. `failed`: it can't run, and `reason` says why.
+                 * @description The connector's state: `stopped`, `starting`, `connected` (ready and carrying traffic), `reconnecting` (ended or no longer ready, being brought back) or `failed` (can't run; see `reason`).
                  * @enum {string}
                  */
                 state: "stopped" | "starting" | "connected" | "reconnecting" | "failed";
                 /**
-                 * @description Why the connector can't run. Present while `state` is `failed`. `missing`: the server has no connector file it can run. `refused`: Marfa Cloud refuses the instance's tunnel token and has no newer one. `token`: the server can't read or write the tunnel token it gives the connector.
+                 * @description Why a `failed` connector can't run: `missing` (no connector file the server can run), `refused` (Marfa Cloud refuses its tunnel token and has no newer one) or `token` (the server can't read or write the token file).
                  * @enum {string}
                  */
                 reason?: "missing" | "refused" | "token";

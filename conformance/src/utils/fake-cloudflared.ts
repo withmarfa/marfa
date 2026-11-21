@@ -25,7 +25,8 @@ import { waitFor } from "./wait.js";
  * A plan is one entry per start, the last standing for every start after
  * it. An entry says whether the connector `ready`s itself, whether it
  * `refuse`s the tunnel tokens it lists (or every one, with `"*"`) as the
- * edge refuses an old token, whether it `echoToken`s the token it was given
+ * edge refuses an old token (with the error text in `refusal`, which is the
+ * edge's secret refusal unless given), whether it `echoToken`s the token it was given
  * into its output, which `lines` it prints, and whether it `exit`s with a
  * code after a time. `ready(true)` makes `/ready` answer `200` whatever the
  * plan says, and `ready(false)` goes back to the plan. `refuseNow` refuses
@@ -60,6 +61,7 @@ export interface FakeCloudflared {
 export interface PlanEntry {
   ready?: boolean;
   refuse?: string[] | "*";
+  refusal?: string;
   echoToken?: boolean;
   lines?: string[];
   exit?: { code: number; afterMs: number };
@@ -130,7 +132,7 @@ let refused = false;
 const refuse = () => {
   if (refused) return;
   refused = true;
-  say('ERR Register tunnel error from server side error="Unauthorized: Invalid tunnel secret" connIndex=0');
+  say("ERR Register tunnel error from server side error=\"" + (entry.refusal ?? "Unauthorized: Invalid tunnel secret") + "\" connIndex=0");
 };
 const refusedNow = () => {
   const tokens = read("refuse-now.json", []);
