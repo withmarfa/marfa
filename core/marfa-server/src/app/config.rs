@@ -739,6 +739,10 @@ async fn check_sign_in(
             Ok((request, step_up, moved))
         })
         .await?;
+    let at = app.clock.stamp();
+    if authority == Authority::Caller && step_up {
+        caller.require_step_up(Permission::ConfigManage, &at)?;
+    }
     let moved = moved?;
     if authority == Authority::Restored {
         return Ok((request, None));
@@ -752,8 +756,7 @@ async fn check_sign_in(
             .map_err(sign_in_check::Failed::refusal)?;
         return Ok((request, Some(moved.sign_in)));
     }
-    let at = app.clock.stamp();
-    if step_up || moved.sign_in_moves {
+    if moved.sign_in_moves {
         caller.require_step_up(Permission::ConfigManage, &at)?;
     }
     check_backup_path(app, &request).await?;
