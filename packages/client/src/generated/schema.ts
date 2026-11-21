@@ -32382,9 +32382,9 @@ export interface operations {
                     name?: string;
                     /**
                      * Format: email
-                     * @description The owner's email address. It plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed.
+                     * @description The owner's email address, which plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed. Leave it out or send `null` to set none.
                      */
-                    email?: string;
+                    email?: string | null;
                     /** @description Machine-issued setup code. Omit when using a setup-only browser session. */
                     code?: string;
                 };
