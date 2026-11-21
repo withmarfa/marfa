@@ -53,13 +53,22 @@ async fn pass(app: &Arc<App>) -> Result<Option<Duration>> {
         ));
     }
     let clock = app.clock.clone();
-    let (claimed, started) = app
+    let written = app
         .db
         .write(Write::own(), move |tx| {
             let started = clock.stamp();
             Ok((schedule::apply(tx, &steps, Some(&started))?, started))
         })
-        .await?;
+        .await;
+    let (claimed, started) = match written {
+        Ok(claimed) => claimed,
+        Err(refused) => {
+            if app.db.writes_held().is_none() {
+                run_without_claim(app);
+            }
+            return Err(refused);
+        }
+    };
     for name in claimed {
         if let Some(job) = JOBS.iter().find(|job| job.name == name) {
             let active = app.housekeeping.active();
@@ -174,34 +183,7 @@ async fn while_restoring(app: &Arc<App>) {
             if *at > now {
                 continue;
             }
-            let run = Run {
-                job: job.name,
-                given_up: Arc::new(AtomicBool::new(false)),
-                stopping: app.housekeeping.stopping.subscribe(),
-                kept_unread: Arc::new(AtomicI64::new(0)),
-            };
-            let given_up = run.given_up.clone();
-            let deadline = app.faults.deadline(job.name).unwrap_or(job.deadline);
-            let body = tokio::spawn(perform(app.clone(), job, run));
-            match tokio::time::timeout(deadline, body).await {
-                Ok(Ok(Ok(_))) => {}
-                Ok(Ok(Err(failed))) => {
-                    tracing::warn!(job = job.name, error = %failed.message, "A housekeeping run during a restore failed");
-                }
-                Ok(Err(_)) => {
-                    tracing::warn!(
-                        job = job.name,
-                        "A housekeeping run's task during a restore ended early"
-                    );
-                }
-                Err(_) => {
-                    given_up.store(true, Ordering::Release);
-                    tracing::warn!(
-                        job = job.name,
-                        "A housekeeping run during a restore did not finish in time"
-                    );
-                }
-            }
+            run_unclaimed(app, job).await;
             let interval = i64::try_from(job.interval.ms(job.name, app)).unwrap_or(i64::MAX);
             *at = app.clock.now_ms().saturating_add(interval);
         }
@@ -210,6 +192,56 @@ async fn while_restoring(app: &Arc<App>) {
         };
         let left = u64::try_from(next.saturating_sub(app.clock.now_ms())).unwrap_or(0);
         tokio::time::sleep(Duration::from_millis(left)).await;
+    }
+}
+
+/// Runs a job once with no claim and records nothing, so a run that ends late or fails leaves
+/// no trace in the schedule.
+async fn run_unclaimed(app: &Arc<App>, job: &'static Job) {
+    let run = Run {
+        job: job.name,
+        given_up: Arc::new(AtomicBool::new(false)),
+        stopping: app.housekeeping.stopping.subscribe(),
+        kept_unread: Arc::new(AtomicI64::new(0)),
+    };
+    let given_up = run.given_up.clone();
+    let deadline = app.faults.deadline(job.name).unwrap_or(job.deadline);
+    let mut cut = app.housekeeping.cut.subscribe();
+    let body = tokio::spawn(perform(app.clone(), job, run));
+    tokio::select! {
+        ended = tokio::time::timeout(deadline, body) => match ended {
+            Ok(Ok(Ok(_))) => {}
+            Ok(Ok(Err(failed))) => {
+                tracing::warn!(job = job.name, error = %failed.message, "A housekeeping run without its claim failed");
+            }
+            Ok(Err(_)) => {
+                tracing::warn!(job = job.name, "A housekeeping run's task without its claim ended early");
+            }
+            Err(_) => {
+                given_up.store(true, Ordering::Release);
+                tracing::warn!(job = job.name, "A housekeeping run without its claim did not finish in time");
+            }
+        },
+        _ = cut.wait_for(|cut| *cut) => given_up.store(true, Ordering::Release),
+    }
+}
+
+/// While writes fail, a job that only reads and handles a failed write itself still runs, so
+/// what it finds is not left until someone looks. One run at a time, and the next waits for the
+/// job's interval, however often the scheduler tries again.
+fn run_without_claim(app: &Arc<App>) {
+    for job in JOBS.iter().filter(|job| job.unclaimed && job.runs_here(app)) {
+        let Some(turn) = app.housekeeping.unclaimed.begin(job.name, app.clock.now_ms()) else {
+            continue;
+        };
+        let active = app.housekeeping.active();
+        let app = app.clone();
+        tokio::spawn(async move {
+            let _active = active;
+            run_unclaimed(&app, job).await;
+            let interval = i64::try_from(job.interval.ms(job.name, &app)).unwrap_or(i64::MAX);
+            turn.next_not_before(app.clock.now_ms().saturating_add(interval));
+        });
     }
 }
 
@@ -474,7 +506,46 @@ pub async fn supervise(
 
 #[cfg(test)]
 mod tests {
+    use super::super::Unclaimed;
     use super::*;
+    use crate::settings::{Environment, Settings};
+
+    const CHECK: &str = "attention-check";
+
+    async fn started() -> (tempfile::TempDir, Arc<App>) {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("marfa.db");
+        let blobs = dir.path().join("blobs");
+        let socket = dir.path().join("s.sock");
+        let pairs = [
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+        ];
+        let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
+        (dir, App::start(settings).await.unwrap())
+    }
+
+    /// Moves the clock until the check, which first runs a minute after start, is due.
+    fn make_check_due(app: &Arc<App>) {
+        app.clock.jump(10 * 60_000).unwrap();
+    }
+
+    /// Waits until no unclaimed run of the check is under way, and says when the next may start.
+    async fn next_run_ms(app: &Arc<App>) -> i64 {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let Some(turn) = app.housekeeping.unclaimed.begin(CHECK, i64::MAX) {
+                    drop(turn);
+                    let states = app.housekeeping.unclaimed.states();
+                    return states[CHECK].next_ms;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the unclaimed run ended")
+    }
 
     #[tokio::test]
     async fn a_panic_in_a_run_is_caught_and_the_next_goes_on() {
@@ -486,5 +557,84 @@ mod tests {
         .await;
         assert!(fault.is_err());
         assert_eq!(caught(async { 1 }).await.ok(), Some(1));
+    }
+
+    #[test]
+    fn an_unclaimed_job_has_one_run_at_a_time_and_waits_for_its_next_turn() {
+        let held = Arc::new(Unclaimed::default());
+        let turn = held.begin(CHECK, 100).expect("the first run starts");
+        assert!(held.begin(CHECK, 100).is_none(), "a second run at once");
+        assert!(held.begin(CHECK, i64::MAX).is_none(), "however late it is");
+        turn.next_not_before(5_100);
+        drop(turn);
+        assert!(held.begin(CHECK, 5_099).is_none(), "before its interval");
+        assert!(held.begin(CHECK, 5_100).is_some(), "at its interval");
+    }
+
+    #[test]
+    fn a_run_that_ends_without_saying_when_the_next_may_start_does_not_hold_the_job_for_good() {
+        let held = Arc::new(Unclaimed::default());
+        drop(held.begin(CHECK, 0).unwrap());
+        assert!(held.begin(CHECK, 0).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_pass_that_cannot_write_runs_the_attention_check_once_and_then_waits_its_interval() {
+        let (_dir, app) = started().await;
+        app.faults
+            .set("hold:housekeeping:attention-check", None)
+            .unwrap();
+        app.faults.set("refuse:write", None).unwrap();
+        make_check_due(&app);
+        for _ in 0..5 {
+            assert!(pass(&app).await.is_err(), "the claim cannot be written");
+        }
+        assert!(
+            app.housekeeping.unclaimed.begin(CHECK, i64::MAX).is_none(),
+            "the one run is still under way, however many passes tried"
+        );
+
+        app.faults
+            .clear(Some("hold:housekeeping:attention-check"));
+        let next = next_run_ms(&app).await;
+        let interval = JOBS
+            .iter()
+            .find(|job| job.name == CHECK)
+            .map(|job| i64::try_from(job.interval.ms(CHECK, &app)).unwrap())
+            .unwrap();
+        assert!(next >= app.clock.now_ms() + interval - 5_000);
+        for _ in 0..5 {
+            assert!(pass(&app).await.is_err());
+        }
+        assert!(
+            app.housekeeping
+                .unclaimed
+                .begin(CHECK, app.clock.now_ms())
+                .is_none(),
+            "passes inside the interval start no run"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pass_that_cannot_write_during_a_restore_runs_nothing() {
+        let (_dir, app) = started().await;
+        let _holding = app
+            .db
+            .hold_writes(Refusal::new(Code::WriteContention, "a restore holds writes"))
+            .unwrap();
+        make_check_due(&app);
+        assert!(pass(&app).await.is_err());
+        assert!(
+            app.housekeeping.unclaimed.begin(CHECK, i64::MAX).is_some(),
+            "no run started"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pass_that_can_write_claims_the_check_and_starts_no_unclaimed_run() {
+        let (_dir, app) = started().await;
+        make_check_due(&app);
+        assert!(pass(&app).await.is_ok());
+        assert!(app.housekeeping.unclaimed.begin(CHECK, i64::MAX).is_some());
     }
 }
