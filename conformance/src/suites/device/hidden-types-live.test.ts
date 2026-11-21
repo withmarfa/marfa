@@ -5,7 +5,12 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { Outcome } from "../../device/protocol.js";
-import { cleanup, createTestContext, trackItem } from "../../utils/setup.js";
+import {
+  cleanup,
+  createTestContext,
+  newRunId,
+  trackItem,
+} from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
 /**
@@ -50,8 +55,9 @@ async function made(type: string, title: string): Promise<string> {
 }
 
 it("holds no app item in a slice of every type, by hydration or by event, and holds a user item the same way", async () => {
-  const shown = `user.shown-${ctx.runId}`;
-  const hidden = `app.hidden-${ctx.runId}.setting`;
+  const attempt = newRunId();
+  const shown = `user.shown-${attempt}`;
+  const hidden = `app.hidden-${attempt}.setting`;
   for (const id of [shown, hidden]) {
     const registered = await client.registerType({
       id,
@@ -109,8 +115,9 @@ it("holds no app item in a slice of every type, by hydration or by event, and ho
 });
 
 it("reads an app item in the bin as the server's bin answers it, with no type named", async () => {
-  const shown = `user.binned-${ctx.runId}`;
-  const hidden = `app.binned-${ctx.runId}.setting`;
+  const attempt = newRunId();
+  const shown = `user.binned-${attempt}`;
+  const hidden = `app.binned-${attempt}.setting`;
   for (const id of [shown, hidden]) {
     const registered = await client.registerType({
       id,
