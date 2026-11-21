@@ -1913,7 +1913,7 @@ async fn a_database_at_schema_version_1_gains_login_after_and_keeps_its_rows() {
     let version: u32 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, super::migrate::latest(MIGRATIONS));
     let kept: String = conn
         .query_row("SELECT value FROM instance WHERE key = 'kept'", [], |row| {
             row.get(0)
@@ -1974,4 +1974,83 @@ async fn upgraded_by_uri(file: &Path, uri: &str) {
 
     assert!(has_login_after(file));
     assert!(copy_of(file).exists());
+}
+
+fn vendors_of(file: &Path) -> Vec<(String, String)> {
+    Connection::open(file)
+        .unwrap()
+        .prepare("SELECT vendor, client_id FROM app_vendors ORDER BY vendor")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_database_at_schema_version_2_gives_each_vendor_to_the_app_that_made_its_first_type() {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..2]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    let client = |id: &str| {
+        format!(
+            "INSERT INTO oauth_clients (client_id, application_type, redirect_uris, grant_types, \
+             response_types, scopes, contacts, created_at) \
+             VALUES ('{id}', 'native', '[]', '[]', '[]', '', '[]', '2026-11-01T00:00:00.000Z');"
+        )
+    };
+    let made = |id: &str, by: &str, at: &str| {
+        format!(
+            "INSERT INTO types (id, origin, created_by, definition, created_at, updated_at) \
+             VALUES ('{id}', 'user', '{by}', '{{}}', '{at}', '{at}');"
+        )
+    };
+    let by_app = |grant: &str| format!(r#"{{"kind":"app","id":"{grant}","name":"App"}}"#);
+    let by_key = |key: &str| format!(r#"{{"kind":"key","id":"{key}","name":"Key"}}"#);
+    let batch = [
+        client("client-a"),
+        client("client-b"),
+        "INSERT INTO owner (id, name, username, password, created_at, updated_at) \
+         VALUES ('owner', 'Owner', 'owner', 'x', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z');"
+            .to_string(),
+        "INSERT INTO oauth_consents (client_id, owner_id, grant_id, scopes, created_at, updated_at) VALUES \
+         ('client-a', 'owner', 'grant-a', 'content:write', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'), \
+         ('client-b', 'owner', 'grant-b', 'content:write', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z');"
+            .to_string(),
+        "INSERT INTO api_keys (id, hash, label, source, oauth_client_id, permissions, type_permissions, \
+         edge_permissions, extension_permissions, metadata_permissions, profile_permissions, created_at) \
+         VALUES ('key-b', 'hash-b', 'B', 'b', 'client-b', '[]', '{}', '{}', '{}', '{}', '{}', \
+         '2026-11-01T00:00:00.000Z'), ('key-owner', 'hash-o', 'O', 'o', NULL, '[]', '{}', '{}', '{}', \
+         '{}', '{}', '2026-11-01T00:00:00.000Z');"
+            .to_string(),
+        made("app.alpha.setting", &by_app("grant-a"), "2026-11-02T00:00:00.000Z"),
+        made("app.alpha.later", &by_app("grant-b"), "2026-11-03T00:00:00.000Z"),
+        made("app.beta.setting", &by_key("key-b"), "2026-11-02T00:00:00.000Z"),
+        made("app.gamma.setting", &by_key("key-owner"), "2026-11-02T00:00:00.000Z"),
+        made("app.delta.setting", r#"{"kind":"local","id":"local","name":"Local command"}"#, "2026-11-02T00:00:00.000Z"),
+        made("acme.widget", &by_app("grant-a"), "2026-11-02T00:00:00.000Z"),
+    ]
+    .concat();
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch(&batch)
+        .unwrap();
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    assert_eq!(version_of(&place.file), 3);
+    assert_eq!(
+        vendors_of(&place.file),
+        [
+            ("app.alpha".to_string(), "client-a".to_string()),
+            ("app.beta".to_string(), "client-b".to_string()),
+        ]
+    );
 }

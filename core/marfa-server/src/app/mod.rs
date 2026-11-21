@@ -47,6 +47,7 @@ pub mod tables;
 pub mod types;
 pub mod unit;
 pub mod updates;
+pub mod vendors;
 pub mod views;
 pub mod webhooks;
 

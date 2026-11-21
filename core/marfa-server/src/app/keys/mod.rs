@@ -10,7 +10,9 @@ use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value, json};
 
 use super::App;
-use super::access::{Axis, Caller, Change, Grants, OwnLevers, Permission, Standing};
+use super::access::{
+    Axis, Caller, Change, Grants, OwnLevers, Permission, Standing, bind_to_app, stored_for_app,
+};
 use super::connectors;
 use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
@@ -443,11 +445,15 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
             if request.levers.is_some() {
                 caller.require(Permission::ConfigManage)?;
             }
-            let grants = if request.families.names_any() {
+            let mut grants = if request.families.names_any() {
                 request.families.over(&Grants::default())
             } else {
                 caller.whole_set()
             };
+            let app_origin = caller.key().and_then(|maker| maker.oauth_client_id.clone());
+            if let Some(client) = app_origin.as_deref().filter(|_| !request.owner_key) {
+                stored_for_app(unit.tx(), client, &mut grants)?;
+            }
             let inherited = caller.key().and_then(|maker| maker.expires_at.clone());
             let expires_at = request.expires_at.unwrap_or(inherited);
             require_ahead(expires_at.as_deref(), &unit.at)?;
@@ -462,7 +468,6 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
                 &request.source,
                 connectors::source_held(unit.tx(), &request.source)?,
             )?;
-            let app_origin = caller.key().and_then(|maker| maker.oauth_client_id.clone());
             if request.owner_key && app_origin.is_some() {
                 caller.require(Permission::KeysManage)?;
             }
@@ -682,7 +687,13 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Presented> {
     let at = app.clock.stamp();
     let found = app
         .db
-        .read(move |tx| unrevoked_where(tx, "hash", &hash))
+        .read(move |tx| match unrevoked_where(tx, "hash", &hash)? {
+            Some(mut key) => {
+                bind_to_app(tx, &mut key)?;
+                Ok(Some(key))
+            }
+            None => Ok(None),
+        })
         .await?;
     Ok(match found {
         None => Presented::Unknown,
