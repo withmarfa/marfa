@@ -52979,7 +52979,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you hold neither `keys.mint` nor `keys.manage`, or only `keys.manage` and it widens or lengthens the key; it gives more than you hold or an `expires_at` later than yours, unless `keys.manage` narrows it; it widens or lengthens an app's key, or any key with `narrow_only`, which also refuses a changed `enforcement_override`; or it names `enforcement_override` without `config.manage`.",
+            "description": "- `forbidden`: you hold neither `keys.mint` nor `keys.manage`; the update widens reach without `keys.mint`, beyond your access, or for an app's key; its expiry exceeds yours when widening or lengthening; it lengthens an app's key without `keys.manage`; `narrow_only` refuses wider reach, longer life or a changed override; or changing `enforcement_override` needs `config.manage`.",
             "content": {
               "application/json": {
                 "schema": {

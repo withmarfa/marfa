@@ -535,7 +535,6 @@ describe("a key that expires", () => {
   });
 });
 
-/** A key that holds keys.manage and not keys.mint, which expires when `expiresAt` says. */
 async function managingKey(expiresAt?: string): Promise<MarfaClient> {
   const name = unique("manager");
   const made = await management.createKey({
@@ -666,13 +665,10 @@ describe("the owner and an expiry with narrow_only", () => {
 });
 
 describe("a key an app made", () => {
-  // An app's key is minted through a sign-in, which needs an owner, and an
-  // instance has one: these stories need a server of their own.
+  // App approval needs an owner, so these tests need their own server.
   let own: FreshServer;
   let person: MarfaClient;
-  /** A signed-in app with the default scopes, which hold keys.mint and not keys.manage. */
   let minting: MarfaClient;
-  /** A signed-in app that holds keys.manage, as an owner's own app does. */
   let managing: MarfaClient;
 
   beforeAll(async () => {
@@ -718,8 +714,7 @@ describe("a key an app made", () => {
   it("is refused a later expiry or none by a caller that does not hold keys.manage, and is shortened", async () => {
     const made = await appKey("app-made-held");
 
-    // The witness: the same app lengthens a key no app made, so the
-    // refusals below are the key's and not the caller's.
+    // The same caller can lengthen a key no app made.
     const plain = await person.createKey({
       label: "plain",
       source: unique("plain"),

@@ -392,8 +392,6 @@ describe("the instance from the terminal", () => {
       expect(refusedUpdate.envelope.error.code, args.join(" ")).toBe("usage");
     }
 
-    // Through keys.manage, a time of its own shortens it, a duration
-    // lengthens it, and --no-expiry clears it, so the key reads back with none.
     const shorter = new Date(Date.now() + DAY_MS).toISOString();
     const shortened = await c.operator.json<{ expires_at: string }>([
       "keys",
