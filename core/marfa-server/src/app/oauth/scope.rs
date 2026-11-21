@@ -516,7 +516,8 @@ impl Registries {
             .types
             .iter()
             .filter(|id| platform_root(id).is_none())
-            .filter_map(|id| id.split('.').next());
+            .filter_map(|id| id.split('.').next())
+            .filter(|root| !STANDING_ITEM_ROOTS.contains(root));
         STANDING_ROOTS.into_iter().chain(publishers).collect()
     }
 }
@@ -1011,12 +1012,16 @@ mod tests {
 
     #[test]
     fn common_is_offered_for_item_types_and_for_no_edge_type() {
-        let allowed = Registries::new([], []).allowed();
-        for offered in ["common.*:read", "common.*:write", "edge.user.*:read"] {
-            assert!(allowed.contains(offered), "{offered} is not offered");
-        }
-        for withheld in ["edge.common.*:read", "edge.common.*:write"] {
-            assert!(!allowed.contains(withheld), "{withheld} is offered");
+        for allowed in [
+            Registries::new([], []).allowed(),
+            Registries::new(["common.ticket"], []).allowed(),
+        ] {
+            for offered in ["common.*:read", "common.*:write", "edge.user.*:read"] {
+                assert!(allowed.contains(offered), "{offered} is not offered");
+            }
+            for withheld in ["edge.common.*:read", "edge.common.*:write"] {
+                assert!(!allowed.contains(withheld), "{withheld} is offered");
+            }
         }
     }
 
