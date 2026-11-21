@@ -406,7 +406,7 @@ it.each(unanswerableCases)(
         tier: "library",
       },
     );
-    expect(value(await device.list())).toHaveLength(2);
+    expect(value(await device.list()).map((item) => item.id)).toEqual([id(1)]);
     for (const args of [
       ["items", "list", "--view", VIEW],
       ["search", "body", "--view", VIEW],
