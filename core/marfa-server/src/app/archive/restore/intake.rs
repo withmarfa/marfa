@@ -1326,7 +1326,7 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
     }
 }
 
-/// Reads the counts a manifest of archive version 1 holds.
+/// Version 1 predates the plugin count.
 fn first(held: &Map<String, Value>, version: u64) -> Result<Manifest> {
     let mut errors = Vec::new();
     let mut wrong =

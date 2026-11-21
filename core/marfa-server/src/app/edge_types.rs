@@ -376,8 +376,6 @@ pub fn write_restored(unit: &Unit<'_, '_>, plan: Restoring) -> Result<()> {
     instance::raise_reach(unit.tx())
 }
 
-/// Registers a plugin's edge types: a new one as `POST /edge-types` takes it, one registered
-/// alike is kept, and one registered otherwise may only widen its endpoint constraints.
 pub fn install(unit: &Unit<'_, '_>, catalog: &Catalog, definitions: &[Obj]) -> Result<()> {
     let mut named: Vec<(String, String)> = Vec::new();
     let mut changed = false;

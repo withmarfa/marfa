@@ -709,7 +709,6 @@ pub fn restore_icons(
     Ok((added, held))
 }
 
-/// What installing a plugin does with its types, judged on the catalog its write holds.
 pub struct InstallPlan {
     fresh: Vec<Obj>,
     replaced: Vec<Obj>,
@@ -764,9 +763,7 @@ fn narrows_refusal(changes: Vec<Value>) -> Refusal {
     .with_detail("changes", changes)
 }
 
-/// Judges every type a plugin's bundle holds together, so types that name each other install in
-/// any order: each new one as `POST /types` takes it, and each the plugin already installed as a
-/// replacement that only adds.
+/// Bundled types may refer to one another in either order.
 pub fn plan_install(
     caller: &Caller,
     catalog: &Catalog,
@@ -864,7 +861,6 @@ pub fn plan_install(
     Ok(plan)
 }
 
-/// Writes a plan's types with the plugin's provenance, and brings their items up to them.
 pub fn write_install(
     unit: &crate::app::unit::Unit<'_, '_>,
     cache: &arc_swap::ArcSwap<Catalog>,
