@@ -110,7 +110,7 @@ pub fn refuse_folder_settings(settings: &EnvFile, file: &Path) -> Result<(), Cli
     )))
 }
 
-/// Homebrew's prefix, for a program Homebrew installed: `<prefix>/Cellar/<formula>/<version>/bin/marfa`.
+/// Homebrew's prefix, for a program Homebrew installed: it lies under `<prefix>/Cellar/<formula>/<version>/`.
 fn homebrew_prefix(real: &Path) -> Option<PathBuf> {
     let parts: Vec<Component> = real.components().collect();
     let cellar = parts

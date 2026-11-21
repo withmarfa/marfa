@@ -723,8 +723,14 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   ],
 
   [/^scripts\/check-image\.sh$/, ["workspace", "image"]],
-  // The release builds the programs with it, and the image job runs it.
-  [/^scripts\/release\/build-programs\.sh$/, ["workspace", "image"]],
+  // The release builds the programs with it, and the image job runs it. It
+  // fetches the connector with the second script from the pins of the third,
+  // which the first reads, and holds its modules to the licence bundle, with
+  // the module reader, so they reach the image job too.
+  [
+    /^scripts\/release\/(build-programs\.sh|fetch-cloudflared\.sh|cloudflared(-pins\.sh|-modules\.sh|-licences\.txt|\.txt))$/,
+    ["workspace", "image"],
+  ],
   [/^ci\//, ["workspace"]],
   [/^scripts\/generate-core-contract\.ts$/, ["workspace", "clients-freshness"]],
   // The icon sets' writer and the pins it checks each download against.

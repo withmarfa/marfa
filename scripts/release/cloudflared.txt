@@ -1,0 +1,40 @@
+# The tunnel connector every release ships beside `marfa` and `marfa-server`:
+# one version of cloudflare/cloudflared, taken from its official GitHub release,
+# with the SHA-256 of each download. `fetch-cloudflared.sh` reads it and stops at
+# the first hash that does not match, so a release cannot carry a connector this
+# file does not name.
+#
+# Each line is whitespace-separated fields. A line starting with # is a comment.
+#
+#   version <tag>                                the cloudflared release, which is also its git tag
+#   licence <sha256>                             the LICENSE file at that tag
+#   dependencies <sha256>                        cloudflared-licences.txt, the licences of the Go modules
+#                                                built into the program, which NOTICES.txt carries
+#   team <id>                                    the Apple team that signs the macOS program
+#   download <target> <asset> <download sha256> <program sha256>
+#                                                the release asset for a build target, and the
+#                                                program inside it; a plain download is its own program.
+#                                                On macOS the program hash is of Cloudflare's signed build;
+#                                                the archive carries it re-signed by the release.
+#
+# To move the pin, read the release page, then change the version and every
+# hash together. Cloudflare's page lists the macOS programs' hashes, not their
+# archives', so take the download hash from the file you fetched (GitHub shows it
+# as the asset's digest) and the program hash from the page. Then regenerate the
+# licences of the Go modules: with the new version and downloads in place, run
+#
+#   scripts/release/cloudflared-licences.sh scripts/release/cloudflared-licences.txt
+#
+# which needs go, and put the sha256 it prints on the `dependencies` line.
+# `fetch-cloudflared.sh` refuses a program built from a module that file has no
+# entry for, so a pin moved without it stops the release.
+#
+# Cloudflare stops publishing Intel macOS builds in 2027, and Marfa builds none.
+
+version 2026.11.1
+licence 58d1e17ffe5109a7ae296caafcadfdbe6a7d176f0bc4ab01e12a689b0499d8bd
+dependencies abd2f2da1d64bae0dfa481ced5b5ae1fcfe3d896fcfb8f321fd6f3dbd5cd2956
+team 68WVV388M8
+download aarch64-apple-darwin cloudflared-darwin-arm64.tgz 02fe4bcf08f2c09699cff30658228a739a0c47fb75f3653d1b8772a27ade4462 1cd7041838e5b0943378763ca86ddc0af896d1727875f36b29f5cc35eb2c4df7
+download aarch64-unknown-linux-musl cloudflared-linux-arm64 b155cec3e48e489cfb8e5c602769fb8c771083018d8881d68b4d18a791567c5a b155cec3e48e489cfb8e5c602769fb8c771083018d8881d68b4d18a791567c5a
+download x86_64-unknown-linux-musl cloudflared-linux-amd64 97bb3b02d23a5980fc9c15a1a270e692da1923f103f920d5b16d4931d5ab55e7 97bb3b02d23a5980fc9c15a1a270e692da1923f103f920d5b16d4931d5ab55e7

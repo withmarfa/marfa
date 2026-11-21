@@ -611,6 +611,24 @@ describe("what a change runs", () => {
       ["quick-checks", "workspace", "image"],
     ],
     [
+      "the connector's pins and the script that fetches them, which the image job's build runs",
+      [
+        "scripts/release/cloudflared.txt",
+        "scripts/release/fetch-cloudflared.sh",
+      ],
+      ["quick-checks", "workspace", "image"],
+    ],
+    [
+      "the licence bundle the fetch checks the connector's modules against",
+      ["scripts/release/cloudflared-licences.txt"],
+      ["quick-checks", "workspace", "image"],
+    ],
+    [
+      "the reader of the connector's modules, which the fetch sources",
+      ["scripts/release/cloudflared-modules.sh"],
+      ["quick-checks", "workspace", "image"],
+    ],
+    [
       "the native readers' scripts, which the image's programs and the Rust server are built with",
       ["core/marfa-enrichment/native/lib.sh"],
       ["quick-checks", "core-native", "image", ...RUST_SERVER],

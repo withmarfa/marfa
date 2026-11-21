@@ -1488,7 +1488,7 @@ jobs:
           echo "VERSION=$version" >> "$GITHUB_ENV"
           context="$RUNNER_TEMP/image-context/amd64"
           mkdir -p "$context"
-          cp "$MARFA_NATIVE_ROOT/out/$TARGET"/{marfa,marfa-server,NOTICES.txt} "$context/"
+          cp "$MARFA_NATIVE_ROOT/out/$TARGET"/{marfa,marfa-server,cloudflared,NOTICES.txt} "$context/"
           docker buildx build --load --platform linux/amd64 -f deploy/Dockerfile \
             --build-arg "VERSION=$version" --build-arg "REVISION=$GITHUB_SHA" \
             -t marfa-server "$RUNNER_TEMP/image-context"

@@ -62,7 +62,7 @@ function runSign(env: Record<string, string>, binary: string) {
   });
 }
 
-const PROGRAMS = ["marfa", "marfa-server"];
+const PROGRAMS = ["marfa", "marfa-server", "cloudflared"];
 
 describe("the release signs the programs in a job of its own", () => {
   const { sign, collect } = jobs();
@@ -126,15 +126,23 @@ describe("the release signs the programs in a job of its own", () => {
     expect(JSON.stringify(sign.steps[adHoc])).not.toContain("secrets.");
   });
 
-  it("signs both programs, packs only them, and builds nothing for Intel Macs", () => {
+  it("signs all three programs, packs only them, and builds nothing for Intel Macs", () => {
     const step = sign.steps.find((candidate) =>
       (candidate.run ?? "").includes("sign-binary.sh"),
     );
     expect(step?.run).toContain(`for program in ${PROGRAMS.join(" ")}; do`);
+    const adHoc = sign.steps.find((candidate) =>
+      (candidate.run ?? "").includes("codesign --force --sign - "),
+    );
+    expect(adHoc?.run).toContain(`for program in ${PROGRAMS.join(" ")}; do`);
     const packing = sign.steps.find((candidate) =>
       (candidate.run ?? "").includes("pack-programs.sh"),
     );
     expect(packing?.run).toContain("marfa-$VERSION-darwin-arm64.tar.gz");
+    // A tag run holds the archive's programs to the release's team; a dry run has no team.
+    expect(packing?.env?.MARFA_EXPECT_TEAM).toBe(
+      "${{ github.event_name == 'push' && secrets.APPLE_TEAM_ID || '' }}",
+    );
     expect(packing?.run).not.toContain("marfa-enrichment-read");
     expect(packing?.run).not.toContain("linux");
     expect(JSON.stringify(jobs())).not.toContain("x86_64-apple-darwin");
@@ -197,6 +205,9 @@ describe("the build hands on exactly the programs and the package", () => {
   it("refuses a build missing a program, or carrying an archive already", () => {
     expect(holdBuild(build.slice(1))).not.toBe(0);
     expect(holdBuild(build.filter((name) => name !== "marfa-server"))).not.toBe(
+      0,
+    );
+    expect(holdBuild(build.filter((name) => name !== "cloudflared"))).not.toBe(
       0,
     );
     expect(holdBuild([...build, "marfa-0.0.9-darwin-arm64.tar.gz"])).not.toBe(

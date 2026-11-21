@@ -6,15 +6,15 @@ This page covers a server on a Mac or a Linux machine, natively or in Docker, an
 
 ## Install the programs
 
-Each release has one archive per platform, `marfa-<version>-<platform>.tar.gz`, where `<platform>` is `darwin-arm64`, `linux-x86_64` or `linux-aarch64`. An archive holds `marfa`, `marfa-server` and `NOTICES.txt`, the licenses of what the programs contain. Intel Macs aren't supported.
+Each release has one archive per platform, `marfa-<version>-<platform>.tar.gz`, where `<platform>` is `darwin-arm64`, `linux-x86_64` or `linux-aarch64`. An archive holds `marfa`, `marfa-server`, `cloudflared` and `NOTICES.txt`, the licenses of what the programs contain. Intel Macs aren't supported.
 
-`scripts/install.sh` downloads the archive for your machine, checks it against the release's checksum file, and installs both programs side by side, in `~/.local/bin` unless `MARFA_INSTALL_DIR` names another folder. `MARFA_VERSION` chooses a release; without it, the script installs the latest.
+`scripts/install.sh` downloads the archive for your machine, checks it against the release's checksum file, and installs `marfa`, `marfa-server` and the tunnel connector `cloudflared` side by side, in `~/.local/bin` unless `MARFA_INSTALL_DIR` names another folder. `MARFA_VERSION` chooses a release; without it, the script installs the latest.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/install.sh | sh
 ```
 
-The two programs must be the same release. `marfa` finds `marfa-server` only beside itself.
+The two programs must be the same release. `marfa` finds `marfa-server` only beside itself. Cloudflare's `cloudflared` is a release of its own, which the server will run only once its owner links the instance to Marfa Cloud. The macOS archive carries it signed and notarized by Marfa's release, like the other programs. A server's own update installs it too, when the new release has one.
 
 ## Verify a download
 
@@ -179,13 +179,13 @@ The image sets `MARFA_LISTEN_HOST`, `MARFA_PORT`, `MARFA_DATABASE_PATH`, `MARFA_
 
 ## Build the programs and the image yourself
 
-To run code that isn't a release, build the programs for a target: `aarch64-apple-darwin`, `aarch64-unknown-linux-musl` or `x86_64-unknown-linux-musl`. The script needs the tools that `core/marfa-enrichment/native/release.sh <target> --needs` lists, and Docker for the Linux targets:
+To run code that isn't a release, build the programs for a target: `aarch64-apple-darwin`, `aarch64-unknown-linux-musl` or `x86_64-unknown-linux-musl`. The script needs the tools that `core/marfa-enrichment/native/release.sh <target> --needs` lists, `go` to read the modules built into `cloudflared`, and Docker for the Linux targets:
 
 ```bash
 MARFA_NATIVE_ROOT=<folder> scripts/release/build-programs.sh <target>
 ```
 
-`<folder>` holds downloads and work, and the result is in `<folder>/out/<target>/`: `marfa`, `marfa-server` and `NOTICES.txt`. A build from the repository reports version `0.0.0`.
+`<folder>` holds downloads and work, and the result is in `<folder>/out/<target>/`: `marfa`, `marfa-server`, `cloudflared` and `NOTICES.txt`. The build downloads `cloudflared` from Cloudflare and checks it against the pin in `scripts/release/cloudflared.txt`. On macOS the build removes Cloudflare's signature from `cloudflared`, which the release signs again, so to run it from a build of your own, sign it first with `codesign --force --sign - <folder>/out/aarch64-apple-darwin/cloudflared`. A build from the repository reports version `0.0.0`.
 
 To build the image from those programs, put the output of the two Linux targets in a build context as `amd64/` (`x86_64-unknown-linux-musl`) and `arm64/` (`aarch64-unknown-linux-musl`), then run:
 

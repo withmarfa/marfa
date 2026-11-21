@@ -87,6 +87,25 @@ describe("the server image in a release", () => {
     expect(built?.with?.file).toBe("deploy/Dockerfile");
   });
 
+  it("puts cloudflared beside marfa in the image, from the same archives, in the release and in the CI check", () => {
+    const dockerfile = readFileSync(
+      join(WORKFLOWS, "..", "..", "deploy", "Dockerfile"),
+      "utf8",
+    );
+    expect(dockerfile).toContain(
+      "COPY --chmod=0755 ${TARGETARCH}/marfa ${TARGETARCH}/marfa-server ${TARGETARCH}/cloudflared /usr/local/bin/",
+    );
+    const ci = parse(readFileSync(join(WORKFLOWS, "ci.yml"), "utf8")) as {
+      jobs: Record<string, Job>;
+    };
+    const context = ci.jobs.image?.steps?.find((step) =>
+      (step.run ?? "").includes("image-context"),
+    );
+    expect(context?.run).toContain(
+      "{marfa,marfa-server,cloudflared,NOTICES.txt}",
+    );
+  });
+
   it("describes the image as the Marfa server, in both builds", () => {
     const builds = imageSteps.filter((step) =>
       step.uses?.startsWith("docker/build-push-action@"),

@@ -18,7 +18,7 @@ for pair in amd64:x86_64 arm64:aarch64; do
   fi
   mkdir "$context/$architecture"
   tar -xzf "$archive" -C "$context/$architecture"
-  for name in marfa marfa-server NOTICES.txt; do
+  for name in marfa marfa-server cloudflared NOTICES.txt; do
     if [ ! -s "$context/$architecture/$name" ]; then
       echo "::error::$(basename "$archive") holds no $name."
       exit 1

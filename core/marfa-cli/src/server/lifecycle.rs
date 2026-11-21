@@ -1258,7 +1258,7 @@ mod tests {
     fn putting_an_earlier_release_back_names_the_folder_only_outside_homebrew() {
         let dir = Path::new("/srv/marfa");
         // The install script's folder, and a folder the programs were copied into by hand: the
-        // install script puts both programs back there.
+        // install script puts the programs back there.
         for programs in ["/home/someone/.local/bin", "/usr/local/bin"] {
             let program = Path::new(programs).join("marfa");
             let words = put_back_by(Some("0.0.80"), &program, false, dir);

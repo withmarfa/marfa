@@ -49,7 +49,7 @@ You need a Mac with Apple silicon, or Linux on x86_64 or arm64. Install the `mar
 curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/install.sh | sh
 ```
 
-The script checks the download against the release's checksums and puts both programs in `~/.local/bin`. If that folder isn't on your `PATH`, the script says how to add it.
+The script checks the download against the release's checksums and puts `marfa`, `marfa-server` and the tunnel connector `cloudflared` in `~/.local/bin`. If that folder isn't on your `PATH`, the script says how to add it.
 
 Then set up a server that only this computer can reach:
 

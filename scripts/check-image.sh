@@ -6,8 +6,8 @@
 # read-only root file system, so every write the server makes must land in /data:
 #
 # 1. it becomes healthy by its own health check and by `GET /health` from outside;
-# 2. `GET /` reports <version>, the labels and both programs report it, and
-#    the process is not root;
+# 2. `GET /` reports <version>, the labels and both programs report it, the
+#    tunnel connector runs and is the pinned release, and the process is not root;
 # 3. what it generated for itself is on the volume, private to its user;
 # 4. `docker stop` ends it with status 0 inside the ten seconds a runtime allows;
 # 5. started again on the same volume it is the same instance;
@@ -86,6 +86,12 @@ reported=$(docker run --rm --entrypoint /usr/local/bin/marfa-server "$image" --v
 [ "$reported" = "marfa-server $version" ] || fail "the server reports '$reported', not 'marfa-server $version'"
 reported=$(docker run --rm --entrypoint /usr/local/bin/marfa "$image" --version)
 [ "$reported" = "marfa $version" ] || fail "the packaged command line reports '$reported', not 'marfa $version'"
+connector=$(awk '$1 == "version" { print $2 }' "$(dirname "${BASH_SOURCE[0]}")/release/cloudflared.txt")
+reported=$(docker run --rm --entrypoint /usr/local/bin/cloudflared "$image" --version)
+case "$reported" in
+  "cloudflared version $connector "*) ;;
+  *) fail "the packaged cloudflared reports '$reported', not version $connector" ;;
+esac
 
 echo "== a fresh volume"
 fresh=marfa-check-fresh-$$

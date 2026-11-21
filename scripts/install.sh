@@ -1,12 +1,14 @@
 #!/bin/sh
-# Install the `marfa` command line and the `marfa-server` program from a
-# GitHub release.
+# Install the `marfa` command line, the `marfa-server` program and, when the
+# release carries it, the `cloudflared` tunnel connector, from a GitHub release.
 #
 #   curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/install.sh | sh
 #
 # It picks the archive for this machine, checks it against the release's
-# checksum file, and puts both programs in one folder. Running it again
-# installs the latest release over the last, or leaves the install as it is.
+# checksum file, and puts the programs in one folder: the server looks for the
+# connector beside itself, and runs it only once its owner links the instance
+# to Marfa Cloud. Running it again installs the latest release over the last,
+# or leaves the install as it is.
 # Marfa runs on Macs with Apple silicon and on Linux, x86_64 and arm64.
 #
 #   MARFA_VERSION      a release such as 0.0.70; the latest when not set
@@ -98,16 +100,39 @@ for program in marfa marfa-server; do
   [ "$reported" = "$program $version" ] ||
     fail "the downloaded $program reports '$reported', not '$program $version'. Nothing was installed."
 done
+# A release from before the connector shipped has none, and MARFA_VERSION can name one.
+programs="marfa marfa-server"
+if [ -f "$work/unpack/cloudflared" ]; then
+  chmod +x "$work/unpack/cloudflared"
+  "$work/unpack/cloudflared" --version >/dev/null 2>&1 ||
+    fail "the downloaded cloudflared does not run on this machine. Nothing was installed."
+  programs="$programs cloudflared"
+fi
 
 mkdir -p "$dir" || fail "could not make $dir. Choose another with MARFA_INSTALL_DIR."
+# The connector may be one the person keeps here; a replaced one is said so.
+replaced=
+if [ -e "$dir/cloudflared" ] || [ -L "$dir/cloudflared" ]; then
+  replaced=1
+fi
 # A copy beside each target and a rename, so a stop part-way leaves the old ones.
-for program in marfa marfa-server; do
+for program in $programs; do
   cp "$work/unpack/$program" "$dir/.$program.$$" || fail "could not write to $dir. Choose another with MARFA_INSTALL_DIR."
 done
-for program in marfa marfa-server; do
+for program in $programs; do
   mv "$dir/.$program.$$" "$dir/$program"
 done
 say "Installed marfa $version and marfa-server $version to $dir."
+case "$programs" in
+  *cloudflared)
+    if [ -n "$replaced" ]; then
+      say "Installed cloudflared beside them, replacing the cloudflared that was in $dir."
+    else
+      say "Installed cloudflared beside them."
+    fi
+    say "Marfa does not run it unless you link this server to Marfa Cloud."
+    ;;
+esac
 
 case ":$PATH:" in
   *":$dir:"*) ;;

@@ -72,7 +72,7 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
   ],
   [
     "deploy/README.md",
-    "tells an operator the two stored settings and that no variable sets them",
+    "tells an operator the two stored settings and that no variable sets them, and that releases carry the cloudflared connector",
   ],
   [
     ".env.example",
@@ -90,10 +90,78 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
     "core/marfa-rules/icons/icon-set-simple-icons.json",
     "a brand icon an item can show, which is not telemetry",
   ],
+  [
+    "scripts/release/cloudflared.txt",
+    "pins the tunnel connector every release ships: its version and the SHA-256 of each download",
+  ],
+  [
+    "scripts/release/cloudflared-licences.txt",
+    "the licences of the Go modules built into the connector, which the notices carry",
+  ],
+  [
+    "scripts/release/cloudflared-licences.sh",
+    "gathers those licences for the pinned connector when the pin moves",
+  ],
+  [
+    "scripts/release/cloudflared-modules.sh",
+    "reads the modules and the Go release from a connector's build information",
+  ],
+  [
+    "core/marfa-server/src/app/updates/pending.rs",
+    "names the connector a release holds beside the programs, so that an update installs it",
+  ],
+  [
+    "core/marfa-server/src/app/updates/tests.rs",
+    "tests that an update installs the connector, and installs an older release without one",
+  ],
+  [
+    "scripts/release/cloudflared-pins.sh",
+    "reads that pin file for the scripts that fetch and check the connector",
+  ],
+  [
+    "scripts/release/fetch-cloudflared.sh",
+    "downloads the connector, holds it to its pin, removes its macOS signature for the release to sign again, and adds its licences to the notices",
+  ],
+  [
+    "scripts/release/build-programs.sh",
+    "runs the fetch so that the programs' folder holds the connector",
+  ],
+  [
+    "scripts/release/pack-programs.sh",
+    "packs the connector beside the two programs in each release archive",
+  ],
+  [
+    "scripts/release/check-archive.sh",
+    "refuses an archive whose connector is missing, unsigned, not executable, not the pinned release or does not run",
+  ],
+  [
+    "scripts/release/image-context.sh",
+    "lays the connector out for the image from the Linux archives",
+  ],
+  [
+    "scripts/release/write-formula.sh",
+    "installs the connector beside the two programs, off the path, in the Homebrew formula",
+  ],
+  [
+    "scripts/release/install-proof.sh",
+    "runs the connector the installer put in place",
+  ],
+  [
+    "scripts/install.sh",
+    "installs the connector beside the two programs, where the server looks for it",
+  ],
+  [
+    "deploy/Dockerfile",
+    "copies the connector into the image beside the two programs",
+  ],
+  [
+    ".github/workflows/release.yml",
+    "carries the connector from the Mac build into its archive, and signs and notarizes it with the other programs",
+  ],
 ];
 
-/** A vendor token starts `phc_`; the name is matched in any case. */
-const VENDOR = ["-e", "posthog", "-e", "phc_"];
+/** A vendor token starts `phc_`; a name is matched in any case. */
+const VENDOR = ["-e", "posthog", "-e", "phc_", "-e", "cloudflared"];
 
 function allows(path: string): boolean {
   return ALLOWED.some(([entry]) =>
@@ -172,7 +240,7 @@ export function lockedCrates(lock: string): string[] {
   return [...lock.matchAll(/^name = "([^"]+)"$/gm)].map((match) => match[1]!);
 }
 
-const isVendor = (name: string) => /posthog/i.test(name);
+const isVendor = (name: string) => /posthog|cloudflared/i.test(name);
 
 describe("product code names no vendor outside its allowlist", () => {
   const found = hits();
