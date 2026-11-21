@@ -1680,6 +1680,14 @@ When a device makes a tag replace wait on a create queued under `device/restored
 
 **Tests:** `device/server-restored-live.test.ts › sends a tag replace the restored server refused, once its item is made again, naming no tags it read`.
 
+### `device/restored-waiting-extension-unread`
+
+When a device makes an extension write or delete wait on a create queued under `device/restored-kept`, a device MUST remove the revision the write read (`queue-and-verdicts/extension-names-read-revision`) from it.
+
+**Reason:** the server lost the item that revision was read from, and the create puts it back with no extensions, so a write that named it would be refused as a conflict with work the person already made.
+
+**Tests:** `device/server-restored-live.test.ts › sends an extension write the restored server refused, once its item is made again, naming no revision it read`.
+
 ### `device/restored-kept-blocked`
 
 When a device queues a write under `device/restored-kept`, a device MUST give it the verdict `blocked` with the reason `server_restored`.

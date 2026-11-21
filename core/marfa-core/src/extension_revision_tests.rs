@@ -1,6 +1,7 @@
 //! An extension write guarded by the namespace's revision the caller read.
 
-use crate::model::{BlockedReason, QueuedWrite, Verdict};
+use crate::model::{BlockedReason, QueuedWrite, Verdict, WriteKind};
+use crate::restored::Lost;
 use crate::scripted::{self, Answer, Scripted, certified};
 use crate::stop_tests::{copy_in_keyed, holding_a_catalog};
 use crate::{Core, store};
@@ -184,6 +185,36 @@ fn takes_a_resend_whose_refusal_shows_the_namespace_holds_what_it_leaves() {
             "{case}"
         );
     }
+}
+
+#[test]
+fn a_write_made_to_wait_on_a_create_a_restore_keeps_names_no_revision_read() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy(&server, dir.path());
+    let queued = write(&core, Some(READ));
+    let held = core.get(ITEM).unwrap().unwrap();
+    {
+        let mut conn = core.conn().unwrap();
+        let tx = conn.transaction().unwrap();
+        let catalog = crate::catalog::load(&tx).unwrap();
+        crate::restored::keep(&tx, &catalog, Some(Lost::creating(vec![held]))).unwrap();
+        tx.commit().unwrap();
+    }
+
+    let create = core
+        .queue()
+        .unwrap()
+        .into_iter()
+        .find(|write| write.kind == WriteKind::CreateItem)
+        .unwrap();
+    let waiting = row(&core, &queued.id);
+    assert!(waiting.depends_on.contains(&create.id), "{waiting:?}");
+    assert_eq!(
+        store::read_revision(&core.conn().unwrap(), &queued.id).unwrap(),
+        None,
+        "a write over an item made again still names the revision read before the restore"
+    );
 }
 
 #[test]

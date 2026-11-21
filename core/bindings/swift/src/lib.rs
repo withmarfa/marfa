@@ -3108,6 +3108,7 @@ guarded! {
         /// Writes one extension namespace, as its own write. `read_revision`
         /// is the namespace's `revision` as a read answered it; the server
         /// then refuses the write if the namespace changed since.
+        #[uniffi::method(default(read_revision = None))]
         pub fn write_extension(
             &self,
             id: String,
@@ -3126,6 +3127,7 @@ guarded! {
 
         /// Removes one extension namespace, guarded by `read_revision` as a
         /// write is.
+        #[uniffi::method(default(read_revision = None))]
         pub fn delete_extension(
             &self,
             id: String,

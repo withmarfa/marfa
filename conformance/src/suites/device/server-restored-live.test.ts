@@ -657,6 +657,57 @@ describe("a server restored behind work this device sent it", () => {
   );
 
   it(
+    "sends an extension write the restored server refused, once its item is made again, naming no revision it read",
+    async () => {
+      const w = await world("restored-refused-extension");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const id = await made(w.device, "extended since the backup");
+      value(await w.device.writeExtension(id, "app.notes", { pinned: false }));
+      await sent(w.device);
+      const read = await w.client().getItemExtension(id, "app.notes");
+      expect(read.status, JSON.stringify(read.error)).toBe(200);
+      const revision = read.data.revision;
+
+      await w.restore(image);
+      const queued = value(
+        await w.device.writeExtension(
+          id,
+          "app.notes",
+          { pinned: true },
+          revision,
+        ),
+      );
+      const refused = value(await w.device.drain());
+      expect(refused.verdicts.map((verdict) => verdict.verdict)).toEqual([
+        "refused",
+      ]);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note"], "library"));
+      const kept = await queue(w.device);
+      const create = kept.find((write) => write.kind === "create_item");
+      expect(
+        kept.find((write) => write.id === queued.id)?.depends_on,
+        "the refused extension write was not made to wait on the create that puts its item back",
+      ).toContain(create?.id);
+
+      value(await w.device.release({ reason: "server_restored" }));
+      value(await w.device.drain());
+      value(await w.device.drain());
+      const settled = (await queue(w.device)).find(
+        (write) => write.id === queued.id,
+      );
+      expect(
+        settled?.verdict ?? "accepted",
+        "the write was refused for a revision the item put back never had",
+      ).not.toBe("blocked");
+      const after = await w.client().getItemExtension(id, "app.notes");
+      expect(after.data.document).toEqual({ pinned: true });
+    },
+    TIMEOUT,
+  );
+
+  it(
     "puts back the tags the restored server lost from an item it still holds",
     async () => {
       const w = await world("restored-tags");
