@@ -10,7 +10,7 @@ use super::sign_in::signed_in_cookies;
 use super::{cookies, redirect, require_safe_caller, with_cookie};
 use crate::app::App;
 use crate::app::auth::claim::{self, Presented, Proof};
-use crate::app::auth::owner::{Details, Owner, optional_text};
+use crate::app::auth::owner::{Details, Owner, optional_email, optional_text};
 use crate::app::auth::return_to::{HOME, encoded, kept, through_sign_in};
 use crate::app::auth::{Visit, own_origins, sign_in};
 use crate::app::refusal::{Code, Refusal};
@@ -130,7 +130,7 @@ pub(super) async fn make_claim(
     let password = text("password").unwrap_or("").to_string();
     let details = Details::new(
         text("username").unwrap_or(""),
-        optional_text(&fields, "email")?,
+        optional_email(&fields)?,
         optional_text(&fields, "name")?,
         password.clone(),
     )?;

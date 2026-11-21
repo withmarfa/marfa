@@ -58,7 +58,7 @@ pub async fn setup_claim(State(app): State<Arc<App>>, caller: Caller, body: Json
     let username = text("username").ok_or_else(owner::incomplete_claim)?;
     let password = text("password").ok_or_else(owner::incomplete_claim)?;
     let name = owner::optional_text(&body, "name")?;
-    let email = owner::optional_text(&body, "email")?;
+    let email = owner::optional_email(&body)?;
     let details = Details::new(username, email, name, password.to_string())?;
     let owner = claim::claim(&app, details, Proof::Local, Visit::default()).await?;
     Ok(json_answer(

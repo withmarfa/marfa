@@ -98,6 +98,22 @@ When valid setup proof claims an unclaimed instance with no `email`, the server 
 
 **Tests:** `compliance/owner.test.ts › answers the setup routes in snake_case and the claim as the public claim does`.
 
+### `instance-claim/owner-email-null`
+
+When valid setup proof claims an unclaimed instance with `email` sent as `null`, through `POST /owner`, `POST /setup/claim` or the private control socket, the server MUST create the owner with `email` `null`, as it does for a claim with no `email`.
+
+**Reason:** `PATCH /profile` reads `null` as no email, so an app sends one shape to every route.
+
+**Tests:** `compliance/owner.test.ts › claims with a null email as it does with none, on every claim route`.
+
+### `instance-claim/owner-email-invalid`
+
+If a claim through `POST /owner`, `POST /setup/claim` or the private control socket sends `email` as an empty string or as a value that is neither a string nor `null`, then the server MUST refuse it with `400 validation_error` and `email` as `details.errors[0].path`, without consuming the proof.
+
+**Reason:** An empty string is no address, so it is refused as `PATCH /profile` refuses it, and the setup page's form is the one place a blank field means no email (`instance-claim/owner-email-form-blank`).
+
+**Tests:** `compliance/owner.test.ts › refuses an empty email, and an email that is not a string or null, naming email on every claim route without consuming valid setup proof`.
+
 ### `instance-claim/owner-email-form-blank`
 
 When the setup page's form submits `email` left blank with valid owner details, the server MUST create the owner with `email` `null`.

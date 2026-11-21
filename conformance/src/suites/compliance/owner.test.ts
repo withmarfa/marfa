@@ -344,6 +344,110 @@ describe("claiming the one owner", () => {
     expect((await local("/_control/setup/status")).body.claimed).toBe(false);
   });
 
+  it("refuses an empty email, and an email that is not a string or null, naming email on every claim route without consuming valid setup proof", async () => {
+    const refusals: [unknown, string][] = [
+      ["", "Enter a valid email address."],
+      [42, "Must be a string or null."],
+      [true, "Must be a string or null."],
+      [["owner@example.test"], "Must be a string or null."],
+      [{}, "Must be a string or null."],
+    ];
+    for (const [email, message] of refusals) {
+      const claims: [string, Response][] = [
+        ["POST /owner", await post("/owner", { ...OWNER, email, code })],
+        [
+          "POST /setup/claim",
+          await post("/setup/claim", { ...OWNER, email, code }),
+        ],
+      ];
+      for (const [route, refused] of claims) {
+        const where = `${route} with email ${JSON.stringify(email)}`;
+        expect(refused.status, where).toBe(400);
+        const { error } = await refused.json();
+        expect(error.code, where).toBe("validation_error");
+        expect(error.details.errors, where).toEqual([
+          { path: "email", message },
+        ]);
+      }
+      const socket = await local("/_control/setup/claim", { ...OWNER, email });
+      const where = `the socket with email ${JSON.stringify(email)}`;
+      expect(socket.status, where).toBe(400);
+      const refusal = socket.body as {
+        error: { code: string; details: { errors: unknown[] } };
+      };
+      expect(refusal.error.code, where).toBe("validation_error");
+      expect(refusal.error.details.errors, where).toEqual([
+        { path: "email", message },
+      ]);
+    }
+    expect((await local("/_control/setup/status")).body.claimed).toBe(false);
+  });
+
+  it(
+    "claims with a null email as it does with none, on every claim route",
+    async () => {
+      const routes: [
+        string,
+        (instance: FreshInstance) => Promise<{ status: number; body: unknown }>,
+      ][] = [
+        [
+          "POST /owner",
+          async (instance) => {
+            const response = await fetch(`${instance.url}/owner`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                ...OWNER,
+                email: null,
+                code: await instance.code(),
+              }),
+            });
+            return { status: response.status, body: await response.json() };
+          },
+        ],
+        [
+          "POST /setup/claim",
+          async (instance) => {
+            const response = await fetch(`${instance.url}/setup/claim`, {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                ...OWNER,
+                email: null,
+                code: await instance.code(),
+              }),
+            });
+            return { status: response.status, body: await response.json() };
+          },
+        ],
+        [
+          "the socket",
+          (instance) =>
+            controlRequest(instance.controlSocket, "/_control/setup/claim", {
+              method: "POST",
+              body: { ...OWNER, email: null },
+            }),
+        ],
+      ];
+      for (const [route, claim] of routes) {
+        await withFreshInstance(async (instance) => {
+          const claimed = await claim(instance);
+          expect(claimed.status, route).toBe(201);
+          expect(claimed.body, route).toMatchObject({
+            username: OWNER.username,
+            email: null,
+          });
+          const profile = await controlRequest(
+            instance.controlSocket,
+            "/profile",
+          );
+          expect(profile.body, route).toMatchObject({ email: null });
+        });
+      }
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
   it("refuses a key the claim does not declare without consuming valid setup proof", async () => {
     for (const key of ["bogus", "_trace"]) {
       const refused = await post("/owner", { ...OWNER, code, [key]: 1 });
@@ -617,13 +721,14 @@ describe("claiming the one owner", () => {
  * A fresh unclaimed server on its own state folder, for a test that claims it.
  * The claim happens once, so each way of claiming needs an instance of its own.
  */
+type FreshInstance = {
+  url: string;
+  controlSocket: string;
+  code: () => Promise<string>;
+  ticket: () => Promise<string>;
+};
 async function withFreshInstance(
-  run: (instance: {
-    url: string;
-    controlSocket: string;
-    code: () => Promise<string>;
-    ticket: () => Promise<string>;
-  }) => Promise<void>,
+  run: (instance: FreshInstance) => Promise<void>,
 ): Promise<void> {
   const freshState = tempFolder("marfa-owner-session-");
   let booted = false;
