@@ -786,3 +786,312 @@ describe("vendors in an archive", () => {
     expect(await reads(maker.token, item)).toBe(true);
   });
 });
+
+/** An owner's key the app holding `token` mints, holding `types` and `permissions`. */
+async function ownerKeyBy(
+  token: string,
+  types: Record<string, string>,
+  permissions: string[] = [],
+): Promise<string> {
+  const minted = await answer(token, "/keys", {
+    method: "POST",
+    body: {
+      label: "owner's key from an app",
+      source: `owner-from-app-${randomUUID().slice(0, 8)}`,
+      type_permissions: types,
+      permissions,
+      owner_key: true,
+    },
+  });
+  expect(minted.status, JSON.stringify(minted.body)).toBe(201);
+  expect(minted.body).not.toHaveProperty("oauth_client_id");
+  return minted.body.key as string;
+}
+
+/** The vendor bindings an archive export `credential` takes carries for `vendor`. */
+async function exportedBindings(
+  credential: string,
+  vendor: string,
+): Promise<Array<{ vendor: string; client_id: string | null }>> {
+  const response = await call(credential, "/export?format=archive");
+  expect(response.status).toBe(200);
+  const archive = new Uint8Array(await response.arrayBuffer());
+  return archiveLines<{
+    app_vendor?: { vendor: string; client_id: string | null };
+  }>(archive, "instance")
+    .flatMap((line) => (line.app_vendor ? [line.app_vendor] : []))
+    .filter((line) => line.vendor === vendor);
+}
+
+async function ownersKey(types: Record<string, string>): Promise<string> {
+  const made = await local.createKey({
+    label: "owner's reader",
+    source: `owner-reader-${randomUUID().slice(0, 8)}`,
+    permissions: [],
+    type_permissions: types,
+  });
+  expect(made.ok, JSON.stringify(made.error)).toBe(true);
+  return made.data!.key;
+}
+
+describe("vendors whose types only the owner made", () => {
+  const byLocal = { kind: "local", id: "local", name: "Local command" };
+
+  it("holds for the owner a vendor whose types only the owner made, from an archive of either version, and refuses it to an app", async () => {
+    for (const [version, vendor] of [
+      [1, "app.vendors"],
+      [2, "app.vendort"],
+    ] as const) {
+      const restored = await local.restoreArchive(
+        vendorArchive(version, [typeLine(`${vendor}.setting`, byLocal)]),
+      );
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      expect(restored.data.types_registered).toBe(1);
+      expect(await holder(vendor), vendor).toBeNull();
+    }
+    const app = await signedIn(REGISTERS);
+    const error = forbidden(
+      await answer(app.token, "/types", {
+        method: "POST",
+        body: {
+          id: "app.vendors.more",
+          version: 1,
+          fields: { title: { type: "string" } },
+        },
+      }),
+    );
+    expect(error.details?.namespace).toBe("app.vendors");
+  });
+
+  it("refuses an app's restore a type under a vendor the owner or another app holds", async () => {
+    const holderApp = await signedIn(REGISTERS);
+    expect(await registerType(holderApp.token, "app.vendoru.setting")).toBe(
+      201,
+    );
+    const app = await signedIn(`${REGISTERS} backups.manage`);
+    const restorer = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: app.token,
+    });
+    const made = { kind: "app", id: await grantOf(app.app), name: "fixture" };
+    const refusedUnder = async (vendor: string) => {
+      const refused = await restorer.restoreArchive(
+        vendorArchive(2, [typeLine(`${vendor}.other`, made)]),
+      );
+      expect(refused.status, JSON.stringify(refused.error)).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+      expect(refused.error?.error.details?.namespace).toBe(vendor);
+    };
+    // The witness: a type under a vendor no one holds restores.
+    const open = await restorer.restoreArchive(
+      vendorArchive(2, [typeLine("app.vendorw.setting", made)]),
+    );
+    expect(open.status, JSON.stringify(open.error)).toBe(200);
+    expect(open.data.types_registered).toBe(1);
+    await refusedUnder("app.vendoru");
+    expect(await holder("app.vendoru")).toBe(holderApp.app.clientId);
+
+    const held = await local.restoreArchive(
+      vendorArchive(1, [typeLine("app.vendorv.setting", byLocal)]),
+    );
+    expect(held.status, JSON.stringify(held.error)).toBe(200);
+    expect(await holder("app.vendorv")).toBeNull();
+    await refusedUnder("app.vendorv");
+    expect(await holder("app.vendorv")).toBeNull();
+    expect(await registerType(holderApp.token, "app.vendoru.other")).toBe(201);
+  });
+});
+
+describe("an owner's key an app made", () => {
+  it("treats an owner's key minted through an app as the app's: refused a vendor move, and kept from other apps' data the app's grant no longer names", async () => {
+    const maker = await signedIn(
+      `${REGISTERS} keys.mint keys.manage grants.manage app.*:read`,
+    );
+    const other = await signedIn(REGISTERS);
+    expect(await registerType(other.token, "app.vendorx.setting")).toBe(201);
+    const theirs = await createItem(
+      other.token,
+      "app.vendorx.setting",
+      "theirs",
+    );
+    const key = await ownerKeyBy(
+      maker.token,
+      { "core.note": "read", "app.*": "read" },
+      ["grants.manage"],
+    );
+    // The witness: while the grant names app.*, the key reads the other app's item.
+    expect(await reads(key, theirs)).toBe(true);
+    const error = forbidden(
+      await answer(key, "/app-vendors/app.vendorx", {
+        method: "PUT",
+        body: { client_id: maker.app.clientId },
+      }),
+    );
+    expect(error.code).toBe("forbidden");
+    expect(await holder("app.vendorx")).toBe(other.app.clientId);
+
+    const grant = await grantFor(maker.app);
+    const narrowed = await answer(server.managementKey, `/grants/${grant.id}`, {
+      method: "PATCH",
+      body: {
+        expected_scopes: grant.scopes,
+        scopes: grant.scopes.filter((scope) => scope !== "app.*:read"),
+      },
+    });
+    expect(narrowed.status, JSON.stringify(narrowed.body)).toBe(200);
+    expect(await reads(key, theirs)).toBe(false);
+  });
+
+  it("holds an owner's key an app made to what the app may do with its own vendor now", async () => {
+    const maker = await signedIn(`${REGISTERS} keys.mint keys.manage`);
+    expect(await registerType(maker.token, "app.vendory.setting")).toBe(201);
+    const key = await ownerKeyBy(maker.token, { "app.vendory.*": "write" });
+    // The witness: while the app writes, so does the key.
+    const written = await createItem(key, "app.vendory.setting", "by the key");
+
+    const grant = await grantFor(maker.app);
+    const narrowed = await answer(server.managementKey, `/grants/${grant.id}`, {
+      method: "PATCH",
+      body: {
+        expected_scopes: grant.scopes,
+        scopes: grant.scopes.map((scope) =>
+          scope === "content:write" ? "content:read" : scope,
+        ),
+      },
+    });
+    expect(narrowed.status, JSON.stringify(narrowed.body)).toBe(200);
+    expect(await reads(key, written)).toBe(true);
+    const refused = await answer(key, "/items", {
+      method: "POST",
+      body: { type: "app.vendory.setting", properties: { title: "again" } },
+    });
+    expect(refused.status, JSON.stringify(refused.body)).toBe(403);
+  });
+});
+
+describe("vendors from the owner's browser", () => {
+  it("lists and moves vendors for the owner's browser session", async () => {
+    const first = await signedIn(REGISTERS);
+    const second = await signedIn(REGISTERS);
+    expect(await registerType(first.token, "app.vendorz.setting")).toBe(201);
+    const listedByCookie = await fetch(`${server.apiUrl}/app-vendors`, {
+      headers: { cookie },
+    });
+    const page = (await listedByCookie.json()) as {
+      data: Array<{ vendor: string; client_id: string | null }>;
+    };
+    expect(listedByCookie.status, JSON.stringify(page)).toBe(200);
+    expect(page.data).toContainEqual(
+      expect.objectContaining({
+        vendor: "app.vendorz",
+        client_id: first.app.clientId,
+      }),
+    );
+    const moved = await fetch(`${server.apiUrl}/app-vendors/app.vendorz`, {
+      method: "PUT",
+      headers: { cookie, origin, "content-type": "application/json" },
+      body: JSON.stringify({ client_id: second.app.clientId }),
+    });
+    expect(moved.status, await moved.clone().text()).toBe(200);
+    expect(await holder("app.vendorz")).toBe(second.app.clientId);
+  });
+});
+
+describe("vendor bindings an export judges", () => {
+  it("decides a binding on the vendor's wildcard, never on an entry for the bare namespace", async () => {
+    const app = await signedIn(REGISTERS);
+    expect(await registerType(app.token, "app.vendorq.setting")).toBe(201);
+    const held = await local.restoreArchive(
+      vendorArchive(2, [
+        {
+          app_vendor: {
+            vendor: "app.vendorp",
+            client_id: null,
+            claimed_at: "2026-11-01T00:00:00.000Z",
+          },
+        },
+      ]),
+    );
+    expect(held.status, JSON.stringify(held.error)).toBe(200);
+    // The witness: an entry for a type under the vendor carries its binding.
+    const typed = await ownersKey({ "app.vendorq.setting": "read" });
+    expect(await exportedBindings(typed, "app.vendorq")).toHaveLength(1);
+    const bare = await ownersKey({ "core.note": "read", "app.vendorq": "read" });
+    expect(await exportedBindings(bare, "app.vendorq")).toEqual([]);
+    const wildcard = await ownersKey({
+      "app.vendorp.*": "read",
+      "app.vendorp": "none",
+    });
+    expect(await exportedBindings(wildcard, "app.vendorp")).toEqual([
+      expect.objectContaining({ vendor: "app.vendorp", client_id: null }),
+    ]);
+  });
+
+  it(
+    "ends an export whose credential reads no type under a vendor by the time it sends the vendor's binding",
+    { retry: 0 },
+    async () => {
+      // retry: 0 because the test removes the type it relies on.
+      const app = await signedIn(REGISTERS);
+      expect(await registerType(app.token, "app.vendorbb.setting")).toBe(201);
+      const key = await ownersKey({
+        "core.note": "read",
+        "app.vendorbb.setting": "read",
+      });
+      expect(await exportedBindings(key, "app.vendorbb")).toHaveLength(1);
+
+      await server.setFault("hold:export-check=1");
+      let reading: Promise<boolean> | undefined;
+      try {
+        const response = await call(key, "/export?format=archive");
+        expect(response.status).toBe(200);
+        const reader = response.body!.getReader();
+        reading = (async () => {
+          try {
+            for (;;) {
+              const { done } = await reader.read();
+              if (done) return false;
+            }
+          } catch {
+            return true;
+          }
+        })();
+        await server.waitForHold("hold:export-check");
+        const removed = await local.deleteType("app.vendorbb.setting");
+        expect(removed.ok, JSON.stringify(removed.error)).toBe(true);
+      } finally {
+        await server.clearFault("hold:export-check");
+      }
+      expect(await reading).toBe(true);
+    },
+  );
+});
+
+describe("archive times", () => {
+  it("restores a claimed_at in any RFC 3339 form and keeps it as the instant", async () => {
+    const forms = [
+      ["app.vendorta", "2026-11-01T00:00:00Z"],
+      ["app.vendortb", "2026-11-01T01:00:00+01:00"],
+      ["app.vendortc", "2026-11-01T00:00:00.000000Z"],
+    ] as const;
+    for (const [vendor, claimed_at] of forms) {
+      const restored = await local.restoreArchive(
+        vendorArchive(2, [
+          { app_vendor: { vendor, client_id: null, claimed_at } },
+        ]),
+      );
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      expect(restored.data.app_vendors_added).toBe(1);
+    }
+    const page = await answer(server.managementKey, "/app-vendors");
+    const data = page.body.data as Array<{
+      vendor: string;
+      claimed_at: string;
+    }>;
+    for (const [vendor] of forms) {
+      expect(data.find((one) => one.vendor === vendor)?.claimed_at).toBe(
+        "2026-11-01T00:00:00.000Z",
+      );
+    }
+  });
+});

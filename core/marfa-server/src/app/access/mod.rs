@@ -607,6 +607,7 @@ mod tests {
             source: source.into(),
             default_tier: "library".into(),
             oauth_client_id: None,
+            made_by_client: None,
             grants: Grants {
                 permissions: permissions.to_vec(),
                 maps: Default::default(),
@@ -680,6 +681,10 @@ mod tests {
         assert_eq!(type_level(&every_app, "app.other.setting"), Level::Write);
     }
 
+    fn wide_key() -> Grants {
+        grants_of(json!({ "*": "write" }))
+    }
+
     #[test]
     fn a_key_an_app_made_reaches_app_data_only_through_its_own_vendors_and_its_apps_live_grant() {
         let own = ["app.mine".to_string()];
@@ -705,7 +710,20 @@ mod tests {
         assert_eq!(type_level(&disconnected, "app.other.setting"), Level::None);
 
         let asked = grants_of(json!({ "app.mine.*": "write" }));
-        let reach = key_reach(&asked, Some(&grants_of(json!({ "*": "read" }))), &own);
+        let reader = grants_of(json!({ "*": "read" }));
+        let reach = key_reach(&asked, Some(&reader), &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Read);
+        let reach = key_reach(&asked, Some(&content), &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Write);
+        let reach = key_reach(&asked, None, &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Write);
+
+        let named = grants_of(json!({ "*": "read", "app.mine.setting": "write" }));
+        let reach = key_reach(&named, Some(&reader), &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Read);
+        let fenced_grant = grants_of(json!({ "*": "write", "app.mine.secret": "none" }));
+        let reach = key_reach(&wide_key(), Some(&fenced_grant), &own);
+        assert_eq!(type_level(&reach, "app.mine.secret"), Level::None);
         assert_eq!(type_level(&reach, "app.mine.setting"), Level::Write);
 
         let moved = key_reach(&asked, Some(&content), &[]);

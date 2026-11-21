@@ -18,7 +18,7 @@ pub fn bind_sign_in(tx: &Connection, key: &mut Key) -> Result<()> {
 /// Read again at each use, never from the key's stored map: the owner can move a vendor or
 /// narrow the app's grant after the key was made.
 pub fn bind_app_key(tx: &Connection, key: &mut Key) -> Result<()> {
-    if let Some(client) = key.oauth_client_id.clone() {
+    if let Some(client) = key.made_by_client.clone() {
         key.grants = app_key_reach(tx, &client, &key.grants)?;
     }
     Ok(())
@@ -72,11 +72,22 @@ fn held_for_owner(vendor: &str) -> Refusal {
     .with_detail("namespace", vendor)
 }
 
+/// Refuses `client` a type under `vendor` another app or the owner holds; answers whether
+/// `client` holds it.
+fn registrable(tx: &Connection, vendor: &str, client: &str) -> Result<bool> {
+    match vendors::holder_of(tx, vendor)? {
+        Some(Holder::App(holder)) if holder == client => Ok(true),
+        Some(Holder::App(_)) => Err(claimed_elsewhere(vendor)),
+        Some(Holder::Owner) => Err(held_for_owner(vendor)),
+        None => Ok(false),
+    }
+}
+
 impl Caller {
     pub fn app_client(&self) -> Option<&str> {
         match self {
             Caller::App { grant, .. } => Some(&grant.client_id),
-            Caller::Key(key) => key.oauth_client_id.as_deref(),
+            Caller::Key(key) => key.made_by_client.as_deref(),
             Caller::Local(_) | Caller::Owner(_) | Caller::Server => None,
         }
     }
@@ -86,25 +97,51 @@ impl Caller {
         let (Some(vendor), Some(client)) = (vendors::vendor_of(id), self.app_client()) else {
             return Ok(None);
         };
-        match vendors::holder_of(tx, vendor)? {
-            Some(Holder::App(holder)) if holder == client => Ok(None),
-            Some(Holder::App(_)) => Err(claimed_elsewhere(vendor)),
-            Some(Holder::Owner) => Err(held_for_owner(vendor)),
-            None => {
-                vendors::claim(tx, vendor, client, at)?;
-                self.current(tx, at).map(Some)
-            }
+        if registrable(tx, vendor, client)? {
+            return Ok(None);
         }
+        vendors::claim(tx, vendor, client, at)?;
+        self.current(tx, at).map(Some)
     }
 
-    /// Whether the caller reads the vendor's wildcard or any of `types`, the types under it.
-    pub fn reads_vendor<'a>(&self, vendor: &str, mut types: impl Iterator<Item = &'a str>) -> bool {
-        self.level_on(Axis::Type, vendor) >= Level::Read
-            || types.any(|type_id| self.level_on(Axis::Type, type_id) >= Level::Read)
+    /// A restore registers a type under a held vendor only where direct registration would.
+    pub fn require_restored_vendors<'a>(
+        &self,
+        tx: &Connection,
+        ids: impl Iterator<Item = &'a str>,
+    ) -> Result<()> {
+        let Some(client) = self.app_client() else {
+            return Ok(());
+        };
+        for vendor in ids.filter_map(vendors::vendor_of) {
+            registrable(tx, vendor, client)?;
+        }
+        Ok(())
     }
 
+    /// Whether the caller reads the vendor's wildcard or a type registered under it, of `ids`.
+    pub fn reads_vendor<'a>(&self, vendor: &str, mut ids: impl Iterator<Item = &'a str>) -> bool {
+        let wildcard = match self {
+            Caller::Key(key) | Caller::App { key, .. } => key
+                .grants
+                .map(Axis::Type)
+                .entry_level(&format!("{vendor}.*")),
+            Caller::Local(_) | Caller::Server => Level::Write,
+            Caller::Owner(_) => Level::None,
+        };
+        wildcard >= Level::Read
+            || ids.any(|id| {
+                vendors::vendor_of(id) == Some(vendor)
+                    && self.level_on(Axis::Type, id) >= Level::Read
+            })
+    }
+
+    /// The owner's browser manages vendors as the owner, holding no permission of its own.
     pub fn require_vendor_door(&self) -> Result<()> {
-        self.require(Permission::GrantsManage)
+        match self {
+            Caller::Owner(_) => Ok(()),
+            _ => self.require(Permission::GrantsManage),
+        }
     }
 
     /// Moving a vendor hands one app what another keeps for itself, which only the owner approves.

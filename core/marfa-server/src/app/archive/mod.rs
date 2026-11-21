@@ -123,8 +123,8 @@ struct InstanceNeed {
     sources: BTreeMap<String, BTreeSet<String>>,
     /// The type and source of each row a line names.
     rows: BTreeSet<(String, String)>,
-    /// Each vendor a line names, with the types under it, of which the credential reads one.
-    vendors: BTreeMap<String, BTreeSet<String>>,
+    /// Each vendor a line names, judged at send on the types registered then.
+    vendors: BTreeSet<String>,
 }
 
 impl InstanceNeed {
@@ -785,9 +785,7 @@ fn select<W: RowSink>(
                     open.sources.entry(source).or_default().extend(types);
                 }
                 open.rows.extend(need.rows);
-                for (vendor, types) in need.vendors {
-                    open.vendors.entry(vendor).or_default().extend(types);
-                }
+                open.vendors.extend(need.vendors);
             })?;
         }
         Ok(())
@@ -847,24 +845,14 @@ fn select<W: RowSink>(
         })
         .collect::<Result<_>>()?;
     count("source_count", &mut instance, named)?;
+    let registered = catalog.types.ids();
     let bound = vendors::list(read.tx)?
         .into_iter()
-        .filter_map(|binding| {
-            let under: BTreeSet<String> = catalog
-                .types
-                .ids()
-                .into_iter()
-                .filter(|id| vendors::vendor_of(id) == Some(binding.vendor.as_str()))
-                .map(str::to_string)
-                .collect();
-            caller
-                .reads_vendor(&binding.vendor, under.iter().map(String::as_str))
-                .then_some((binding, under))
-        })
-        .map(|(binding, under)| {
+        .filter(|binding| caller.reads_vendor(&binding.vendor, registered.iter().copied()))
+        .map(|binding| {
             let line = print(&json!({ "app_vendor": binding.to_json() }))?;
             let mut need = needing(None);
-            need.vendors.insert(binding.vendor, under);
+            need.vendors.insert(binding.vendor);
             Ok((line, need))
         })
         .collect::<Result<_>>()?;

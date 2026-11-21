@@ -36,7 +36,10 @@ pub const MIGRATIONS: &[Migration] = &[
     Migration {
         version: 4,
         sql: include_str!("migrations/0004_app_vendors.sql"),
-        done: None,
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('api_keys') \
+             WHERE name = 'made_by_client')",
+        ),
     },
 ];
 

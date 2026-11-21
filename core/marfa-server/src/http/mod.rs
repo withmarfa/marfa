@@ -269,6 +269,15 @@ fn owner_item_doors() -> Routes {
         .route("/trash/empty", post(trash::empty))
 }
 
+/// The owner's browser moves a vendor too, as only the owner may.
+fn vendor_doors() -> Routes {
+    Doors::new()
+        .route("/app-vendors", get(vendors::list))
+        .route("/app-vendors/{vendor}", put(vendors::give))
+        .asking(Asks::Session)
+        .route_layer(from_fn(no_store))
+}
+
 fn profile_doors() -> Routes {
     Doors::new()
         .route("/profile", get(profile::read_own).patch(profile::update))
@@ -359,8 +368,6 @@ fn shared(app: Arc<App>) -> Routes {
             "/backups/{instance_id}/{name}/restore",
             post(backups::restore),
         )
-        .route("/app-vendors", get(vendors::list))
-        .route("/app-vendors/{vendor}", put(vendors::give))
         .route("/sources", get(sources::list))
         .route(
             "/sources/{source}",
@@ -379,6 +386,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(attention_doors(app.clone()))
         .merge(count_doors(app))
         .merge(owner_item_doors())
+        .merge(vendor_doors())
         .merge(auth::owner_doors())
         .merge(profile_doors())
         .merge(config_doors())

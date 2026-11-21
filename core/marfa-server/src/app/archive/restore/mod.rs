@@ -284,8 +284,10 @@ fn lines(scratch: &Scratch) -> Result<impl Iterator<Item = Result<Value>>> {
 }
 
 /// Judges an archive's types and edge types on `before` and refuses in the order a restore does:
-/// a definition that cannot register, a conflict, then guidance the caller may not set.
+/// a definition that cannot register, a conflict, a vendor another holds, then guidance the
+/// caller may not set.
 fn judge_types(
+    tx: &rusqlite::Connection,
     before: &Catalog,
     types: &[types::write::Archived],
     edge_types: &[Obj],
@@ -302,6 +304,7 @@ fn judge_types(
     if !conflicts.is_empty() {
         return Err(conflicting(conflicts));
     }
+    caller.require_restored_vendors(tx, types_plan.ids())?;
     types_plan.require_guidance(caller)?;
     Ok((types_plan, edges_plan))
 }
@@ -392,7 +395,7 @@ impl App {
                         enforcement.as_ref(),
                     )?)?;
                     let before = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
-                    judge_types(&before, &types, &edge_types, &caller).map(drop)
+                    judge_types(tx, &before, &types, &edge_types, &caller).map(drop)
                 })
                 .await?;
             let placed = app.place_restored(carried, absent).await?;
@@ -428,6 +431,7 @@ impl App {
                         )?)?;
                         let before = catalog::current(&cache, tx, Snapshot::Pending)?;
                         let (types_plan, edges_plan) = judge_types(
+                            tx,
                             &before,
                             &registrations.types,
                             &registrations.edge_types,

@@ -563,6 +563,10 @@ impl Restoring {
         self.fresh.len()
     }
 
+    pub fn ids(&self) -> impl Iterator<Item = &str> {
+        self.fresh.iter().map(|(id, _, _)| id.as_str())
+    }
+
     pub fn require_guidance(&self, caller: &Caller) -> Result<()> {
         self.fresh.iter().try_for_each(|(_, schema, _)| {
             caller.require_guidance(None, text_of(schema, "guidance"))

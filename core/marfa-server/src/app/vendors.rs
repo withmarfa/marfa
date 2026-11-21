@@ -1,11 +1,11 @@
 //! Which OAuth client each `app.<vendor>` namespace belongs to.
 
+use marfa_rules::time;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
 
 use super::App;
 use super::access::Caller;
-use super::clock::Stamp;
 use super::instance;
 use super::oauth::store;
 use super::refusal::{Code, Refusal, Result};
@@ -15,7 +15,7 @@ use super::refusal::{Code, Refusal, Result};
 const MAKERS: &str = "SELECT substr(t.id, 1, instr(substr(t.id, 5), '.') + 3) AS vendor, \
             CASE json_extract(t.created_by, '$.kind') \
                 WHEN 'app' THEN coalesce(c.client_id, '') \
-                WHEN 'key' THEN CASE WHEN k.id IS NULL THEN '' ELSE k.oauth_client_id END \
+                WHEN 'key' THEN CASE WHEN k.id IS NULL THEN '' ELSE k.made_by_client END \
                 WHEN 'local' THEN NULL WHEN 'browser' THEN NULL WHEN 'server' THEN NULL \
                 ELSE '' END AS maker, \
             t.created_at AS made_at \
@@ -26,22 +26,22 @@ const MAKERS: &str = "SELECT substr(t.id, 1, instr(substr(t.id, 5), '.') + 3) AS
           AND k.id = json_extract(t.created_by, '$.id') \
      WHERE t.id GLOB 'app.*.*'";
 
-/// The same claim migration 0004 makes: a vendor goes to an app only when exactly one known app
-/// made its types; otherwise the owner holds it until they give it to one.
+/// The same claim migration 0004 makes: a vendor goes to an app only when that one known app
+/// made every type under it; otherwise the owner holds it until they give it to one.
 fn from_types() -> String {
     format!(
         "INSERT OR IGNORE INTO app_vendors (vendor, client_id, claimed_at) \
-         SELECT vendor, CASE WHEN count(DISTINCT maker) = 1 AND min(maker) <> '' \
-                THEN min(maker) END, min(made_at) \
-         FROM ({MAKERS}) WHERE maker IS NOT NULL GROUP BY vendor"
+         SELECT vendor, CASE WHEN count(maker) = count(*) AND count(DISTINCT maker) = 1 \
+                AND min(maker) <> '' THEN min(maker) END, min(made_at) \
+         FROM ({MAKERS}) GROUP BY vendor"
     )
 }
 
-/// For a restore an app sends: every vendor an app made types under is the owner's to give.
+/// For a restore an app sends: every vendor with types under it is the owner's to give.
 fn held_from_types() -> String {
     format!(
         "INSERT OR IGNORE INTO app_vendors (vendor, client_id, claimed_at) \
-         SELECT vendor, NULL, min(made_at) FROM ({MAKERS}) WHERE maker IS NOT NULL GROUP BY vendor"
+         SELECT vendor, NULL, min(made_at) FROM ({MAKERS}) GROUP BY vendor"
     )
 }
 
@@ -96,12 +96,13 @@ impl Binding {
         let claimed_at = body
             .get("claimed_at")
             .and_then(Value::as_str)
-            .filter(|at| Stamp::parsed(at).is_some())
+            .and_then(|at| time::read(at).ok())
+            .map(time::written)
             .ok_or("claimed_at must be an RFC 3339 instant")?;
         Ok(Binding {
             vendor: vendor.to_string(),
             holder,
-            claimed_at: claimed_at.to_string(),
+            claimed_at,
         })
     }
 }
@@ -206,8 +207,8 @@ pub fn set(tx: &Connection, vendor: &str, client_id: &str, at: &str) -> Result<(
     Ok(())
 }
 
-/// Records each vendor no one holds whose types an app made: for that app when exactly one known
-/// app made them, else for the owner, or for the owner whenever `for_owner`.
+/// Records each vendor no one holds that has types: for the one known app that made them all,
+/// else for the owner, or for the owner whenever `for_owner`.
 pub fn claim_from_types(tx: &Connection, for_owner: bool) -> Result<usize> {
     let sql = if for_owner {
         held_from_types()
@@ -281,5 +282,24 @@ mod tests {
         assert!(!is_vendor("app"));
         assert!(!is_vendor("core.note"));
         assert!(!is_vendor("app.Acme"));
+    }
+
+    #[test]
+    fn an_archived_claim_reads_any_rfc_3339_form_and_keeps_the_instant() {
+        for at in [
+            "2026-11-01T00:00:00Z",
+            "2026-11-01T00:00:00.000Z",
+            "2026-11-01T00:00:00.000000Z",
+            "2026-11-01T01:00:00+01:00",
+            "2026-10-31T19:00:00-05:00",
+        ] {
+            let line = json!({ "vendor": "app.acme", "client_id": null, "claimed_at": at });
+            let binding = Binding::archived(&line).unwrap_or_else(|why| panic!("{at}: {why}"));
+            assert_eq!(binding.claimed_at, "2026-11-01T00:00:00.000Z", "{at}");
+        }
+        for at in ["yesterday", "2026-11-01", "2026-11-01T00:00:00"] {
+            let line = json!({ "vendor": "app.acme", "client_id": null, "claimed_at": at });
+            assert!(Binding::archived(&line).is_err(), "{at}");
+        }
     }
 }

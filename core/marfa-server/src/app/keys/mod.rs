@@ -39,6 +39,8 @@ pub struct Key {
     pub source: String,
     pub default_tier: String,
     pub oauth_client_id: Option<String>,
+    /// The app the key was minted through, kept for an owner's key too.
+    pub made_by_client: Option<String>,
     pub grants: Grants,
     pub levers: OwnLevers,
     pub standing: Standing,
@@ -132,6 +134,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
         source: row.get("source")?,
         default_tier: row.get("default_tier")?,
         oauth_client_id: row.get("oauth_client_id")?,
+        made_by_client: row.get("made_by_client")?,
         grants: grants_of(row)?,
         levers: OwnLevers::from_row(row.get("enforcement_override")?),
         standing: Standing::default(),
@@ -325,8 +328,9 @@ fn insert(tx: &Transaction<'_>, key: &Key, hash: &str) -> Result<()> {
     tx.execute(
         "INSERT INTO api_keys (id, hash, label, source, default_tier, oauth_client_id, \
          permissions, type_permissions, edge_permissions, extension_permissions, \
-         metadata_permissions, profile_permissions, enforcement_override, created_at, expires_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+         metadata_permissions, profile_permissions, enforcement_override, created_at, expires_at, \
+         made_by_client) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             key.id,
             hash,
@@ -343,6 +347,7 @@ fn insert(tx: &Transaction<'_>, key: &Key, hash: &str) -> Result<()> {
             key.levers.row_text(),
             key.created_at,
             key.expires_at,
+            key.made_by_client,
         ],
     )?;
     store_claims(tx, &key.id, &key.grants.sources)
@@ -451,12 +456,11 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
             } else {
                 caller.whole_set()
             };
-            let app_origin = caller.key().and_then(|maker| maker.oauth_client_id.clone());
-            let made_by_app = app_origin.as_deref().filter(|_| !request.owner_key);
+            let app_origin = caller.app_client().map(str::to_string);
             let inherited = caller.key().and_then(|maker| maker.expires_at.clone());
             let expires_at = request.expires_at.unwrap_or(inherited);
             require_ahead(expires_at.as_deref(), &unit.at)?;
-            match made_by_app {
+            match app_origin.as_deref() {
                 Some(client) => {
                     caller.check_ceiling(&app_key_reach(unit.tx(), client, &grants)?)?
                 }
@@ -480,7 +484,8 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
                 label: request.label,
                 source: request.source,
                 default_tier: request.default_tier,
-                oauth_client_id: app_origin.filter(|_| !request.owner_key),
+                oauth_client_id: app_origin.clone().filter(|_| !request.owner_key),
+                made_by_client: app_origin,
                 grants,
                 levers: request.levers.flatten().into(),
                 standing: Standing::default(),
@@ -508,7 +513,7 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
         if let Some(wanted) = &request.expires_at {
             require_ahead(wanted.as_deref(), &unit.at)?;
         }
-        let reach = match &key.oauth_client_id {
+        let reach = match &key.made_by_client {
             Some(client) => app_key_reach(unit.tx(), client, &grants)?,
             None => grants.clone(),
         };

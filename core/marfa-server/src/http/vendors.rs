@@ -1,20 +1,22 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use axum::http::{StatusCode, Uri};
+use axum::http::{HeaderMap, StatusCode, Uri};
 use serde_json::{Value, json};
 
 use super::answer::{Answer, json_answer};
 use super::body::JsonBody;
-use super::query;
+use super::caller::OnPage;
+use super::{named_instance, query};
 use crate::app::App;
-use crate::app::access::Caller;
+use crate::app::access::unauthorized;
 use crate::app::refusal::{Code, Refusal};
 use crate::app::vendors;
 
 const FIELDS: [&str; 1] = ["client_id"];
 
-pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
+pub async fn list(State(app): State<Arc<App>>, OnPage(caller): OnPage, uri: Uri) -> Answer {
+    let caller = caller.ok_or_else(unauthorized)?;
     caller.require_vendor_door()?;
     query::only(&uri, &[])?;
     let data = vendors::listed(&app, &caller).await?;
@@ -24,13 +26,17 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answ
     ))
 }
 
+/// The owner's session is no credential to the instance header's layer, so this door judges it.
 pub async fn give(
     State(app): State<Arc<App>>,
-    caller: Caller,
     Path(vendor): Path<String>,
+    headers: HeaderMap,
+    OnPage(caller): OnPage,
     uri: Uri,
     body: JsonBody,
 ) -> Answer {
+    let caller = caller.ok_or_else(unauthorized)?;
+    named_instance::judge(&app, &headers)?;
     caller.require_vendor_move()?;
     query::only(&uri, &[])?;
     let sent = body.object(&FIELDS).await?;

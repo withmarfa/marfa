@@ -2056,7 +2056,7 @@ fn backup_changes(conn: &Connection) -> i64 {
 }
 
 #[tokio::test]
-async fn a_database_at_schema_version_2_gives_a_vendor_to_an_app_only_when_one_known_app_made_its_types()
+async fn a_database_at_schema_version_2_gives_a_vendor_to_an_app_only_when_one_known_app_made_all_its_types()
  {
     let place = folder();
     db_open(&options(&place.file, &MIGRATIONS[..2]), Arc::default())
@@ -2094,7 +2094,22 @@ async fn a_database_at_schema_version_2_gives_a_vendor_to_an_app_only_when_one_k
          edge_permissions, extension_permissions, metadata_permissions, profile_permissions, created_at) \
          VALUES ('key-b', 'hash-b', 'B', 'b', 'client-b', '[]', '{}', '{}', '{}', '{}', '{}', \
          '2026-11-01T00:00:00.000Z'), ('key-owner', 'hash-o', 'O', 'o', NULL, '[]', '{}', '{}', '{}', \
-         '{}', '{}', '2026-11-01T00:00:00.000Z');"
+         '{}', '{}', '2026-11-01T00:00:00.000Z'), ('key-through-a', 'hash-ta', 'TA', 'ta', NULL, '[]', \
+         '{}', '{}', '{}', '{}', '{}', '2026-11-01T00:00:00.000Z'), ('key-through-b', 'hash-tb', 'TB', \
+         'tb', NULL, '[]', '{}', '{}', '{}', '{}', '{}', '2026-11-01T00:00:00.000Z'), ('key-chained', \
+         'hash-c', 'C', 'c', NULL, '[]', '{}', '{}', '{}', '{}', '{}', '2026-11-01T00:00:00.000Z');"
+            .to_string(),
+        "INSERT INTO audit_log (id, created_at, key_id, actor, action, kind, resource_type, \
+         resource_id, details) VALUES \
+         ('audit-1', '2026-11-01T00:00:00.000Z', 'token-a', '{\"kind\":\"app\",\"id\":\"grant-a\",\"name\":\"A\"}', \
+         'key.create', 'access', 'key', 'key-through-a', '{\"owner_key\":true}'), \
+         ('audit-2', '2026-11-01T00:00:00.000Z', 'key-b', '{\"kind\":\"key\",\"id\":\"key-b\",\"name\":\"B\"}', \
+         'key.create', 'access', 'key', 'key-through-b', '{\"owner_key\":true}'), \
+         ('audit-3', '2026-11-01T00:00:00.000Z', 'key-through-b', \
+         '{\"kind\":\"key\",\"id\":\"key-through-b\",\"name\":\"TB\"}', \
+         'key.create', 'access', 'key', 'key-chained', '{}'), \
+         ('audit-4', '2026-11-01T00:00:00.000Z', 'key-owner', '{\"kind\":\"key\",\"id\":\"key-owner\",\"name\":\"O\"}', \
+         'key.create', 'access', 'key', 'key-b', '{}');"
             .to_string(),
         made("app.alpha.setting", &by_app("grant-a"), "2026-11-02T00:00:00.000Z"),
         made("app.alpha.later", &by_app("grant-b"), "2026-11-03T00:00:00.000Z"),
@@ -2107,6 +2122,8 @@ async fn a_database_at_schema_version_2_gives_a_vendor_to_an_app_only_when_one_k
         made("app.zeta.later", &by_app("grant-a"), "2026-11-03T00:00:00.000Z"),
         made("app.eta.setting", "NULL", "2026-11-02T00:00:00.000Z"),
         made("app.theta.setting", &by_key("key-gone"), "2026-11-02T00:00:00.000Z"),
+        made("app.iota.setting", &by_key("key-through-a"), "2026-11-02T00:00:00.000Z"),
+        made("app.kappa.setting", &by_key("key-chained"), "2026-11-02T00:00:00.000Z"),
         made("acme.widget", &by_app("grant-a"), "2026-11-02T00:00:00.000Z"),
     ]
     .concat();
@@ -2129,14 +2146,42 @@ async fn a_database_at_schema_version_2_gives_a_vendor_to_an_app_only_when_one_k
         [
             owner("app.alpha"),
             app("app.beta", "client-b"),
+            owner("app.delta"),
             owner("app.epsilon"),
             owner("app.eta"),
+            owner("app.gamma"),
+            app("app.iota", "client-a"),
+            app("app.kappa", "client-b"),
             owner("app.theta"),
-            app("app.zeta", "client-a"),
+            owner("app.zeta"),
         ]
     );
 
     let conn = Connection::open(&place.file).unwrap();
+    let makers: Vec<(String, Option<String>, Option<String>)> = conn
+        .prepare("SELECT id, oauth_client_id, made_by_client FROM api_keys ORDER BY id")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    let key = |id: &str, client: Option<&str>, maker: Option<&str>| {
+        (
+            id.to_string(),
+            client.map(str::to_string),
+            maker.map(str::to_string),
+        )
+    };
+    assert_eq!(
+        makers,
+        [
+            key("key-b", Some("client-b"), Some("client-b")),
+            key("key-chained", None, Some("client-b")),
+            key("key-owner", None, None),
+            key("key-through-a", None, Some("client-a")),
+            key("key-through-b", None, Some("client-b")),
+        ]
+    );
     let before = backup_changes(&conn);
     conn.execute(
         "UPDATE app_vendors SET client_id = 'client-a' WHERE vendor = 'app.alpha'",

@@ -144,7 +144,7 @@ impl Map {
     }
 
     /// The level `entry` is decided at, a wildcard by itself or a wider entry, never by a narrower one.
-    fn entry_level(&self, entry: &str) -> Level {
+    pub(super) fn entry_level(&self, entry: &str) -> Level {
         let Some(mut root) = entry.strip_suffix(".*") else {
             return self.most_specific(entry);
         };
@@ -183,9 +183,10 @@ impl Map {
         }
     }
 
-    /// A key an app made: each of `own` as the key's own entry for it says, else at the most the
-    /// key holds outside `app`; any other `app` name only where both the key and the app's live
-    /// grant reach it.
+    /// A key an app made: each of `own` as the key asks (its own entry for it, else the most it
+    /// holds outside `app`), never beyond what the app's sign-in reaches there now; any other
+    /// `app` name only where both the key and the app's live grant reach it. With no grant
+    /// standing, the key keeps its own vendors as it asks.
     pub(super) fn for_app_key(&self, grant: Option<&Map>, own: &[String]) -> Map {
         let own_of = |name: &str| {
             own.iter().find(|vendor| {
@@ -212,18 +213,32 @@ impl Map {
             let level = self.entry_level(name).min(granted(name));
             held.insert(name.to_string(), level.word().into());
         }
+        let authority = grant.map(|grant| {
+            let mut signed_in = grant.clone();
+            signed_in.for_sign_in(own);
+            signed_in
+        });
         let most = self.outside_apps();
+        let mut asked = self.clone();
         for vendor in own {
             let name = format!("{vendor}.*");
             let level = self
                 .exact(&name)
-                .unwrap_or_else(|| most.max(self.entry_level(&name).min(granted(&name))));
-            for (entry, kept) in &self.0 {
-                if own_of(entry) == Some(vendor) {
-                    held.insert(entry.clone(), kept.clone());
-                }
-            }
-            held.insert(name, level.word().into());
+                .unwrap_or_else(|| most.max(self.entry_level(&name)));
+            asked.0.insert(name, level.word().into());
+        }
+        let entries: Vec<&String> = asked
+            .0
+            .keys()
+            .chain(authority.iter().flat_map(|signed_in| signed_in.0.keys()))
+            .filter(|name| own_of(name).is_some())
+            .collect();
+        for name in entries {
+            let ceiling = authority
+                .as_ref()
+                .map_or(Level::Write, |signed_in| signed_in.most_specific(name));
+            let level = asked.most_specific(name).min(ceiling);
+            held.insert(name.clone(), level.word().into());
         }
         Map(held)
     }
