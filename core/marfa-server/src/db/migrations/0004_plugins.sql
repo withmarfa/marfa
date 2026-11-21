@@ -46,6 +46,8 @@ CREATE TABLE plugins (
     maker TEXT NOT NULL,
     marfa TEXT NOT NULL,
     manifest TEXT NOT NULL CHECK (json_valid(manifest)),
+    -- Every edge type any installed version brought, which a later version may leave out.
+    edge_types TEXT NOT NULL CHECK (json_valid(edge_types)),
     installed_at TEXT NOT NULL,
     installed_by TEXT CHECK (installed_by IS NULL OR json_valid(installed_by)),
     updated_at TEXT NOT NULL,

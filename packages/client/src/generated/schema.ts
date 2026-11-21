@@ -8635,7 +8635,7 @@ export interface components {
             version: string;
             /** @description The IDs of the types the plugin installed, at any version. */
             types: string[];
-            /** @description The IDs of the edge types the installed version brought that the instance still holds. */
+            /** @description The IDs of the edge types any installed version of the plugin brought that the instance still holds. */
             edge_types: string[];
             /** @description The installed version's connector, as its bundle gave it, or `null`. */
             connector: {
@@ -8700,7 +8700,7 @@ export interface components {
             version: string;
             /** @description The IDs of the types the plugin installed, at any version. */
             types: string[];
-            /** @description The IDs of the edge types the installed version brought that the instance still holds. */
+            /** @description The IDs of the edge types any installed version of the plugin brought that the instance still holds. */
             edge_types: string[];
             /** @description The installed version's connector, as its bundle gave it, or `null`. */
             connector: {
@@ -8750,7 +8750,7 @@ export interface components {
             kept: {
                 /** @description The types the plugin installed that the instance still holds, which stay with their items and provenance. */
                 types: string[];
-                /** @description The edge types the plugin brought that the instance still holds, which stay with their edges. */
+                /** @description The edge types any installed version of the plugin brought that the instance still holds, which stay with their edges. */
                 edge_types: string[];
             };
         };

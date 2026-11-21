@@ -1000,23 +1000,25 @@ When `POST /restore` reads an archive at version 1, the server MUST read its man
 
 ### `archive/restore-type-origin`
 
-If `POST /restore` reads an archive at version 2 with a `type` line whose `provenance.origin` is missing, is not text, is neither `registered` nor `plugin`, or is `plugin` without a `provenance.plugin` naming a plugin `name` and `version`, or whose `provenance.created_by` is neither `null` nor a sign-in's `kind`, `id` and `name`, then the server MUST answer `400 validation_error` and register no type of the archive.
+If `POST /restore` reads an archive at version 2 with a `type` line whose `provenance.origin` is missing, is not text, is neither `registered` nor `plugin`, or is `plugin` without a `provenance.plugin` naming a plugin `name` and `version`, whose `provenance.plugin` is not `null` while `provenance.origin` is `registered`, or whose `provenance.created_by` is missing or is neither `null` nor a sign-in's `kind` (`browser`, `app`, `key` or `local`), `id` and `name`, then the server MUST answer `400 validation_error` and register no type of the archive.
 
-**Tests:** `compliance/plugins.test.ts › refuses a version 2 archive whose type names the origin user`, `› refuses a type whose origin is not text, and one whose creator is not a sign-in`.
+**Reason:** a restored type is read back as `types/provenance-read` says, so it holds only a provenance that answer's schema allows, never one that loses a field it was given. A type may name a plugin no `plugin` line holds: removing a plugin keeps its types and their provenance (`plugins/remove-keeps-types`).
+
+**Tests:** `compliance/plugins.test.ts › refuses a version 2 archive whose type names the origin user`, `› refuses a type whose origin or creator is mistyped, missing, outside the sign-in kinds or at odds with its plugin`.
 
 ### `archive/restore-plugin-line`
 
-If `POST /restore` reads a `plugin` line whose `bundle` `POST /plugins` would refuse for its shape, whose `name` or `version` differs from its bundle's, whose `installed_at` or `updated_at` is not a time in the form the server writes, whose `installed_by` is neither `null` nor a sign-in's `kind`, `id` and `name`, or whose `fingerprint` is not a SHA-256 in lowercase hexadecimal, then the server MUST answer `400 validation_error` naming the line and keep no record of the archive.
+If `POST /restore` reads a `plugin` line whose `bundle` `POST /plugins` would refuse for its shape or for the definition of a type or an edge type it holds, whose `name` or `version` differs from its bundle's, whose `edge_types` is not a list naming each edge type of its bundle and each name once, whose `installed_at` or `updated_at` is not a time in the form the server writes, whose `installed_by` is neither `null` nor a sign-in's `kind` (`browser`, `app`, `key` or `local`), `id` and `name`, or whose `fingerprint` is not a SHA-256 in lowercase hexadecimal, then the server MUST answer `400 validation_error` naming the line and keep no record of the archive.
 
-**Reason:** a restored record is answered by `GET /plugins/{name}`, so it holds only what that answer's schema allows.
+**Reason:** a restored record is answered by `GET /plugins/{name}`, so it holds only what that answer's schema allows. Its bundle is judged as installing judges it, with the archive's types and the instance's as the types it may name, since a type it installed may since have been deleted.
 
-**Tests:** `compliance/plugins.test.ts › refuses a plugin line whose times are not in the stored form, whose installer is not a sign-in, or whose fingerprint is not a SHA-256`.
+**Tests:** `compliance/plugins.test.ts › refuses a plugin line whose times, installer, edge types, fingerprint or bundle definitions are not ones the server writes or installs`.
 
 ### `archive/export-plugins`
 
-When a credential that may export sends `GET /export?format=archive`, the server MUST write a `plugin` line in `instance.ndjson.gz` for each installed plugin, holding its `name`, `version`, `bundle`, `fingerprint`, `installed_at`, `installed_by` and `updated_at`, counted in the manifest's `plugin_count`.
+When a credential that may export sends `GET /export?format=archive`, the server MUST write a `plugin` line in `instance.ndjson.gz` for each installed plugin, holding its `name`, `version`, `bundle`, `edge_types` naming every edge type any installed version brought, `fingerprint`, `installed_at`, `installed_by` and `updated_at`, counted in the manifest's `plugin_count`.
 
-**Tests:** `compliance/plugins.test.ts › keeps plugin provenance and the install record through an export and a restore`.
+**Tests:** `compliance/plugins.test.ts › keeps plugin provenance and the install record through an export and a restore`, `› keeps reporting an edge type a newer version omits, through an export, a restore and the removal`.
 
 ### `archive/export-plugin-provenance`
 

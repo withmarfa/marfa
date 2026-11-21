@@ -376,6 +376,41 @@ pub fn write_restored(unit: &Unit<'_, '_>, plan: Restoring) -> Result<()> {
     instance::raise_reach(unit.tx())
 }
 
+/// Both names of each edge type a bundle names, and the reverse name the instance holds under its id.
+pub fn require_install_names(caller: &Caller, catalog: &Catalog, definitions: &[Obj]) -> Result<()> {
+    for body in definitions {
+        let Some(id) = text_of(body, "id") else {
+            continue;
+        };
+        require_names(caller, id, text_of(body, "reverse_name"))?;
+        if let Some(held) = catalog.edge_type(id) {
+            require_names(caller, id, text_of(held, "reverse_name"))?;
+        }
+    }
+    Ok(())
+}
+
+/// A stored bundle's edge types judged as installing judges a definition, against each other's names.
+pub fn judge_bundle(definitions: &[Obj]) -> Result<()> {
+    let mut named: Vec<(String, String)> = Vec::new();
+    for body in definitions {
+        let id = text_of(body, "id").unwrap_or_default().to_string();
+        let taken = |name: &str| {
+            named
+                .iter()
+                .find(|(held, _)| held == name)
+                .map(|(_, owner)| owner.clone())
+        };
+        let built = marfa_rules::plugin::judge_edge_type(body, &taken)
+            .map_err(|issues| refusal_of(issues).with_detail("edge_type", id.as_str()))?;
+        named.push((id.clone(), id.clone()));
+        if let Some(reverse) = text_of(&built, "reverse_name") {
+            named.push((reverse.to_string(), id.clone()));
+        }
+    }
+    Ok(())
+}
+
 /// A plugin may only widen an edge type the instance holds; its names and labels stay.
 pub fn install(unit: &Unit<'_, '_>, catalog: &Catalog, definitions: &[Obj]) -> Result<()> {
     let mut named: Vec<(String, String)> = Vec::new();
@@ -383,9 +418,6 @@ pub fn install(unit: &Unit<'_, '_>, catalog: &Catalog, definitions: &[Obj]) -> R
     for body in definitions {
         let id = text_of(body, "id").unwrap_or_default().to_string();
         let existing = catalog.edge_type(&id);
-        if let Some(held) = existing {
-            require_names(&unit.caller, &id, text_of(held, "reverse_name"))?;
-        }
         let taken = |name: &str| {
             named
                 .iter()

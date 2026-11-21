@@ -1648,27 +1648,37 @@ A plugin's source folder holds `plugin.json` (its identity, with no version), `t
 
 ### `cli/plugins-install-file`
 
-When `marfa plugins install` is given a path to a file, the CLI MUST send the file's JSON object as the body of `POST /plugins` and print the server's answer.
+When `marfa plugins install` is given a path to a file that holds one JSON object, the CLI MUST send the file's bytes unchanged as the body of `POST /plugins` and print the server's answer.
+
+**Reason:** the server's `fingerprint` is the SHA-256 of the bytes it receives (`plugins/install-fingerprint`), so it equals the file's own digest only when the bytes arrive as read.
 
 **Tests:** `cli/plugins.test.ts › installs a plugin from a bundle file and from a source folder, and lists, reads and removes it`.
 
 ### `cli/plugins-install-folder`
 
-When `marfa plugins install` is given a source folder, the CLI MUST build the bundle `marfa plugins bundle` builds from it, at the version `--version` names or `0.0.0` without it, and send it to `POST /plugins`.
+When `marfa plugins install` is given a source folder, the CLI MUST send to `POST /plugins` the bytes of the bundle `marfa plugins bundle` writes from it, at the version `--version` names or `0.0.0` without it, and print their SHA-256 on standard error.
 
 **Tests:** `cli/plugins.test.ts › installs a plugin from a bundle file and from a source folder, and lists, reads and removes it`.
 
 ### `cli/plugins-install-name`
 
-When `marfa plugins install` is given a plugin's name that is no path on the machine, the CLI MUST read `plugins.json` and then the bundle it lists for that name from the release `MARFA_PLUGINS_URL` names, or the latest release of the plugins repository without it, sending no credential, and send the bundle to `POST /plugins`.
+When `marfa plugins install` is given a plugin's name that is no path on the machine, the CLI MUST read `plugins.json` and then the bundle it lists for that name from the release `MARFA_PLUGINS_URL` names, or the latest release of the plugins repository without it, sending no credential, and send the bundle's bytes as read to `POST /plugins`.
 
-**Reason:** the server makes no outbound request, so nothing leaves an instance by default; the CLI names each address it reads on standard error.
+**Reason:** the server makes no outbound request, so nothing leaves an instance by default; the CLI names each address it reads on standard error. The server's `fingerprint` then equals the SHA-256 that `plugins.json` lists.
 
 **Tests:** `cli/plugins.test.ts › installs a plugin by name from a release's index, checking its SHA-256, and sends no credential`.
 
 ### `cli/plugins-address-credential`
 
 If the release address `MARFA_PLUGINS_URL` names, or an address a release redirects to, carries a user name or a password, then the CLI MUST refuse it before it sends any request, without printing the user name or the password.
+
+### `cli/plugins-address-unread`
+
+If the release address `MARFA_PLUGINS_URL` names is not an `http` or `https` address with a host and no query or fragment, then the CLI MUST refuse it before it sends any request, naming `MARFA_PLUGINS_URL` without printing its value.
+
+**Reason:** an address that does not parse cannot be checked for a user name or a password, so the CLI prints none of it.
+
+**Tests:** `cli/plugins.test.ts › refuses a plugins address carrying a user name or password before it fetches, printing and sending neither`.
 
 **Reason:** an HTTP client turns user info in an address into an `Authorization` header, and `cli/plugins-install-name` sends no credential.
 
@@ -1687,6 +1697,14 @@ When `marfa plugins check` is given a source folder, the CLI MUST report every p
 **Reason:** the plugins repository checks a plugin as installing will, while `marfa types check` keeps judging as `POST /types` does.
 
 **Tests:** `device/plugins-check.test.ts › judges a source folder as installing would: takes common.ticket, which types check refuses, and refuses user.ticket, which types check takes`, `› refuses an edge type that redefines a shipped one, or names a shipped edge as its reverse, as installing does`.
+
+### `cli/plugins-file-name`
+
+If a source folder holds a file in `types/` or `edge-types/` whose definition has an `id` that is a string and whose name is not that `id` followed by `.json`, then `marfa plugins check`, `marfa plugins bundle` and `marfa plugins install` MUST refuse the folder with `file_name_mismatch`, naming the file.
+
+**Reason:** the three commands read a source folder the same way, so the folder `marfa plugins check` refuses never installs.
+
+**Tests:** `device/plugins-check.test.ts › refuses an edge type file not named after its id, in the check, the bundle and the install alike`.
 
 ### `cli/plugins-check-version`
 

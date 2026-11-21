@@ -353,6 +353,20 @@ struct Source {
     manifest: Result<Obj, Problem>,
     types: Vec<TypeFile>,
     edge_types: Vec<(String, Result<Obj, Problem>)>,
+    /// Each definition file whose name is not its id's.
+    misnamed: Vec<Problem>,
+}
+
+fn misnamed(folder: &str, name: &str, read: &Result<Obj, Problem>) -> Option<Problem> {
+    let id = read.as_ref().ok()?.get("id")?.as_str()?;
+    let path = format!("{folder}/{name}");
+    (name != format!("{id}.json")).then(|| {
+        fault(
+            path.as_str(),
+            "file_name_mismatch",
+            format!("{path} must be named after its id, {folder}/{id}.json"),
+        )
+    })
 }
 
 fn read_source(files: &[SourceFile]) -> Source {
@@ -371,7 +385,7 @@ fn read_source(files: &[SourceFile]) -> Source {
             },
             |file| read_object(MANIFEST, &file.content),
         );
-    let types = sorted
+    let types: Vec<TypeFile> = sorted
         .iter()
         .filter_map(|file| {
             Some(TypeFile {
@@ -380,15 +394,27 @@ fn read_source(files: &[SourceFile]) -> Source {
             })
         })
         .collect();
-    let edge_types = sorted
+    let edge_types: Vec<(String, Result<Obj, Problem>)> = sorted
         .iter()
         .filter(|file| below(&file.path, EDGE_TYPES).is_some_and(is_type_file))
         .map(|file| (file.path.clone(), read_object(&file.path, &file.content)))
         .collect();
+    let mut misnamed_files: Vec<Problem> = types
+        .iter()
+        .filter(|file| is_type_file(&file.name))
+        .filter_map(|file| {
+            let path = format!("{TYPES}/{}", file.name);
+            misnamed(TYPES, &file.name, &read_object(&path, &file.content))
+        })
+        .collect();
+    misnamed_files.extend(edge_types.iter().filter_map(|(path, read)| {
+        misnamed(EDGE_TYPES, below(path, EDGE_TYPES)?, read)
+    }));
     Source {
         manifest,
         types,
         edge_types,
+        misnamed: misnamed_files,
     }
 }
 
@@ -504,6 +530,14 @@ pub fn check_source(files: &[SourceFile], registry: &Registry) -> Result<SourceV
         Err(refused) => vec![refused.clone()],
     };
     let types = check_plugin_type_files(&source.types, registry)?;
+    // A misnamed type file is in `types`, as `marfa types check` reports it.
+    problems.extend(
+        source
+            .misnamed
+            .iter()
+            .filter(|held| held.path.starts_with(EDGE_TYPES))
+            .cloned(),
+    );
     let mut names: HashMap<String, String> = HashMap::new();
     for (path, read) in &source.edge_types {
         let definition = match read {
@@ -514,13 +548,6 @@ pub fn check_source(files: &[SourceFile], registry: &Registry) -> Result<SourceV
             }
         };
         let id = definition.get("id").and_then(Value::as_str).unwrap_or("");
-        if *path != format!("{EDGE_TYPES}/{id}.json") {
-            problems.push(fault(
-                path.as_str(),
-                "file_name_mismatch",
-                format!("{path} must be named after its id, {EDGE_TYPES}/{id}.json"),
-            ));
-        }
         let taken = |name: &str| names.get(name).cloned();
         match judge_edge_type(definition, &taken) {
             Ok(built) => {
@@ -540,7 +567,7 @@ pub fn check_source(files: &[SourceFile], registry: &Registry) -> Result<SourceV
 /// It judges no type: `check_source` does.
 pub fn build_bundle(files: &[SourceFile], version: &str) -> Result<Obj, Vec<Problem>> {
     let source = read_source(files);
-    let mut problems = Vec::new();
+    let mut problems = source.misnamed.clone();
     if Version::parse(version).is_none() {
         problems.push(fault(
             "version",
@@ -611,6 +638,13 @@ pub fn build_bundle(files: &[SourceFile], version: &str) -> Result<Obj, Vec<Prob
         bundle.insert(CONNECTOR.into(), connector.clone());
     }
     Ok(bundle)
+}
+
+/// The bytes of a bundle as `marfa plugins bundle` writes it, which a release's digest is of.
+pub fn bundle_text(bundle: &Obj) -> String {
+    let mut text = serde_json::to_string_pretty(bundle).unwrap_or_default();
+    text.push('\n');
+    text
 }
 
 /// A bundle's file name in a release.
@@ -896,8 +930,19 @@ pub fn narrowings(stored: &Obj, next: &Obj) -> Vec<Narrowing> {
             "The type's parent changes, which a newer version cannot do".into(),
         ));
     }
-    let (before, after) = (objects(stored, "fields"), objects(next, "fields"));
-    members_narrowings("fields", &before, &after, &mut out);
+    // Either spelling of a field's requirement counts, so it is compared through `required_names`.
+    let unrequired = |definition: &Obj| -> Map<String, Value> {
+        objects(definition, "fields")
+            .into_iter()
+            .map(|(name, mut field)| {
+                if let Some(field) = field.as_object_mut() {
+                    field.remove("required");
+                }
+                (name, field)
+            })
+            .collect()
+    };
+    members_narrowings("fields", &unrequired(stored), &unrequired(next), &mut out);
     let was_required = required_names(stored);
     for name in required_names(next) {
         if !was_required.contains(&name) {
@@ -1422,5 +1467,61 @@ mod tests {
             ("tickets.plugin.json", digest.as_str())
         );
         assert!(index_lookup(&listed, "other").is_err());
+    }
+
+    #[test]
+    fn a_requirement_moved_between_the_required_list_and_the_field_is_no_narrowing() {
+        let listed = obj(json!({
+            "id": "common.ticket",
+            "required": ["title"],
+            "fields": { "title": { "type": "string" } },
+        }));
+        let in_field = obj(json!({
+            "id": "common.ticket",
+            "fields": { "title": { "type": "string", "required": true } },
+        }));
+        assert_eq!(narrowings(&listed, &in_field), Vec::new());
+        assert_eq!(narrowings(&in_field, &listed), Vec::new());
+        let optional = obj(json!({
+            "id": "common.ticket",
+            "fields": { "title": { "type": "string" } },
+        }));
+        let made = narrowings(&optional, &in_field);
+        assert_eq!(made.len(), 1, "{made:?}");
+        assert_eq!(made[0].path, "fields.title");
+    }
+
+    #[test]
+    fn a_file_not_named_after_its_id_is_refused_by_the_check_and_the_build() {
+        let mut files = folder();
+        files[3] = file(
+            "edge-types/first.json",
+            json!({ "id": "second", "cardinality": "many-to-many" }),
+        );
+        let verdict = check_source(&files, &shipped_registry().unwrap()).unwrap();
+        assert!(
+            verdict
+                .problems
+                .iter()
+                .any(|held| held.code == "file_name_mismatch" && held.path == "edge-types/first.json"),
+            "{verdict:?}"
+        );
+        let refused = build_bundle(&files, "1.0.0").unwrap_err();
+        assert!(
+            refused
+                .iter()
+                .any(|held| held.code == "file_name_mismatch" && held.path == "edge-types/first.json"),
+            "{refused:?}"
+        );
+        let mut files = folder();
+        files[1] = file("types/common.other.json", ticket());
+        files.remove(2);
+        let refused = build_bundle(&files, "1.0.0").unwrap_err();
+        assert!(
+            refused
+                .iter()
+                .any(|held| held.code == "file_name_mismatch" && held.path == "types/common.other.json"),
+            "{refused:?}"
+        );
     }
 }

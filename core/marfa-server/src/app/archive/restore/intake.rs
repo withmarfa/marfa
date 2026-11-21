@@ -300,8 +300,16 @@ fn archived_origin(line: &Value, version: u64) -> Result<Origin> {
             ));
         }
     };
+    if version >= 2
+        && origin != Some("plugin")
+        && line.pointer("/provenance/plugin").is_some_and(|held| !held.is_null())
+    {
+        return Err(refused(
+            "The archive names a plugin for a type whose origin is not plugin.".into(),
+        ));
+    }
     match (version, origin) {
-        (_, Some("platform")) => Err(Refusal::new(
+        (1, Some("platform")) => Err(Refusal::new(
             Code::Forbidden,
             "The archive claims a type is platform-shipped, which no archive can restore.",
         )),
@@ -342,10 +350,10 @@ fn archived_creator(line: &Value, version: u64) -> Result<Option<Value>> {
         return Ok(held.filter(|by| plugins::is_actor(by)).cloned());
     }
     match held {
-        None | Some(Value::Null) => Ok(None),
+        Some(Value::Null) => Ok(None),
         Some(by) if plugins::is_actor(by) => Ok(Some(by.clone())),
-        Some(_) => Err(invalid(
-            "The archive names a type's creator in no form a sign-in is named.",
+        None | Some(_) => Err(invalid(
+            "The archive names a type's creator as neither null nor a sign-in.",
         )
         .with_detail("entry", INSTANCE)),
     }

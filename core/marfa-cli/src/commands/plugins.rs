@@ -79,8 +79,9 @@ pub fn get_request(name: &str) -> Request {
     Request::get(&["plugins", name])
 }
 
-pub fn install_request(bundle: Obj) -> Request {
-    Request::post(&["plugins"]).json(Value::Object(bundle))
+/// The server's fingerprint is of the body's bytes, so they go as read or as built.
+pub fn install_request(bundle: String) -> Request {
+    Request::post(&["plugins"]).json_text(bundle)
 }
 
 pub fn remove_request(name: &str) -> Request {
@@ -113,7 +114,9 @@ fn run_offline(command: PluginsCommand, out: &Printer) -> Result<(), CliError> {
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             let path = output.join(plugin::bundle_file_name(name));
-            write_json(&path, &Value::Object(bundle.clone()))?;
+            std::fs::write(&path, plugin::bundle_text(&bundle)).map_err(|error| {
+                CliError::Invalid(format!("cannot write {}: {error}", path.display()))
+            })?;
             let answer = serde_json::json!({
                 "name": name,
                 "version": version,
@@ -189,12 +192,19 @@ fn write_json(path: &Path, value: &Value) -> Result<(), CliError> {
         .map_err(|error| CliError::Invalid(format!("cannot write {}: {error}", path.display())))
 }
 
-/// The bundle to install: a source folder built, a bundle file read, or a name fetched.
-fn bundle_for(args: &InstallArgs) -> Result<Obj, CliError> {
+/// The bytes to install: a source folder built, a bundle file read, or a name fetched.
+fn bundle_for(args: &InstallArgs) -> Result<String, CliError> {
     let path = Path::new(&args.source);
     match std::fs::metadata(path) {
         Ok(held) if held.is_dir() => {
-            built(path, args.version.as_deref().unwrap_or(plugin::DEVELOPMENT))
+            let version = args.version.as_deref().unwrap_or(plugin::DEVELOPMENT);
+            let text = plugin::bundle_text(&built(path, version)?);
+            crate::errln!(
+                "built {} at {version}, SHA-256 {}",
+                path.display(),
+                hex::encode(Sha256::digest(text.as_bytes()))
+            );
+            Ok(text)
         }
         Ok(_) if args.version.is_some() => Err(CliError::Usage(
             "--version builds a source folder, and a bundle carries its own version".into(),
@@ -225,10 +235,18 @@ fn object(bytes: &[u8], said: &str) -> Result<Obj, CliError> {
     }
 }
 
-fn read_bundle(path: &Path) -> Result<Obj, CliError> {
+/// The bytes as text, once they read as one JSON object.
+fn object_text(bytes: Vec<u8>, said: &str) -> Result<(Obj, String), CliError> {
+    let bundle = object(&bytes, said)?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| CliError::Invalid(format!("{said} is not UTF-8")))?;
+    Ok((bundle, text))
+}
+
+fn read_bundle(path: &Path) -> Result<String, CliError> {
     let bytes = std::fs::read(path)
         .map_err(|error| CliError::Invalid(format!("cannot read {}: {error}", path.display())))?;
-    object(&bytes, &path.display().to_string())
+    Ok(object_text(bytes, &path.display().to_string())?.1)
 }
 
 /// The files of a source folder that a bundle is built from.
@@ -447,8 +465,12 @@ struct Release {
 impl Release {
     /// `MARFA_PLUGINS_URL` where it is set and not empty, else the plugins repository's latest release.
     fn from_environment() -> Result<Release, CliError> {
-        let address = match std::env::var(RELEASE_VARIABLE) {
-            Ok(address) if !address.trim().is_empty() => address,
+        Release::at(std::env::var(RELEASE_VARIABLE).ok())
+    }
+
+    fn at(address: Option<String>) -> Result<Release, CliError> {
+        let address = match address {
+            Some(address) if !address.trim().is_empty() => address,
             _ => DEFAULT_RELEASE.to_string(),
         };
         let base = address.trim().trim_end_matches('/').to_string();
@@ -468,8 +490,9 @@ impl Release {
                 && url.fragment().is_none()
         });
         if !usable {
+            // An address that does not parse may still carry a password, so it is never printed.
             return Err(CliError::Invalid(format!(
-                "{RELEASE_VARIABLE} is {address:?}, which is not an http or https address with a host and no query or fragment"
+                "{RELEASE_VARIABLE} is not an http or https address with a host and no query or fragment"
             )));
         }
         let tls = ureq::tls::TlsConfig::builder()
@@ -512,7 +535,7 @@ impl Release {
             .map_err(|error| self.unreachable(format!("{file}: {error}")))
     }
 
-    fn fetch(&self, name: &str) -> Result<Obj, CliError> {
+    fn fetch(&self, name: &str) -> Result<String, CliError> {
         crate::errln!("reading {}/{}", self.base, plugin::INDEX);
         let listed = self.get(plugin::INDEX)?;
         let index: Value = serde_json::from_slice(&listed)
@@ -528,10 +551,32 @@ impl Release {
                 plugin::INDEX
             )));
         }
-        let bundle = object(&bytes, file)?;
+        let (bundle, text) = object_text(bytes, file)?;
         if bundle.get("name").and_then(Value::as_str) != Some(name) {
             return Err(self.unreachable(format!("{file} holds another plugin than {name}")));
         }
-        Ok(bundle)
+        Ok(text)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_address_that_does_not_parse_is_refused_without_printing_it() {
+        for address in [
+            "http://reader:hunter2@[not-a-host",
+            "reader:hunter2@example.com",
+            "http://reader:hunter2@example.com:99999",
+        ] {
+            let Err(refused) = Release::at(Some(address.into())) else {
+                panic!("{address} was taken");
+            };
+            let said = refused.to_string();
+            assert!(said.contains(RELEASE_VARIABLE), "{said}");
+            assert!(!said.contains("hunter2"), "{said}");
+        }
+        assert!(Release::at(Some("https://example.com/download".into())).is_ok());
     }
 }

@@ -18,6 +18,8 @@ pub struct Installed {
     pub name: String,
     pub version: String,
     pub manifest: Obj,
+    /// Every edge type any installed version brought.
+    pub edge_types: Vec<String>,
     /// The SHA-256 of the bundle's bytes as `POST /plugins` received them.
     pub fingerprint: String,
     pub installed_at: String,
@@ -32,17 +34,6 @@ impl Installed {
             .and_then(Value::as_str)
             .unwrap_or_default()
     }
-
-    fn ids(&self, key: &str) -> Vec<String> {
-        self.manifest
-            .get(key)
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|entry| entry.get("id").and_then(Value::as_str))
-            .map(str::to_string)
-            .collect()
-    }
 }
 
 fn not_found(name: &str) -> Refusal {
@@ -56,8 +47,8 @@ fn not_found(name: &str) -> Refusal {
 fn row(tx: &Transaction<'_>, name: &str) -> Result<Option<Installed>> {
     let held: Option<Stored> = tx
         .query_row(
-            "SELECT name, version, manifest, fingerprint, installed_at, installed_by, updated_at \
-             FROM plugins WHERE name = ?1",
+            "SELECT name, version, manifest, edge_types, fingerprint, installed_at, installed_by, \
+             updated_at FROM plugins WHERE name = ?1",
             [name],
             stored,
         )
@@ -66,6 +57,7 @@ fn row(tx: &Transaction<'_>, name: &str) -> Result<Option<Installed>> {
 }
 
 type Stored = (
+    String,
     String,
     String,
     String,
@@ -84,17 +76,24 @@ fn stored(row: &rusqlite::Row<'_>) -> rusqlite::Result<Stored> {
         row.get(4)?,
         row.get(5)?,
         row.get(6)?,
+        row.get(7)?,
     ))
 }
 
 fn read_row(
-    (name, version, manifest, fingerprint, installed_at, installed_by, updated_at): Stored,
+    (name, version, manifest, edge_types, fingerprint, installed_at, installed_by, updated_at): Stored,
 ) -> Result<Installed> {
     let Ok(Value::Object(manifest)) = serde_json::from_str::<Value>(&manifest) else {
         return Err(Refusal::internal(&format!(
             "the stored bundle of plugin {name} does not read"
         )));
     };
+    let edge_types = edge_type_names(&serde_json::from_str(&edge_types).unwrap_or(Value::Null))
+        .ok_or_else(|| {
+            Refusal::internal(&format!(
+                "the edge types plugin {name} brought do not read"
+            ))
+        })?;
     let installed_by = match installed_by {
         None => None,
         Some(text) => Some(serde_json::from_str(&text).map_err(|_| {
@@ -110,6 +109,7 @@ fn read_row(
         name,
         version,
         manifest,
+        edge_types,
         fingerprint,
         installed_at,
         installed_by,
@@ -117,10 +117,23 @@ fn read_row(
     })
 }
 
+/// A list of distinct edge type ids, as the `edge_types` of a record holds it.
+fn edge_type_names(value: &Value) -> Option<Vec<String>> {
+    let mut names: Vec<String> = Vec::new();
+    for held in value.as_array()? {
+        let name = held.as_str()?;
+        if names.iter().any(|seen| seen == name) {
+            return None;
+        }
+        names.push(name.to_string());
+    }
+    Some(names)
+}
+
 fn rows(tx: &Transaction<'_>) -> Result<Vec<Installed>> {
     let mut statement = tx.prepare(
-        "SELECT name, version, manifest, fingerprint, installed_at, installed_by, updated_at \
-         FROM plugins ORDER BY name",
+        "SELECT name, version, manifest, edge_types, fingerprint, installed_at, installed_by, \
+         updated_at FROM plugins ORDER BY name",
     )?;
     let found = statement.query_map([], stored)?;
     let mut held = Vec::new();
@@ -141,12 +154,13 @@ fn types_from(catalog: &Catalog, name: &str) -> Vec<String> {
     ids
 }
 
-/// The edge types the plugin brought that the instance still holds.
+/// The edge types any version of the plugin brought that the instance still holds.
 fn edge_types_held(installed: &Installed, catalog: &Catalog) -> Vec<String> {
     installed
-        .ids("edge_types")
-        .into_iter()
+        .edge_types
+        .iter()
         .filter(|id| catalog.edge_type(id).is_some())
+        .cloned()
         .collect()
 }
 
@@ -270,20 +284,14 @@ fn require_server(bundle: &Obj) -> Result<()> {
     .with_detail("server", server.to_string()))
 }
 
-fn require_install(caller: &Caller, bundle: &Obj) -> Result<()> {
+fn require_install(caller: &Caller, bundle: &Obj, catalog: &Catalog) -> Result<()> {
     caller.require(Permission::SchemaWrite)?;
-    if bundle.get("connector").is_some_and(|held| !held.is_null()) {
-        caller.require(Permission::ConnectorsManage)?;
-    }
     for id in bundle_ids(bundle, "types") {
         caller.require_type(id, Level::Write)?;
     }
-    for edge in bundle_objects(bundle, "edge_types") {
-        for key in ["id", "reverse_name"] {
-            if let Some(name) = edge.get(key).and_then(Value::as_str) {
-                caller.require_edge(name, Level::Write)?;
-            }
-        }
+    edge_types::require_install_names(caller, catalog, &bundle_objects(bundle, "edge_types"))?;
+    if bundle.get("connector").is_some_and(|held| !held.is_null()) {
+        caller.require(Permission::ConnectorsManage)?;
     }
     let guided = bundle_objects(bundle, "types").iter().any(|definition| {
         definition
@@ -329,10 +337,10 @@ pub async fn install(
     let answered = app
         .write(caller, "plugin.install", move |unit| {
             let caller = &unit.caller;
-            require_install(caller, &bundle)?;
+            let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+            require_install(caller, &bundle, &catalog)?;
             let name = text(&bundle, "name");
             let version = version_of(&bundle, "version")?;
-            let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             let held = row(unit.tx(), &name)?;
             if let Some(held) = &held {
                 let installed = Version::parse(&held.version).ok_or_else(|| {
@@ -368,16 +376,22 @@ pub async fn install(
             let before = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             types::write::write_install(unit, &cache, &before, plan, &origin)?;
             let manifest = Value::Object(bundle.clone()).to_string();
+            let mut brought = held.as_ref().map(|held| held.edge_types.clone()).unwrap_or_default();
+            for id in bundle_ids(&bundle, "edge_types") {
+                if !brought.iter().any(|seen| seen == id) {
+                    brought.push(id.to_string());
+                }
+            }
             let by = caller.actor().to_string();
             unit.tx().execute(
                 "INSERT INTO plugins (name, version, title, description, mark, maker, marfa, \
-                 manifest, installed_at, installed_by, updated_at, fingerprint) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?9, ?11) \
+                 manifest, installed_at, installed_by, updated_at, fingerprint, edge_types) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?9, ?11, ?12) \
                  ON CONFLICT (name) DO UPDATE SET version = excluded.version, \
                  title = excluded.title, description = excluded.description, \
                  mark = excluded.mark, maker = excluded.maker, marfa = excluded.marfa, \
                  manifest = excluded.manifest, updated_at = excluded.updated_at, \
-                 fingerprint = excluded.fingerprint",
+                 fingerprint = excluded.fingerprint, edge_types = excluded.edge_types",
                 params![
                     name,
                     version.to_string(),
@@ -390,6 +404,7 @@ pub async fn install(
                     unit.at,
                     by,
                     fingerprint,
+                    Value::from(brought).to_string(),
                 ],
             )?;
             unit.audit("plugin", &name, Some(json!({ "version": version.to_string() })))?;
@@ -444,6 +459,7 @@ pub fn archive_lines(tx: &Transaction<'_>) -> Result<Vec<Value>> {
                 "name": held.name,
                 "version": held.version,
                 "bundle": held.manifest,
+                "edge_types": held.edge_types,
                 "fingerprint": held.fingerprint,
                 "installed_at": held.installed_at,
                 "installed_by": held.installed_by,
@@ -462,7 +478,7 @@ pub fn is_actor(value: &Value) -> bool {
     actor.len() == 3
         && matches!(
             text("kind"),
-            Some("local" | "server" | "key" | "browser" | "app")
+            Some("local" | "key" | "browser" | "app")
         )
         && text("id").is_some_and(|id| !id.is_empty())
         && text("name").is_some()
@@ -486,6 +502,15 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
     {
         return Err("names another name or version than its bundle".into());
     }
+    let edge_types = line
+        .get("edge_types")
+        .and_then(edge_type_names)
+        .filter(|names| {
+            bundle_ids(&bundle, "edge_types")
+                .iter()
+                .all(|id| names.iter().any(|name| name == id))
+        })
+        .ok_or("names no edge_types listing each edge type its bundle holds, once each")?;
     let stamped = |key: &str| {
         read(key)
             .filter(|at| Stamp::parsed(at).is_some())
@@ -507,12 +532,37 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
             name,
             version,
             manifest: bundle,
+            edge_types,
             fingerprint,
             installed_at,
             installed_by,
             updated_at,
         },
     })
+}
+
+/// Each restored record's bundle judged as installing it judges its definitions, against the
+/// catalog with the archive's own types, so a type it names need not be held.
+pub fn judge_restored(
+    before: &Catalog,
+    archived_types: &[Obj],
+    archived: &[Archived],
+) -> Result<()> {
+    let base = marfa_rules::schema::with_set_stored(&before.types, archived_types);
+    for line in archived {
+        let bundle = &line.line.manifest;
+        types::write::judge_bundle_types(&base, &bundle_objects(bundle, "types"))
+            .and_then(|()| edge_types::judge_bundle(&bundle_objects(bundle, "edge_types")))
+            .map_err(|refused| {
+                Refusal::validation(format!(
+                    "The archive holds plugin {} with a bundle installing would refuse: {}",
+                    line.name, refused.message
+                ))
+                .with_detail("entry", "instance.ndjson.gz")
+                .with_detail("name", line.name.as_str())
+            })?;
+    }
+    Ok(())
 }
 
 pub fn restore(tx: &Transaction<'_>, archived: &[Archived]) -> Result<(usize, usize)> {
@@ -525,8 +575,8 @@ pub fn restore(tx: &Transaction<'_>, archived: &[Archived]) -> Result<(usize, us
         }
         tx.execute(
             "INSERT INTO plugins (name, version, title, description, mark, maker, marfa, \
-             manifest, installed_at, installed_by, updated_at, fingerprint) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             manifest, installed_at, installed_by, updated_at, fingerprint, edge_types) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 installed.name,
                 installed.version,
@@ -540,6 +590,7 @@ pub fn restore(tx: &Transaction<'_>, archived: &[Archived]) -> Result<(usize, us
                 installed.installed_by.as_ref().map(Value::to_string),
                 installed.updated_at,
                 installed.fingerprint,
+                Value::from(installed.edge_types.clone()).to_string(),
             ],
         )?;
         added += 1;

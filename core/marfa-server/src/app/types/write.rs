@@ -785,6 +785,24 @@ fn early_install_refusal(definition: &Obj, id: &str) -> Result<()> {
     }
 }
 
+/// A stored bundle's types judged as installing judges a definition, against `base` and each other.
+pub fn judge_bundle_types(base: &Registry, definitions: &[Obj]) -> Result<()> {
+    let registry = with_set_stored(base, definitions);
+    for definition in definitions {
+        let id = text_of(definition, "id").unwrap_or_default();
+        check_id(id, "types.id")?;
+        early_install_refusal(definition, id)?;
+        if let Some(parent) = text_of(definition, "parent")
+            && let Some(fault) = parent_chain_fault(&registry, id, parent, 0)
+        {
+            return Err(Refusal::validation(fault).with_detail("type_id", id));
+        }
+        validate_type(&Value::Object(definition.clone()), &registry)
+            .map_err(|issues| schema_refusal(issues).with_detail("type_id", id))?;
+    }
+    Ok(())
+}
+
 /// Bundled types may refer to one another in either order. A newer version is held to the
 /// version installed, as its stored bundle gives it, and to the catalog the owner may have changed.
 pub fn plan_install(

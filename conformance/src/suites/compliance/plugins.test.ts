@@ -488,6 +488,69 @@ describe("a newer version of an installed plugin", () => {
     });
   });
 
+  it("refuses 403 the same or an older version to a key without write on an edge type's stored reverse name", async () => {
+    const watched = (version: string, reverse: boolean) =>
+      single("stored-reverse", "storedreverse.thing", {
+        version,
+        edge_types: [
+          {
+            id: "watches",
+            cardinality: "many-to-many",
+            ...(reverse ? { reverse_name: "watched-by" } : {}),
+          },
+        ],
+      });
+    const installed = await owner.installPlugin(watched("1.0.0", true));
+    expect(installed.status, JSON.stringify(installed.error)).toBe(201);
+    const forwardOnly = await ownerKey(
+      origin,
+      ["schema.write"],
+      { "*": "write" },
+      { watches: "write" },
+    );
+    for (const version of ["1.0.0", "0.9.0"]) {
+      const refused = await forwardOnly.installPlugin(watched(version, false));
+      expect(refused.status, version).toBe(403);
+      expect(refused.error?.error.code).toBe("edge_type_not_permitted");
+    }
+    // The witness: a key holding both names is answered for the version.
+    const both = await ownerKey(
+      origin,
+      ["schema.write"],
+      { "*": "write" },
+      { watches: "write", "watched-by": "write" },
+    );
+    const again = await both.installPlugin(watched("1.0.0", false));
+    expect(again.status, JSON.stringify(again.error)).toBe(200);
+    expect(again.data.outcome).toBe("unchanged");
+    const older = await both.installPlugin(watched("0.9.0", false));
+    expect(older.error?.error.code).toBe("plugin_version_older");
+  });
+
+  it("takes a version that moves a requirement from the type's required list to the field", async () => {
+    const versioned = (version: string, inField: boolean) =>
+      single("moved-required", "movedrequired.thing", {
+        version,
+        types: [
+          {
+            id: "movedrequired.thing",
+            description: "A thing whose title is required.",
+            ...(inField ? {} : { required: ["title"] }),
+            fields: {
+              title: { type: "string", ...(inField ? { required: true } : {}) },
+            },
+          },
+        ],
+      });
+    const installed = await owner.installPlugin(versioned("1.0.0", false));
+    expect(installed.status, JSON.stringify(installed.error)).toBe(201);
+    const moved = await owner.installPlugin(versioned("1.1.0", true));
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.outcome).toBe("updated");
+    const back = await owner.installPlugin(versioned("1.2.0", false));
+    expect(back.status, JSON.stringify(back.error)).toBe(200);
+  });
+
   it("refuses 409 plugin_narrows a version that drops a field or a type, naming each, and keeps the type as installed", async () => {
     const without = await owner.installPlugin(
       bundle("tickets", { version: "1.1.0", types: [ticket()] }),
@@ -943,7 +1006,7 @@ describe("a version 2 archive's provenance and install records", () => {
       controlSocket: destination.controlSocket,
     }).restoreArchive(archive);
 
-  it("refuses a type whose origin is not text, and one whose creator is not a sign-in", async () => {
+  it("refuses a type whose origin or creator is mistyped, missing, outside the sign-in kinds or at odds with its plugin", async () => {
     const id = "user.mistyped-origin";
     const typed = (provenance: Record<string, unknown>) =>
       archiveOf(
@@ -953,6 +1016,18 @@ describe("a version 2 archive's provenance and install records", () => {
     for (const provenance of [
       { origin: 7, created_by: null },
       { origin: "registered", created_by: {} },
+      { origin: "registered" },
+      {
+        origin: "registered",
+        created_by: { kind: "server", id: "server", name: "Marfa" },
+      },
+      {
+        origin: "registered",
+        plugin: { name: "tickets", version: "1.0.0" },
+        created_by: null,
+      },
+      { origin: "plugin", created_by: null },
+      { origin: "platform", created_by: null },
     ]) {
       const refused = await restore(typed(provenance));
       expect(refused.status, JSON.stringify(provenance)).toBe(400);
@@ -969,13 +1044,14 @@ describe("a version 2 archive's provenance and install records", () => {
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
   });
 
-  it("refuses a plugin line whose times are not in the stored form, whose installer is not a sign-in, or whose fingerprint is not a SHA-256", async () => {
+  it("refuses a plugin line whose times, installer, edge types, fingerprint or bundle definitions are not ones the server writes or installs", async () => {
     const plugin = single("archived-record", "archivedrecord.thing");
     const line = (fields: Record<string, unknown>) => ({
       plugin: {
         name: plugin.name,
         version: plugin.version,
         bundle: plugin,
+        edge_types: [],
         installed_at: "2026-11-01T10:00:00.000Z",
         installed_by: null,
         updated_at: "2026-11-01T10:00:00.000Z",
@@ -987,6 +1063,14 @@ describe("a version 2 archive's provenance and install records", () => {
       { installed_at: "yesterday" },
       { updated_at: "2026-11-01" },
       { installed_by: {} },
+      { installed_by: { kind: "server", id: "server", name: "Marfa" } },
+      {
+        bundle: {
+          ...plugin,
+          types: [{ id: "archivedrecord.thing", description: "No fields." }],
+        },
+      },
+      { edge_types: "none" },
       { fingerprint: "AB".repeat(32) },
       { fingerprint: "ab" },
       { fingerprint: null },
@@ -1244,5 +1328,45 @@ describe("installing a plugin with a connector", () => {
     expect(
       listed.data.data.find((held) => held.name === "wired-taken")?.fingerprint,
     ).toBe(digest);
+  });
+});
+
+describe("an edge type an earlier version brought", () => {
+  it("keeps reporting an edge type a newer version omits, through an export, a restore and the removal", async () => {
+    const versioned = (version: string, linked: boolean) =>
+      single("review-plugin", "reviewplugin.thing", {
+        version,
+        edge_types: linked
+          ? [{ id: "review-link", cardinality: "many-to-many" }]
+          : [],
+      });
+    const first = await owner.installPlugin(versioned("1.0.0", true));
+    expect(first.status, JSON.stringify(first.error)).toBe(201);
+    const omitted = await owner.installPlugin(versioned("1.1.0", false));
+    expect(omitted.status, JSON.stringify(omitted.error)).toBe(200);
+    expect(omitted.data.edge_types).toEqual(["review-link"]);
+    const held = await owner.listEdgeTypes();
+    expect(held.data.data.map((edge) => edge.id)).toContain("review-link");
+    const archive = await owner.exportArchive({ state: "any" });
+    expect(archive.status).toBe(200);
+    const line = archiveLines(archive.data, "instance")
+      .map((held) => held.plugin as { name: string; edge_types: string[] })
+      .find((held) => held?.name === "review-plugin");
+    expect(line?.edge_types).toEqual(["review-link"]);
+    const local = new MarfaClient({
+      baseUrl: destination.apiUrl,
+      controlSocket: destination.controlSocket,
+    });
+    const restored = await local.restoreArchive(archive.data);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect((await elsewhere.getPlugin("review-plugin")).data.edge_types).toEqual(
+      ["review-link"],
+    );
+    const removed = await owner.removePlugin("review-plugin");
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
+    expect(removed.data.kept).toEqual({
+      types: ["reviewplugin.thing"],
+      edge_types: ["review-link"],
+    });
   });
 });

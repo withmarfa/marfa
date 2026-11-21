@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -22,6 +22,11 @@ interface Plugin {
   version: string;
   outcome?: string;
   types: string[];
+  fingerprint: string;
+}
+
+function sha256(bytes: string | Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function manifest(name: string): Record<string, unknown> {
@@ -110,10 +115,9 @@ describe("plugins from the terminal", () => {
     trackType(c.ctx, fileType);
     trackType(c.ctx, folderType);
     const file = join(tempFolder("marfa-plugin-bundle-"), "file.plugin.json");
-    writeFileSync(
-      file,
-      JSON.stringify(bundleOf(`${root}-file`, fileType, "1.0.0")),
-    );
+    // Spacing JSON.stringify would not write, so a body sent as re-serialized JSON differs.
+    const written = `${JSON.stringify(bundleOf(`${root}-file`, fileType, "1.0.0"), null, 3)}\n\n`;
+    writeFileSync(file, written);
     const fromFile = await c.cli.json<Plugin>(["plugins", "install", file]);
     expect(fromFile).toMatchObject({
       name: `${root}-file`,
@@ -121,14 +125,26 @@ describe("plugins from the terminal", () => {
       outcome: "installed",
       types: [fileType],
     });
-    const fromFolder = await c.cli.json<Plugin>([
+    expect(fromFile.fingerprint).toBe(sha256(readFileSync(file)));
+    const folder = sourceFolder(`${root}-folder`, folderType);
+    const output = tempFolder("marfa-plugin-built-");
+    await c.cli.json(["plugins", "bundle", folder, "--version", "2.1.0", "--output", output]);
+    const built = sha256(
+      readFileSync(join(output, `${root}-folder.plugin.json`)),
+    );
+    const installing = await c.cli.run([
+      "--json",
       "plugins",
       "install",
-      sourceFolder(`${root}-folder`, folderType),
+      folder,
       "--version",
       "2.1.0",
     ]);
+    expect(installing.code, installing.stderr).toBe(0);
+    const fromFolder = JSON.parse(installing.stdout) as Plugin;
     expect(fromFolder).toMatchObject({ version: "2.1.0", types: [folderType] });
+    expect(fromFolder.fingerprint).toBe(built);
+    expect(installing.stderr).toContain(built);
     const read = await c.cli.json<{ guidance?: string; provenance: unknown }>([
       "types",
       "get",
@@ -163,7 +179,7 @@ describe("plugins from the terminal", () => {
     const name = `${root}-named`;
     const id = `${root}.named-thing`;
     trackType(c.ctx, id);
-    const bundle = JSON.stringify(bundleOf(name, id, "3.0.0"));
+    const bundle = `${JSON.stringify(bundleOf(name, id, "3.0.0"), null, 1)}\n`;
     const digest = createHash("sha256").update(bundle).digest("hex");
     const index = JSON.stringify({
       format: 1,
@@ -186,6 +202,7 @@ describe("plugins from the terminal", () => {
         .withEnv({ MARFA_PLUGINS_URL: served.url })
         .json<Plugin>(["plugins", "install", name]);
       expect(installed).toMatchObject({ name, version: "3.0.0", types: [id] });
+      expect(installed.fingerprint).toBe(digest);
       expect(served.asked.map((asked) => asked.path)).toEqual([
         "/download/plugins.json",
         `/download/${name}.plugin.json`,
@@ -232,6 +249,12 @@ describe("plugins from the terminal", () => {
       expect(refused.stderr).toContain("user name or password");
       expect(refused.stderr + refused.stdout).not.toContain(secret);
       expect(served.asked).toEqual([]);
+      const malformed = await c.cli
+        .withEnv({ MARFA_PLUGINS_URL: `http://reader:${secret}@[not-a-host` })
+        .run(["--json", "plugins", "install", name]);
+      expect(malformed.code).not.toBe(0);
+      expect(malformed.stderr).toContain("MARFA_PLUGINS_URL");
+      expect(malformed.stderr + malformed.stdout).not.toContain(secret);
       // The witness: the same release without the user info installs.
       const installed = await c.cli
         .withEnv({ MARFA_PLUGINS_URL: served.url })

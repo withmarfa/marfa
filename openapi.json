@@ -13523,7 +13523,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The IDs of the edge types the installed version brought that the instance still holds."
+            "description": "The IDs of the edge types any installed version of the plugin brought that the instance still holds."
           },
           "connector": {
             "type": [
@@ -13642,7 +13642,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The IDs of the edge types the installed version brought that the instance still holds."
+            "description": "The IDs of the edge types any installed version of the plugin brought that the instance still holds."
           },
           "connector": {
             "type": [
@@ -13753,7 +13753,7 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "The edge types the plugin brought that the instance still holds, which stay with their edges."
+                "description": "The edge types any installed version of the plugin brought that the instance still holds, which stay with their edges."
               }
             },
             "required": [

@@ -8,6 +8,8 @@ pub use marfa_core::http::Method;
 pub enum Body {
     None,
     Json(Value),
+    /// JSON sent as these exact bytes.
+    JsonText(String),
     File { path: PathBuf, content_type: String },
     Form(Vec<(String, String)>),
 }
@@ -105,6 +107,11 @@ impl Request {
 
     pub fn json(mut self, value: Value) -> Request {
         self.body = Body::Json(value);
+        self
+    }
+
+    pub fn json_text(mut self, text: String) -> Request {
+        self.body = Body::JsonText(text);
         self
     }
 

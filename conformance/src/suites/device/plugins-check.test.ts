@@ -132,6 +132,53 @@ describe("a plugin's source folder from the terminal", () => {
     }
   });
 
+  it("refuses an edge type file not named after its id, in the check, the bundle and the install alike", async () => {
+    const folder = source({
+      "common.ticket.json": definition("common.ticket"),
+    });
+    writeFileSync(
+      join(folder, "edge-types", "first.json"),
+      JSON.stringify({ id: "second", cardinality: "many-to-many" }),
+    );
+    const checked = await marfa(
+      ["--json", "plugins", "check", folder],
+      NO_KEYCHAIN,
+    );
+    expect(checked.code).toBe(1);
+    expect((JSON.parse(checked.stdout) as Verdict).problems).toEqual([
+      expect.objectContaining({
+        path: "edge-types/first.json",
+        code: "file_name_mismatch",
+      }),
+    ]);
+    const bundled = await marfa(
+      ["plugins", "bundle", folder, "--output", tempFolder("marfa-plugin-misnamed-")],
+      NO_KEYCHAIN,
+    );
+    expect(bundled.code).not.toBe(0);
+    expect(bundled.stderr).toContain("edge-types/first.json");
+    // No server listens: the install stops at the folder, before any request.
+    const unserved = {
+      MARFA_API_URL: "http://127.0.0.1:9",
+      MARFA_API_KEY: "mrf_unused",
+      MARFA_NO_KEYCHAIN: "1",
+    };
+    const installed = await marfa(["plugins", "install", folder], unserved);
+    expect(installed.code).not.toBe(0);
+    expect(installed.stderr).toContain("edge-types/first.json");
+    expect(installed.stderr).toContain("does not build");
+    // The witness: named after its id, the same folder checks clean.
+    writeFileSync(
+      join(folder, "edge-types", "first.json"),
+      JSON.stringify({ id: "first", cardinality: "many-to-many" }),
+    );
+    const passed = await marfa(
+      ["--json", "plugins", "check", folder],
+      NO_KEYCHAIN,
+    );
+    expect(passed.code, passed.stdout).toBe(0);
+  });
+
   it("refuses a plugin.json that names a version, which a release stamps from its tag", async () => {
     const folder = source(
       { "common.ticket.json": definition("common.ticket") },

@@ -751,6 +751,7 @@ impl Remote {
                 json_text = serde_json::to_string(value)?;
                 CallBody::Json(&json_text)
             }
+            Body::JsonText(text) => CallBody::Json(text),
             Body::File { path, content_type } => {
                 let file = File::open(path).map_err(|error| {
                     CliError::Invalid(format!("cannot read {}: {error}", path.display()))

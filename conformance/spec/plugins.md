@@ -90,7 +90,7 @@ If a caller whose edge map does not grant write on the `id` or the `reverse_name
 
 **Reason:** `POST /edge-types` checks both names of an edge type (`edges/types-register-id`), and installing registers edge types as it does.
 
-**Tests:** `compliance/plugins.test.ts › refuses 403 a key without schema.write, one without write on a type of the bundle, and one without write on an edge type`, `› refuses 403 a key without write on an edge type's reverse name, as registering the edge type does`.
+**Tests:** `compliance/plugins.test.ts › refuses 403 a key without schema.write, one without write on a type of the bundle, and one without write on an edge type`, `› refuses 403 a key without write on an edge type's reverse name, as registering the edge type does`, `› refuses 403 the same or an older version to a key without write on an edge type's stored reverse name`.
 
 ### `plugins/install-parent-reach`
 
@@ -184,9 +184,9 @@ If `POST /plugins` sends a bundle of an earlier version than the plugin installe
 
 If `POST /plugins` sends a later version of an installed plugin that, compared with the bundle of the version installed or with the type as stored, would remove a field, a list member, a status word, an enum value, a table or a column, move a status word to another group, change a field's, member's or column's kind, lower a limit or raise a minimum anywhere, take fewer types at an item field or column, make a field, member or column required or add one as required, change a type's parent, or leave out a type the version installed published, then the server MUST answer `409 plugin_narrows` with `details.changes` naming each `type` and `path`, and write nothing.
 
-**Reason:** an app or another plugin builds on a published type, so a newer version only adds. The version installed is what was published, so a type it held stays refused to drop even after the owner deletes it. The owner can still change a type with `PUT /types/{id}`, and installing protects that change too by comparing with the type as stored.
+**Reason:** an app or another plugin builds on a published type, so a newer version only adds. A field is required when the type's `required` list names it or the field sets `required`, so moving the requirement between the two narrows nothing. The version installed is what was published, so a type it held stays refused to drop even after the owner deletes it. The owner can still change a type with `PUT /types/{id}`, and installing protects that change too by comparing with the type as stored.
 
-**Tests:** `compliance/plugins.test.ts › refuses 409 plugin_narrows a version that drops a field or a type, naming each, and keeps the type as installed`, `› refuses 409 plugin_narrows a version that adds a required field, makes a list member required, lowers a table column's limit or moves a status word to another group`, `› refuses 409 plugin_narrows a version that drops a type the owner already deleted, naming it`.
+**Tests:** `compliance/plugins.test.ts › refuses 409 plugin_narrows a version that drops a field or a type, naming each, and keeps the type as installed`, `› refuses 409 plugin_narrows a version that adds a required field, makes a list member required, lowers a table column's limit or moves a status word to another group`, `› refuses 409 plugin_narrows a version that drops a type the owner already deleted, naming it`, `› takes a version that moves a requirement from the type's required list to the field`.
 
 ### `plugins/update-adds`
 
@@ -226,11 +226,11 @@ If a caller sends `GET /plugins/{name}` or `DELETE /plugins/{name}` for a name n
 
 ### `plugins/remove-keeps-types`
 
-When a caller holding `schema.write` sends `DELETE /plugins/{name}`, the server MUST remove the plugin's install record, keep every type and edge type it installed with their items, edges and provenance, and answer `200` with `removed` naming its `name` and `version` and `kept` listing the `types` and `edge_types` from the plugin that the instance holds.
+When a caller holding `schema.write` sends `DELETE /plugins/{name}`, the server MUST remove the plugin's install record, keep every type and edge type it installed with their items, edges and provenance, and answer `200` with `removed` naming its `name` and `version` and `kept` listing the `types` from the plugin and the `edge_types` any of its installed versions brought that the instance holds.
 
 **Reason:** removing a plugin never deletes a type. The owner deletes one with `DELETE /types/{id}`, refused while items or a child type hold it, as for any type, so an edge type or type the owner already deleted is not listed.
 
-**Tests:** `compliance/plugins.test.ts › removes a plugin's record and keeps its types, which keep their provenance, saying what it removed and kept`, `› reports as kept only the edge types the instance still holds`.
+**Tests:** `compliance/plugins.test.ts › removes a plugin's record and keeps its types, which keep their provenance, saying what it removed and kept`, `› reports as kept only the edge types the instance still holds`, `› keeps reporting an edge type a newer version omits, through an export, a restore and the removal`.
 
 ### `plugins/remove-permission`
 

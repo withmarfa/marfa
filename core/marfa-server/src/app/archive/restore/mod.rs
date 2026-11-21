@@ -289,8 +289,14 @@ fn judge_types(
     before: &Catalog,
     types: &[types::write::Archived],
     edge_types: &[Obj],
+    archived_plugins: &[plugins::Archived],
     caller: &Caller,
 ) -> Result<(types::write::Restoring, edge_types::Restoring)> {
+    let definitions: Vec<Obj> = types
+        .iter()
+        .filter_map(|held| held.definition.as_object().cloned())
+        .collect();
+    plugins::judge_restored(before, &definitions, archived_plugins)?;
     let types_plan = types::write::plan_restored(before, types)?;
     let edges_plan = edge_types::plan_restored(before, edge_types)?;
     let conflicts: Vec<String> = types_plan
@@ -377,12 +383,14 @@ impl App {
                 registrations.enforcement.clone(),
                 registrations.types.clone(),
                 registrations.edge_types.clone(),
+                registrations.plugins.clone(),
             );
             app.faults.hold(HOLD_RESTORE_SETTINGS, None).await;
             // On the writer, so every write admitted before the hold has landed.
             app.db
                 .write(Write::own().unsynced(), move |tx| {
-                    let (app, caller, settings, secrets, enforcement, types, edge_types) = judged;
+                    let (app, caller, settings, secrets, enforcement, types, edge_types, archived_plugins) =
+                        judged;
                     let caller = caller.current(tx, &app.clock.stamp())?;
                     caller.require_settings_restore(&stored::restoring(
                         tx,
@@ -392,7 +400,7 @@ impl App {
                         enforcement.as_ref(),
                     )?)?;
                     let before = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
-                    judge_types(&before, &types, &edge_types, &caller).map(drop)
+                    judge_types(&before, &types, &edge_types, &archived_plugins, &caller).map(drop)
                 })
                 .await?;
             let placed = app.place_restored(carried, absent).await?;
@@ -431,6 +439,7 @@ impl App {
                             &before,
                             &registrations.types,
                             &registrations.edge_types,
+                            &registrations.plugins,
                             &unit.caller,
                         )?;
                         let (types_registered, types_skipped) =
