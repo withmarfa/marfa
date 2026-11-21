@@ -236,8 +236,7 @@ fn direction_sql(direction: SortDirection) -> &'static str {
 /// dropped and repeats removed before the list is counted, and each entry left
 /// is refused as it would be alone, in the order given. `*` is no type filter
 /// at all and is refused, as on the server; every type is the list left unset.
-/// Unless `hidden`, a hidden row is selected only by an entry naming its exact
-/// hidden type (`search-and-filters/type-hidden-exact`).
+/// Unless `hidden`, a hidden row needs an entry naming its type or a hidden ancestor exactly.
 pub(crate) fn narrow_by_types(
     catalog: &Catalog,
     types: Option<&[String]>,

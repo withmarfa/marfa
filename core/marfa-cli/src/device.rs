@@ -214,8 +214,7 @@ pub enum DeviceCommand {
         #[arg(long)]
         state: Vec<StateFilter>,
         /// A type identifier, with its subtypes; repeat it for more, up to ten.
-        /// A `system.*` or `app.*` item is found only where its exact type is
-        /// named, not a wildcard.
+        /// To find a hidden item (`system.*` or `app.*`), name its type or a hidden ancestor exactly.
         #[arg(long = "type", value_name = "TYPE")]
         type_: Vec<String>,
         /// Only hits at this tier.
@@ -1040,8 +1039,8 @@ pub struct UpdateArgs {
 #[derive(Debug, Args)]
 pub struct ListArgs {
     /// A type identifier, with its subtypes; repeat it for more, up to ten.
-    /// A `system.*` or `app.*` item is listed only where its exact type is
-    /// named, not a wildcard, or in a list of the bin alone.
+    /// To list a hidden item (`system.*` or `app.*`), name its type or a hidden ancestor exactly.
+    /// Listing the bin alone also includes hidden items.
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Vec<String>,
     /// A state to answer; repeat it for more. `any` is every state, and is

@@ -160,8 +160,7 @@ pub fn opens_hidden(named: &str) -> bool {
 }
 
 /// Whether a type name takes a row of `row_type`: the type itself or a subtype of it. A hidden
-/// row is taken only by an exact hidden name, so naming a visible type opens none of its hidden
-/// subtypes, naming one hidden type opens no other, and a wildcard opens none.
+/// row needs an exact name for its type or a hidden ancestor.
 pub fn takes_type(catalog: &Catalog, named: &str, row_type: &str) -> bool {
     catalog.matches(named, row_type) && (!is_hidden(row_type) || opens_hidden(named))
 }

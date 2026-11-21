@@ -3257,7 +3257,7 @@ marfa device items list [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--type <TYPE>` | A type identifier, with its subtypes; repeat it for more, up to ten. A `system.*` or `app.*` item is listed only where its exact type is named, not a wildcard, or in a list of the bin alone. |
+| `--type <TYPE>` | A type identifier, with its subtypes; repeat it for more, up to ten. To list a hidden item (`system.*` or `app.*`), name its type or a hidden ancestor exactly. Listing the bin alone also includes hidden items. |
 | `--state <STATE>` | A state to answer; repeat it for more. `any` is every state, and is given alone. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
 | `--tier <TIER>` | Only items at this tier. One of `library`, `feed`. |
 | `--tag <TAG>` | Items must carry every tag given. |
@@ -3944,7 +3944,7 @@ marfa device search [OPTIONS] <QUERY>
 | Option | Description |
 | --- | --- |
 | `--state <STATE>` | A state to answer; repeat it for more. `any` is every state, and is given alone. Unset answers the active state. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
-| `--type <TYPE>` | A type identifier, with its subtypes; repeat it for more, up to ten. A `system.*` or `app.*` item is found only where its exact type is named, not a wildcard. |
+| `--type <TYPE>` | A type identifier, with its subtypes; repeat it for more, up to ten. To find a hidden item (`system.*` or `app.*`), name its type or a hidden ancestor exactly. |
 | `--tier <TIER>` | Only hits at this tier. One of `library`, `feed`. |
 | `--tag <TAG>` | Hits must carry every tag given. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
