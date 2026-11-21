@@ -21,7 +21,8 @@ A type file is a JSON object. A key the rules do not read is refused, with the k
 - **`parent`**: the parent type's `id` for a subtype. A subtype declares only the fields it adds and inherits the rest
 - **`label`**: optional, the name people see for the type, at most 100 characters. A type that names none is shown by one made from the last segment of its `id`
 - **`plural`**: optional, the name of a list of the type's items, at most 100 characters. A type that names none is answered with one made from its label (`Story` makes `Stories`), never from its parent's
-- **`description`**: what the type represents
+- **`description`**: what the type represents, in one sentence of at most 200 characters
+- **`guidance`**: optional, Markdown of at most 1,000 characters that tells an agent or an app builder how to use the type. A shipped file names it here; the catalog writer reads no `.md` file. `marfa types check` instead reads `<id>.md` beside `<id>.json` as the guidance of a folder's type, and refuses a definition that names it too. Limits count characters (Unicode code points), as labels do
 - **`version`**: a non-negative integer, `0` where a file names none. Every shipped type is at 0
 - **`fields`**: field name to definition
 - **`required`**: optional, an array of field names, which each must be a declared or inherited field. A field may instead say `"required": true`
@@ -39,11 +40,11 @@ A type declares no `states`, `default_state` or `transitions`, and no field name
 ## Field definition
 
 - **`type`**: one of `string`, `number`, `integer`, `boolean`, `url`, `email`, `datetime`, `date`, `enum`, `status`, `array`, `object` and `thumbnail`
-- **`description`**, **`label`**: optional. A label is at most 100 characters, and a field that names none is shown by one made from its name (`due_at` reads as `Due At`)
+- **`description`**, **`label`**: optional. A description is at most 300 characters. A label is at most 100 characters, and a field that names none is shown by one made from its name (`due_at` reads as `Due At`)
 - **`required`**: optional, `true` to require the field
 - **`format`**: optional. The formats `url`, `email`, `date`, and `thumbnail` collapse into `type`. The formats `bcp47`, `iso3166`, `currency`, and `phone` annotate a `string` and stay as `format`. Of those annotations, only `currency` is checked on write. It takes three capital letters, such as `GBP`. Declare `datetime` with `type`
 - **`enum_values`**: required for an `enum`, a non-empty array of strings, and refused on any other type but an array of enums
-- **`status_values`**: required for a `status` field, except on a subtype that declares an inherited status field again: the words, each `{ "value": "in_review", "group": "in_progress" }`, with the word a lowercase API name used once and the group one of `not_started`, `in_progress`, `completed` and `canceled`. A type carries at most one `status` field, and a subtype adds words after the inherited ones and never repeats one
+- **`status_values`**: required for a `status` field, except on a subtype that declares an inherited status field again: the words, each `{ "value": "in_review", "group": "in_progress" }` and optionally a text `description` of at most 120 characters, with the word a lowercase API name used once and the group one of `not_started`, `in_progress`, `completed` and `canceled`. A type carries at most one `status` field, and a subtype adds words after the inherited ones and never repeats one
 - **`items_type`**: required for an `array`, and never `status` or `thumbnail`
 - **`items_fields`**: optional on an `array` whose `items_type` is `object`: the members of each entry, by name, at least one. A member takes `type` (`string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`), `description`, `label`, `required`, `enum_values`, `format`, `max_length`, `minimum` and `maximum`
 - **`searchable`**: optional, `false` to keep the field out of full-text search

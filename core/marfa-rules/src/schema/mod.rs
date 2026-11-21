@@ -22,7 +22,8 @@ pub use chain::{
     descendant_depth, parent_chain_fault,
 };
 pub use check::{
-    FileVerdict, FolderVerdict, Problem, TypeFile, check_type_files, is_type_file, shipped_registry,
+    FileVerdict, FolderVerdict, GuidanceFileFault, Problem, TypeFile, check_type_files,
+    guidance_file_name, is_guidance_file, is_type_file, read_guidance_file, shipped_registry,
 };
 pub use compat::{ShapeConflict, stored_shape_conflicts};
 pub use edge::{

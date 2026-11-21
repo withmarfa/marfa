@@ -4,7 +4,8 @@ use std::time::Duration;
 use clap::{Args, Subcommand};
 use marfa_core::ScaffoldField;
 use marfa_rules::schema::{
-    FolderVerdict, Problem, TypeFile, check_type_files, is_type_file, shipped_registry,
+    FolderVerdict, Problem, TypeFile, check_type_files, guidance_file_name, is_guidance_file,
+    is_type_file, read_guidance_file, shipped_registry,
 };
 use serde_json::{Map, Value};
 
@@ -31,9 +32,9 @@ pub enum TypesCommand {
     Scaffold(ScaffoldArgs),
     /// Check a folder of type definitions the way a server checks each at registration, with no server.
     ///
-    /// Reads each `*.json` file directly in the folder (not its subfolders, and not a file whose name starts with a dot) as an item type definition, in the body `types register --file` sends. The file is named `ID.json`, after the type's `id`. Other files are ignored. An edge type is not checked.
+    /// Reads each `*.json` file directly in the folder (not its subfolders, and not a file whose name starts with a dot) as an item type definition, in the body `types register --file` sends. The file is named `ID.json`, after the type's `id`. The Markdown file beside it with the same name (`ID.md`) is read as the type's `guidance`, as `register --file` reads it: UTF-8 with no byte-order mark, trailing whitespace removed, and no `guidance` also in the definition. A `.md` file named for a type with no `ID.json` beside it is refused. Other files are ignored. An edge type is not checked.
     ///
-    /// Needs no server, key or keychain, sends nothing, and takes none of `--url`, `--key`, `--profile` and `--socket`. Each type is judged with the registration rules that need no instance, against the types Marfa ships and the types of the folder that passed before it: a type goes after the folder types it names, as its `parent`, in a `compatible_with` list of strings or in a table column's `type_constraints`, except a type that names itself and the types in a loop. A file refused for any reason supplies no type to the others. Types that name one another in a loop cannot be registered in any order, so each is judged with the others absent, which is the answer a server gives whichever it is given first. Every problem is reported, each with its file, its path in the definition, and the code and message a server gives for that file; a type whose parent or other named type is absent also says why, beside the server's answer. The command reports its own codes, `file_name_mismatch` and `file_unreadable`, first. What only an instance knows is left to it: whether the type already exists, what a key may register, and the body size an instance allows. Exits 1 when any file is refused or none is found, and 2 when the path is not a folder.
+    /// Needs no server, key or keychain, sends nothing, and takes none of `--url`, `--key`, `--profile` and `--socket`. Each type is judged with the registration rules that need no instance, against the types Marfa ships and the types of the folder that passed before it: a type goes after the folder types it names, as its `parent`, in a `compatible_with` list of strings or in a table column's `type_constraints`, except a type that names itself and the types in a loop. A file refused for any reason supplies no type to the others. Types that name one another in a loop cannot be registered in any order, so each is judged with the others absent, which is the answer a server gives whichever it is given first. Every problem is reported, each with its file, its path in the definition, and the code and message a server gives for that file; a type whose parent or other named type is absent also says why, beside the server's answer. The command reports its own codes, `file_name_mismatch`, `file_unreadable`, `guidance_file_unreadable`, `guidance_named_twice` and `guidance_file_without_definition`, first. What only an instance knows is left to it: whether the type already exists, what a key may register, and the body size an instance allows. Exits 1 when any file is refused or none is found, and 2 when the path is not a folder.
     Check(CheckArgs),
     /// Register a type from its definition. Needs `metadata.types:write` and write on the type in the key's type map, and `schema.write` for a type that carries guidance.
     ///
@@ -274,10 +275,9 @@ pub fn run(
     }
 }
 
-fn guidance_path(file: &Path) -> Option<std::path::PathBuf> {
-    file.extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
-        .then(|| file.with_extension("md"))
+fn guidance_path(file: &Path) -> Option<PathBuf> {
+    let name = guidance_file_name(file.file_name()?.to_str()?)?;
+    Some(file.with_file_name(name))
 }
 
 fn guidance_text(path: &Path) -> Result<Option<String>, CliError> {
@@ -291,19 +291,9 @@ fn guidance_text(path: &Path) -> Result<Option<String>, CliError> {
             )));
         }
     };
-    if bytes.starts_with(b"\xEF\xBB\xBF") {
-        return Err(CliError::Invalid(format!(
-            "{} starts with a byte-order mark. Save it as UTF-8 without one.",
-            path.display()
-        )));
-    }
-    let text = String::from_utf8(bytes).map_err(|_| {
-        CliError::Invalid(format!(
-            "{} is not UTF-8. Save it as UTF-8.",
-            path.display()
-        ))
-    })?;
-    Ok(Some(text.trim_end().to_string()))
+    read_guidance_file(&bytes)
+        .map(Some)
+        .map_err(|fault| CliError::Invalid(fault.message(&path.display().to_string())))
 }
 
 fn definition(body: &BodySource) -> Result<Value, CliError> {
@@ -608,7 +598,7 @@ fn type_files(folder: &PathBuf) -> Result<Vec<TypeFile>, CliError> {
             ))
         })?;
         let name = entry.file_name().to_string_lossy().into_owned();
-        if !is_type_file(&name) {
+        if !is_type_file(&name) && !is_guidance_file(&name) {
             continue;
         }
         let path = entry.path();
