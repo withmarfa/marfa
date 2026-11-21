@@ -452,13 +452,22 @@ impl Release {
             _ => DEFAULT_RELEASE.to_string(),
         };
         let base = address.trim().trim_end_matches('/').to_string();
-        let parsed = Url::parse(&base).ok().filter(|url| {
+        let parsed = Url::parse(&base).ok();
+        if parsed
+            .as_ref()
+            .is_some_and(|url| !url.username().is_empty() || url.password().is_some())
+        {
+            return Err(CliError::Invalid(format!(
+                "{RELEASE_VARIABLE} carries a user name or password, which this command never sends: set it to the release address alone"
+            )));
+        }
+        let usable = parsed.is_some_and(|url| {
             matches!(url.scheme(), "http" | "https")
                 && url.host_str().is_some()
                 && url.query().is_none()
                 && url.fragment().is_none()
         });
-        if parsed.is_none() {
+        if !usable {
             return Err(CliError::Invalid(format!(
                 "{RELEASE_VARIABLE} is {address:?}, which is not an http or https address with a host and no query or fragment"
             )));
