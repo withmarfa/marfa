@@ -581,8 +581,7 @@ fn reserved(id: &str, why: String) -> Refusal {
     )
 }
 
-/// Judges every type an archive registers together, so registrations that name each other
-/// restore in any order: each is held to what `POST /types` takes.
+/// Judges registrations together so a type can refer to one that appears later in the archive.
 pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restoring> {
     let mut raw = Vec::new();
     for line in archived {

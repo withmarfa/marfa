@@ -916,7 +916,7 @@ If an archive carries a core edge type, then the server MUST answer `409 conflic
 
 ### `archive/restore-type-unknown-key`
 
-If an archive registers a type with a key `types/unknown-key` refuses, other than the `compatible_with` that `archive/restore-type-compatible-with-dropped` drops, or an edge type with a key `edges/types-register-unknown-key` refuses, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
+If an archive registers a type with a key `types/unknown-key` refuses, except `compatible_with` as specified by `archive/restore-type-compatible-with-dropped`, or an edge type with a key `edges/types-register-unknown-key` refuses, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
 
 **Reason:** an archive is held to what the registration doors take, so a registration they would refuse cannot come in by restore.
 
