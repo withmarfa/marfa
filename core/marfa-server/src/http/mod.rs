@@ -11,6 +11,7 @@ pub mod body;
 mod bulk;
 pub mod caller;
 mod caller_address;
+mod cloud;
 mod compression;
 mod conditional;
 mod config;
@@ -285,6 +286,10 @@ fn config_doors() -> Routes {
         )
         .route("/config/address-check", post(config::address_check))
         .route("/config/settings", get(config::settings))
+        .route(
+            "/cloud/link",
+            get(cloud::read).post(cloud::start).delete(cloud::unlink),
+        )
 }
 
 fn connector_doors(app: Arc<App>) -> Routes {

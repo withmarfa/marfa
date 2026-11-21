@@ -14,7 +14,8 @@ use super::oauth;
 use super::refusal::{Code, Refusal, Result};
 use super::sign_in_check;
 use super::sources;
-use super::{App, instance, stored};
+use super::unit::Unit;
+use super::{App, cloud, instance, stored};
 use crate::settings::registry::{
     ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, ENTRIES, Entry, OBJECT_STORE_BUCKET,
     OBJECT_STORE_ENDPOINT, OBJECT_STORE_PATH_STYLE, OBJECT_STORE_PREFIX, OBJECT_STORE_REGION,
@@ -83,6 +84,8 @@ pub struct Request {
     settings: Vec<(&'static Entry, Ask<String>)>,
     name: Option<Ask<String>>,
     enforcement: Option<Ask<Levers>>,
+    /// An address the write removes from `addresses`, which no body names.
+    drops: Option<addresses::Address>,
 }
 
 fn invalid(errors: Vec<(String, String)>) -> Refusal {
@@ -168,6 +171,7 @@ impl Request {
             settings: Vec::new(),
             name: None,
             enforcement: None,
+            drops: None,
         };
         let null_in_put = |path: &str| {
             (
@@ -251,6 +255,24 @@ impl Request {
             errors.sort();
             Err(invalid(errors))
         }
+    }
+
+    /// Moves the sign-in address to `to`, or removes it, and removes `drops` from `addresses`.
+    pub fn sign_in_move(
+        to: Option<&addresses::Address>,
+        confirmed: bool,
+        drops: Option<addresses::Address>,
+        sealer: &Sealer,
+    ) -> Result<Request> {
+        let mut body = Map::new();
+        body.insert(
+            SIGN_IN_ADDRESS.entry.key.into(),
+            to.map_or(Value::Null, |address| address.origin().into()),
+        );
+        body.insert(CONFIRMATION.into(), confirmed.into());
+        let mut request = Request::from_body(Mode::Patch, &body, &fields(), sealer)?;
+        request.drops = drops;
+        Ok(request)
     }
 
     /// Refuses a body that names another instance than this one.
@@ -358,6 +380,26 @@ impl Plan {
             ops.insert(
                 ADDRESSES.entry.key.to_string(),
                 Some(Value::from(origins).to_string()),
+            );
+            if !touched.contains(&ADDRESSES.entry.key) {
+                touched.push(ADDRESSES.entry.key);
+            }
+        }
+        if let Some(dropped) = &request.drops {
+            let text = match ops.get(ADDRESSES.entry.key) {
+                Some(text) => text.clone(),
+                None => before.get(ADDRESSES.entry.key).cloned(),
+            };
+            let list: Vec<_> = text
+                .and_then(|text| addresses::parse_list(&text).ok())
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|address| address != dropped)
+                .collect();
+            let origins: Vec<_> = list.iter().map(addresses::Address::origin).collect();
+            ops.insert(
+                ADDRESSES.entry.key.to_string(),
+                (!origins.is_empty()).then(|| Value::from(origins).to_string()),
             );
             if !touched.contains(&ADDRESSES.entry.key) {
                 touched.push(ADDRESSES.entry.key);
@@ -474,9 +516,25 @@ impl Plan {
         let mut fields = request.field_names();
         if self.drops_secret {
             fields.push(OBJECT_STORE_SECRET_ACCESS_KEY.entry.key);
-            fields.sort_unstable();
         }
+        if request.drops.is_some() && !fields.contains(&ADDRESSES.entry.key) {
+            fields.push(ADDRESSES.entry.key);
+        }
+        fields.sort_unstable();
         fields
+    }
+
+    fn sign_in_change(&self, app: &App, moved: &Moved) -> SignInChange {
+        let before = Arc::new(app.settings.candidate(&pairs(&self.before)));
+        SignInChange {
+            before: app.addresses_in(before.clone()).sign_in(),
+            after: moved.sign_in.clone(),
+            stored_before: self
+                .before
+                .contains_key(SIGN_IN_ADDRESS.entry.key)
+                .then(|| before.get(SIGN_IN_ADDRESS))
+                .flatten(),
+        }
     }
 
     /// What the change does to the addresses, and whether it needs a person to
@@ -637,11 +695,31 @@ fn confirmation_needed(moved: &Moved) -> Refusal {
     .with_detail("consequences", moved.consequences_json())
 }
 
+/// Who stands behind a change of the configuration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Authority {
+    /// The caller, who must hold what the change needs and confirm a move of the sign-in address.
+    Caller,
+    /// The server, carrying out a move a caller who could make it confirmed earlier.
+    Confirmed,
+    /// The server, putting back the sign-in address an address that no longer answers replaced.
+    Restored,
+}
+
+/// What a write did to the sign-in address, for a part that keeps track of it.
+pub struct SignInChange {
+    pub before: addresses::Address,
+    pub after: addresses::Address,
+    /// The sign-in address stored before the write, if one was; never a default.
+    pub stored_before: Option<addresses::Address>,
+}
+
 /// Refuses as the write would, then checks the backup folder and the new sign-in address.
 async fn check_sign_in(
     app: &Arc<App>,
     caller: &Caller,
     request: Request,
+    authority: Authority,
 ) -> Result<(Request, Option<addresses::Address>)> {
     if request.skip_check && !caller.is_local() {
         return Err(Refusal::new(
@@ -661,12 +739,21 @@ async fn check_sign_in(
             Ok((request, step_up, moved))
         })
         .await?;
-    let at = app.clock.stamp();
-    if step_up {
-        caller.require_step_up(Permission::ConfigManage, &at)?;
-    }
     let moved = moved?;
-    if moved.sign_in_moves {
+    if authority == Authority::Restored {
+        return Ok((request, None));
+    }
+    if authority == Authority::Confirmed {
+        if !moved.sign_in_moves {
+            return Ok((request, None));
+        }
+        sign_in_check::check(app, &moved.sign_in)
+            .await
+            .map_err(sign_in_check::Failed::refusal)?;
+        return Ok((request, Some(moved.sign_in)));
+    }
+    let at = app.clock.stamp();
+    if step_up || moved.sign_in_moves {
         caller.require_step_up(Permission::ConfigManage, &at)?;
     }
     check_backup_path(app, &request).await?;
@@ -686,38 +773,60 @@ async fn check_sign_in(
 }
 
 pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result<Value> {
+    let (answer, ()) = update_with(app, caller, request, Authority::Caller, |_, _| Ok(())).await?;
+    Ok(answer)
+}
+
+/// Writes the change as `update` does, with `also` in the same write.
+pub async fn update_with<T, F>(
+    app: &Arc<App>,
+    caller: &Caller,
+    request: Request,
+    authority: Authority,
+    also: F,
+) -> Result<(Value, T)>
+where
+    T: Send + 'static,
+    F: FnOnce(&Unit<'_, '_>, &SignInChange) -> Result<T> + Send + 'static,
+{
     request.check_identity(app)?;
-    let (request, answered) = check_sign_in(app, caller, request).await?;
+    let (request, answered) = check_sign_in(app, caller, request, authority).await?;
     let writing = app.clone();
     let working = app.clone();
     let caller = caller.clone();
     stored::committing(app, async move {
         working
             .write(&caller, "config.update", move |unit| {
+                let asked = authority == Authority::Caller;
                 unit.caller.require(Permission::ConfigManage)?;
                 let tx = unit.tx();
                 let before = rows_of(stored::rows(tx)?);
                 let plan = Plan::of(&request, before);
-                if plan.needs_step_up(&writing) {
+                if asked && plan.needs_step_up(&writing) {
                     unit.caller
                         .require_step_up(Permission::ConfigManage, &unit.at)?;
                 }
                 plan.judge(&writing)?;
                 let moved = plan.addresses_at(&writing, tx)?;
-                if moved.sign_in_moves {
+                if asked && moved.sign_in_moves {
                     unit.caller
                         .require_step_up(Permission::ConfigManage, &unit.at)?;
                 }
-                if moved.confirm && !request.confirmed {
+                if asked && moved.confirm && !request.confirmed {
                     return Err(confirmation_needed(&moved));
                 }
-                if moved.confirm && !request.skip_check && answered.as_ref() != Some(&moved.sign_in)
-                {
+                let checked = match authority {
+                    Authority::Caller => moved.confirm && !request.skip_check,
+                    Authority::Confirmed => moved.sign_in_moves,
+                    Authority::Restored => false,
+                };
+                if checked && answered.as_ref() != Some(&moved.sign_in) {
                     return Err(Refusal::new(
                         Code::Conflict,
                         "The configuration changed while the new sign-in address was checked. Try again.",
                     ));
                 }
+                let change = plan.sign_in_change(&writing, &moved);
                 stored::write_rows(tx, &plan.ops)?;
                 if moved.sign_in_moves {
                     session::end_every(tx, &unit.at, &unit.caller)?;
@@ -727,6 +836,8 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                     instance::set_name(tx, name.as_deref())?;
                 }
                 unit.audit_set("config", Some(json!({ "fields": plan.audited(&request) })))?;
+                let kept = also(unit, &change)?;
+                cloud::after_config(unit, &writing, &change)?;
                 let staged = stored::stage(tx, &writing)?;
                 let name = instance::stored_name(tx)?;
                 let mut answer = document(&writing, &plan.after, name);
@@ -736,7 +847,7 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                         "next_steps": consequences::next_steps(&moved.sign_in),
                     });
                 }
-                Ok((answer, Some(staged)))
+                Ok(((answer, kept), Some(staged)))
             })
             .await
     })
@@ -781,11 +892,13 @@ pub async fn adopt_sign_in_address(
                 let plan = Plan::of(&request, before);
                 plan.judge(&writing)?;
                 let moved = plan.addresses_at(&writing, tx)?;
+                let change = plan.sign_in_change(&writing, &moved);
                 stored::write_rows(tx, &plan.ops)?;
                 if moved.sign_in_moves {
                     session::end_every(tx, &unit.at, &unit.caller)?;
                 }
                 unit.audit_set("config", Some(json!({ "fields": request.field_names() })))?;
+                cloud::after_config(unit, &writing, &change)?;
                 Ok((Adopted::Stored, Some(stored::stage(tx, &writing)?)))
             })
             .await

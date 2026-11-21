@@ -11,7 +11,7 @@ use tokio::task::JoinSet;
 
 use crate::app::auth::claim;
 use crate::app::instance::VERSION;
-use crate::app::{App, blocking, housekeeping, jobs, take_files, updates, webhooks};
+use crate::app::{App, blocking, cloud, housekeeping, jobs, take_files, updates, webhooks};
 use crate::control_socket::Claim;
 use crate::failure::Failure;
 use crate::http;
@@ -164,13 +164,13 @@ pub async fn run(accepted: Accepted) -> Result<u8, Failure> {
     let private = UnixListener::from_std(claim.bind()?)
         .map_err(|error| Failure::start(format!("The control socket failed: {error}")))?;
 
-    let port = public
+    let bound = public
         .as_ref()
-        .and_then(|listener| listener.local_addr().ok())
-        .map(|address| address.port());
-    if let Some(port) = port {
-        app.record_bound_port(port);
+        .and_then(|listener| listener.local_addr().ok());
+    if let Some(address) = bound {
+        app.record_bound(address);
     }
+    let port = bound.map(|address| address.port());
     claim::announce_at_start(&app)
         .await
         .map_err(|refusal| Failure::start(refusal.message.to_string()))?;
@@ -180,6 +180,7 @@ pub async fn run(accepted: Accepted) -> Result<u8, Failure> {
         housekeeping::start(&app);
         webhooks::start(&app);
         jobs::start(&app);
+        cloud::follow(&app);
     }
     tracing::info!("Private control socket listening");
     if let Some(port) = port {
@@ -203,14 +204,16 @@ pub async fn run(accepted: Accepted) -> Result<u8, Failure> {
     app.housekeeping.stop();
     app.webhooks.stop();
     app.jobs.stop();
+    app.cloud.stop();
     #[cfg(feature = "test-hooks")]
     app.faults.clear(None);
     app.begin_stop();
-    let (closed, (), (), ()) = tokio::join!(
+    let (closed, (), (), (), ()) = tokio::join!(
         tokio::time::timeout(STOP_WAIT, servers.join_all()),
         app.housekeeping.settle(STOP_WAIT),
         app.webhooks.settle(STOP_WAIT),
         app.jobs.settle(STOP_WAIT),
+        app.cloud.settle(STOP_WAIT),
     );
     if closed.is_err() {
         tracing::error!("A request was still open when the stop's wait ended");

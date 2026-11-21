@@ -10,6 +10,7 @@ pub mod backups;
 pub mod blobs;
 pub mod catalog;
 pub mod clock;
+pub mod cloud;
 pub mod config;
 pub mod connectors;
 pub mod consequences;
@@ -50,6 +51,7 @@ pub mod updates;
 pub mod views;
 pub mod webhooks;
 
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -119,10 +121,11 @@ pub struct App {
     pub attention: attention::Order,
     pub inbound: inbound::InFlight,
     pub updates: updates::Updates,
+    pub cloud: cloud::Cloud,
     stop: watch::Sender<bool>,
     catalog: Arc<ArcSwap<Catalog>>,
     read_only: Arc<ArcSwap<connectors::Registry>>,
-    bound_port: OnceLock<u16>,
+    bound: OnceLock<SocketAddr>,
     pub(crate) documents: oauth::clients::Documents,
 }
 
@@ -254,9 +257,11 @@ impl App {
         for id in &loaded.unreadable {
             tracing::error!(type_id = %id, "A stored type does not read, and is kept as it is");
         }
+        let cloud = cloud::Cloud::new(clock.instant());
         let app = Arc::new(App {
             db,
             clock,
+            cloud,
             faults,
             settings,
             instance_id,
@@ -285,7 +290,7 @@ impl App {
             started: Instant::now(),
             catalog,
             read_only: Arc::new(ArcSwap::from_pointee(connectors::Registry::empty())),
-            bound_port: OnceLock::new(),
+            bound: OnceLock::new(),
             documents: oauth::clients::Documents::default(),
         });
         housekeeping::prepare(&app)
@@ -319,16 +324,25 @@ impl App {
     }
 
     pub fn addresses(&self) -> Addresses {
-        Addresses::read(&self.settings, self.bound_port.get().copied())
+        Addresses::read(&self.settings, self.bound_port())
     }
 
     pub fn addresses_in(&self, snapshot: Arc<crate::settings::Snapshot>) -> Addresses {
-        Addresses::in_snapshot(&self.settings, snapshot, self.bound_port.get().copied())
+        Addresses::in_snapshot(&self.settings, snapshot, self.bound_port())
     }
 
     /// `MARFA_PORT=0` leaves the port to the operating system.
-    pub fn record_bound_port(&self, port: u16) {
-        let _ = self.bound_port.set(port);
+    pub fn record_bound(&self, address: SocketAddr) {
+        let _ = self.bound.set(address);
+    }
+
+    /// Where the public listener is bound, which a control-only server has none of.
+    pub fn bound(&self) -> Option<SocketAddr> {
+        self.bound.get().copied()
+    }
+
+    pub fn bound_port(&self) -> Option<u16> {
+        self.bound().map(|address| address.port())
     }
 
     #[cfg(feature = "test-hooks")]

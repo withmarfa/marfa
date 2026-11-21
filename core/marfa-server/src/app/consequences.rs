@@ -20,7 +20,8 @@ impl Consequence {
     }
 }
 
-type Counter = fn(&Transaction<'_>, &Address, i64) -> Result<i64>;
+/// Counts against the host of the new sign-in address.
+type Counter = fn(&Transaction<'_>, &str, i64) -> Result<i64>;
 
 struct Registered {
     code: &'static str,
@@ -28,15 +29,15 @@ struct Registered {
     count: Counter,
 }
 
-fn live_browser_sessions(tx: &Transaction<'_>, _: &Address, now_ms: i64) -> Result<i64> {
+fn live_browser_sessions(tx: &Transaction<'_>, _: &str, now_ms: i64) -> Result<i64> {
     session::live_count(tx, Stamp::from_ms(now_ms)?)
 }
 
-fn stranded_passkeys(tx: &Transaction<'_>, sign_in: &Address, _: i64) -> Result<i64> {
-    passkeys::stranded_by(tx, sign_in.host())
+fn stranded_passkeys(tx: &Transaction<'_>, host: &str, _: i64) -> Result<i64> {
+    passkeys::stranded_by(tx, host)
 }
 
-fn connected_apps(tx: &Transaction<'_>, _: &Address, _: i64) -> Result<i64> {
+fn connected_apps(tx: &Transaction<'_>, _: &str, _: i64) -> Result<i64> {
     Ok(i64::try_from(grants::all_of_owner(tx)?.len()).unwrap_or(i64::MAX))
 }
 
@@ -85,18 +86,7 @@ pub fn of_change(
 ) -> Result<Vec<Consequence>> {
     let mut found = Vec::new();
     if before.sign_in() != after.sign_in() {
-        let sign_in = after.sign_in();
-        for registered in SIGN_IN_CHANGED {
-            let count = u64::try_from((registered.count)(tx, &sign_in, now_ms)?).unwrap_or(0);
-            if count == 0 {
-                continue;
-            }
-            found.push(Consequence {
-                code: registered.code,
-                sentence: registered.sentence.to_string(),
-                count: Some(count),
-            });
-        }
+        found = of_sign_in_move(tx, after.sign_in().host(), now_ms)?;
     }
     let kept = after.all();
     for gone in before
@@ -105,6 +95,28 @@ pub fn of_change(
         .filter(|address| !kept.contains(address))
     {
         found.push(removed(gone));
+    }
+    Ok(found)
+}
+
+/// What moving the sign-in address to a host not yet known does, as a link to Marfa Cloud
+/// does before Marfa Cloud names the address.
+pub fn of_move_to_unknown_host(tx: &Transaction<'_>, now_ms: i64) -> Result<Vec<Consequence>> {
+    of_sign_in_move(tx, "", now_ms)
+}
+
+fn of_sign_in_move(tx: &Transaction<'_>, host: &str, now_ms: i64) -> Result<Vec<Consequence>> {
+    let mut found = Vec::new();
+    for registered in SIGN_IN_CHANGED {
+        let count = u64::try_from((registered.count)(tx, host, now_ms)?).unwrap_or(0);
+        if count == 0 {
+            continue;
+        }
+        found.push(Consequence {
+            code: registered.code,
+            sentence: registered.sentence.to_string(),
+            count: Some(count),
+        });
     }
     Ok(found)
 }
