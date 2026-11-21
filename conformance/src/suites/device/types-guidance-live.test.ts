@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -382,6 +382,89 @@ describe("a type's guidance beside its definition", () => {
       await onEach(write(id, { id, fields: FIELDS }, bytes), id, quietEnv);
     }
     expect(heard.requests.length).toBe(before);
+  });
+
+  it("reads only the entry named exactly PATH.md as guidance, and follows a link", async () => {
+    // A name that differs in the case of its extension is not the guidance file, on any file system.
+    const other = idOf("upper");
+    const sent = await bodySent(COMMANDS[0], other, [
+      "--file",
+      write(other, { id: other, fields: FIELDS }),
+    ]);
+    expect(sent).not.toHaveProperty("guidance");
+    const upper = idOf("upper_md");
+    const upperPath = write(upper, { id: upper, fields: FIELDS });
+    writeFileSync(join(folder, `${upper}.MD`), "Not sent.");
+    for (const command of COMMANDS) {
+      const body = await bodySent(command, upper, ["--file", upperPath]);
+      expect(body, command.verb).not.toHaveProperty("guidance");
+    }
+
+    // The witness: a link is followed to the file it names, so its text is sent.
+    const linked = idOf("linked");
+    const linkedPath = write(linked, { id: linked, fields: FIELDS });
+    writeFileSync(join(folder, `${linked}.txt`), "Linked text.");
+    symlinkSync(join(folder, `${linked}.txt`), join(folder, `${linked}.md`));
+    for (const command of COMMANDS) {
+      const body = await bodySent(command, linked, ["--file", linkedPath]);
+      expect(body.guidance, command.verb).toBe("Linked text.");
+    }
+  });
+
+  it("refuses a Markdown name that is a folder or a link to nothing, sending no request", async () => {
+    // The witness: a readable file under the same kind of name is sent by each command.
+    const good = idOf("kind_good");
+    const held = writes();
+    await onEach(
+      write(good, { id: good, fields: FIELDS }, "Use it."),
+      good,
+      quietEnv,
+    );
+    expect(writes() - held).toBe(COMMANDS.length);
+
+    const before = heard.requests.length;
+    const directory = idOf("kind_folder");
+    const directoryPath = write(directory, { id: directory, fields: FIELDS });
+    mkdirSync(join(folder, `${directory}.md`));
+    const dangling = idOf("kind_dangling");
+    const danglingPath = write(dangling, { id: dangling, fields: FIELDS });
+    symlinkSync(
+      join(folder, `${dangling}.missing`),
+      join(folder, `${dangling}.md`),
+    );
+    for (const [id, path] of [
+      [directory, directoryPath],
+      [dangling, danglingPath],
+    ]) {
+      for (const ran of await onEach(path, id, quietEnv)) {
+        expect(ran.code, ran.stdout).toBe(1);
+        const said = refusal(ran).error;
+        expect(said.code).toBe("invalid");
+        expect(said.message).toContain("guidance_file_unreadable");
+      }
+    }
+    expect(heard.requests.length).toBe(before);
+  });
+
+  it("judges an unreadable Markdown file before the definition's own guidance, and a readable empty one beside it as named twice", async () => {
+    const inline = { fields: FIELDS, guidance: "In the JSON." };
+    const cases: [string, string | Buffer, string][] = [
+      ["bom", Buffer.from([0xef, 0xbb, 0xbf]), "guidance_file_unreadable"],
+      ["latin", Buffer.from([0xe9]), "guidance_file_unreadable"],
+      ["empty", "", "guidance_named_twice"],
+      ["blank", " \n", "guidance_named_twice"],
+      ["text", "In the file.", "guidance_named_twice"],
+    ];
+    for (const [name, content, code] of cases) {
+      const id = idOf(`order_${name}`);
+      const path = write(id, { id, ...inline }, content);
+      for (const ran of await onEach(path, id, quietEnv)) {
+        expect(ran.code, `${name}: ${ran.stdout}`).toBe(1);
+        const said = refusal(ran).error;
+        expect(said.code, name).toBe("invalid");
+        expect(said.message, name).toContain(code);
+      }
+    }
   });
 
   it("prints a type's guidance and its ancestors' as members under --json and as text otherwise", async () => {

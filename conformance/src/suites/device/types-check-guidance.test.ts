@@ -1,4 +1,4 @@
-import { symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { tempFolder } from "../../utils/temp-folder.js";
@@ -20,6 +20,7 @@ interface Verdict {
     id: string | null;
     ok: boolean;
     problems: { path: string; code: string; message: string; hint?: string }[];
+    context?: string;
   }[];
 }
 
@@ -137,7 +138,7 @@ describe("the guidance a folder of type definitions keeps in Markdown files", ()
       0,
     );
 
-    for (const text of ["Use it too.", ""]) {
+    for (const text of ["Use it too.", "", " \n\t\n"]) {
       const verdict = await verdictOf(
         folderOf({
           "acme.recipe.json": definition("acme.recipe", {
@@ -165,7 +166,11 @@ describe("the guidance a folder of type definitions keeps in Markdown files", ()
         Buffer.from("Use it."),
       ]),
       "acme.link.json": definition("acme.link"),
+      "acme.folder.json": definition("acme.folder"),
+      "acme.both.json": definition("acme.both", { guidance: "Use it." }),
+      "acme.both.md": Buffer.from([0xef, 0xbb, 0xbf]),
     });
+    mkdirSync(join(folder, "acme.folder.md"));
     // Witness: the link's target exists, so the file reads.
     const target = join(folder, "target");
     writeFileSync(target, "Use it.");
@@ -181,12 +186,14 @@ describe("the guidance a folder of type definitions keeps in Markdown files", ()
     unlinkSync(target);
 
     const verdict = await verdictOf(folder, 1);
-    expect(verdict).toMatchObject({ checked: 4, refused: 3 });
+    expect(verdict).toMatchObject({ checked: 6, refused: 5 });
     expect(problemsOf(verdict, "acme.fine.json")).toEqual([]);
     for (const [file, said] of [
       ["acme.latin.json", "not UTF-8"],
       ["acme.marked.json", "byte-order mark"],
       ["acme.link.json", "Cannot read"],
+      ["acme.folder.json", "not a regular file"],
+      ["acme.both.json", "byte-order mark"],
     ] as const) {
       expect(problemsOf(verdict, file), file).toMatchObject([
         {
@@ -224,6 +231,118 @@ describe("the guidance a folder of type definitions keeps in Markdown files", ()
     // A folder of guidance with no definition at all is refused too.
     const alone = await verdictOf(folderOf({ "acme.recipe.md": "x" }), 1);
     expect(problemsOf(alone, "acme.recipe.md")).toMatchObject([
+      { code: "guidance_file_without_definition" },
+    ]);
+  });
+
+  it("reads only the entry named exactly after the definition as its guidance, and follows a link", async () => {
+    const over = "a".repeat(1001);
+    // A name that differs in the case of its extension is not the guidance file, on any file
+    // system, and is not an orphan either.
+    const other = await verdictOf(
+      folderOf({
+        "acme.recipe.json": definition("acme.recipe"),
+        "acme.recipe.MD": over,
+        "acme.other.MD": "Use it.",
+      }),
+      0,
+    );
+    expect(other).toMatchObject({ ok: true, checked: 1, refused: 0 });
+
+    // Witness: the same text under the exact name is judged.
+    const exact = await verdictOf(
+      folderOf({
+        "acme.recipe.json": definition("acme.recipe"),
+        "acme.recipe.md": over,
+      }),
+      1,
+    );
+    expect(problemsOf(exact, "acme.recipe.json")).toMatchObject([
+      { path: "guidance" },
+    ]);
+
+    // A link is followed to the file it names.
+    const folder = folderOf({
+      "acme.recipe.json": definition("acme.recipe"),
+      "acme.target.txt": over,
+    });
+    symlinkSync(
+      join(folder, "acme.target.txt"),
+      join(folder, "acme.recipe.md"),
+    );
+    const linked = await verdictOf(folder, 1);
+    expect(problemsOf(linked, "acme.recipe.json")).toMatchObject([
+      { path: "guidance", code: "invalid_schema" },
+    ]);
+  });
+
+  it("reports a Markdown file beside a refused definition as paired with it, not as without a definition", async () => {
+    // Witness: with no definition at all, the same file is refused as without one.
+    const orphan = await verdictOf(
+      folderOf({ "acme.broken.md": "Use it." }),
+      1,
+    );
+    expect(problemsOf(orphan, "acme.broken.md")).toMatchObject([
+      { code: "guidance_file_without_definition" },
+    ]);
+
+    const verdict = await verdictOf(
+      folderOf({
+        "acme.fine.json": definition("acme.fine"),
+        "acme.broken.json": "{ not json",
+        "acme.broken.md": "Use it.",
+      }),
+      1,
+    );
+    expect(verdict.files.map((entry) => entry.file)).toEqual([
+      "acme.broken.json",
+      "acme.fine.json",
+    ]);
+    const broken = verdict.files[0];
+    expect(broken.context).toContain("acme.broken.md");
+    expect(broken.problems).toMatchObject([{ code: "validation_error" }]);
+  });
+
+  it("tells a type whose parent was refused for its guidance file that the parent was refused in the folder", async () => {
+    const child = definition("acme.leaf", { parent: "acme.base" });
+    // Witness: with no parent in the folder, the child is told it is absent.
+    const absent = await verdictOf(folderOf({ "acme.leaf.json": child }), 1);
+    const absentContext = absent.files[0].context ?? "";
+    expect(absentContext).toContain("is not shipped or in this folder");
+
+    const verdict = await verdictOf(
+      folderOf({
+        "acme.base.json": definition("acme.base"),
+        "acme.base.md": Buffer.from([0x55, 0xe9]),
+        "acme.leaf.json": child,
+      }),
+      1,
+    );
+    expect(problemsOf(verdict, "acme.base.json")).toMatchObject([
+      { code: "guidance_file_unreadable" },
+    ]);
+    const context = verdict.files.find(
+      (entry) => entry.file === "acme.leaf.json",
+    )?.context;
+    expect(context).toContain("was refused in this folder");
+    expect(context).not.toContain("is not shipped or in this folder");
+  });
+
+  it("says no definitions were found for a folder that holds only Markdown files, and reports them", async () => {
+    // Witness: an empty folder is refused with the same message.
+    const empty = await marfa(["types", "check", folderOf({})], NO_KEYCHAIN);
+    expect(empty.code).toBe(1);
+    expect(empty.stderr).toContain("no *.json files found");
+
+    const folder = folderOf({
+      "acme.recipe.md": "Use it.",
+      "README.md": "About.",
+    });
+    const ran = await marfa(["--json", "types", "check", folder], NO_KEYCHAIN);
+    expect(ran.code).toBe(1);
+    expect(ran.stderr).toContain("no *.json files found");
+    const verdict = JSON.parse(ran.stdout) as Verdict;
+    expect(problemsOf(verdict, "acme.recipe.md")).toMatchObject([
       { code: "guidance_file_without_definition" },
     ]);
   });
