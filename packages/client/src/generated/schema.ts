@@ -4600,7 +4600,7 @@ export interface components {
             format?: "url" | "email" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description `false` if full-text search should skip the field. Items still return it. */
             searchable?: boolean;
-            /** @description The longest value a `string` or `enum` field allows, in Unicode characters, not UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other. */
+            /** @description The longest `string` value, in Unicode characters, not UTF-16 code units. Defaults to 1,000,000 on the field `display_hints.body_field` names, and to 100,000 on any other. Ignored on `enum` fields. */
             max_length?: number;
             /** @description The most elements an `array` field allows. */
             max_items?: number;

@@ -76,18 +76,7 @@ export function emptyKeychain(): string {
   return ownKeychain("marfa-conformance-empty-keychain-").path;
 }
 
-/**
- * A keychain file of the fixture's own, for one that keeps a sign-in or a key
- * (`keys keep`, `login`, a refresh): each makes its origin the current one,
- * which the run's shared keychain must not be left holding while other files
- * run. It is unlocked and never locks itself, because the binary may not ask
- * a person to unlock it; `lock` locks it for a fixture that claims the
- * binary copes with a locked one. `remove` deletes the file and its folder.
- *
- * The binary reads an item `security` made only where the item lets any
- * application read it, which is set as the item is made, never changed later.
- * Where there are no keychain files, the path is of a file never made.
- */
+/** Isolates credentials that would otherwise change the run's current sign-in. */
 export function ownKeychain(prefix = "marfa-conformance-own-keychain-"): {
   path: string;
   remove: () => void;
@@ -107,6 +96,7 @@ export function ownKeychain(prefix = "marfa-conformance-own-keychain-"): {
   const password = randomUUID();
   execFileSync("security", ["create-keychain", "-p", password, path]);
   execFileSync("security", ["unlock-keychain", "-p", password, path]);
+  // Automatic locking would require a dialog the binary must refuse.
   execFileSync("security", ["set-keychain-settings", path]);
   return {
     path,

@@ -1463,8 +1463,7 @@ describe("folder syncing from login", () => {
       made.push(harness);
       const other = await folderHarness("autostart-keep-other");
       made.push(other);
-      // `keys keep` makes its origin the current sign-in, which the run's
-      // shared keychain must not be left holding.
+      // A kept credential must not change the run's current sign-in.
       const keychain = ownKeychain("marfa-autostart-keep-keychain-");
       cleanups.push(keychain.remove);
       // Async: the scripted server answers from this process.

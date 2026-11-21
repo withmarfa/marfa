@@ -4736,7 +4736,7 @@
           },
           "max_length": {
             "type": "integer",
-            "description": "The longest value a `string` or `enum` field allows, in Unicode characters, not UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other."
+            "description": "The longest `string` value, in Unicode characters, not UTF-16 code units. Defaults to 1,000,000 on the field `display_hints.body_field` names, and to 100,000 on any other. Ignored on `enum` fields."
           },
           "max_items": {
             "type": "integer",

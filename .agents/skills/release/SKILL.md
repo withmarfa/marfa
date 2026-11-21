@@ -105,7 +105,7 @@ Each job is named as GitHub shows it.
 
    When the variable is not `publish`, the tap stays at the last version it was given. Say so in the hand-back; it is not a failed release.
 
-6. The Railway template's image tag. The template lives in Railway, not in this repository, and its server image is pinned to one release (`deploy/railway.md`, "Template configuration"), so a new release does not reach it until someone moves the tag. The owner of the Railway account that holds the template does this, in Railway's template editor: set the server's image to `ghcr.io/withmarfa/marfa-server:<version>` and publish the template. A session cannot do it and never changes a pinned tag elsewhere; say in the hand-back that the tag is still to move. Until it does, a new deployment from the template runs the earlier release.
+6. Update the Railway template's image tag. The template lives in Railway, not in this repository, and its server image is pinned to one release (`deploy/railway.md`, "Template configuration"). In Railway's template editor, set the server's image to `ghcr.io/withmarfa/marfa-server:<version>` and publish the template. This requires access to the Railway account that holds the template. If that access is unavailable, say in the hand-back that the account owner must update the tag. Until then, a new deployment from the template runs the earlier release.
 7. Stop. Publishing starts WithMarfa's release automation, which writes the release notes, syncs and rewrites the docs from the open docs issues, and moves the Swift package and the connectors to the release. Do none of these yourself.
 
 ## Finish a failed or partial run
