@@ -237,7 +237,7 @@ describe("installing a plugin", () => {
     expect((await owner.getType("acme.first")).status).toBe(200);
   });
 
-  it("refuses 400 validation_error a bundle with a key it does not hold, a missing field or another format, and keeps a connector object as it is", async () => {
+  it("refuses 400 validation_error a bundle with a key it does not hold, a missing field or another format", async () => {
     const { marfa: _marfa, ...lacking } = single("shape", "shape.thing");
     const missing = await owner.installPlugin(lacking);
     expect(missing.status).toBe(400);
@@ -258,12 +258,9 @@ describe("installing a plugin", () => {
     expect(JSON.stringify(refused.error?.error.details)).toContain(
       "shipped_by",
     );
-    const connector = { any: ["shape", 1], the: { connector: "defines" } };
-    const taken = await owner.installPlugin(
-      single("extra-key", "extra.thing", { connector }),
-    );
+    // The witness: the same bundle without the key installs.
+    const taken = await owner.installPlugin(single("extra-key", "extra.thing"));
     expect(taken.status, JSON.stringify(taken.error)).toBe(201);
-    expect(taken.data.connector).toEqual(connector);
   });
 
   it("refuses 403 forbidden a bundle with a type under a root kept for Marfa, apps or the owner, naming the namespace", async () => {
@@ -843,8 +840,8 @@ describe("listing and removing plugins", () => {
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
     await expectMatchesSchema("DELETE", "/plugins/{name}", 200, removed.data);
     expect(removed.data).toEqual({
-      removed: { name: "removable", version: "1.0.0" },
-      kept: { types: ["removable.thing"], edge_types: [] },
+      removed: { name: "removable", version: "1.0.0", connector: null },
+      kept: { types: ["removable.thing"], edge_types: [], connector: null },
     });
     expect((await owner.getPlugin("removable")).status).toBe(404);
     const kept = await owner.getType("removable.thing");
@@ -1383,7 +1380,12 @@ describe("installing a plugin with a connector", () => {
   }
 
   it("refuses 403 a bundle with a connector to a key without connectors.manage, which installs the same bundle without one, and takes it with both, recording the SHA-256 of the bytes sent", async () => {
-    const connector = { reads: "a service" };
+    const connector = (type: string, source: string) => ({
+      source,
+      source_name: "A service",
+      kinds: [{ name: "entry", type, direction: "in" }],
+      runs: { on: "host" },
+    });
     const schemaOnly = await keyWith(["schema.write"]);
     // The witness: schema.write alone installs a bundle with no connector.
     const bare = await sent(
@@ -1393,7 +1395,11 @@ describe("installing a plugin with a connector", () => {
     expect(bare.status, JSON.stringify(bare.body)).toBe(201);
     const refused = await sent(
       schemaOnly,
-      JSON.stringify(single("wired-refused", "wired.refused", { connector })),
+      JSON.stringify(
+        single("wired-refused", "wired.refused", {
+          connector: connector("wired.refused", "wired-refused"),
+        }),
+      ),
     );
     expect(refused.status, JSON.stringify(refused.body)).toBe(403);
     expect(refused.body.error.details.required_scope).toBe("connectors.manage");
@@ -1402,7 +1408,9 @@ describe("installing a plugin with a connector", () => {
     const both = await keyWith(["schema.write", "connectors.manage"]);
     // Spacing the server does not keep, so the digest is of the bytes as sent.
     const text = JSON.stringify(
-      single("wired-taken", "wired.taken", { connector }),
+      single("wired-taken", "wired.taken", {
+        connector: connector("wired.taken", "wired-taken"),
+      }),
       null,
       3,
     );
@@ -1412,7 +1420,7 @@ describe("installing a plugin with a connector", () => {
     expect(taken.body.fingerprint).toBe(digest);
     const read = await owner.getPlugin("wired-taken");
     expect(read.data.fingerprint).toBe(digest);
-    expect(read.data.connector).toEqual(connector);
+    expect(read.data.connector).toEqual(connector("wired.taken", "wired-taken"));
     const listed = await owner.listPlugins();
     expect(
       listed.data.data.find((held) => held.name === "wired-taken")?.fingerprint,

@@ -626,6 +626,75 @@ export class MarfaClient {
     });
   }
 
+  async assignConnector(
+    plugin: string,
+    host: string | null,
+  ): Promise<ApiResponse<Record<string, unknown>>> {
+    return this.request<Record<string, unknown>>(
+      `/plugins/${plugin}/connector`,
+      { method: "PUT", body: { host } },
+    );
+  }
+
+  async createConnectorHost(
+    name: unknown,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>("/connector-hosts", {
+      method: "POST",
+      body: name === undefined ? {} : { name },
+    });
+  }
+
+  async listConnectorHosts(): Promise<
+    ApiResponse<PaginatedResult<Record<string, any>>>
+  > {
+    return this.request<PaginatedResult<Record<string, any>>>(
+      "/connector-hosts",
+    );
+  }
+
+  async getConnectorHost(id: string): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(`/connector-hosts/${id}`);
+  }
+
+  async linkConnectorHost(
+    id: string,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(`/connector-hosts/${id}/link`, {
+      method: "POST",
+    });
+  }
+
+  async removeConnectorHost(
+    id: string,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(`/connector-hosts/${id}`, {
+      method: "DELETE",
+    });
+  }
+
+  /** Sent with no credential, whatever this client holds. */
+  async redeemConnectorLink(
+    body: unknown,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return new MarfaClient({ baseUrl: this.baseUrl }).request<
+      Record<string, any>
+    >("/connector-hosts/redeem", { method: "POST", body: body as object });
+  }
+
+  async connectorHostSelf(): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>("/connector-hosts/self");
+  }
+
+  async mintConnectorKey(
+    plugin: string,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(
+      `/connector-hosts/self/connectors/${plugin}/key`,
+      { method: "POST" },
+    );
+  }
+
   async registerType(schema: TypeSchema): Promise<ApiResponse<TypeSchema>> {
     return this.request<TypeSchema>("/types", {
       method: "POST",

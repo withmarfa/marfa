@@ -1,6 +1,6 @@
 # Connectors
 
-A connector is a program outside the server that has a connector registration: it registers under a key of its own, heartbeats, reports its runs, holds its registration so that one process at a time replaces its state or writes its agreements, and keeps what it needs to resume on the instance. The connector's own key is the key its registration was made under. An app or a script that acts with a key or through OAuth but has no registration is not a connector.
+A connector is a program outside the server that has a connector registration: it registers under a key of its own, heartbeats, reports its runs, holds its registration so that one process at a time replaces its state or writes its agreements, and keeps what it needs to resume on the instance. The connector's own key is the key its registration was made under. An app or a script that acts with a key or through OAuth but has no registration is not a connector. A plugin's connector runs on a connector host and registers with the key its host mints for it, as `plugins.md` says.
 
 The source-owned inbound endpoints a current registration exposes are `inbound-webhooks.md`'s. The error envelope and the codes are `errors.md`'s, and the settings named here are `instance.md`'s.
 
@@ -56,7 +56,7 @@ If local authority sends `POST /connectors`, then the server MUST answer `403 fo
 
 If a request to an operation this chapter states presents an owner's browser session cookie and no other credential, then the server MUST answer `401 unauthorized`.
 
-**Reason:** the owner acts on connectors through the private control socket, so a cookie, which a web page can send without the owner's knowing which door it reaches, is ignored on every connector door this chapter states.
+**Reason:** the owner acts on connectors through a key or an app's access holding `connectors.manage`, so a cookie, which a web page can send without the owner's knowing which door it reaches, is ignored on every connector door this chapter states.
 
 **Tests:** `compliance/connectors.test.ts › answers an owner session cookie 401 on every connector door, where the private socket keeps the owner's reach`.
 

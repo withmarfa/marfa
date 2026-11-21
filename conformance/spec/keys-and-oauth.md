@@ -989,11 +989,19 @@ If a mint names as the new key's own `source` one another key claims, and the ca
 
 ### `keys-and-oauth/claims-reserved`
 
-If a mint or an update names a claim or an own `source` that, after trimming whitespace and ignoring case, starts with `oauth:` or `restored:`, then the server MUST answer `400 validation_error`, whoever the caller is.
+If a mint or an update names a claim or an own `source` that, after trimming whitespace and ignoring case, starts with `oauth:`, `restored:` or `connector-host:`, then the server MUST answer `400 validation_error`, whoever the caller is.
 
-**Reason:** An OAuth source names an app's identity, which no key earns by naming it. A restored source records history without granting any credential authority over it.
+**Reason:** An OAuth source names an app's identity, which no key earns by naming it. A restored source records history without granting any credential authority over it. A connector host's source names the host whose key holds it (`plugins/host-key-holds`).
 
 **Tests:** `compliance/claimed-sources.test.ts › refuses a reserved prefix, even to the owner`, `compliance/owner-keys.test.ts › refuses a reserved prefix through keys.manage`.
+
+### `keys-and-oauth/plugin-source-held`
+
+If a mint names as its own `source`, or a mint or an update names as a claim, the source of an installed plugin's connector, then the server MUST answer `409 connector_source_held` with `details.source` and `details.plugin` naming the plugin, whoever the caller is.
+
+**Reason:** the source belongs to the plugin, so the only key that holds it is the one the connector's host mints (`plugins/host-mint-holds`).
+
+**Tests:** `compliance/plugin-connectors.test.ts › refuses a key mint or a claim of a source a plugin's connector holds, naming the plugin`.
 
 ### `keys-and-oauth/claims-case`
 
