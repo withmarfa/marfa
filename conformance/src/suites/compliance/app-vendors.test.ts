@@ -20,6 +20,7 @@ import {
   signIn,
   type App,
 } from "../../utils/signed-in.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
@@ -147,7 +148,10 @@ async function found(
 ): Promise<boolean> {
   const got = await answer(credential, `/search?q=${word}&limit=100`);
   expect(got.status, JSON.stringify(got.body)).toBe(200);
-  const data = (got.body.data ?? []) as Array<{ id?: string; item?: { id: string } }>;
+  const data = (got.body.data ?? []) as Array<{
+    id?: string;
+    item?: { id: string };
+  }>;
   return data.some((hit) => (hit.id ?? hit.item?.id) === id);
 }
 
@@ -201,6 +205,7 @@ async function grantOf(app: App): Promise<string> {
 async function holder(vendor: string): Promise<string | undefined> {
   const page = await answer(server.managementKey, "/app-vendors");
   expect(page.status, JSON.stringify(page.body)).toBe(200);
+  await expectMatchesSchema("GET", "/app-vendors", 200, page.body);
   const data = page.body.data as Array<{ vendor: string; client_id: string }>;
   return data.find((one) => one.vendor === vendor)?.client_id;
 }
@@ -299,7 +304,9 @@ describe("an app's own types", () => {
     };
     expect(error.code).toBe("forbidden");
     expect(error.details.namespace).toBe(vendor);
-    expect((await answer(server.workingKey, `/types/${vendor}.other`)).status).toBe(404);
+    expect(
+      (await answer(server.workingKey, `/types/${vendor}.other`)).status,
+    ).toBe(404);
   });
 
   it("lets another app reach their items through a grant that names the vendor", async () => {
@@ -339,6 +346,7 @@ describe("giving a vendor to another app", () => {
       body: { client_id: second.app.clientId },
     });
     expect(given.status, JSON.stringify(given.body)).toBe(200);
+    await expectMatchesSchema("PUT", "/app-vendors/{vendor}", 200, given.body);
     expect(given.body.vendor).toBe(vendor);
     expect(given.body.client_id).toBe(second.app.clientId);
     expect(await holder(vendor)).toBe(second.app.clientId);
@@ -365,27 +373,39 @@ describe("giving a vendor to another app", () => {
   });
 
   it("refuses a client no app registered with 404 not_found, a name that is no vendor and a missing client_id with 400", async () => {
-    const unknown = await answer(server.managementKey, `/app-vendors/${vendor}`, {
-      method: "PUT",
-      body: { client_id: randomUUID() },
-    });
+    const unknown = await answer(
+      server.managementKey,
+      `/app-vendors/${vendor}`,
+      {
+        method: "PUT",
+        body: { client_id: randomUUID() },
+      },
+    );
     expect(unknown.status).toBe(404);
     expect((unknown.body.error as { code: string }).code).toBe("not_found");
 
     for (const name of ["core.note", "app", "app.vendorc.setting"]) {
-      const refused = await answer(server.managementKey, `/app-vendors/${name}`, {
-        method: "PUT",
-        body: { client_id: second.app.clientId },
-      });
+      const refused = await answer(
+        server.managementKey,
+        `/app-vendors/${name}`,
+        {
+          method: "PUT",
+          body: { client_id: second.app.clientId },
+        },
+      );
       expect(refused.status, name).toBe(400);
       expect((refused.body.error as { code: string }).code, name).toBe(
         "validation_error",
       );
     }
-    const missing = await answer(server.managementKey, `/app-vendors/${vendor}`, {
-      method: "PUT",
-      body: {},
-    });
+    const missing = await answer(
+      server.managementKey,
+      `/app-vendors/${vendor}`,
+      {
+        method: "PUT",
+        body: {},
+      },
+    );
     expect(missing.status).toBe(400);
     expect((missing.body.error as { code: string }).code).toBe(
       "missing_required_field",
@@ -404,10 +424,9 @@ describe("vendors in an archive", () => {
       const response = await call(credential, "/export?format=archive");
       expect(response.status).toBe(200);
       const archive = new Uint8Array(await response.arrayBuffer());
-      return archiveLines<{ app_vendor?: { vendor: string; client_id: string } }>(
-        archive,
-        "instance",
-      )
+      return archiveLines<{
+        app_vendor?: { vendor: string; client_id: string };
+      }>(archive, "instance")
         .flatMap((line) => (line.app_vendor ? [line.app_vendor] : []))
         .filter((line) => line.vendor === "app.vendord");
     };
@@ -438,7 +457,11 @@ describe("vendors in an archive", () => {
     expect(restored.data.app_vendors_added).toBe(1);
     expect(restored.data.app_vendors_skipped).toBe(0);
     expect(await holder("app.vendore")).toBe(holderApp.app.clientId);
-    const item = await createItem(holderApp.token, "app.vendore.setting", "restored");
+    const item = await createItem(
+      holderApp.token,
+      "app.vendore.setting",
+      "restored",
+    );
     expect(await reads(holderApp.token, item)).toBe(true);
 
     const again = await local.restoreArchive(
@@ -473,7 +496,11 @@ describe("vendors in an archive", () => {
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(restored.data.types_registered).toBe(1);
     expect(await holder("app.vendorf")).toBe(maker.app.clientId);
-    const item = await createItem(maker.token, "app.vendorf.setting", "restored");
+    const item = await createItem(
+      maker.token,
+      "app.vendorf.setting",
+      "restored",
+    );
     expect(await reads(maker.token, item)).toBe(true);
   });
 });

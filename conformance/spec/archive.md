@@ -14,7 +14,7 @@ When a credential that may export sends `GET /export?format=archive`, the server
 
 ### `archive/archive-version`
 
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 1.
+When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 2.
 
 **Reason:** the version is the one marker of the archive's layout, and a restore reads every version up to its own build's and refuses a later one (`archive/restore-version`). A field or a line kind added within a version is optional to a reader of that version (`archive/archive-version-additions`): a restore skips a field it does not read and a line kind it does not know, and names the kind (`archive/restore-unknown-field`, `archive/restore-unknown-line-kind`). An archive with a new entry, line file or field that a restore must read is a new version, because an older build would skip what it does not know.
 
@@ -62,7 +62,7 @@ The server MUST name no entry of an archive with a colon, naming the `blobs/` en
 
 ### `archive/archive-manifest`
 
-The server MUST write into the manifest of an archive its `version`, its `format`, its `written_by`, a `created_at` instant, and in `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count` and `connector_agreement_count` the number of each kind of entry or line the archive holds.
+The server MUST write into the manifest of an archive its `version`, its `format`, its `written_by`, a `created_at` instant, and in `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` and `app_vendor_count` the number of each kind of entry or line the archive holds.
 
 **Reason:** `archive/archive-version`, `archive/archive-format`, `archive/archive-written-by` and `archive/id-in-archive` state the version, the format, the writing build and the instance's name in the manifest, and a restore checks every count against what it read (`archive/restore-line-counts`).
 
@@ -438,6 +438,34 @@ When the credential requesting `GET /export?format=archive` holds `connectors.ma
 
 **Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`.
 
+### `archive/archive-app-vendors`
+
+When a credential sends `GET /export?format=archive`, the server MUST write an `app_vendor` line in `instance.ndjson.gz` for each vendor an app holds whose types the credential reads, with its `vendor`, `client_id` and `claimed_at`, and count them in the manifest's `app_vendor_count`.
+
+**Tests:** `compliance/app-vendors.test.ts › carries each vendor binding to a credential that reads the vendor, and none to one that does not`.
+
+### `archive/restore-app-vendor`
+
+When `POST /restore` reads an `app_vendor` line for a vendor no app holds on the instance, the server MUST give the vendor to the `client_id` the line names and count it in `app_vendors_added`.
+
+**Tests:** `compliance/app-vendors.test.ts › restores a binding for a vendor no app holds, and skips one for a vendor an app holds`.
+
+### `archive/restore-app-vendor-held`
+
+When `POST /restore` reads an `app_vendor` line for a vendor an app holds on the instance, the server MUST leave the vendor with that app and count the line in `app_vendors_skipped`.
+
+**Reason:** a restore never takes an app's machinery from the app that holds it.
+
+**Tests:** `compliance/app-vendors.test.ts › restores a binding for a vendor no app holds, and skips one for a vendor an app holds`.
+
+### `archive/restore-vendor-from-types`
+
+When `POST /restore` leaves a vendor no app holds, and a type under it carries a `created_by` naming an app's grant or a key an app made on the instance, the server MUST give the vendor to that app, the app whose type was made first where there are several.
+
+**Reason:** an archive of version 1 carries no `app_vendor` line, so a restore gives each vendor to the app that made its first type, as an upgraded database does.
+
+**Tests:** `compliance/app-vendors.test.ts › restores a version 1 archive, giving each vendor no app holds to the app that made its first type`.
+
 ### `archive/restore-connector-state`
 
 When `POST /restore` reads a `connector_state` line, the server MUST store that state document only where the instance holds none for the source, and replace none it holds.
@@ -654,7 +682,7 @@ When a caller the operation admits sends `POST /restore` with an archive that `G
 
 ### `archive/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `secrets_to_set`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts, and the lists `enforcement_added` and `enforcement_skipped`, each naming the enforcement settings it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `secrets_to_set`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `app_vendors_added`, `app_vendors_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts, and the lists `enforcement_added` and `enforcement_skipped`, each naming the enforcement settings it counts.
 
 **Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
 
@@ -984,7 +1012,7 @@ When a restore reads an archive that lacks a field or a line kind added to the a
 
 ### `archive/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count` or `connector_agreement_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
+If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` or, in an archive of version 2, `app_vendor_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
 
 **Reason:** a later version is free to lay out its fields differently, so a manifest naming one is refused for its version (`archive/restore-version`) and not its shape.
 
