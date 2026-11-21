@@ -14,6 +14,7 @@ import type {
   QueuedWrite,
 } from "../../device/protocol.js";
 import { ownerOf } from "../../utils/backups.js";
+import { controlRequest } from "../../utils/control-request.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -70,6 +71,8 @@ interface World {
   client(): MarfaClient;
   /** An operator client of the server the proxy reaches now. */
   operator(): MarfaClient;
+  /** The private control socket of the server the proxy reaches now. */
+  socket(): string;
   /** The address of the server the proxy reaches now. */
   upstream(): string;
   /** The requests the device sent, as `METHOD /path`, oldest first. */
@@ -97,6 +100,7 @@ async function world(
   const original = await bootFreshServer(label, env);
   servers.push(original);
   let upstream = original.apiUrl;
+  let state = original.stateDir;
   let instead: Instead = () => undefined;
   let contract: string | null = null;
   const sent: string[] = [];
@@ -181,6 +185,9 @@ async function world(
       new MarfaClient({ baseUrl: upstream, apiKey: original.workingKey }),
     operator: () =>
       new MarfaClient({ baseUrl: upstream, apiKey: original.managementKey }),
+    socket: () =>
+      parseEnvFile(readFileSync(join(state, "env"), "utf8"))
+        .MARFA_CONTROL_SOCKET ?? "",
     upstream: () => upstream,
     async restore(image) {
       await original.stop();
@@ -191,6 +198,7 @@ async function world(
       ).MARFA_API_URL;
       if (!restored) throw new Error("the restored boot wrote no address");
       upstream = restored;
+      state = image;
     },
     answerInstead(answer) {
       instead = answer;
@@ -906,7 +914,146 @@ describe("a server restored behind work this device sent it", () => {
     },
     TIMEOUT,
   );
+
+  it(
+    "keeps an item made since the backup under a source its key claims, under that source",
+    async () => {
+      const w = await world("restored-claimed");
+      const own = await claim(w, "restored-claimed-folder");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const sourceId = `${randomUUID()}.md`;
+      const id = await keyed(
+        w,
+        "made under the claim",
+        "restored-claimed-folder",
+        sourceId,
+      );
+
+      await w.restore(image);
+      expect((await w.client().getItem(id)).status).toBe(404);
+      // The key's own source already holds the same `source_id`.
+      const clash = await w.client().createItem({
+        type: "core.note",
+        tier: "library",
+        properties: { title: "under the key's own source" },
+        source_id: sourceId,
+      });
+      expect(clash.ok, JSON.stringify(clash.error)).toBe(true);
+      expect(clash.data.item.source).toBe(own);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note"], "library"));
+      expect(await keptBlocked(w.device)).toEqual([["create_item", id]]);
+
+      value(await w.device.release({ reason: "server_restored" }));
+      const report = value(await w.device.drain());
+      expect(
+        report.verdicts.map((entry) => [entry.verdict, entry.reason ?? null]),
+        JSON.stringify(report),
+      ).toEqual([["accepted", null]]);
+      const back = await w.client().getItem(id);
+      expect(back.ok, JSON.stringify(back.error)).toBe(true);
+      expect(
+        [back.data.item.source, back.data.item.source_id],
+        "the kept create came back under the key's own source",
+      ).toEqual(["restored-claimed-folder", sourceId]);
+      expect(back.data.item.properties.title).toBe("made under the claim");
+      const left = await w.client().getItem(clash.data.item.id);
+      expect(left.ok && left.data.item.properties.title).toBe(
+        "under the key's own source",
+      );
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "keeps an item made since the backup under a source the restored key does not claim, blocked until it does",
+    async () => {
+      const w = await world("restored-unclaimed");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      // Claimed after the backup, so the restored server's key lacks it.
+      await claim(w, "restored-unclaimed-folder");
+      const id = await keyed(
+        w,
+        "made under a later claim",
+        "restored-unclaimed-folder",
+        `${randomUUID()}.md`,
+      );
+
+      await w.restore(image);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note"], "library"));
+      expect(await keptBlocked(w.device)).toEqual([["create_item", id]]);
+
+      value(await w.device.release({ reason: "server_restored" }));
+      const refused = value(await w.device.drain());
+      expect(
+        refused.verdicts.map((entry) => [entry.verdict, entry.reason]),
+        "a create the restored key may not send under its source was dropped or sent under another",
+      ).toEqual([["blocked", "credential_refused"]]);
+      expect(refused.unclaimed_sources).toEqual(["restored-unclaimed-folder"]);
+      expect((await w.client().getItem(id)).status).toBe(404);
+      expect(value(await w.device.get(id)).properties.title).toBe(
+        "made under a later claim",
+      );
+
+      await claim(w, "restored-unclaimed-folder");
+      value(await w.device.drain());
+      const back = await w.client().getItem(id);
+      expect(back.ok, JSON.stringify(back.error)).toBe(true);
+      expect(back.data.item.source).toBe("restored-unclaimed-folder");
+    },
+    TIMEOUT,
+  );
 });
+
+/**
+ * Makes a note on the device under `source` and `sourceId`, sends it, and
+ * answers the id the server gave it.
+ */
+async function keyed(
+  w: World,
+  title: string,
+  source: string,
+  sourceId: string,
+): Promise<string> {
+  value(
+    await w.device.create({
+      type: "core.note",
+      properties: { title },
+      source,
+      sourceId,
+    }),
+  );
+  expect((await sent(w.device)).answered).toBe(1);
+  const held = value(await w.device.list()).find(
+    (item) => item.source === source && item.source_id === sourceId,
+  );
+  expect(
+    held,
+    "the copy holds no item under the key it was made with",
+  ).toBeDefined();
+  const id = held?.id ?? "";
+  expect((await w.client().getItem(id)).status).toBe(200);
+  return id;
+}
+
+/**
+ * Gives the device's key a claim on `source` through local authority on the
+ * server the proxy reaches now, and answers the key's own source.
+ */
+async function claim(w: World, source: string): Promise<string> {
+  const current = await w.client().getCurrentKey();
+  expect(current.ok, JSON.stringify(current.error)).toBe(true);
+  const granted = await controlRequest(w.socket(), `/keys/${current.data.id}`, {
+    method: "PATCH",
+    body: { sources: [source] },
+  });
+  expect(granted.status, JSON.stringify(granted.body)).toBe(200);
+  expect(granted.body.sources).toEqual([source]);
+  return current.data.source ?? "";
+}
 
 type Operation = Record<string, unknown>;
 
@@ -1118,7 +1265,7 @@ describe("table rows a server restored behind lost", () => {
         "the later write went ahead of the kept one",
       ).toEqual([]);
 
-      value(await w.device.withdraw(kept?.id ?? ""));
+      value(await w.device.withdraw(kept?.id));
       value(await w.device.drain());
       expect(
         (await queue(w.device)).find((write) => write.id === later.id),
