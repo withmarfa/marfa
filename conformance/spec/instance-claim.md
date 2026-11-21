@@ -108,7 +108,7 @@ When valid setup proof claims an unclaimed instance with `email` sent as `null`,
 
 ### `instance-claim/owner-email-invalid`
 
-If a claim through `POST /owner`, `POST /setup/claim` or the private control socket sends `email` as an empty string or as a value that is neither a string nor `null`, then the server MUST refuse it with `400 validation_error` and `email` as `details.errors[0].path`, without consuming the proof.
+If a JSON claim through `POST /owner`, `POST /setup/claim` or the private control socket sends `email` as an empty string or as a value that is neither a string nor `null`, then the server MUST refuse it with `400 validation_error` and `email` as `details.errors[0].path`, without consuming the proof.
 
 **Reason:** An empty string is no address, so it is refused as `PATCH /profile` refuses it, and the setup page's form is the one place a blank field means no email (`instance-claim/owner-email-form-blank`).
 
