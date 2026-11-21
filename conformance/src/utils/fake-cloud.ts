@@ -286,7 +286,7 @@ export async function fakeCloud(
     }
     link.unlinked = true;
     link.canceled = true;
-    json(response, 200, { canceled: true });
+    json(response, 200, { cancelled: true });
   }
 
   function start(body: any, response: ServerResponse): void {
