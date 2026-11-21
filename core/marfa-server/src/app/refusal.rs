@@ -81,6 +81,7 @@ codes! {
     NotFound = "not_found", 404;
     OwnerNotFound = "owner_not_found", 404;
     PasskeyNotFound = "passkey_not_found", 404;
+    PluginNotFound = "plugin_not_found", 404;
     RowNotFound = "row_not_found", 404;
     SignInNotFound = "sign_in_not_found", 404;
     SourceNotFound = "source_not_found", 404;
@@ -106,6 +107,10 @@ codes! {
     LinkTaken = "link_taken", 409;
     NoBackupDestination = "no_backup_destination", 409;
     OwnerExists = "owner_exists", 409;
+    PluginChildConflict = "plugin_child_conflict", 409;
+    PluginNarrows = "plugin_narrows", 409;
+    PluginNeedsNewerServer = "plugin_needs_newer_server", 409;
+    PluginVersionOlder = "plugin_version_older", 409;
     ReachChanged = "reach_changed", 409;
     SignInAddressChangeUnconfirmed = "sign_in_address_change_unconfirmed", 409;
     SignInAddressCheckFailed = "sign_in_address_check_failed", 409;

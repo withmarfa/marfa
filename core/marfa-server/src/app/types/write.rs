@@ -12,7 +12,7 @@ use super::{
 };
 use crate::app::App;
 use crate::app::access::{Axis, Caller, Door, Level, Permission, SchemaKind};
-use crate::app::catalog::{self, Catalog, Provenance, Snapshot};
+use crate::app::catalog::{self, Catalog, Origin, Provenance, Snapshot};
 use crate::app::instance;
 use crate::app::items;
 use crate::app::oauth::scope::Registries;
@@ -27,7 +27,7 @@ fn platform_locked(catalog: &Catalog, id: &str, what: &str) -> Result<()> {
     let platform = catalog
         .provenance
         .get(id)
-        .is_some_and(|held| held.origin == "platform");
+        .is_some_and(|held| held.origin == Origin::Platform);
     if Catalog::ships(id) || platform {
         return Err(Refusal::new(
             Code::CoreTypeImmutable,
@@ -108,7 +108,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             let creator = caller.actor();
             unit.tx().execute(
                 "INSERT INTO types (id, parent, origin, created_by, definition, created_at, updated_at) \
-                 VALUES (?1, ?2, 'user', ?3, ?4, ?5, ?5)",
+                 VALUES (?1, ?2, 'registered', ?3, ?4, ?5, ?5)",
                 params![
                     id,
                     text_of(&schema, "parent"),
@@ -127,7 +127,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
             items::reindex_changed(unit.tx(), &catalog.rules, &after.rules)?;
             unit.audit("type", &id, None)?;
             let held = Provenance {
-                origin: "user",
+                origin: Origin::Registered,
                 created_by: Some(creator),
             };
             Ok(presented(
@@ -546,12 +546,13 @@ async fn change_icon(
 #[derive(Clone)]
 pub struct Archived {
     pub definition: Value,
+    pub origin: Origin,
     pub created_by: Option<Value>,
 }
 
 /// What a restore does with an archive's types, judged on the catalog its write holds.
 pub struct Restoring {
-    fresh: Vec<(String, Obj, Option<Value>)>,
+    fresh: Vec<(String, Obj, Origin, Option<Value>)>,
     pub skipped: usize,
     pub conflicts: Vec<String>,
 }
@@ -562,7 +563,7 @@ impl Restoring {
     }
 
     pub fn require_guidance(&self, caller: &Caller) -> Result<()> {
-        self.fresh.iter().try_for_each(|(_, schema, _)| {
+        self.fresh.iter().try_for_each(|(_, schema, _, _)| {
             caller.require_guidance(None, text_of(schema, "guidance"))
         })
     }
@@ -571,7 +572,7 @@ impl Restoring {
     pub fn rows(&self) -> Vec<Obj> {
         self.fresh
             .iter()
-            .map(|(_, schema, _)| schema.clone())
+            .map(|(_, schema, _, _)| schema.clone())
             .collect()
     }
 }
@@ -632,7 +633,9 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restori
         match catalog.types.get(&id) {
             Some(held) if catalog.holds(&id) && *held == schema => plan.skipped += 1,
             Some(_) if catalog.holds(&id) => plan.conflicts.push(id),
-            _ => plan.fresh.push((id, schema, line.created_by.clone())),
+            _ => plan
+                .fresh
+                .push((id, schema, line.origin.clone(), line.created_by.clone())),
         }
     }
     Ok(plan)
@@ -650,14 +653,18 @@ pub fn write_restored(
     }
     let tx = unit.tx();
     let mut ids = Vec::new();
-    for (id, schema, created_by) in plan.fresh {
+    for (id, schema, origin, created_by) in plan.fresh {
         let parent = text_of(&schema, "parent").map(str::to_string);
+        let (plugin, version) = origin.columns();
         tx.execute(
-            "INSERT INTO types (id, parent, origin, created_by, definition, created_at, updated_at) \
-             VALUES (?1, ?2, 'user', ?3, ?4, ?5, ?5)",
+            "INSERT INTO types (id, parent, origin, plugin_name, plugin_version, created_by, \
+             definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
             params![
                 id,
                 parent,
+                origin.word(),
+                plugin,
+                version,
                 created_by.map(|by| by.to_string()),
                 Value::Object(schema).to_string(),
                 unit.at,
@@ -700,4 +707,206 @@ pub fn restore_icons(
         catalog::raise(unit.tx())?;
     }
     Ok((added, held))
+}
+
+/// What installing a plugin does with its types, judged on the catalog its write holds.
+pub struct InstallPlan {
+    fresh: Vec<Obj>,
+    replaced: Vec<Obj>,
+}
+
+impl InstallPlan {
+    pub fn ids(&self) -> Vec<&str> {
+        self.fresh
+            .iter()
+            .chain(&self.replaced)
+            .filter_map(|schema| text_of(schema, "id"))
+            .collect()
+    }
+
+    /// The catalog's types with the plan's in place.
+    pub fn next_registry(&self, catalog: &Catalog) -> Registry {
+        self.fresh
+            .iter()
+            .chain(&self.replaced)
+            .fold(catalog.types.clone(), |held, schema| held.with(schema.clone()))
+    }
+}
+
+fn narrows_refusal(changes: Vec<Value>) -> Refusal {
+    let named: Vec<String> = changes
+        .iter()
+        .filter_map(|change| {
+            Some(format!(
+                "{} {}",
+                change.get("type")?.as_str()?,
+                change.get("path")?.as_str()?
+            ))
+        })
+        .collect();
+    Refusal::new(
+        Code::PluginNarrows,
+        format!(
+            "A newer version of a plugin may only add to its types, and this one removes or narrows: {}.",
+            named.join(", ")
+        ),
+    )
+    .with_detail("changes", changes)
+}
+
+/// Judges every type a plugin's bundle holds together, so types that name each other install in
+/// any order: each new one as `POST /types` takes it, and each the plugin already installed as a
+/// replacement that only adds.
+pub fn plan_install(
+    caller: &Caller,
+    catalog: &Catalog,
+    name: &str,
+    definitions: &[Obj],
+) -> Result<InstallPlan> {
+    let ids: Vec<&str> = definitions
+        .iter()
+        .filter_map(|definition| text_of(definition, "id"))
+        .collect();
+    for id in &ids {
+        check_id(id, "types.id")?;
+        if catalog.holds(id)
+            && catalog.provenance.get(*id).and_then(|held| held.origin.plugin()) != Some(name)
+        {
+            return Err(Refusal::new(
+                Code::TypeExists,
+                format!("Type \"{id}\" already exists, and this plugin did not install it."),
+            )
+            .with_detail("type_id", *id));
+        }
+    }
+    let mut changes: Vec<Value> = catalog
+        .provenance
+        .iter()
+        .filter(|(id, held)| held.origin.plugin() == Some(name) && !ids.contains(&id.as_str()))
+        .map(|(id, _)| {
+            json!({
+                "type": id,
+                "path": "",
+                "message": format!("The plugin no longer holds {id}, which a newer version cannot do"),
+            })
+        })
+        .collect();
+    let registry = with_set_stored(&catalog.types, definitions);
+    for definition in definitions {
+        let id = text_of(definition, "id").unwrap_or_default();
+        if let Some(parent) = text_of(definition, "parent") {
+            if let Some(fault) = parent_chain_fault(&registry, id, parent, 0) {
+                return Err(Refusal::validation(fault).with_detail("type_id", id));
+            }
+            let outside = !ids.contains(&parent)
+                && !Catalog::ships(parent)
+                && parent.split('.').next() != Some("common");
+            if outside {
+                caller.require_type(parent, Level::Write)?;
+            }
+        }
+    }
+    let mut plan = InstallPlan {
+        fresh: Vec::new(),
+        replaced: Vec::new(),
+    };
+    for definition in definitions {
+        let id = text_of(definition, "id").unwrap_or_default();
+        let input = Value::Object(definition.clone());
+        let stored = catalog.types.get(id).filter(|_| catalog.holds(id));
+        let judged = match stored {
+            Some(held) => validate_replacing_type(&input, &registry, held),
+            None => validate_type(&input, &registry),
+        };
+        let schema = labelled(
+            judged.map_err(|issues| schema_refusal(issues).with_detail("type_id", id))?,
+        );
+        match stored {
+            Some(held) => {
+                changes.extend(marfa_rules::plugin::narrowings(held, &schema).into_iter().map(
+                    |narrowing| {
+                        json!({ "type": id, "path": narrowing.path, "message": narrowing.message })
+                    },
+                ));
+                plan.replaced.push(schema);
+            }
+            None => plan.fresh.push(schema),
+        }
+    }
+    if !changes.is_empty() {
+        changes.sort_by(|a, b| {
+            (a["type"].as_str(), a["path"].as_str()).cmp(&(b["type"].as_str(), b["path"].as_str()))
+        });
+        return Err(narrows_refusal(changes));
+    }
+    Ok(plan)
+}
+
+/// Writes a plan's types with the plugin's provenance, and brings their items up to them.
+pub fn write_install(
+    unit: &crate::app::unit::Unit<'_, '_>,
+    cache: &arc_swap::ArcSwap<Catalog>,
+    before: &Catalog,
+    plan: InstallPlan,
+    origin: &Origin,
+) -> Result<()> {
+    let tx = unit.tx();
+    let (plugin, version) = origin.columns();
+    let creator = unit.caller.actor().to_string();
+    let mut fresh = Vec::new();
+    for schema in &plan.fresh {
+        let id = text_of(schema, "id").unwrap_or_default().to_string();
+        tx.execute(
+            "INSERT INTO types (id, parent, origin, plugin_name, plugin_version, created_by, \
+             definition, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            params![
+                id,
+                text_of(schema, "parent"),
+                origin.word(),
+                plugin,
+                version,
+                creator,
+                Value::Object(schema.clone()).to_string(),
+                unit.at,
+            ],
+        )?;
+        unit.audit_also("type.register", "type", &id, None)?;
+        fresh.push(id);
+    }
+    let mut family = fresh.clone();
+    for schema in &plan.replaced {
+        let id = text_of(schema, "id").unwrap_or_default().to_string();
+        tx.execute(
+            "UPDATE types SET parent = ?2, definition = ?3, origin = ?4, plugin_name = ?5, \
+             plugin_version = ?6, updated_at = ?7 WHERE id = ?1",
+            params![
+                id,
+                text_of(schema, "parent"),
+                Value::Object(schema.clone()).to_string(),
+                origin.word(),
+                plugin,
+                version,
+                unit.at,
+            ],
+        )?;
+        unit.audit_also("type.replace", "type", &id, None)?;
+        for held in with_subtypes(tx, &id)? {
+            if !family.contains(&held) {
+                family.push(held);
+            }
+        }
+    }
+    if family.is_empty() {
+        return Ok(());
+    }
+    catalog::raise(tx)?;
+    instance::raise_reach(tx)?;
+    let after = catalog::current(cache, tx, Snapshot::Pending)?;
+    items::rekey_changed(tx, &before.rules, &after.rules, &family)?;
+    tables::rekey_types(tx, before, &after, &family, &unit.at)?;
+    items::relink_changed(tx, before, &after, &family)?;
+    for id in &fresh {
+        items::drop_tombstones(tx, id)?;
+    }
+    items::reindex_changed(tx, &before.rules, &after.rules)
 }

@@ -163,7 +163,7 @@ mod tests {
         let compacted = compact(&json!({
             "id": "user.recipe",
             "label": "Recipe",
-            "provenance": { "origin": "user" },
+            "provenance": { "origin": "registered" },
             "display_hints": { "title_field": "title", "icon": "x" },
             "fields": {
                 "title": { "type": "string", "required": true, "label": "Title" },

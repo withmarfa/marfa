@@ -29,13 +29,13 @@ use super::items::{self, Archived, Reader, reading, reading_background};
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
 use super::tables::archive::{ArchivedRow, CarriedTable, Rows};
-use super::{backups, connectors, edges, provenance, sources, stored, tables};
+use super::{backups, connectors, edges, plugins, provenance, sources, stored, tables};
 use crate::db::io_refusal;
 use crate::settings::registry;
 pub use spool::Sealed;
 use spool::{Lines, Spooled};
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 /// What a manifest names itself, so a reader knows the archive for one before reading its version.
 pub const FORMAT: &str = "marfa-archive";
 /// The most a manifest, or one line of a line file, may hold.
@@ -798,7 +798,7 @@ fn select<W: RowSink>(
         if let Some(provenance) = catalog
             .provenance
             .get(id)
-            .filter(|held| held.origin == "user")
+            .filter(|held| held.origin != crate::app::catalog::Origin::Platform)
             && let Some(definition) = catalog.types.get(id)
         {
             types.push((
@@ -823,6 +823,11 @@ fn select<W: RowSink>(
         .map(|definition| Ok((print(&json!({ "edge_type": definition }))?, needing(None))))
         .collect::<Result<_>>()?;
     count("edge_type_count", &mut instance, edge_types)?;
+    let plugin_lines = plugins::archive_lines(read.tx)?
+        .iter()
+        .map(|line| Ok((print(line)?, needing(None))))
+        .collect::<Result<_>>()?;
+    count("plugin_count", &mut instance, plugin_lines)?;
     count("type_icon_count", &mut instance, icons)?;
     let direct = matches!(caller, Caller::Server);
     let named = sources::named(read.tx)?

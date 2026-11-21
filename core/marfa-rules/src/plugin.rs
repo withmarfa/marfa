@@ -821,6 +821,67 @@ pub fn narrowings(stored: &Obj, next: &Obj) -> Vec<Narrowing> {
     out
 }
 
+/// A type outside the bundle, below one the bundle changes, that would then declare a field
+/// or a status word in another shape than the bundle's type gives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChildClash {
+    pub type_id: String,
+    pub field: String,
+    pub attribute: String,
+    pub inherited_from: String,
+    pub inherited: String,
+    pub declared: String,
+}
+
+/// Each clash `next`, the catalog with the bundle's types in it, holds below the types in `changed`.
+pub fn child_clashes(next: &Registry, changed: &[&str]) -> Vec<ChildClash> {
+    let mut clashes = Vec::new();
+    let mut seen = BTreeSet::new();
+    for id in changed {
+        for child in next.descendants(id) {
+            let Some(child_id) = child.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if changed.contains(&child_id) || !seen.insert(child_id.to_string()) {
+                continue;
+            }
+            for conflict in crate::schema::stored_shape_conflicts(child, next) {
+                clashes.push(ChildClash {
+                    type_id: child_id.into(),
+                    field: conflict.field,
+                    attribute: conflict.attribute.to_string(),
+                    inherited_from: conflict.owner,
+                    inherited: conflict.inherited,
+                    declared: conflict.declared,
+                });
+            }
+            let Some(parent) = child.get("parent").and_then(Value::as_str) else {
+                continue;
+            };
+            let ancestry = next.ancestry(parent);
+            for (field, definition) in objects(child, "fields") {
+                let Some(held) = ancestry.get(&field) else {
+                    continue;
+                };
+                let inherited = words(&Value::Object(held.definition.clone()), "status_values");
+                for word in words(&definition, "status_values") {
+                    if inherited.contains(&word) {
+                        clashes.push(ChildClash {
+                            type_id: child_id.into(),
+                            field: format!("{field}.status_values"),
+                            attribute: "status_values".into(),
+                            inherited_from: held.owner.clone(),
+                            inherited: word.clone(),
+                            declared: word,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    clashes
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
