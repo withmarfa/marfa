@@ -570,7 +570,8 @@ pub(crate) fn readable_tags(read: &Reader<'_, '_>) -> Result<Vec<(String, i64)>>
     let rules = &read.catalog.rules;
     let mut counts: BTreeMap<String, i64> = BTreeMap::new();
     for (tag, type_id, source, count) in rows::active_tags(read.tx)? {
-        if read.caller.may_read_type(&type_id)
+        if !super::is_hidden(&type_id)
+            && read.caller.may_read_type(&type_id)
             && read.caller.levers()?.lists(rules, &type_id, &source)
         {
             *counts.entry(tag).or_default() += count;
@@ -913,7 +914,7 @@ pub async fn purge_preview(app: &App, caller: &Caller, choosing: Choosing) -> Re
         let levers = read.caller.levers()?;
         let rules = &read.catalog.rules;
         let shows = |row: &Item| {
-            !super::is_hidden(&row.type_id)
+            !super::is_system(&row.type_id)
                 && read.caller.may_read_type(&row.type_id)
                 && levers.lists(rules, &row.type_id, &row.source)
         };

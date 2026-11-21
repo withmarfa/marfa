@@ -622,9 +622,9 @@ The server MUST NOT include in the `GET /overview` answer a type the credential 
 
 ### `instance/overview-tags`
 
-When `GET /overview` is answered `200`, the server MUST list in `tags` the tags that active items the credential may read carry, the most used first, each with its `count`.
+When `GET /overview` is answered `200`, the server MUST list in `tags` the tags that active items of a type that is not hidden (`items/hidden-types`) and that the credential may read carry, the most used first, each with its `count`.
 
-**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
+**Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`, `compliance/hidden-types.test.ts › counts only visible items in the tag counts and the overview, and lists no tag only hidden items carry`.
 
 ### `instance/overview-edge-types`
 

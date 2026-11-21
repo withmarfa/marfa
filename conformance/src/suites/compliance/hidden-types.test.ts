@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { MarfaItem } from "../../client/types.js";
+import { localFetch } from "../../utils/control-request.js";
 import {
   approvedApp,
   bootFreshServer,
@@ -52,6 +53,7 @@ beforeAll(async () => {
     const registered = await owner.registerType({
       id,
       fields: { name: { type: "string" } },
+      display_hints: { title_field: "name" },
     });
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
   }
@@ -166,9 +168,25 @@ describe("hidden app types", () => {
     const asked = await owner.bulkGet(ids, ["hidden"]);
     expect(idsOf(asked.data.data).sort()).toEqual([...ids].sort());
 
+    const looked = await owner.lookupItems({
+      type: SHOWN,
+      ids: [shownIds[0]!],
+    });
+    expect(looked.status, JSON.stringify(looked.error)).toBe(200);
+    expect(idsOf(looked.data.data), "the witness is looked up").toEqual([
+      shownIds[0],
+    ]);
+    const hidden = await owner.lookupItems({
+      type: HIDDEN,
+      ids: [hiddenIds[0]!],
+    });
+    expect(hidden.status, JSON.stringify(hidden.error)).toBe(200);
+    expect(hidden.data.data).toEqual([]);
+
     const titled = await owner.findItemsByTitle([`${WORD} library`]);
     expect(titled.status, JSON.stringify(titled.error)).toBe(200);
     const named = titled.data.data.flatMap((entry) => idsOf(entry.items));
+    expect(named, "the witness is titled").toContain(shownIds[0]);
     expect(named).not.toContain(hiddenIds[0]);
   });
 
@@ -210,5 +228,151 @@ describe("hidden app types", () => {
     expect(changed.data.item.properties.name).toBe("changed");
     const gone = await app.deleteItem(id);
     expect(gone.status, JSON.stringify(gone.error)).toBe(200);
+  });
+
+  it("lists an app item in the bin, and restores and purges it, as it does any item the type map reaches", async () => {
+    const made: string[] = [];
+    for (const [as, type] of [
+      [app, HIDDEN],
+      [owner, SHOWN],
+    ] as const) {
+      const id = await write(as, type, "library");
+      expect((await as.deleteItem(id)).status).toBe(200);
+      made.push(id);
+    }
+    const [hiddenId, shownId] = made as [string, string];
+    const owned = (path: string, init: RequestInit = {}) =>
+      localFetch(server.controlSocket, `${server.apiUrl}${path}`, init);
+
+    const listed = await owned("/trash?limit=100");
+    expect(listed.status).toBe(200);
+    const page = (await listed.json()) as {
+      data: { id: string; version: number; eligible_for_deletion_at: string }[];
+    };
+    const row = (id: string) => page.data.find((entry) => entry.id === id);
+    expect(row(shownId), "the witness is in the bin").toBeDefined();
+    expect(row(hiddenId), "the app item is in the bin").toBeDefined();
+    expect(row(hiddenId)?.eligible_for_deletion_at).toBeTruthy();
+
+    const restored = await owned(
+      `/items/${hiddenId}/restore?version=${String(row(hiddenId)?.version)}`,
+      { method: "POST" },
+    );
+    expect(restored.status).toBe(200);
+    expect(
+      (await owner.rawRequest(`/items?type=${HIDDEN}&tier=all`)).status,
+    ).toBe(200);
+    expect((await app.getItem(hiddenId)).data.item.state).toBe("active");
+
+    expect((await app.deleteItem(hiddenId)).status).toBe(200);
+    const purged = await owned(
+      `/items/${hiddenId}/purge?version=${String(row(hiddenId)?.version)}`,
+      {
+        method: "POST",
+      },
+    );
+    expect(purged.status).toBe(200);
+    expect((await app.getItem(hiddenId)).status).toBe(404);
+  });
+
+  it("counts only visible items in the tag counts and the overview, and lists no tag only hidden items carry", async () => {
+    const shared = "hiddentag-shared";
+    const only = "hiddentag-only";
+    for (const [as, type, tags] of [
+      [owner, SHOWN, [shared]],
+      [app, HIDDEN, [shared, only]],
+      [app, HIDDEN, [shared, only]],
+    ] as const) {
+      const made = await as.createItem({
+        type,
+        properties: { name: "tagged" },
+        tags: [...tags],
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+    }
+    const tags = await owner.listTags();
+    expect(tags.status, JSON.stringify(tags.error)).toBe(200);
+    const counted = new Map(tags.data.data.map((row) => [row.tag, row.count]));
+    expect(counted.get(shared), "the visible item's tag is counted").toBe(1);
+    expect(counted.has(only)).toBe(false);
+
+    const overview = await owner.rawRequest<{
+      tags?: { tag: string; count: number }[];
+    }>("/overview");
+    expect(overview.status, JSON.stringify(overview.error)).toBe(200);
+    const overviewed = new Map(
+      (overview.data.tags ?? []).map((row) => [row.tag, row.count]),
+    );
+    expect(overviewed.get(shared)).toBe(1);
+    expect(overviewed.has(only)).toBe(false);
+  });
+
+  it("opens a type filter to the hidden type it names and no other, though a visible type it names has that other as a subtype", async () => {
+    const parent = "user.hidden_probe";
+    const child = "app.other.setting";
+    for (const [id, extra] of [
+      [parent, {}],
+      [child, { parent }],
+    ] as const) {
+      const registered = await owner.registerType({
+        id,
+        fields: { name: { type: "string" } },
+        ...extra,
+      });
+      expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    }
+    const probe = await write(owner, parent, "library");
+    const nested = await write(owner, child, "library");
+
+    const listed = async (type: string, more = "") => {
+      const page = await owner.rawRequest<{ data: MarfaItem[] }>(
+        `/items?tier=all&limit=200&type=${type}${more}`,
+      );
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      return idsOf(page.data.data);
+    };
+    expect(await listed(child), "the hidden type, named").toContain(nested);
+    expect(await listed(`${parent}&include=hidden`)).toEqual(
+      expect.arrayContaining([probe, nested]),
+    );
+    const byParent = await listed(parent);
+    expect(byParent, "the visible parent, named").toContain(probe);
+    expect(byParent).not.toContain(nested);
+    const beside = await listed(`${parent},${HIDDEN}`);
+    expect(beside).toContain(probe);
+    expect(beside, "the hidden type named beside it").toEqual(
+      expect.arrayContaining(hiddenIds),
+    );
+    expect(beside, "the other hidden type, not named").not.toContain(nested);
+
+    const counts = await owner.rawRequest<Record<string, number>>(
+      `/items/stats?by=type&tier=all&type=${parent},${HIDDEN}`,
+    );
+    expect(counts.status, JSON.stringify(counts.error)).toBe(200);
+    expect(counts.data[parent]).toBe(1);
+    expect(counts.data[HIDDEN]).toBeGreaterThanOrEqual(2);
+    expect(counts.data).not.toHaveProperty(child);
+
+    const searched = await owner.rawRequest<{ data: { item: MarfaItem }[] }>(
+      `/search?q=${WORD}&tier=all&type=${parent},${HIDDEN}`,
+    );
+    expect(searched.status, JSON.stringify(searched.error)).toBe(200);
+    expect(searched.data.data.map((hit) => hit.item.id)).not.toContain(nested);
+  });
+
+  it("answers a search that names a hidden type with the items of that type, as a listing does", async () => {
+    const found = async (more: string) => {
+      const page = await owner.rawRequest<{ data: { item: MarfaItem }[] }>(
+        `/search?q=${WORD}&tier=all${more}`,
+      );
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      return page.data.data.map((hit) => hit.item.id);
+    };
+    const plain = await found("");
+    expect(plain, "the witness is found").toContain(shownIds[0]);
+    for (const id of hiddenIds) expect(plain).not.toContain(id);
+    const named = await found(`&type=${HIDDEN}`);
+    for (const id of hiddenIds) expect(named).toContain(id);
+    for (const id of shownIds) expect(named).not.toContain(id);
   });
 });

@@ -660,9 +660,17 @@ If any key the API can mint writes a `system.*` type through an item operation, 
 
 The server MUST leave each item of a hidden type, a type under the root `system` or `app`, out of every operation that lists, searches, counts or reads items in bulk, except where the request names `include=hidden` or the hidden type.
 
-**Reason:** a `system.*` item is the server's own record and an `app.*` item is an app's own machinery, so neither belongs among the items a person reads. Only a request that asks for hidden items, or names a hidden type, returns them. A `system.*` item is also written only by the server (`items/system-types`), which an `app.*` item is not: an app writes its own through the item operations.
+**Reason:** a `system.*` item is the server's own record and an `app.*` item is an app's own machinery, so neither belongs among the items a person reads. Only a request that asks for hidden items, or names a hidden type, returns them, and a type named opens only the items of that hidden type and its hidden subtypes (`search-and-filters/type-hidden-exact`). A `system.*` item is also written only by the server (`items/system-types`), which an `app.*` item is not: an app writes its own through the item operations. An export and a backup carry every item, hidden ones included, and the bin is for recovery (`items/hidden-types-bin`).
 
-**Tests:** `compliance/hidden-types.test.ts › leaves an app item out of a listing, in either tier, unless the listing asks for hidden items`, `› leaves an app item out of a search unless the search asks for hidden items`, `› leaves an app item out of the counts unless they ask for hidden items`, `› leaves an app item out of a view, and its type out of the overview`, `› leaves an app item out of a bulk read, a lookup and a title search unless the read asks for hidden items`, `› still lets the app write, read and change its own hidden item through the item doors`, `device/hidden-types-live.test.ts › holds no app item in a slice of every type, by hydration or by event, and holds a user item the same way`.
+**Tests:** `compliance/hidden-types.test.ts › leaves an app item out of a listing, in either tier, unless the listing asks for hidden items`, `› leaves an app item out of a search unless the search asks for hidden items`, `› leaves an app item out of the counts unless they ask for hidden items`, `› leaves an app item out of a view, and its type out of the overview`, `› leaves an app item out of a bulk read, a lookup and a title search unless the read asks for hidden items`, `› still lets the app write, read and change its own hidden item through the item doors`, `› opens a type filter to the hidden type it names and no other, though a visible type it names has that other as a subtype`, `device/hidden-types-live.test.ts › holds no app item in a slice of every type, by hydration or by event, and holds a user item the same way`.
+
+### `items/hidden-types-bin`
+
+When the owner lists the bin, restores an item from it or purges one, the server MUST treat an `app.*` item in the bin as it treats an item of any other type the caller's type map reaches.
+
+**Reason:** the bin is how the owner recovers what was deleted, and an item an app deleted is recoverable the same way, with its deletion date. Only a `system.*` item, which the server revokes and never bins, is outside it.
+
+**Tests:** `compliance/hidden-types.test.ts › lists an app item in the bin, and restores and purges it, as it does any item the type map reaches`.
 
 ### `items/get`
 
@@ -2304,9 +2312,9 @@ The server MUST hold `favorite` as an ordinary tag, with no field of its own.
 
 ### `items/tag-counts`
 
-When a key sends `GET /tags`, the server MUST answer each tag on an active item the key may read with the number of such items carrying it, by count descending and then by tag ascending.
+When a key sends `GET /tags`, the server MUST answer each tag on an active item of a type that is not hidden (`items/hidden-types`) and that the key may read with the number of such items carrying it, by count descending and then by tag ascending.
 
-**Tests:** `compliance/metadata-routes.test.ts › counts distinct tags across the dataset`, `› keeps each tag once, whichever operation writes it`.
+**Tests:** `compliance/metadata-routes.test.ts › counts distinct tags across the dataset`, `› keeps each tag once, whichever operation writes it`, `compliance/hidden-types.test.ts › counts only visible items in the tag counts and the overview, and lists no tag only hidden items carry`.
 
 ### `items/tag-updated-at`
 
@@ -2880,7 +2888,7 @@ If an owner trash action names an item that no item holds, then the server MUST 
 
 ### `items/owner-trash-hidden`
 
-If an owner trash action names a hidden item, or an item the instance's source filter does not admit, then the server MUST answer `404 item_not_found`.
+If an owner trash action names a `system.*` item, or an item the instance's source filter does not admit, then the server MUST answer `404 item_not_found`.
 
 **Tests:** `compliance/owner-trash.test.ts › answers an owner trash action on a system item, or one the source filter hides, with 404 item_not_found and leaves it`.
 
