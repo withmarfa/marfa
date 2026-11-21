@@ -134,7 +134,7 @@ When an unbound document names an ID absent from the copy, a device MUST replace
 
 ### `folder-files/id-system-ignored`
 
-When an unbound document names a `system.*` item as its ID, a device MUST create a separate document item.
+When an unbound document names a hidden item (`items/hidden-types`) as its ID, a device MUST create a separate document item.
 
 **Tests:** `device/folders-identity.test.ts › reads no id from a file naming the folder's own settings`.
 

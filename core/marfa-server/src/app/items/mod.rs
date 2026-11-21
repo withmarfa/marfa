@@ -512,6 +512,8 @@ pub(crate) fn is_system(type_id: &str) -> bool {
     type_id.split('.').next() == Some("system")
 }
 
+pub(crate) use marfa_rules::folder::is_hidden;
+
 fn title_key(rules: &Rules, type_id: &str, properties: &Map<String, Value>) -> Option<String> {
     if is_system(type_id) {
         return None;

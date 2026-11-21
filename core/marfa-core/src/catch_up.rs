@@ -761,6 +761,25 @@ pub(crate) fn replay_build(
     }
 }
 
+/// A copy an earlier release made can hold hidden rows its slice does not take, which no event
+/// will correct. Each catch-up lets go of those, and writes nothing where the copy holds none.
+fn let_go_hidden(
+    core: &Core,
+    context: &Context,
+    stop: &AtomicBool,
+    catalog: &Catalog,
+) -> Result<()> {
+    if store::hidden_item_ids(&*core.conn()?)?.is_empty() {
+        return Ok(());
+    }
+    crate::busy::transaction(core, context, stop, |tx| {
+        for id in store::hidden_item_ids(tx)? {
+            store::let_go_unless_kept(tx, catalog, &id)?;
+        }
+        Ok(())
+    })
+}
+
 fn replay(
     core: &Core,
     http: &Http,
@@ -775,6 +794,7 @@ fn replay(
     let catalog = ask_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
     let mut catalog = adopt(core, context, &catalog, catalog_changed)?;
+    let_go_hidden(core, context, stop, &catalog)?;
     let mut opening = crate::restored::Opening::read(&*core.conn()?, &cursor, !context.building())?;
     let mut frames = open(http, &opening.from(), STREAM_HARD_BOUND)?;
     let mut opened_under = http.authorization();
@@ -5344,6 +5364,155 @@ mod tests {
         )
     }
 
+    /// A copy of every type takes no `app.*` row by event, and takes the note
+    /// beside it.
+    #[test]
+    fn a_copy_of_every_type_takes_no_app_row() {
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![types(&[(NOTE, None), ("app.acme.setting", None)])],
+        );
+        let events = || {
+            stream(
+                vec![
+                    event(
+                        "11",
+                        "item.created",
+                        &item_payload("item.created", "setting", "app.acme.setting", 1),
+                    ),
+                    event(
+                        "12",
+                        "item.created",
+                        &item_payload("item.created", "note", NOTE, 1),
+                    ),
+                    stream_live(Some("12")),
+                ],
+                Then::End,
+            )
+        };
+        server.on("/events", vec![events(), events()]);
+        let (_dir, core) = hydrated(&server);
+        store::meta_set(&core.conn().unwrap(), store::META_SLICE_TYPES, "[\"*\"]").unwrap();
+
+        core.catch_up().unwrap();
+
+        assert!(
+            core.get("note").unwrap().is_some(),
+            "the witness was dropped"
+        );
+        assert_eq!(
+            core.get("setting").unwrap(),
+            None,
+            "a slice of every type took an app row"
+        );
+        assert_eq!(stored_cursor(&core).as_deref(), Some("12"));
+    }
+
+    /// A copy naming a visible type takes no hidden subtype of it by event.
+    #[test]
+    fn a_copy_naming_a_visible_type_takes_no_hidden_subtype_of_it() {
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![types(&[(NOTE, None), ("app.other.setting", Some(NOTE))])],
+        );
+        let events = || {
+            stream(
+                vec![
+                    event(
+                        "11",
+                        "item.created",
+                        &item_payload("item.created", "setting", "app.other.setting", 1),
+                    ),
+                    event(
+                        "12",
+                        "item.created",
+                        &item_payload("item.created", "note", NOTE, 1),
+                    ),
+                    stream_live(Some("12")),
+                ],
+                Then::End,
+            )
+        };
+        server.on("/events", vec![events(), events()]);
+        let (_dir, core) = hydrated(&server);
+
+        core.catch_up().unwrap();
+
+        assert!(
+            core.get("note").unwrap().is_some(),
+            "the witness was dropped"
+        );
+        assert_eq!(
+            core.get("setting").unwrap(),
+            None,
+            "a copy naming a visible type took its hidden subtype"
+        );
+    }
+
+    /// A copy an earlier release made lets go of the hidden rows its slice does
+    /// not take on its first catch-up, keeping a pinned row.
+    #[test]
+    fn the_first_catch_up_lets_go_of_hidden_rows_the_slice_does_not_take() {
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![types(&[
+                (NOTE, None),
+                ("app.other.setting", Some(NOTE)),
+                ("app.acme.setting", None),
+            ])],
+        );
+        server.on("/events", vec![at_head(), at_head()]);
+        let (_dir, core) = hydrated(&server);
+        {
+            let conn = core.conn().unwrap();
+            let catalog = WireCatalog {
+                types: vec![
+                    store::testing::wire_type(NOTE, None, Some("title")),
+                    store::testing::wire_type("app.other.setting", Some(NOTE), Some("title")),
+                    store::testing::wire_type("app.acme.setting", None, Some("title")),
+                ],
+                edge_types: Vec::new(),
+            };
+            store::replace_catalog(&conn, &catalog).unwrap();
+            let rules = crate::catalog::load(&conn).unwrap();
+            for (id, type_id) in [
+                ("note", NOTE),
+                ("setting", "app.other.setting"),
+                ("pinned", "app.acme.setting"),
+            ] {
+                let row = store::testing::wire_item(
+                    id,
+                    type_id,
+                    "active",
+                    "2026-01-01T00:00:00Z",
+                    serde_json::json!({ "title": id }),
+                );
+                store::put_server_item(&conn, &row, Some(&[]), &rules).unwrap();
+                reach::set_listed(&conn, id, true).unwrap();
+            }
+            store::pin(&conn, "pinned").unwrap();
+        }
+
+        core.catch_up().unwrap();
+
+        assert!(
+            core.get("note").unwrap().is_some(),
+            "the witness was dropped"
+        );
+        assert!(
+            core.get("pinned").unwrap().is_some(),
+            "a pinned hidden row was let go"
+        );
+        assert_eq!(
+            core.get("setting").unwrap(),
+            None,
+            "an unpinned hidden row the slice does not take was kept"
+        );
+    }
+
     /// A copy of every type takes no `system.*` row by event, unless the row
     /// is pinned, which keeps taking its updates whatever the slice.
     #[test]
@@ -6666,6 +6835,7 @@ mod tests {
                 serde_json::json!({}),
             );
             store::put_server_item(&conn, &held, Some(&[]), &catalog).unwrap();
+            store::pin(&conn, "n1").unwrap();
             conn.execute(
                 "INSERT INTO table_choices (type, name) VALUES ('app.acme.ledger', 'log')",
                 [],

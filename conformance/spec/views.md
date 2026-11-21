@@ -52,7 +52,7 @@ If a view setting is malformed, other than by a key it does not declare or a par
 
 ### `views/setting-invalid`
 
-If a field a view's `sort` or `group` names is outside `views/field`, a `sort` holds more than 10 keys or a `direction` other than `asc` or `desc`, a `group.bucket` is not `day`, `week`, `month` or `year` or is set on a `group.by` other than `created_at`, `updated_at`, `occurred_at` or `properties.<name>`, or the `query` names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` that is not an item id, a `tier` other than `library`, `feed` or `all`, or a `state` other than `active` or `archived`, then the server MUST answer `400 validation_error`.
+If a field a view's `sort` or `group` names is outside `views/field`, a `sort` holds more than 10 keys or a `direction` other than `asc` or `desc`, a `group.bucket` is not `day`, `week`, `month` or `year` or is set on a `group.by` other than `created_at`, `updated_at`, `occurred_at` or `properties.<name>`, or the `query` names a malformed or hidden type identifier (`items/hidden-types`), a `filter` the listing grammar refuses, a `beneath` that is not an item id, a `tier` other than `library`, `feed` or `all`, or a `state` other than `active` or `archived`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/views.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`.
 
@@ -198,11 +198,11 @@ The server MUST list in a view the items that match its `query`: the named `type
 
 ### `views/items-system`
 
-The server MUST NOT list an item of a `system.*` type in a view.
+The server MUST NOT list an item of a hidden type (`items/hidden-types`) in a view, including one saved with a query that names a hidden type.
 
-**Reason:** a view of every item lists what a person keeps, not the records the server keeps for itself.
+**Reason:** a view of every item lists what a person keeps, not the records the server or an app keeps for itself. A view door refuses a query that names a hidden type, so only a view saved before that type was hidden holds one.
 
-**Tests:** `compliance/views-items.test.ts › never lists a system item, though the view's own query would reach one`.
+**Tests:** `compliance/views-items.test.ts › never lists a system item, though the view's own query would reach one`, `compliance/hidden-types-saved-view.test.ts › lists no app item in a view saved with a query that names the app type`.
 
 ### `views/items-beneath`
 

@@ -666,9 +666,9 @@ pub(super) fn newest(
     limit: i64,
 ) -> Result<Vec<Item>> {
     let state = if trashed {
-        "state = 'trashed'"
+        "state = 'trashed' AND type NOT GLOB 'system.*'"
     } else {
-        "state <> 'trashed'"
+        "state <> 'trashed' AND type NOT GLOB 'system.*' AND type NOT GLOB 'app.*'"
     };
     let bound = if after.is_some() {
         "(created_at, id) < (?2, ?3)"
@@ -676,7 +676,7 @@ pub(super) fn newest(
         "?2 IS NULL AND ?3 IS NULL"
     };
     let sql = format!(
-        "{ITEM} WHERE {state} AND type NOT GLOB 'system.*' AND (?1 IS NULL OR type = ?1) AND {bound}
+        "{ITEM} WHERE {state} AND (?1 IS NULL OR type = ?1) AND {bound}
          ORDER BY created_at DESC, id DESC LIMIT ?4"
     );
     let (at, id) = after.map_or((None, None), |(at, id)| (Some(at), Some(id)));

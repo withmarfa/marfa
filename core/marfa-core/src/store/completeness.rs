@@ -81,7 +81,7 @@ pub use marfa_rules::folder::declares_type;
 pub use marfa_rules::query::EVERY_TYPE;
 
 /// `EVERY_TYPE` takes what a bare server listing answers, which leaves out
-/// `system.*`. A `system.*` row named by type is taken at either tier: the
+/// hidden types. A `system.*` row named by type is taken at either tier: the
 /// server stamps one a tier that says nothing about it, and a copy of the
 /// feed still needs the folders it shows.
 pub fn slice_takes(
@@ -94,14 +94,15 @@ pub fn slice_takes(
     let system = is_system(row_type);
     types.iter().any(|declared| {
         if declared == EVERY_TYPE {
-            !system && tier.takes(row_tier)
+            !is_hidden(row_type) && tier.takes(row_tier)
         } else {
-            catalog.matches(declared, row_type) && (system || tier.takes(row_tier))
+            marfa_rules::folder::takes_type(catalog, declared, row_type)
+                && (system || tier.takes(row_tier))
         }
     })
 }
 
-pub(crate) use marfa_rules::folder::is_system;
+pub(crate) use marfa_rules::folder::{is_hidden, is_system};
 
 pub fn slice_query(conn: &Connection) -> Result<Option<crate::slice::SliceQuery>, CoreError> {
     match meta_get(conn, META_SLICE_QUERY)? {
@@ -164,6 +165,14 @@ pub fn let_go_unless_kept(
     }
     evict_item(conn, id, &whole_edge_types(conn)?)?;
     Ok(true)
+}
+
+/// The ids of the rows the copy holds of a hidden type.
+pub fn hidden_item_ids(conn: &Connection) -> Result<Vec<String>, CoreError> {
+    Ok(conn
+        .prepare_cached("SELECT id FROM items WHERE type GLOB 'system.*' OR type GLOB 'app.*'")?
+        .query_map([], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
 }
 
 pub fn slice(conn: &Connection) -> Result<Option<(Vec<String>, SliceTier)>, CoreError> {

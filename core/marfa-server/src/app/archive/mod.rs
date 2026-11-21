@@ -425,7 +425,7 @@ impl App {
         reuse: HashMap<String, Part>,
     ) -> Result<Taken> {
         let ask = Ask {
-            system: true,
+            hidden: true,
             ..Ask::default()
         };
         let rows = PartedRows {

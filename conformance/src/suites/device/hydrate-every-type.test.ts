@@ -13,7 +13,7 @@ import {
 /**
  * A slice of every type, declared as `*` alone, for an app and a folder alike
  * (`device/hydrate-every-type`). The listing it reads names no type, which
- * leaves `system.*` out.
+ * leaves hidden types (`system.*` and `app.*`) out.
  */
 
 let harness: Harness | undefined;
@@ -27,6 +27,7 @@ const ROWS = {
   "core.note": [{ item: { id: "n1" } }],
   "core.bookmark": [{ item: { id: "b1", type: "core.bookmark" } }],
   "system.connection": [{ item: { id: "s1", type: "system.connection" } }],
+  "app.acme.setting": [{ item: { id: "a1", type: "app.acme.setting" } }],
 };
 
 function listings(h: Harness): string[] {
@@ -36,7 +37,7 @@ function listings(h: Harness): string[] {
 }
 
 describe("a slice of every type", () => {
-  it("hydrates every type but system.* from the listing naming no type", async () => {
+  it("hydrates a visible type and omits a system type from the listing naming no type", async () => {
     harness = await startHarness("every-type");
     const { server, device } = harness;
     scriptHydration(server, { head: "10", items: ROWS });
@@ -47,7 +48,7 @@ describe("a slice of every type", () => {
     expect(hydrated.value.types).toEqual(["*"]);
     expect(
       hydrated.value.items,
-      "the copy took a system item, or left a type out",
+      "the copy took a hidden item, or left a type out",
     ).toBe(2);
     for (const query of listings(harness)) {
       expect(
@@ -60,6 +61,10 @@ describe("a slice of every type", () => {
     expect(
       (await device.get("s1")).ok,
       "a slice of every type held a system item",
+    ).toBe(false);
+    expect(
+      (await device.get("a1")).ok,
+      "a slice of every type held an app item",
     ).toBe(false);
     const status = await device.status();
     expect(status.ok && status.value.slice_types).toEqual(["*"]);
@@ -77,7 +82,7 @@ describe("a slice of every type", () => {
     ).toBe(true);
   });
 
-  it("refuses the star beside a type that is not a system type before any request, and takes it said twice", async () => {
+  it("refuses the star beside a visible type before any request, and takes it said twice", async () => {
     harness = await startHarness("every-type-mixed");
     const { server, device } = harness;
     scriptHydration(server, { head: "10", items: ROWS });
@@ -174,7 +179,7 @@ describe("a slice of every type", () => {
     ).toBe("changed");
   });
 
-  it("counts every type but system.* as the items expected, and leaves the count out where the server gave none", async () => {
+  it("omits system items from the expected count, and leaves the count out where the server gave none", async () => {
     harness = await startHarness("every-type-expected");
     const { server, device } = harness;
     scriptHydration(server, {

@@ -48,7 +48,7 @@ fn choose(
     ask: &Ask,
     held: impl FnOnce(&str) -> Result<Held>,
 ) -> Result<Reading> {
-    let narrowed = reach.narrowed(|type_id| keeps_type(rules, &ask.types, ask.system, type_id));
+    let narrowed = reach.narrowed(|type_id| keeps_type(rules, &ask.types, ask.hidden, type_id));
     let Some(type_id) = narrowed.only_type().filter(|_| walkable(ask)) else {
         return Ok(Reading::Scan(None));
     };

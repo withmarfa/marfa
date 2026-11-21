@@ -271,7 +271,7 @@ fn ask_of(params: &Params, default: States) -> Result<Ask> {
     .map_err(past_bound)?;
     Ok(Ask {
         types: params.one("type")?.map_or(Ok(Vec::new()), types_of)?,
-        system: false,
+        hidden: false,
         states: params.one("state")?.map_or(Ok(default), states_of)?,
         source: params.one("source")?.map(str::to_string),
         tier: tier_of(params)?,
@@ -315,7 +315,7 @@ fn many_of(params: &Params) -> Result<Many> {
             "metadata" => many.metadata = true,
             "edges" => many.edges = true,
             "extensions" => many.extensions = true,
-            "system" => many.system = true,
+            "hidden" => many.hidden = true,
             other => {
                 return Err(invalid_field(
                     "include",
@@ -356,7 +356,7 @@ pub async fn items(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Ans
 pub(super) async fn items_from(app: &App, caller: &Caller, params: &Params) -> Result<String> {
     let mut ask = ask_of(params, active())?;
     let include = many_of(params)?;
-    ask.system = include.system;
+    ask.hidden = include.hidden;
     let sent_sort = params.one("sort")?;
     let sort = Sort {
         field: sent_sort.map(field_of).transpose()?,
@@ -388,10 +388,10 @@ pub async fn stats(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Ans
     caller.require_reach()?;
     let params = Params::read(&uri, &STATS_QUERY, true)?;
     let mut ask = ask_of(&params, States::Every)?;
-    ask.system = match params.one("include")? {
+    ask.hidden = match params.one("include")? {
         None => false,
-        Some("system") => true,
-        Some(_) => return Err(invalid_field("include", "include takes system.").into()),
+        Some("hidden") => true,
+        Some(_) => return Err(invalid_field("include", "include takes hidden.").into()),
     };
     let by = by_of(&params)?;
     let counts = run_stats(&app, &caller, ask, by).await?;
@@ -451,7 +451,7 @@ pub(super) async fn search_from(app: &App, caller: &Caller, params: &Params) -> 
         .collect();
     include.sort_unstable();
     include.dedup();
-    ask.system = include.iter().any(|token| token == "system");
+    ask.hidden = include.iter().any(|token| token == "hidden");
     let found = Search {
         q,
         ask,

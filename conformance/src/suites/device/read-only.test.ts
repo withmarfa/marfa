@@ -88,7 +88,7 @@ function readAnswers(
   server.answer("POST", "/items/bulk-get", () =>
     bulkGetOf(
       rows.map((row) => certifiedRead(answers.updated(row), BUILT_FOR)),
-      { withReach: true, system: false },
+      { withReach: true, hidden: false },
     ),
   );
 }

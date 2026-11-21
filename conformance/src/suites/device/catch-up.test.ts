@@ -3209,7 +3209,7 @@ describe("catch-up keeps the copy to its slice", () => {
     expect(status.ok && status.value.pinned).toEqual(["settings"]);
   });
 
-  it("reads a pinned folder item again at a hydration, which the bulk read answers only with system", async () => {
+  it("reads a pinned folder item again at hydration when the bulk read asks for hidden items", async () => {
     harness = await startHarness("pinned-system-row");
     const { server, device } = harness;
     scriptHydration(server, {

@@ -582,7 +582,7 @@ impl<'a> Peers<'a> {
                     .get(item_id)
                     .ok()
                     .flatten()
-                    .is_some_and(|item| !item.r#type.starts_with("system."))
+                    .is_some_and(|item| !marfa_rules::folder::is_hidden(&item.r#type))
             })
         })
     }

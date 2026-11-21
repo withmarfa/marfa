@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * List items
-         * @description Returns a page of the items you can read that match the filters. System items are left out unless you ask for them with `include=system`. Use `include` to add edges, metadata or extensions to each item.
+         * @description Returns a page of the items you can read that match the filters. Hidden items (`system.*` and `app.*`) are left out unless you ask for them with `include=hidden`. Use `include` to add edges, metadata or extensions to each item.
          */
         get: operations["listItems"];
         put?: never;
@@ -207,7 +207,7 @@ export interface paths {
         put?: never;
         /**
          * Find items by title
-         * @description Finds the active and archived items titled by each of up to 200 names, matched without regard to case, Unicode form or the white space around a name. `system.*` items and items you can't read are left out.
+         * @description Finds the active and archived items titled by each of up to 200 names, matched without regard to case, Unicode form or the white space around a name. `system.*` and `app.*` items and items you can't read are left out.
          */
         post: operations["findItemsByTitle"];
         delete?: never;
@@ -305,7 +305,7 @@ export interface paths {
         };
         /**
          * List item summaries
-         * @description Returns item names, types, versions, sources and creation times, newest first, of the types you can read. Trashed and system items are excluded.
+         * @description Returns item names, types, versions, sources and creation times, newest first, of the types you can read. Trashed and hidden items (`system.*` and `app.*`) are excluded.
          */
         get: operations["listItemSummaries"];
         put?: never;
@@ -3719,7 +3719,7 @@ export interface components {
             };
             /** @description `true` if listings show you this item, `false` if `source_filter` leaves it out of them and you can read it only by ID. Present only when you send `X-Marfa-Reach`. */
             listed?: boolean;
-            /** @description The items you can read at the far end of `item.edges`, and of `backrefs` if you asked for both, with their metadata. Leaves out `system.*` items without counting them in `neighbors_omitted`. Present with `include=neighbors`. */
+            /** @description The items you can read at the far end of `item.edges`, and of `backrefs` if you asked for both, with their metadata. Leaves out `system.*` and `app.*` items without counting them in `neighbors_omitted`. Present with `include=neighbors`. */
             neighbors?: components["schemas"]["ItemReadWithMetadata"][];
             /** @description `true` if this answer's edges reach more than 100 items, so `neighbors` leaves some out. Page `GET /items/{id}/edges` and `GET /items/{id}/backrefs` for the rest. Present with `include=neighbors`. */
             neighbors_truncated?: boolean;
@@ -5954,7 +5954,7 @@ export interface components {
         };
         /** @description Which items the folder holds. */
         FolderQuery: {
-            /** @description The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*`. */
+            /** @description The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*` and `app.*`. */
             types?: string[];
             /**
              * @description The tiers the folder holds: `library`, `feed`, or `all` for both. Absent means `library`.
@@ -6146,9 +6146,9 @@ export interface components {
             /** @description The whole seconds since receipt, measured by the server; it does not show whether the copy is online. */
             age_seconds: number;
         };
-        /** @description Which items the view lists. Absent lists every item the reading key can read, except `system.*`. */
+        /** @description Which items the view lists. Absent lists every item the reading key can read, except `system.*` and `app.*`. */
         ViewQuery: {
-            /** @description The types the view lists, each with its subtypes. Empty or absent lists every type the reading key can read, except `system.*`. */
+            /** @description The types the view lists, each with its subtypes. Empty or absent lists every type the reading key can read, except `system.*` and `app.*`. */
             types?: string[];
             tier?: components["schemas"]["ViewTier"] & unknown;
             /** @description The states the view lists. Absent means both. */
@@ -8537,7 +8537,7 @@ export interface operations {
                 limit?: number;
                 /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
                 cursor?: string;
-                /** @description Comma-separated extras. `edges`, `metadata` and `extensions` add that data to each item. `system` also returns `system.*` items, which are left out by default; a `system.` type filter does the same. */
+                /** @description Comma-separated extras. `edges`, `metadata` and `extensions` add that data to each item. `hidden` also returns `system.*` and `app.*` items, which are left out by default; a type filter naming one does the same. */
                 include?: string;
             };
             header?: {
@@ -11151,7 +11151,7 @@ export interface operations {
                      *     }
                      */
                     "application/json": {
-                        /** @description The items found, in any state, in the order the request named their keys, each once. Items you can't read, and `system.*` items, are left out. */
+                        /** @description The items found, in any state, in the order the request named their keys, each once. Items you can't read, and `system.*` and `app.*` items, are left out. */
                         data: components["schemas"]["Item"][];
                         /** @description The tombstones under `type` for the keys named, in the order named. Empty when you look up by `ids`. */
                         tombstones: components["schemas"]["Tombstone"][];
@@ -11513,8 +11513,8 @@ export interface operations {
                 "application/json": {
                     /** @description The IDs of the items to read, at most 100. */
                     ids: string[];
-                    /** @description `edges`, `metadata` and `extensions` add that data to each item. `system` also returns `system.*` items, which are left out by default. */
-                    include?: ("edges" | "metadata" | "extensions" | "system")[];
+                    /** @description `edges`, `metadata` and `extensions` add that data to each item. `hidden` also returns `system.*` and `app.*` items, which are left out by default. */
+                    include?: ("edges" | "metadata" | "extensions" | "hidden")[];
                 };
             };
         };
@@ -12265,8 +12265,8 @@ export interface operations {
                 updated_after?: string;
                 /** @description Only return items changed before this time. It doesn't change the ordering, so it works with any `sort`. */
                 updated_before?: string;
-                /** @description `system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own. */
-                include?: "system";
+                /** @description `hidden` counts `system.*` and `app.*` items too, which are left out by default. A `type` filter naming one opts in on its own. */
+                include?: "hidden";
             };
             header?: never;
             path?: never;
@@ -18404,7 +18404,7 @@ export interface operations {
                 source?: string;
                 /** @description Only return items in this tier. Omit it or send `all` for both tiers. */
                 tier?: "library" | "feed" | "all";
-                /** @description Comma-separated extras. `system` also returns `system.*` items, which are left out by default. A `system.` type filter does the same. */
+                /** @description Comma-separated extras. `hidden` also returns `system.*` and `app.*` items, which are left out by default. A type filter naming one does the same. */
                 include?: string;
                 /** @description Comma-separated tags. Only return items that carry all of them. At most 100 distinct tags, each at most 128 characters. */
                 tags?: string;
@@ -23901,7 +23901,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: a setting is malformed or undeclared, such as a `system.*` type, a `..` placement or a `backref` filter. `details.errors[0].path` or `details.unknown_body_fields` names it.
+             * @description - `validation_error`: a setting is malformed or undeclared, such as a `system.*` or `app.*` type, a `..` placement or a `backref` filter. `details.errors[0].path` or `details.unknown_body_fields` names it.
              *     - `missing_required_field`: `title` is missing.
              *     - `unknown_type`: a setting's type is unknown.
              *     - `invalid_properties`: `defaults.properties` has a whole number a 64-bit float can't keep.

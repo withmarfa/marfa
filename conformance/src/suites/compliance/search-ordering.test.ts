@@ -351,7 +351,7 @@ describe("search cursor", () => {
       `q=${word}%20other`,
       `q=${word}&type=core.note`,
       `q=${word}&state=archived`,
-      `q=${word}&include=system`,
+      `q=${word}&include=hidden`,
       `q=${word}&tags=${encodeURIComponent(`tag-${ctx.runId}`)}`,
       `q=${word}&filter=${encodeURIComponent(`source neq "other"`)}`,
       `q=${word}&occurred_after=${instant}`,

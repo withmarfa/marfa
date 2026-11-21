@@ -8,7 +8,7 @@ use super::access::{Caller, Described, Level};
 use super::catalog::Catalog;
 use super::edge_types;
 use super::instance;
-use super::items::{self, is_system, reading};
+use super::items::{self, is_hidden, reading};
 use super::query::{self, Listed};
 use super::refusal::Result;
 use super::{App, access};
@@ -155,7 +155,7 @@ pub async fn read(app: &App, caller: &Caller) -> Result<Value> {
             .map(|(id, count)| (id.as_str(), *count))
             .collect();
         for id in catalog.types.ids() {
-            if !is_system(id) && read.caller.may_read_type(id) {
+            if !is_hidden(id) && read.caller.may_read_type(id) {
                 counts.entry(id).or_insert(0);
             }
         }

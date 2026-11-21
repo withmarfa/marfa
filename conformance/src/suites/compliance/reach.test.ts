@@ -779,7 +779,7 @@ describe("conditional working-copy reaches", () => {
     }
   });
 
-  it("answers a system item to a bulk read under a reach only when include names system", async () => {
+  it("answers a system item to a bulk read under a reach only when include names hidden", async () => {
     const view = await fetch(`${server.apiUrl}/views`, {
       method: "POST",
       headers: {
@@ -808,7 +808,7 @@ describe("conditional working-copy reaches", () => {
     });
 
     const shown = await bulkGet(
-      { ids: [made.item.id], include: ["metadata", "system"] },
+      { ids: [made.item.id], include: ["metadata", "hidden"] },
       proof.reach,
     );
     certified(shown, proof.reach);
@@ -822,7 +822,7 @@ describe("conditional working-copy reaches", () => {
     // A device reading `read_only` asks for no metadata, and only an item page
     // is refused for that.
     const bare = await bulkGet(
-      { ids: [made.item.id], include: ["system"] },
+      { ids: [made.item.id], include: ["hidden"] },
       proof.reach,
     );
     certified(bare, proof.reach);
@@ -832,7 +832,7 @@ describe("conditional working-copy reaches", () => {
 
     for (const [include, expected] of [
       [[], []],
-      [["system"], [made.item.id]],
+      [["hidden"], [made.item.id]],
     ] as const) {
       const ordinary = await bulkGet({
         ids: [made.item.id],

@@ -144,14 +144,15 @@ pub fn readable_types(tx: &Transaction<'_>, caller: &Caller) -> Result<Option<Ve
     Ok((readable.len() < present.len()).then_some(readable))
 }
 
-pub fn keeps_type(rules: &Rules, named: &[String], system: bool, type_id: &str) -> bool {
+pub fn keeps_type(rules: &Rules, named: &[String], hidden: bool, type_id: &str) -> bool {
     if named.is_empty() {
-        return system || !crate::app::items::is_system(type_id);
+        return hidden || !crate::app::items::is_hidden(type_id);
     }
-    named.iter().any(|entry| rules.matches(entry, type_id))
-        && (system
-            || !crate::app::items::is_system(type_id)
-            || named
-                .iter()
-                .any(|entry| crate::app::items::is_system(entry)))
+    named.iter().any(|entry| {
+        if hidden {
+            rules.matches(entry, type_id)
+        } else {
+            marfa_rules::folder::takes_type(rules, entry, type_id)
+        }
+    })
 }

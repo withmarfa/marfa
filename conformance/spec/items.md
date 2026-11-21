@@ -656,6 +656,22 @@ If any key the API can mint writes a `system.*` type through an item operation, 
 
 ## Reading
 
+### `items/hidden-types`
+
+The server MUST leave each item of a hidden type, a type under the root `system` or `app`, out of every operation that lists, searches, counts or reads items in bulk, except where the request names `include=hidden` or the hidden type.
+
+**Reason:** a `system.*` item is the server's own record and an `app.*` item is an app's own machinery, so neither belongs among the items a person reads. Only a request that asks for hidden items, or names a hidden type, returns them, and a type named opens only the items of that hidden type and its hidden subtypes (`search-and-filters/type-hidden-exact`). A `system.*` item is also written only by the server (`items/system-types`), which an `app.*` item is not: an app writes its own through the item operations. An export and a backup carry every item, hidden ones included, and the bin is for recovery (`items/hidden-types-bin`).
+
+**Tests:** `compliance/hidden-types.test.ts › leaves an app item out of a listing, in either tier, unless the listing asks for hidden items`, `› leaves an app item out of a search unless the search asks for hidden items`, `› leaves an app item out of the counts unless they ask for hidden items`, `› leaves an app item out of a view, and its type out of the overview`, `› omits app items from lookup and title search and returns them in a bulk read with include=hidden`, `› still lets the app write, read and change its own hidden item through the item doors`, `› opens a type filter to the hidden type it names and no other, though a visible type it names has that other as a subtype`, `device/hidden-types-live.test.ts › holds no app item in a slice of every type, by hydration or by event, and holds a user item the same way`.
+
+### `items/hidden-types-bin`
+
+When the owner lists the bin, restores an item from it or purges one, the server MUST treat an `app.*` item in the bin as it treats an item of any other type the caller's type map reaches.
+
+**Reason:** the bin is how the owner recovers what was deleted, and an item an app deleted is recoverable the same way, with its deletion date. Only a `system.*` item, which the server revokes and never bins, is outside it.
+
+**Tests:** `compliance/hidden-types.test.ts › lists an app item in the bin, and restores and purges it, as it does any item the type map reaches`.
+
 ### `items/get`
 
 When a key sends `GET /items/{id}` for an item it may read that is not in the bin, the server MUST answer `200` with the `item` and its `metadata`, every field as the write that made it stored it.
@@ -702,9 +718,9 @@ If `GET /items/{id}` names a `state` that is empty, holds a value that is not a 
 
 ### `items/bulk-get`
 
-When a key sends `POST /items/bulk-get` with `ids`, the server MUST answer `200` with `data` holding each item it may read that is not in the bin, and is not a `system.*` item unless the request's `include` holds `system`, once each, in the order the request named them.
+When a key sends `POST /items/bulk-get` with `ids`, the server MUST answer `200` with `data` holding each item it may read that is not in the bin, and is not a hidden item (`items/hidden-types`) unless the request's `include` holds `hidden`, once each, in the order the request named them.
 
-**Tests:** `compliance/bulk-get.test.ts › returns the requested items by id`, `› omits ids that do not resolve rather than erroring`, `compliance/links.test.ts › looks items up by id in every state, where bulk-get leaves the bin out, and leaves a system item out`, `compliance/reach.test.ts › answers a system item to a bulk read under a reach only when include names system`.
+**Tests:** `compliance/bulk-get.test.ts › returns the requested items by id`, `› omits ids that do not resolve rather than erroring`, `compliance/links.test.ts › looks items up by id in every state, where bulk-get leaves the bin out, and leaves a system item out`, `compliance/reach.test.ts › answers a system item to a bulk read under a reach only when include names hidden`.
 
 ### `items/bulk-get-omits`
 
@@ -748,13 +764,13 @@ When `POST /items/bulk-get` names `metadata` in `include`, the server MUST answe
 
 ### `items/bulk-get-system`
 
-If `POST /items/bulk-get` names a `system.*` item and its `include` does not hold `system`, then the server MUST leave the item out of the answer.
+If `POST /items/bulk-get` names a hidden item and its `include` does not hold `hidden`, then the server MUST leave the item out of the answer.
 
-**Tests:** `compliance/reach.test.ts › answers a system item to a bulk read under a reach only when include names system`.
+**Tests:** `compliance/reach.test.ts › answers a system item to a bulk read under a reach only when include names hidden`.
 
 ### `items/titles`
 
-When a key sends `POST /items/titles` with `names`, the server MUST answer `200` with `data`, one entry for each name in the order the request named them, each holding the `name` as sent and the `items` that the key may read, in the state active or archived, that are not `system.*` items and whose title equals the name under `items/titles-fold`, with each item's `id`, `type`, `title` as stored and whether its `blob_ref` holds a blob.
+When a key sends `POST /items/titles` with `names`, the server MUST answer `200` with `data`, one entry for each name in the order the request named them, each holding the `name` as sent and the `items` that the key may read, in the state active or archived, that are not hidden items (`items/hidden-types`) and whose title equals the name under `items/titles-fold`, with each item's `id`, `type`, `title` as stored and whether its `blob_ref` holds a blob.
 
 **Reason:** a device resolving the links of a folder asks for many names at once, and the answer to a name is a lookup in an index, so it costs the same on a million items as on a hundred.
 
@@ -2296,9 +2312,9 @@ The server MUST hold `favorite` as an ordinary tag, with no field of its own.
 
 ### `items/tag-counts`
 
-When a key sends `GET /tags`, the server MUST answer each tag on an active item the key may read with the number of such items carrying it, by count descending and then by tag ascending.
+When a key sends `GET /tags`, the server MUST answer each tag on an active item of a type that is not hidden (`items/hidden-types`) and that the key may read with the number of such items carrying it, by count descending and then by tag ascending.
 
-**Tests:** `compliance/metadata-routes.test.ts › counts distinct tags across the dataset`, `› keeps each tag once, whichever operation writes it`.
+**Tests:** `compliance/metadata-routes.test.ts › counts distinct tags across the dataset`, `› keeps each tag once, whichever operation writes it`, `compliance/hidden-types.test.ts › counts only visible items in the tag counts and the overview, and lists no tag only hidden items carry`.
 
 ### `items/tag-updated-at`
 
@@ -2486,7 +2502,7 @@ If `query.types`, `defaults.type` or a `first_placement` key names a well-formed
 
 ### `items/folder-setting-invalid`
 
-If a folder setting names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `query.beneath` that is neither an item id nor the path of a file inside the folder (`items/folder-query-beneath-file`), an ID an edge points to that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 to items for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute or carries a backslash or NUL, a `removal_threshold` or `addition_threshold` with `files` other than a whole number from 0 to 9007199254740991 or a `fraction` outside 0 to 1, a `removal_threshold.ceiling` other than a whole number from 0 to 9007199254740991, a `full_pass_interval_seconds` that is not a whole number from 60 to 86400, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, or an `outside_query` other than `send` or `hold`, then the server MUST answer `400 validation_error`.
+If a folder setting names a malformed or hidden type identifier (`items/hidden-types`), a `filter` the listing grammar refuses, a `query.beneath` that is neither an item id nor the path of a file inside the folder (`items/folder-query-beneath-file`), an ID an edge points to that is not an item id, an edge type in `defaults.edges` nothing registered or `in-folder`, more than 100 edge types or 100 to items for one, an empty or non-string `include` or `ignore` pattern, a `first_placement` directory that is absolute or drive-absolute or carries a backslash or NUL, a `removal_threshold` or `addition_threshold` with `files` other than a whole number from 0 to 9007199254740991 or a `fraction` outside 0 to 1, a `removal_threshold.ceiling` other than a whole number from 0 to 9007199254740991, a `full_pass_interval_seconds` that is not a whole number from 60 to 86400, a `query.state` other than `active` or `archived`, or a `query.tier` other than `library`, `feed` or `all`, or an `outside_query` other than `send` or `hold`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› caps defaults.edges at 100 edge types and 100 to items for each`.
 
@@ -2510,7 +2526,7 @@ If a `first_placement` directory holds a `..` name, wherever it climbs back, or 
 
 If the settings a `POST /folders` or `PATCH /folders/{id}` would leave hold a `defaults.type` that the types in `query.types` do not hold, then the server MUST answer `400 validation_error`, naming `defaults.type` in `details.errors[0].path`, before it writes anything.
 
-**Reason:** a file made at that type would fall outside the query of its own folder, and a device refuses to follow such a folder. A query naming no type, or `*`, holds every type but `system.*`, and a change is judged on the complete settings it leaves, not on the settings it names.
+**Reason:** a file made at that type would fall outside the query of its own folder, and a device refuses to follow such a folder. A query naming no type, or `*`, holds every type but the hidden ones, and a change is judged on the complete settings it leaves, not on the settings it names.
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› refuses a change that leaves a default type outside the query, whichever setting it changes`.
 
@@ -2558,7 +2574,7 @@ When `POST /folders` or `PATCH /folders/{id}` names `query.beneath` as the path 
 
 When `POST /folders` or `PATCH /folders/{id}` names `*` in `query.types`, the server MUST store the query as sent.
 
-**Reason:** `*` is every type but `system.*` (`folder-setup/search-default-types`), which a device follows, though a view's `query.types` lists no `*`.
+**Reason:** `*` is every type but the hidden ones (`folder-setup/search-default-types`), which a device follows, though a view's `query.types` lists no `*`.
 
 **Tests:** `compliance/folders.test.ts › takes the star in a folder's query types and reads it back`.
 
@@ -2872,7 +2888,7 @@ If an owner trash action names an item that no item holds, then the server MUST 
 
 ### `items/owner-trash-hidden`
 
-If an owner trash action names a system item, or an item the instance's source filter does not admit, then the server MUST answer `404 item_not_found`.
+If an owner trash action names a `system.*` item, or an item the instance's source filter does not admit, then the server MUST answer `404 item_not_found`.
 
 **Tests:** `compliance/owner-trash.test.ts › answers an owner trash action on a system item, or one the source filter hides, with 404 item_not_found and leaves it`.
 
