@@ -7,7 +7,7 @@ use crate::model::{SearchFilters, SearchHit};
 use crate::query;
 use crate::store::{self, Unreadable};
 use marfa_rules::catalog::Catalog;
-use marfa_rules::search::{MARK_CLOSE, MARK_OPEN, fts_expression, snippet_html};
+use marfa_rules::search::{MARK_CLOSE, MARK_OPEN, TITLE_WEIGHT, fts_expression, snippet_html};
 
 pub(crate) fn search(
     conn: &Connection,
@@ -71,11 +71,11 @@ pub(crate) fn search_where(
         .collect();
     values.push(Value::from(limit as i64));
     let mut statement = conn.prepare(&format!(
-        "SELECT items.id, bm25(items_fts), snippet(items_fts, -1, '{MARK_OPEN}', '{MARK_CLOSE}', '...', 32)
+        "SELECT items.id, bm25(items_fts, {TITLE_WEIGHT}, 1, 1, 1, 1, 1), snippet(items_fts, -1, '{MARK_OPEN}', '{MARK_CLOSE}', '...', 32)
          FROM items_fts
          JOIN items ON items.seq = items_fts.rowid
          WHERE items_fts MATCH ?{narrowing}
-         ORDER BY bm25(items_fts), items.id
+         ORDER BY bm25(items_fts, {TITLE_WEIGHT}, 1, 1, 1, 1, 1), items.id
          LIMIT ?"
     ))?;
     let params: Vec<rusqlite::types::Value> = values.iter().map(store::sql_value).collect();
@@ -174,9 +174,9 @@ mod tests {
         )
         .unwrap();
         let ids: Vec<&str> = hits.iter().map(|hit| hit.item.id.as_str()).collect();
-        // The title and the tag hold one match in three words each, so they
-        // tie and the id breaks it; the body's is one in four.
-        assert_eq!(ids, vec!["tag", "title", "body"]);
+        // The title and the tag hold one match in three words each, but a word
+        // in the title counts for more; the body's is one in four.
+        assert_eq!(ids, vec!["title", "tag", "body"]);
         assert_eq!(
             search(
                 &conn,
@@ -189,8 +189,8 @@ mod tests {
             .len(),
             2
         );
-        assert_eq!(hits[0].score, hits[1].score);
-        assert!(hits[0].score > hits[2].score);
+        assert!(hits[0].score > hits[1].score);
+        assert!(hits[1].score > hits[2].score);
         assert!(hits[2].snippet.contains("<mark>zebra</mark>"));
         assert!(
             search(

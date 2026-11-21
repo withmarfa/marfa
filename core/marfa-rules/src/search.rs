@@ -5,6 +5,9 @@ use serde_json::{Map, Value};
 use crate::catalog::Indexing;
 use crate::error::{FieldError, RuleError, field_code};
 
+/// How many times a word in an item's title counts against one in any other column when hits are ranked.
+pub const TITLE_WEIGHT: i64 = 3;
+
 // FTS5 wraps each match in private-use characters; the excerpt is escaped whole before they become `<mark>`. A row's own text can hold them too, so each opens only a closed mark and closes only an open one.
 pub const MARK_OPEN: char = '\u{E000}';
 pub const MARK_CLOSE: char = '\u{E001}';

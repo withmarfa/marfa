@@ -1,5 +1,5 @@
-//! `bm25_within(fts, entries, tokens, length, hits per phrase...)`: FTS5's `bm25` over a given corpus.
-//! `length` is the entry's token count, or NULL for FTS5 to read it.
+//! `bm25_within(fts, weight, entries, tokens, length, hits per phrase...)`: FTS5's `bm25` over a given corpus.
+//! `weight` is the first column's weight, every other column's being 1. `length` is the entry's token count, or NULL for FTS5 to read it.
 
 use std::ffi::c_int;
 use std::ptr;
@@ -61,7 +61,7 @@ unsafe fn score(
     // SAFETY: `fts` is the context of the current call, as for every call below.
     let phrases = usize::try_from(unsafe { phrases(fts) }).map_err(|_| ffi::SQLITE_ERROR)?;
     let count = usize::try_from(count).map_err(|_| ffi::SQLITE_MISUSE)?;
-    if count != phrases + 3 || values.is_null() {
+    if count != phrases + 4 || values.is_null() {
         return Err(ffi::SQLITE_MISUSE);
     }
     // SAFETY: SQLite passes `count` values, valid for the call.
@@ -71,7 +71,7 @@ unsafe fn score(
         // SAFETY: each value is a live argument of the call.
         Ok(unsafe { ffi::sqlite3_value_int64(*value) } as f64)
     };
-    let (entries, tokens) = (number(0)?, number(1)?);
+    let (weight, entries, tokens) = (number(0)?, number(1)?, number(2)?);
     if entries <= 0.0 || tokens <= 0.0 {
         return Err(ffi::SQLITE_MISMATCH);
     }
@@ -95,11 +95,11 @@ unsafe fn score(
             .ok()
             .and_then(|phrase| frequency.get_mut(phrase))
         {
-            *held += 1.0;
+            *held += if column == 0 { weight } else { 1.0 };
         }
     }
     // SAFETY: each value is a live argument of the call.
-    let given = unsafe { ffi::sqlite3_value_type(*values.get(2).ok_or(ffi::SQLITE_MISUSE)?) };
+    let given = unsafe { ffi::sqlite3_value_type(*values.get(3).ok_or(ffi::SQLITE_MISUSE)?) };
     let length = if given == ffi::SQLITE_NULL {
         let mut length: c_int = 0;
         // SAFETY: as above.
@@ -109,12 +109,12 @@ unsafe fn score(
         }
         f64::from(length)
     } else {
-        number(2)?
+        number(3)?
     };
 
     let mut score = 0.0;
     for (at, frequency) in frequency.iter().enumerate() {
-        let hits = number(at + 3)?;
+        let hits = number(at + 4)?;
         let idf = ((entries - hits + 0.5) / (hits + 0.5)).ln();
         let idf = if idf <= 0.0 { LEAST_IDF } else { idf };
         score +=
@@ -232,6 +232,10 @@ mod tests {
 
     /// The statistics of the entries `kept` keeps, as `bm25_within` takes them.
     fn within(conn: &Connection, phrases: &[&str], kept: &[i64]) -> String {
+        weighted(conn, 1, phrases, kept)
+    }
+
+    fn weighted(conn: &Connection, weight: i64, phrases: &[&str], kept: &[i64]) -> String {
         let listed: Vec<String> = kept.iter().map(ToString::to_string).collect();
         let listed = listed.join(", ");
         let (entries, tokens) = conn
@@ -244,7 +248,12 @@ mod tests {
             .fold((0, 0), |(entries, tokens), size| {
                 (entries + 1, tokens + size.unwrap())
             });
-        let mut arguments = vec![entries.to_string(), tokens.to_string(), "NULL".to_string()];
+        let mut arguments = vec![
+            weight.to_string(),
+            entries.to_string(),
+            tokens.to_string(),
+            "NULL".to_string(),
+        ];
         for phrase in phrases {
             let hits: i64 = conn
                 .query_row(
@@ -347,10 +356,25 @@ mod tests {
     }
 
     #[test]
+    fn a_weight_on_the_first_column_ranks_as_bm25_with_that_weight() {
+        let conn = indexed(|_| true);
+        let every: Vec<i64> = (0..TEXTS.len()).map(rowid).collect();
+        for phrases in QUERIES {
+            let query = phrases.join(" ");
+            let builtin = ranked(&conn, &query, "bm25(t, 3, 1)");
+            close(
+                &builtin,
+                &ranked(&conn, &query, &weighted(&conn, 3, phrases, &every)),
+            );
+            assert_ne!(builtin, ranked(&conn, &query, "bm25(t)"));
+        }
+    }
+
+    #[test]
     fn a_count_for_each_phrase_is_required() {
         let conn = indexed(|_| true);
         let refused = conn.query_row(
-            "SELECT bm25_within(t, 6, 40, NULL) FROM t WHERE t MATCH '\"quick\"'",
+            "SELECT bm25_within(t, 1, 6, 40, NULL) FROM t WHERE t MATCH '\"quick\"'",
             [],
             |row| row.get::<_, f64>(0),
         );
