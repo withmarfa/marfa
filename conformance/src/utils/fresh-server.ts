@@ -779,6 +779,8 @@ export async function startDeviceFlow(
     grantTypes?: readonly string[];
     redirectUris?: readonly string[];
     responseTypes?: readonly string[];
+    /** The scope the client registers with; the server's default when left out. */
+    registeredScope?: string;
   } = {},
 ): Promise<DeviceFlow> {
   const owner = TEST_OWNER;
@@ -806,6 +808,9 @@ export async function startDeviceFlow(
         ...(options.redirectUris === undefined
           ? {}
           : { redirect_uris: options.redirectUris }),
+        ...(options.registeredScope === undefined
+          ? {}
+          : { scope: options.registeredScope }),
         token_endpoint_auth_method: "none",
       }),
     })
@@ -940,8 +945,9 @@ export async function startDeviceFlow(
 export async function approvedApp(
   server: FreshServer,
   scopes?: readonly string[],
+  registeredScope?: string,
 ): Promise<{ token: string; clientId: string; refreshToken?: string }> {
-  const flow = await startDeviceFlow(server, scopes);
+  const flow = await startDeviceFlow(server, scopes, { registeredScope });
   await flow.approve();
   // The code's first poll, so no polling interval applies to it yet.
   const answer = await flow.poll();

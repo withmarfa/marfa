@@ -142,12 +142,23 @@ async function listed(
   return data.some((entry) => (entry.id ?? entry.item?.id) === id);
 }
 
+/** Whether a search naming `type`, which an app item's hidden type needs, finds `id`; a refused type finds nothing. */
 async function found(
   credential: string,
   word: string,
+  type: string,
   id: string,
 ): Promise<boolean> {
-  const got = await answer(credential, `/search?q=${word}&limit=100`);
+  const got = await answer(
+    credential,
+    `/search?q=${word}&type=${encodeURIComponent(type)}&limit=100`,
+  );
+  if (got.status === 403) {
+    expect((got.body.error as { code: string }).code).toBe(
+      "type_not_permitted",
+    );
+    return false;
+  }
   expect(got.status, JSON.stringify(got.body)).toBe(200);
   const data = (got.body.data ?? []) as Array<{
     id?: string;
@@ -323,14 +334,14 @@ describe("an app's own types", () => {
   it("lets the app that registered them read, list, search and copy their items without a scope that names them", async () => {
     expect(await reads(maker.token, item)).toBe(true);
     expect(await listed(maker.token, type, item)).toBe(true);
-    expect(await found(maker.token, word, item)).toBe(true);
+    expect(await found(maker.token, word, type, item)).toBe(true);
     expect(await streamed(maker.token, maker.token, type)).toBe(true);
   });
 
   it("lets a key no app made read, list, search and copy their items as its map says", async () => {
     expect(await reads(server.workingKey, item)).toBe(true);
     expect(await listed(server.workingKey, type, item)).toBe(true);
-    expect(await found(server.workingKey, word, item)).toBe(true);
+    expect(await found(server.workingKey, word, type, item)).toBe(true);
     expect(await streamed(server.workingKey, maker.token, type)).toBe(true);
   });
 
@@ -338,12 +349,12 @@ describe("an app's own types", () => {
     // The witness: the same reads find a note the other app may read.
     const note = await createItem(maker.token, "core.note", `a note ${word}`);
     expect(await reads(reader.token, note)).toBe(true);
-    expect(await found(reader.token, word, note)).toBe(true);
+    expect(await found(reader.token, word, "core.note", note)).toBe(true);
     expect(await streamed(reader.token, maker.token, "core.note")).toBe(true);
 
     expect(await reads(reader.token, item)).toBe(false);
     expect(await listed(reader.token, type, item)).toBe(false);
-    expect(await found(reader.token, word, item)).toBe(false);
+    expect(await found(reader.token, word, type, item)).toBe(false);
     expect(await streamed(reader.token, maker.token, type)).toBe(false);
   });
 
@@ -377,7 +388,7 @@ describe("an app's own types", () => {
     const named = await signedIn(`content:read ${vendor}.*:read`);
     expect(await reads(named.token, item)).toBe(true);
     expect(await listed(named.token, type, item)).toBe(true);
-    expect(await found(named.token, word, item)).toBe(true);
+    expect(await found(named.token, word, type, item)).toBe(true);
     expect(await streamed(named.token, maker.token, type)).toBe(true);
     const write = await answer(named.token, "/items", {
       method: "POST",
