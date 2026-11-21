@@ -164,7 +164,7 @@ When a device hydrates, a device MUST keep every pin it holds, the hydration tha
 
 When a device hydrates, a device MUST hold each pinned item as the server answers it then, read by id where the slice does not bring it.
 
-**Tests:** `device/catch-up.test.ts › keeps a pinned item outside the slice current`, `› keeps a pin across the hydration that follows an aged-out cursor`, `› reads a pinned folder item again at a hydration, which the bulk read answers only with system`, `device/pins-live.test.ts › holds a pinned folder item, and keeps a pin whose item went to the bin without an item`.
+**Tests:** `device/catch-up.test.ts › keeps a pinned item outside the slice current`, `› keeps a pin across the hydration that follows an aged-out cursor`, `› reads a pinned folder item again at hydration when the bulk read asks for hidden items`, `device/pins-live.test.ts › holds a pinned folder item, and keeps a pin whose item went to the bin without an item`.
 
 ### `device/pin-gone-kept`
 
@@ -764,7 +764,7 @@ If a hydration declares `*` beside a type that is not a hidden type (`items/hidd
 
 **Reason:** `*` is every type but the hidden ones, so a type beside it that is not a hidden type is one the caller either meant to name instead of `*` or already holds, and the slice a caller means is not clear. A hidden type beside it adds the items `*` leaves out (`device/hydrate-every-type-beside-system`).
 
-**Tests:** `device/hydrate-every-type.test.ts › refuses the star beside a type that is not a system type before any request, and takes it said twice`.
+**Tests:** `device/hydrate-every-type.test.ts › refuses the star beside a visible type before any request, and takes it said twice`.
 
 ### `device/hydrate-grammar`
 
@@ -1112,7 +1112,7 @@ When a hydration completes, a device MUST report the types, tier and edge types 
 
 When a hydration declares `*` alone, or a folder whose query names no type or names `*` hydrates its copy, a device MUST read the item listing naming no type, which leaves hidden types out (`folder-setup/search-default-types`), and report the slice's types as `*`.
 
-**Tests:** `device/hydrate-every-type.test.ts › hydrates every type but system.* from the listing naming no type`, `device/hidden-types-live.test.ts › holds no app item in a slice of every type, by hydration or by event, and holds a user item the same way`, `device/hydrate-every-type-live.test.ts › holds every type registered before the hydration in one pass, and takes a later item of each by its event`, `device/folders.test.ts › holds exactly what its query matches`, `› takes every type, and any default type, where its query names no type or the star`.
+**Tests:** `device/hydrate-every-type.test.ts › hydrates a visible type and omits a system type from the listing naming no type`, `device/hidden-types-live.test.ts › holds no app item in a slice of every type, by hydration or by event, and holds a user item the same way`, `device/hydrate-every-type-live.test.ts › holds every type registered before the hydration in one pass, and takes a later item of each by its event`, `device/folders.test.ts › holds exactly what its query matches`, `› takes every type, and any default type, where its query names no type or the star`.
 
 ### `device/hydrate-every-type-beside-system`
 
@@ -1134,7 +1134,7 @@ While a hydration of a slice of every type has started and not completed, and th
 
 **Reason:** `device/report-items-expected` holds for this slice too, and a count that took hidden types would pass the whole.
 
-**Tests:** `device/hydrate-every-type.test.ts › counts every type but system.* as the items expected, and leaves the count out where the server gave none`, `› leaves the expected count out, not zero, where the server did not count`.
+**Tests:** `device/hydrate-every-type.test.ts › omits system items from the expected count, and leaves the count out where the server gave none`, `› leaves the expected count out, not zero, where the server did not count`.
 
 ### `device/hydrate-every-type-interrupted`
 

@@ -77,7 +77,8 @@ describe("hidden app types", () => {
     );
     expect(plain.status, JSON.stringify(plain.error)).toBe(200);
     const shown = idsOf(plain.data.data);
-    for (const id of shownIds) expect(shown, "the witness is listed").toContain(id);
+    for (const id of shownIds)
+      expect(shown, "the witness is listed").toContain(id);
     for (const id of hiddenIds) expect(shown).not.toContain(id);
 
     const asked = await owner.rawRequest<{ data: MarfaItem[] }>(
@@ -107,7 +108,8 @@ describe("hidden app types", () => {
     );
     expect(plain.status, JSON.stringify(plain.error)).toBe(200);
     const found = plain.data.data.map((row) => row.item.id);
-    for (const id of shownIds) expect(found, "the witness is found").toContain(id);
+    for (const id of shownIds)
+      expect(found, "the witness is found").toContain(id);
     for (const id of hiddenIds) expect(found).not.toContain(id);
 
     const asked = await owner.rawRequest<{ data: { item: MarfaItem }[] }>(
@@ -157,7 +159,8 @@ describe("hidden app types", () => {
     const plain = await owner.bulkGet(ids);
     expect(plain.status, JSON.stringify(plain.error)).toBe(200);
     const read = idsOf(plain.data.data);
-    for (const id of shownIds) expect(read, "the witness is read").toContain(id);
+    for (const id of shownIds)
+      expect(read, "the witness is read").toContain(id);
     for (const id of hiddenIds) expect(read).not.toContain(id);
 
     const asked = await owner.bulkGet(ids, ["hidden"]);
