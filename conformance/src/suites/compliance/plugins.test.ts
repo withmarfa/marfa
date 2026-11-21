@@ -143,7 +143,10 @@ async function appToken(
     app,
     scope,
   );
-  return new MarfaClient({ baseUrl: server.apiUrl, apiKey: tokens.access_token });
+  return new MarfaClient({
+    baseUrl: server.apiUrl,
+    apiKey: tokens.access_token,
+  });
 }
 
 beforeAll(async () => {
@@ -241,7 +244,9 @@ describe("installing a plugin", () => {
     });
     expect(refused.status).toBe(400);
     expect(refused.error?.error.code).toBe("validation_error");
-    expect(JSON.stringify(refused.error?.error.details)).toContain("shipped_by");
+    expect(JSON.stringify(refused.error?.error.details)).toContain(
+      "shipped_by",
+    );
     const connector = { any: ["shape", 1], the: { connector: "defines" } };
     const taken = await owner.installPlugin(
       single("extra-key", "extra.thing", { connector }),
@@ -321,7 +326,9 @@ describe("installing a plugin", () => {
       single("ordered", "ordered.thing"),
     );
     expect(permission.status).toBe(403);
-    expect(permission.error?.error.details?.required_scope).toBe("schema.write");
+    expect(permission.error?.error.details?.required_scope).toBe(
+      "schema.write",
+    );
   });
 
   it("installs a type under another plugin's common type with no write on it, and refuses one under an owner's type", async () => {
@@ -511,9 +518,9 @@ describe("plugins in an archive", () => {
     const plugins = archiveLines(archive.data, "instance").filter(
       (line) => "plugin" in line,
     );
-    expect(plugins.map((line) => (line.plugin as { name: string }).name)).toContain(
-      "tickets",
-    );
+    expect(
+      plugins.map((line) => (line.plugin as { name: string }).name),
+    ).toContain("tickets");
     const local = new MarfaClient({
       baseUrl: destination.apiUrl,
       controlSocket: destination.controlSocket,
@@ -528,7 +535,10 @@ describe("plugins in an archive", () => {
     });
     const record = await elsewhere.getPlugin("tickets");
     expect(record.status).toBe(200);
-    expect(record.data).toMatchObject({ version: "1.3.0", types: [TICKET, SPIKE] });
+    expect(record.data).toMatchObject({
+      version: "1.3.0",
+      types: [TICKET, SPIKE],
+    });
     expect(
       (await elsewhere.getType("user.registered-beside")).data.provenance
         ?.origin,
@@ -609,7 +619,10 @@ describe("plugins in an archive", () => {
 
 describe("who writes a type's guidance", () => {
   it("refuses guidance to an app holding user.*:write and schema.write, and takes the same registration without it", async () => {
-    const app = await appToken(origin, "user.*:write metadata.types:write schema.write");
+    const app = await appToken(
+      origin,
+      "user.*:write metadata.types:write schema.write",
+    );
     const refused = await app.registerType({
       id: "user.app-guided",
       guidance: "Use it.",
@@ -627,7 +640,10 @@ describe("who writes a type's guidance", () => {
   });
 
   it("refuses an app's replacement that adds guidance, and lets an owner's key add it", async () => {
-    const app = await appToken(origin, "user.*:write metadata.types:write schema.write");
+    const app = await appToken(
+      origin,
+      "user.*:write metadata.types:write schema.write",
+    );
     const made = await app.registerType({
       id: "user.app-replaced",
       fields: { title: { type: "string" } },

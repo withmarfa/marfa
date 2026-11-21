@@ -1642,6 +1642,64 @@ When a Markdown file in the folder has a name before `.md` that is not a well-fo
 
 **Tests:** `device/types-check-guidance.test.ts › leaves a Markdown file that is not named for a type alone`, `› reads only the entry named exactly after the definition as its guidance, and follows a link`.
 
+## Plugins
+
+A plugin's source folder holds `plugin.json` (its identity, with no version), `types/<id>.json` with `<id>.md` beside it as guidance, and `edge-types/<id>.json`. A release lists its bundles in `plugins.json`: `format`, which is 1, and `plugins`, each entry the plugin's identity fields, `version`, `has_connector`, `bundle` (its file name) and `sha256` (its bundle's digest, in hex).
+
+### `cli/plugins-install-file`
+
+When `marfa plugins install` is given a path to a file, the CLI MUST send the file's JSON object as the body of `POST /plugins` and print the server's answer.
+
+**Tests:** `cli/plugins.test.ts › installs a plugin from a bundle file and from a source folder, and lists, reads and removes it`.
+
+### `cli/plugins-install-folder`
+
+When `marfa plugins install` is given a source folder, the CLI MUST build the bundle `marfa plugins bundle` builds from it, at the version `--version` names or `0.0.0` without it, and send it to `POST /plugins`.
+
+**Tests:** `cli/plugins.test.ts › installs a plugin from a bundle file and from a source folder, and lists, reads and removes it`.
+
+### `cli/plugins-install-name`
+
+When `marfa plugins install` is given a plugin's name that is no path on the machine, the CLI MUST read `plugins.json` and then the bundle it lists for that name from the release `MARFA_PLUGINS_URL` names, or the latest release of the plugins repository without it, sending no credential, and send the bundle to `POST /plugins`.
+
+**Reason:** the server makes no outbound request, so nothing leaves an instance by default; the CLI names each address it reads on standard error.
+
+**Tests:** `cli/plugins.test.ts › installs a plugin by name from a release's index, checking its SHA-256, and sends no credential`.
+
+### `cli/plugins-install-digest`
+
+If the bundle a release serves has another SHA-256 than its `plugins.json` lists, or the release cannot be read, then the CLI MUST exit 3 with `plugins_unreachable`, naming the release's address, and send nothing to the server.
+
+**Tests:** `cli/plugins.test.ts › refuses a bundle whose SHA-256 is not the one the index lists, exiting 3 with plugins_unreachable and installing nothing`.
+
+### `cli/plugins-check-judges`
+
+When `marfa plugins check` is given a source folder, the CLI MUST report every problem installing its bundle would be refused for, with no server: each problem of `plugin.json` and the edge types with its path, and each file in `types/` as `cli/types-check-judges` reports it, except that a type under `common` is taken and a type under `core`, `system`, `marfa`, `app` or `user` is refused `forbidden`.
+
+**Reason:** the plugins repository checks a plugin as installing will, while `marfa types check` keeps judging as `POST /types` does.
+
+**Tests:** `device/plugins-check.test.ts › judges a source folder as installing would: takes common.ticket and refuses user.ticket, which types check takes`.
+
+### `cli/plugins-check-version`
+
+If the `plugin.json` of a source folder that `marfa plugins check` is given names a `version`, then the CLI MUST report it as a problem at `plugin.json: version` and exit 1.
+
+**Reason:** a plugin's version is its release tag, which the release stamps into the bundle.
+
+**Tests:** `device/plugins-check.test.ts › refuses a plugin.json that names a version, which a release stamps from its tag`.
+
+### `cli/plugins-bundle`
+
+When `marfa plugins bundle` is given a source folder, the CLI MUST write `<name>.plugin.json` in the output folder holding `format` 1, the identity fields of `plugin.json`, `version` from `--version`, `types` with each `<id>.md` joined as the type's `guidance`, `edge_types`, and `connector` where `plugin.json` names one.
+
+**Tests:** `device/plugins-check.test.ts › builds a source folder into a bundle stamped with its version, and writes an index naming its SHA-256`.
+
+### `cli/plugins-index`
+
+When `marfa plugins index` is given a folder of bundles, the CLI MUST write `plugins.json` in it listing each bundle by name with its identity fields, `version`, `has_connector`, `bundle` and the SHA-256 of its bytes.
+
+**Tests:** `device/plugins-check.test.ts › builds a source folder into a bundle stamped with its version, and writes an index naming its SHA-256`.
+
 ## Type guidance
 
 To keep a type's guidance in a separate Markdown file, name it `PATH.md` and place it beside `PATH.json`.

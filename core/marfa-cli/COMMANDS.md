@@ -48,7 +48,7 @@ With --json a refusal is the last line of stderr, one JSON object, after any pla
 {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...,"request_id":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
-where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `sync_paused`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `instance_changed`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `conflict`, `too_large`.
+where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `sync_paused`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `instance_changed`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `plugins_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 
@@ -1313,6 +1313,105 @@ marfa edge-types delete [OPTIONS] <ID>
 | Argument | Description |
 | --- | --- |
 | `<ID>` | The edge type id. |
+
+## plugins
+
+Plugins: install one, by name or from a file or folder, list and remove them, and check or build a plugin's source folder.
+
+### marfa plugins
+
+```text
+marfa plugins [OPTIONS] <COMMAND>
+```
+
+### marfa plugins install
+
+Install a plugin: by name from the latest release of the plugins repository, or from a bundle file or a source folder on this machine. Needs `schema.write` and write on each of its types and edge types. A newer version of an installed plugin may only add to its types.
+
+```text
+marfa plugins install [OPTIONS] <NAME_OR_PATH>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME_OR_PATH>` | A plugin's name, a `.plugin.json` bundle, or a source folder. |
+
+| Option | Description |
+| --- | --- |
+| `--version <VERSION>` | The version a source folder is built at, such as `1.4.0`. A folder installs at `0.0.0` without it. |
+
+### marfa plugins list
+
+Every installed plugin.
+
+```text
+marfa plugins list [OPTIONS]
+```
+
+### marfa plugins get
+
+One installed plugin, with the types it installed.
+
+```text
+marfa plugins get [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
+### marfa plugins remove
+
+Remove a plugin's install record. Its types, edge types and items stay, and keep saying which plugin they came from. Needs `schema.write`.
+
+```text
+marfa plugins remove [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
+### marfa plugins check
+
+Judge a plugin's source folder as installing it would, with no server: `common.*` types are taken, and the roots kept for Marfa, apps and the owner are refused.
+
+```text
+marfa plugins check [OPTIONS] <FOLDER>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<FOLDER>` | The source folder, holding `plugin.json`, `types/` and `edge-types/`. |
+
+### marfa plugins bundle
+
+Build a source folder into the bundle that installs it, `<name>.plugin.json`, in the output folder.
+
+```text
+marfa plugins bundle [OPTIONS] <FOLDER>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<FOLDER>` | The source folder. |
+
+| Option | Description |
+| --- | --- |
+| `--version <VERSION>` | The version to stamp, such as `1.4.0`. Default: `0.0.0`. |
+| `--output <OUTPUT>` | The folder to write the bundle in. Default: `.`. |
+
+### marfa plugins index
+
+Write `plugins.json`, the index a release lists, from the bundles in a folder.
+
+```text
+marfa plugins index [OPTIONS] <FOLDER>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<FOLDER>` | The folder of `*.plugin.json` bundles; the index is written beside them. |
 
 ## types
 

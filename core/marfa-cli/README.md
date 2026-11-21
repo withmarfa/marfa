@@ -30,6 +30,14 @@ Run `marfa types check FOLDER` locally or in CI to validate item type definition
 - **Exit codes** are 0 when every file passes the folder's checks and a server would register it, 1 when any file fails, no type files are found, or the folder cannot be listed, and 2 when the path does not resolve to a folder. With `--json`, a completed check of one or more files writes `{ok, checked, refused, files}` to standard output. A refusal also writes the standard JSON error envelope to standard error.
 - **What it cannot judge:** a server also decides from what an instance holds. The command does not check that the type's `id` is free (`409 type_exists`), that the key may register it (`403 forbidden`, `403 type_not_permitted`, the `metadata.types:write` and `schema.write` permissions and the key's type map), that the key reaches the `parent` when it is not a platform type, or that the body is within the instance's request-size setting.
 
+## Plugins
+
+`marfa plugins install` takes a plugin's name, a `.plugin.json` bundle or a source folder, and sends the bundle to `POST /plugins`.
+
+- **By name:** the command reads `plugins.json`, then the bundle it lists, from the release that `MARFA_PLUGINS_URL` names, or from `https://github.com/withmarfa/plugins/releases/latest/download` when it is unset or empty. It names each address on standard error, sends no key, cookie or query, follows up to five redirects, and refuses a bundle whose SHA-256 differs from the index (`plugins_unreachable`, exit 3). A path on the machine wins over a name.
+- **A file or a folder** installs with no network. A folder is built as `marfa plugins bundle` builds it, at `--version` or `0.0.0`.
+- **`marfa plugins check`, `bundle` and `index`** need no server, key or keychain. `check` judges a source folder as installing would, with the roots a plugin may not use refused and `common.*` taken; `marfa types check` keeps judging a folder as `POST /types` does. A release builds each bundle with `bundle --version <tag>` and lists them with `index`.
+
 ## Limits and timings
 
 | What                                                                   | Limit                                                                                                                                                |

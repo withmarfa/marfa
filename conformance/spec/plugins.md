@@ -2,7 +2,7 @@
 
 A plugin is what an owner adds to Marfa: types under `common.*` or a root of its own, the edge types they use and, optionally, a connector. It arrives as a bundle, one JSON file named `<name>.plugin.json`, which `POST /plugins` installs. The server makes no request of its own to fetch one: the CLI or an app fetches the bundle and sends it (`cli/plugins-install-name`).
 
-A bundle holds `format` (1), the plugin's identity (`name`, `title`, `description`, `mark`, `maker` and `marfa`, the oldest Marfa release it works with), its `version`, `types` (each a definition as `POST /types` takes it, with its `guidance`), `edge_types` (each as `POST /edge-types` takes it) and an optional `connector` object, which the server keeps with the install record and does not read. `openapi.json` gives each field's shape as `PluginBundle`.
+A bundle holds `format`, which is 1,, the plugin's identity (`name`, `title`, `description`, `mark`, `maker` and `marfa`, the oldest Marfa release it works with), its `version`, `types` (each a definition as `POST /types` takes it, with its `guidance`), `edge_types` (each as `POST /edge-types` takes it) and an optional `connector` object, which the server keeps with the install record and does not read. `openapi.json` gives each field's shape as `PluginBundle`.
 
 `POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, a type under a reserved root, the Marfa release it needs, the caller's permission, the version installed, a type the plugin did not install, each type's definition, what a newer version narrows, a clash with a type below, and each edge type.
 
@@ -62,7 +62,7 @@ If `POST /plugins` sends a bundle with a type whose identifier starts `core`, `s
 
 While the server runs a release other than `0.0.0`, if `POST /plugins` sends a bundle whose `marfa` is a later release than the server's, then the server MUST answer `409 plugin_needs_newer_server` with `details.marfa` and `details.server`.
 
-**Tests:** waiting on #3420.
+**Tests:** waiting on #3421.
 
 ### `plugins/install-development-any`
 

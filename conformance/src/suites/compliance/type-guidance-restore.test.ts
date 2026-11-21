@@ -310,7 +310,11 @@ describe("an app restoring an archive that carries guidance", () => {
   it("answers 403 forbidden naming guidance to an app holding backups.manage and schema.write, and registers none of its types", async () => {
     const app = await appToken("backups.manage schema.write");
     const fields = { title: { type: "string" } };
-    const guided = { id: "user.guided-app-holding", guidance: "Use it.", fields };
+    const guided = {
+      id: "user.guided-app-holding",
+      guidance: "Use it.",
+      fields,
+    };
     const refused = await app.restoreArchive(itemsArchive([], [], [guided]));
     expect(refused.status, JSON.stringify(refused.error)).toBe(403);
     expect(refused.error?.error.code).toBe("forbidden");
