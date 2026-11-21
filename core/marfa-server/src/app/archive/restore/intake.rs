@@ -1425,15 +1425,15 @@ mod tests {
 
     #[test]
     fn a_manifest_at_a_later_version_is_refused_and_one_at_none_is_mistyped() {
-        let text = r#"{"format":"marfa-archive","version":2,"written_by":"marfa-server 9.0.0"}"#;
+        let text = r#"{"format":"marfa-archive","version":3,"written_by":"marfa-server 9.0.0"}"#;
         let refused = manifest(text.as_bytes()).unwrap_err();
         assert!(
-            refused.message.contains("up to version 1"),
+            refused.message.contains("up to version 2"),
             "{}",
             refused.message
         );
         let details = refused.details.unwrap();
-        assert_eq!(details["version"], 2);
+        assert_eq!(details["version"], 3);
         assert_eq!(details["written_by"], "marfa-server 9.0.0");
         for version in ["0", "1.5", "\"1\"", "null"] {
             let text = format!(r#"{{"format":"marfa-archive","version":{version}}}"#);
