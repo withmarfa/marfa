@@ -29,13 +29,13 @@ use super::items::{self, Archived, Reader, reading, reading_background};
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
 use super::tables::archive::{ArchivedRow, CarriedTable, Rows};
-use super::{backups, connectors, edges, provenance, sources, stored, tables};
+use super::{backups, connectors, edges, provenance, sources, stored, tables, vendors};
 use crate::db::io_refusal;
 use crate::settings::registry;
 pub use spool::Sealed;
 use spool::{Lines, Spooled};
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 /// What a manifest names itself, so a reader knows the archive for one before reading its version.
 pub const FORMAT: &str = "marfa-archive";
 /// The most a manifest, or one line of a line file, may hold.
@@ -123,6 +123,8 @@ struct InstanceNeed {
     sources: BTreeMap<String, BTreeSet<String>>,
     /// The type and source of each row a line names.
     rows: BTreeSet<(String, String)>,
+    /// Each vendor a line names, with the types under it, of which the credential reads one.
+    vendors: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl InstanceNeed {
@@ -783,6 +785,9 @@ fn select<W: RowSink>(
                     open.sources.entry(source).or_default().extend(types);
                 }
                 open.rows.extend(need.rows);
+                for (vendor, types) in need.vendors {
+                    open.vendors.entry(vendor).or_default().extend(types);
+                }
             })?;
         }
         Ok(())
@@ -842,6 +847,28 @@ fn select<W: RowSink>(
         })
         .collect::<Result<_>>()?;
     count("source_count", &mut instance, named)?;
+    let bound = vendors::list(read.tx)?
+        .into_iter()
+        .filter_map(|binding| {
+            let under: BTreeSet<String> = catalog
+                .types
+                .ids()
+                .into_iter()
+                .filter(|id| vendors::vendor_of(id) == Some(binding.vendor.as_str()))
+                .map(str::to_string)
+                .collect();
+            caller
+                .reads_vendor(&binding.vendor, under.iter().map(String::as_str))
+                .then_some((binding, under))
+        })
+        .map(|(binding, under)| {
+            let line = print(&json!({ "app_vendor": binding.to_json() }))?;
+            let mut need = needing(None);
+            need.vendors.insert(binding.vendor, under);
+            Ok((line, need))
+        })
+        .collect::<Result<_>>()?;
+    count("app_vendor_count", &mut instance, bound)?;
     let mut settings = Vec::new();
     if caller.holds(Permission::ConfigManage) {
         for (key, text) in stored::rows(read.tx)? {

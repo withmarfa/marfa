@@ -246,6 +246,9 @@ fn instance_need(need: &InstanceNeed) -> Judge {
             })
             && need.rows.iter().all(|(type_id, source)| {
                 caller.may_read_type(type_id) && levers.lists(&read.catalog.rules, type_id, source)
+            })
+            && need.vendors.iter().all(|(vendor, types)| {
+                caller.reads_vendor(vendor, types.iter().map(String::as_str))
             }))
     })
 }

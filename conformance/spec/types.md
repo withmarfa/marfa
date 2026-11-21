@@ -216,6 +216,20 @@ If `POST /types` or `PUT /types/{id}` names a `label` or `plural` for the type, 
 
 **Tests:** `compliance/type-label.test.ts › refuses a label or plural longer than 100 characters or not text`.
 
+### `types/app-vendor-bound`
+
+When an app's sign-in or a key an app made registers the first type under an `app.<vendor>` namespace no app holds, the server MUST give the vendor to the app's OAuth client in the same write.
+
+**Reason:** a vendor is an app's own machinery, so it belongs to the app that made it, and the owner moves it with `PUT /app-vendors/{vendor}` (`keys-and-oauth/app-vendor-move`).
+
+**Tests:** `compliance/app-vendors.test.ts › gives the vendor to the app that registered the first type under it`.
+
+### `types/app-vendor-claimed-refused`
+
+If an app's sign-in or a key an app made registers a type under an `app.<vendor>` namespace another app or the owner holds, then the server MUST answer `403 forbidden` with `details.namespace` naming `app.<vendor>`.
+
+**Tests:** `compliance/app-vendors.test.ts › refuses another app a type under the vendor with 403 forbidden naming the namespace`, `› moves the vendor to the app named, which then reaches its items in place of the app that held it`, `› holds a vendor two apps made types under for the owner, refuses it to either app, and gives it to the app the owner names`.
+
 ## Descriptions and guidance
 
 A type's `description` says in one sentence what it is for. Its `guidance` is optional Markdown that tells an agent or an app builder how to use it. Lengths are counted in Unicode code points.

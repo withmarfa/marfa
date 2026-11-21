@@ -7,8 +7,9 @@ use marfa_rules::builtin;
 use marfa_rules::grammar::{platform_root, type_pattern};
 use serde_json::{Map as Entries, Value};
 
-use crate::app::access::{Axis, Grants, Level, Map, Permission};
+use crate::app::access::{Axis, Grants, Level, Map, Permission, key_reach, sign_in_reach};
 use crate::app::catalog::Catalog;
+use crate::app::vendors::vendor_of;
 
 pub const OFFLINE_ACCESS: &str = "offline_access";
 
@@ -20,6 +21,8 @@ const PROFILE: &str = "profile";
 const MOST_NAME_BYTES: usize = 128;
 
 const NOT_CONTENT: [&str; 2] = ["system", "marfa"];
+/// Each app's own machinery: neither `content` nor `*` reaches it, only a scope that names it.
+const APP: &str = "app";
 
 /// The roots a permission lives under, and the one word no publisher may use. Anything under
 /// one of these that is not a permission is no scope, so `keys.note:read` can never mean a type.
@@ -264,15 +267,6 @@ fn edge_pattern(pattern: &str) -> bool {
         && parts.all(tail)
 }
 
-/// `app.<vendor>` for an `app.<vendor>.<name>` id, the namespace one vendor's app types share.
-fn vendor_of(id: &str) -> Option<&str> {
-    let segments: Vec<&str> = id.split('.').collect();
-    match segments[..] {
-        ["app", vendor, _] => Some(&id[.."app.".len() + vendor.len()]),
-        _ => None,
-    }
-}
-
 fn vendors(ids: &BTreeSet<String>) -> BTreeSet<&str> {
     ids.iter().filter_map(|id| vendor_of(id)).collect()
 }
@@ -493,12 +487,13 @@ impl Registries {
         .allowed()
     }
 
-    /// A type under `system` or `marfa` is never one.
+    /// A type under `system`, `marfa` or `app` is never one.
     pub fn choosable_types(&self) -> Vec<&str> {
         self.types
             .iter()
             .map(String::as_str)
             .filter(|id| !platform_root(id).is_some_and(|root| NOT_CONTENT.contains(&root)))
+            .filter(|id| id.split('.').next() != Some(APP))
             .collect()
     }
 
@@ -536,7 +531,6 @@ fn raise(entries: &mut Entries<String, Value>, name: &str, verb: Verb) {
     }
 }
 
-/// A set reaches what each of its scopes reaches: `content` all but `system` and `marfa`, `*` all.
 pub fn to_grants(granted: &ScopeSet) -> Grants {
     let (mut content, mut all) = (None, None);
     for scope in granted.scopes() {
@@ -553,6 +547,9 @@ pub fn to_grants(granted: &ScopeSet) -> Grants {
         for root in NOT_CONTENT {
             types.insert(format!("{root}.*"), Value::from(not_content));
         }
+    }
+    if content.is_some() || all.is_some() {
+        types.insert(format!("{APP}.*"), Value::from(Level::None.word()));
     }
     let mut edges = Entries::new();
     let mut metadata = Entries::new();
@@ -607,9 +604,13 @@ pub fn first_uncovered(held: &ScopeSet, wanted: &ScopeSet) -> Option<String> {
     })
 }
 
-/// Whether a key's access reaches past `held`, judged as `first_uncovered` judges a set whole.
-pub fn grants_beyond(held: &ScopeSet, key: &Grants) -> bool {
-    to_grants(held).first_scope_beyond(key).is_some()
+/// Whether a key the app made, holding `stored`, would reach past what `held` lets the app reach,
+/// judged as `first_uncovered` judges a set whole, with the app's `own` vendors applied to both.
+pub fn grants_beyond(held: &ScopeSet, stored: &Grants, own: &[String]) -> bool {
+    let grant = to_grants(held);
+    sign_in_reach(&grant, own)
+        .first_scope_beyond(&key_reach(stored, Some(&grant), own))
+        .is_some()
 }
 
 pub fn covers(held: &ScopeSet, required: &str) -> bool {
@@ -803,6 +804,28 @@ mod tests {
 
     fn level(granted: &str, axis: Axis, name: &str) -> Level {
         axis.level(to_grants(&set(granted)).map(axis), name)
+    }
+
+    #[test]
+    fn neither_content_nor_everything_reaches_app_data_a_scope_does_not_name() {
+        for granted in ["content:write", "*:write", "content:write *:write"] {
+            assert_eq!(level(granted, Axis::Type, "core.note"), Level::Write);
+            assert_eq!(
+                level(granted, Axis::Type, "app.acme.setting"),
+                Level::None,
+                "{granted}"
+            );
+        }
+        let one = "content:write app.acme.*:read";
+        assert_eq!(level(one, Axis::Type, "app.acme.setting"), Level::Read);
+        assert_eq!(level(one, Axis::Type, "app.other.setting"), Level::None);
+        let every = "content:read app.*:write";
+        assert_eq!(level(every, Axis::Type, "app.other.setting"), Level::Write);
+        assert!(!covers(&set("content:write *:write"), "app.acme.*:read"));
+        assert!(covers(
+            &set("content:write app.acme.*:read"),
+            "app.acme.setting:read"
+        ));
     }
 
     #[test]
@@ -1410,7 +1433,7 @@ mod tests {
     }
 
     #[test]
-    fn the_choosable_types_leave_out_system_and_marfa() {
+    fn the_choosable_types_leave_out_system_marfa_and_app() {
         assert_eq!(
             registries().choosable_types(),
             [

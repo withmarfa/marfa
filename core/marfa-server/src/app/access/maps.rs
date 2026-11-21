@@ -143,11 +143,102 @@ impl Map {
         json!([default, apart])
     }
 
+    /// The level `entry` is decided at, a wildcard by itself or a wider entry, never by a narrower one.
+    fn entry_level(&self, entry: &str) -> Level {
+        let Some(mut root) = entry.strip_suffix(".*") else {
+            return self.most_specific(entry);
+        };
+        if let Some(level) = self.exact(entry) {
+            return level;
+        }
+        while let Some(at) = root.rfind('.') {
+            root = &root[..at];
+            if let Some(level) = self.exact(&format!("{root}.*")) {
+                return level;
+            }
+        }
+        self.exact("*").unwrap_or(Level::None)
+    }
+
+    /// The most the map grants any name outside `app`.
+    fn outside_apps(&self) -> Level {
+        self.patterns()
+            .filter(|(name, _)| !is_app(name))
+            .map(|(_, level)| level)
+            .max()
+            .unwrap_or(Level::None)
+    }
+
+    /// An app's sign-in: `app.*` only where its grant names it, and each of `own` at least at the
+    /// most it holds outside `app`.
+    pub(super) fn for_sign_in(&mut self, own: &[String]) {
+        let most = self.outside_apps();
+        self.0
+            .entry("app.*")
+            .or_insert_with(|| Level::None.word().into());
+        for vendor in own {
+            let name = format!("{vendor}.*");
+            let level = self.entry_level(&name).max(most);
+            self.0.insert(name, level.word().into());
+        }
+    }
+
+    /// A key an app made: each of `own` as the key's own entry for it says, else at the most the
+    /// key holds outside `app`; any other `app` name only where both the key and the app's live
+    /// grant reach it.
+    pub(super) fn for_app_key(&self, grant: Option<&Map>, own: &[String]) -> Map {
+        let own_of = |name: &str| {
+            own.iter().find(|vendor| {
+                name.strip_prefix(vendor.as_str())
+                    .is_some_and(|rest| rest.starts_with('.'))
+            })
+        };
+        let granted = |name: &str| grant.map_or(Level::None, |grant| grant.entry_level(name));
+        let mut held: serde_json::Map<String, Value> = self
+            .0
+            .iter()
+            .filter(|(name, _)| !is_app(name))
+            .map(|(name, level)| (name.clone(), level.clone()))
+            .collect();
+        let mut names: Vec<&str> = self
+            .0
+            .keys()
+            .chain(grant.into_iter().flat_map(|grant| grant.0.keys()))
+            .map(String::as_str)
+            .filter(|name| is_app(name) && own_of(name).is_none())
+            .collect();
+        names.push("app.*");
+        for name in names {
+            let level = self.entry_level(name).min(granted(name));
+            held.insert(name.to_string(), level.word().into());
+        }
+        let most = self.outside_apps();
+        for vendor in own {
+            let name = format!("{vendor}.*");
+            let level = self
+                .exact(&name)
+                .unwrap_or_else(|| most.max(self.entry_level(&name).min(granted(&name))));
+            for (entry, kept) in &self.0 {
+                if own_of(entry) == Some(vendor) {
+                    held.insert(entry.clone(), kept.clone());
+                }
+            }
+            held.insert(name, level.word().into());
+        }
+        Map(held)
+    }
+
     fn widest(&self, name: &str) -> Level {
         self.exact(name)
             .unwrap_or(Level::None)
             .max(self.exact("*").unwrap_or(Level::None))
     }
+}
+
+/// A name under the `app` root, each app's own machinery.
+fn is_app(name: &str) -> bool {
+    name.strip_prefix("app")
+        .is_some_and(|rest| rest.starts_with('.'))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

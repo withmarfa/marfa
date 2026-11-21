@@ -1102,6 +1102,14 @@ The server MUST count a change to a stored setting as a change a backup holds.
 
 **Tests:** `compliance/backups.test.ts › skips a scheduled run when nothing changed, counts a settings change as a change, and puts one when asked`.
 
+### `instance/backup-app-vendor-change`
+
+The server MUST count giving a vendor to an app, or a vendor coming to be held, as a change a backup holds.
+
+**Reason:** a backup carries who holds each vendor (`archive/archive-app-vendors`), so a restore from an older one would give a vendor back to the app that held it before.
+
+**Tests:** `compliance/backups.test.ts › counts giving a vendor to an app as a change a scheduled backup takes`.
+
 ### `instance/backup-run-now`
 
 When a caller holding `backups.manage` sends `POST /backups`, the server MUST put a backup, whether or not anything has changed since the last.

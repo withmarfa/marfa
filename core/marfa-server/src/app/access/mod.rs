@@ -13,6 +13,7 @@ mod profile;
 pub mod reach;
 mod schema;
 mod tools;
+mod vendors;
 mod webhooks;
 
 use rusqlite::Transaction;
@@ -32,6 +33,7 @@ pub use maps::{Axis, Level, Map};
 pub use overview::Described;
 pub use schema::{Door, SchemaKind};
 pub use tools::AdminTask;
+pub use vendors::{app_key_reach, bind_app_key, bind_sign_in, key_reach, reaching, sign_in_reach};
 pub use webhooks::{Listener, Maker, attention_listeners, standing_maker};
 
 macro_rules! permissions {
@@ -564,6 +566,7 @@ impl Caller {
 }
 
 fn standing_key(tx: &Transaction<'_>, mut key: Key) -> Result<Key> {
+    bind_app_key(tx, &mut key)?;
     key.standing = match &key.levers {
         OwnLevers::Unread(text) => {
             report_unread(&key.id, text);
@@ -645,6 +648,80 @@ mod tests {
             refused.details.and_then(|d| d.get("max_age").cloned()),
             Some(json!(900))
         );
+    }
+
+    fn grants_of(value: Value) -> Grants {
+        let mut grants = Grants::default();
+        grants.maps[Axis::Type as usize] = map(Axis::Type, value);
+        grants
+    }
+
+    fn type_level(grants: &Grants, name: &str) -> Level {
+        Axis::Type.level(grants.map(Axis::Type), name)
+    }
+
+    #[test]
+    fn an_apps_sign_in_reaches_its_own_vendors_and_only_the_app_data_its_grant_names() {
+        let own = ["app.mine".to_string()];
+        let held = sign_in_reach(
+            &grants_of(json!({ "*": "write", "app.*": "none", "app.other.*": "read" })),
+            &own,
+        );
+        assert_eq!(type_level(&held, "app.mine.setting"), Level::Write);
+        assert_eq!(type_level(&held, "app.other.setting"), Level::Read);
+        assert_eq!(type_level(&held, "app.third.setting"), Level::None);
+
+        let reader = sign_in_reach(&grants_of(json!({ "core.note": "read" })), &own);
+        assert_eq!(type_level(&reader, "app.mine.setting"), Level::Read);
+        assert_eq!(type_level(&reader, "app.third.setting"), Level::None);
+
+        let every_app = sign_in_reach(&grants_of(json!({ "app.*": "write" })), &own);
+        assert_eq!(type_level(&every_app, "app.mine.setting"), Level::Write);
+        assert_eq!(type_level(&every_app, "app.other.setting"), Level::Write);
+    }
+
+    #[test]
+    fn a_key_an_app_made_reaches_app_data_only_through_its_own_vendors_and_its_apps_live_grant() {
+        let own = ["app.mine".to_string()];
+        let content = grants_of(json!({ "*": "write", "app.*": "none" }));
+        let every_app = grants_of(json!({ "*": "write", "app.*": "write" }));
+
+        let old = grants_of(json!({ "*": "write", "app.*": "write" }));
+        let reach = key_reach(&old, Some(&content), &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Write);
+        assert_eq!(type_level(&reach, "app.other.setting"), Level::None);
+        assert_eq!(type_level(&reach, "core.note"), Level::Write);
+        let reach = key_reach(&old, Some(&every_app), &own);
+        assert_eq!(type_level(&reach, "app.other.setting"), Level::Write);
+
+        let narrow = grants_of(json!({ "core.note": "read", "app.*": "read" }));
+        let reach = key_reach(&narrow, Some(&every_app), &own);
+        assert_eq!(type_level(&reach, "app.other.setting"), Level::Read);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Read);
+
+        let wide = grants_of(json!({ "*": "write" }));
+        let disconnected = key_reach(&wide, None, &own);
+        assert_eq!(type_level(&disconnected, "app.mine.setting"), Level::Write);
+        assert_eq!(type_level(&disconnected, "app.other.setting"), Level::None);
+
+        let asked = grants_of(json!({ "app.mine.*": "write" }));
+        let reach = key_reach(&asked, Some(&grants_of(json!({ "*": "read" }))), &own);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Write);
+
+        let moved = key_reach(&asked, Some(&content), &[]);
+        assert_eq!(type_level(&moved, "app.mine.setting"), Level::None);
+
+        let fenced = grants_of(json!({ "*": "write", "app.mine.secret": "none" }));
+        let reach = key_reach(&fenced, Some(&content), &own);
+        assert_eq!(type_level(&reach, "app.mine.secret"), Level::None);
+        assert_eq!(type_level(&reach, "app.mine.setting"), Level::Write);
+
+        let exact = grants_of(json!({ "*": "read", "app.other.setting": "read" }));
+        let granted =
+            grants_of(json!({ "*": "read", "app.*": "none", "app.other.setting": "read" }));
+        let reach = key_reach(&exact, Some(&granted), &own);
+        assert_eq!(type_level(&reach, "app.other.setting"), Level::Read);
+        assert_eq!(type_level(&reach, "app.other.else"), Level::None);
     }
 
     #[test]

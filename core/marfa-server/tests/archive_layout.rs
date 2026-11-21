@@ -417,10 +417,10 @@ async fn the_bulk_limit_may_not_be_set_above_what_one_line_holds() {
     assert_eq!(taken.status, StatusCode::OK, "{}", taken.body);
 }
 
-/// The layout of archive version 1. A change to any of it raises `VERSION`, and this pin with it.
+/// The layout of archive version 2. A change to any of it raises `VERSION`, and this pin with it.
 #[tokio::test]
 async fn the_layout_is_pinned_to_its_version() {
-    assert_eq!(archive::VERSION, 1);
+    assert_eq!(archive::VERSION, 2);
     let folder = TempDir::new().unwrap();
     let origin = Instance::start(folder.path(), &[]).await;
     let hash = origin.upload(b"a file the archive carries").await;
@@ -494,6 +494,7 @@ async fn the_layout_is_pinned_to_its_version() {
     assert_eq!(
         sorted_keys(&Value::Object(manifest_of(&held))),
         [
+            "app_vendor_count",
             "blob_count",
             "connector_agreement_count",
             "connector_state_count",
@@ -532,6 +533,7 @@ async fn the_layout_is_pinned_to_its_version() {
             .any(|held| held["type"]["id"] == "user.pinned")
     );
     let kinds = [
+        "app_vendor",
         "connector_agreement",
         "connector_state",
         "edge_type",
@@ -654,18 +656,18 @@ async fn a_manifest_at_a_later_version_is_refused_naming_the_build_that_wrote_it
     let origin = Instance::start(folder.path(), &[]).await;
     origin.note("written by a later build").await;
     let archive = with_manifest(entries(&origin.archive().await), |manifest| {
-        manifest.insert("version".into(), 2.into());
+        manifest.insert("version".into(), 3.into());
         manifest.insert("written_by".into(), "marfa-server 9.0.0".into());
     });
     let fresh = Instance::start(folder.path(), &[]).await;
     let refused = fresh.restore(archive).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
     let message = refused.body["error"]["message"].as_str().unwrap();
-    assert!(message.contains("version 2"), "{message}");
+    assert!(message.contains("version 3"), "{message}");
     assert!(message.contains("marfa-server 9.0.0"), "{message}");
-    assert!(message.contains("up to version 1"), "{message}");
+    assert!(message.contains("up to version 2"), "{message}");
     let details = &refused.body["error"]["details"];
-    assert_eq!(details["version"], 2, "{details}");
+    assert_eq!(details["version"], 3, "{details}");
     assert_eq!(details["written_by"], "marfa-server 9.0.0", "{details}");
 }
 

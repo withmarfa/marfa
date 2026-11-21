@@ -33,6 +33,11 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0003_remove_compatible_with.sql"),
         done: None,
     },
+    Migration {
+        version: 4,
+        sql: include_str!("migrations/0004_app_vendors.sql"),
+        done: None,
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

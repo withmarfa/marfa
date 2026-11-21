@@ -16,7 +16,7 @@ use crate::app::catalog::Catalog;
 use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::unit::Unit;
-use crate::app::{App, instance, keys};
+use crate::app::{App, instance, keys, vendors};
 
 const COMMAND_LINE_SOFTWARE_ID: &str = "so.marfa.cli";
 const APP_SOURCE_PREFIX: &str = "oauth:";
@@ -208,8 +208,9 @@ pub async fn narrow(
         }
         end_chains_beyond(tx, &consent, &asked.scopes, unit.instant)?;
         store::end_outstanding_codes(tx, &consent.client_id, &consent.owner_id)?;
+        let own = vendors::of_client(tx, &consent.client_id)?;
         let revoked_keys = keys::end_beyond_of_app(unit, &consent.client_id, |held| {
-            grants_beyond(&asked.scopes, held)
+            grants_beyond(&asked.scopes, held, &own)
         })?;
         grant::narrow(unit, &cache, &consent, &asked.scopes)?;
         unit.audit(

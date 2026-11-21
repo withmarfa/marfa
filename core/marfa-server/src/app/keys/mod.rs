@@ -10,7 +10,10 @@ use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::{Map, Value, json};
 
 use super::App;
-use super::access::{Axis, Caller, Change, Grants, OwnLevers, Permission, Standing};
+use super::access::{
+    Axis, Caller, Change, Grants, OwnLevers, Permission, Standing, app_key_reach, bind_app_key,
+    reaching,
+};
 use super::connectors;
 use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
@@ -295,7 +298,7 @@ fn unknown(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Refusal> {
 
 pub(crate) fn reached(tx: &Transaction<'_>, caller: &Caller, id: &str, at: &str) -> Result<Key> {
     match live_by_id(tx, id, at)? {
-        Some(key) if caller.reaches(&key) => Ok(key),
+        Some(key) if caller.reaches(&reaching(tx, &key)?) => Ok(key),
         _ => Err(unknown(tx, caller, id)?),
     }
 }
@@ -448,10 +451,17 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
             } else {
                 caller.whole_set()
             };
+            let app_origin = caller.key().and_then(|maker| maker.oauth_client_id.clone());
+            let made_by_app = app_origin.as_deref().filter(|_| !request.owner_key);
             let inherited = caller.key().and_then(|maker| maker.expires_at.clone());
             let expires_at = request.expires_at.unwrap_or(inherited);
             require_ahead(expires_at.as_deref(), &unit.at)?;
-            caller.check_ceiling(&grants)?;
+            match made_by_app {
+                Some(client) => {
+                    caller.check_ceiling(&app_key_reach(unit.tx(), client, &grants)?)?
+                }
+                None => caller.check_ceiling(&grants)?,
+            }
             caller.check_life(expires_at.as_deref())?;
             caller.check_own_source(
                 &request.source,
@@ -462,7 +472,6 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
                 &request.source,
                 connectors::source_held(unit.tx(), &request.source)?,
             )?;
-            let app_origin = caller.key().and_then(|maker| maker.oauth_client_id.clone());
             if request.owner_key && app_origin.is_some() {
                 caller.require(Permission::KeysManage)?;
             }
@@ -499,10 +508,14 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
         if let Some(wanted) = &request.expires_at {
             require_ahead(wanted.as_deref(), &unit.at)?;
         }
+        let reach = match &key.oauth_client_id {
+            Some(client) => app_key_reach(unit.tx(), client, &grants)?,
+            None => grants.clone(),
+        };
         unit.caller.check_update(
-            &key,
+            &reaching(unit.tx(), &key)?,
             &Change {
-                grants: &grants,
+                grants: &reach,
                 life: request.expires_at.as_ref().map(Option::as_deref),
                 levers: request.levers.as_ref().map(Option::as_ref),
                 narrow_only: request.narrow_only,
@@ -649,8 +662,13 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Key>> {
         .read(move |tx| {
             let caller = caller.current(tx, &at)?;
             caller.require_key_door()?;
-            let keys = all_live(tx, &at)?;
-            Ok(keys.into_iter().filter(|key| caller.reaches(key)).collect())
+            let mut reached = Vec::new();
+            for key in all_live(tx, &at)? {
+                if caller.reaches(&reaching(tx, &key)?) {
+                    reached.push(key);
+                }
+            }
+            Ok(reached)
         })
         .await
 }
@@ -682,7 +700,13 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Presented> {
     let at = app.clock.stamp();
     let found = app
         .db
-        .read(move |tx| unrevoked_where(tx, "hash", &hash))
+        .read(move |tx| match unrevoked_where(tx, "hash", &hash)? {
+            Some(mut key) => {
+                bind_app_key(tx, &mut key)?;
+                Ok(Some(key))
+            }
+            None => Ok(None),
+        })
         .await?;
     Ok(match found {
         None => Presented::Unknown,

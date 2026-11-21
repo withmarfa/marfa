@@ -2034,3 +2034,114 @@ async fn upgraded_by_uri(file: &Path, uri: &str) {
     assert!(has_login_after(file));
     assert!(copy_of(file).exists());
 }
+
+fn vendors_of(file: &Path) -> Vec<(String, Option<String>)> {
+    Connection::open(file)
+        .unwrap()
+        .prepare("SELECT vendor, client_id FROM app_vendors ORDER BY vendor")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+fn backup_changes(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT coalesce((SELECT changes FROM backup_state WHERE id = 1), 0)",
+        [],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_database_at_schema_version_2_gives_a_vendor_to_an_app_only_when_one_known_app_made_its_types()
+ {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..2]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    let client = |id: &str| {
+        format!(
+            "INSERT INTO oauth_clients (client_id, application_type, redirect_uris, grant_types, \
+             response_types, scopes, contacts, created_at) \
+             VALUES ('{id}', 'native', '[]', '[]', '[]', '', '[]', '2026-11-01T00:00:00.000Z');"
+        )
+    };
+    let made = |id: &str, by: &str, at: &str| {
+        format!(
+            "INSERT INTO types (id, origin, created_by, definition, created_at, updated_at) \
+             VALUES ('{id}', 'user', {by}, '{{}}', '{at}', '{at}');"
+        )
+    };
+    let by_app = |grant: &str| format!(r#"'{{"kind":"app","id":"{grant}","name":"App"}}'"#);
+    let by_key = |key: &str| format!(r#"'{{"kind":"key","id":"{key}","name":"Key"}}'"#);
+    let local = r#"'{"kind":"local","id":"local","name":"Local command"}'"#;
+    let batch = [
+        client("client-a"),
+        client("client-b"),
+        "INSERT INTO owner (id, name, username, password, created_at, updated_at) \
+         VALUES ('owner', 'Owner', 'owner', 'x', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z');"
+            .to_string(),
+        "INSERT INTO oauth_consents (client_id, owner_id, grant_id, scopes, created_at, updated_at) VALUES \
+         ('client-a', 'owner', 'grant-a', 'content:write', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z'), \
+         ('client-b', 'owner', 'grant-b', 'content:write', '2026-11-01T00:00:00.000Z', '2026-11-01T00:00:00.000Z');"
+            .to_string(),
+        "INSERT INTO api_keys (id, hash, label, source, oauth_client_id, permissions, type_permissions, \
+         edge_permissions, extension_permissions, metadata_permissions, profile_permissions, created_at) \
+         VALUES ('key-b', 'hash-b', 'B', 'b', 'client-b', '[]', '{}', '{}', '{}', '{}', '{}', \
+         '2026-11-01T00:00:00.000Z'), ('key-owner', 'hash-o', 'O', 'o', NULL, '[]', '{}', '{}', '{}', \
+         '{}', '{}', '2026-11-01T00:00:00.000Z');"
+            .to_string(),
+        made("app.alpha.setting", &by_app("grant-a"), "2026-11-02T00:00:00.000Z"),
+        made("app.alpha.later", &by_app("grant-b"), "2026-11-03T00:00:00.000Z"),
+        made("app.beta.setting", &by_key("key-b"), "2026-11-02T00:00:00.000Z"),
+        made("app.beta.later", &by_app("grant-b"), "2026-11-03T00:00:00.000Z"),
+        made("app.gamma.setting", &by_key("key-owner"), "2026-11-02T00:00:00.000Z"),
+        made("app.delta.setting", local, "2026-11-02T00:00:00.000Z"),
+        made("app.epsilon.setting", &by_app("grant-gone"), "2026-11-02T00:00:00.000Z"),
+        made("app.zeta.setting", &by_key("key-owner"), "2026-11-01T00:00:00.000Z"),
+        made("app.zeta.later", &by_app("grant-a"), "2026-11-03T00:00:00.000Z"),
+        made("app.eta.setting", "NULL", "2026-11-02T00:00:00.000Z"),
+        made("app.theta.setting", &by_key("key-gone"), "2026-11-02T00:00:00.000Z"),
+        made("acme.widget", &by_app("grant-a"), "2026-11-02T00:00:00.000Z"),
+    ]
+    .concat();
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch(&batch)
+        .unwrap();
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    assert_eq!(version_of(&place.file), super::migrate::latest(MIGRATIONS));
+    let owner = |vendor: &str| (vendor.to_string(), None);
+    let app = |vendor: &str, client: &str| (vendor.to_string(), Some(client.to_string()));
+    assert_eq!(
+        vendors_of(&place.file),
+        [
+            owner("app.alpha"),
+            app("app.beta", "client-b"),
+            owner("app.epsilon"),
+            owner("app.eta"),
+            owner("app.theta"),
+            app("app.zeta", "client-a"),
+        ]
+    );
+
+    let conn = Connection::open(&place.file).unwrap();
+    let before = backup_changes(&conn);
+    conn.execute(
+        "UPDATE app_vendors SET client_id = 'client-a' WHERE vendor = 'app.alpha'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(backup_changes(&conn), before + 1);
+}

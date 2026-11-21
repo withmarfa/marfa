@@ -70,8 +70,12 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
     let cache = app.catalog_handle();
     let created = app
         .write(caller, "type.register", move |unit| {
-            let caller = &unit.caller;
-            caller.require_door(SchemaKind::Types, Door::Register)?;
+            unit.caller.require_door(SchemaKind::Types, Door::Register)?;
+            let claimed = match &named {
+                Some(id) => unit.caller.claim_vendor(unit.tx(), id, &unit.at)?,
+                None => None,
+            };
+            let caller = claimed.as_ref().unwrap_or(&unit.caller);
             let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             if let Some(id) = &named {
                 caller.require_type(id, Level::Write).map_err(|refusal| {

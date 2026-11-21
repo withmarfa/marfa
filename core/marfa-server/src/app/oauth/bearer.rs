@@ -6,7 +6,7 @@ use super::grants;
 use super::scope::to_grants;
 use super::store::{self, AccessToken, Consent};
 use crate::app::App;
-use crate::app::access::{Caller, OwnLevers, Standing};
+use crate::app::access::{Caller, Grants, OwnLevers, Standing, bind_sign_in};
 use crate::app::clock::Stamp;
 use crate::app::config;
 use crate::app::keys::{Key, digest_of, queue_use};
@@ -37,7 +37,7 @@ fn caller_of(tx: &Connection, token: AccessToken, now: Stamp) -> Result<Option<(
     ) else {
         return Ok(None);
     };
-    let key = Key {
+    let mut key = Key {
         label: grants::named(tx, &consent, Some(&client))?,
         source: grants::source_of(&token.client_id),
         default_tier: DEFAULT_TIER.to_string(),
@@ -50,6 +50,7 @@ fn caller_of(tx: &Connection, token: AccessToken, now: Stamp) -> Result<Option<(
         last_used_at: None,
         id: token.id,
     };
+    bind_sign_in(tx, &mut key)?;
     let grant = Granted {
         client_id: token.client_id,
         owner_id: token.owner_id,
@@ -73,7 +74,7 @@ pub fn grant_caller(tx: &Transaction<'_>, grant_id: &str) -> Result<Option<Calle
     let Some(client) = store::client(tx, &consent.client_id)? else {
         return Ok(None);
     };
-    let key = Key {
+    let mut key = Key {
         label: grants::named(tx, &consent, Some(&client))?,
         source: grants::source_of(&consent.client_id),
         default_tier: DEFAULT_TIER.to_string(),
@@ -86,6 +87,7 @@ pub fn grant_caller(tx: &Transaction<'_>, grant_id: &str) -> Result<Option<Calle
         last_used_at: None,
         id: consent.grant_id.clone(),
     };
+    bind_sign_in(tx, &mut key)?;
     let grant = Granted {
         client_id: consent.client_id,
         owner_id: consent.owner_id,
@@ -96,6 +98,11 @@ pub fn grant_caller(tx: &Transaction<'_>, grant_id: &str) -> Result<Option<Calle
         key: Box::new(key),
         grant: Box::new(grant),
     }))
+}
+
+/// What the app's standing grant reaches, before its own vendors; none while it has none.
+pub fn standing_reach(tx: &Connection, client_id: &str) -> Result<Option<Grants>> {
+    Ok(store::standing_consent_of_client(tx, client_id)?.map(|consent| to_grants(&consent.scopes)))
 }
 
 /// The OAuth client a grant was made to, and its name while the client is kept.

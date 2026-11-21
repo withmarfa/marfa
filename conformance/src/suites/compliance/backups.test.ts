@@ -37,6 +37,7 @@ import {
   runJob,
 } from "../../utils/own-blob-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { registerApp } from "../../utils/signed-in.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
@@ -683,6 +684,37 @@ describe("the backup schedule", () => {
       expect(asked.status, JSON.stringify(asked.error)).toBe(200);
       expect(asked.data.outcome).toBe("put");
       expect((await mine.backupKeys()).length).toBe(3);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("counts giving a vendor to an app as a change a scheduled backup takes", async () => {
+    const own = ownObjectStore();
+    const mine = bucketAt(own.MARFA_OBJECT_STORE_PREFIX);
+    const server = await bootFreshServer("backups-vendor", {
+      ...own,
+      MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
+    });
+    try {
+      const { operator } = clientsFor(server);
+      const app = await registerApp(server, "content:read");
+      await afterFirstScheduledBackup(server);
+      const again = await runJob<{ outcome: string }>(operator, "backup");
+      expect(again.result.outcome).toBe("unchanged");
+
+      const given = await fetch(`${server.apiUrl}/app-vendors/app.backedup`, {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${server.managementKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ client_id: app.clientId }),
+      });
+      expect(given.status, await given.text()).toBe(200);
+      const after = await runJob<{ outcome: string }>(operator, "backup");
+      expect(after.result.outcome).toBe("put");
+      expect((await mine.backupKeys()).length).toBe(2);
     } finally {
       await server.stop();
     }

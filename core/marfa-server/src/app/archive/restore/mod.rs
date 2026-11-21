@@ -25,7 +25,7 @@ use crate::app::edges::write::Writing;
 use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM, HOLD_RESTORE_SETTINGS};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::app::{connectors, edge_types, sources, stored, tables, types};
+use crate::app::{connectors, edge_types, instance, sources, stored, tables, types, vendors};
 use crate::app::{provenance, restore_running};
 use crate::db::Write;
 use crate::settings::registry;
@@ -487,6 +487,20 @@ impl App {
                                 states.skip("already_set");
                             }
                         }
+                        let mut bound = Counted::default();
+                        let by_app = unit.caller.app_client().is_some();
+                        for binding in &registrations.vendors {
+                            if by_app {
+                                bound.skip("app_credential");
+                            } else if vendors::restore(tx, binding)? {
+                                bound.added += 1;
+                            } else {
+                                bound.skip("already_set");
+                            }
+                        }
+                        if bound.added + vendors::claim_from_types(tx, by_app)? > 0 {
+                            instance::raise_reach(tx)?;
+                        }
                         blobs::record(tx, &copies, replicates, &unit.caller.credential_handle(), &unit.at)?;
                         let held = restored::held_snapshots(tx, snapshots.each())?;
                         let (mut imported, mut duplicates) = (0usize, 0usize);
@@ -586,6 +600,8 @@ impl App {
                             "connector_states_skipped": states.skipped,
                             "connector_agreements_added": agreements.added,
                             "connector_agreements_skipped": agreements.skipped,
+                            "app_vendors_added": bound.added,
+                            "app_vendors_skipped": bound.skipped,
                             "rows_imported": rows_imported,
                             "rows_skipped": rows_skipped,
                             "entries_skipped": skipped,

@@ -291,6 +291,17 @@ pub fn consent(tx: &Connection, client_id: &str, owner_id: &str) -> Result<Optio
         .optional()?)
 }
 
+/// The one owner's standing consent to the app, if any.
+pub fn standing_consent_of_client(tx: &Connection, client_id: &str) -> Result<Option<Consent>> {
+    Ok(tx
+        .query_row(
+            "SELECT * FROM oauth_consents WHERE client_id = ?1 AND withdrawn_at IS NULL",
+            [client_id],
+            consent_of,
+        )
+        .optional()?)
+}
+
 pub fn consent_by_grant(tx: &Connection, grant_id: &str) -> Result<Option<Consent>> {
     Ok(tx
         .query_row(

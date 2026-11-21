@@ -13344,6 +13344,55 @@
         ],
         "additionalProperties": false,
         "description": "What moving the sign-in address did: every browser session and every app's sign-in ended, and API keys kept working."
+      },
+      "AppVendor": {
+        "type": "object",
+        "description": "An `app.<vendor>` namespace and who holds it. Only the app that holds it registers types under it, and that app reaches the namespace's items without a scope that names them. While the owner holds it, no app does until the owner gives it to one.",
+        "properties": {
+          "vendor": {
+            "type": "string",
+            "description": "The namespace, as `app.<vendor>`.",
+            "example": "app.acme"
+          },
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The OAuth client ID of the app that holds the namespace, or `null` while the owner holds it because no one app is known to have made its types."
+          },
+          "claimed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the namespace was first held, or when it was given to the app that holds it."
+          }
+        },
+        "required": [
+          "vendor",
+          "client_id",
+          "claimed_at"
+        ],
+        "additionalProperties": false
+      },
+      "AppVendorPage": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppVendor"
+            }
+          },
+          "next_cursor": {
+            "type": "null",
+            "description": "Always `null`: every binding comes in one page."
+          }
+        },
+        "required": [
+          "data",
+          "next_cursor"
+        ],
+        "additionalProperties": false
       }
     },
     "parameters": {},
@@ -31849,7 +31898,7 @@
           "Types"
         ],
         "summary": "Register a type",
-        "description": "Registers a type under the `app.*`, `user.*` or `<publisher>.*` namespace and returns it. Name a `parent` to inherit its fields.",
+        "description": "Registers a type under the `app.*`, `user.*` or `<publisher>.*` namespace and returns it. Name a `parent` to inherit its fields. An app that registers the first type under an `app.<vendor>` namespace holds it: only that app registers there, and it reaches the namespace's items without a scope that names them.",
         "security": [
           {
             "bearerAuth": []
@@ -31951,7 +32000,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `metadata.types:write`, the type has `guidance` and you lack `schema.write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.\n- `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` (`details.grant` names it).",
+            "description": "- `forbidden`: you don't have `metadata.types:write`, the type has `guidance` and you lack `schema.write`, the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register, or you are an app and the identifier is under an `app.<vendor>` namespace another app or the owner holds (`details.namespace` names it).\n- `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` (`details.grant` names it).",
             "content": {
               "application/json": {
                 "schema": {
@@ -54263,6 +54312,548 @@
         "x-marfa-local-command": true
       }
     },
+    "/app-vendors": {
+      "get": {
+        "operationId": "listAppVendors",
+        "tags": [
+          "Apps"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List app vendors",
+        "description": "Returns each `app.<vendor>` namespace an app or the owner holds, in one page. An app holds the namespace it registered the first type under; the owner holds one no single app is known to have made, until they give it to an app. Requires `grants.manage`.",
+        "x-marfa-local-command": true,
+        "responses": {
+          "200": {
+            "description": "Returns every vendor binding, ordered by vendor.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppVendorPage"
+                },
+                "example": {
+                  "data": [
+                    {
+                      "vendor": "app.acme",
+                      "client_id": "01a10127-d974-7c54-8cc4-5b1e0f3c2a10",
+                      "claimed_at": "2026-11-20T09:30:00.000Z"
+                    }
+                  ],
+                  "next_cursor": null
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `forbidden`: the credential lacks `grants.manage`, and `details.required_scope` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app-vendors/{vendor}": {
+      "put": {
+        "operationId": "giveAppVendor",
+        "tags": [
+          "Apps"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Give a vendor to an app",
+        "description": "Gives an `app.<vendor>` namespace to the app with the client ID you name, which from then on registers types under it and reaches its items in place of whoever held it. Use it when an app registers again and gets a new client ID, or to give a namespace the owner holds to its app. Requires `grants.manage`, and only the owner's own credentials may: an app's sign-in or a key an app made is refused.",
+        "x-marfa-local-command": true,
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The namespace, as `app.<vendor>`.",
+              "example": "app.acme"
+            },
+            "required": true,
+            "description": "The namespace, as `app.<vendor>`.",
+            "name": "vendor",
+            "in": "path"
+          },
+          {
+            "name": "X-Marfa-Instance-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "client_id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The OAuth client ID of the app to give the namespace to. `GET /grants` lists each app's `client_id`."
+                  }
+                },
+                "required": [
+                  "client_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Returns the vendor binding as it now reads.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppVendor"
+                },
+                "example": {
+                  "vendor": "app.acme",
+                  "client_id": "01a10127-d974-7c54-8cc4-5b1e0f3c2a10",
+                  "claimed_at": "2026-11-20T09:30:00.000Z"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the vendor is not an `app.<vendor>` namespace, `client_id` is not a string, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.\n- `missing_required_field`: `client_id` is missing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MissingRequiredFieldOrValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `forbidden`: the credential lacks `grants.manage`, and `details.required_scope` names it, or it is an app's sign-in or a key an app made, which never gives a namespace to an app.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "404": {
+            "description": "- `not_found`: no app with that client ID has registered on this instance, and `details.client_id` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "408": {
+            "description": "`request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTimeoutRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "413": {
+            "description": "`request_too_large`: the request body is larger than this instance accepts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequestTooLargeRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
     "/oauth/authorize": {
       "get": {
         "operationId": "authorizeApp",
@@ -65137,6 +65728,14 @@
                       "type": "number",
                       "description": "How many connector agreements Marfa skipped because the instance holds no such item or already holds an agreement for it."
                     },
+                    "app_vendors_added": {
+                      "type": "number",
+                      "description": "How many vendor bindings Marfa stored, each giving an `app.<vendor>` namespace to the app that holds it."
+                    },
+                    "app_vendors_skipped": {
+                      "type": "number",
+                      "description": "How many vendor bindings Marfa skipped: the namespace was already held here, or an app's sign-in or a key an app made sent the restore."
+                    },
                     "rows_imported": {
                       "type": "number",
                       "description": "How many table rows Marfa wrote."
@@ -65190,6 +65789,8 @@
                     "connector_states_skipped",
                     "connector_agreements_added",
                     "connector_agreements_skipped",
+                    "app_vendors_added",
+                    "app_vendors_skipped",
                     "rows_imported",
                     "rows_skipped",
                     "settings_without_receiver",
@@ -65229,6 +65830,8 @@
                   "connector_states_skipped": 0,
                   "connector_agreements_added": 0,
                   "connector_agreements_skipped": 0,
+                  "app_vendors_added": 0,
+                  "app_vendors_skipped": 0,
                   "rows_imported": 0,
                   "rows_skipped": 0,
                   "entries_skipped": [],
@@ -66542,6 +67145,14 @@
                       "type": "number",
                       "description": "How many connector agreements Marfa skipped because the instance holds no such item or already holds an agreement for it."
                     },
+                    "app_vendors_added": {
+                      "type": "number",
+                      "description": "How many vendor bindings Marfa stored, each giving an `app.<vendor>` namespace to the app that holds it."
+                    },
+                    "app_vendors_skipped": {
+                      "type": "number",
+                      "description": "How many vendor bindings Marfa skipped: the namespace was already held here, or an app's sign-in or a key an app made sent the restore."
+                    },
                     "rows_imported": {
                       "type": "number",
                       "description": "How many table rows Marfa wrote."
@@ -66615,6 +67226,8 @@
                     "connector_states_skipped",
                     "connector_agreements_added",
                     "connector_agreements_skipped",
+                    "app_vendors_added",
+                    "app_vendors_skipped",
                     "rows_imported",
                     "rows_skipped",
                     "settings_without_receiver",
@@ -66653,6 +67266,8 @@
                   "connector_states_skipped": 0,
                   "connector_agreements_added": 0,
                   "connector_agreements_skipped": 0,
+                  "app_vendors_added": 0,
+                  "app_vendors_skipped": 0,
                   "rows_imported": 0,
                   "rows_skipped": 0,
                   "entries_skipped": [],
@@ -67294,6 +67909,8 @@
         "listAppGrants",
         "narrowAppGrant",
         "revokeAppGrant",
+        "listAppVendors",
+        "giveAppVendor",
         "authorizeApp",
         "requestDeviceCode",
         "exchangeToken",
