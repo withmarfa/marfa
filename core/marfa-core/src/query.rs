@@ -40,7 +40,7 @@ pub(crate) fn list_with(
     clauses.push(LISTED.into());
     // A list of the bin alone is the bin, which holds hidden items as the server's does
     // (`device/read-hidden-bin`).
-    let bin = filters.states.as_deref() == Some(&[ItemState::Trashed]);
+    let bin = filters.bin_alone();
     narrow_by_types(
         catalog,
         filters.types.as_deref(),
@@ -532,6 +532,15 @@ mod tests {
             ids(&conn, binned(None), Sort::default()),
             vec!["t", "e"],
             "the bin left out a hidden item"
+        );
+        let repeated = ListFilters {
+            states: Some(vec![ItemState::Trashed, ItemState::Trashed]),
+            ..Default::default()
+        };
+        assert_eq!(
+            ids(&conn, repeated, Sort::default()),
+            vec!["t", "e"],
+            "a repeated bin state left out a hidden item"
         );
         assert_eq!(
             ids(&conn, binned(Some(vec!["app.*".into()])), Sort::default()),

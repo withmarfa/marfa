@@ -328,6 +328,16 @@ pub struct ListFilters {
     pub offset: Option<u32>,
 }
 
+impl ListFilters {
+    /// Whether the list names the bin's state and no other, however often.
+    pub(crate) fn bin_alone(&self) -> bool {
+        !self.all_states
+            && self.states.as_deref().is_some_and(|states| {
+                !states.is_empty() && states.iter().all(|state| *state == ItemState::Trashed)
+            })
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SearchFilters {
     /// Only the rows of these types, each with its subtree, as the server's
@@ -402,9 +412,7 @@ impl Sort {
     pub(crate) fn unnamed(filters: &ListFilters) -> Sort {
         if filters.updated_after.is_some() {
             Sort::RESUMED
-        } else if !filters.all_states
-            && filters.states.as_deref() == Some(&[ItemState::Trashed][..])
-        {
+        } else if filters.bin_alone() {
             Sort::BINNED
         } else {
             Sort::default()
