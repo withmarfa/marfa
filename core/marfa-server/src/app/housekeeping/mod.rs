@@ -264,6 +264,15 @@ impl Unclaimed {
     }
 }
 
+impl Unclaimed {
+    /// Keeps the job's next unclaimed run from starting before `next_ms`, whatever it was.
+    fn not_before(&self, name: &'static str, next_ms: i64) {
+        let mut states = self.states();
+        let state = states.entry(name).or_default();
+        state.next_ms = state.next_ms.max(next_ms);
+    }
+}
+
 impl UnclaimedRun {
     fn next_not_before(&self, next_ms: i64) {
         if let Some(state) = self.held.states().get_mut(self.name) {
