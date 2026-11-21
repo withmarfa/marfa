@@ -13,8 +13,8 @@ use super::{
     SEARCHED_FIELD_NAMES,
 };
 use crate::schema::{
-    EdgeIssues, Obj, Registry, edge_id, edge_type_from_request, labelled, plural_of, request_shape,
-    unread_edge_keys, validate_type,
+    EdgeIssues, Judging, Obj, Registry, edge_id, edge_type_from_request, labelled, plural_of,
+    request_shape, unread_edge_keys, validate_type,
 };
 
 /// Edge types where an edge can close a cycle over more than one edge.
@@ -345,7 +345,7 @@ pub(super) fn register_edges(edges: &[Source]) -> Result<Vec<Obj>, Vec<String>> 
                 (held == name || reverse == Some(name)).then(|| held.to_string())
             })
         };
-        match edge_type_from_request(row, &taken) {
+        match edge_type_from_request(row, &taken, Judging::Register) {
             Ok(stored) => found.push(stored),
             Err(EdgeIssues::Conflict { message, .. }) => problems.push(message),
             Err(issue) => problems.push(format!("{issue:?}")),

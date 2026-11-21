@@ -26,7 +26,8 @@ pub use check::{
 };
 pub use compat::{ShapeConflict, stored_shape_conflicts};
 pub use edge::{
-    EdgeIssues, constraint_evolution_changes, edge_id, edge_type_from_request, request_shape,
+    EdgeIssues, Judging, constraint_evolution_changes, edge_id, edge_type_from_request,
+    request_shape,
 };
 pub use evolution::{evolution_of, item_table_changes};
 pub use field::normalize_field;

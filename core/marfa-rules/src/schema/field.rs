@@ -16,13 +16,17 @@ use crate::catalog::{STATUS_GROUPS, api_name};
 pub(super) enum Stray<'a> {
     /// Refused: the definition is new.
     Refuse,
-    /// Taken as it is: a restore holds what an older server accepted.
+    /// Taken as it is: a restore holds what an older server accepted, and an element type no field type names.
     Take,
     /// Taken only where the definition at the same path of the held value keeps its type and its values.
     UnlessChanged(&'a Obj),
 }
 
 impl Stray<'_> {
+    fn takes_unnamed_items(self) -> bool {
+        matches!(self, Stray::Take)
+    }
+
     fn refuses(self, path: &str, definition: &Obj) -> bool {
         match self {
             Stray::Refuse => true,
@@ -172,6 +176,10 @@ pub(super) fn label_issue(field: &str, value: Option<&Value>, errors: &mut Vec<I
     }
 }
 
+fn one_of_types(vocabulary: &Vocabulary) -> String {
+    format!("one of: {}", vocabulary.field_types.join(", "))
+}
+
 pub(super) struct Shape<'a> {
     pub inherits_status: bool,
     pub path: Option<&'a str>,
@@ -208,7 +216,7 @@ pub(super) fn validate_field_shape(
         errors,
         "A label is the name an app shows for it. Omit it to make one from the name.",
     );
-    let one_of = format!("one of: {}", vocabulary.field_types.join(", "));
+    let one_of = one_of_types(vocabulary);
     match held_kind_text {
         None | Some("") => errors.push(issue(
             "type",
@@ -266,7 +274,7 @@ pub(super) fn validate_field_shape(
                 "enum_values",
                 expected,
                 "an empty array".into(),
-                "An enum with no values can never validate. List the allowed values.".into(),
+                "List at least one allowed value in enum_values.".into(),
             )),
             Some(Value::Array(values)) if !values.iter().all(Value::is_string) => {
                 errors.push(issue(
@@ -333,6 +341,17 @@ pub(super) fn validate_field_shape(
             "a string naming the element type".into(),
             describe(fd.get("items_type")),
             "Add items_type, e.g. \"string\" or \"object\".".into(),
+        ));
+    }
+    if let Some(items) = text(fd, "items_type")
+        && !vocabulary.field_types.iter().any(|t| t == items)
+        && !shape.stray.takes_unnamed_items()
+    {
+        errors.push(issue(
+            "items_type",
+            one_of_types(vocabulary),
+            format!("\"{items}\""),
+            format!("\"{items}\" is not a field type. Name the type of each element, e.g. \"string\" or \"object\"."),
         ));
     }
     if text(fd, "items_type") == Some("thumbnail") {

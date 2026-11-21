@@ -1,6 +1,6 @@
 use marfa_rules::builtin;
 use marfa_rules::schema::{
-    EdgeIssues, Issue, Obj, constraint_evolution_changes, edge_id, edge_type_from_request,
+    EdgeIssues, Issue, Judging, Obj, constraint_evolution_changes, edge_id, edge_type_from_request,
     request_shape, unread_edge_keys,
 };
 use rusqlite::params;
@@ -171,7 +171,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
                 {
                     asked.insert("reverse_label".into(), label.clone());
                 }
-                let built = edge_type_from_request(&asked, &taken).map_err(refusal_of)?;
+                let built = edge_type_from_request(&asked, &taken, Judging::Evolve(existing)).map_err(refusal_of)?;
                 let changes = constraint_evolution_changes(existing, &built);
                 if !changes.is_empty() {
                     return Err(Refusal::new(
@@ -198,7 +198,7 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<(bool, Va
                     format!("Edge type {id} already exists"),
                 ));
             }
-            let built = edge_type_from_request(&body, &taken).map_err(refusal_of)?;
+            let built = edge_type_from_request(&body, &taken, Judging::Register).map_err(refusal_of)?;
             require_stored_to_items(unit, &id, &built)?;
             unit.tx().execute(
                 "INSERT INTO edge_types (id, reverse_name, created_by, definition, created_at, updated_at) \
@@ -299,7 +299,6 @@ impl Restoring {
     }
 }
 
-/// Judges each edge type an archive carries as `POST /edge-types` would register it.
 pub fn plan_restored(catalog: &Catalog, archived: &[Obj]) -> Result<Restoring> {
     let mut plan = Restoring {
         fresh: Vec::new(),
@@ -338,7 +337,7 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Obj]) -> Result<Restoring> {
                     holder_of(catalog, name).filter(|owner| *owner != id || existing.is_none())
                 })
         };
-        let built = edge_type_from_request(body, &taken).map_err(refusal_of)?;
+        let built = edge_type_from_request(body, &taken, Judging::Restore).map_err(refusal_of)?;
         match existing {
             Some(held) if *held == built => plan.skipped += 1,
             Some(_) => plan.conflicts.push(id),
