@@ -1,6 +1,6 @@
 //! What the copy holds of its slice, and whether a read or a write may rely on it.
 
-use super::marks::pinned;
+use super::marks::{item_held, pinned};
 use super::meta::{
     META_EVENT_CURSOR, META_HYDRATE_STATE, META_INSTANCE_ID, META_REFILL, META_SLICE_QUERY,
     META_SLICE_TIER, META_SLICE_TYPES, meta_get,
@@ -66,14 +66,11 @@ pub fn slice_holds(
     let Some((types, tier)) = slice(conn)? else {
         return Ok(false);
     };
+    let row_tier = Tier::parse_wire(item.tier.as_deref())?;
     Ok(crate::reach::listed(conn, &item.id)?
-        && slice_takes(
-            catalog,
-            &types,
-            tier,
-            &item.r#type,
-            Tier::parse_wire(item.tier.as_deref())?,
-        ))
+        && (slice_takes(catalog, &types, tier, &item.r#type, row_tier)
+            || (item_held(conn, &item.id)?
+                && slice_keeps_held(catalog, &types, tier, &item.r#type, row_tier))))
 }
 
 pub use marfa_rules::folder::declares_type;
@@ -98,6 +95,25 @@ pub fn slice_takes(
         } else {
             marfa_rules::folder::takes_type(catalog, declared, row_type)
                 && (system || tier.takes(row_tier))
+        }
+    })
+}
+
+/// A row the copy holds stays where the slice would take it with every hidden
+/// type named, so a copy made before `app.*` was hidden keeps what it holds.
+pub fn slice_keeps_held(
+    catalog: &marfa_rules::catalog::Catalog,
+    types: &[String],
+    tier: SliceTier,
+    row_type: &str,
+    row_tier: Option<Tier>,
+) -> bool {
+    let system = is_system(row_type);
+    types.iter().any(|declared| {
+        if declared == EVERY_TYPE {
+            !system && tier.takes(row_tier)
+        } else {
+            catalog.matches(declared, row_type) && (system || tier.takes(row_tier))
         }
     })
 }
@@ -137,7 +153,7 @@ pub fn keeps_held(
     let Some(held) = items_by_ids(conn, &[id.to_string()])?.pop() else {
         return Ok(false);
     };
-    if !slice_takes(catalog, &types, tier, &held.r#type, held.tier) {
+    if !slice_keeps_held(catalog, &types, tier, &held.r#type, held.tier) {
         return Ok(false);
     }
     match slice_query(conn)? {
@@ -313,5 +329,49 @@ pub fn held_or_refused<T>(
     match (found, completeness) {
         (None, Completeness::Partial) => Err(CoreError::HydrationIncomplete),
         (found, _) => Ok(found),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use marfa_rules::wire::WireCatalog;
+
+    #[test]
+    fn a_copy_of_every_type_keeps_the_app_row_it_holds_and_takes_no_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = crate::Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        let conn = core.conn().unwrap();
+        crate::store::meta_set(&conn, META_SLICE_TYPES, "[\"*\"]").unwrap();
+        crate::store::meta_set(&conn, META_SLICE_TIER, "library").unwrap();
+        crate::store::replace_catalog(
+            &conn,
+            &WireCatalog {
+                types: vec![crate::store::testing::wire_type(
+                    "app.acme.setting",
+                    None,
+                    Some("title"),
+                )],
+                edge_types: Vec::new(),
+            },
+        )
+        .unwrap();
+        let catalog = crate::catalog::load(&conn).unwrap();
+        let row = |id: &str| {
+            crate::store::testing::wire_item(
+                id,
+                "app.acme.setting",
+                "active",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({ "title": id }),
+            )
+        };
+        crate::store::put_server_item(&conn, &row("held"), Some(&[]), &catalog).unwrap();
+        for id in ["held", "new"] {
+            crate::reach::set_listed(&conn, id, true).unwrap();
+        }
+
+        assert!(slice_holds(&conn, &catalog, &row("held")).unwrap());
+        assert!(!slice_holds(&conn, &catalog, &row("new")).unwrap());
     }
 }
