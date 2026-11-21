@@ -123,6 +123,14 @@ fn default_cloud_url() -> Address {
     Address::parse(DEFAULT_CLOUD_URL).expect("the default Cloud address reads")
 }
 
+/// A program run by the path it is given, with no search of `PATH`.
+fn absolute_path(text: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(text);
+    path.is_absolute()
+        .then_some(path)
+        .ok_or_else(|| "must be an absolute path".to_string())
+}
+
 /// Judged as a stored sign-in address is, and only where it can carry the owner's password.
 fn https_or_loopback(text: &str) -> Result<Address, String> {
     let address = Address::parse(text)?;
@@ -156,6 +164,8 @@ pub struct Fixed {
     pub claim_address: Option<Address>,
     pub owner_recovery: bool,
     pub cloud_url: Address,
+    /// The tunnel connector the server runs while linked, where the owner named one.
+    pub cloudflared: Option<PathBuf>,
 }
 
 pub struct Start {
@@ -306,6 +316,7 @@ impl Fixed {
         let cloud_url = reader
             .take("MARFA_CLOUD_URL", https_or_loopback)
             .unwrap_or_else(default_cloud_url);
+        let cloudflared = reader.take("MARFA_CLOUDFLARED", absolute_path);
         let owner_recovery = reader.flag("MARFA_OWNER_RECOVERY");
         #[cfg(feature = "test-hooks")]
         let clock_offset_ms = reader
@@ -365,6 +376,7 @@ impl Fixed {
             claim_address,
             owner_recovery,
             cloud_url,
+            cloudflared,
         };
         (!failed).then_some((fixed, given))
     }

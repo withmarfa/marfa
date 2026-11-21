@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use super::answer::refusal_body;
 use super::listening::Peer;
 use crate::app::refusal::{Code, Refusal};
-use crate::listener::{Trust, network};
+use crate::listener::{Trust, Tunnel, network};
 
 /// What a refused caller is told to wait, in seconds.
 const RETRY_AFTER_SECONDS: u64 = 5;
@@ -18,6 +18,7 @@ pub struct Caps {
     pub per_address: usize,
     /// A believed proxy carries many callers, so it counts in the total alone.
     pub trust: Trust,
+    pub tunnel: Tunnel,
 }
 
 #[derive(Debug, Default)]
@@ -54,7 +55,7 @@ impl Gate {
     pub fn enter(self: &Arc<Gate>, peer: Peer) -> Result<Slot, Turned> {
         let counted = peer
             .0
-            .filter(|address| !self.caps.trust.believes(*address))
+            .filter(|address| !self.caps.tunnel.trust(&self.caps.trust).believes(*address))
             .map(network);
         let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
         if held.total >= self.caps.total {
@@ -120,6 +121,7 @@ mod tests {
             total,
             per_address,
             trust,
+            tunnel: Tunnel::default(),
         })
     }
 

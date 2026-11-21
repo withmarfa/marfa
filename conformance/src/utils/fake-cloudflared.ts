@@ -14,12 +14,12 @@ import { waitFor } from "./wait.js";
  * A stand-in for the tunnel connector `cloudflared`, for a server booted
  * with `MARFA_CLOUDFLARED` at its `path`.
  *
- * The file at `path` is a shell script that runs a small Node program with
- * the folder baked in, because the server gives the connector none of its
- * own environment, so nothing can be passed that way. The program records
- * each start (arguments, environment, process ID, and the token file it was
- * given, as it was when the program started), prints what the connector
- * prints, serves `/ready` on the address `--metrics` names, and acts as the
+ * The file at `path` is a small Node program with a shebang line and the
+ * folder baked in, because the server gives the connector none of its own
+ * environment, so nothing can be passed that way, and no shell stands between
+ * the server and it to add variables of its own. It records each start
+ * (arguments, environment, process ID, and the token file it was given, as
+ * it was when the program started), prints what the connector prints, serves `/ready` on the address `--metrics` names, and acts as the
  * plan for that start says.
  *
  * A plan is one entry per start, the last standing for every start after
@@ -75,10 +75,10 @@ export interface Start {
 }
 
 const PROGRAM = String.raw`
-import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+const { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } = require("node:fs");
+const { createServer } = require("node:http");
 
-const [folder, ...argv] = process.argv.slice(2);
+const argv = process.argv.slice(2);
 const read = (name, fallback) => {
   try {
     return JSON.parse(readFileSync(folder + "/" + name, "utf8"));
@@ -170,9 +170,7 @@ if (entry.exit !== undefined) {
 export function fakeCloudflared(): FakeCloudflared {
   const folder = tempFolder("fc-");
   const path = join(folder, "cloudflared");
-  const program = join(folder, "fake.mjs");
-  writeFileSync(program, PROGRAM);
-  const script = `#!/bin/sh\nexec '${process.execPath}' '${program}' '${folder}' "$@"\n`;
+  const script = `#!${process.execPath}\nconst folder = ${JSON.stringify(folder)};${PROGRAM}`;
   const install = () => {
     writeFileSync(path, script);
     chmodSync(path, 0o755);

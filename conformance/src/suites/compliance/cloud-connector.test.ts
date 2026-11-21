@@ -242,6 +242,8 @@ const ALLOWED_ENVIRONMENT = new Set([
   "TZ",
   "SSL_CERT_FILE",
   "SSL_CERT_DIR",
+  // macOS adds this to every process it starts, with an empty environment too.
+  "__CF_USER_TEXT_ENCODING",
 ]);
 
 describe("finding the connector", () => {

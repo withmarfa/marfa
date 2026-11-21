@@ -1,7 +1,9 @@
 //! What a listener says about itself, and whom it believes about a caller's
 //! address. Names no HTTP type: `http` acts on these.
 
-use std::net::{IpAddr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 
 use ipnet::IpNet;
 
@@ -71,6 +73,33 @@ pub fn network(address: IpAddr) -> IpAddr {
     }
 }
 
+/// What a linked instance's tunnel connector, which connects from this machine, is believed to say.
+static TUNNEL_TRUST: LazyLock<Trust> = LazyLock::new(|| Trust::EdgeHeader {
+    header: "cf-connecting-ip".to_string(),
+    ranges: vec![
+        IpNet::new_assert(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 0)), 8),
+        IpNet::new_assert(IpAddr::V6(Ipv6Addr::LOCALHOST), 128),
+    ],
+});
+
+/// Whether the instance is linked to Marfa Cloud, read on every request with no lock.
+#[derive(Clone, Debug, Default)]
+pub struct Tunnel(Arc<AtomicBool>);
+
+impl Tunnel {
+    pub fn set(&self, linked: bool) {
+        self.0.store(linked, Ordering::Release);
+    }
+
+    /// The trust in force: the one the owner configured, or, where they configured none, the tunnel's while linked.
+    pub fn trust<'a>(&self, configured: &'a Trust) -> &'a Trust {
+        match configured {
+            Trust::Nothing if self.0.load(Ordering::Acquire) => &TUNNEL_TRUST,
+            configured => configured,
+        }
+    }
+}
+
 impl Trust {
     /// Whether this listener believes an address a peer forwards for its callers.
     pub fn believes(&self, peer: IpAddr) -> bool {
@@ -115,6 +144,22 @@ mod tests {
     fn trust(pairs: &[(&str, &str)]) -> Result<Trust, Refused> {
         Settings::read(Environment::from_pairs(pairs))
             .map(|accepted| accepted.fixed().public_listener.trust.clone())
+    }
+
+    #[test]
+    fn a_linked_instance_believes_the_tunnel_only_where_the_owner_set_no_trust() {
+        let tunnel = Tunnel::default();
+        let proxies = Trust::Proxies(proxy_ranges("10.0.0.0/8").unwrap());
+        assert_eq!(tunnel.trust(&Trust::Nothing), &Trust::Nothing);
+        tunnel.set(true);
+        let linked = tunnel.trust(&Trust::Nothing);
+        assert!(linked.believes("127.0.0.1".parse().unwrap()));
+        assert!(linked.believes("::1".parse().unwrap()));
+        assert!(linked.believes("::ffff:127.0.0.1".parse().unwrap()));
+        assert!(!linked.believes("192.0.2.1".parse().unwrap()));
+        assert_eq!(tunnel.trust(&proxies), &proxies);
+        tunnel.set(false);
+        assert_eq!(tunnel.trust(&Trust::Nothing), &Trust::Nothing);
     }
 
     #[test]
