@@ -250,15 +250,17 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install cmake and ninja if the runner lacks them
+      # fetch-cloudflared.sh reads cloudflared's Go modules with `go version -m`.
+      - name: Install cmake, ninja and go if the runner lacks them
         run: |
           missing=()
-          for tool in cmake ninja; do
+          for tool in cmake ninja go; do
             command -v "$tool" > /dev/null || missing+=("$tool")
           done
           if [ "${#missing[@]}" -gt 0 ]; then brew install "${missing[@]}"; fi
           cmake --version | head -1
           echo "ninja $(ninja --version)"
+          go version
 
       - name: Install the Rust version the native pins name
         run: |

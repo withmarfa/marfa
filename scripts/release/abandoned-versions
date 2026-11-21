@@ -7,3 +7,7 @@
 # umask 002 the new server refused its own data folder and the Linux user-service
 # install proof failed. Nothing was published.
 0.0.85
+
+# The macOS runner had no go, which fetch-cloudflared.sh needs to read the
+# modules built into cloudflared, so the macOS build failed. Nothing was published.
+0.0.91
