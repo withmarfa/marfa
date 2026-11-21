@@ -203,7 +203,8 @@ export interface RecordedActor {
 
 export interface TypeSchema {
   provenance?: {
-    origin: "platform" | "user" | "unknown";
+    origin: "platform" | "registered" | "plugin" | "unknown";
+    plugin: { name: string; version: string } | null;
     created_by: RecordedActor | null;
   };
   id: string; // Type identifier: "core.note", "acme.deal"

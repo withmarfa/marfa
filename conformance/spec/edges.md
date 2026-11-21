@@ -1712,7 +1712,7 @@ When `POST /edge-types` reads `evolve_constraints`, the server MUST treat it as 
 
 If `POST /edge-types` names an `id` that is neither a type identifier (`types/id-grammar`) nor one segment that starts with a lowercase letter, ends with a lowercase letter or a digit, and holds only lowercase letters, digits, hyphens and underscores, then the server MUST answer `400 validation_error`.
 
-**Reason:** single-segment names include `parent-of` and `parent_of`. Dotted names follow the same rules as type identifiers, including `types/id-reserved-scope-root`.
+**Reason:** single-segment names include `parent-of` and `parent_of`. Dotted names follow the same rules as type identifiers, including `types/id-reserved-scope-root`. A plugin names its edge types plainly, such as `blocks`, and the plugins repository keeps those names from clashing, so the server holds no rule of its own for them.
 
 **Tests:** `compliance/edge-types.test.ts › refuses an id that is not an edge type identifier with 400 validation_error, and registers one that is`.
 

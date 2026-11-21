@@ -39,7 +39,7 @@ describe("type registration and listing", () => {
     const created = await client.registerType({ id, fields: {} });
     expect(created.ok).toBe(true);
     const provenance = created.data.provenance;
-    expect(provenance?.origin).toBe("user");
+    expect(provenance?.origin).toBe("registered");
     expect(provenance?.created_by?.kind).toBe("key");
     const replaced = await client.replaceType(id, {
       ...(await client.getType(id)).data,

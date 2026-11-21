@@ -36,6 +36,7 @@ use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
     apps, attention, audit, backups, blobs, config, connectors, docs, edge_types, edges, events,
+    plugins,
     export, extensions, housekeeping, items, keys, login, logout, metrics, operations, overview,
     owner, profile, restore, rows, search, sign_ins, sources, status, tables, tags, types, update,
     views, webhooks, whoami,
@@ -207,6 +208,11 @@ enum Command {
     EdgeTypes {
         #[command(subcommand)]
         command: edge_types::EdgeTypesCommand,
+    },
+    /// Plugins: install one, by name or from a file or folder, list and remove them, and check or build a plugin's source folder.
+    Plugins {
+        #[command(subcommand)]
+        command: plugins::PluginsCommand,
     },
     /// The types an instance holds, and the shipped ones it has outgrown.
     Types {
@@ -565,6 +571,7 @@ fn socket_refusal(command: &Command) -> Option<CliError> {
             | Command::Docs(_)
             | Command::Server { .. }
     ) || matches!(command, Command::Types { command } if command.is_offline())
+        || matches!(command, Command::Plugins { command } if command.is_offline())
     {
         return Some(CliError::Usage(
             "this command does not support --socket".into(),
@@ -648,6 +655,14 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             "types scaffold and types check contact no server and take none of --url, --key and --profile".into(),
         ));
     }
+    if let Command::Plugins { command } = &cli.command
+        && command.is_offline()
+        && (cli.url.is_some() || cli.key.is_some() || cli.profile.is_some())
+    {
+        return Err(CliError::Usage(
+            "plugins check, bundle and index contact no server and take none of --url, --key and --profile".into(),
+        ));
+    }
     if matches!(cli.command, Command::Server { .. })
         && (cli.url.is_some() || cli.key.is_some() || cli.profile.is_some())
     {
@@ -713,6 +728,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Edges { command } => edges::run(command, &remote()?, &out),
         Command::EdgeTypes { command } => edge_types::run(command, &remote()?, &out),
         Command::Types { command } => types::run(command, remote, &out),
+        Command::Plugins { command } => plugins::run(command, remote, &out),
         Command::Search(args) => search::run(args, &remote()?, &out),
         Command::Tags => tags::run(&remote()?, &out),
         Command::Extensions { command } => extensions::run(command, &remote()?, &out),

@@ -20,6 +20,7 @@ pub mod logout;
 pub mod metrics;
 pub mod operations;
 pub mod overview;
+pub mod plugins;
 pub mod owner;
 mod owner_file;
 pub mod owner_passkeys;

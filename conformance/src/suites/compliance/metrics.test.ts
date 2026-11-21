@@ -22,7 +22,7 @@ afterAll(async () => {
 interface Metrics {
   items: { total: number; by_state: Record<string, number> };
   blobs: { count: number; total_bytes: number };
-  types: { core: number; registered: number };
+  types: { core: number; registered: number; plugin: number };
   keys: { total: number };
   webhooks: { total: number };
   uptime_seconds: number;
