@@ -8779,7 +8779,7 @@ export interface components {
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "validation_error" | "missing_required_field" | "invalid_schema" | "inheritance_violation" | "property_shadows_field" | "compatible_with_violation";
+                code: "validation_error" | "missing_required_field" | "invalid_schema" | "inheritance_violation" | "property_shadows_field";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -19205,7 +19205,7 @@ export interface operations {
             };
             /**
              * @description - `validation_error`: the bundle has a key it does not hold, a field of the wrong shape, an ID named twice, or an edge type the rules refuse. `details.errors` names each.
-             *     - `missing_required_field`, `invalid_schema`, `inheritance_violation`, `property_shadows_field`, `compatible_with_violation`: a type is refused as `POST /types` refuses it. `details.type_id` names it.
+             *     - `missing_required_field`, `invalid_schema`, `inheritance_violation`, `property_shadows_field`: a type is refused as `POST /types` refuses it. `details.type_id` names it.
              */
             400: {
                 headers: {
