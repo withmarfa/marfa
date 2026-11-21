@@ -760,14 +760,21 @@ describe("a key an app made", () => {
       const lengthened = await caller.updateKey(made.id, {
         expires_at: LATER,
       });
-      expect(lengthened.status, `${who}: ${JSON.stringify(lengthened.error)}`).toBe(200);
+      expect(
+        lengthened.status,
+        `${who}: ${JSON.stringify(lengthened.error)}`,
+      ).toBe(200);
       expect(lengthened.data.expires_at, who).toBe(LATER);
       const after = await bearer.getCurrentKey();
-      expect(after.status, `${who}: the same secret after a later expiry`).toBe(200);
+      expect(after.status, `${who}: the same secret after a later expiry`).toBe(
+        200,
+      );
       expect(after.data.expires_at, who).toBe(LATER);
 
       const cleared = await caller.updateKey(made.id, { expires_at: null });
-      expect(cleared.status, `${who}: ${JSON.stringify(cleared.error)}`).toBe(200);
+      expect(cleared.status, `${who}: ${JSON.stringify(cleared.error)}`).toBe(
+        200,
+      );
       expect(cleared.data.expires_at, who).toBeNull();
       const open = await bearer.getCurrentKey();
       expect(open.status, `${who}: the same secret with no expiry`).toBe(200);

@@ -1791,7 +1791,7 @@ export interface paths {
         head?: never;
         /**
          * Update an API key
-         * @description Updates a key and returns it. Each supplied field replaces its value; omitted fields stay unchanged. Requires `keys.mint`, `keys.manage`, or local authority.
+         * @description Updates a key and returns it, keeping its secret. Each supplied field replaces its value; omitted fields stay unchanged. Requires `keys.mint`, `keys.manage`, or local authority.
          */
         patch: operations["updateKey"];
         trace?: never;
@@ -30869,7 +30869,7 @@ export interface operations {
                     /** @description Replaces the key's enforcement levers whole. `null` clears them. */
                     enforcement_override?: components["schemas"]["EnforcementOverride"] | null;
                     /**
-                     * @description Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than the key's current one for a key an app made, with `narrow_only`, or without `keys.mint`. It also can't be later than your own key's `expires_at`, unless you hold `keys.manage` and it isn't later than the key's current one.
+                     * @description Replaces when the key stops working, as an ISO 8601 date and time in the future. `null` clears it. Leave it out to keep it. It can't be later than the key's current one with `narrow_only`, or for a key an app made without `keys.manage`. It also can't be later than your own key's `expires_at`, unless you hold `keys.manage` and it isn't later than the key's current one.
                      * @example 2027-01-01T00:00:00.000Z
                      */
                     expires_at?: string | null;

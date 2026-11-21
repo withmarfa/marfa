@@ -392,7 +392,8 @@ describe("the instance from the terminal", () => {
       expect(refusedUpdate.envelope.error.code, args.join(" ")).toBe("usage");
     }
 
-    // A time of its own, shortened by a caller that can only narrow.
+    // Through keys.manage, a time of its own shortens it, a duration
+    // lengthens it, and --no-expiry clears it, so the key reads back with none.
     const shorter = new Date(Date.now() + DAY_MS).toISOString();
     const shortened = await c.operator.json<{ expires_at: string }>([
       "keys",
@@ -402,26 +403,20 @@ describe("the instance from the terminal", () => {
       shorter,
     ]);
     expect(shortened.expires_at).toBe(shorter);
-    const lengthened = await c.operator.refused([
+    const lengthened = await c.operator.json<{ expires_at: string | null }>([
       "keys",
       "update",
       weekly.id,
       "--expires-in",
       "30d",
     ]);
-    expect(lengthened.code).toBe(1);
-    expect(lengthened.envelope.error.code).toBe("forbidden");
-    const kept = await c.operator.refused([
-      "keys",
-      "update",
-      weekly.id,
-      "--no-expiry",
-    ]);
-    expect(kept.envelope.error.code).toBe("forbidden");
-    expect(await expiryOf(weekly.id)).toBe(shorter);
-
-    // A caller that is not held to narrowing clears it, and the key reads back with none.
-    const cleared = await c.cli.json<{ expires_at: string | null }>([
+    expect(
+      Math.abs(
+        Date.parse(lengthened.expires_at ?? "") - Date.now() - 30 * DAY_MS,
+      ),
+      `--expires-in 30d set ${String(lengthened.expires_at)}`,
+    ).toBeLessThan(600_000);
+    const cleared = await c.operator.json<{ expires_at: string | null }>([
       "keys",
       "update",
       weekly.id,
