@@ -1158,7 +1158,7 @@ If a count in an archive's manifest is not the number it counts, being the lines
 
 **Reason:** the manifest says what the archive holds before a reader reads the rest (`archive/archive-entries`), so an archive that holds other than it says was cut or changed after the export, and a restore that took it would restore less than was exported without saying so.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses an archive whose %s is not the number of lines its file holds, and writes nothing`, `› refuses an archive whose manifest counts more than the archive carries, however it was cut`, `compliance/app-vendors.test.ts › refuses a version 2 manifest that leaves out, mistypes or miscounts app_vendor_count`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive whose %s is not the number of lines its file holds, and writes nothing`, `› refuses a version 2 archive whose %s is not the number of lines it holds, and writes nothing`, `› refuses an archive whose manifest counts more than the archive carries, however it was cut`, `compliance/app-vendors.test.ts › refuses a version 2 manifest that leaves out, mistypes or miscounts app_vendor_count`.
 
 ### `archive/restore-item-fields`
 
