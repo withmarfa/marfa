@@ -80,6 +80,15 @@ Fixture paths are under `src/suites/`.
 | `GET /edge-types`          | covered | `compliance/edge-types.test.ts`                                                                                                                                       |                                                                                                                        |
 | `DELETE /edge-types/{id}`  | covered | `compliance/edge-types.test.ts`                                                                                                                                       | 404 for an unknown type; `edge_type_in_use` while edges exist; `?force=true`.                                          |
 
+## Plugins
+
+| Operation                | Status  | Fixture                      | Notes                                                                                                                  |
+| ------------------------ | ------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `GET /plugins`           | covered | `compliance/plugins.test.ts` |                                                                                                                        |
+| `POST /plugins`          | covered | `compliance/plugins.test.ts` | Install, one write, reserved roots, permission, provenance, guidance, a newer version that only adds, a child's clash. |
+| `GET /plugins/{name}`    | covered | `compliance/plugins.test.ts` | `plugin_not_found`.                                                                                                    |
+| `DELETE /plugins/{name}` | covered | `compliance/plugins.test.ts` | Removes the record and keeps the types.                                                                                |
+
 ## Types
 
 | Operation                 | Status  | Fixture                                                                                                                                     | Notes                                                                                                                                                                                                                                                                         |

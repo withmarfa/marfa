@@ -23,6 +23,7 @@ pub mod overview;
 pub mod owner;
 mod owner_file;
 pub mod owner_passkeys;
+pub mod plugins;
 pub mod profile;
 pub mod restore;
 pub mod rows;

@@ -22,7 +22,7 @@ afterAll(async () => {
 interface Metrics {
   items: { total: number; by_state: Record<string, number> };
   blobs: { count: number; total_bytes: number };
-  types: { core: number; registered: number };
+  types: { core: number; registered: number; plugin: number };
   keys: { total: number };
   webhooks: { total: number };
   uptime_seconds: number;
@@ -51,7 +51,7 @@ describe("the instance's metrics", () => {
       "uptime_seconds",
       "webhooks",
     ]);
-    expect(sorted(r.data.types)).toEqual(["core", "registered"]);
+    expect(sorted(r.data.types)).toEqual(["core", "plugin", "registered"]);
     expect(sorted(r.data.items)).toEqual(["by_state", "total"]);
     expect(sorted(r.data.blobs)).toEqual(["count", "total_bytes"]);
     expect(typeof r.data.types.registered).toBe("number");

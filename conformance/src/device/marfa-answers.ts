@@ -202,9 +202,10 @@ export function wireType(
     },
     own_roles: [],
     provenance: shipped
-      ? { origin: "platform", created_by: null }
+      ? { origin: "platform", plugin: null, created_by: null }
       : {
-          origin: "user",
+          origin: "registered",
+          plugin: null,
           created_by: { kind: "key", id: "fixture-key", name: "Fixture key" },
         },
   };

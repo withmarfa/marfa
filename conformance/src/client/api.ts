@@ -599,6 +599,33 @@ export class MarfaClient {
     return this.request<PaginatedResult<SearchResult>>(`/search?${params}`);
   }
 
+  async installPlugin(
+    bundle: object,
+  ): Promise<ApiResponse<Record<string, unknown>>> {
+    return this.request<Record<string, unknown>>("/plugins", {
+      method: "POST",
+      body: bundle,
+    });
+  }
+
+  async listPlugins(): Promise<
+    ApiResponse<PaginatedResult<Record<string, unknown>>>
+  > {
+    return this.request<PaginatedResult<Record<string, unknown>>>("/plugins");
+  }
+
+  async getPlugin(name: string): Promise<ApiResponse<Record<string, unknown>>> {
+    return this.request<Record<string, unknown>>(`/plugins/${name}`);
+  }
+
+  async removePlugin(
+    name: string,
+  ): Promise<ApiResponse<Record<string, unknown>>> {
+    return this.request<Record<string, unknown>>(`/plugins/${name}`, {
+      method: "DELETE",
+    });
+  }
+
   async registerType(schema: TypeSchema): Promise<ApiResponse<TypeSchema>> {
     return this.request<TypeSchema>("/types", {
       method: "POST",

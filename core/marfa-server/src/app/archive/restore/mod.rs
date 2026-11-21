@@ -25,7 +25,7 @@ use crate::app::edges::write::Writing;
 use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM, HOLD_RESTORE_SETTINGS};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::app::{connectors, edge_types, sources, stored, tables, types};
+use crate::app::{connectors, edge_types, plugins, sources, stored, tables, types};
 use crate::app::{provenance, restore_running};
 use crate::db::Write;
 use crate::settings::registry;
@@ -466,6 +466,7 @@ impl App {
                             icons.skip("already_set");
                         }
                         let named = sources::restore(tx, &unit.at, &registrations.sources)?;
+                        let (plugins_added, plugins_skipped) = plugins::restore(tx, &registrations.plugins)?;
                         let restored_settings =
                             stored::restore(
                                 tx,
@@ -575,6 +576,8 @@ impl App {
                             "sources_added": named.added,
                             "sources_skipped": named.skipped,
                             "sources_skipped_reasons": named.reasons,
+                            "plugins_added": plugins_added,
+                            "plugins_skipped": plugins_skipped,
                             "settings_added": settings_added,
                             "settings_skipped": settings_skipped,
                             "settings_dropped": registrations.dropped_settings,

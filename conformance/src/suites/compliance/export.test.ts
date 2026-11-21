@@ -609,7 +609,7 @@ describe("the archive's contents", () => {
     ) as Record<string, unknown>;
     const typeLines = archiveLines(archive, "instance");
     expect(manifest).toMatchObject({
-      version: 1,
+      version: 2,
       format: "marfa-archive",
       written_by: expect.stringMatching(/^marfa-server /),
       file_count: 1,

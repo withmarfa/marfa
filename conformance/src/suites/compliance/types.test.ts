@@ -39,7 +39,7 @@ describe("type registration and listing", () => {
     const created = await client.registerType({ id, fields: {} });
     expect(created.ok).toBe(true);
     const provenance = created.data.provenance;
-    expect(provenance?.origin).toBe("user");
+    expect(provenance?.origin).toBe("registered");
     expect(provenance?.created_by?.kind).toBe("key");
     const replaced = await client.replaceType(id, {
       ...(await client.getType(id)).data,
@@ -47,6 +47,7 @@ describe("type registration and listing", () => {
       label: "Changed",
       provenance: {
         origin: "platform",
+        plugin: null,
         created_by: { kind: "key", id: "forged", name: "Forged" },
       },
     });
@@ -58,6 +59,7 @@ describe("type registration and listing", () => {
     ).toEqual(provenance);
     expect((await client.getType("core.note")).data.provenance).toEqual({
       origin: "platform",
+      plugin: null,
       created_by: null,
     });
   });

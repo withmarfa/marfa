@@ -328,6 +328,15 @@ impl Caller {
         }
     }
 
+    /// An app's sign-in, or a key an app made, whatever it was minted as.
+    pub fn app_made(&self) -> bool {
+        match self {
+            Caller::App { .. } => true,
+            Caller::Key(key) => key.app_made,
+            Caller::Local(_) | Caller::Owner(_) | Caller::Server => false,
+        }
+    }
+
     pub fn key(&self) -> Option<&Key> {
         match self {
             Caller::Local(_) | Caller::Owner(_) | Caller::Server => None,
@@ -604,6 +613,7 @@ mod tests {
             source: source.into(),
             default_tier: "library".into(),
             oauth_client_id: None,
+            app_made: false,
             grants: Grants {
                 permissions: permissions.to_vec(),
                 maps: Default::default(),
@@ -865,6 +875,7 @@ mod tests {
     fn app_key(mut key: Key) -> Key {
         key.source = "oauth:client".into();
         key.oauth_client_id = Some("client".into());
+        key.app_made = true;
         key
     }
 
