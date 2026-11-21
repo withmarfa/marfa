@@ -28,7 +28,9 @@ pub fn stored_for_app(tx: &Connection, client: &str, grants: &mut Grants) -> Res
 fn claimed_elsewhere(vendor: &str) -> Refusal {
     Refusal::new(
         Code::Forbidden,
-        format!("Another app registered the first type under {vendor}.*, so only it registers there."),
+        format!(
+            "Another app registered the first type under {vendor}.*, so only it registers there."
+        ),
     )
     .with_detail("namespace", vendor)
 }

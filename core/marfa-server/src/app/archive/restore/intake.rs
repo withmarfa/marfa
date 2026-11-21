@@ -1422,7 +1422,11 @@ mod tests {
         let second =
             format!(r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS}}}"#);
         let refused = manifest(second.as_bytes()).unwrap_err();
-        assert!(refused.message.contains("app_vendor_count"), "{}", refused.message);
+        assert!(
+            refused.message.contains("app_vendor_count"),
+            "{}",
+            refused.message
+        );
         let second = format!(
             r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS},"app_vendor_count":0}}"#
         );

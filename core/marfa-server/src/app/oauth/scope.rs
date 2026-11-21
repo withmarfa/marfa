@@ -820,7 +820,10 @@ mod tests {
         let every = "content:read app.*:write";
         assert_eq!(level(every, Axis::Type, "app.other.setting"), Level::Write);
         assert!(!covers(&set("content:write *:write"), "app.acme.*:read"));
-        assert!(covers(&set("content:write app.acme.*:read"), "app.acme.setting:read"));
+        assert!(covers(
+            &set("content:write app.acme.*:read"),
+            "app.acme.setting:read"
+        ));
     }
 
     #[test]
