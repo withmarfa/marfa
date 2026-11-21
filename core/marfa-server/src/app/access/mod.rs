@@ -13,6 +13,7 @@ mod profile;
 pub mod reach;
 mod schema;
 mod tools;
+mod vendors;
 mod webhooks;
 
 use rusqlite::Transaction;
@@ -32,6 +33,7 @@ pub use maps::{Axis, Level, Map};
 pub use overview::Described;
 pub use schema::{Door, SchemaKind};
 pub use tools::AdminTask;
+pub use vendors::{bind_to_app, stored_for_app};
 pub use webhooks::{Listener, Maker, attention_listeners, standing_maker};
 
 macro_rules! permissions {
@@ -564,6 +566,7 @@ impl Caller {
 }
 
 fn standing_key(tx: &Transaction<'_>, mut key: Key) -> Result<Key> {
+    bind_to_app(tx, &mut key)?;
     key.standing = match &key.levers {
         OwnLevers::Unread(text) => {
             report_unread(&key.id, text);
@@ -645,6 +648,29 @@ mod tests {
             refused.details.and_then(|d| d.get("max_age").cloned()),
             Some(json!(900))
         );
+    }
+
+    #[test]
+    fn an_apps_map_reaches_its_own_vendors_and_no_other_app_data() {
+        let mut held = map(
+            Axis::Type,
+            json!({ "*": "write", "app.*": "none", "app.other.*": "read" }),
+        );
+        held.bound_to_app(&["app.mine".to_string()]);
+        assert_eq!(Axis::Type.level(&held, "app.mine.setting"), Level::Write);
+        assert_eq!(Axis::Type.level(&held, "app.other.setting"), Level::Read);
+        assert_eq!(Axis::Type.level(&held, "app.third.setting"), Level::None);
+
+        let mut reader = map(Axis::Type, json!({ "core.note": "read" }));
+        reader.bound_to_app(&["app.mine".to_string()]);
+        assert_eq!(Axis::Type.level(&reader, "app.mine.setting"), Level::Read);
+        assert_eq!(Axis::Type.level(&reader, "app.third.setting"), Level::None);
+
+        let mut made = map(Axis::Type, json!({ "*": "write", "app.mine.*": "write" }));
+        made.without_vendors(&["app.mine".to_string()]);
+        made.bound_to_app(&[]);
+        assert_eq!(Axis::Type.level(&made, "app.mine.setting"), Level::None);
+        assert_eq!(Axis::Type.level(&made, "core.note"), Level::Write);
     }
 
     #[test]

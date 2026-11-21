@@ -143,6 +143,33 @@ impl Map {
         json!([default, apart])
     }
 
+    /// `app.*` reached only where named, and each of `own` at the most the map holds elsewhere.
+    pub(super) fn bound_to_app(&mut self, own: &[String]) {
+        let app = |name: &str| name == "app.*" || name.starts_with("app.");
+        let most = self
+            .patterns()
+            .filter(|(name, _)| !app(name))
+            .map(|(_, level)| level)
+            .max()
+            .unwrap_or(Level::None);
+        self.0
+            .entry("app.*")
+            .or_insert_with(|| Level::None.word().into());
+        for vendor in own {
+            let name = format!("{vendor}.*");
+            if self.exact(&name).is_none_or(|held| held < most) {
+                self.0.insert(name, most.word().into());
+            }
+        }
+    }
+
+    /// Without the entries `bound_to_app` gives `own`, which a credential reads again each time.
+    pub(super) fn without_vendors(&mut self, own: &[String]) {
+        for vendor in own {
+            self.0.remove(&format!("{vendor}.*"));
+        }
+    }
+
     fn widest(&self, name: &str) -> Level {
         self.exact(name)
             .unwrap_or(Level::None)

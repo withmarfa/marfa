@@ -88,6 +88,7 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | End one sign-in | `marfa sign-ins end` |
 | End every sign-in of a kind at once | `marfa sign-ins end-all` |
 | List, narrow and revoke a connected app | `marfa apps list`, `marfa apps narrow`, `marfa apps revoke` |
+| List the app vendors, and give one to another app | `marfa apps vendors list`, `marfa apps vendors move` |
 | Manage the owner's passkeys | `marfa owner passkeys list`, `marfa owner passkeys add`, `marfa owner passkeys rename`, `marfa owner passkeys delete` |
 | Change the owner's password | `marfa owner password` |
 | Recover the owner's password | `marfa owner recover` |
@@ -421,6 +422,35 @@ marfa apps revoke [OPTIONS] <ID>
 | Option | Description |
 | --- | --- |
 | `--revoke-keys` | Also revoke every key the app minted, and every key those keys minted, but an owner's key. |
+
+### marfa apps vendors
+
+The `app.<vendor>` namespaces apps hold. An app holds the namespace it registered the first type under. Requires `grants.manage`.
+
+```text
+marfa apps vendors [OPTIONS] <COMMAND>
+```
+
+### marfa apps vendors list
+
+List each vendor and the client ID of the app that holds it.
+
+```text
+marfa apps vendors list [OPTIONS]
+```
+
+### marfa apps vendors move
+
+Give a vendor to another app, such as one that registered again and got a new client ID. The app named then reaches the vendor's items in place of the app that held it.
+
+```text
+marfa apps vendors move [OPTIONS] <VENDOR> <CLIENT_ID>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<VENDOR>` | The namespace, such as `app.acme`. |
+| `<CLIENT_ID>` | The client ID of the app to give it to, as `marfa apps list` shows it. |
 
 ## sign-ins
 

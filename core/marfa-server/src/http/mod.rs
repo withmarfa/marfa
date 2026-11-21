@@ -57,6 +57,7 @@ mod test_instance;
 mod trash;
 mod types;
 mod updates;
+mod vendors;
 mod views;
 mod webhooks;
 
@@ -358,6 +359,8 @@ fn shared(app: Arc<App>) -> Routes {
             "/backups/{instance_id}/{name}/restore",
             post(backups::restore),
         )
+        .route("/app-vendors", get(vendors::list))
+        .route("/app-vendors/{vendor}", put(vendors::give))
         .route("/sources", get(sources::list))
         .route(
             "/sources/{source}",

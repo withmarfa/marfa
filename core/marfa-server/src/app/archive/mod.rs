@@ -29,13 +29,13 @@ use super::items::{self, Archived, Reader, reading, reading_background};
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
 use super::tables::archive::{ArchivedRow, CarriedTable, Rows};
-use super::{backups, connectors, edges, provenance, sources, stored, tables};
+use super::{backups, connectors, edges, provenance, sources, stored, tables, vendors};
 use crate::db::io_refusal;
 use crate::settings::registry;
 pub use spool::Sealed;
 use spool::{Lines, Spooled};
 
-pub const VERSION: u64 = 1;
+pub const VERSION: u64 = 2;
 /// What a manifest names itself, so a reader knows the archive for one before reading its version.
 pub const FORMAT: &str = "marfa-archive";
 /// The most a manifest, or one line of a line file, may hold.
@@ -842,6 +842,15 @@ fn select<W: RowSink>(
         })
         .collect::<Result<_>>()?;
     count("source_count", &mut instance, named)?;
+    let bound = vendors::list(read.tx)?
+        .into_iter()
+        .filter(|binding| caller.reads_vendor(&binding.vendor))
+        .map(|binding| {
+            let line = print(&json!({ "app_vendor": binding.to_json() }))?;
+            Ok((line, needing(None)))
+        })
+        .collect::<Result<_>>()?;
+    count("app_vendor_count", &mut instance, bound)?;
     let mut settings = Vec::new();
     if caller.holds(Permission::ConfigManage) {
         for (key, text) in stored::rows(read.tx)? {

@@ -18,7 +18,7 @@ pub const ROWS: [(&str, &str); 14] = [
     ("content", "Your content"),
     ("user.*", "Your custom types"),
     ("core.*", "Built-in types"),
-    ("app.*", "Every app's data"),
+    ("app.*", "Every app's own data"),
     ("edge.*", "Links between items"),
     ("profile", "Profile"),
     ("profile.name", "Name"),

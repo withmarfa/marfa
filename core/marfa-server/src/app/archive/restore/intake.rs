@@ -148,6 +148,7 @@ pub struct Registrations {
     /// Names of settings this instance does not have, which the restore leaves out.
     pub dropped_settings: Vec<String>,
     pub states: Vec<(String, Map<String, Value>)>,
+    pub vendors: Vec<crate::app::vendors::Binding>,
 }
 
 /// A body read to its end and checked, ready for the restore's write.
@@ -264,7 +265,7 @@ struct Rows {
 }
 
 /// Each kind of `instance.ndjson.gz` line, with the manifest field that counts it.
-const KINDS: [(&str, &str); 8] = [
+const KINDS: [(&str, &str); 9] = [
     ("type", "type_count"),
     ("edge_type", "edge_type_count"),
     ("type_icon", "type_icon_count"),
@@ -273,7 +274,11 @@ const KINDS: [(&str, &str); 8] = [
     ("enforcement", "enforcement_count"),
     ("connector_state", "connector_state_count"),
     ("connector_agreement", "connector_agreement_count"),
+    (APP_VENDOR, "app_vendor_count"),
 ];
+
+/// Archive version 2 added it, so a version 1 manifest counts none.
+const APP_VENDOR: &str = "app_vendor";
 
 /// The key beside a line's kind that says who registered it.
 const PROVENANCE: &str = "provenance";
@@ -599,6 +604,21 @@ impl Rows {
                 registrations
                     .states
                     .push((source.to_string(), state.clone()));
+            }
+            APP_VENDOR => {
+                let binding = crate::app::vendors::Binding::archived(body).ok_or_else(|| {
+                    invalid(format!(
+                        "Line {row} of {INSTANCE} holds an app vendor without an app.<vendor> vendor, a client_id and a claimed_at."
+                    ))
+                })?;
+                if registrations
+                    .vendors
+                    .iter()
+                    .any(|held| held.vendor == binding.vendor)
+                {
+                    return Err(registered_twice("vendor", &binding.vendor));
+                }
+                registrations.vendors.push(binding);
             }
             _ => {
                 let held = body.get("source").is_some_and(Value::is_string)
@@ -1257,7 +1277,7 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
         .with_detail("entry", MANIFEST)
         .with_detail("version", version)
         .with_detail("written_by", written_by)),
-        Some(1) => first(&held),
+        Some(version @ (1 | 2)) => first(&held, version),
         _ => Err(invalid(format!(
             "{MANIFEST} is missing or mistypes version, a whole number from 1 to {VERSION}."
         ))
@@ -1269,8 +1289,8 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
     }
 }
 
-/// Reads the counts a manifest of archive version 1 holds.
-fn first(held: &Map<String, Value>) -> Result<Manifest> {
+/// Reads the counts a manifest of archive version 1 or 2 holds.
+fn first(held: &Map<String, Value>, version: u64) -> Result<Manifest> {
     let mut errors = Vec::new();
     let mut wrong =
         |path: String, message: &str| errors.push(json!({ "path": path, "message": message }));
@@ -1284,7 +1304,10 @@ fn first(held: &Map<String, Value>) -> Result<Manifest> {
             None => wrong((*count).into(), "Must be a non-negative integer."),
         }
     }
-    for (at, (_, count)) in KINDS.iter().enumerate() {
+    for (at, (kind, count)) in KINDS.iter().enumerate() {
+        if *kind == APP_VENDOR && version == 1 {
+            continue;
+        }
         match held.get(*count).and_then(Value::as_u64) {
             Some(counted) => manifest.instance_counts[at] = counted,
             None => wrong((*count).into(), "Must be a non-negative integer."),
@@ -1362,15 +1385,15 @@ mod tests {
 
     #[test]
     fn a_manifest_at_a_later_version_is_refused_and_one_at_none_is_mistyped() {
-        let text = r#"{"format":"marfa-archive","version":2,"written_by":"marfa-server 9.0.0"}"#;
+        let text = r#"{"format":"marfa-archive","version":3,"written_by":"marfa-server 9.0.0"}"#;
         let refused = manifest(text.as_bytes()).unwrap_err();
         assert!(
-            refused.message.contains("up to version 1"),
+            refused.message.contains("up to version 2"),
             "{}",
             refused.message
         );
         let details = refused.details.unwrap();
-        assert_eq!(details["version"], 2);
+        assert_eq!(details["version"], 3);
         assert_eq!(details["written_by"], "marfa-server 9.0.0");
         for version in ["0", "1.5", "\"1\"", "null"] {
             let text = format!(r#"{{"format":"marfa-archive","version":{version}}}"#);
@@ -1396,6 +1419,18 @@ mod tests {
         let whole =
             format!(r#"{{"format":"marfa-archive","version":1,"written_by":"x",{COUNTS}}}"#);
         assert!(manifest(whole.as_bytes()).is_ok());
+        let second =
+            format!(r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS}}}"#);
+        let refused = manifest(second.as_bytes()).unwrap_err();
+        assert!(
+            refused.message.contains("app_vendor_count"),
+            "{}",
+            refused.message
+        );
+        let second = format!(
+            r#"{{"format":"marfa-archive","version":2,"written_by":"x",{COUNTS},"app_vendor_count":0}}"#
+        );
+        assert!(manifest(second.as_bytes()).is_ok());
     }
 
     #[test]
