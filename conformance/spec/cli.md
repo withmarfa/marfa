@@ -1686,7 +1686,7 @@ When `marfa plugins check` is given a source folder, the CLI MUST report every p
 
 **Reason:** the plugins repository checks a plugin as installing will, while `marfa types check` keeps judging as `POST /types` does.
 
-**Tests:** `device/plugins-check.test.ts › judges a source folder as installing would: takes common.ticket and refuses user.ticket, which types check takes`, `› refuses an edge type that redefines a shipped one, or names a shipped edge as its reverse, as installing does`.
+**Tests:** `device/plugins-check.test.ts › judges a source folder as installing would: takes common.ticket, which types check refuses, and refuses user.ticket, which types check takes`, `› refuses an edge type that redefines a shipped one, or names a shipped edge as its reverse, as installing does`.
 
 ### `cli/plugins-check-version`
 
