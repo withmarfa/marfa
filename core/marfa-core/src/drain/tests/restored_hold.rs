@@ -66,7 +66,7 @@ fn copy_with(server: &Scripted, writes: &[(&str, &str)]) -> std::sync::Arc<Core>
     core
 }
 
-fn drain_pausing(core: &Core, lead: &str, meanwhile: impl FnOnce(&rusqlite::Connection)) {
+fn drain_pausing(core: &Core, lead: &str, meanwhile: impl FnOnce(&Core)) {
     let point = format!("drain-sending:{lead}");
     crate::fault::arm(&point);
     std::thread::scope(|scope| {
@@ -79,7 +79,7 @@ fn drain_pausing(core: &Core, lead: &str, meanwhile: impl FnOnce(&rusqlite::Conn
             );
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
-        meanwhile(&core.conn().unwrap());
+        meanwhile(core);
         crate::fault::release(&point);
         drain.join().unwrap().unwrap();
     });
@@ -91,18 +91,32 @@ fn unsent(core: &Core, id: &str) -> bool {
     write.batched_with.is_none() && store::unsent(&conn, id).unwrap()
 }
 
+/// Queues a kept write to the table, as a fill that finds a restore does.
+fn keep(core: &Core) -> String {
+    let values = json!({ "count": 9 }).as_object().unwrap().clone();
+    let kept = crate::row_writes::keep(
+        &core.conn().unwrap(),
+        "item",
+        "steps",
+        &[crate::row_writes::Op::Put {
+            id: S.into(),
+            values,
+        }],
+    )
+    .unwrap();
+    assert_eq!(kept.len(), 1);
+    kept.into_iter().next().unwrap()
+}
+
 /// The unchanged control must send before the changed case can assert silence.
-fn held_by(
-    writes: &[(&str, &str)],
-    meanwhile: impl Fn(&rusqlite::Connection),
-) -> (Scripted, std::sync::Arc<Core>) {
+fn held_by(writes: &[(&str, &str)], meanwhile: impl Fn(&Core)) -> (Scripted, std::sync::Arc<Core>) {
     for changed in [false, true] {
         let server = Scripted::start();
         let core = copy_with(&server, writes);
         let lead = writes[0].0;
-        drain_pausing(&core, lead, |conn| {
+        drain_pausing(&core, lead, |core| {
             if changed {
-                meanwhile(conn);
+                meanwhile(core);
             }
         });
         let sent = server.seen(PATH);
@@ -132,48 +146,81 @@ fn held_by(
 
 #[test]
 fn a_row_write_whose_table_is_set_aside_after_the_drain_judged_it_ready_is_not_sent() {
-    held_by(&[("w", R)], |conn| {
-        conn.execute(
-            "INSERT INTO held_tables (item_id, name, restored) VALUES ('item', 'steps', 1)",
-            [],
-        )
-        .unwrap();
+    held_by(&[("w", R)], |core| {
+        core.conn()
+            .unwrap()
+            .execute(
+                "INSERT INTO held_tables (item_id, name, restored) VALUES ('item', 'steps', 1)",
+                [],
+            )
+            .unwrap();
     });
 }
 
 #[test]
 fn a_row_write_is_not_sent_while_a_kept_write_queued_after_the_drain_judged_it_waits_ahead() {
-    held_by(&[("w", R)], |conn| {
-        let values = json!({ "count": 9 }).as_object().unwrap().clone();
-        let kept = crate::row_writes::keep(
-            conn,
-            "item",
-            "steps",
-            &[crate::row_writes::Op::Put {
-                id: S.into(),
-                values,
-            }],
-        )
-        .unwrap();
-        assert_eq!(kept.len(), 1);
+    held_by(&[("w", R)], |core| {
+        keep(core);
     });
 }
 
 #[test]
+fn a_row_write_is_not_sent_past_a_kept_write_queued_and_released_after_the_drain_judged_it() {
+    let (server, core) = held_by(&[("w", R)], |core| {
+        let kept = keep(core);
+        assert!(core.release(&kept).unwrap(), "the kept write is released");
+    });
+    // The next drain sends the kept write first.
+    server.on(
+        PATH,
+        vec![certified(answer(
+            200,
+            &json!({
+                "batch": "019a5b1e-9c33-7e5f-8a6b-7c8d9e0f1a2c",
+                "last_activity_at": "2026-11-19T11:01:00.000Z",
+                "results": [
+                    { "id": S, "outcome": "created" },
+                    { "id": R, "outcome": "created" },
+                ],
+            })
+            .to_string(),
+        ))],
+    );
+    core.drain().unwrap();
+    let order: Vec<String> = server
+        .seen(PATH)
+        .iter()
+        .flat_map(|seen| {
+            let body: Value = serde_json::from_slice(&seen.body).unwrap();
+            body["operations"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|op| op["id"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(order, [S, R]);
+    assert!(!unsent(&core, "w"));
+}
+
+#[test]
 fn a_batch_whose_table_is_set_aside_after_the_drain_gathered_it_sends_no_member() {
-    held_by(&[("w", R), ("m", S)], |conn| {
-        conn.execute(
-            "INSERT INTO held_tables (item_id, name, restored) VALUES ('item', 'steps', 1)",
-            [],
-        )
-        .unwrap();
+    held_by(&[("w", R), ("m", S)], |core| {
+        core.conn()
+            .unwrap()
+            .execute(
+                "INSERT INTO held_tables (item_id, name, restored) VALUES ('item', 'steps', 1)",
+                [],
+            )
+            .unwrap();
     });
 }
 
 #[test]
 fn a_row_write_is_not_sent_when_the_copy_was_built_again_after_the_drain_judged_it_ready() {
-    let (server, core) = held_by(&[("w", R)], |conn| {
-        crate::reach::advance_generation(conn).unwrap();
+    let (server, core) = held_by(&[("w", R)], |core| {
+        crate::reach::advance_generation(&core.conn().unwrap()).unwrap();
     });
     // The next drain judges it on the copy as it now is.
     core.drain().unwrap();

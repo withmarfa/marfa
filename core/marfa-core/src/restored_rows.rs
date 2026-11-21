@@ -230,26 +230,48 @@ pub(crate) fn holds_back(conn: &Connection, write: &QueuedWrite) -> Result<bool>
     Ok(held && store::unsent(conn, &write.id)?)
 }
 
-/// A fill can insert kept writes after a drain snapshots the queue.
-pub(crate) fn kept_ahead(conn: &Connection, write: &QueuedWrite) -> Result<bool> {
+/// Whether an unsent row write to the table queued ahead of `write` must go
+/// first: one blocked `server_restored`, or one the drain never `read`, as a
+/// fill keeps and a release then lets go while the drain runs.
+pub(crate) fn kept_ahead(
+    conn: &Connection,
+    write: &QueuedWrite,
+    read: impl Fn(&str) -> bool,
+) -> Result<bool> {
     if !write.kind.rows() {
         return Ok(false);
     }
-    Ok(conn.query_row_cached(
-        "SELECT EXISTS (
-           SELECT 1 FROM queue w JOIN queue k
-             ON k.item_id = w.item_id AND k.row_table = w.row_table AND k.seq < w.seq
-          WHERE w.id = ?1 AND w.sent = 0
-            AND k.kind IN (?2, ?3) AND k.verdict = ?4 AND k.reason = ?5)",
+    let mut query = conn.prepare_cached(
+        "SELECT k.id, k.verdict, k.reason FROM queue w JOIN queue k
+           ON k.item_id = w.item_id AND k.row_table = w.row_table AND k.seq < w.seq
+        WHERE w.id = ?1 AND w.sent = 0 AND k.sent = 0 AND k.kind IN (?2, ?3)
+          AND (k.verdict IS NULL OR k.verdict IN (?4, ?5))",
+    )?;
+    let ahead = query.query_map(
         params![
             write.id,
             WriteKind::WriteRows.as_str(),
             WriteKind::UndoRows.as_str(),
             Verdict::Blocked.as_str(),
-            BlockedReason::ServerRestored.as_str(),
+            Verdict::Dead.as_str(),
         ],
-        |row| row.get(0),
-    )?)
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
+        },
+    )?;
+    for ahead in ahead {
+        let (id, verdict, reason) = ahead?;
+        let kept = verdict.as_deref() == Some(Verdict::Blocked.as_str())
+            && reason.as_deref() == Some(BlockedReason::ServerRestored.as_str());
+        if kept || !read(&id) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 struct Unseen {

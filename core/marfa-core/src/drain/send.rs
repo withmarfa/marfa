@@ -637,7 +637,7 @@ pub(super) fn send_queue(
                 // reached the server, and treating it as unsent would write twice.
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
-                if rows::held_since(&tx, row, &batched, generation)? {
+                if rows::held_since(&tx, row, &batched, generation, |id| rows.contains_key(id))? {
                     if let Some(stuck) = &resending {
                         leave_waiting(stuck, report);
                         continue 'walk;

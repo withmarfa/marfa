@@ -122,6 +122,7 @@ pub(super) fn held_since(
     lead: &QueuedWrite,
     members: &[QueuedWrite],
     generation: u64,
+    read: impl Fn(&str) -> bool,
 ) -> Result<bool> {
     if !lead.kind.rows() || !store::unsent(conn, &lead.id)? {
         return Ok(false);
@@ -131,7 +132,7 @@ pub(super) fn held_since(
     }
     for write in batch_of(lead, members) {
         if crate::restored_rows::holds_back(conn, write)?
-            || crate::restored_rows::kept_ahead(conn, write)?
+            || crate::restored_rows::kept_ahead(conn, write, &read)?
         {
             return Ok(true);
         }
