@@ -1109,6 +1109,32 @@ const invocations: Record<string, () => string[]> = {
   "types register": () => ["--body", '{"id":"user.t"}'],
   "types normalize": () => ["--body", '{"id":"user.t","fields":{}}'],
   "types get": () => ["core.note"],
+  "plugins list": () => [],
+  "plugins get": () => ["fixture"],
+  "plugins remove": () => ["fixture"],
+  "plugins install": () => [
+    fileOf(
+      "fixture.plugin.json",
+      JSON.stringify({
+        format: 1,
+        name: "fixture",
+        title: "Fixture",
+        description: "A plugin the contract drives.",
+        mark: "lucide:box",
+        maker: "Marfa",
+        marfa: "0.0.1",
+        version: "1.0.0",
+        types: [
+          {
+            id: "fixture.thing",
+            description: "A thing the contract drives.",
+            fields: { title: { type: "string" } },
+          },
+        ],
+        edge_types: [],
+      }),
+    ),
+  ],
   "tables list": () => [ID],
   "rows list": () => [ID, "lines"],
   "rows get": () => [ID, "lines", ID],
@@ -1320,6 +1346,12 @@ const NOT_DRIVEN: Record<string, string> = {
     "prints a definition from its arguments, sending nothing; held by types-scaffold.test.ts",
   "types check":
     "checks local type definitions without sending a request; covered by types-check.test.ts",
+  "plugins check":
+    "checks a plugin's source folder without sending a request; held by plugins-check.test.ts",
+  "plugins bundle":
+    "builds a plugin's bundle from its source folder without sending a request; held by cli/plugins.test.ts",
+  "plugins index":
+    "writes a release's plugins.json from bundles without sending a request; held by cli/plugins.test.ts",
   "docs search":
     "reads the docs site, which is not a server; held by its own case",
   "docs topics":

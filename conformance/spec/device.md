@@ -8302,6 +8302,8 @@ A refusal the CLI reports carries one `code`, a lowercase snake case word. The f
 | `docs_unreachable`       | The docs site cannot be read.                                                                    |
 | `conflict`               | A server answered `409` to a command.                                                            |
 | `too_large`              | A server answered `413` to a command.                                                            |
+| `plugins_unreachable`    | The plugins release, or the address `MARFA_PLUGINS_URL` names, could not be read.                |
+| `file_name_mismatch`     | A file in a plugin's source folder is not named after the id it defines.                         |
 
 ### `device/error-codes-closed`
 
