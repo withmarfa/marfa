@@ -1006,15 +1006,15 @@ If `POST /restore` reads an archive at version 2 with a `type` line whose `prove
 
 ### `archive/restore-plugin-line`
 
-If `POST /restore` reads a `plugin` line whose `bundle` `POST /plugins` would refuse for its shape, whose `name` or `version` differs from its bundle's, whose `installed_at` or `updated_at` is not a time in the form the server writes, or whose `installed_by` is neither `null` nor a sign-in's `kind`, `id` and `name`, then the server MUST answer `400 validation_error` naming the line and keep no record of the archive.
+If `POST /restore` reads a `plugin` line whose `bundle` `POST /plugins` would refuse for its shape, whose `name` or `version` differs from its bundle's, whose `installed_at` or `updated_at` is not a time in the form the server writes, whose `installed_by` is neither `null` nor a sign-in's `kind`, `id` and `name`, or whose `fingerprint` is not a SHA-256 in lowercase hexadecimal, then the server MUST answer `400 validation_error` naming the line and keep no record of the archive.
 
 **Reason:** a restored record is answered by `GET /plugins/{name}`, so it holds only what that answer's schema allows.
 
-**Tests:** `compliance/plugins.test.ts › refuses a plugin line whose times are not in the stored form, or whose installer is not a sign-in`.
+**Tests:** `compliance/plugins.test.ts › refuses a plugin line whose times are not in the stored form, whose installer is not a sign-in, or whose fingerprint is not a SHA-256`.
 
 ### `archive/export-plugins`
 
-When a credential that may export sends `GET /export?format=archive`, the server MUST write a `plugin` line in `instance.ndjson.gz` for each installed plugin, holding its `name`, `version`, `bundle`, `installed_at`, `installed_by` and `updated_at`, counted in the manifest's `plugin_count`.
+When a credential that may export sends `GET /export?format=archive`, the server MUST write a `plugin` line in `instance.ndjson.gz` for each installed plugin, holding its `name`, `version`, `bundle`, `fingerprint`, `installed_at`, `installed_by` and `updated_at`, counted in the manifest's `plugin_count`.
 
 **Tests:** `compliance/plugins.test.ts › keeps plugin provenance and the install record through an export and a restore`.
 

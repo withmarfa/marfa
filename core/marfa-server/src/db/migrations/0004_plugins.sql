@@ -48,7 +48,8 @@ CREATE TABLE plugins (
     manifest TEXT NOT NULL CHECK (json_valid(manifest)),
     installed_at TEXT NOT NULL,
     installed_by TEXT CHECK (installed_by IS NULL OR json_valid(installed_by)),
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    fingerprint TEXT NOT NULL CHECK (length(fingerprint) = 64 AND fingerprint NOT GLOB '*[^0-9a-f]*')
 ) STRICT, WITHOUT ROWID;
 
 CREATE TRIGGER backup_plugins_inserted AFTER INSERT ON plugins BEGIN

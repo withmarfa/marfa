@@ -646,6 +646,14 @@ pub fn index(mut entries: Vec<Value>) -> Value {
     json!({ "format": FORMAT, "plugins": entries })
 }
 
+/// A SHA-256 as a plugin's fingerprint is written: 64 lowercase hexadecimal digits.
+pub fn is_sha256(text: &str) -> bool {
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 /// The entry an index lists under `name`, with its bundle file and digest, or why it cannot be used.
 pub fn index_lookup<'a>(index: &'a Value, name: &str) -> Result<(&'a str, &'a str), String> {
     if index.get("format").and_then(Value::as_u64) != Some(FORMAT) {

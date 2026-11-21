@@ -839,7 +839,7 @@ export interface paths {
         put?: never;
         /**
          * Install a plugin
-         * @description Installs a plugin's bundle: registers its edge types and types in one write, records the plugin and version on each type, and keeps the bundle. Needs `schema.write`, write on each type it holds and on both names of each edge type it holds. An app's access token, or a key an app made, can install only a bundle whose types carry no guidance.
+         * @description Installs a plugin's bundle in one write and records the plugin on each type. Needs `schema.write`, write on each type and edge type name, and `connectors.manage` for a `connector`. An app can't install guidance.
          */
         post: operations["installPlugin"];
         delete?: never;
@@ -8642,6 +8642,11 @@ export interface components {
                 [key: string]: unknown;
             } | null;
             /**
+             * @description The SHA-256 of the bundle's bytes as the install that wrote this version received them, in lowercase hexadecimal.
+             * @example 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+             */
+            fingerprint: string;
+            /**
              * Format: date-time
              * @description When the plugin was first installed.
              * @example 2026-11-21T10:00:00.000Z
@@ -8701,6 +8706,11 @@ export interface components {
             connector: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * @description The SHA-256 of the bundle's bytes as the install that wrote this version received them, in lowercase hexadecimal.
+             * @example 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+             */
+            fingerprint: string;
             /**
              * Format: date-time
              * @description When the plugin was first installed.
@@ -18983,6 +18993,7 @@ export interface operations {
                      *             "blocks"
                      *           ],
                      *           "connector": null,
+                     *           "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
                      *           "installed_at": "2026-11-21T10:00:00.000Z",
                      *           "installed_by": {
                      *             "kind": "key",
@@ -19139,6 +19150,7 @@ export interface operations {
                      *         "blocks"
                      *       ],
                      *       "connector": null,
+                     *       "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
                      *       "installed_at": "2026-11-21T10:00:00.000Z",
                      *       "installed_by": {
                      *         "kind": "key",
@@ -19177,6 +19189,7 @@ export interface operations {
                      *         "blocks"
                      *       ],
                      *       "connector": null,
+                     *       "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
                      *       "installed_at": "2026-11-21T10:00:00.000Z",
                      *       "installed_by": {
                      *         "kind": "key",
@@ -19218,9 +19231,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you don't have `schema.write`, or a type sits under `core`, `system`, `marfa`, `app` or `user`, which `details.namespace` names.
-             *     - `type_not_permitted`: your type map doesn't grant write on a type of the bundle, or on a parent outside it that is not shipped or under `common`.
-             *     - `edge_type_not_permitted`: your edge map doesn't grant write on an edge type of the bundle.
+             * @description - `forbidden`: no `schema.write`, no `connectors.manage` for a `connector` (`details.required_scope`), a type under `core`, `system`, `marfa`, `app` or `user` (`details.namespace`), or app guidance.
+             *     - `type_not_permitted`: no write on a type of the bundle, or on a parent outside it that isn't shipped or under `common`.
+             *     - `edge_type_not_permitted`: no write on an edge type name of the bundle.
              */
             403: {
                 headers: {
@@ -19377,6 +19390,7 @@ export interface operations {
                      *         "blocks"
                      *       ],
                      *       "connector": null,
+                     *       "fingerprint": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
                      *       "installed_at": "2026-11-21T10:00:00.000Z",
                      *       "installed_by": {
                      *         "kind": "key",
