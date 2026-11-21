@@ -345,7 +345,12 @@ mod tests {
         let refused = |body: Value| {
             let body = body.as_object().cloned().unwrap_or_default();
             super::super::request_shape(&body).is_err()
-                || super::super::edge_type_from_request(&body, &|_| None).is_err()
+                || super::super::edge_type_from_request(
+                    &body,
+                    &|_| None,
+                    super::super::Judging::Register,
+                )
+                .is_err()
         };
         for key in EDGE_KEYS {
             assert!(
