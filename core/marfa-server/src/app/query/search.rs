@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use marfa_rules::search::{MARK_CLOSE, MARK_OPEN, fts_phrases, snippet_html};
+use marfa_rules::search::{MARK_CLOSE, MARK_OPEN, TITLE_WEIGHT, fts_phrases, snippet_html};
 use rusqlite::types::Value;
 use serde_json::{Value as Json, json};
 
@@ -33,6 +33,8 @@ pub struct Search {
 
 struct Source {
     fts: &'static str,
+    /// The weight of the index's first column in a ranking.
+    first_weight: i64,
     from: &'static str,
     /// `from` for an ask that the columns of `items_fts_sizes` can judge.
     narrow_from: &'static str,
@@ -48,6 +50,7 @@ struct Source {
 const SOURCES: [Source; 2] = [
     Source {
         fts: "items_fts",
+        first_weight: TITLE_WEIGHT,
         from: "items_fts CROSS JOIN items_fts_sizes z ON z.seq = items_fts.rowid \
              CROSS JOIN items i ON i.seq = z.seq",
         narrow_from: "items_fts CROSS JOIN items_fts_sizes i ON i.seq = items_fts.rowid",
@@ -59,6 +62,7 @@ const SOURCES: [Source; 2] = [
     },
     Source {
         fts: "rows_fts",
+        first_weight: 1,
         from: tables::search::HITS_FROM,
         narrow_from: tables::search::HITS_FROM,
         lengths: ("NULL", "NULL"),
@@ -151,7 +155,10 @@ impl Ranking {
         } else {
             source.lengths.1
         };
-        let mut sql = Sql::new(&format!("bm25_within({}", source.fts));
+        let mut sql = Sql::new(&format!(
+            "bm25_within({}, {}",
+            source.fts, source.first_weight
+        ));
         for (place, argument) in held.iter().enumerate() {
             if place == 2 {
                 sql.push(&format!(", {length}"));

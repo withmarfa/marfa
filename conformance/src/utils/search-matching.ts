@@ -53,9 +53,8 @@ export const MATCHING_ITEMS: MatchingItem[] = [
   { key: "k2", properties: { body: "kiwi kiwi pear" } },
   { key: "k3", properties: { body: "kiwi pear pear" } },
   { key: "k4", properties: { body: "kiwi pear pear" } },
-  // The same match in the other column, created first: an index that weighted
-  // the title above the body would put `mango-title` first, and equal weights
-  // leave the tie to the identifier.
+  // The same match in the other column, created first: only a weight on the
+  // title puts `mango-title` ahead, since equal weights leave the tie to the identifier.
   { key: "mango-body", properties: { title: "alpha beta", body: "mango" } },
   { key: "mango-title", properties: { title: "mango", body: "alpha beta" } },
   {
@@ -218,9 +217,9 @@ export const MATCHING_CASES: MatchingCase[] = [
     ranked: true,
   },
   {
-    name: "a title and a body weigh the same",
+    name: "a match in the title ranks above the same match in the body",
     query: "mango",
-    hits: [["mango-body", "mango-title"]],
+    hits: [["mango-title"], ["mango-body"]],
     ranked: true,
   },
   {
