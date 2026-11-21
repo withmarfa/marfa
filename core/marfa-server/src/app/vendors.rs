@@ -9,7 +9,7 @@ use super::instance;
 use super::oauth::store;
 use super::refusal::{Code, Refusal, Result};
 
-/// As migration 3 claims them.
+/// Keep restore and database upgrade in agreement about who first held a vendor.
 const FROM_TYPES: &str = "INSERT OR IGNORE INTO app_vendors (vendor, client_id, claimed_at) \
      SELECT substr(t.id, 1, instr(substr(t.id, 5), '.') + 3), \
             COALESCE(c.client_id, k.oauth_client_id), t.created_at \

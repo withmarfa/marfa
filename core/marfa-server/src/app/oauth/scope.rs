@@ -531,8 +531,6 @@ fn raise(entries: &mut Entries<String, Value>, name: &str, verb: Verb) {
     }
 }
 
-/// A set reaches what each of its scopes reaches: `content` all but `system`, `marfa` and `app`,
-/// `*` all but `app`.
 pub fn to_grants(granted: &ScopeSet) -> Grants {
     let (mut content, mut all) = (None, None);
     for scope in granted.scopes() {
@@ -1431,7 +1429,7 @@ mod tests {
     }
 
     #[test]
-    fn the_choosable_types_leave_out_system_and_marfa() {
+    fn the_choosable_types_leave_out_system_marfa_and_app() {
         assert_eq!(
             registries().choosable_types(),
             [
