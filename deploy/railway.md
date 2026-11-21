@@ -8,7 +8,7 @@ You need a Railway account with permission to deploy services and volumes in you
 
 1. Open the [Marfa Railway template](https://railway.com/new/template/5z9-Ja).
 2. Choose your workspace and create a project for this instance.
-3. Review the resources: one Marfa server with a volume mounted at `/data`. Check that the server's image is a version tag, such as `ghcr.io/withmarfa/marfa-server:0.0.74`, and not `latest`. Then deploy.
+3. Review the resources: one Marfa server with a volume mounted at `/data`. Check that the server's image is a version tag, as in `ghcr.io/withmarfa/marfa-server:<version>`, and not `latest`. Then deploy.
 4. Wait for the server deployment to pass its `/health` check, then claim the instance below.
 5. Note the release that is running. Run `curl https://<your-address>/`; the JSON answer names it as `version`. (A browser shows the page instead.)
 
