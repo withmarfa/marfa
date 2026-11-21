@@ -8935,7 +8935,7 @@ export interface components {
             /** @description Why the last link ended without an unlink here. Present while `state` is `not_linked` after Marfa Cloud ended the link. */
             ended?: {
                 /**
-                 * @description `unlinked_by_service`: the link was ended on Marfa Cloud. Marfa put back the sign-in address if the link had moved it.
+                 * @description `unlinked_by_service`: the link was ended on Marfa Cloud. Marfa put back the sign-in address if the link had moved it, unless `sign_in_address` says it could not.
                  * @enum {string}
                  */
                 reason: "unlinked_by_service";
@@ -8996,20 +8996,28 @@ export interface components {
                  */
                 since: string;
             };
-            /** @description Where the sign-in address stands. Present while `state` is `linking` or `linked`, and while failed if the sign-in address is the Marfa Cloud address. */
+            /** @description Where the sign-in address stands. Present while `state` is `linking` or `linked`, while failed if the sign-in address is the Marfa Cloud address, and while not linked if the link ended with the sign-in address still at its Marfa Cloud address. */
             sign_in_address?: {
                 /**
-                 * @description `moved`: it is the Marfa Cloud address. `kept`: it stays as it is. `pending`: Marfa moves it once linked. `waiting`: it moves when you take `next_step`.
+                 * @description `moved`: it is the Marfa Cloud address. `kept`: it stays as it is. `pending`: Marfa moves it once linked. `waiting`: it moves when you take `next_step`. `not_put_back`: the link ended, and Marfa couldn't move it back from the Marfa Cloud address.
                  * @enum {string}
                  */
-                state: "moved" | "kept" | "pending" | "waiting";
+                state: "moved" | "kept" | "pending" | "waiting" | "not_put_back";
                 /**
                  * Format: uri
                  * @description The sign-in address in force.
                  * @example https://marfa.example.com
                  */
                 address: string;
-                /** @description How to move the sign-in address yourself. Present while linked and `state` is `waiting`. */
+                /** @description Why Marfa couldn't move the sign-in address back. Present while `state` is `not_put_back`, after Marfa Cloud ended the link. */
+                failure?: {
+                    /**
+                     * @description The error code of the write that failed.
+                     * @example internal_error
+                     */
+                    reason: string;
+                };
+                /** @description How to move the sign-in address yourself. Present while linked and `state` is `waiting`, and while `state` is `not_put_back` if `addresses` reads. */
                 next_step?: {
                     /** @description The request that moves it, sent from an app someone signed in to recently. */
                     request: {
@@ -9027,7 +9035,7 @@ export interface components {
                         body: {
                             /**
                              * Format: uri
-                             * @description The Marfa Cloud address.
+                             * @description The address it moves to: the Marfa Cloud address, or for `not_put_back`, the one Marfa would have moved it back to.
                              */
                             sign_in_address: string;
                             /**

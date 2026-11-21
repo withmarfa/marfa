@@ -870,6 +870,51 @@ async function movedLink(label: string): Promise<{
   return { linkable, before, cookie, linked };
 }
 
+async function setSignIn(linkable: Linkable, address: string): Promise<void> {
+  const answer = await linkable.call("socket", "PATCH", "/config", {
+    sign_in_address: address,
+    confirm_sign_in_address_change: true,
+  });
+  expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+}
+
+/**
+ * A link that finds the sign-in address already at its Cloud address: the
+ * sign-in address moves to another address, then to the Cloud address
+ * before any link starts, and a link that moves it is approved there.
+ */
+async function linkedOnCloudFirst(label: string): Promise<{
+  linkable: Linkable;
+  other: string;
+  linked: any;
+}> {
+  const linkable = await boot(label);
+  const gated = await gate(linkable.server.apiUrl);
+  cleanups.push(() => gated.close());
+  gated.open();
+  const cloudAddress = `http://127.0.0.1:${new URL(linkable.server.apiUrl).port}`;
+  await setSignIn(linkable, gated.address);
+  await setSignIn(linkable, cloudAddress);
+  await start(linkable, "socket", {
+    sign_in_address: "move",
+    confirm_sign_in_address_change: true,
+  });
+  linkable.cloud.approve({ address: cloudAddress });
+  const linked = await linkable.until(
+    "the link to be linked on the sign-in address",
+    (s) => s.state === "linked" && s.sign_in_address?.state === "moved",
+  );
+  expect(linked.address).toBe(cloudAddress);
+  return { linkable, other: gated.address, linked };
+}
+
+/** Waits for the server to notice that Marfa Cloud ended the link. */
+async function endedByCloud(linkable: Linkable): Promise<any> {
+  linkable.cloud.forget();
+  await linkable.server.advanceClock(61 * 60_000);
+  return linkable.until("the link to be ended", (s) => s.state === "not_linked");
+}
+
 async function opens(linkable: Linkable, cookie: string): Promise<number> {
   const answer = await fetch(`${linkable.server.apiUrl}/owner/passkeys`, {
     headers: { cookie },
@@ -1271,6 +1316,68 @@ describe("unlinking", () => {
   );
 
   it(
+    "puts back an address left in addresses on an unlink where the link found the sign-in address already at its Cloud address",
+    async () => {
+      const { linkable, other, linked } = await linkedOnCloudFirst(
+        "cloud-put-back-found",
+      );
+      const unlinked = await linkable.call(
+        "socket",
+        "DELETE",
+        "/cloud/link?confirm_sign_in_address_change=true",
+      );
+      expect(unlinked.status, JSON.stringify(unlinked.body)).toBe(200);
+      expect(unlinked.body).toEqual({
+        state: "not_linked",
+        service_told: true,
+      });
+      expect(await signInAddress(linkable)).toBe(other);
+      const config = await linkable.call("key", "GET", "/config");
+      expect(config.body.addresses).toEqual([other]);
+      expect(config.body.addresses).not.toContain(linked.address);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "puts back an address left in addresses on an unlink where the owner removed the one in force before the move",
+    async () => {
+      const linkable = await boot("cloud-put-back-removed");
+      const [first, other] = [
+        await gate(linkable.server.apiUrl),
+        await gate(linkable.server.apiUrl),
+      ];
+      cleanups.push(() => first.close(), () => other.close());
+      first.open();
+      other.open();
+      await setSignIn(linkable, first.address);
+      await start(linkable, "socket", {
+        sign_in_address: "move",
+        confirm_sign_in_address_change: true,
+      });
+      linkable.cloud.approve();
+      const linked = await linkable.until(
+        "the sign-in address to move",
+        (s) => s.sign_in_address?.state === "moved",
+      );
+      const listed = await linkable.call("socket", "PATCH", "/config", {
+        addresses: [linked.address, other.address],
+      });
+      expect(listed.status, JSON.stringify(listed.body)).toBe(200);
+      const unlinked = await linkable.call(
+        "socket",
+        "DELETE",
+        "/cloud/link?confirm_sign_in_address_change=true",
+      );
+      expect(unlinked.status, JSON.stringify(unlinked.body)).toBe(200);
+      expect(await signInAddress(linkable)).toBe(other.address);
+      const config = await linkable.call("key", "GET", "/config");
+      expect(config.body.addresses).toEqual([other.address]);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "answers not_linked to an unlink when nothing is linked",
     async () => {
       const linkable = await boot("cloud-unlink-none");
@@ -1375,6 +1482,96 @@ describe("a link ended on Marfa Cloud", () => {
         await audited(linkable, "cloud.sign_in_address_move"),
       ).toHaveLength(2);
       // A new link can start once the last one ended.
+      await start(linkable, "key", { sign_in_address: "keep" });
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "puts back an address left in addresses on an end by Marfa Cloud where the link found the sign-in address already at its Cloud address",
+    async () => {
+      const { linkable, other, linked } = await linkedOnCloudFirst(
+        "cloud-ended-found",
+      );
+      const ended = await endedByCloud(linkable);
+      expect(ended.ended).toMatchObject({ reason: "unlinked_by_service" });
+      expect(ended).not.toHaveProperty("sign_in_address");
+      expect(await signInAddress(linkable)).toBe(other);
+      const config = await linkable.call("key", "GET", "/config");
+      expect(config.body.addresses).toEqual([other]);
+      expect(config.body.addresses).not.toContain(linked.address);
+      expect(
+        (await audited(linkable, "cloud.sign_in_address_move"))[0]?.details,
+      ).toMatchObject({ reason: "unlinked_by_service" });
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "puts back the first https address left in addresses on an end by Marfa Cloud where the address in force before the move is not among them",
+    async () => {
+      const { linkable, linked } = await movedLink("cloud-ended-https");
+      const other = await gate(linkable.server.apiUrl);
+      cleanups.push(() => other.close());
+      const secure = "https://elsewhere.example";
+      const listed = await linkable.call("socket", "PATCH", "/config", {
+        addresses: [linked.address, other.address, secure],
+      });
+      expect(listed.status, JSON.stringify(listed.body)).toBe(200);
+      await endedByCloud(linkable);
+      expect(await signInAddress(linkable)).toBe(secure);
+      const config = await linkable.call("key", "GET", "/config");
+      expect(config.body.addresses).toEqual([other.address, secure]);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says how to move it",
+    async () => {
+      const { linkable, linked } = await movedLink("cloud-ended-stranded");
+      const own = `http://localhost:${new URL(linkable.server.apiUrl).port}`;
+      await linkable.server.setFault("fail:commit=config.update@always");
+      const ended = await endedByCloud(linkable);
+      // The witness: the put-back was tried and its write failed each time.
+      const fault = (await linkable.server.faults()).find(
+        (each) => each.name === "fail:commit",
+      );
+      expect(fault?.fired ?? 0).toBeGreaterThanOrEqual(3);
+      expect(ended.ended).toMatchObject({ reason: "unlinked_by_service" });
+      expect(ended.sign_in_address).toMatchObject({
+        state: "not_put_back",
+        address: linked.address,
+        failure: { reason: "internal_error" },
+      });
+      expect(ended.sign_in_address.next_step).toEqual({
+        request: {
+          method: "PATCH",
+          path: "/config",
+          body: { sign_in_address: own, confirm_sign_in_address_change: true },
+        },
+        command: `marfa config set sign_in_address ${own} --confirm-address-change`,
+      });
+      await expectMatchesSchema("GET", "/cloud/link", 200, ended);
+      expect(await signInAddress(linkable)).toBe(linked.address);
+      expect(
+        (await audited(linkable, "cloud.unlink"))[0]?.details,
+      ).toMatchObject({
+        reason: "unlinked_by_service",
+        sign_in_address: "not_put_back",
+        put_back_failure: "internal_error",
+      });
+      await linkable.server.clearFault("fail:commit");
+      const moved = await linkable.call(
+        "socket",
+        ended.sign_in_address.next_step.request.method,
+        ended.sign_in_address.next_step.request.path,
+        ended.sign_in_address.next_step.request.body,
+      );
+      expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+      const after = await linkable.status();
+      expect(after.state).toBe("not_linked");
+      expect(after).not.toHaveProperty("sign_in_address");
       await start(linkable, "key", { sign_in_address: "keep" });
     },
     FRESH_SERVER_TIMEOUT_MS,

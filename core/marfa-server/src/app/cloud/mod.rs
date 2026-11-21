@@ -139,13 +139,38 @@ fn seen<'a>(app: &'a App, link: Option<&'a Link>, sign_in: &'a Address, untold: 
         now_ms: app.clock.now_ms(),
         connector: &app.cloud.connector,
         untold,
+        put_back: None,
     }
+}
+
+/// The link as `seen` reads it, with where an ended link's sign-in address would go back to.
+fn seen_in<'a>(
+    app: &'a App,
+    tx: &Transaction<'_>,
+    link: Option<&'a Link>,
+    sign_in: &'a Address,
+    untold: bool,
+) -> Result<Seen<'a>> {
+    let mut seen = seen(app, link, sign_in, untold);
+    if let Some(link) = link.filter(|link| link.state == State::Ended)
+        && let Some(cloud) = status::cloud_address(link).filter(|cloud| cloud == sign_in)
+    {
+        let previous = link
+            .previous_sign_in_address
+            .as_deref()
+            .and_then(|text| Address::parse(text).ok());
+        let unread = link.previous_sign_in_address.is_some() && previous.is_none();
+        if !unread {
+            seen.put_back = config::put_back_target(tx, previous, own_sign_in(app), cloud)?;
+        }
+    }
+    Ok(seen)
 }
 
 fn status_in(app: &App, tx: &Transaction<'_>) -> Result<Value> {
     let link = store::read(tx)?;
     let sign_in = sign_in_in(app, tx)?;
-    Ok(seen(app, link.as_ref(), &sign_in, store::any_untold(tx)?).to_json())
+    Ok(seen_in(app, tx, link.as_ref(), &sign_in, store::any_untold(tx)?)?.to_json())
 }
 
 fn announce(unit: &Unit<'_, '_>, status: &Value) -> Result<()> {
@@ -381,6 +406,7 @@ pub async fn start(
                 failure_reason: None,
                 failure_message: None,
                 ended_at: None,
+                put_back_failure: None,
             };
             store::put(tx, &link)?;
             unit.audit(
@@ -397,13 +423,27 @@ pub async fn start(
     Ok(answer)
 }
 
-/// The sign-in address the link moved, which an unlink puts back.
-fn previous_sign_in(link: &Link) -> Result<Option<Address>> {
-    link.previous_sign_in_address
+/// The write that removes the link's address `cloud` and puts the sign-in address back.
+fn put_back(app: &App, link: &Link, cloud: Address, confirmed: bool) -> Result<Request> {
+    let previous = link
+        .previous_sign_in_address
         .as_deref()
         .map(Address::parse)
         .transpose()
-        .map_err(|_| Refusal::internal("the sign-in address the link moved does not read"))
+        .map_err(|_| Refusal::internal("the sign-in address the link moved does not read"))?;
+    Request::sign_in_put_back(
+        previous,
+        own_sign_in(app),
+        cloud,
+        confirmed,
+        app.settings.sealer(),
+    )
+}
+
+/// The default sign-in address.
+fn own_sign_in(app: &App) -> Address {
+    app.addresses_in(Arc::new(app.settings.candidate(&[])))
+        .sign_in()
 }
 
 /// Refuses an end whose put-back plan no longer fits `sign_in`, the address the write found.
@@ -511,13 +551,7 @@ async fn unlink_once(
     let ending = app.clone();
     let queued = match status::cloud_address(&link).filter(|address| *address == sign_in) {
         Some(cloud) => {
-            let previous = previous_sign_in(&link)?;
-            let request = Request::sign_in_move(
-                previous.as_ref(),
-                confirmed,
-                Some(cloud),
-                app.settings.sealer(),
-            )?;
+            let request = put_back(app, &link, cloud, confirmed)?;
             config::update_with(
                 app,
                 caller,
@@ -547,7 +581,7 @@ pub fn after_config(unit: &Unit<'_, '_>, app: &App, change: &SignInChange) -> Re
         return Ok(());
     };
     let untold = store::any_untold(tx)?;
-    let before = seen(app, Some(&link), &change.before, untold).to_json();
+    let before = seen_in(app, tx, Some(&link), &change.before, untold)?.to_json();
     let cloud = status::cloud_address(&link);
     let arrived = cloud
         .as_ref()
@@ -560,7 +594,11 @@ pub fn after_config(unit: &Unit<'_, '_>, app: &App, change: &SignInChange) -> Re
             .map(|address| address.origin().to_string());
         store::put(tx, &link)?;
     }
-    let after = seen(app, Some(&link), &change.after, untold).to_json();
+    if link.put_back_failure.is_some() && cloud.as_ref() != Some(&change.after) {
+        link.put_back_failure = None;
+        store::put(tx, &link)?;
+    }
+    let after = seen_in(app, tx, Some(&link), &change.after, untold)?.to_json();
     if before != after {
         announce(unit, &after)?;
     }

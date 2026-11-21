@@ -30,6 +30,8 @@ pub struct Seen<'a> {
     pub connector: &'a Connector,
     /// Whether Marfa Cloud has not been told of some unlink.
     pub untold: bool,
+    /// Where putting back the sign-in address would move it, for a link that ended without.
+    pub put_back: Option<Address>,
 }
 
 impl Seen<'_> {
@@ -97,6 +99,20 @@ impl Seen<'_> {
         Value::Object(shown)
     }
 
+    /// The sign-in address a link that ended left at the link's address.
+    fn not_put_back(&self, link: &Link) -> Value {
+        let mut shown = Map::new();
+        shown.insert("state".into(), "not_put_back".into());
+        shown.insert("address".into(), self.sign_in.origin().into());
+        if let Some(reason) = &link.put_back_failure {
+            shown.insert("failure".into(), json!({ "reason": reason }));
+        }
+        if let Some(address) = &self.put_back {
+            shown.insert("next_step".into(), next_step(address));
+        }
+        Value::Object(shown)
+    }
+
     pub fn to_json(&self) -> Value {
         let standing = self.standing();
         let mut body = Map::new();
@@ -119,6 +135,9 @@ impl Seen<'_> {
                     ended.insert("ended_at".into(), ended_at.text().into());
                 }
                 body.insert("ended".into(), Value::Object(ended));
+                if self.moved() {
+                    body.insert("sign_in_address".into(), self.not_put_back(link));
+                }
             }
             Standing::Linking => {
                 body.insert("state".into(), "linking".into());

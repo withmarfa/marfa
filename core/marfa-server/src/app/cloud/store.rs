@@ -88,12 +88,14 @@ pub struct Link {
     pub failure_reason: Option<String>,
     pub failure_message: Option<String>,
     pub ended_at: Option<Stamp>,
+    /// Why Marfa could not put back the sign-in address as the link ended.
+    pub put_back_failure: Option<String>,
 }
 
 const LINK_COLUMNS: &str = "link_id, state, user_code, approval_url, expires_at, interval_ms, \
      started_at, poll_secret, sign_in_move, previous_sign_in_address, name, address, \
      approved_at, linked_at, tunnel_token, link_credential, failure_reason, failure_message, \
-     ended_at";
+     ended_at, put_back_failure";
 
 fn unread(column: &str) -> Refusal {
     Refusal::internal(&format!("the stored link's {column} does not read"))
@@ -115,6 +117,7 @@ type Columns = (
     ),
     (Option<String>, Option<String>, Option<String>),
     (
+        Option<String>,
         Option<String>,
         Option<String>,
         Option<String>,
@@ -147,6 +150,7 @@ fn columns(row: &Row<'_>) -> rusqlite::Result<Columns> {
             row.get(16)?,
             row.get(17)?,
             row.get(18)?,
+            row.get(19)?,
         ),
     ))
 }
@@ -156,7 +160,14 @@ fn link_of(columns: Columns) -> Result<Link> {
         (link_id, state, user_code, approval_url, expires_at, interval_ms),
         (started_at, poll_secret, sign_in_move, previous_sign_in_address, name),
         (address, approved_at, linked_at),
-        (tunnel_token, link_credential, failure_reason, failure_message, ended_at),
+        (
+            tunnel_token,
+            link_credential,
+            failure_reason,
+            failure_message,
+            ended_at,
+            put_back_failure,
+        ),
     ) = columns;
     Ok(Link {
         link_id,
@@ -178,6 +189,7 @@ fn link_of(columns: Columns) -> Result<Link> {
         failure_reason,
         failure_message,
         ended_at: stamp(ended_at, "ended_at")?,
+        put_back_failure,
     })
 }
 
@@ -198,7 +210,7 @@ pub fn put(tx: &Transaction<'_>, link: &Link) -> Result<()> {
         &format!(
             "INSERT OR REPLACE INTO cloud_link (id, {LINK_COLUMNS}) \
              VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, \
-             ?17, ?18, ?19)"
+             ?17, ?18, ?19, ?20)"
         ),
         params![
             link.link_id,
@@ -220,6 +232,7 @@ pub fn put(tx: &Transaction<'_>, link: &Link) -> Result<()> {
             link.failure_reason,
             link.failure_message,
             link.ended_at.map(Stamp::text),
+            link.put_back_failure,
         ],
     )?;
     Ok(())
