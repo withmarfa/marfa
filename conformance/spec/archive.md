@@ -498,6 +498,14 @@ When `POST /restore` writes an `app_vendor` line whose `claimed_at` is an RFC 33
 
 **Tests:** `compliance/app-vendors.test.ts › restores a claimed_at in any RFC 3339 form and keeps it as the instant`.
 
+### `archive/restore-app-vendor-uncounted`
+
+When `POST /restore` reads an archive at version 2 whose manifest has no `app_vendor_count`, the server MUST restore the archive without comparing its `app_vendor` lines with a count.
+
+**Reason:** Marfa 0.0.90 wrote archives of version 2 before the `app_vendor` line existed, and a field added within a version is optional to a reader of that version (`archive/archive-version-additions`).
+
+**Tests:** `compliance/app-vendors.test.ts › refuses a version 2 manifest that mistypes app_vendor_count or miscounts the app_vendor lines, and restores one that leaves the count out`.
+
 ### `archive/restore-connector-state`
 
 When `POST /restore` reads a `connector_state` line, the server MUST store that state document only where the instance holds none for the source, and replace none it holds.
@@ -1124,11 +1132,11 @@ When a restore reads an archive that lacks a field or a line kind added to the a
 
 ### `archive/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` or, at version 2, `plugin_count` and `app_vendor_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
+If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` or, at version 2, `plugin_count`, or mistypes them or a version 2 `app_vendor_count`, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
 
 **Reason:** a later version is free to lay out its fields differently, so a manifest naming one is refused for its version (`archive/restore-version`) and not its shape.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses a manifest missing or mistyping a field the restore reads, naming the field, and writes nothing`.
+**Tests:** `compliance/restore-archive.test.ts › refuses a manifest missing or mistyping a field the restore reads, naming the field, and writes nothing`, `compliance/app-vendors.test.ts › refuses a version 2 manifest that mistypes app_vendor_count or miscounts the app_vendor lines, and restores one that leaves the count out`.
 
 ### `archive/restore-manifest-created`
 
@@ -1154,11 +1162,11 @@ If two lines of the `files.ndjson.gz` of an archive name the same `hash`, then t
 
 ### `archive/restore-line-counts`
 
-If a count in an archive's manifest is not the number it counts, being the lines of `files.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz` or `rows.ndjson.gz` for `file_count`, `item_count`, `version_count`, `edge_count` or `row_count`, the lines of each kind in `instance.ndjson.gz` for the eight other `_count` fields that name a kind of line, or the `blobs/` entries for `blob_count`, then the server MUST answer `400 validation_error` naming the count in `details.field`.
+If a count in an archive's manifest is not the number it counts, being the lines of `files.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz` or `rows.ndjson.gz` for `file_count`, `item_count`, `version_count`, `edge_count` or `row_count`, the lines of each kind in `instance.ndjson.gz` for the ten other `_count` fields that name a kind of line, or the `blobs/` entries for `blob_count`, then the server MUST answer `400 validation_error` naming the count in `details.field`.
 
 **Reason:** the manifest says what the archive holds before a reader reads the rest (`archive/archive-entries`), so an archive that holds other than it says was cut or changed after the export, and a restore that took it would restore less than was exported without saying so.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses an archive whose %s is not the number of lines its file holds, and writes nothing`, `› refuses an archive whose manifest counts more than the archive carries, however it was cut`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive whose %s is not the number of lines its file holds, and writes nothing`, `› refuses an archive whose manifest counts more than the archive carries, however it was cut`, `compliance/app-vendors.test.ts › refuses a version 2 manifest that mistypes app_vendor_count or miscounts the app_vendor lines, and restores one that leaves the count out`.
 
 ### `archive/restore-item-fields`
 

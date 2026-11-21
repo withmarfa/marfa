@@ -333,10 +333,6 @@ describe("restore", () => {
         path: "connector_agreement_count",
       },
       {
-        reshape: (m) => without(m, "app_vendor_count"),
-        path: "app_vendor_count",
-      },
-      {
         reshape: (m) => without(m, "enforcement_count"),
         path: "enforcement_count",
       },
@@ -458,7 +454,6 @@ describe("restore", () => {
     "enforcement_count",
     "connector_state_count",
     "connector_agreement_count",
-    "app_vendor_count",
   ])(
     "refuses an archive whose %s is not the number of lines its file holds, and writes nothing",
     async (count) => {
@@ -588,7 +583,7 @@ describe("restore", () => {
         (m) => reshape({ ...m, written_by: "marfa-server 0.0.1" }),
       );
 
-    // The witness: the same archive at version 2 restores, so what is
+    // The witness: the same archive at version 1 restores, so what is
     // refused below is the manifest's format or version and nothing else.
     const restored = await owner.restoreArchive(archiveWith((m) => m, witness));
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);

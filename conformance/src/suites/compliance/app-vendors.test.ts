@@ -247,6 +247,7 @@ function forbidden(got: { status: number; body: Record<string, unknown> }) {
   return got.body.error as { code: string; details?: Record<string, unknown> };
 }
 
+/** Version 1 names a registered type's origin `user`, and version 2 `registered`. */
 function vendorArchive(
   version: number,
   lines: Array<Record<string, unknown>>,
@@ -254,9 +255,26 @@ function vendorArchive(
   const manifest = emptyManifest({
     version,
     type_count: lines.filter((line) => "type" in line).length,
-    app_vendor_count: lines.filter((line) => "app_vendor" in line).length,
+    ...(version === 1
+      ? {}
+      : {
+          plugin_count: 0,
+          app_vendor_count: lines.filter((line) => "app_vendor" in line).length,
+        }),
   });
-  if (version === 1) delete manifest.app_vendor_count;
+  if (version !== 1) {
+    lines = lines.map((line) =>
+      "provenance" in line
+        ? {
+            ...line,
+            provenance: {
+              ...(line.provenance as Record<string, unknown>),
+              origin: "registered",
+            },
+          }
+        : line,
+    );
+  }
   return tar([
     { name: "manifest.json", body: JSON.stringify(manifest) },
     lineFile("files", ""),
@@ -910,6 +928,58 @@ describe("vendors in an archive", () => {
     expect(again.data.app_vendors_added).toBe(0);
     expect(again.data.app_vendors_skipped).toBe(1);
     expect(await holder(vE)).toBe(holderApp.app.clientId);
+  });
+
+  it("refuses a version 2 manifest that mistypes app_vendor_count or miscounts the app_vendor lines, and restores one that leaves the count out", async () => {
+    const counted = (vendor: string, count: unknown) => {
+      const manifest = emptyManifest({
+        version: 2,
+        plugin_count: 0,
+        app_vendor_count: count,
+      });
+      if (count === undefined) delete manifest.app_vendor_count;
+      const line = {
+        app_vendor: {
+          vendor,
+          client_id: null,
+          claimed_at: "2026-11-01T00:00:00.000Z",
+        },
+      };
+      return tar([
+        { name: "manifest.json", body: JSON.stringify(manifest) },
+        lineFile("files", ""),
+        lineFile("instance", ndjson([line])),
+        lineFile("items", ""),
+        lineFile("versions", ""),
+        lineFile("edges", ""),
+        lineFile("rows", ""),
+      ]);
+    };
+    const vC = freshVendor();
+    const mistyped = await local.restoreArchive(counted(vC, "1"));
+    expect(mistyped.status, JSON.stringify(mistyped.error)).toBe(400);
+    expect(mistyped.error?.error.code).toBe("validation_error");
+    expect(mistyped.error?.error.details?.errors).toEqual([
+      expect.objectContaining({ path: "app_vendor_count" }),
+    ]);
+    const miscounted = await local.restoreArchive(counted(vC, 2));
+    expect(miscounted.status, JSON.stringify(miscounted.error)).toBe(400);
+    expect(miscounted.error?.error.code).toBe("validation_error");
+    expect(miscounted.error?.error.details?.field).toBe("app_vendor_count");
+    expect(await holder(vC)).toBeUndefined();
+
+    // The witness: the same archive counting its one line restores it.
+    const restored = await local.restoreArchive(counted(vC, 1));
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data.app_vendors_added).toBe(1);
+    expect(await holder(vC)).toBeNull();
+
+    // Marfa 0.0.90 wrote version 2 with no app_vendor_count.
+    const vU = freshVendor();
+    const uncounted = await local.restoreArchive(counted(vU, undefined));
+    expect(uncounted.status, JSON.stringify(uncounted.error)).toBe(200);
+    expect(uncounted.data.app_vendors_added).toBe(1);
+    expect(await holder(vU)).toBeNull();
   });
 
   it("refuses an app_vendor line whose client_id is empty or whose claimed_at is no instant", async () => {

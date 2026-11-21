@@ -44,7 +44,7 @@ export const LINE_FILES: LineFile[] = [
 ];
 
 /** The version a restore reads, and the build that wrote the archive. */
-export const ARCHIVE_VERSION = 2;
+export const ARCHIVE_VERSION = 1;
 
 /** What every manifest names itself as. */
 export const ARCHIVE_FORMAT = "marfa-archive";
@@ -85,7 +85,6 @@ export function emptyManifest(
     enforcement_count: 0,
     connector_state_count: 0,
     connector_agreement_count: 0,
-    app_vendor_count: 0,
     ...fields,
   };
 }
