@@ -775,22 +775,26 @@ impl Folder {
     }
 
     /// Leaves the folder's files; refused while writes wait, unless the first
-    /// sync still waits to be confirmed.
-    pub fn remove(self) -> Result<()> {
+    /// sync still waits to be confirmed or the copy was expired because
+    /// another instance answered at its server, which no write from it can
+    /// reach. Answers how many writes waited unsent; their changes stay in the
+    /// files.
+    pub fn remove(self) -> Result<usize> {
         // A first sync still waiting has sent nothing, so its queue holds
         // only what the scan read from files that stay.
-        let waiting = if self.awaiting_confirmation()? {
-            0
+        let (waiting, another_instance) = if self.awaiting_confirmation()? {
+            (0, false)
         } else {
-            self.core
-                .queue()?
+            let conn = self.core.conn()?;
+            let waiting = crate::store::queued_writes(&conn)?
                 .iter()
                 .filter(|write| {
                     matches!(write.verdict, None | Some(crate::model::Verdict::Blocked))
                 })
-                .count()
+                .count();
+            (waiting, crate::store::another_instance_answered(&conn)?)
         };
-        if waiting > 0 {
+        if waiting > 0 && !another_instance {
             return Err(CoreError::Invalid(format!(
                 "{} has {waiting} write(s) not yet sent; push it first, or they are lost with the folder",
                 self.root.display()
@@ -813,7 +817,8 @@ impl Folder {
                 "cannot remove {}: {error}",
                 root.join(STATE_DIR).display()
             ))
-        })
+        })?;
+        Ok(waiting)
     }
 
     pub fn folder_id(&self) -> &str {

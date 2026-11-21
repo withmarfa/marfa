@@ -22,6 +22,17 @@ pub const META_EVENT_CURSOR: &str = "event_cursor";
 /// The instance the copy was hydrated from, as the server's root names it.
 pub const META_INSTANCE_ID: &str = "instance_id";
 
+/// Present from the moment a server at the copy's origin answered as another
+/// instance than `META_INSTANCE_ID`, expiring the copy, until a hydration
+/// starts.
+pub const META_ANOTHER_INSTANCE: &str = "another_instance_answered";
+
+/// Whether a server at the copy's origin last answered as another instance,
+/// and no hydration has started since.
+pub fn another_instance_answered(conn: &Connection) -> Result<bool, CoreError> {
+    Ok(meta_get(conn, META_ANOTHER_INSTANCE)?.is_some())
+}
+
 /// The largest request body the root last named, in bytes; absent where it
 /// has named none (`queue-and-verdicts/request-limit-unknown`).
 const META_REQUEST_LIMIT: &str = "request_limit";

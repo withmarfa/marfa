@@ -136,7 +136,7 @@ If the server at a watched folder's address answers as another Marfa instance th
 
 ### `folder-sync/watch-instance-changed-said`
 
-If a folder's watch ends because its server answers as another Marfa instance, then the CLI MUST report the server's address, that it answers as another Marfa instance, and that the directory is to be removed with `folders remove` and added again with `folders add` and a key for that instance.
+If a folder's watch ends because its server answers as another Marfa instance, then the CLI MUST report the server's address, that it answers as another Marfa instance, and that the directory is to be removed with `folders remove`, moved aside, added again with `folders add`, the folder's ID and a key for that instance, and pushed, with the files changed in it then copied back in and pushed again.
 
 **Tests:** `device/folders-watch-every.test.ts › stops only the folder whose server answers as another instance, says and records why, and sends that server nothing more`.
 

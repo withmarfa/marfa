@@ -6392,6 +6392,65 @@ describe("a folder whose server answers as another instance", () => {
       "a status still said the watch stopped the folder after a later watch left it in step",
     ).toBeNull();
   });
+
+  it("removes a folder whose server answers as another instance while writes wait, keeps the changes in its files, and says how many writes were not sent", async () => {
+    harness = await folderHarness("folder-remove-instance-changed");
+    scriptFolderWrites(harness);
+    const typed = "---\ntitle: Waits\n---\nfor its own instance\n";
+    put(harness, "Waits.md", typed);
+    expect((await harness.folder.scan()).ok).toBe(true);
+    // The witness: a write waits, so the removal is refused.
+    const waiting = await harness.folder.remove();
+    expect(waiting.ok, "a folder was removed with a write waiting").toBe(false);
+    if (waiting.ok) return;
+    const count = /has (\d+) write\(s\) not yet sent/.exec(
+      waiting.refusal.raw,
+    )?.[1];
+    expect(count, waiting.refusal.raw).toBeDefined();
+    expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(true);
+
+    harness.server.answer("GET", "/", answers.root(Number(BUILT_FOR), other));
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(false);
+    if (pushed.ok) return;
+    expect(pushed.refusal.code).toBe("copy_expired");
+    expect(pushed.refusal.raw).toContain("instance_changed");
+
+    const removed = await harness.folder
+      .device()
+      .rootText(["folders", "remove", harness.dir]);
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    expect(removed.value).toContain(`${count} write(s) could not be sent`);
+    expect(removed.value).toContain(
+      `the changes stay in the files in ${harness.dir}`,
+    );
+    expect(removed.value).toContain(`--folder ${harness.settings.id}`);
+    expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(false);
+    expect(read(harness, "Waits.md")).toBe(typed);
+    expect(writesSent(harness)).toEqual([]);
+  });
+
+  it("refuses to remove a folder whose writes wait while its server is out of reach", async () => {
+    harness = await folderHarness("folder-remove-unreachable");
+    scriptFolderWrites(harness);
+    put(harness, "Waits.md", "---\ntitle: Waits\n---\nfor a server\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    await harness.server.stop();
+    const pushed = await harness.folder.push();
+    expect(
+      pushed.ok && pushed.value.drain.undelivered,
+      JSON.stringify(pushed),
+    ).toBe(1);
+    const refused = await harness.folder.remove();
+    expect(
+      refused.ok,
+      "a folder was removed with writes its own server may still take",
+    ).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal.raw).toContain("not yet sent");
+    expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(true);
+  });
 });
 
 describe("a watch started straight after a folder is added", () => {

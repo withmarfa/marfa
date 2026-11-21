@@ -59,7 +59,10 @@ pub enum FoldersCommand {
     /// Make a directory stop following its folder: its own state under
     /// `.marfa` goes, and its files stay as plain files. Empty administrative directories
     /// remain. Refused while writes wait, except for a first sync still
-    /// waiting to be confirmed, which this cancels. Follows no symbolic
+    /// waiting to be confirmed, which this cancels, and except where another
+    /// Marfa instance answered at the folder's server, which none of them can
+    /// reach: their changes stay in the files, and the command says how many
+    /// writes were not sent and how to send them to that instance. Follows no symbolic
     /// link, and takes a path through one only where it is the path
     /// `folders list` shows. Where that path is gone, passes through a link,
     /// or holds state the registry does not show to be the directory's own, the
@@ -397,15 +400,14 @@ pub fn run(
         }
         FoldersCommand::Remove { dir } => {
             match Folder::remove_at_asking(&dir).map_err(asked(&dir))? {
-                Removal::Deleted(dir) => output::report(
-                    &serde_json::json!({ "dir": dir, "removed": true }),
+                Removal::Deleted {
+                    dir,
+                    folder,
+                    unsent,
+                } => output::report(
+                    &serde_json::json!({ "dir": dir, "removed": true, "unsent": unsent }),
                     json,
-                    || {
-                        format!(
-                            "{} no longer follows a folder; its files stay",
-                            dir.display()
-                        )
-                    },
+                    || removed_said(&dir, &folder, unsent),
                 ),
                 Removal::Unlisted { dir, reason } => output::report(
                     &serde_json::json!({ "dir": dir, "removed": false, "reason": reason }),
@@ -1520,6 +1522,25 @@ struct FolderStatus<'a> {
     /// Why the watch stopped the folder, where another instance answers at
     /// its server.
     watch_stopped: Option<&'a str>,
+}
+
+/// What `folders remove` says of a folder whose state went, and where writes
+/// waited that another instance at its server could not take, how to send
+/// their changes to that instance.
+fn removed_said(dir: &Path, folder: &str, unsent: usize) -> String {
+    let dir = dir.display();
+    let removed = format!("{dir} no longer follows a folder; its files stay");
+    if unsent == 0 {
+        return removed;
+    }
+    let folder = printable(folder);
+    format!(
+        "{removed}\n{unsent} write(s) could not be sent, because another Marfa instance answers at \
+         the folder's server, and the changes stay in the files in {dir}; to send them there, move \
+         the directory aside, run `marfa folders add {dir} --folder {folder}` with a key for that \
+         instance and `marfa folders push {dir}`, then copy the files you changed back in from the \
+         moved directory and push again"
+    )
 }
 
 /// A copy the instance change expired is said by its cause; every other

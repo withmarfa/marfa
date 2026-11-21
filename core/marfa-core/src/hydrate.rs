@@ -454,6 +454,7 @@ fn attempt(
             store::meta_set(&tx, store::META_EVENT_CURSOR, &cursor)?;
             crate::reach::build_under(&tx, &fence)?;
             store::meta_set(&tx, store::META_INSTANCE_ID, &instance)?;
+            store::meta_delete(&tx, store::META_ANOTHER_INSTANCE)?;
             store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
             store::meta_set(&tx, store::META_SLICE_TYPES, &serde_json::to_string(types)?)?;
             store::meta_set(&tx, store::META_SLICE_TIER, tier.as_str())?;

@@ -1350,7 +1350,7 @@ pub(crate) fn expire_for_another_instance(
             server,
         });
     }
-    reach::expire(tx)?;
+    reach::expire_for_another_instance(tx)?;
     Ok(CoreError::CopyExpired {
         reason: crate::http::INSTANCE_CHANGED.into(),
         server,
@@ -1425,7 +1425,7 @@ fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
         return Ok(());
     }
     if core.handle() == Handle::Writer {
-        reach::expire(&tx)?;
+        reach::expire_for_another_instance(&tx)?;
         tx.commit()?;
     }
     Err(CoreError::expired(crate::http::INSTANCE_CHANGED))

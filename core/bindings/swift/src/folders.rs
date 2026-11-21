@@ -606,7 +606,9 @@ guarded! {
 
         /// Takes the folder off this machine: its state under `.marfa` goes and
         /// its files stay. Refused while writes wait, except for a first sync
-        /// still waiting to be confirmed, which this cancels. Follows no symbolic
+        /// still waiting to be confirmed, which this cancels, and except where
+        /// another Marfa instance answered at the folder's server, which none of
+        /// them can reach; their changes stay in the files. Follows no symbolic
         /// link, and takes a path through one only where it is the path the
         /// registry lists. Where that path is
         /// gone, passes through a link, or holds state the registry does not

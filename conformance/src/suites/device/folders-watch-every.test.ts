@@ -856,6 +856,12 @@ describe("a watch of every folder", () => {
         expect(stopped[0].reason).toContain("another Marfa instance");
         expect(stopped[0].reason).toContain("marfa folders remove");
         expect(stopped[0].reason).toContain("marfa folders add");
+        expect(stopped[0].reason).toContain("move the directory aside");
+        expect(stopped[0].reason).toContain("`--folder` with the folder's ID");
+        expect(stopped[0].reason).toContain(
+          "copy the files you changed back in",
+        );
+        expect(stopped[0].reason).toContain("push again");
       }, WAIT);
       const sent = b.server.requests.length;
       put(a, "Goes on.md", "---\ntitle: Goes on\n---\nthe other folder\n");
