@@ -1650,7 +1650,7 @@ A plugin's source folder holds `plugin.json` (its identity, with no version), `t
 
 When `marfa plugins install` is given a path to a file that holds one JSON object, the CLI MUST send the file's bytes unchanged as the body of `POST /plugins` and print the server's answer.
 
-**Reason:** the server's `fingerprint` is the SHA-256 of the bytes it receives (`plugins/install-fingerprint`), so it equals the file's own digest only when the bytes arrive as read.
+**Reason:** a new install or update records the file's SHA-256 as its `fingerprint` (`plugins/install-fingerprint`). Submitting the installed version returns its existing fingerprint (`plugins/update-same-version`).
 
 **Tests:** `cli/plugins.test.ts › installs a plugin from a bundle file and from a source folder, and lists, reads and removes it`.
 
@@ -1664,7 +1664,7 @@ When `marfa plugins install` is given a source folder, the CLI MUST send to `POS
 
 When `marfa plugins install` is given a plugin's name that is no path on the machine, the CLI MUST read `plugins.json` and then the bundle it lists for that name from the release `MARFA_PLUGINS_URL` names, or the latest release of the plugins repository without it, sending no credential, and send the bundle's bytes as read to `POST /plugins`.
 
-**Reason:** the server makes no outbound request, so nothing leaves an instance by default; the CLI names each address it reads on standard error. The server's `fingerprint` then equals the SHA-256 that `plugins.json` lists.
+**Reason:** the CLI fetches the release so the server needs no outbound connection. A new install or update records the SHA-256 from `plugins.json` as its fingerprint.
 
 **Tests:** `cli/plugins.test.ts › installs a plugin by name from a release's index, checking its SHA-256, and sends no credential`.
 
@@ -1702,7 +1702,7 @@ When `marfa plugins check` is given a source folder, the CLI MUST report every p
 
 If a source folder holds a file in `types/` or `edge-types/` whose definition has an `id` that is a string and whose name is not that `id` followed by `.json`, then the CLI MUST refuse the folder with `file_name_mismatch`, naming the file, in `marfa plugins check`, `marfa plugins bundle` and `marfa plugins install` alike.
 
-**Reason:** the three commands read a source folder the same way, so the folder `marfa plugins check` refuses never installs.
+**Reason:** a bundle contains definitions without their source filenames. The CLI can identify a misnamed file only while reading the source folder.
 
 **Tests:** `device/plugins-check.test.ts › refuses an edge type file not named after its id, in the check, the bundle and the install alike`.
 

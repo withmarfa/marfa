@@ -35,8 +35,8 @@ Run `marfa types check FOLDER` locally or in CI to validate item type definition
 `marfa plugins install` takes a plugin's name, a `.plugin.json` bundle or a source folder, and sends the bundle to `POST /plugins`.
 
 - **By name:** the command reads `plugins.json`, then the bundle it lists, from the release that `MARFA_PLUGINS_URL` names, or from `https://github.com/withmarfa/plugins/releases/latest/download` when it is unset or empty. It names each address on standard error, sends no key, cookie or query, follows up to five redirects, and refuses a bundle whose SHA-256 differs from the index (`plugins_unreachable`, exit 3). A path on the machine wins over a name.
-- **A file or a folder** installs with no network. A folder is built as `marfa plugins bundle` builds it, at `--version` or `0.0.0`, and the command prints the bundle's SHA-256 on standard error.
-- **The bytes sent** are the file's or the fetched bundle's as read, or the bundle a folder builds into, so the server's `fingerprint` equals the SHA-256 that `plugins.json` lists for the same bundle.
+- **From a file or folder:** the CLI reads the bundle locally and sends it to your server. For a folder, it builds the same bundle as `marfa plugins bundle`, at `--version` or `0.0.0`, and prints the bundle's SHA-256 on standard error.
+- **Fingerprint:** a new install or update records the SHA-256 of the file, the downloaded release bundle, or the bundle built from the folder. Submitting the installed version returns the fingerprint from its original install or last update.
 - **`marfa plugins check`, `bundle` and `index`** need no server, key or keychain. `check` judges a source folder as installing would, with the roots a plugin may not use refused and `common.*` taken; `marfa types check` keeps judging a folder as `POST /types` does. A release builds each bundle with `bundle --version <tag>` and lists them with `index`.
 
 ## Limits and timings
