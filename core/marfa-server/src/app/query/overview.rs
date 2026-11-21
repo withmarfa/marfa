@@ -2,7 +2,7 @@ use rusqlite::params_from_iter;
 
 use super::compile::Sql;
 use super::reach::Reach;
-use crate::app::items::{Reader, is_system};
+use crate::app::items::{Reader, is_hidden};
 use crate::app::refusal::{Refusal, Result};
 
 pub struct Titled {
@@ -17,7 +17,7 @@ pub struct Listed {
 }
 
 pub struct Held {
-    /// Active items the caller may read, by type, in the namespaces but `system`.
+    /// Active items the caller may read, by type, in the namespaces but the hidden ones.
     pub counts: Vec<(String, i64)>,
     /// For each `Listed`, how many the caller may read and the first by title.
     pub titled: Vec<(i64, Vec<Titled>)>,
@@ -36,7 +36,7 @@ pub(crate) fn held(read: &Reader<'_, '_>, listed: &[Listed]) -> Result<Held> {
 }
 
 fn counts(read: &Reader<'_, '_>, reach: &Reach) -> Result<Vec<(String, i64)>> {
-    let reach = reach.narrowed(|type_id| !is_system(type_id));
+    let reach = reach.narrowed(|type_id| !is_hidden(type_id));
     if reach.is_empty() {
         return Ok(Vec::new());
     }

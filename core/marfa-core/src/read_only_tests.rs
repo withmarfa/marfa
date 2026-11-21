@@ -478,7 +478,7 @@ fn a_look_asks_for_no_metadata_and_reads_an_answer_without_it() {
     core.catch_up().unwrap();
 
     let sent: Value = serde_json::from_slice(&server.seen("/items/bulk-get")[0].body).unwrap();
-    assert_eq!(sent["include"], json!(["system"]));
+    assert_eq!(sent["include"], json!(["hidden"]));
     assert!(flag(&core, "a"));
 }
 

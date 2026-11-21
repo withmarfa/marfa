@@ -70,8 +70,8 @@ impl Core {
     /// not stopped: the hydration takes its stream, and gives it back.
     ///
     /// `types` is the slice's types. `store::EVERY_TYPE` alone is every type
-    /// but `system.*`, hydrated in one pass with no need to read the catalog
-    /// and name its types first; beside `system.*` types it adds them, and
+    /// but the hidden ones (`system.*` and `app.*`), hydrated in one pass with no need to read the catalog
+    /// and name its types first; beside hidden types it adds them, and
     /// beside any other type it is `Invalid`.
     pub fn hydrate(&self, types: &[String], tier: SliceTier) -> Result<HydrateReport> {
         self.hydrate_with(types, tier, &[])

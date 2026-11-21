@@ -74,7 +74,7 @@ impl From<OutsideQuery> for CoreOutsideQuery {
 /// The query that decides which items a folder holds.
 #[derive(Debug, Clone, Default, PartialEq, uniffi::Record)]
 pub struct FolderQuery {
-    /// Each with its subtypes; empty holds every type but `system.*`.
+    /// Each with its subtypes; empty holds every type but the hidden ones (`system.*` and `app.*`).
     #[uniffi(default = [])]
     pub types: Vec<String>,
     /// `None` holds the library tier.

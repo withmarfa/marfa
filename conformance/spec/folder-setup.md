@@ -930,7 +930,7 @@ While a folder's query names `beneath` as a path, the CLI MUST report in the fol
 
 ### `folder-setup/search-default-types`
 
-When a folder query names no types or names `*`, a device MUST admit every readable type except `system.*`.
+When a folder query names no types or names `*`, a device MUST admit every readable type except the hidden types (`items/hidden-types`).
 
 **Tests:** `device/folders.test.ts › takes every type, and any default type, where its query names no type or the star`.
 

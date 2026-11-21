@@ -81,7 +81,7 @@ pub use marfa_rules::folder::declares_type;
 pub use marfa_rules::query::EVERY_TYPE;
 
 /// `EVERY_TYPE` takes what a bare server listing answers, which leaves out
-/// `system.*`. A `system.*` row named by type is taken at either tier: the
+/// hidden types. A `system.*` row named by type is taken at either tier: the
 /// server stamps one a tier that says nothing about it, and a copy of the
 /// feed still needs the folders it shows.
 pub fn slice_takes(
@@ -94,14 +94,14 @@ pub fn slice_takes(
     let system = is_system(row_type);
     types.iter().any(|declared| {
         if declared == EVERY_TYPE {
-            !system && tier.takes(row_tier)
+            !is_hidden(row_type) && tier.takes(row_tier)
         } else {
             catalog.matches(declared, row_type) && (system || tier.takes(row_tier))
         }
     })
 }
 
-pub(crate) use marfa_rules::folder::is_system;
+pub(crate) use marfa_rules::folder::{is_hidden, is_system};
 
 pub fn slice_query(conn: &Connection) -> Result<Option<crate::slice::SliceQuery>, CoreError> {
     match meta_get(conn, META_SLICE_QUERY)? {

@@ -59,7 +59,7 @@ pub enum DeviceCommand {
     /// against.
     Hydrate {
         /// A type identifier, repeatable, such as core.note, or `*` alone for
-        /// every type but `system.*`, hydrated in one pass without reading the
+        /// every type but the hidden ones (`system.*` and `app.*`), hydrated in one pass without reading the
         /// catalog first.
         #[arg(long = "type", required = true, value_name = "TYPE")]
         types: Vec<String>,

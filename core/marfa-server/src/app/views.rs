@@ -1,3 +1,4 @@
+use marfa_rules::folder::is_hidden;
 use marfa_rules::query::{EVERY_TYPE, StateFault, check_states};
 use marfa_rules::{filter, validation};
 use serde_json::{Map, Value, json};
@@ -132,8 +133,8 @@ fn check_types(value: &Value, catalog: &Catalog, every_type: bool) -> Result<()>
             continue;
         }
         check_id(type_id, &path)?;
-        if type_id == "system" || type_id.starts_with("system.") {
-            return Err(at(&path, "A query lists no system type."));
+        if type_id == "system" || is_hidden(type_id) {
+            return Err(at(&path, "A query lists no hidden type."));
         }
         if !catalog.rules.known(type_id) {
             return Err(

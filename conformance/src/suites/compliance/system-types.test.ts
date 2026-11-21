@@ -287,7 +287,7 @@ describe("system.* set", () => {
     ];
     const r = await client.rawRequest<{
       data: { id: string; properties: Record<string, unknown> }[];
-    }>("/items?type=system.connection&include=system&limit=100");
+    }>("/items?type=system.connection&include=hidden&limit=100");
     expect(r.status).toBe(200);
     const populated: string[] = [];
     for (const row of r.data.data) {

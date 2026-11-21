@@ -411,8 +411,8 @@ export class ScriptedServer {
    * id the fixture did script, one for each id in the order named, because
    * the server resolves each id as a read by id does: a fixture that scripts
    * an item's read scripts what a bulk read of it answers. The one difference
-   * is a `system.*` item, which the bulk read leaves out unless its `include`
-   * names `system` (`items/bulk-get-system`).
+   * is a hidden item, which the bulk read leaves out unless its `include`
+   * names `hidden` (`items/bulk-get-system`).
    */
   private respond(recorded: RecordedRequest): Answer | undefined {
     const route = this.routes.find((candidate) =>
@@ -452,7 +452,7 @@ export class ScriptedServer {
       }
       return bulkGetOf(reads, {
         withReach: recorded.headers["x-marfa-reach"] === SCRIPTED_REACH,
-        system: include?.includes("system") ?? false,
+        hidden: include?.includes("hidden") ?? false,
       });
     }
     this.unmatched.push(`${recorded.method} ${recorded.pathname}`);

@@ -480,9 +480,9 @@ When `GET /items` names `include=edges`, the server MUST add to each item its ou
 
 ### `search-and-filters/system-named-type`
 
-When `GET /items` names a `type` in the `system.` namespace, the server MUST list the items of that type that the credential may read.
+When `GET /items` names a `type` that is a hidden type (`items/hidden-types`), the server MUST list the items of that type that the credential may read.
 
-**Reason:** a caller that asks for `system.folder` has already said what it wants, so the default that leaves `system.*` items out of a listing does not apply to it.
+**Reason:** a caller that asks for `system.folder` has already said what it wants, so the default that leaves hidden items out of a listing does not apply to it.
 
 **Tests:** `compliance/folders.test.ts › creates a folder as a system.folder, read back through the item doors`, `compliance/views.test.ts › creates a view as a system.view with its query, sort and group, read back through the item doors`.
 
@@ -1250,6 +1250,12 @@ When `GET /search` carries a `q`, the server MUST answer the items whose searcha
 
 **Tests:** `correctness/persistence.test.ts › search for distinctive text returns matching items`, `› search for nonexistent string returns empty results`.
 
+### `search-and-filters/search-hidden`
+
+The server MUST leave hidden items (`items/hidden-types`) out of the matches of `GET /search` unless the request names `include=hidden`.
+
+**Tests:** `compliance/hidden-types.test.ts › leaves an app item out of a search unless the search asks for hidden items`.
+
 ### `search-and-filters/search-id-not-text`
 
 The server MUST NOT match an item on its identifier alone.
@@ -1630,27 +1636,27 @@ If `GET /items/stats` carries `limit`, `cursor`, `sort` or `direction`, then the
 
 ### `search-and-filters/stats-system`
 
-When `GET /items/stats` names `include=system`, the server MUST count the `system.*` items that the credential may read.
+When `GET /items/stats` names `include=hidden`, the server MUST count the hidden items (`items/hidden-types`) that the credential may read.
 
-**Tests:** `compliance/item-stats.test.ts › counts the system items under include=system and refuses any other include`.
+**Tests:** `compliance/item-stats.test.ts › counts the system items under include=hidden and refuses any other include`.
 
 ### `search-and-filters/stats-system-default`
 
-When `GET /items/stats` names neither `include=system` nor a `type` in the `system.` namespace, the server MUST leave the `system.*` items out of its counts.
+When `GET /items/stats` names neither `include=hidden` nor a `type` that is a hidden type, the server MUST leave the hidden items (`items/hidden-types`) out of its counts.
 
-**Tests:** `compliance/item-stats.test.ts › counts the system items under include=system and refuses any other include`.
+**Tests:** `compliance/item-stats.test.ts › counts the system items under include=hidden and refuses any other include`.
 
 ### `search-and-filters/stats-include-other`
 
-If `GET /items/stats` names an `include` other than `system`, then the server MUST answer `400 validation_error`.
+If `GET /items/stats` names an `include` other than `hidden`, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/item-stats.test.ts › counts the system items under include=system and refuses any other include`.
+**Tests:** `compliance/item-stats.test.ts › counts the system items under include=hidden and refuses any other include`.
 
 ### `search-and-filters/counts-linked`
 
 When `POST /items/counts` names `backref` or `edge` with an edge type, the server MUST answer, for each item in `ids`, `total` as the number of items that a `GET /items` listing with the filter `backref[<edge type>]` or `edge[<edge type>]` anchored on that item and no `state` lists, and `status_groups` as how many of them fall in each of `not_started`, `in_progress`, `completed` and `canceled`.
 
-**Reason:** a count that differs from the list a person opens next is wrong, so the listing's own default decides what counts: only `active` items, never an archived item, an item in the bin or a `system.*` item.
+**Reason:** a count that differs from the list a person opens next is wrong, so the listing's own default decides what counts: only `active` items, never an archived item, an item in the bin or a hidden item (`items/hidden-types`).
 
 **Tests:** `compliance/item-counts.test.ts › counts what each anchor links, by status group, and equals the listing`, `› counts the items that link to an anchor as well as the items it links to`.
 
@@ -1806,7 +1812,7 @@ The server MUST answer the items of `POST /items/lookup` in the order the reques
 
 ### `search-and-filters/lookup-system-left-out`
 
-The server MUST leave out of the items of `POST /items/lookup` a `system.*` item, whichever key names it.
+The server MUST leave out of the items of `POST /items/lookup` a hidden item (`items/hidden-types`), whichever key names it.
 
 **Tests:** `compliance/links.test.ts › looks items up by id in every state, where bulk-get leaves the bin out, and leaves a system item out`, `› leaves out a system item that holds a natural key a lookup names`.
 
@@ -2054,7 +2060,7 @@ When `GET /items/summaries` succeeds, the server MUST return each item as exactl
 
 ### `search-and-filters/owner-summaries-selection`
 
-When `GET /items/summaries` lists items, the server MUST exclude trashed and `system.*` items, apply instance source filtering and, when supplied, match `type` as an exact identifier.
+When `GET /items/summaries` lists items, the server MUST exclude trashed and hidden items (`items/hidden-types`), apply instance source filtering and, when supplied, match `type` as an exact identifier.
 
 **Tests:** `compliance/item-summaries.test.ts › keeps archived items, exact types and source filtering while excluding system items`.
 

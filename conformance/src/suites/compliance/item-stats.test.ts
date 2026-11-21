@@ -145,7 +145,7 @@ describe("GET /items/stats", () => {
     ).toEqual(["cursor", "direction", "limit", "sort"]);
   });
 
-  it("counts the system items under include=system and refuses any other include", async () => {
+  it("counts the system items under include=hidden and refuses any other include", async () => {
     const folder = await client.createFolder({ title: `stats-${ctx.runId}` });
     expect(folder.status, JSON.stringify(folder.error)).toBe(201);
     trackFolder(ctx, folder.data.item.id);
@@ -167,11 +167,11 @@ describe("GET /items/stats", () => {
     // The folder is left out by default and counted under the token, beside
     // the same note, so the count that rose is the system one.
     expect(Object.keys(await byType(""))).not.toContain("system.folder");
-    const withSystem = await byType("&include=system");
+    const withSystem = await byType("&include=hidden");
     expect(withSystem["system.folder"]).toBe(1);
     expect(withSystem["core.note"]).toBe((await byType(""))["core.note"]);
 
-    for (const include of ["edges", "metadata", "extensions", "system,edges"]) {
+    for (const include of ["edges", "metadata", "extensions", "hidden,edges"]) {
       const refused = await client.rawRequest<unknown>(
         `/items/stats?include=${include}`,
       );

@@ -5344,6 +5344,51 @@ mod tests {
         )
     }
 
+    /// A copy of every type takes no `app.*` row by event, and takes the note
+    /// beside it.
+    #[test]
+    fn a_copy_of_every_type_takes_no_app_row() {
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![types(&[(NOTE, None), ("app.acme.setting", None)])],
+        );
+        let events = || {
+            stream(
+                vec![
+                    event(
+                        "11",
+                        "item.created",
+                        &item_payload("item.created", "setting", "app.acme.setting", 1),
+                    ),
+                    event(
+                        "12",
+                        "item.created",
+                        &item_payload("item.created", "note", NOTE, 1),
+                    ),
+                    stream_live(Some("12")),
+                ],
+                Then::End,
+            )
+        };
+        server.on("/events", vec![events(), events()]);
+        let (_dir, core) = hydrated(&server);
+        store::meta_set(&core.conn().unwrap(), store::META_SLICE_TYPES, "[\"*\"]").unwrap();
+
+        core.catch_up().unwrap();
+
+        assert!(
+            core.get("note").unwrap().is_some(),
+            "the witness was dropped"
+        );
+        assert_eq!(
+            core.get("setting").unwrap(),
+            None,
+            "a slice of every type took an app row"
+        );
+        assert_eq!(stored_cursor(&core).as_deref(), Some("12"));
+    }
+
     /// A copy of every type takes no `system.*` row by event, unless the row
     /// is pinned, which keeps taking its updates whatever the slice.
     #[test]

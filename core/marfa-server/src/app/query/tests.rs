@@ -43,7 +43,7 @@ fn asks() -> Vec<Ask> {
             ..Ask::default()
         },
         Ask {
-            system: true,
+            hidden: true,
             source: Some("other".to_string()),
             tier: Some("feed".to_string()),
             tags: vec!["a".to_string()],

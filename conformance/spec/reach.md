@@ -348,7 +348,7 @@ When a conditional read answers, the server MUST NOT carry a reach in the body.
 
 When a credential sends `GET /items?include=metadata`, `GET /items/{id}` or `POST /items/bulk-get` without `X-Marfa-Reach`, the server MUST answer it as an ordinary read, without `X-Marfa-Reach`.
 
-**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› answers a system item to a bulk read under a reach only when include names system`.
+**Tests:** `compliance/reach.test.ts › walks conditional metadata pages to explicit null and certifies every supported read door`, `› certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› answers a system item to a bulk read under a reach only when include names hidden`.
 
 ### `reach/conditional-item-page`
 
@@ -492,7 +492,7 @@ When a credential sends `POST /items/bulk-get` with a matching `X-Marfa-Reach`, 
 
 **Reason:** the source filter does not narrow a read by id (`types/source-filter-by-id`), so `listed` is how a device that reads many items by id at once learns which of them belong to its inventory.
 
-**Tests:** `compliance/reach.test.ts › certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› answers a system item to a bulk read under a reach only when include names system`.
+**Tests:** `compliance/reach.test.ts › certifies a bulk read by id and answers listed for each item it returns, in order, false for a source-excluded one`, `› answers a system item to a bulk read under a reach only when include names hidden`.
 
 ### `reach/listed-not-on-edges`
 

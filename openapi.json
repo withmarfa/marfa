@@ -2722,7 +2722,7 @@
             "items": {
               "$ref": "#/components/schemas/ItemReadWithMetadata"
             },
-            "description": "The items you can read at the far end of `item.edges`, and of `backrefs` if you asked for both, with their metadata. Leaves out `system.*` items without counting them in `neighbors_omitted`. Present with `include=neighbors`."
+            "description": "The items you can read at the far end of `item.edges`, and of `backrefs` if you asked for both, with their metadata. Leaves out `system.*` and `app.*` items without counting them in `neighbors_omitted`. Present with `include=neighbors`."
           },
           "neighbors_truncated": {
             "type": "boolean",
@@ -7893,7 +7893,7 @@
               "type": "string"
             },
             "maxItems": 100,
-            "description": "The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*`."
+            "description": "The types the folder holds, each with its subtypes. Empty or absent holds every type the machine's key can read, except `system.*` and `app.*`."
           },
           "tier": {
             "type": "string",
@@ -8401,7 +8401,7 @@
               "type": "string"
             },
             "maxItems": 100,
-            "description": "The types the view lists, each with its subtypes. Empty or absent lists every type the reading key can read, except `system.*`."
+            "description": "The types the view lists, each with its subtypes. Empty or absent lists every type the reading key can read, except `system.*` and `app.*`."
           },
           "tier": {
             "allOf": [
@@ -8435,7 +8435,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "Which items the view lists. Absent lists every item the reading key can read, except `system.*`."
+        "description": "Which items the view lists. Absent lists every item the reading key can read, except `system.*` and `app.*`."
       },
       "ViewItemPage": {
         "type": "object",
@@ -13960,7 +13960,7 @@
           "Items"
         ],
         "summary": "List items",
-        "description": "Returns a page of the items you can read that match the filters. System items are left out unless you ask for them with `include=system`. Use `include` to add edges, metadata or extensions to each item.",
+        "description": "Returns a page of the items you can read that match the filters. Hidden items (`system.*` and `app.*`) are left out unless you ask for them with `include=hidden`. Use `include` to add edges, metadata or extensions to each item.",
         "security": [
           {
             "bearerAuth": []
@@ -14136,10 +14136,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Comma-separated extras. `edges`, `metadata` and `extensions` add that data to each item. `system` also returns `system.*` items, which are left out by default; a `system.` type filter does the same."
+              "description": "Comma-separated extras. `edges`, `metadata` and `extensions` add that data to each item. `hidden` also returns `system.*` and `app.*` items, which are left out by default; a type filter naming one does the same."
             },
             "required": false,
-            "description": "Comma-separated extras. `edges`, `metadata` and `extensions` add that data to each item. `system` also returns `system.*` items, which are left out by default; a `system.` type filter does the same.",
+            "description": "Comma-separated extras. `edges`, `metadata` and `extensions` add that data to each item. `hidden` also returns `system.*` and `app.*` items, which are left out by default; a type filter naming one does the same.",
             "name": "include",
             "in": "query"
           },
@@ -18070,7 +18070,7 @@
                       "items": {
                         "$ref": "#/components/schemas/Item"
                       },
-                      "description": "The items found, in any state, in the order the request named their keys, each once. Items you can't read, and `system.*` items, are left out."
+                      "description": "The items found, in any state, in the order the request named their keys, each once. Items you can't read, and `system.*` and `app.*` items, are left out."
                     },
                     "tombstones": {
                       "type": "array",
@@ -18387,7 +18387,7 @@
           "Items"
         ],
         "summary": "Find items by title",
-        "description": "Finds the active and archived items titled by each of up to 200 names, matched without regard to case, Unicode form or the white space around a name. `system.*` items and items you can't read are left out.",
+        "description": "Finds the active and archived items titled by each of up to 200 names, matched without regard to case, Unicode form or the white space around a name. `system.*` and `app.*` items and items you can't read are left out.",
         "security": [
           {
             "bearerAuth": []
@@ -18774,10 +18774,10 @@
                         "edges",
                         "metadata",
                         "extensions",
-                        "system"
+                        "hidden"
                       ]
                     },
-                    "description": "`edges`, `metadata` and `extensions` add that data to each item. `system` also returns `system.*` items, which are left out by default."
+                    "description": "`edges`, `metadata` and `extensions` add that data to each item. `hidden` also returns `system.*` and `app.*` items, which are left out by default."
                   }
                 },
                 "required": [
@@ -20175,12 +20175,12 @@
             "schema": {
               "type": "string",
               "enum": [
-                "system"
+                "hidden"
               ],
-              "description": "`system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own."
+              "description": "`hidden` counts `system.*` and `app.*` items too, which are left out by default. A `type` filter naming one opts in on its own."
             },
             "required": false,
-            "description": "`system` counts `system.*` items too, which are left out by default. A `type` filter in the `system.` namespace opts in on its own.",
+            "description": "`hidden` counts `system.*` and `app.*` items too, which are left out by default. A `type` filter naming one opts in on its own.",
             "name": "include",
             "in": "query"
           }
@@ -20395,7 +20395,7 @@
           "Items"
         ],
         "summary": "List item summaries",
-        "description": "Returns item names, types, versions, sources and creation times, newest first, of the types you can read. Trashed and system items are excluded.",
+        "description": "Returns item names, types, versions, sources and creation times, newest first, of the types you can read. Trashed and hidden items (`system.*` and `app.*`) are excluded.",
         "parameters": [
           {
             "schema": {
@@ -31195,10 +31195,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Comma-separated extras. `system` also returns `system.*` items, which are left out by default. A `system.` type filter does the same."
+              "description": "Comma-separated extras. `hidden` also returns `system.*` and `app.*` items, which are left out by default. A type filter naming one does the same."
             },
             "required": false,
-            "description": "Comma-separated extras. `system` also returns `system.*` items, which are left out by default. A `system.` type filter does the same.",
+            "description": "Comma-separated extras. `hidden` also returns `system.*` and `app.*` items, which are left out by default. A type filter naming one does the same.",
             "name": "include",
             "in": "query"
           },
@@ -40550,7 +40550,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: a setting is malformed or undeclared, such as a `system.*` type, a `..` placement or a `backref` filter. `details.errors[0].path` or `details.unknown_body_fields` names it.\n- `missing_required_field`: `title` is missing.\n- `unknown_type`: a setting's type is unknown.\n- `invalid_properties`: `defaults.properties` has a whole number a 64-bit float can't keep.",
+            "description": "- `validation_error`: a setting is malformed or undeclared, such as a `system.*` or `app.*` type, a `..` placement or a `backref` filter. `details.errors[0].path` or `details.unknown_body_fields` names it.\n- `missing_required_field`: `title` is missing.\n- `unknown_type`: a setting's type is unknown.\n- `invalid_properties`: `defaults.properties` has a whole number a 64-bit float can't keep.",
             "content": {
               "application/json": {
                 "schema": {

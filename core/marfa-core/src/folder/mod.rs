@@ -161,10 +161,10 @@ fn id_named(path: &Path, bytes: &[u8], read: Option<&document::Document>) -> Opt
 }
 
 /// Whether a file naming the item's id is its file: a file item's file is
-/// its bytes, never a document naming it, and no `system.*` row is a file's
+/// its bytes, never a document naming it, and no hidden row is a file's
 /// item.
 fn named_by_its_file(item: &Item, catalog: &Catalog) -> bool {
-    bytes_of(item, catalog).is_none() && !item.r#type.starts_with("system.")
+    bytes_of(item, catalog).is_none() && !marfa_rules::folder::is_hidden(&item.r#type)
 }
 
 /// Each file's identity, where no other of `paths` shares it.
