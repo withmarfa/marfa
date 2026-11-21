@@ -70,6 +70,8 @@ codes! {
     BlobCopyNotFound = "blob_copy_not_found", 404;
     BlobNotFound = "blob_not_found", 404;
     BulkJobNotFound = "bulk_job_not_found", 404;
+    ConnectorHostNotFound = "connector_host_not_found", 404;
+    ConnectorLinkNotFound = "connector_link_not_found", 404;
     ConnectorNotFound = "connector_not_found", 404;
     DeliveryNotFound = "delivery_not_found", 404;
     EdgeNotFound = "edge_not_found", 404;
@@ -92,6 +94,7 @@ codes! {
     AncestorUnavailable = "ancestor_unavailable", 409;
     Conflict = "conflict", 409;
     ConnectorHeld = "connector_held", 409;
+    ConnectorSourceHeld = "connector_source_held", 409;
     CopiesBelowMinimum = "copies_below_minimum", 409;
     BackupFilesMissing = "backup_files_missing", 409;
     BackupPartsMissing = "backup_parts_missing", 409;

@@ -46,6 +46,14 @@ pub const MIGRATIONS: &[Migration] = &[
              WHERE name = 'made_by_client')",
         ),
     },
+    Migration {
+        version: 6,
+        sql: include_str!("migrations/0006_connector_hosts.sql"),
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('api_keys') \
+             WHERE name = 'made_by_host')",
+        ),
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

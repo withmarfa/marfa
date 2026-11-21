@@ -15,6 +15,7 @@ mod compression;
 mod conditional;
 mod config;
 mod connections;
+mod connector_hosts;
 mod connectors;
 mod control;
 mod cors;
@@ -27,6 +28,7 @@ mod events;
 mod export;
 mod folders;
 mod health;
+mod hosts_gate;
 mod housekeeping;
 mod inbound;
 mod items;
@@ -145,6 +147,34 @@ fn schema_doors() -> Routes {
             get(edge_types::list).post(edge_types::register),
         )
         .route("/edge-types/{id}", delete(edge_types::delete))
+}
+
+fn connector_host_doors() -> Routes {
+    Doors::new()
+        .route(
+            "/connector-hosts",
+            post(connector_hosts::create).get(connector_hosts::list),
+        )
+        .route(
+            "/connector-hosts/{id}",
+            get(connector_hosts::read).delete(connector_hosts::remove),
+        )
+        .route("/connector-hosts/{id}/link", post(connector_hosts::link))
+        .route("/plugins/{name}/connector", put(connector_hosts::assign))
+        .route("/connector-hosts/redeem", post(connector_hosts::redeem))
+        .asking_at(Method::POST, "/connector-hosts/redeem", Asks::Nothing)
+        .route("/connector-hosts/self", get(connector_hosts::own))
+        .route(
+            "/connector-hosts/self/connectors/{plugin}/key",
+            post(connector_hosts::mint),
+        )
+        .asking_at(Method::GET, "/connector-hosts/self", Asks::Host)
+        .asking_at(
+            Method::POST,
+            "/connector-hosts/self/connectors/{plugin}/key",
+            Asks::Host,
+        )
+        .route_layer(from_fn(no_store))
 }
 
 fn type_move_doors(app: Arc<App>) -> Routes {
@@ -380,6 +410,7 @@ fn shared(app: Arc<App>) -> Routes {
             get(sources::read).patch(sources::update),
         )
         .merge(schema_doors())
+        .merge(connector_host_doors())
         .merge(type_move_doors(app.clone()))
         .merge(key_doors(app.clone()))
         .merge(webhook_doors(app.clone()))
@@ -399,9 +430,14 @@ fn shared(app: Arc<App>) -> Routes {
 }
 
 fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
+    let credentials = Arc::new(routes.credentials());
+    let gate = hosts_gate::Gate {
+        app: app.clone(),
+        credentials: credentials.clone(),
+    };
     let checking = body::Checking {
         app: app.clone(),
-        credentials: Arc::new(routes.credentials()),
+        credentials,
     };
     let judging = named_instance::Judging {
         app: app.clone(),
@@ -415,6 +451,7 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
         .into_router()
         .method_not_allowed_fallback(unmatched)
         .route_layer(from_fn_with_state(checking, body::checked))
+        .route_layer(from_fn_with_state(gate, hosts_gate::kept))
         .route_layer(from_fn_with_state(app.clone(), conditional::judged))
         .route_layer(from_fn_with_state(judging, named_instance::judged))
         .route_layer(from_fn_with_state(app.clone(), limit::requests))

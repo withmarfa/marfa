@@ -241,7 +241,7 @@ pub async fn presents(
             true => Ok(()),
             false => Err(unauthorized()),
         },
-        Asks::Session | Asks::Credential => match identify(parts, app).await? {
+        Asks::Session | Asks::Credential | Asks::Host => match identify(parts, app).await? {
             Some(caller)
                 if admission
                     .is_none_or(|rule| rule.admits(Some(&caller), &parts.headers, socket)) =>

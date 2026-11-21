@@ -32,12 +32,14 @@ const UNREVOKED: &str = "k.revoked_at IS NULL";
 pub(crate) const REVOKED: &str = "key.revoke";
 pub(crate) const UPDATED: &str = "key.update";
 
-/// Who minted a key: the owner, an app (an owner's key minted through it too), or no one
-/// Marfa can name, for a key minted before Marfa kept its maker.
+/// Who minted a key: the owner, an app (an owner's key minted through it too), a connector
+/// host (its own key and each connector key it minted), or no one Marfa can name, for a key
+/// minted before Marfa kept its maker.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Maker {
     Owner,
     App(String),
+    Host(String),
     Unknown,
 }
 
@@ -45,22 +47,31 @@ impl Maker {
     pub fn client(&self) -> Option<&str> {
         match self {
             Maker::App(client) => Some(client),
-            Maker::Owner | Maker::Unknown => None,
+            Maker::Owner | Maker::Host(_) | Maker::Unknown => None,
+        }
+    }
+
+    pub fn host(&self) -> Option<&str> {
+        match self {
+            Maker::Host(host) => Some(host),
+            Maker::Owner | Maker::App(_) | Maker::Unknown => None,
         }
     }
 
     fn from_row(row: &Row<'_>) -> rusqlite::Result<Maker> {
         let client: Option<String> = row.get("made_by_client")?;
+        let host: Option<String> = row.get("made_by_host")?;
         let unknown: bool = row.get("maker_unknown")?;
-        match (client, unknown) {
-            (Some(client), false) => Ok(Maker::App(client)),
-            (None, false) => Ok(Maker::Owner),
-            (None, true) => Ok(Maker::Unknown),
-            (Some(_), true) => Err(rusqlite::Error::FromSqlConversionFailure(
+        match (client, host, unknown) {
+            (Some(client), None, false) => Ok(Maker::App(client)),
+            (None, Some(host), false) => Ok(Maker::Host(host)),
+            (None, None, false) => Ok(Maker::Owner),
+            (None, None, true) => Ok(Maker::Unknown),
+            _ => Err(rusqlite::Error::FromSqlConversionFailure(
                 0,
                 rusqlite::types::Type::Integer,
                 Box::new(std::io::Error::other(
-                    "a key names the app that made it and an unknown maker",
+                    "a key names more than one maker",
                 )),
             )),
         }
@@ -370,8 +381,8 @@ fn insert(tx: &Transaction<'_>, key: &Key, hash: &str) -> Result<()> {
         "INSERT INTO api_keys (id, hash, label, source, default_tier, oauth_client_id, \
          permissions, type_permissions, edge_permissions, extension_permissions, \
          metadata_permissions, profile_permissions, enforcement_override, created_at, expires_at, \
-         made_by_client, maker_unknown) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+         made_by_client, maker_unknown, made_by_host) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         params![
             key.id,
             hash,
@@ -390,6 +401,7 @@ fn insert(tx: &Transaction<'_>, key: &Key, hash: &str) -> Result<()> {
             key.expires_at,
             key.made_by.client(),
             key.made_by == Maker::Unknown,
+            key.made_by.host(),
         ],
     )?;
     store_claims(tx, &key.id, &key.grants.sources)
@@ -490,6 +502,100 @@ fn require_ahead(expires_at: Option<&str>, at: &str) -> Result<()> {
     }
 }
 
+/// A new key's secret and the digest the server keeps of it.
+pub(crate) fn new_secret(app: &App) -> Result<(String, String)> {
+    let plain = secret::new_secret()?;
+    let hash = secret::hash(&app.settings.start.key_salt, &plain)?;
+    Ok((plain, hash))
+}
+
+/// A key the server gives rather than one a caller asks for: a connector host's own key, or
+/// a connector's key its host mints. It holds what `grants` says and nothing it inherits.
+pub(crate) fn given(
+    label: String,
+    source: String,
+    grants: Grants,
+    default_tier: &str,
+    made_by: Maker,
+    at: &str,
+) -> Key {
+    Key {
+        id: uuid::Uuid::now_v7().to_string(),
+        label,
+        source,
+        default_tier: default_tier.to_string(),
+        oauth_client_id: None,
+        made_by,
+        grants,
+        stored_types: None,
+        levers: OwnLevers::Unset,
+        standing: Standing::default(),
+        created_at: at.to_string(),
+        expires_at: None,
+        last_used_at: None,
+    }
+}
+
+/// Stores a key [`given`] made, taking its source as a mint takes one.
+pub(crate) fn store_given(unit: &Unit<'_, '_>, key: &Key, hash: &str) -> Result<()> {
+    take_source(unit, &key.source)?;
+    insert(unit.tx(), key, hash)?;
+    unit.audit_also(
+        "key.create",
+        "key",
+        &key.id,
+        Some(json!({ "actor": unit.caller.audit_id(), "host": key.made_by.host() })),
+    )
+}
+
+/// The live keys a connector host's link minted, its own key and the connector keys it minted.
+pub(crate) fn live_of_host(tx: &Transaction<'_>, host: &str, at: &str) -> Result<Vec<String>> {
+    let now = Stamp::read(at)?;
+    let held = tx
+        .prepare(&format!(
+            "SELECT k.id, k.expires_at FROM api_keys k WHERE {UNREVOKED} AND k.made_by_host = ?1"
+        ))?
+        .query_map([host], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(held
+        .into_iter()
+        .filter(|(_, end_at)| may_live(end_at.as_deref(), now))
+        .map(|(id, _)| id)
+        .collect())
+}
+
+/// The oldest live key holding `source` as its own or as a claim.
+pub(crate) fn oldest_holding(tx: &Transaction<'_>, source: &str, at: &str) -> Result<Option<String>> {
+    Ok(live_rows(
+        tx,
+        &format!(
+            "SELECT k.id, k.id, k.expires_at FROM api_keys k \
+             WHERE {UNREVOKED} AND (k.source = ?1 OR EXISTS (SELECT 1 FROM api_key_sources s \
+             WHERE s.key_id = k.id AND s.source = ?1)) ORDER BY k.created_at, k.id"
+        ),
+        [source],
+        at,
+    )?
+    .into_iter()
+    .next()
+    .map(|(id, _)| id))
+}
+
+/// Refuses a source an installed plugin's connector holds, as a key's own or a claim.
+fn require_not_plugins<'a>(
+    tx: &Transaction<'_>,
+    sources: impl IntoIterator<Item = &'a String>,
+) -> Result<()> {
+    for source in sources {
+        if let Some(plugin) = super::connector_hosts::plugin_holding(tx, source)? {
+            return Err(super::connector_hosts::source_held_by_plugin(source, &plugin));
+        }
+    }
+    Ok(())
+}
+
 pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, String)> {
     let plain = secret::new_secret()?;
     let hash = secret::hash(&app.settings.start.key_salt, &plain)?;
@@ -516,6 +622,10 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
             caller.check_own_source(
                 &request.source,
                 claimed_by_a_live_key(unit.tx(), &request.source, &unit.at)?,
+            )?;
+            require_not_plugins(
+                unit.tx(),
+                std::iter::once(&request.source).chain(&grants.sources),
             )?;
             take_source(unit, &request.source)?;
             caller.check_held_source(
@@ -557,6 +667,9 @@ pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> 
         unit.caller.require_key_door()?;
         let mut key = reached(unit.tx(), &unit.caller, &id, &unit.at)?;
         let grants = request.families.over(&key.grants);
+        if let Some(claims) = &request.families.sources {
+            require_not_plugins(unit.tx(), claims)?;
+        }
         if let Some(wanted) = &request.expires_at {
             require_ahead(wanted.as_deref(), &unit.at)?;
         }

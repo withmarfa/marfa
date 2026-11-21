@@ -22,6 +22,7 @@ pub mod names;
 pub mod number;
 pub mod pattern;
 pub mod plugin;
+pub mod plugin_connector;
 pub mod query;
 pub mod recurrence;
 pub mod release;

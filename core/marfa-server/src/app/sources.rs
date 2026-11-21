@@ -27,8 +27,11 @@ const ICON_SETS: [(&str, &str); 2] = [
 
 pub const FIELDS: [&str; 2] = ["name", "mark"];
 
-/// The server's own: an app's source and a restored app's source, which no key may take or claim.
-const RESERVED: [&str; 2] = ["oauth:", RESTORED];
+/// The server's own: an app's source, a restored app's source and a connector host's source,
+/// which no key may take or claim.
+const RESERVED: [&str; 3] = ["oauth:", RESTORED, CONNECTOR_HOST];
+/// What a connector host's key holds as its own source, before the host's id.
+pub const CONNECTOR_HOST: &str = "connector-host:";
 
 pub fn reserved(source: &str) -> bool {
     let lowered = source.to_ascii_lowercase();

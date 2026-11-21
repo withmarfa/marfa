@@ -29,6 +29,7 @@ const DOCUMENT_OWNER: &str = "client-document-owner";
 const REGISTER_ADDRESS: &str = "client-register-address";
 const DEVICE_CODE_ADDRESS: &str = "device-code-address";
 const PASSKEY_ADDRESS: &str = "passkey-challenge-address";
+const CONNECTOR_LINK_ADDRESS: &str = "connector-link-address";
 const ALL: &str = "all";
 const NO_ADDRESS: &str = "unknown";
 const PASSWORD_FAMILIES: [&str; 6] = [
@@ -187,6 +188,16 @@ pub fn register_lanes(address: Option<IpAddr>) -> [Lane; 1] {
 
 pub fn passkey_challenge_lanes(address: Option<IpAddr>) -> [Lane; 1] {
     [Lane::new(PASSKEY_ADDRESS, bucket(address), 30, MINUTE_MS)]
+}
+
+/// The tries at redeeming a connector host's one-time link, a door that takes no credential.
+pub fn connector_link_lanes(address: Option<IpAddr>) -> [Lane; 1] {
+    [Lane::new(
+        CONNECTOR_LINK_ADDRESS,
+        bucket(address),
+        10,
+        15 * MINUTE_MS,
+    )]
 }
 
 pub fn device_code_lanes(address: Option<IpAddr>) -> [Lane; 1] {

@@ -35,7 +35,9 @@ pub fn reach_of(tx: &Connection, maker: &Maker, stored: &Grants) -> Result<Grant
     match maker {
         Maker::Owner => Ok(stored.clone()),
         Maker::App(client) => app_key_reach(tx, client, stored),
-        Maker::Unknown => Ok(unknown_maker_reach(stored, &vendors::app_held(tx)?)),
+        Maker::Unknown | Maker::Host(_) => {
+            Ok(unknown_maker_reach(stored, &vendors::app_held(tx)?))
+        }
     }
 }
 
@@ -91,7 +93,7 @@ pub fn as_stored(key: &Key) -> Grants {
 pub fn named_by(maker: &Maker, stored: &Map) -> Map {
     match maker {
         Maker::Owner => stored.clone(),
-        Maker::App(_) | Maker::Unknown => stored.naming_apps(),
+        Maker::App(_) | Maker::Host(_) | Maker::Unknown => stored.naming_apps(),
     }
 }
 

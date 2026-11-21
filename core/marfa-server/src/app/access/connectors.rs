@@ -7,6 +7,16 @@ impl Caller {
         matches!(self, Caller::Key(key) if key.id == key_id)
     }
 
+    /// The host whose own key this is: only a host's key holds `connectors.host`.
+    pub fn host_id(&self) -> Option<&str> {
+        match self {
+            Caller::Key(key) if key.grants.permissions.contains(&Permission::ConnectorsHost) => {
+                key.made_by.host()
+            }
+            _ => None,
+        }
+    }
+
     pub fn manages_connectors(&self) -> bool {
         self.holds(Permission::ConnectorsManage)
     }

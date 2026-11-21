@@ -42,7 +42,7 @@ pub const UPDATE_FIELDS: [&str; 12] = [
 pub struct Families {
     permissions: Option<Vec<Permission>>,
     maps: [Option<Map>; 5],
-    sources: Option<Vec<String>>,
+    pub(crate) sources: Option<Vec<String>>,
 }
 
 impl Families {
@@ -122,6 +122,12 @@ fn permission_list(value: &Value) -> Result<Vec<Permission>> {
             .as_str()
             .and_then(Permission::from_word)
             .ok_or_else(refused)?;
+        if !permission.grantable() {
+            return Err(Refusal::validation(format!(
+                "{} is given only to a connector host's key, when its one-time link is redeemed.",
+                permission.word()
+            )));
+        }
         if !permissions.contains(&permission) {
             permissions.push(permission);
         }
@@ -143,7 +149,7 @@ fn held_source(text: &str, field: &str) -> Result<String> {
     }
     if sources::reserved(trimmed) {
         return Err(Refusal::validation(format!(
-            "{field} can't start with oauth: or restored:."
+            "{field} can't start with oauth:, restored: or connector-host:."
         )));
     }
     Ok(trimmed.to_string())
