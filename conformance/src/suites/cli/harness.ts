@@ -63,6 +63,35 @@ const INHERITED = [
   "MARFA_TEST_FAULT",
 ];
 
+/**
+ * Runs the program given after the answer under a terminal, copies what the
+ * terminal shows to standard output, types the answer once `[y/N]` appears,
+ * and ends with the program's own exit code.
+ */
+const TERMINAL = `
+import os, pty, sys
+answer, argv = sys.argv[1], sys.argv[2:]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv(argv[0], argv)
+seen = b""
+sent = False
+while True:
+    try:
+        data = os.read(fd, 4096)
+    except OSError:
+        break
+    if not data:
+        break
+    os.write(1, data)
+    seen += data
+    if not sent and b"[y/N]" in seen:
+        os.write(fd, (answer + "\\n").encode())
+        sent = True
+_, status = os.waitpid(pid, 0)
+sys.exit(os.waitstatus_to_exitcode(status))
+`;
+
 /** The long-running children a file started, killed when the file ends. */
 const held: ChildProcess[] = [];
 
@@ -95,7 +124,7 @@ export class Cli {
 
   /** Selects private machine authority with no ordinary credential. */
   viaSocket(socketPath: string): Cli {
-    return new Cli(this.binary, this.url, undefined, socketPath);
+    return new Cli(this.binary, this.url, undefined, socketPath, this.extraEnv);
   }
 
   private args(args: string[]): string[] {
@@ -110,7 +139,7 @@ export class Cli {
       const value = process.env[name];
       if (value !== undefined) env[name] = value;
     }
-    if (this.socketPath !== undefined) return env;
+    if (this.socketPath !== undefined) return { ...env, ...this.extraEnv };
     Object.assign(env, keychainEnv());
     env.MARFA_API_URL = this.url;
     if (this.key !== undefined) env.MARFA_API_KEY = this.key;
@@ -230,16 +259,54 @@ export class Cli {
   }
 
   /**
+   * Runs the binary with a terminal for its input and output, as a person
+   * types at it, and sends `answer` and a new line once the terminal shows
+   * a `[y/N]` question. A terminal is made by Python's `pty`, which every
+   * system the contract runs on carries. The terminal holds standard output
+   * and standard error together, so `stdout` answers both and `stderr` is
+   * empty. Colors are off.
+   */
+  async runAtTerminal(args: string[], answer: string): Promise<Outcome> {
+    const child = spawn(
+      "python3",
+      ["-I", "-c", TERMINAL, answer, this.binary, ...this.args(args)],
+      {
+        env: { ...this.env(), NO_COLOR: "1", TERM: "xterm" },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    stopChildAtCleanup(child);
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", resolve);
+    });
+    return { code: code ?? -1, stdout, stderr };
+  }
+
+  /**
    * Starts a long-running command and leaves it to the caller, who reads
    * its stdout and stderr; the child is killed when the file ends if the
    * scenario did not see it out, so a failing scenario does not leave a
    * binary polling a server that is about to stop.
    */
-  hold(args: string[]): ChildProcess {
-    const child = spawn(this.binary, this.args(["--json", ...args]), {
-      env: this.env(),
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+  hold(args: string[], options: { json?: boolean } = {}): ChildProcess {
+    const json = options.json ?? true;
+    const child = spawn(
+      this.binary,
+      this.args(json ? ["--json", ...args] : args),
+      {
+        env: this.env(),
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
     held.push(child);
     stopChildAtCleanup(child);
     return child;
