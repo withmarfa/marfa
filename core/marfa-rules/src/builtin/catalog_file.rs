@@ -79,18 +79,32 @@ pub(super) fn read_folder(folder: &Path) -> Result<Vec<Source>, String> {
                 .map_err(|e| format!("{}: {e}", folder.display()))
         })
         .collect::<Result<_, _>>()?;
+    let present: BTreeSet<String> = names.iter().cloned().collect();
     names.retain(|name| Path::new(name).extension().is_some_and(|ext| ext == "json"));
     names.sort();
     names
         .into_iter()
         .map(|name| {
             let path = folder.join(&name);
+            let sibling = format!("{}.md", name.trim_end_matches(".json"));
+            if present.contains(&sibling) {
+                return Err(format!(
+                    "{}: shipped types carry no guidance yet, so {sibling} must not sit beside {name}",
+                    folder.join(&sibling).display()
+                ));
+            }
             let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             let parsed: Value = serde_json::from_str(&text)
                 .map_err(|e| format!("{}: not valid JSON: {e}", path.display()))?;
             let Value::Object(mut row) = parsed else {
                 return Err(format!("{}: not a JSON object", path.display()));
             };
+            if row.contains_key("guidance") {
+                return Err(format!(
+                    "{}: shipped types carry no guidance yet, so the definition must not name `guidance`",
+                    path.display()
+                ));
+            }
             row.values_mut().for_each(javascript_numbers);
             Ok((name, row))
         })
@@ -863,6 +877,34 @@ mod tests {
             refused.contains("broken.json: not a JSON object"),
             "{refused}"
         );
+    }
+
+    #[test]
+    fn a_shipped_definition_that_carries_guidance_is_refused_with_its_file() {
+        let copy = Copy::new();
+        assert!(write(&copy.0).is_ok());
+        copy.edit("system/view.json", |row| {
+            row["guidance"] = Value::String("Use it.".into());
+        });
+        copy.edit("note.json", |row| {
+            row["guidance"] = Value::String("Use it.".into());
+        });
+        let refused = write(&copy.0).err().unwrap().join("\n");
+        assert!(refused.contains("note.json"), "{refused}");
+        assert!(refused.contains("guidance"), "{refused}");
+    }
+
+    #[test]
+    fn a_markdown_file_beside_a_shipped_definition_is_refused_with_its_file() {
+        let copy = Copy::new();
+        assert!(write(&copy.0).is_ok());
+        fs::write(copy.0.join("note.md"), "Use it.").unwrap();
+        let refused = write(&copy.0).err().unwrap().join("\n");
+        assert!(refused.contains("note.md"), "{refused}");
+        assert!(refused.contains("guidance"), "{refused}");
+        fs::remove_file(copy.0.join("note.md")).unwrap();
+        fs::write(copy.0.join("system").join("README.md"), "Notes.").unwrap();
+        assert!(write(&copy.0).is_ok());
     }
 
     #[test]

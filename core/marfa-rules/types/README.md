@@ -22,7 +22,7 @@ A type file is a JSON object. A key the rules do not read is refused, with the k
 - **`label`**: optional, the name people see for the type, at most 100 characters. A type that names none is shown by one made from the last segment of its `id`
 - **`plural`**: optional, the name of a list of the type's items, at most 100 characters. A type that names none is answered with one made from its label (`Story` makes `Stories`), never from its parent's
 - **`description`**: what the type represents, in one sentence of at most 200 characters
-- **`guidance`**: optional, Markdown of at most 1,000 characters that tells an agent or an app builder how to use the type. A shipped file names it here; the catalog writer reads no `.md` file. `marfa types check` instead reads `<id>.md` beside `<id>.json` as the guidance of a folder's type, and refuses a definition that names it too. Limits count characters (Unicode code points), as labels do
+- **`guidance`**: a shipped type carries none yet. The catalog writer refuses a definition that names `guidance`, and a `<id>.md` beside a definition, and names the file. A registered type may carry optional Markdown guidance of at most 1,000 characters, and `marfa types check` reads `<id>.md` beside `<id>.json` as the guidance of a folder's type. Limits count characters (Unicode code points), as labels do
 - **`version`**: a non-negative integer, `0` where a file names none. Every shipped type is at 0
 - **`fields`**: field name to definition
 - **`required`**: optional, an array of field names, which each must be a declared or inherited field. A field may instead say `"required": true`
