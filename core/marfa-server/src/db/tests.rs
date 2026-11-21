@@ -1983,7 +1983,7 @@ async fn a_database_at_schema_version_2_loses_compatible_with_and_keeps_the_rest
 }
 
 #[tokio::test]
-async fn a_database_at_schema_version_2_upgrades_through_4_naming_registered_types_and_who_made_each_key()
+async fn a_database_at_schema_version_2_upgrades_to_the_newest_naming_registered_types_and_who_made_each_key()
  {
     let place = folder();
     db_open(&options(&place.file, &MIGRATIONS[..2]), Arc::default())
@@ -2053,7 +2053,7 @@ async fn a_database_at_schema_version_2_upgrades_through_4_naming_registered_typ
     let version: u32 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 4);
+    assert_eq!(Some(version), MIGRATIONS.last().map(|m| m.version));
     let app_made: Vec<(String, bool)> = conn
         .prepare("SELECT id, app_made FROM api_keys ORDER BY id")
         .unwrap()
