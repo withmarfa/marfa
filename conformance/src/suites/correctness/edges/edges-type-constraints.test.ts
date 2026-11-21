@@ -120,11 +120,6 @@ describe("edge type-constraints", () => {
   // Type-constraint matching walks the `parent` chain, so a type that extends
   // a constraint entry satisfies it.
   it("inheritance-aware: constraint accepts inheriting child type", async () => {
-    // Item type IDs follow the five-tier namespace grammar — only
-    // `core.<type>`, `system.<type>`, `app.<app>.<type>`, `user.<type>`
-    // or `<publisher>.<type>` are accepted, and `user.<...>` is the root for
-    // an ad-hoc test type. Edge type IDs follow a separate grammar that
-    // accepts `<ns>.<segment>.<segment>`.
     const childTypeId = `user.inh-hl-r${ctx.runId}`;
     const edgeTypeId = `mock.tcinh.${ctx.runId}`;
 

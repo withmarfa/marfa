@@ -1,6 +1,6 @@
 use crate::error::RuleError;
 
-pub const GRAMMAR: &str = "a type is two or more lowercase dotted segments, each a letter followed by letters, digits, hyphens and underscores, at most 128 characters, with exactly three under `app.` and none under a root Marfa reserves";
+pub const GRAMMAR: &str = "a type is two or more lowercase dotted segments, each a letter followed by letters, digits, hyphens and underscores, at most 128 characters, with exactly three under `app.`, two or more under `common.`, and none under a root Marfa reserves for permissions or scopes or under `space`";
 
 /// The root of the shared types a plugin brings.
 pub const COMMON_ROOT: &str = "common";
