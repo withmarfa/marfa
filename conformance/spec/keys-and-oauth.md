@@ -77,11 +77,19 @@ While an app holds a vendor (`types/app-vendor-bound`), the server MUST let the 
 
 ### `keys-and-oauth/app-key-own-vendor`
 
-While an app holds a vendor, the server MUST let a key the app made reach the items of the types under the vendor at the level the key's own type map entry for the vendor grants, or, where the map has none, at the most it grants any type outside `app.*`, whether or not the app's grant still stands.
+While an app holds a vendor, the server MUST let a key the app made reach the items of each type under the vendor at the level the key's type map gives it, taking the key's own entry for the vendor or, where the map has none, the most it grants any type outside `app.*` as its entry for the vendor, but, while the app's grant stands, no higher than the app's sign-ins reach that type (`keys-and-oauth/app-reaches-own-vendor`).
 
-**Reason:** a key an app made keeps the app's own machinery as the app does, and a key the owner kept when ending the app keeps what the app keeps for itself and nothing more.
+**Reason:** a key an app made keeps the app's own machinery as the app does and never more than the app may do there now, so a key whose map asks more than the owner's narrowed grant leaves gets no more than the grant. A key the owner kept when ending the app keeps what the app keeps for itself and nothing more.
 
-**Tests:** `compliance/app-vendors.test.ts › keeps the own-vendor wildcard a key an app made asks for`, `› keeps a key an app made from other apps' data once the app's grant no longer names it, and leaves it its own vendor`.
+**Tests:** `compliance/app-vendors.test.ts › keeps the own-vendor wildcard a key an app made asks for`, `› keeps a key an app made from other apps' data once the app's grant no longer names it, and leaves it its own vendor`, `› holds an owner's key an app made to what the app may do with its own vendor now`.
+
+### `keys-and-oauth/app-made-owner-key`
+
+When an app's sign-in, or a key an app made, mints a key with `owner_key: true`, the server MUST treat the key as a key that app made wherever a statement on app vendors or their reach names one.
+
+**Reason:** `owner_key` decides only that the key carries no `oauth_client_id` and outlives the app's grant (`keys-and-oauth/owner-key-mint`). The key still came from the app, so it reaches other apps' machinery only as the app's grant does, and it may not move a vendor.
+
+**Tests:** `compliance/app-vendors.test.ts › treats an owner's key minted through an app as the app's: refused a vendor move, and kept from other apps' data the app's grant no longer names`, `› holds an owner's key an app made to what the app may do with its own vendor now`.
 
 ### `keys-and-oauth/app-key-other-app-data`
 
@@ -2457,21 +2465,21 @@ When a caller holding `grants.manage` sends `GET /grants`, the server MUST answe
 
 ### `keys-and-oauth/app-vendors-list`
 
-When a caller holding `grants.manage` sends `GET /app-vendors`, the server MUST answer each vendor an app or the owner holds, with its `vendor`, the `client_id` of the app that holds it or `null` while the owner holds it, and `claimed_at`, in one page whose `next_cursor` is `null`.
+When the owner's browser session, or a caller holding `grants.manage`, sends `GET /app-vendors`, the server MUST answer each vendor an app or the owner holds, with its `vendor`, the `client_id` of the app that holds it or `null` while the owner holds it, and `claimed_at`, in one page whose `next_cursor` is `null`.
 
-**Tests:** `compliance/app-vendors.test.ts › gives the vendor to the app that registered the first type under it`, `› moves the vendor to the app named, which then reaches its items in place of the app that held it`, `› holds a vendor two apps made types under for the owner, refuses it to either app, and gives it to the app the owner names`.
+**Tests:** `compliance/app-vendors.test.ts › gives the vendor to the app that registered the first type under it`, `› moves the vendor to the app named, which then reaches its items in place of the app that held it`, `› holds a vendor two apps made types under for the owner, refuses it to either app, and gives it to the app the owner names`, `› lists and moves vendors for the owner's browser session`.
 
 ### `keys-and-oauth/app-vendor-move`
 
-When the owner's browser, the local command or a key no app made, holding `grants.manage`, sends `PUT /app-vendors/{vendor}` with the `client_id` of an app registered on the instance, the server MUST give the vendor to that app in place of whoever held it, and answer `200` with the vendor as it now reads.
+When the owner's browser session, or the local command or a key no app made holding `grants.manage`, sends `PUT /app-vendors/{vendor}` with the `client_id` of an app registered on the instance, the server MUST give the vendor to that app in place of whoever held it, and answer `200` with the vendor as it now reads.
 
-**Reason:** an app that registers again gets a new client ID, and the owner moves its vendor to it so the app keeps reaching what it kept.
+**Reason:** an app that registers again gets a new client ID, and the owner moves its vendor to it so the app keeps reaching what it kept. A browser session holds no permission of its own, so it acts here as the owner.
 
-**Tests:** `compliance/app-vendors.test.ts › moves the vendor to the app named, which then reaches its items in place of the app that held it`.
+**Tests:** `compliance/app-vendors.test.ts › moves the vendor to the app named, which then reaches its items in place of the app that held it`, `› lists and moves vendors for the owner's browser session`.
 
 ### `keys-and-oauth/app-vendor-move-permission`
 
-If a caller without `grants.manage` sends `GET /app-vendors` or `PUT /app-vendors/{vendor}`, then the server MUST answer `403 forbidden` with `details.required_scope` `grants.manage`.
+If a credential without `grants.manage` sends `GET /app-vendors` or `PUT /app-vendors/{vendor}`, then the server MUST answer `403 forbidden` with `details.required_scope` `grants.manage`.
 
 **Tests:** `compliance/app-vendors.test.ts › refuses a credential without grants.manage with 403 forbidden naming it`.
 
@@ -2481,7 +2489,7 @@ If an app's sign-in or a key an app made sends `PUT /app-vendors/{vendor}`, then
 
 **Reason:** giving a vendor to an app hands it what another app keeps for itself, which only the owner may approve.
 
-**Tests:** `compliance/app-vendors.test.ts › refuses to give a vendor to an app's sign-in or a key an app made, whatever it holds`.
+**Tests:** `compliance/app-vendors.test.ts › refuses to give a vendor to an app's sign-in or a key an app made, whatever it holds`, `› treats an owner's key minted through an app as the app's: refused a vendor move, and kept from other apps' data the app's grant no longer names`.
 
 ### `keys-and-oauth/app-vendor-move-unknown-client`
 

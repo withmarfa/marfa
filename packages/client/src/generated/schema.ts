@@ -1869,7 +1869,7 @@ export interface paths {
         };
         /**
          * List app vendors
-         * @description Returns each `app.<vendor>` namespace an app or the owner holds, in one page. An app holds the namespace it registered the first type under; the owner holds one no single app is known to have made, until they give it to an app. Requires `grants.manage`.
+         * @description Returns each `app.<vendor>` namespace an app or the owner holds, in one page. An app holds the namespace it registered the first type under; the owner holds one whose types no single app is known to have made, until they give it to an app. Requires the owner's browser session or `grants.manage`.
          */
         get: operations["listAppVendors"];
         put?: never;
@@ -1890,7 +1890,7 @@ export interface paths {
         get?: never;
         /**
          * Give a vendor to an app
-         * @description Gives an `app.<vendor>` namespace to the app with the client ID you name, which from then on registers types under it and reaches its items in place of whoever held it. Use it when an app registers again and gets a new client ID, or to give a namespace the owner holds to its app. Requires `grants.manage`, and only the owner's own credentials may: an app's sign-in or a key an app made is refused.
+         * @description Gives an `app.<vendor>` namespace to the app with the client ID you name, which from then on registers types under it and reaches its items in place of whoever held it. Use it when an app registers again and gets a new client ID, or to give a namespace the owner holds to its app. Requires the owner's browser session, or `grants.manage` on one of the owner's own credentials: an app's sign-in, or any key minted through an app, is refused.
          */
         put: operations["giveAppVendor"];
         post?: never;

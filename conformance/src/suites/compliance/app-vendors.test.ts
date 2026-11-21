@@ -1016,7 +1016,10 @@ describe("vendor bindings an export judges", () => {
     // The witness: an entry for a type under the vendor carries its binding.
     const typed = await ownersKey({ "app.vendorq.setting": "read" });
     expect(await exportedBindings(typed, "app.vendorq")).toHaveLength(1);
-    const bare = await ownersKey({ "core.note": "read", "app.vendorq": "read" });
+    const bare = await ownersKey({
+      "core.note": "read",
+      "app.vendorq": "read",
+    });
     expect(await exportedBindings(bare, "app.vendorq")).toEqual([]);
     const wildcard = await ownersKey({
       "app.vendorp.*": "read",
