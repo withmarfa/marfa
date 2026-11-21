@@ -413,8 +413,7 @@ pub fn install(unit: &Unit<'_, '_>, catalog: &Catalog, definitions: &[Obj]) -> R
                 .map(|(_, owner)| owner.clone())
                 .or_else(|| holder_of(catalog, name).filter(|owner| *owner != id))
         };
-        let built =
-            edge_type_from_request(body, &taken, Judging::Register).map_err(refusal_of)?;
+        let built = edge_type_from_request(body, &taken, Judging::Register).map_err(refusal_of)?;
         named.push((id.clone(), id.clone()));
         if let Some(reverse) = text_of(&built, "reverse_name") {
             named.push((reverse.to_string(), id.clone()));

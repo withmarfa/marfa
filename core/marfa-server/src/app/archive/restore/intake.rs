@@ -313,7 +313,8 @@ fn archived_origin(line: &Value, version: u64) -> Result<Origin> {
                     Ok(Origin::Plugin { name, version })
                 }
                 _ => Err(refused(
-                    "The archive names a type from a plugin without the plugin's name and version.".into(),
+                    "The archive names a type from a plugin without the plugin's name and version."
+                        .into(),
                 )),
             }
         }
@@ -554,9 +555,11 @@ impl Rows {
             }
             "plugin" => {
                 let archived = plugins::archived(body).map_err(|why| {
-                    invalid(format!("Line {row} of {INSTANCE} holds a plugin that {why}."))
-                        .with_detail("entry", INSTANCE)
-                        .with_detail("line", row)
+                    invalid(format!(
+                        "Line {row} of {INSTANCE} holds a plugin that {why}."
+                    ))
+                    .with_detail("entry", INSTANCE)
+                    .with_detail("line", row)
                 })?;
                 if !self.plugin_names.insert(archived.name.clone()) {
                     return Err(registered_twice("plugin", &archived.name));

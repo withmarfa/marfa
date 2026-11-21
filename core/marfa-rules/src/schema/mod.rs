@@ -22,8 +22,8 @@ pub use chain::{
 };
 pub use check::{
     FileVerdict, FolderVerdict, GuidanceFileFault, Problem, TypeFile, check_plugin_type_files,
-    check_type_files, joined_guidance,
-    guidance_file_name, is_guidance_file, is_type_file, read_guidance_file, shipped_registry,
+    check_type_files, guidance_file_name, is_guidance_file, is_type_file, joined_guidance,
+    read_guidance_file, shipped_registry,
 };
 pub use compat::{ShapeConflict, stored_shape_conflicts};
 pub use edge::{

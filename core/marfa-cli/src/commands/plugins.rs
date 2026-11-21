@@ -92,7 +92,9 @@ impl PluginsCommand {
     pub fn is_offline(&self) -> bool {
         matches!(
             self,
-            PluginsCommand::Check { .. } | PluginsCommand::Bundle { .. } | PluginsCommand::Index { .. }
+            PluginsCommand::Check { .. }
+                | PluginsCommand::Bundle { .. }
+                | PluginsCommand::Index { .. }
         )
     }
 }
@@ -106,7 +108,10 @@ fn run_offline(command: PluginsCommand, out: &Printer) -> Result<(), CliError> {
             output,
         } => {
             let bundle = built(&folder, &version)?;
-            let name = bundle.get("name").and_then(Value::as_str).unwrap_or_default();
+            let name = bundle
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let path = output.join(plugin::bundle_file_name(name));
             write_json(&path, &Value::Object(bundle.clone()))?;
             let answer = serde_json::json!({
@@ -121,7 +126,9 @@ fn run_offline(command: PluginsCommand, out: &Printer) -> Result<(), CliError> {
             let path = folder.join(plugin::INDEX);
             write_json(&path, &index)?;
             let count = index["plugins"].as_array().map_or(0, Vec::len);
-            out.report(&index, |_| format!("wrote {} listing {count}", path.display()))
+            out.report(&index, |_| {
+                format!("wrote {} listing {count}", path.display())
+            })
         }
         _ => Err(CliError::Usage("this command needs a server".into())),
     }
@@ -150,11 +157,7 @@ pub fn run(
 fn installed_words(answer: &Value) -> String {
     let field = |key: &str| answer.get(key).and_then(Value::as_str).unwrap_or_default();
     let types = answer["types"].as_array().map_or(0, Vec::len);
-    let types = &format!(
-        "{} {}",
-        types,
-        if types == 1 { "type" } else { "types" }
-    );
+    let types = &format!("{} {}", types, if types == 1 { "type" } else { "types" });
     match field("outcome") {
         "unchanged" => format!(
             "{} {} is already installed",
@@ -182,16 +185,17 @@ fn removed_words(answer: &Value) -> String {
 fn write_json(path: &Path, value: &Value) -> Result<(), CliError> {
     let mut text = serde_json::to_string_pretty(value)?;
     text.push('\n');
-    std::fs::write(path, text).map_err(|error| {
-        CliError::Invalid(format!("cannot write {}: {error}", path.display()))
-    })
+    std::fs::write(path, text)
+        .map_err(|error| CliError::Invalid(format!("cannot write {}: {error}", path.display())))
 }
 
 /// The bundle to install: a source folder built, a bundle file read, or a name fetched.
 fn bundle_for(args: &InstallArgs) -> Result<Obj, CliError> {
     let path = Path::new(&args.source);
     match std::fs::metadata(path) {
-        Ok(held) if held.is_dir() => built(path, args.version.as_deref().unwrap_or(plugin::DEVELOPMENT)),
+        Ok(held) if held.is_dir() => {
+            built(path, args.version.as_deref().unwrap_or(plugin::DEVELOPMENT))
+        }
         Ok(_) if args.version.is_some() => Err(CliError::Usage(
             "--version builds a source folder, and a bundle carries its own version".into(),
         )),
@@ -215,7 +219,9 @@ fn object(bytes: &[u8], said: &str) -> Result<Obj, CliError> {
     match serde_json::from_slice::<Value>(bytes) {
         Ok(Value::Object(object)) => Ok(object),
         Ok(_) => Err(CliError::Invalid(format!("{said} is not a JSON object"))),
-        Err(error) => Err(CliError::Invalid(format!("{said} is not valid JSON: {error}"))),
+        Err(error) => Err(CliError::Invalid(format!(
+            "{said} is not valid JSON: {error}"
+        ))),
     }
 }
 
@@ -262,7 +268,10 @@ fn source_files(folder: &Path) -> Result<Vec<SourceFile>, CliError> {
         };
         for entry in entries {
             let entry = entry.map_err(|error| {
-                CliError::Invalid(format!("cannot read the folder {}: {error}", path.display()))
+                CliError::Invalid(format!(
+                    "cannot read the folder {}: {error}",
+                    path.display()
+                ))
             })?;
             let name = entry.file_name().to_string_lossy().into_owned();
             let relative = match below {
@@ -366,7 +375,10 @@ fn check(folder: &Path, out: &Printer) -> Result<(), CliError> {
         lines.push(if count == 0 {
             "the plugin passes".to_string()
         } else {
-            format!("{count} {}", if count == 1 { "problem" } else { "problems" })
+            format!(
+                "{count} {}",
+                if count == 1 { "problem" } else { "problems" }
+            )
         });
         lines.join("\n")
     })?;
@@ -381,12 +393,18 @@ fn check(folder: &Path, out: &Printer) -> Result<(), CliError> {
 
 fn index_of(folder: &Path) -> Result<Value, CliError> {
     let entries = std::fs::read_dir(folder).map_err(|error| {
-        CliError::Usage(format!("cannot read the folder {}: {error}", folder.display()))
+        CliError::Usage(format!(
+            "cannot read the folder {}: {error}",
+            folder.display()
+        ))
     })?;
     let mut listed = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|error| {
-            CliError::Invalid(format!("cannot read the folder {}: {error}", folder.display()))
+            CliError::Invalid(format!(
+                "cannot read the folder {}: {error}",
+                folder.display()
+            ))
         })?;
         let name = entry.file_name().to_string_lossy().into_owned();
         if !name.ends_with(plugin::BUNDLE_SUFFIX) {
@@ -402,14 +420,20 @@ fn index_of(folder: &Path) -> Result<Value, CliError> {
                 problems_said(&faults)
             )));
         }
-        let named = bundle.get("name").and_then(Value::as_str).unwrap_or_default();
+        let named = bundle
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if name != plugin::bundle_file_name(named) {
             return Err(CliError::Invalid(format!(
                 "{name} holds the plugin {named}, so name it {}",
                 plugin::bundle_file_name(named)
             )));
         }
-        listed.push(plugin::index_entry(&bundle, &hex::encode(Sha256::digest(&bytes))));
+        listed.push(plugin::index_entry(
+            &bundle,
+            &hex::encode(Sha256::digest(&bytes)),
+        ));
     }
     Ok(plugin::index(listed))
 }

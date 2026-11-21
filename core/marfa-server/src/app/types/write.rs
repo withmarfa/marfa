@@ -729,7 +729,9 @@ impl InstallPlan {
         self.fresh
             .iter()
             .chain(&self.replaced)
-            .fold(catalog.types.clone(), |held, schema| held.with(schema.clone()))
+            .fold(catalog.types.clone(), |held, schema| {
+                held.with(schema.clone())
+            })
     }
 }
 
@@ -770,7 +772,11 @@ pub fn plan_install(
     for id in &ids {
         check_id(id, "types.id")?;
         if catalog.holds(id)
-            && catalog.provenance.get(*id).and_then(|held| held.origin.plugin()) != Some(name)
+            && catalog
+                .provenance
+                .get(*id)
+                .and_then(|held| held.origin.plugin())
+                != Some(name)
         {
             return Err(Refusal::new(
                 Code::TypeExists,
@@ -818,9 +824,8 @@ pub fn plan_install(
             Some(held) => validate_replacing_type(&input, &registry, held),
             None => validate_type(&input, &registry),
         };
-        let schema = labelled(
-            judged.map_err(|issues| schema_refusal(issues).with_detail("type_id", id))?,
-        );
+        let schema =
+            labelled(judged.map_err(|issues| schema_refusal(issues).with_detail("type_id", id))?);
         match stored {
             Some(held) => {
                 changes.extend(marfa_rules::plugin::narrowings(held, &schema).into_iter().map(
