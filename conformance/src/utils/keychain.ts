@@ -73,15 +73,54 @@ export function keychainEnv(): NodeJS.ProcessEnv {
  * file started and stopped. Removed with the file's temporary folders.
  */
 export function emptyKeychain(): string {
-  const folder = tempFolder("marfa-conformance-empty-keychain-");
-  if (process.platform !== "darwin") return join(folder, "none");
-  const path = join(folder, "empty.keychain-db");
+  return ownKeychain("marfa-conformance-empty-keychain-").path;
+}
+
+/**
+ * A keychain file of the fixture's own, for one that keeps a sign-in or a key
+ * (`keys keep`, `login`, a refresh): each makes its origin the current one,
+ * which the run's shared keychain must not be left holding while other files
+ * run. It is unlocked and never locks itself, because the binary may not ask
+ * a person to unlock it; `lock` locks it for a fixture that claims the
+ * binary copes with a locked one. `remove` deletes the file and its folder.
+ *
+ * The binary reads an item `security` made only where the item lets any
+ * application read it, which is set as the item is made, never changed later.
+ * Where there are no keychain files, the path is of a file never made.
+ */
+export function ownKeychain(prefix = "marfa-conformance-own-keychain-"): {
+  path: string;
+  remove: () => void;
+  lock: () => void;
+} {
+  const folder = tempFolder(prefix);
+  if (process.platform !== "darwin") {
+    return {
+      path: join(folder, "none"),
+      remove: () => {
+        removeTempFolder(folder);
+      },
+      lock: () => {},
+    };
+  }
+  const path = join(folder, "credentials.keychain-db");
   const password = randomUUID();
   execFileSync("security", ["create-keychain", "-p", password, path]);
-  // Unlocked and never locking itself: the binary may not ask a person to.
   execFileSync("security", ["unlock-keychain", "-p", password, path]);
   execFileSync("security", ["set-keychain-settings", path]);
-  return path;
+  return {
+    path,
+    remove: () => {
+      try {
+        execFileSync("security", ["delete-keychain", path]);
+      } finally {
+        removeTempFolder(folder);
+      }
+    },
+    lock: () => {
+      execFileSync("security", ["lock-keychain", path]);
+    },
+  };
 }
 
 function keychainFiles(): {

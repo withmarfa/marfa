@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -26,6 +25,7 @@ import {
   sentTitles,
   withFault,
 } from "./folders.shared.js";
+import { ownKeychain } from "../../utils/keychain.js";
 import { ON_MACOS } from "../../utils/platform.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
@@ -70,28 +70,6 @@ function listedDirs(harness: FolderHarness): string[] {
       folders: Array<{ dir: string }>;
     }
   ).folders.map((entry) => entry.dir);
-}
-
-/** A keychain file of the test's own, unlocked; an item in it lets any
- *  application read it, so the binary reads it without a dialog. */
-function ownKeychain(): { path: string; lock: () => void } {
-  const folder = tempFolder("marfa-handover-keychain-");
-  const path = join(folder, "credentials.keychain-db");
-  const password = randomUUID();
-  execFileSync("security", ["create-keychain", "-p", password, path]);
-  execFileSync("security", ["unlock-keychain", "-p", password, path]);
-  execFileSync("security", ["set-keychain-settings", path]);
-  cleanups.push(() => {
-    try {
-      execFileSync("security", ["delete-keychain", path]);
-    } finally {
-      rmSync(folder, { recursive: true, force: true });
-    }
-  });
-  return {
-    path,
-    lock: () => execFileSync("security", ["lock-keychain", path]),
-  };
 }
 
 /** Keeps the command holding the folder until its original watcher is
@@ -896,7 +874,8 @@ describe("a folder whose lock file cannot be written", () => {
 describe("a watch's credential", ON_MACOS, () => {
   it("takes a folder back with the credential it began with, though the keychain cannot be read meanwhile", async () => {
     const harness = await oneFolder("handover-keychain");
-    const keychain = ownKeychain();
+    const keychain = ownKeychain("marfa-handover-keychain-");
+    cleanups.push(keychain.remove);
     execFileSync("security", [
       "add-generic-password",
       "-A",

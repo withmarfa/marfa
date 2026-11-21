@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { dirname, join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { keychainEnv } from "../../utils/keychain.js";
+import { keychainEnv, ownKeychain } from "../../utils/keychain.js";
 import { folderHarness, requireBinary } from "./harness.js";
 import type { FolderHarness } from "./harness.js";
 import type { HeldCommand } from "../../device/cli-adapter.js";
@@ -1369,7 +1369,7 @@ describe("folder syncing from login", () => {
       const harness = await folderHarness("autostart-keyfile-keychain");
       made.push(harness);
       scriptFolderWrites(harness);
-      const keychain = ownKeychain();
+      const keychain = ownKeychain("marfa-autostart-keychain-");
       cleanups.push(keychain.remove);
       const inKeychain = "device-fixture-key-in-the-keychain";
       keepKey(keychain.path, harness.server.url, inKeychain);
@@ -1425,7 +1425,7 @@ describe("folder syncing from login", () => {
       const harness = await folderHarness("autostart-keychain");
       made.push(harness);
       scriptFolderWrites(harness);
-      const keychain = ownKeychain();
+      const keychain = ownKeychain("marfa-autostart-keychain-");
       cleanups.push(keychain.remove);
       const kept = "device-fixture-key-kept-for-login";
       keepKey(keychain.path, harness.server.url, kept);
@@ -1463,6 +1463,10 @@ describe("folder syncing from login", () => {
       made.push(harness);
       const other = await folderHarness("autostart-keep-other");
       made.push(other);
+      // `keys keep` makes its origin the current sign-in, which the run's
+      // shared keychain must not be left holding.
+      const keychain = ownKeychain("marfa-autostart-keep-keychain-");
+      cleanups.push(keychain.remove);
       // Async: the scripted server answers from this process.
       const keep = (
         root: string,
@@ -1485,6 +1489,7 @@ describe("folder syncing from login", () => {
               env: {
                 ...process.env,
                 ...keychainEnv(),
+                MARFA_KEYCHAIN: keychain.path,
                 MARFA_AUTOSTART_ROOT: root,
                 MARFA_FOLDER_REGISTRY: registry,
               },
@@ -1911,30 +1916,6 @@ function lastLine(text: string): string {
 function stopAgent(root: string): void {
   const pid = managerState(root).pid;
   if (pid !== null && alive(pid)) process.kill(pid, "SIGKILL");
-}
-
-/**
- * A keychain file of the test's own, so the run's shared one is left as it
- * is. The binary reads an item `security` made only where the item lets any
- * application read it, which is set as the item is made, never changed later.
- */
-function ownKeychain(): { path: string; remove: () => void } {
-  const folder = tempFolder("marfa-autostart-keychain-");
-  const path = join(folder, "credentials.keychain-db");
-  const password = randomUUID();
-  execFileSync("security", ["create-keychain", "-p", password, path]);
-  execFileSync("security", ["unlock-keychain", "-p", password, path]);
-  execFileSync("security", ["set-keychain-settings", path]);
-  return {
-    path,
-    remove: () => {
-      try {
-        execFileSync("security", ["delete-keychain", path]);
-      } finally {
-        rmSync(folder, { recursive: true, force: true });
-      }
-    },
-  };
 }
 
 /** Keeps `key` for `origin`, as `keys keep` would. */
