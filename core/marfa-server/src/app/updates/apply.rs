@@ -78,8 +78,7 @@ fn expected(sums: &str, name: &str) -> Result<String, String> {
     }
 }
 
-/// Unpacks the programs, and the connector when the release carries one: a release from before
-/// the connector shipped holds none, and installs without it.
+/// Unpacks the programs, and the connector where the release holds one.
 fn unpack(archive: &Path, into: &Path) -> Result<(), String> {
     let unreadable =
         |error: &dyn std::fmt::Display| format!("The archive could not be unpacked: {error}");
@@ -154,7 +153,7 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
             ));
         }
     }
-    // Its release is Cloudflare's, so only that it runs here and says what it is is proved.
+    // Cloudflare's own release number, so only what it is and that it runs here are checked.
     if staging.join(CONNECTOR).is_file() {
         let reported = ask(&staging.join(CONNECTOR), &["--version".as_ref()])
             .ok()
@@ -222,8 +221,8 @@ fn prove(staging: &Path, job: &Job) -> Result<Option<u32>, String> {
 
 /// Puts in only the new `marfa-server`, keeping the old one beside it, and stages the new
 /// `marfa` as `.marfa.next`: the running release's `marfa server run` supervises the new server
-/// until it settles. Then replaces the connector, when the release carries one; nothing runs it
-/// yet, so a put-back leaves the new one. Undoes what it did when a step fails.
+/// until it settles. Replaces the connector last, and a put-back leaves the new one. Undoes what
+/// it did when a step fails.
 pub(super) fn swap(staging: &Path, job: &Job, schema: Option<u32>) -> Result<(), String> {
     let pending = Pending {
         from: job.from.clone(),

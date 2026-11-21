@@ -611,13 +611,21 @@ describe("what a change runs", () => {
       ["quick-checks", "workspace", "image"],
     ],
     [
-      "the connector's pins, its licence bundle and the scripts that fetch and check them, which the image job's build runs",
+      "the connector's pins and the script that fetches them, which the image job's build runs",
       [
         "scripts/release/cloudflared.txt",
-        "scripts/release/cloudflared-modules.sh",
-        "scripts/release/cloudflared-licences.txt",
         "scripts/release/fetch-cloudflared.sh",
       ],
+      ["quick-checks", "workspace", "image"],
+    ],
+    [
+      "the licence bundle the fetch checks the connector's modules against",
+      ["scripts/release/cloudflared-licences.txt"],
+      ["quick-checks", "workspace", "image"],
+    ],
+    [
+      "the reader of the connector's modules, which the fetch sources",
+      ["scripts/release/cloudflared-modules.sh"],
       ["quick-checks", "workspace", "image"],
     ],
     [
