@@ -108,6 +108,7 @@ const INSTANCE_KINDS: Record<string, string> = {
   enforcement: "enforcement_count",
   connector_state: "connector_state_count",
   connector_agreement: "connector_agreement_count",
+  plugin: "plugin_count",
 };
 
 /** The manifest's count of each kind of line in `instance.ndjson.gz`. */

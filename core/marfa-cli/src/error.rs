@@ -176,6 +176,8 @@ pub enum CliError {
     },
     #[error("cannot read the docs site at {address}: {reason}")]
     DocsUnreachable { address: String, reason: String },
+    #[error("cannot read the plugins release at {address}: {reason}")]
+    PluginsUnreachable { address: String, reason: String },
     #[error(
         "{origin} answered {status}, a redirect to {}: name that address instead",
         location.as_deref().unwrap_or("nowhere it named")
@@ -391,6 +393,7 @@ own_codes! {
     CliError::DocsPageNotFound { .. } => "docs_page_not_found",
     CliError::DocsSectionNotFound { .. } => "docs_section_not_found",
     CliError::DocsUnreachable { .. } => "docs_unreachable",
+    CliError::PluginsUnreachable { .. } => "plugins_unreachable",
 }
 
 /// What the server's own refusal is named by, from its status.
@@ -493,7 +496,8 @@ impl CliError {
             | CliError::Watch(..)
             | CliError::Install(_)
             | CliError::DeviceCodeEnded
-            | CliError::DocsUnreachable { .. } => Exit::Environment,
+            | CliError::DocsUnreachable { .. }
+            | CliError::PluginsUnreachable { .. } => Exit::Environment,
             CliError::Invalid(_)
             | CliError::ArchiveLacksBlobs(_)
             | CliError::ArchiveKeptApart { .. }
@@ -957,6 +961,7 @@ mod tests {
             "docs_page_not_found",
             "docs_section_not_found",
             "docs_unreachable",
+            "plugins_unreachable",
             "blobs_missing",
             "install",
         ] {
@@ -1025,6 +1030,10 @@ mod tests {
                 headings: Vec::new(),
             },
             CliError::DocsUnreachable {
+                address: String::new(),
+                reason: String::new(),
+            },
+            CliError::PluginsUnreachable {
                 address: String::new(),
                 reason: String::new(),
             },

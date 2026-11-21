@@ -300,6 +300,14 @@ If a key without `schema.write` sends `POST /types` naming non-empty `guidance` 
 
 **Tests:** `compliance/type-guidance.test.ts › answers 403 forbidden naming schema.write and guidance to a key with metadata.types:write alone that registers a type with guidance`.
 
+### `types/guidance-app-made`
+
+If an app's access token, or a key an app made, that holds `schema.write` sends `POST /types`, `PUT /types/{id}` or `POST /restore` that would add, change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
+
+**Reason:** agents read guidance as instructions, so it is written by installing a plugin (`plugins/install-guidance`) or by the owner: the local command, the owner's browser, or an owner's key. An app the owner allowed `user.*` may still make and change the types themselves.
+
+**Tests:** `compliance/plugins.test.ts › refuses guidance to an app holding user.*:write and schema.write, and takes the same registration without it`, `› refuses an app's replacement that adds guidance, and lets an owner's key add it`, `compliance/type-guidance-restore.test.ts › answers 403 forbidden naming guidance to an app holding backups.manage and schema.write, and registers none of its types`.
+
 ### `types/guidance-register-no-write`
 
 If a key without `schema.write` sends `POST /types` naming non-empty `guidance`, then the server MUST NOT register the type.
@@ -1928,11 +1936,13 @@ If the private local command sends `DELETE /types/{id}?force=true`, then the ser
 
 When a caller registers a type, the server MUST retain its canonical sign-in ID, kind and readable name in `provenance.created_by`, independently of the submitted definition and later replacements.
 
-**Tests:** `compliance/types.test.ts › reports the creator after replacement and distinguishes built-in types`, `compliance/user-types.test.ts › registers a user type for an app the owner granted user.* write, recording the app as its creator`.
+**Reason:** `registered` names how a type arrived, not the `user.*` namespace (`GLOSSARY.md`).
+
+**Tests:** `compliance/types.test.ts › reports the creator after replacement and distinguishes built-in types`, `compliance/user-types.test.ts › registers a user type for an app the owner granted user.* write, recording the app as its creator`, `compliance/plugins.test.ts › reads a type a plugin installed with origin plugin, naming the plugin and its version`.
 
 ### `types/provenance-read`
 
-When a caller reads or lists types, the server MUST return `provenance.origin` as `platform` for built-in types, `user` for registered types, or `unknown` for an unrecorded origin, with `created_by` set to `null` where no creator is recorded.
+When a caller reads or lists types, the server MUST return `provenance.origin` as `platform` for built-in types, `registered` for a type registered through `POST /types` or a restore, `plugin` for a type a plugin installed, or `unknown` for an unrecorded origin, with `provenance.plugin` naming the plugin's `name` and `version` for `plugin` and `null` otherwise, and `created_by` set to `null` where no creator is recorded.
 
 **Tests:** `compliance/types.test.ts › reports the creator after replacement and distinguishes built-in types`.
 

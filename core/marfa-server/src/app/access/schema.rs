@@ -92,20 +92,20 @@ impl Caller {
         if stored == next {
             return Ok(());
         }
-        let app_made = match self {
-            Caller::App { .. } => true,
-            Caller::Key(key) => key.oauth_client_id.is_some(),
-            Caller::Local(_) | Caller::Owner(_) | Caller::Server => false,
-        };
-        if app_made {
+        if self.holds(Permission::SchemaWrite) {
+            let app_made = match self {
+                Caller::App { .. } => true,
+                Caller::Key(key) => key.oauth_client_id.is_some(),
+                Caller::Local(_) | Caller::Owner(_) | Caller::Server => false,
+            };
+            if !app_made {
+                return Ok(());
+            }
             return Err(Refusal::new(
                 Code::Forbidden,
                 "Type guidance is written by installing a plugin, or by the owner. An app, or a key an app made, cannot add, change or remove it.",
             )
             .with_detail("changes", vec!["guidance"]));
-        }
-        if self.holds(Permission::SchemaWrite) {
-            return Ok(());
         }
         Err(Refusal::new(
             Code::Forbidden,
