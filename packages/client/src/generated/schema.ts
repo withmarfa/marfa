@@ -887,7 +887,7 @@ export interface paths {
         put?: never;
         /**
          * Register a type
-         * @description Registers a type under the `app.*`, `user.*` or `<publisher>.*` namespace and returns it. Name a `parent` to inherit its fields. An app that registers the first type under an `app.<vendor>` namespace holds it: only that app registers there, and it reaches the namespace's items without a scope that names them.
+         * @description Registers a type under the `app.*`, `user.*` or `<publisher>.*` namespace and returns it. Name a `parent` to inherit its fields. The first type under an `app.<vendor>` namespace gives that namespace to the app that registered it.
          */
         post: operations["registerType"];
         delete?: never;
@@ -1917,7 +1917,7 @@ export interface paths {
         };
         /**
          * List app vendors
-         * @description Returns each `app.<vendor>` namespace an app or the owner holds, in one page. An app holds the namespace it registered the first type under; the owner holds one whose types no single app is known to have made, until they give it to an app. Requires the owner's browser session or `grants.manage`.
+         * @description Returns each `app.<vendor>` namespace and who holds it, in one page: the app that registered its first type, or the owner until they give it to an app. Requires the owner's browser session or `grants.manage`.
          */
         get: operations["listAppVendors"];
         put?: never;
@@ -1938,7 +1938,7 @@ export interface paths {
         get?: never;
         /**
          * Give a vendor to an app
-         * @description Gives an `app.<vendor>` namespace to the app with the client ID you name, which from then on registers types under it and reaches its items in place of whoever held it. Use it when an app registers again and gets a new client ID, or to give a namespace the owner holds to its app. Requires the owner's browser session, or `grants.manage` on one of the owner's own credentials: an app's sign-in, or any key minted through an app, is refused.
+         * @description Gives an `app.<vendor>` namespace to the app you name by client ID, which then registers types under it and reaches its items. Use it when an app's client ID changes. Requires the owner's browser session, or `grants.manage` on a key the owner made.
          */
         put: operations["giveAppVendor"];
         post?: never;
@@ -8894,15 +8894,21 @@ export interface components {
              * @example app.acme
              */
             vendor: string;
-            /** @description The OAuth client ID of the app that holds the namespace, or `null` while the owner holds it because no one app is known to have made its types. */
+            /**
+             * @description The OAuth client ID of the app that holds the namespace, or `null` while the owner holds it because no one app is known to have made its types.
+             * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
+             */
             client_id: string | null;
             /**
              * Format: date-time
              * @description When the namespace was first held, or when it was given to the app that holds it.
+             * @example 2026-11-21T09:30:00.000Z
              */
             claimed_at: string;
         };
+        /** @description A page holding every held `app.<vendor>` namespace. */
         AppVendorPage: {
+            /** @description Every held namespace, by name. */
             data: components["schemas"]["AppVendor"][];
             /** @description Always `null`: every binding comes in one page. */
             next_cursor: null;
@@ -20036,7 +20042,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: you lack `metadata.types:write`, guidance needs `schema.write`, the identifier is under `core.*`, `system.*`, `marfa.*` or `common.*`, or you are an app and the identifier is under an `app.<vendor>` namespace another app or the owner holds (`details.namespace` names it). Install the plugin to register its `common.*` types.
+             * @description - `forbidden`: you lack `metadata.types:write`, guidance needs `schema.write`, the identifier is under `core.*`, `system.*`, `marfa.*` or `common.*` (install its plugin), or you are an app and another app or the owner holds its `app.<vendor>` namespace (`details.namespace`).
              *     - `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` (`details.grant` names it).
              */
             403: {
@@ -33018,7 +33024,10 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    /** @description The OAuth client ID of the app to give the namespace to. `GET /grants` lists each app's `client_id`. */
+                    /**
+                     * @description The OAuth client ID of the app to give the namespace to. `GET /grants` lists each app's `client_id`.
+                     * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
+                     */
                     client_id: string;
                 };
             };
