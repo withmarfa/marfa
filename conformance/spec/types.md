@@ -594,7 +594,7 @@ If `POST /types` or `PUT /types/{id}` names a key the type schema does not defin
 
 ### `types/compatible-with-removed`
 
-If `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names `compatible_with`, then the server MUST answer `400 invalid_schema` with `details.errors` naming `compatible_with`.
+If an otherwise valid type definition sent to `POST /types`, `PUT /types/{id}` or `POST /types/normalize` names `compatible_with` at its top level, then the server MUST answer `400 invalid_schema` with `details.errors` naming `compatible_with`.
 
 **Reason:** Marfa reads no such key now that a type's items are read as another's only through its `parent`, so a definition that kept it would claim a promise nothing holds.
 
