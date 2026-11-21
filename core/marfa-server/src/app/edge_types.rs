@@ -376,34 +376,16 @@ pub fn write_restored(unit: &Unit<'_, '_>, plan: Restoring) -> Result<()> {
     instance::raise_reach(unit.tx())
 }
 
+/// A plugin may only widen an edge type the instance holds; its names and labels stay.
 pub fn install(unit: &Unit<'_, '_>, catalog: &Catalog, definitions: &[Obj]) -> Result<()> {
     let mut named: Vec<(String, String)> = Vec::new();
     let mut changed = false;
     for body in definitions {
         let id = text_of(body, "id").unwrap_or_default().to_string();
-        if shipped(&id)? {
-            return Err(Refusal::new(
-                Code::Conflict,
-                format!("{id} is a core edge type and cannot be redefined"),
-            )
-            .with_detail("edge_type", id.as_str()));
-        }
-        request_shape(body).map_err(refusal_of)?;
-        if !edge_id(&id) {
-            return Err(Refusal::validation("Invalid edge-type identifier")
-                .with_detail("edge_type", id.as_str()));
-        }
-        if body.contains_key("extends") || body.contains_key("evolve_constraints") {
-            return Err(Refusal::validation(
-                "A plugin's edge type does not support `extends` or `evolve_constraints`",
-            )
-            .with_detail("edge_type", id.as_str()));
-        }
-        let unread = unread_edge_keys(body);
-        if !unread.is_empty() {
-            return Err(refusal_of(EdgeIssues::Schema(unread)));
-        }
         let existing = catalog.edge_type(&id);
+        if let Some(held) = existing {
+            require_names(&unit.caller, &id, text_of(held, "reverse_name"))?;
+        }
         let taken = |name: &str| {
             named
                 .iter()
@@ -411,7 +393,8 @@ pub fn install(unit: &Unit<'_, '_>, catalog: &Catalog, definitions: &[Obj]) -> R
                 .map(|(_, owner)| owner.clone())
                 .or_else(|| holder_of(catalog, name).filter(|owner| *owner != id))
         };
-        let built = edge_type_from_request(body, &taken, Judging::Register).map_err(refusal_of)?;
+        let built = marfa_rules::plugin::judge_edge_type(body, &taken)
+            .map_err(|issues| refusal_of(issues).with_detail("edge_type", id.as_str()))?;
         named.push((id.clone(), id.clone()));
         if let Some(reverse) = text_of(&built, "reverse_name") {
             named.push((reverse.to_string(), id.clone()));
@@ -419,7 +402,12 @@ pub fn install(unit: &Unit<'_, '_>, catalog: &Catalog, definitions: &[Obj]) -> R
         match existing {
             Some(held) if *held == built => {}
             Some(held) => {
-                let changes = constraint_evolution_changes(held, &built);
+                let mut changes = constraint_evolution_changes(held, &built);
+                for key in ["label", "reverse_label"] {
+                    if presented(held.clone()).get(key) != presented(built.clone()).get(key) {
+                        changes.push(key);
+                    }
+                }
                 if !changes.is_empty() {
                     return Err(Refusal::new(
                         Code::Conflict,

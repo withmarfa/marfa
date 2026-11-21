@@ -8,7 +8,8 @@ use serde_json::{Map, Value, json};
 use crate::error::RuleError;
 use crate::schema::{
     EdgeIssues, FolderVerdict, Judging, Obj, Problem, Registry, TypeFile, check_plugin_type_files,
-    edge_type_from_request, icon_issue, is_guidance_file, is_type_file, request_shape,
+    edge_id, edge_type_from_request, icon_issue, is_guidance_file, is_type_file, request_shape,
+    unread_edge_keys,
 };
 
 /// The bundle format this build reads and writes.
@@ -451,12 +452,47 @@ fn edge_type_problem(path: &str, issues: EdgeIssues) -> Problem {
     }
 }
 
+fn is_shipped_edge(id: &str) -> bool {
+    crate::builtin::shipped_edge_types().is_ok_and(|held| {
+        held.iter()
+            .any(|edge| edge.get("id").and_then(Value::as_str) == Some(id))
+    })
+}
+
 /// Judges an edge type as installing registers it, against the names `taken` already holds.
 pub fn judge_edge_type(
     definition: &Obj,
     taken: &dyn Fn(&str) -> Option<String>,
 ) -> Result<Obj, EdgeIssues> {
+    let id = definition
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if is_shipped_edge(id) {
+        return Err(EdgeIssues::Conflict {
+            message: format!("{id} is a core edge type and cannot be redefined"),
+            field: Some("id"),
+            held_by: Some(id.to_string()),
+        });
+    }
     request_shape(definition)?;
+    if !edge_id(id) {
+        return Err(EdgeIssues::Validation {
+            message: "Invalid edge-type identifier".into(),
+            field: Some("id".into()),
+        });
+    }
+    if definition.contains_key("extends") || definition.contains_key("evolve_constraints") {
+        return Err(EdgeIssues::Validation {
+            message: "A plugin's edge type does not support `extends` or `evolve_constraints`"
+                .into(),
+            field: None,
+        });
+    }
+    let unread = unread_edge_keys(definition);
+    if !unread.is_empty() {
+        return Err(EdgeIssues::Schema(unread));
+    }
     edge_type_from_request(definition, taken, Judging::Register)
 }
 
@@ -700,6 +736,70 @@ fn number(field: &Value, key: &str) -> Option<f64> {
     field.get(key).and_then(Value::as_f64)
 }
 
+fn is_required(field: &Value) -> bool {
+    field.get("required") == Some(&Value::Bool(true))
+}
+
+fn group_of(field: &Value, key: &str, word: &str) -> Option<Value> {
+    field
+        .get(key)
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+        .find(|held| held.get("value").and_then(Value::as_str) == Some(word))
+        .and_then(|held| held.get("group").cloned())
+}
+
+/// Absent, empty or naming `*` takes every type.
+fn constraints(field: &Value) -> Option<Vec<String>> {
+    let named: Vec<String> = field
+        .get("type_constraints")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect();
+    (!named.is_empty() && !named.iter().any(|held| held == "*")).then_some(named)
+}
+
+fn members(field: &Value, key: &str) -> Map<String, Value> {
+    field
+        .get(key)
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Compares each member `before` holds with `after`, and refuses a member `after` adds as required.
+fn members_narrowings(
+    path: &str,
+    before: &Map<String, Value>,
+    after: &Map<String, Value>,
+    out: &mut Vec<Narrowing>,
+) {
+    for (name, member) in before {
+        let at = format!("{path}.{name}");
+        match after.get(name) {
+            Some(next) => field_narrowings(&at, member, next, out),
+            None => out.push(narrowing(
+                at.clone(),
+                format!("{at} is removed, which a newer version cannot do"),
+            )),
+        }
+    }
+    for (name, member) in after {
+        if !before.contains_key(name) && is_required(member) {
+            let at = format!("{path}.{name}");
+            out.push(narrowing(
+                at.clone(),
+                format!("{at} is added as required, which a newer version cannot do"),
+            ));
+        }
+    }
+}
+
 fn field_narrowings(path: &str, before: &Value, after: &Value, out: &mut Vec<Narrowing>) {
     for key in ["type", "items_type", "format"] {
         if before.get(key) != after.get(key) {
@@ -710,6 +810,12 @@ fn field_narrowings(path: &str, before: &Value, after: &Value, out: &mut Vec<Nar
             return;
         }
     }
+    if !is_required(before) && is_required(after) {
+        out.push(narrowing(
+            path.to_string(),
+            format!("{path} becomes required, which a newer version cannot do"),
+        ));
+    }
     for key in ["status_values", "enum_values"] {
         let kept = words(after, key);
         for word in words(before, key) {
@@ -717,6 +823,13 @@ fn field_narrowings(path: &str, before: &Value, after: &Value, out: &mut Vec<Nar
                 out.push(narrowing(
                     format!("{path}.{key}.{word}"),
                     format!("{path} drops {word} from {key}, which a newer version cannot do"),
+                ));
+            } else if group_of(before, key, &word) != group_of(after, key, &word) {
+                out.push(narrowing(
+                    format!("{path}.{key}.{word}"),
+                    format!(
+                        "{path} moves {word} to another group, which a newer version cannot do"
+                    ),
                 ));
             }
         }
@@ -745,28 +858,28 @@ fn field_narrowings(path: &str, before: &Value, after: &Value, out: &mut Vec<Nar
             format!("{path} raises minimum, which a newer version cannot do"),
         ));
     }
-    let members = |field: &Value| {
-        field
-            .get("items_fields")
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default()
+    let narrower = match (constraints(before), constraints(after)) {
+        (_, None) => false,
+        (None, Some(_)) => true,
+        (Some(held), Some(next)) => held.iter().any(|named| !next.contains(named)),
     };
-    let after_members = members(after);
-    for (name, member) in members(before) {
-        let at = format!("{path}.items_fields.{name}");
-        match after_members.get(&name) {
-            Some(next) => field_narrowings(&at, &member, next, out),
-            None => out.push(narrowing(
-                at.clone(),
-                format!("{at} is removed, which a newer version cannot do"),
-            )),
-        }
+    if narrower {
+        out.push(narrowing(
+            format!("{path}.type_constraints"),
+            format!("{path} takes fewer types, which a newer version cannot do"),
+        ));
     }
+    members_narrowings(
+        &format!("{path}.items_fields"),
+        &members(before, "items_fields"),
+        &members(after, "items_fields"),
+        out,
+    );
 }
 
 /// What `next` changes in `stored` beyond adding: a removed field, status word, enum value,
-/// table or column, a field whose kind changes, a limit made tighter, or a field made required.
+/// table or column, a word moved to another group, a field whose kind changes, a limit made
+/// tighter anywhere, or a field, member or column made or added as required.
 pub fn narrowings(stored: &Obj, next: &Obj) -> Vec<Narrowing> {
     let mut out = Vec::new();
     if stored.get("parent") != next.get("parent") {
@@ -775,20 +888,11 @@ pub fn narrowings(stored: &Obj, next: &Obj) -> Vec<Narrowing> {
             "The type's parent changes, which a newer version cannot do".into(),
         ));
     }
-    let after = objects(next, "fields");
-    for (name, field) in objects(stored, "fields") {
-        let path = format!("fields.{name}");
-        match after.get(&name) {
-            Some(next) => field_narrowings(&path, &field, next, &mut out),
-            None => out.push(narrowing(
-                path.clone(),
-                format!("{path} is removed, which a newer version cannot do"),
-            )),
-        }
-    }
+    let (before, after) = (objects(stored, "fields"), objects(next, "fields"));
+    members_narrowings("fields", &before, &after, &mut out);
     let was_required = required_names(stored);
     for name in required_names(next) {
-        if !was_required.contains(&name) && objects(stored, "fields").contains_key(&name) {
+        if !was_required.contains(&name) {
             out.push(narrowing(
                 format!("fields.{name}"),
                 format!("fields.{name} becomes required, which a newer version cannot do"),
@@ -805,30 +909,15 @@ pub fn narrowings(stored: &Obj, next: &Obj) -> Vec<Narrowing> {
             ));
             continue;
         };
-        let columns = |table: &Value| {
-            table
-                .get("columns")
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default()
-        };
-        let kept = columns(next);
-        for (column, held) in columns(&table) {
-            let at = format!("{path}.columns.{column}");
-            match kept.get(&column) {
-                Some(next) if next.get("type") != held.get("type") => out.push(narrowing(
-                    at.clone(),
-                    format!("{at} changes its type, which a newer version cannot do"),
-                )),
-                Some(_) => {}
-                None => out.push(narrowing(
-                    at.clone(),
-                    format!("{at} is removed, which a newer version cannot do"),
-                )),
-            }
-        }
+        members_narrowings(
+            &format!("{path}.columns"),
+            &members(&table, "columns"),
+            &members(next, "columns"),
+            &mut out,
+        );
     }
     out.sort_by(|a, b| a.path.cmp(&b.path));
+    out.dedup_by(|a, b| a.path == b.path);
     out
 }
 
@@ -864,8 +953,66 @@ pub fn provisional(definition: &Obj) -> Obj {
     shaped
 }
 
-/// Each clash `next`, the catalog with the bundle's types in it, holds below the types in `changed`.
-pub fn child_clashes(next: &Registry, changed: &[&str]) -> Vec<ChildClash> {
+/// The nearest type at or above `from` whose own `field` declares the status word `word`.
+fn declaring(registry: &Registry, from: &str, field: &str, word: &str) -> Option<String> {
+    let mut seen = BTreeSet::new();
+    let mut cursor = Some(from);
+    while let Some(at) = cursor {
+        if !seen.insert(at) {
+            return None;
+        }
+        let row = registry.get(at)?;
+        if let Some(own) = row.get("fields").and_then(|fields| fields.get(field))
+            && words(own, "status_values").iter().any(|held| held == word)
+        {
+            return Some(at.to_string());
+        }
+        cursor = row.get("parent").and_then(Value::as_str);
+    }
+    None
+}
+
+fn clashes_in(registry: &Registry, child: &Obj, child_id: &str) -> Vec<ChildClash> {
+    let mut clashes: Vec<ChildClash> = crate::schema::stored_shape_conflicts(child, registry)
+        .into_iter()
+        .map(|conflict| ChildClash {
+            type_id: child_id.into(),
+            field: conflict.field,
+            attribute: conflict.attribute.to_string(),
+            inherited_from: conflict.owner,
+            inherited: conflict.inherited,
+            declared: conflict.declared,
+        })
+        .collect();
+    let Some(parent) = child.get("parent").and_then(Value::as_str) else {
+        return clashes;
+    };
+    let ancestry = registry.ancestry(parent);
+    for (field, definition) in objects(child, "fields") {
+        let Some(held) = ancestry.get(&field) else {
+            continue;
+        };
+        let inherited = words(&Value::Object(held.definition.clone()), "status_values");
+        for word in words(&definition, "status_values") {
+            if inherited.contains(&word) {
+                clashes.push(ChildClash {
+                    type_id: child_id.into(),
+                    field: format!("{field}.status_values"),
+                    attribute: "status_values".into(),
+                    inherited_from: declaring(registry, parent, &field, &word)
+                        .unwrap_or_else(|| held.owner.clone()),
+                    inherited: word.clone(),
+                    declared: word,
+                });
+            }
+        }
+    }
+    clashes
+}
+
+/// Each clash below the types in `changed` that `next`, the catalog with the bundle's types in
+/// it, holds and `before` did not.
+pub fn child_clashes(before: &Registry, next: &Registry, changed: &[&str]) -> Vec<ChildClash> {
     let mut clashes = Vec::new();
     let mut seen = BTreeSet::new();
     for id in changed {
@@ -876,38 +1023,15 @@ pub fn child_clashes(next: &Registry, changed: &[&str]) -> Vec<ChildClash> {
             if changed.contains(&child_id) || !seen.insert(child_id.to_string()) {
                 continue;
             }
-            for conflict in crate::schema::stored_shape_conflicts(child, next) {
-                clashes.push(ChildClash {
-                    type_id: child_id.into(),
-                    field: conflict.field,
-                    attribute: conflict.attribute.to_string(),
-                    inherited_from: conflict.owner,
-                    inherited: conflict.inherited,
-                    declared: conflict.declared,
-                });
-            }
-            let Some(parent) = child.get("parent").and_then(Value::as_str) else {
-                continue;
-            };
-            let ancestry = next.ancestry(parent);
-            for (field, definition) in objects(child, "fields") {
-                let Some(held) = ancestry.get(&field) else {
-                    continue;
-                };
-                let inherited = words(&Value::Object(held.definition.clone()), "status_values");
-                for word in words(&definition, "status_values") {
-                    if inherited.contains(&word) {
-                        clashes.push(ChildClash {
-                            type_id: child_id.into(),
-                            field: format!("{field}.status_values"),
-                            attribute: "status_values".into(),
-                            inherited_from: held.owner.clone(),
-                            inherited: word.clone(),
-                            declared: word,
-                        });
-                    }
-                }
-            }
+            let standing = before
+                .get(child_id)
+                .map(|held| clashes_in(before, held, child_id))
+                .unwrap_or_default();
+            clashes.extend(
+                clashes_in(next, child, child_id)
+                    .into_iter()
+                    .filter(|clash| !standing.contains(clash)),
+            );
         }
     }
     clashes
@@ -1098,6 +1222,185 @@ mod tests {
             .map(|held| held.path)
             .collect();
         assert_eq!(paths, ["fields.kind", "fields.reporter"]);
+    }
+
+    fn paths(stored: &Obj, next: &Obj) -> Vec<String> {
+        narrowings(stored, next)
+            .into_iter()
+            .map(|held| held.path)
+            .collect()
+    }
+
+    #[test]
+    fn a_newer_version_may_not_add_a_requirement_tighten_a_column_or_move_a_word() {
+        let stored = obj(json!({
+            "id": "shapes.thing",
+            "fields": {
+                "stage": { "type": "status", "status_values": [
+                    { "value": "open", "group": "not_started" },
+                    { "value": "shut", "group": "completed" }
+                ] },
+                "parts": { "type": "array", "items_type": "object",
+                    "items_fields": { "name": { "type": "string" } } },
+                "link": { "type": "item", "type_constraints": ["core.note", "core.task"] }
+            },
+            "tables": { "lines": { "columns": { "note": { "type": "string", "max_length": 100 } } } }
+        }));
+        let mut grown = stored.clone();
+        grown["fields"]["due"] = json!({ "type": "date" });
+        grown["fields"]["parts"]["items_fields"]["size"] = json!({ "type": "integer" });
+        grown["tables"]["lines"]["columns"]["extra"] = json!({ "type": "string" });
+        grown["fields"]["link"]["type_constraints"] = json!(["*"]);
+        assert!(
+            paths(&stored, &grown).is_empty(),
+            "{:?}",
+            paths(&stored, &grown)
+        );
+        let changed = |change: &dyn Fn(&mut Obj)| {
+            let mut next = stored.clone();
+            change(&mut next);
+            paths(&stored, &next)
+        };
+        assert_eq!(
+            changed(&|next| next["fields"]["due"] = json!({ "type": "date", "required": true })),
+            ["fields.due"]
+        );
+        assert_eq!(
+            changed(&|next| {
+                next.insert("required".into(), json!(["due"]));
+            }),
+            ["fields.due"]
+        );
+        assert_eq!(
+            changed(
+                &|next| next["fields"]["parts"]["items_fields"]["name"]["required"] = json!(true)
+            ),
+            ["fields.parts.items_fields.name"]
+        );
+        assert_eq!(
+            changed(&|next| next["fields"]["parts"]["items_fields"]["size"] =
+                json!({ "type": "integer", "required": true })),
+            ["fields.parts.items_fields.size"]
+        );
+        assert_eq!(
+            changed(&|next| next["tables"]["lines"]["columns"]["note"]["max_length"] = json!(50)),
+            ["tables.lines.columns.note.max_length"]
+        );
+        assert_eq!(
+            changed(&|next| next["tables"]["lines"]["columns"]["extra"] =
+                json!({ "type": "string", "required": true })),
+            ["tables.lines.columns.extra"]
+        );
+        assert_eq!(
+            changed(
+                &|next| next["fields"]["stage"]["status_values"][1]["group"] = json!("canceled")
+            ),
+            ["fields.stage.status_values.shut"]
+        );
+        assert_eq!(
+            changed(&|next| next["fields"]["link"]["type_constraints"] = json!(["core.note"])),
+            ["fields.link.type_constraints"]
+        );
+    }
+
+    fn registry(rows: Vec<Value>) -> Registry {
+        Registry::new(rows.into_iter().map(obj))
+    }
+
+    fn stage(words: &[&str]) -> Value {
+        json!({ "type": "status", "status_values": words
+            .iter()
+            .map(|word| json!({ "value": word, "group": "not_started" }))
+            .collect::<Vec<_>>() })
+    }
+
+    #[test]
+    fn a_word_clash_names_the_type_that_declared_the_word_and_a_standing_clash_is_not_reported() {
+        let middle = json!({ "id": "user.middle", "parent": "family.base",
+            "fields": { "stage": stage(&["waiting"]) } });
+        let low = json!({ "id": "user.low", "parent": "user.middle",
+            "fields": { "stage": stage(&["parked"]) } });
+        let base =
+            |words: &[&str]| json!({ "id": "family.base", "fields": { "stage": stage(words) } });
+        let before = registry(vec![base(&["open"]), middle.clone(), low.clone()]);
+        let next = registry(vec![base(&["open", "parked"]), middle.clone(), low.clone()]);
+        let clashes = child_clashes(&before, &next, &["family.base"]);
+        assert_eq!(clashes.len(), 1, "{clashes:?}");
+        assert_eq!(clashes[0].type_id, "user.low");
+        assert_eq!(clashes[0].inherited, "parked");
+        assert_eq!(clashes[0].inherited_from, "family.base");
+        // The same clash, already standing before the change, is not this version's.
+        assert!(child_clashes(&next, &next, &["family.base"]).is_empty());
+    }
+
+    #[test]
+    fn an_edge_type_is_judged_as_installing_does_and_the_check_applies_it() {
+        let none = |_: &str| None;
+        for (definition, said) in [
+            (
+                json!({ "id": "about", "cardinality": "many-to-many" }),
+                "conflict",
+            ),
+            (
+                json!({ "id": "cites", "cardinality": "many-to-many", "reverse_name": "about" }),
+                "conflict",
+            ),
+            (
+                json!({ "id": "Bad_Name", "cardinality": "many-to-many" }),
+                "validation",
+            ),
+            (
+                json!({ "id": "cites", "cardinality": "many-to-many", "extends": "about" }),
+                "validation",
+            ),
+            (
+                json!({ "id": "cites", "cardinality": "many-to-many", "stray": true }),
+                "schema",
+            ),
+        ] {
+            let judged = judge_edge_type(&obj(definition.clone()), &none);
+            let kind = match judged {
+                Err(EdgeIssues::Conflict { .. }) => "conflict",
+                Err(EdgeIssues::Validation { .. }) => "validation",
+                Err(EdgeIssues::Schema(_)) => "schema",
+                other => panic!("{definition}: {other:?}"),
+            };
+            assert_eq!(kind, said, "{definition}");
+        }
+        assert!(
+            judge_edge_type(
+                &obj(json!({ "id": "cites", "cardinality": "many-to-many" })),
+                &none
+            )
+            .is_ok()
+        );
+        let mut files = folder();
+        files[3] = file(
+            "edge-types/about.json",
+            json!({ "id": "about", "cardinality": "many-to-many" }),
+        );
+        let verdict = check_source(&files, &shipped_registry().unwrap()).unwrap();
+        assert!(
+            verdict.problems.iter().any(|held| held.code == "conflict"),
+            "{verdict:?}"
+        );
+    }
+
+    #[test]
+    fn the_check_refuses_a_type_with_no_fields_as_installing_does() {
+        let mut files = folder();
+        files[1] = file(
+            "types/common.ticket.json",
+            json!({ "id": "common.ticket", "parent": "core.task", "description": "No fields." }),
+        );
+        let verdict = check_source(&files, &shipped_registry().unwrap()).unwrap();
+        let problems = &verdict.types.files[0].problems;
+        assert!(
+            problems
+                .iter()
+                .any(|held| held.code == "missing_required_field"),
+            "{problems:?}"
+        );
     }
 
     #[test]

@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use super::App;
 use super::access::{Caller, Level, Permission};
 use super::catalog::{self, Catalog, Origin, Snapshot};
+use super::clock::Stamp;
 use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
 use super::{edge_types, instance, types};
@@ -152,6 +153,15 @@ fn types_from(catalog: &Catalog, name: &str) -> Vec<String> {
     ids
 }
 
+/// The edge types the plugin brought that the instance still holds.
+fn edge_types_held(installed: &Installed, catalog: &Catalog) -> Vec<String> {
+    installed
+        .ids("edge_types")
+        .into_iter()
+        .filter(|id| catalog.edge_type(id).is_some())
+        .collect()
+}
+
 fn presented(installed: &Installed, catalog: &Catalog) -> Value {
     json!({
         "name": installed.name,
@@ -162,7 +172,7 @@ fn presented(installed: &Installed, catalog: &Catalog) -> Value {
         "maker": installed.text("maker"),
         "marfa": installed.text("marfa"),
         "types": types_from(catalog, &installed.name),
-        "edge_types": installed.ids("edge_types"),
+        "edge_types": edge_types_held(installed, catalog),
         "connector": installed.manifest.get("connector").cloned().unwrap_or(Value::Null),
         "installed_at": installed.installed_at,
         "installed_by": installed.installed_by.clone().unwrap_or(Value::Null),
@@ -276,8 +286,24 @@ fn require_install(caller: &Caller, bundle: &Obj) -> Result<()> {
     for id in bundle_ids(bundle, "types") {
         caller.require_type(id, Level::Write)?;
     }
-    for id in bundle_ids(bundle, "edge_types") {
-        caller.require_edge(id, Level::Write)?;
+    for edge in bundle_objects(bundle, "edge_types") {
+        for key in ["id", "reverse_name"] {
+            if let Some(name) = edge.get(key).and_then(Value::as_str) {
+                caller.require_edge(name, Level::Write)?;
+            }
+        }
+    }
+    let guided = bundle_objects(bundle, "types").iter().any(|definition| {
+        definition
+            .get("guidance")
+            .is_some_and(|held| !held.is_null())
+    });
+    if guided && caller.app_made() {
+        return Err(Refusal::new(
+            Code::Forbidden,
+            "Installing a plugin whose types carry guidance is the owner's to do. An app, or a key an app made, can install it only without guidance.",
+        )
+        .with_detail("changes", vec!["guidance"]));
     }
     Ok(())
 }
@@ -334,7 +360,13 @@ pub async fn install(app: &App, caller: &Caller, bundle: Obj) -> Result<(Outcome
                 name: name.clone(),
                 version: version.to_string(),
             };
-            let plan = types::write::plan_install(caller, &catalog, &name, &definitions)?;
+            let plan = types::write::plan_install(
+                caller,
+                &catalog,
+                &name,
+                &definitions,
+                held.as_ref().map(|held| &held.manifest),
+            )?;
             edge_types::install(unit, &catalog, &bundle_objects(&bundle, "edge_types"))?;
             let before = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             types::write::write_install(unit, &cache, &before, plan, &origin)?;
@@ -392,7 +424,7 @@ pub async fn remove(app: &App, caller: &Caller, name: String) -> Result<Value> {
             "removed": { "name": held.name, "version": held.version },
             "kept": {
                 "types": types_from(&catalog, &name),
-                "edge_types": held.ids("edge_types"),
+                "edge_types": edge_types_held(&held, &catalog),
             },
         }))
     })
@@ -421,6 +453,21 @@ pub fn archive_lines(tx: &Transaction<'_>) -> Result<Vec<Value>> {
         .collect())
 }
 
+/// A sign-in as `provenance.created_by` and `installed_by` name it.
+pub fn is_actor(value: &Value) -> bool {
+    let Some(actor) = value.as_object() else {
+        return false;
+    };
+    let text = |key: &str| actor.get(key).and_then(Value::as_str);
+    actor.len() == 3
+        && matches!(
+            text("kind"),
+            Some("local" | "server" | "key" | "browser" | "app")
+        )
+        && text("id").is_some_and(|id| !id.is_empty())
+        && text("name").is_some()
+}
+
 pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
     let line = body.as_object().ok_or("is not an object")?;
     let read = |key: &str| line.get(key).and_then(Value::as_str).map(str::to_string);
@@ -439,12 +486,18 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, String> {
     {
         return Err("names another name or version than its bundle".into());
     }
-    let installed_at = read("installed_at").ok_or("names no installed_at")?;
-    let updated_at = read("updated_at").ok_or("names no updated_at")?;
-    let installed_by = line
-        .get("installed_by")
-        .filter(|by| by.is_object())
-        .cloned();
+    let stamped = |key: &str| {
+        read(key)
+            .filter(|at| Stamp::parsed(at).is_some())
+            .ok_or_else(|| format!("names no {key} time in the stored form"))
+    };
+    let installed_at = stamped("installed_at")?;
+    let updated_at = stamped("updated_at")?;
+    let installed_by = match line.get("installed_by") {
+        Some(Value::Null) => None,
+        Some(by) if is_actor(by) => Some(by.clone()),
+        _ => return Err("names who installed it in no form a sign-in is named".into()),
+    };
     Ok(Archived {
         name: name.clone(),
         line: Installed {

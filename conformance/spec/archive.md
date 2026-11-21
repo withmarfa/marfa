@@ -992,7 +992,7 @@ If the `manifest.json` of an archive names a `version` greater than the archive 
 
 ### `archive/restore-version-one`
 
-When `POST /restore` reads an archive at version 1, the server MUST read its manifest without `plugin_count` and register a `type` line whose `provenance.origin` is `user` as a type with the origin `registered`.
+When `POST /restore` reads an archive at version 1, the server MUST read its manifest without `plugin_count` and register a `type` line whose `provenance.origin` is `user` or missing as a type with the origin `registered`.
 
 **Reason:** version 1 named every registered type `user` and carried no plugin, so an older backup still restores.
 
@@ -1000,9 +1000,17 @@ When `POST /restore` reads an archive at version 1, the server MUST read its man
 
 ### `archive/restore-type-origin`
 
-If `POST /restore` reads an archive at version 2 with a `type` line whose `provenance.origin` is neither `registered` nor `plugin`, or is `plugin` without a `provenance.plugin` naming a plugin `name` and `version`, then the server MUST answer `400 validation_error` and register no type of the archive.
+If `POST /restore` reads an archive at version 2 with a `type` line whose `provenance.origin` is missing, is not text, is neither `registered` nor `plugin`, or is `plugin` without a `provenance.plugin` naming a plugin `name` and `version`, or whose `provenance.created_by` is neither `null` nor a sign-in's `kind`, `id` and `name`, then the server MUST answer `400 validation_error` and register no type of the archive.
 
-**Tests:** `compliance/plugins.test.ts › refuses a version 2 archive whose type names the origin user`.
+**Tests:** `compliance/plugins.test.ts › refuses a version 2 archive whose type names the origin user`, `› refuses a type whose origin is not text, and one whose creator is not a sign-in`.
+
+### `archive/restore-plugin-line`
+
+If `POST /restore` reads a `plugin` line whose `bundle` `POST /plugins` would refuse for its shape, whose `name` or `version` differs from its bundle's, whose `installed_at` or `updated_at` is not a time in the form the server writes, or whose `installed_by` is neither `null` nor a sign-in's `kind`, `id` and `name`, then the server MUST answer `400 validation_error` naming the line and keep no record of the archive.
+
+**Reason:** a restored record is answered by `GET /plugins/{name}`, so it holds only what that answer's schema allows.
+
+**Tests:** `compliance/plugins.test.ts › refuses a plugin line whose times are not in the stored form, or whose installer is not a sign-in`.
 
 ### `archive/export-plugins`
 
