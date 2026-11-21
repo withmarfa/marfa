@@ -33052,7 +33052,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the vendor is not an `app.<vendor>` namespace, `client_id` is not a string, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.
+             * @description - `validation_error`: the vendor is not an `app.<vendor>` namespace, the body is malformed, `client_id` is not a string, the body has a field this endpoint doesn't take, or the query has a parameter it doesn't take.
              *     - `missing_required_field`: `client_id` is missing.
              */
             400: {
