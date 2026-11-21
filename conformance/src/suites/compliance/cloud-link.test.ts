@@ -520,6 +520,32 @@ describe("while a link is linking", () => {
   );
 
   it(
+    "keeps a poll's answer when the write after it fails, and polls again no sooner than the interval it gave",
+    async () => {
+      const linkable = await boot("cloud-poll-write-fails", { interval: 1 });
+      await start(linkable, "key", { sign_in_address: "keep" });
+      await linkable.cloud.waitFor("/link/poll", 1);
+      await linkable.server.setFault("fail:commit=cloud.link_poll");
+      linkable.cloud.slowDown(5);
+      // The witness: the write of the slowed interval failed.
+      await waitFor("the write of the interval to fail", async () => {
+        const fault = (await linkable.server.faults()).find(
+          (each) => each.name === "fail:commit",
+        );
+        return (fault?.fired ?? 0) >= 1 ? true : undefined;
+      });
+      const link = linkable.cloud.latest();
+      const slowed = link.slowedAt!;
+      const before = polls(linkable.cloud).length;
+      await linkable.cloud.waitFor("/link/poll", before + 1, 30_000);
+      const next = polls(linkable.cloud).find((poll) => poll.at > slowed)!;
+      expect(next.at - slowed).toBeGreaterThanOrEqual(4_750);
+      expect(link.tooSoon).toBe(0);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "polls again no sooner than the interval when Marfa Cloud refuses the credential just after approving",
     async () => {
       const linkable = await boot("cloud-fresh-refused", { interval: 2 });
@@ -915,35 +941,134 @@ describe("the sign-in address", () => {
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
+
+  it(
+    "does not move the sign-in address once fifteen minutes have passed since approval, though the Cloud address answers while the move is checked",
+    async () => {
+      const linkable = await boot("cloud-move-lapses-checking");
+      const before = await signInAddress(linkable);
+      const target = await gate(linkable.server.apiUrl, true);
+      cleanups.push(() => target.close());
+      await start(linkable, "socket", {
+        sign_in_address: "move",
+        confirm_sign_in_address_change: true,
+      });
+      linkable.cloud.approve({ address: target.address });
+      await target.asked;
+      const checks = linkable.cloud.requests.filter(
+        (request) => request.method === "GET" && request.path === "/link",
+      ).length;
+      await linkable.server.advanceClock(16 * 60_000);
+      target.open();
+      // Settled by the step after the move's: the check of the linked link.
+      await linkable.cloud.waitFor("/link", checks + 1);
+      expect(await signInAddress(linkable)).toBe(before);
+      const settled = await linkable.until(
+        "the move to wait for a person",
+        (s) => s.sign_in_address?.state !== "pending",
+      );
+      expect(settled.sign_in_address.state).toBe("waiting");
+      expect(
+        await audited(linkable, "cloud.sign_in_address_move"),
+      ).toHaveLength(0);
+      // The witness: the address answers as this instance, so a person can move to it.
+      const moved = await linkable.call("socket", "PATCH", "/config", {
+        sign_in_address: target.address,
+        confirm_sign_in_address_change: true,
+      });
+      expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "takes a confirmed move as done where the sign-in address is already the Cloud address, and writes and records nothing for it",
+    async () => {
+      const { linkable, linked } = await movedLink("cloud-move-already");
+      // The witness: a move from another address is recorded.
+      const moves = await audited(linkable, "cloud.sign_in_address_move");
+      expect(moves).toHaveLength(1);
+      const unlinked = await linkable.call(
+        "socket",
+        "DELETE",
+        "/cloud/link?confirm_sign_in_address_change=true",
+      );
+      expect(unlinked.status, JSON.stringify(unlinked.body)).toBe(200);
+      const set = await linkable.call("socket", "PATCH", "/config", {
+        sign_in_address: linked.address,
+        confirm_sign_in_address_change: true,
+      });
+      expect(set.status, JSON.stringify(set.body)).toBe(200);
+      const recorded = (await audited(linkable, "cloud.sign_in_address_move"))
+        .length;
+      const configs = (await audited(linkable, "config.update")).length;
+      await start(linkable, "socket", {
+        sign_in_address: "move",
+        confirm_sign_in_address_change: true,
+      });
+      linkable.cloud.approve({ address: linked.address });
+      const again = await linkable.until(
+        "the second link to be linked",
+        (s) => s.state === "linked",
+      );
+      expect(again.sign_in_address.state).toBe("moved");
+      // Settled by a later step: the check of the linked link.
+      const checks = linkable.cloud.requests.filter(
+        (request) => request.method === "GET" && request.path === "/link",
+      ).length;
+      await linkable.server.advanceClock(16 * 60_000);
+      await linkable.cloud.waitFor("/link", checks + 1);
+      expect(
+        await audited(linkable, "cloud.sign_in_address_move"),
+      ).toHaveLength(recorded);
+      expect(await audited(linkable, "config.update")).toHaveLength(configs);
+      expect(await signInAddress(linkable)).toBe(linked.address);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 });
 
-/** A stand-in for the Cloud address that answers as the server only once opened. */
+/**
+ * A stand-in for the Cloud address that answers as the server only once
+ * opened. Before that it answers 503, or, `held`, holds each request open.
+ */
 async function gate(
   apiUrl: string,
-): Promise<{ address: string; open(): void; close(): Promise<void> }> {
+  held = false,
+): Promise<{
+  address: string;
+  /** Settles when the first request arrives. */
+  asked: Promise<void>;
+  open(): void;
+  close(): Promise<void>;
+}> {
   let opened = false;
+  let arrived: () => void = () => {};
+  const asked = new Promise<void>((resolve) => (arrived = resolve));
+  const waiting: (() => void)[] = [];
   const server = createServer((incoming, response) => {
-    if (!opened) {
-      response.writeHead(503).end();
-      return;
-    }
-    void fetch(`${apiUrl}${incoming.url ?? "/"}`).then(async (answer) => {
-      response
-        .writeHead(answer.status, { "content-type": "application/json" })
-        .end(await answer.text());
-    });
+    arrived();
+    const answer = () =>
+      void fetch(`${apiUrl}${incoming.url ?? "/"}`).then(async (answer) => {
+        response
+          .writeHead(answer.status, { "content-type": "application/json" })
+          .end(await answer.text());
+      });
+    if (opened) answer();
+    else if (held) waiting.push(answer);
+    else response.writeHead(503).end();
   });
-  await new Promise<void>((resolve) =>
-    server.listen(0, "127.0.0.1", resolve),
-  );
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const bound = server.address();
   if (typeof bound !== "object" || bound === null) {
     throw new Error("the gate did not bind to a port");
   }
   return {
     address: `http://127.0.0.1:${String(bound.port)}`,
+    asked,
     open: () => {
       opened = true;
+      for (const answer of waiting.splice(0)) answer();
     },
     close: () =>
       new Promise<void>((resolve) => {
@@ -1110,6 +1235,37 @@ describe("unlinking", () => {
       });
       expect(await signInAddress(linkable)).toBe(before);
       expect(linkable.cloud.latest().unlinked).toBe(true);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "puts back the sign-in address in force just before the sign-in address last became the Cloud address",
+    async () => {
+      const { linkable, before, linked } = await movedLink(
+        "cloud-put-back-latest",
+      );
+      const other = await gate(linkable.server.apiUrl);
+      cleanups.push(() => other.close());
+      other.open();
+      const set = async (address: string) => {
+        const answer = await linkable.call("socket", "PATCH", "/config", {
+          sign_in_address: address,
+          confirm_sign_in_address_change: true,
+        });
+        expect(answer.status, JSON.stringify(answer.body)).toBe(200);
+      };
+      await set(other.address);
+      await set(linked.address);
+      // The witness: the address before the first move is another one.
+      expect(other.address).not.toBe(before);
+      const unlinked = await linkable.call(
+        "socket",
+        "DELETE",
+        "/cloud/link?confirm_sign_in_address_change=true",
+      );
+      expect(unlinked.status, JSON.stringify(unlinked.body)).toBe(200);
+      expect(await signInAddress(linkable)).toBe(other.address);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );

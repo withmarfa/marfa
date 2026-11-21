@@ -17,6 +17,7 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::addresses::Address;
 use crate::app::auth::carries_sessions;
+use crate::app::clock::Stamp;
 use crate::app::config::{self, Authority, Request};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::unit::Unit;
@@ -80,12 +81,23 @@ fn retried(due: Due, now_ms: i64, task: &'static str, refusal: &Refusal) -> Due 
 }
 
 /// A linking link as it is followed: when it is next asked about, and whether that is a poll.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct Asking {
     link_id: String,
     due: Due,
     /// Marfa Cloud refused the credential, so a newer one is polled for.
     poll_next: bool,
+    /// An answer whose write failed, written again before Marfa Cloud is asked again.
+    unwritten: Option<(Answered, Due)>,
+}
+
+/// What Marfa Cloud answered about a linking link that the link must keep.
+#[derive(Clone)]
+enum Answered {
+    Interval(i64),
+    Approved(Approved),
+    Linked(Linked),
+    Failed(&'static str, Option<String>),
 }
 
 #[derive(Default)]
@@ -188,6 +200,7 @@ async fn follow(app: &Arc<App>, plan: &mut Plan, link: &Link) -> Option<i64> {
                     link_id: link.link_id.clone(),
                     due: Due::after(link.started_at.ms().max(now_ms), link.interval_ms),
                     poll_next: false,
+                    unwritten: None,
                 },
             };
             if status::expired(link, now_ms) {
@@ -199,13 +212,24 @@ async fn follow(app: &Arc<App>, plan: &mut Plan, link: &Link) -> Option<i64> {
                 }
                 return Some(now_ms);
             }
-            if asking.due.at_ms <= now_ms {
-                match ask(app, link, &asking).await {
-                    Ok(asked) => asking = asked,
-                    Err(refusal) => asking.due = retried(asking.due, now_ms, "ask", &refusal),
-                }
+            if asking.unwritten.is_none() && asking.due.at_ms <= now_ms {
+                asking = ask(app, link, &asking).await;
             }
-            let at_ms = asking.due.at_ms;
+            if let Some((answered, due)) = asking.unwritten.take() {
+                let now_ms = app.clock.now_ms();
+                asking.unwritten = if due.at_ms > now_ms {
+                    Some((answered, due))
+                } else {
+                    match keep(app, &link.link_id, answered.clone()).await {
+                        Ok(_) => None,
+                        Err(refusal) => Some((answered, retried(due, now_ms, "keep", &refusal))),
+                    }
+                };
+            }
+            let at_ms = asking
+                .unwritten
+                .as_ref()
+                .map_or(asking.due.at_ms, |(_, due)| due.at_ms);
             plan.link = Some(asking);
             Some(if link.link_credential.is_none() {
                 at_ms.min(status::ceiling_ms(link.expires_at))
@@ -383,69 +407,74 @@ fn open(sealed: Option<&String>, setting: &str, app: &App) -> Option<Secret> {
 }
 
 /// Asks Marfa Cloud about a link that is linking: confirms an approved one, or polls.
-async fn ask(app: &Arc<App>, link: &Link, asking: &Asking) -> Result<Asking> {
-    let now_ms = app.clock.now_ms();
-    let next = |due: Due, poll_next: bool| Asking {
+async fn ask(app: &Arc<App>, link: &Link, asking: &Asking) -> Asking {
+    let failed = |now_ms: i64| asking.due.failed(now_ms, link.interval_ms);
+    let next = |due: Due, poll_next: bool, answered: Option<Answered>| Asking {
         link_id: link.link_id.clone(),
         due,
         poll_next,
+        unwritten: answered.map(|answered| (answered, Due::now(app.clock.now_ms()))),
     };
     let credential = open(link.link_credential.as_ref(), LINK_CREDENTIAL, app);
     if let Some(credential) = credential.filter(|_| !asking.poll_next) {
-        return Ok(
-            match client::send(app, Method::Get, "/link", Some(&credential)).await {
-                Ok(answer) if answer.status == 200 => {
-                    match confirmed(app, link, &answer.body).await? {
-                        true => next(Due::now(now_ms), false),
-                        false => next(asking.due.failed(now_ms, link.interval_ms), false),
-                    }
-                }
-                // A newer approval replaced the credential, so poll for it at the interval.
-                Ok(answer) if unauthorized(&answer) => {
-                    next(Due::after(now_ms, link.interval_ms), true)
-                }
-                Ok(_) | Err(_) => next(asking.due.failed(now_ms, link.interval_ms), false),
+        let answer = client::send(app, Method::Get, "/link", Some(&credential)).await;
+        let now_ms = app.clock.now_ms();
+        return match answer {
+            Ok(answer) if answer.status == 200 => match linked_of(&answer.body) {
+                Some(linked) => next(Due::now(now_ms), false, Some(Answered::Linked(linked))),
+                None => next(failed(now_ms), false, None),
             },
-        );
+            // A newer approval replaced the credential, so poll for it at the interval.
+            Ok(answer) if unauthorized(&answer) => {
+                next(Due::after(now_ms, link.interval_ms), true, None)
+            }
+            Ok(_) | Err(_) => next(failed(now_ms), false, None),
+        };
     }
     let Some(secret) = open(link.poll_secret.as_ref(), POLL_SECRET, app) else {
-        return Ok(next(
-            asking.due.failed(now_ms, link.interval_ms),
-            asking.poll_next,
-        ));
+        return next(failed(app.clock.now_ms()), asking.poll_next, None);
     };
     let polled = poll(app, &link.link_id, &secret).await;
     let now_ms = app.clock.now_ms();
-    Ok(match polled {
-        Polled::Waiting(interval_ms) => {
-            if interval_ms != link.interval_ms {
-                set_interval(app, &link.link_id, interval_ms).await?;
-            }
-            next(Due::after(now_ms, interval_ms), false)
-        }
+    match polled {
+        Polled::Waiting(interval_ms) => next(
+            Due::after(now_ms, interval_ms),
+            false,
+            (interval_ms != link.interval_ms).then_some(Answered::Interval(interval_ms)),
+        ),
         Polled::Approved(approved) => {
-            keep_approved(app, &link.link_id, approved).await?;
-            next(Due::now(now_ms), false)
+            next(Due::now(now_ms), false, Some(Answered::Approved(approved)))
         }
-        Polled::Ended(reason, message) => {
-            fail(app, &link.link_id, reason, message).await?;
-            next(Due::now(now_ms), false)
-        }
-        Polled::Unknown => {
-            fail(app, &link.link_id, "unlinked", None).await?;
-            next(Due::now(now_ms), false)
-        }
+        Polled::Ended(reason, message) => next(
+            Due::now(now_ms),
+            false,
+            Some(Answered::Failed(reason, message)),
+        ),
+        Polled::Unknown => next(
+            Due::now(now_ms),
+            false,
+            Some(Answered::Failed("unlinked", None)),
+        ),
         Polled::Later(wait_ms) => next(
             Due::after(now_ms, wait_ms.max(link.interval_ms)),
             asking.poll_next,
+            None,
         ),
-        Polled::Failed => next(
-            asking.due.failed(now_ms, link.interval_ms),
-            asking.poll_next,
-        ),
-    })
+        Polled::Failed => next(failed(now_ms), asking.poll_next, None),
+    }
 }
 
+/// Writes what Marfa Cloud answered to the link, if it is still `link_id`.
+async fn keep(app: &Arc<App>, link_id: &str, answered: Answered) -> Result<bool> {
+    match answered {
+        Answered::Interval(interval_ms) => set_interval(app, link_id, interval_ms).await,
+        Answered::Approved(approved) => keep_approved(app, link_id, approved).await,
+        Answered::Linked(linked) => link_up(app, link_id, linked).await,
+        Answered::Failed(reason, message) => fail(app, link_id, reason, message).await,
+    }
+}
+
+#[derive(Clone)]
 struct Approved {
     name: String,
     address: Address,
@@ -571,30 +600,38 @@ async fn keep_approved(app: &Arc<App>, link_id: &str, approved: Approved) -> Res
     .await
 }
 
-/// Takes the link as linked once its credential works; says whether the answer read.
-async fn confirmed(app: &Arc<App>, link: &Link, body: &Value) -> Result<bool> {
-    let (Some(name), Some(address), Some(linked_at)) = (
-        text_at(body, "name"),
-        text_at(body, "address")
+/// What Marfa Cloud answers about a link whose credential works.
+#[derive(Clone)]
+struct Linked {
+    name: String,
+    address: Address,
+    linked_at: Stamp,
+}
+
+fn linked_of(body: &Value) -> Option<Linked> {
+    Some(Linked {
+        name: text_at(body, "name")?,
+        address: text_at(body, "address")
             .and_then(|text| Address::parse(&text).ok())
-            .filter(carries_sessions),
-        stamp_at(body, "linked_at"),
-    ) else {
-        return Ok(false);
-    };
-    write_link(app, "cloud.linked", &link.link_id, move |unit, link| {
+            .filter(carries_sessions)?,
+        linked_at: stamp_at(body, "linked_at")?,
+    })
+}
+
+/// Takes the link as linked once its credential works.
+async fn link_up(app: &Arc<App>, link_id: &str, linked: Linked) -> Result<bool> {
+    write_link(app, "cloud.linked", link_id, move |unit, link| {
         if link.state != State::Linking {
             return Ok(());
         }
         link.state = State::Linked;
-        link.name = Some(name);
-        link.address = Some(address.origin().to_string());
-        link.linked_at = Some(linked_at);
+        link.name = Some(linked.name);
+        link.address = Some(linked.address.origin().to_string());
+        link.linked_at = Some(linked.linked_at);
         link.poll_secret = None;
         unit.audit("cloud_link", &link.link_id, None)
     })
-    .await?;
-    Ok(true)
+    .await
 }
 
 async fn fail(
@@ -622,10 +659,21 @@ async fn fail(
     .await
 }
 
+/// Whether `link` is still the link `link_id`, linked and with its move confirmed, at `now_ms`.
+fn moves_still(link: &Link, link_id: &str, now_ms: i64) -> bool {
+    link.link_id == link_id
+        && link.state == State::Linked
+        && link.sign_in_move == Move::Authorized
+        && !status::move_lapsed(link, now_ms)
+}
+
 /// Moves the sign-in address to the link's address, as the start confirmed.
 async fn carry_out_move(app: &Arc<App>, link: &Link) -> Result<()> {
     let address = status::cloud_address(link)
         .ok_or_else(|| Refusal::internal("the Marfa Cloud address does not read"))?;
+    if found_moved(app, &link.link_id, &address).await? {
+        return Ok(());
+    }
     let request = Request::sign_in_move(Some(&address), true, None, app.settings.sealer())?;
     let link_id = link.link_id.clone();
     config::update_with(
@@ -633,17 +681,19 @@ async fn carry_out_move(app: &Arc<App>, link: &Link) -> Result<()> {
         &Caller::Server,
         request,
         Authority::Confirmed,
-        move |unit, _| {
-            let current = store::read(unit.tx())?;
-            let still = current.is_some_and(|link| {
-                link.link_id == link_id
-                    && link.state == State::Linked
-                    && link.sign_in_move == Move::Authorized
-            });
+        move |unit, change| {
+            let still = store::read(unit.tx())?
+                .is_some_and(|link| moves_still(&link, &link_id, unit.instant.ms()));
             if !still {
                 return Err(Refusal::new(
                     Code::Conflict,
                     "The link changed before the sign-in address moved.",
+                ));
+            }
+            if change.before == address || change.after != address {
+                return Err(Refusal::new(
+                    Code::Conflict,
+                    "The sign-in address changed before it moved.",
                 ));
             }
             unit.audit_also("cloud.sign_in_address_move", "cloud_link", &link_id, None)
@@ -651,6 +701,35 @@ async fn carry_out_move(app: &Arc<App>, link: &Link) -> Result<()> {
     )
     .await?;
     Ok(())
+}
+
+/// Takes the move as done where the sign-in address is already `address`; says whether it was.
+async fn found_moved(app: &Arc<App>, link_id: &str, address: &Address) -> Result<bool> {
+    let reading = app.clone();
+    let sign_in = app.db.read(move |tx| sign_in_in(&reading, tx)).await?;
+    if sign_in != *address {
+        return Ok(false);
+    }
+    let writing = app.clone();
+    let link_id = link_id.to_string();
+    let address = address.clone();
+    app.write(&Caller::Server, "cloud.link_poll", move |unit| {
+        changing(unit, &writing, |unit| {
+            let tx = unit.tx();
+            let Some(mut link) =
+                store::read(tx)?.filter(|link| moves_still(link, &link_id, unit.instant.ms()))
+            else {
+                return Ok(false);
+            };
+            if sign_in_in(&writing, tx)? != address {
+                return Ok(false);
+            }
+            link.sign_in_move = Move::Done;
+            store::put(tx, &link)?;
+            Ok(true)
+        })
+    })
+    .await
 }
 
 /// Tells Marfa Cloud of an unlink where it is due, and says when it is next due.

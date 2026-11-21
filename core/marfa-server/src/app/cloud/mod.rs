@@ -552,7 +552,7 @@ pub fn after_config(unit: &Unit<'_, '_>, app: &App, change: &SignInChange) -> Re
     let arrived = cloud
         .as_ref()
         .is_some_and(|cloud| *cloud == change.after && *cloud != change.before);
-    if arrived && link.sign_in_move != Move::Done {
+    if arrived {
         link.sign_in_move = Move::Done;
         link.previous_sign_in_address = change
             .stored_before

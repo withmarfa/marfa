@@ -104,7 +104,7 @@ When a caller that cannot move the sign-in address, such as a key, sends `POST /
 
 While a link is linking, the server MUST NOT ask Marfa Cloud about it sooner than the `interval` of Marfa Cloud's last answer, including an answer of `slow_down`.
 
-**Tests:** `compliance/cloud-link.test.ts › asks no sooner than the interval Marfa Cloud gives, and no sooner than a slow_down asks`, `› polls again no sooner than the interval when Marfa Cloud refuses the credential just after approving`.
+**Tests:** `compliance/cloud-link.test.ts › asks no sooner than the interval Marfa Cloud gives, and no sooner than a slow_down asks`, `› polls again no sooner than the interval when Marfa Cloud refuses the credential just after approving`, `› keeps a poll's answer when the write after it fails, and polls again no sooner than the interval it gave`.
 
 ### `cloud/refused-credential-polls`
 
@@ -116,11 +116,19 @@ When Marfa Cloud answers `401` with `error.code` `unauthorized` to the link cred
 
 ### `cloud/failure-retried`
 
-If a request or a write the server makes to follow a link fails, then the server MUST try it again within ten seconds of the first failure.
+If a request or a write the server makes to follow a link fails, then the server MUST try it again within ten seconds of its first failure, or, where the `interval` of Marfa Cloud's last answer is longer, within that interval.
 
-**Reason:** a passing failure, such as a busy database, would otherwise hold a link for minutes.
+**Reason:** a passing failure, such as a busy database, would otherwise hold a link for minutes, and `cloud/poll-interval` sets how soon Marfa Cloud may be asked again.
 
-**Tests:** `compliance/cloud-link.test.ts › keeps following a link after a write of it fails, and links soon after`.
+**Tests:** `compliance/cloud-link.test.ts › keeps following a link after a write of it fails, and links soon after`, `› keeps a poll's answer when the write after it fails, and polls again no sooner than the interval it gave`.
+
+### `cloud/answer-kept`
+
+If the server fails to write what Marfa Cloud answered about a link that is linking, then the server MUST write that answer again before it asks Marfa Cloud about the link again.
+
+**Reason:** asking again to make up for a failed write of the server's own would ask Marfa Cloud sooner than its interval, and a later answer may no longer say why a link ended.
+
+**Tests:** `compliance/cloud-link.test.ts › keeps a poll's answer when the write after it fails, and polls again no sooner than the interval it gave`.
 
 ### `cloud/approved-linked`
 
@@ -196,6 +204,14 @@ Where a link was started with `sign_in_address` `move`, by a caller that may mov
 
 **Tests:** `compliance/cloud-link.test.ts › moves the sign-in address to the Cloud address once linked, as the start confirmed, and ends the sessions`.
 
+### `cloud/move-already-there`
+
+While the sign-in address is already a link's `address`, the server MUST NOT write the configuration or record `cloud.sign_in_address_move` to carry out the move the start confirmed.
+
+**Reason:** the move has nothing left to do, and trying it again and again would fill the audit log.
+
+**Tests:** `compliance/cloud-link.test.ts › takes a confirmed move as done where the sign-in address is already the Cloud address, and writes and records nothing for it`.
+
 ### `cloud/move-ends-sessions`
 
 When the server moves the sign-in address to a link's `address`, the server MUST end every browser session and every app's sign-in, as a confirmed move in `/config` does.
@@ -223,6 +239,14 @@ While a link is linked, when fifteen minutes have passed since Marfa Cloud appro
 **Reason:** the owner confirmed a move to a name that answers soon after approval, and a move long after it would sign everyone out unexpectedly.
 
 **Tests:** `compliance/cloud-link.test.ts › lets a confirmed move wait for a person fifteen minutes after approval while the Cloud address does not answer`.
+
+### `cloud/move-not-after-lapse`
+
+If fifteen minutes have passed since Marfa Cloud approved a link when the server would write the move of the sign-in address that the start confirmed, then the server MUST NOT move the sign-in address.
+
+**Reason:** the check that the address answers can take a while, and a move written after it lapses would sign everyone out unexpectedly.
+
+**Tests:** `compliance/cloud-link.test.ts › does not move the sign-in address once fifteen minutes have passed since approval, though the Cloud address answers while the move is checked`.
 
 ### `cloud/move-waiting-step`
 
@@ -288,9 +312,9 @@ If Marfa Cloud answers a request made with a link credential with `401` and an `
 
 ### `cloud/unlink-puts-back`
 
-When a caller that may move the sign-in address sends `DELETE /cloud/link` with `confirm_sign_in_address_change=true` while the sign-in address is the link's `address`, the server MUST put back the sign-in address that was in force before the link moved it.
+When a caller that may move the sign-in address sends `DELETE /cloud/link` with `confirm_sign_in_address_change=true` while the sign-in address is the link's `address`, the server MUST put back the sign-in address that was in force just before the sign-in address last became the link's `address`.
 
-**Tests:** `compliance/cloud-link.test.ts › puts back the sign-in address the link moved only with a recent sign-in and confirmation, and otherwise unlinks nothing`.
+**Tests:** `compliance/cloud-link.test.ts › puts back the sign-in address the link moved only with a recent sign-in and confirmation, and otherwise unlinks nothing`, `› puts back the sign-in address in force just before the sign-in address last became the Cloud address`.
 
 ### `cloud/unlink-move-refused`
 
@@ -340,7 +364,7 @@ When Marfa Cloud no longer accepts the link credential of a link that is linked,
 
 ### `cloud/ended-puts-back`
 
-When the server ends a link that Marfa Cloud ended while the sign-in address is the link's `address`, the server MUST put back the sign-in address that was in force before the link moved it, as a confirmed move in `/config` does.
+When the server ends a link that Marfa Cloud ended while the sign-in address is the link's `address`, the server MUST put back the sign-in address that was in force just before the sign-in address last became the link's `address`, as a confirmed move in `/config` does.
 
 **Reason:** the link's address no longer reaches the instance, so leaving it would lock the owner out.
 
