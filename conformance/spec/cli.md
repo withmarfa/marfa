@@ -1574,7 +1574,7 @@ When a file `<name>.md` sits beside `<name>.json` in the folder given to `marfa 
 
 ### `cli/types-check-guidance-refused`
 
-If the guidance in `<name>.md` is one a server refuses at registration, because it is longer than 1,000 characters or the definition is of an `app.*` type, then `marfa types check` MUST refuse the definition with the path `guidance` and the code and message the server gives.
+If the guidance in `<name>.md` is one a server refuses at registration, because it is longer than 1,000 characters or the definition is of an `app.*` type, then the CLI MUST refuse the definition in `marfa types check` with the path `guidance` and the code and message the server gives.
 
 **Reason:** guidance in a file is the author's own text, and a limit that only a server enforced would show only when the type is registered.
 
@@ -1582,13 +1582,13 @@ If the guidance in `<name>.md` is one a server refuses at registration, because 
 
 ### `cli/types-check-guidance-empty`
 
-When the file `<name>.md` beside `<name>.json` holds only whitespace, `marfa types check` MUST judge the definition with no `guidance`.
+When the file `<name>.md` beside `<name>.json` holds only whitespace, the CLI MUST judge the definition in `marfa types check` with no `guidance`.
 
 **Tests:** `device/types-check-guidance.test.ts › judges a Markdown file that holds only whitespace as no guidance`.
 
 ### `cli/types-check-guidance-twice`
 
-If the definition in `<name>.json` names `guidance` and a file `<name>.md` sits beside it, then `marfa types check` MUST refuse the definition with `guidance_named_twice`.
+If the definition in `<name>.json` names `guidance` and a file `<name>.md` sits beside it, then the CLI MUST refuse the definition in `marfa types check` with `guidance_named_twice`.
 
 **Reason:** two places for one text cannot both be right (`cli/types-guidance-ambiguous`).
 
@@ -1596,7 +1596,7 @@ If the definition in `<name>.json` names `guidance` and a file `<name>.md` sits 
 
 ### `cli/types-check-guidance-unreadable`
 
-If the file `<name>.md` beside `<name>.json` cannot be read, is not UTF-8 or starts with a byte-order mark, then `marfa types check` MUST refuse the definition with `guidance_file_unreadable` and the reason, and check the other files.
+If the file `<name>.md` beside `<name>.json` cannot be read, is not UTF-8 or starts with a byte-order mark, then the CLI MUST refuse the definition in `marfa types check` with `guidance_file_unreadable` and the reason, and check the other files.
 
 **Reason:** a definition whose guidance cannot be read cannot be registered with `marfa types register --file` either (`cli/types-guidance-file-refused`).
 
@@ -1604,7 +1604,7 @@ If the file `<name>.md` beside `<name>.json` cannot be read, is not UTF-8 or sta
 
 ### `cli/types-check-guidance-orphan`
 
-If a Markdown file in the folder has a name before `.md` that is a well-formed type identifier and no file `<name>.json` sits beside it, then `marfa types check` MUST refuse that file with `guidance_file_without_definition` and exit 1.
+If a Markdown file in the folder has a name before `.md` that is a well-formed type identifier and no file `<name>.json` sits beside it, then the CLI MUST refuse that file in `marfa types check` with `guidance_file_without_definition` and exit 1.
 
 **Reason:** a person who wrote guidance for a type believes it is registered with the type, and a file left without its definition, or named for another type, would otherwise pass without a word.
 
@@ -1612,7 +1612,7 @@ If a Markdown file in the folder has a name before `.md` that is a well-formed t
 
 ### `cli/types-check-markdown-other`
 
-When a Markdown file in the folder has a name before `.md` that is not a well-formed type identifier, `marfa types check` MUST leave it alone.
+When a Markdown file in the folder has a name before `.md` that is not a well-formed type identifier, the CLI MUST leave it alone in `marfa types check`.
 
 **Reason:** a folder of type files usually holds a `README.md`.
 

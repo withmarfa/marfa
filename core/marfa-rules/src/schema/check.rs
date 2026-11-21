@@ -1380,7 +1380,7 @@ mod tests {
             "user.note",
             json!({ "guidance": "x", "fields": { "a": { "type": "string" } } }),
         );
-        assert_eq!(check(&[named.clone()]).problem_count(), 0);
+        assert_eq!(check(std::slice::from_ref(&named)).problem_count(), 0);
         let twice = check(&[named, markdown("user.note", "")]);
         assert_eq!(
             problems_of(&twice, "user.note.json")[0].code,
