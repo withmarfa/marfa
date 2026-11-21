@@ -932,7 +932,6 @@ describe("a server restored behind work this device sent it", () => {
 
       await w.restore(image);
       expect((await w.client().getItem(id)).status).toBe(404);
-      // The key's own source already holds the same `source_id`.
       const clash = await w.client().createItem({
         type: "core.note",
         tier: "library",
@@ -1008,10 +1007,6 @@ describe("a server restored behind work this device sent it", () => {
   );
 });
 
-/**
- * Makes a note on the device under `source` and `sourceId`, sends it, and
- * answers the id the server gave it.
- */
 async function keyed(
   w: World,
   title: string,
@@ -1039,10 +1034,6 @@ async function keyed(
   return id;
 }
 
-/**
- * Gives the device's key a claim on `source` through local authority on the
- * server the proxy reaches now, and answers the key's own source.
- */
 async function claim(w: World, source: string): Promise<string> {
   const current = await w.client().getCurrentKey();
   expect(current.ok, JSON.stringify(current.error)).toBe(true);
