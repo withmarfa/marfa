@@ -11,7 +11,7 @@ use super::status::{self, MOVE_WINDOW_MS};
 use super::store::{self, Link, Move, State, Unlink};
 use super::{
     LINK_CREDENTIAL, MAX_INTERVAL_MS, MIN_INTERVAL_MS, POLL_SECRET, TUNNEL_TOKEN, changing,
-    interval_at, previous_sign_in, refuse_moved, seal, secrets_open, sign_in_in, stamp_at, text_at,
+    interval_at, put_back, refuse_moved, seal, secrets_open, sign_in_in, stamp_at, text_at,
 };
 use crate::app::App;
 use crate::app::access::Caller;
@@ -31,6 +31,8 @@ const TELL_MOST_WAIT_MS: i64 = 60 * 60 * 1000;
 const CHECK_EVERY_MS: i64 = 15 * 60 * 1000;
 const CHECK_FIRST_WAIT_MS: i64 = 5_000;
 const UNLINKED_BY_SERVICE: &str = "unlinked_by_service";
+/// How many put-backs of the sign-in address fail before a link Marfa Cloud ended is ended without.
+const PUT_BACK_TRIES: u32 = 3;
 
 /// When a task is next due, and the wait after a failure that doubles each time.
 #[derive(Clone, Copy, Debug, Default)]
@@ -106,7 +108,18 @@ struct Plan {
     link: Option<Asking>,
     moving: Option<(String, Due)>,
     checking: Option<(String, Due)>,
+    /// The put-backs that failed as a link Marfa Cloud ended was ended, and the last refusal.
+    put_back_failed: Option<(String, u32, Code)>,
     unlinks: HashMap<String, Due>,
+}
+
+impl Plan {
+    fn forget_link(&mut self) {
+        self.link = None;
+        self.moving = None;
+        self.checking = None;
+        self.put_back_failed = None;
+    }
 }
 
 pub fn start(app: &Arc<App>) {
@@ -161,11 +174,7 @@ async fn step(app: &Arc<App>, plan: &mut Plan) -> Option<Duration> {
                 due(at_ms);
             }
         }
-        _ => {
-            plan.link = None;
-            plan.moving = None;
-            plan.checking = None;
-        }
+        _ => plan.forget_link(),
     }
     plan.unlinks
         .retain(|link_id, _| unlinks.iter().any(|unlink| unlink.link_id == *link_id));
@@ -186,9 +195,7 @@ async fn follow(app: &Arc<App>, plan: &mut Plan, link: &Link) -> Option<i64> {
     let now_ms = app.clock.now_ms();
     match link.state {
         State::Failed | State::Ended => {
-            plan.link = None;
-            plan.moving = None;
-            plan.checking = None;
+            plan.forget_link();
             None
         }
         State::Linking => {
@@ -248,15 +255,33 @@ async fn follow(app: &Arc<App>, plan: &mut Plan, link: &Link) -> Option<i64> {
                 _ => Due::now(now_ms),
             };
             if checking.at_ms <= now_ms {
-                checking = match check(app, link).await {
-                    Ok(Checked::Linked) => Due::after(now_ms, CHECK_EVERY_MS),
+                let failed = match &plan.put_back_failed {
+                    Some((link_id, tries, code)) if *link_id == link.link_id => {
+                        Some((*tries, *code))
+                    }
+                    _ => None,
+                };
+                let stranded = failed
+                    .filter(|(tries, _)| *tries >= PUT_BACK_TRIES)
+                    .map(|(_, code)| code);
+                checking = match check(app, link, stranded).await {
+                    Ok(Checked::Linked) => {
+                        plan.put_back_failed = None;
+                        Due::after(now_ms, CHECK_EVERY_MS)
+                    }
                     Ok(Checked::Ended) => {
-                        plan.checking = None;
-                        plan.moving = None;
+                        plan.forget_link();
                         return Some(app.clock.now_ms());
                     }
                     Ok(Checked::Failed) => checking.failed(now_ms, CHECK_FIRST_WAIT_MS),
-                    Err(refusal) => retried(checking, now_ms, "end", &refusal),
+                    Err(refusal) => {
+                        if !transient(&refusal) {
+                            let tries = failed.map_or(0, |(tries, _)| tries);
+                            plan.put_back_failed =
+                                Some((link.link_id.clone(), tries + 1, refusal.code));
+                        }
+                        retried(checking, now_ms, "end", &refusal)
+                    }
                 };
             }
             plan.checking = Some((link.link_id.clone(), checking));
@@ -322,27 +347,39 @@ enum Checked {
 }
 
 /// Asks Marfa Cloud whether a linked link still stands, and ends it here if it does not.
-async fn check(app: &Arc<App>, link: &Link) -> Result<Checked> {
+async fn check(app: &Arc<App>, link: &Link, stranded: Option<Code>) -> Result<Checked> {
     let Some(credential) = open(link.link_credential.as_ref(), LINK_CREDENTIAL, app) else {
         return Ok(Checked::Failed);
     };
     match client::send(app, Method::Get, "/link", Some(&credential)).await {
         Ok(answer) if answer.status == 200 => Ok(Checked::Linked),
         Ok(answer) if unauthorized(&answer) => {
-            end_by_service(app, link).await?;
+            end_by_service(app, link, stranded).await?;
             Ok(Checked::Ended)
         }
         Ok(_) | Err(_) => Ok(Checked::Failed),
     }
 }
 
-/// Ends a link Marfa Cloud ended, putting back the sign-in address its name replaced.
-async fn end_by_service(app: &Arc<App>, link: &Link) -> Result<()> {
+/// How an end by Marfa Cloud treats the sign-in address.
+#[derive(Clone, Copy)]
+enum Ending {
+    /// It is not at the link's address.
+    Leaves,
+    /// It is at the link's address, and the same write puts it back.
+    PutsBack,
+    /// Putting it back failed with this code, so it stays wherever the write finds it.
+    Stranded(Code),
+}
+
+/// Ends a link Marfa Cloud ended, putting back the sign-in address its name replaced. With
+/// `stranded`, the put-back failed too often, so the link ends and the address stays.
+async fn end_by_service(app: &Arc<App>, link: &Link, stranded: Option<Code>) -> Result<()> {
     let reading = app.clone();
     let sign_in = app.db.read(move |tx| sign_in_in(&reading, tx)).await?;
     let link_id = link.link_id.clone();
     let ending = app.clone();
-    let end = move |unit: &Unit<'_, '_>, sign_in: &Address, puts_back: bool| -> Result<()> {
+    let end = move |unit: &Unit<'_, '_>, sign_in: &Address, how: Ending| -> Result<()> {
         changing(unit, &ending, |unit| {
             let tx = unit.tx();
             let Some(mut link) = store::read(tx)?
@@ -353,7 +390,18 @@ async fn end_by_service(app: &Arc<App>, link: &Link) -> Result<()> {
                     "The link changed before it was ended.",
                 ));
             };
-            refuse_moved(&link, sign_in, puts_back)?;
+            let mut details = json!({ "reason": UNLINKED_BY_SERVICE });
+            match how {
+                Ending::Leaves => refuse_moved(&link, sign_in, false)?,
+                Ending::PutsBack => refuse_moved(&link, sign_in, true)?,
+                Ending::Stranded(code) => {
+                    if status::cloud_address(&link).is_some_and(|cloud| cloud == *sign_in) {
+                        link.put_back_failure = Some(code.wire().to_string());
+                        details["sign_in_address"] = "not_put_back".into();
+                        details["put_back_failure"] = code.wire().into();
+                    }
+                }
+            }
             link.state = State::Ended;
             link.failure_reason = Some(UNLINKED_BY_SERVICE.to_string());
             link.failure_message = None;
@@ -362,26 +410,27 @@ async fn end_by_service(app: &Arc<App>, link: &Link) -> Result<()> {
             link.tunnel_token = None;
             link.link_credential = None;
             store::put(tx, &link)?;
-            unit.audit_also(
-                "cloud.unlink",
-                "cloud_link",
-                &link.link_id,
-                Some(json!({ "reason": UNLINKED_BY_SERVICE })),
-            )
+            unit.audit_also("cloud.unlink", "cloud_link", &link.link_id, Some(details))
         })
     };
-    let Some(cloud) = status::cloud_address(link).filter(|cloud| *cloud == sign_in) else {
+    let cloud = status::cloud_address(link).filter(|cloud| *cloud == sign_in);
+    let (Some(cloud), None) = (cloud, stranded) else {
         let reading = app.clone();
+        let how = stranded.map_or(Ending::Leaves, Ending::Stranded);
+        if let Some(code) = stranded {
+            tracing::warn!(
+                code = code.wire(),
+                "Marfa Cloud ended the link, and the sign-in address could not be put back"
+            );
+        }
         return app
             .write(&Caller::Server, "cloud.unlink", move |unit| {
                 let sign_in = sign_in_in(&reading, unit.tx())?;
-                end(unit, &sign_in, false)
+                end(unit, &sign_in, how)
             })
             .await;
     };
-    let previous = previous_sign_in(link)?;
-    let request =
-        Request::sign_in_move(previous.as_ref(), true, Some(cloud), app.settings.sealer())?;
+    let request = put_back(app, link, cloud, true)?;
     let link_id = link.link_id.clone();
     config::update_with(
         app,
@@ -389,7 +438,7 @@ async fn end_by_service(app: &Arc<App>, link: &Link) -> Result<()> {
         request,
         Authority::Restored,
         move |unit, change| {
-            end(unit, &change.before, true)?;
+            end(unit, &change.before, Ending::PutsBack)?;
             unit.audit_also(
                 "cloud.sign_in_address_move",
                 "cloud_link",
@@ -674,7 +723,7 @@ async fn carry_out_move(app: &Arc<App>, link: &Link) -> Result<()> {
     if found_moved(app, &link.link_id, &address).await? {
         return Ok(());
     }
-    let request = Request::sign_in_move(Some(&address), true, None, app.settings.sealer())?;
+    let request = Request::sign_in_move(&address, true, app.settings.sealer())?;
     let link_id = link.link_id.clone();
     config::update_with(
         app,

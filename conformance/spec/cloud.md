@@ -312,9 +312,23 @@ If Marfa Cloud answers a request made with a link credential with `401` and an `
 
 ### `cloud/unlink-puts-back`
 
-When a caller that may move the sign-in address sends `DELETE /cloud/link` with `confirm_sign_in_address_change=true` while the sign-in address is the link's `address`, the server MUST put back the sign-in address that was in force just before the sign-in address last became the link's `address`.
+When a caller that may move the sign-in address sends `DELETE /cloud/link` with `confirm_sign_in_address_change=true` while the sign-in address is the link's `address`, the server MUST move the sign-in address to the address `cloud/put-back-target` names.
 
-**Tests:** `compliance/cloud-link.test.ts › puts back the sign-in address the link moved only with a recent sign-in and confirmation, and otherwise unlinks nothing`, `› puts back the sign-in address in force just before the sign-in address last became the Cloud address`.
+**Tests:** `compliance/cloud-link.test.ts › puts back the sign-in address the link moved only with a recent sign-in and confirmation, and otherwise unlinks nothing`, `› puts back the sign-in address in force just before the sign-in address last became the Cloud address`, `› puts back an address left in addresses on an unlink where the link found the sign-in address already at its Cloud address`, `› puts back an address left in addresses on an unlink where the owner removed the one in force before the move`.
+
+### `cloud/put-back-target`
+
+When the server moves the sign-in address back from a link's `address` as the link ends, the server MUST choose, on the settings the write commits, the sign-in address that was in force just before the sign-in address last became the link's `address` if `addresses` without the link's `address` is empty or holds it, otherwise the first `https` address left in `addresses`, otherwise the first address left in `addresses`.
+
+**Reason:** a stored `addresses` list always holds the sign-in address in force (`instance/addresses-hold-sign-in`), so the sign-in address goes back only where the list allows. The sign-in address in force before the move can be the default, which a link that found the sign-in address already at its `address` puts back.
+
+**Tests:** `compliance/cloud-link.test.ts › puts back the sign-in address in force just before the sign-in address last became the Cloud address`, `› puts back an address left in addresses on an unlink where the link found the sign-in address already at its Cloud address`, `› puts back an address left in addresses on an unlink where the owner removed the one in force before the move`, `› puts back an address left in addresses on an end by Marfa Cloud where the link found the sign-in address already at its Cloud address`, `› puts back the first https address left in addresses on an end by Marfa Cloud where the address in force before the move is not among them`.
+
+### `cloud/put-back-drops-address`
+
+When the server moves the sign-in address back from a link's `address` as the link ends, the server MUST remove the link's `address` from `addresses`.
+
+**Tests:** `compliance/cloud-link.test.ts › puts back an address left in addresses on an unlink where the link found the sign-in address already at its Cloud address`, `› puts back an address left in addresses on an unlink where the owner removed the one in force before the move`, `› puts back an address left in addresses on an end by Marfa Cloud where the link found the sign-in address already at its Cloud address`, `› puts back the first https address left in addresses on an end by Marfa Cloud where the address in force before the move is not among them`.
 
 ### `cloud/unlink-move-refused`
 
@@ -364,11 +378,37 @@ When Marfa Cloud no longer accepts the link credential of a link that is linked,
 
 ### `cloud/ended-puts-back`
 
-When the server ends a link that Marfa Cloud ended while the sign-in address is the link's `address`, the server MUST put back the sign-in address that was in force just before the sign-in address last became the link's `address`, as a confirmed move in `/config` does.
+When the server ends a link that Marfa Cloud ended while the sign-in address is the link's `address`, the server MUST move the sign-in address to the address `cloud/put-back-target` names, as a confirmed move in `/config` does.
 
 **Reason:** the link's address no longer reaches the instance, so leaving it would lock the owner out.
 
-**Tests:** `compliance/cloud-link.test.ts › notices a link ended on Marfa Cloud, puts back the sign-in address the link moved, and says why`.
+**Tests:** `compliance/cloud-link.test.ts › notices a link ended on Marfa Cloud, puts back the sign-in address the link moved, and says why`, `› puts back an address left in addresses on an end by Marfa Cloud where the link found the sign-in address already at its Cloud address`, `› puts back the first https address left in addresses on an end by Marfa Cloud where the address in force before the move is not among them`.
+
+### `cloud/ended-not-put-back`
+
+If the write that moves the sign-in address back fails three times as the server ends a link that Marfa Cloud ended, then the server MUST end the link and leave the sign-in address as it is.
+
+**Reason:** a link Marfa Cloud ended does not come back, so a server that kept it until the sign-in address moved would hold a dead link and try again forever.
+
+**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says how to move it`.
+
+### `cloud/not-put-back-status`
+
+While the last link has ended and the sign-in address is still its `address`, the server MUST answer `GET /cloud/link` with `sign_in_address.state` `not_put_back` and a `sign_in_address.next_step` that moves the sign-in address to the address `cloud/put-back-target` names.
+
+**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says how to move it`.
+
+### `cloud/not-put-back-failure`
+
+While the sign-in address is still the `address` of a link the server ended as `cloud/ended-not-put-back` says, the server MUST answer `GET /cloud/link` with the error code of the failed write in `sign_in_address.failure.reason`.
+
+**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says how to move it`.
+
+### `cloud/not-put-back-audited`
+
+When the server ends a link as `cloud/ended-not-put-back` says while the sign-in address is the link's `address`, the server MUST record `details.sign_in_address` `not_put_back` and the error code of the failed write in `details.put_back_failure` in the audit entry of the unlink.
+
+**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says how to move it`.
 
 ### `cloud/ended-audited`
 

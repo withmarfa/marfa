@@ -25,7 +25,10 @@ CREATE TABLE IF NOT EXISTS cloud_link (
     failure_reason TEXT
         CHECK (failure_reason IN ('denied', 'expired', 'refused', 'unlinked', 'unlinked_by_service')),
     failure_message TEXT,
-    ended_at TEXT
+    ended_at TEXT,
+    -- The error code of the write that could not put back the sign-in address
+    -- as Marfa Cloud ended the link.
+    put_back_failure TEXT
 ) STRICT;
 
 -- Links ended here that Marfa Cloud has not been told of yet, kept until it is

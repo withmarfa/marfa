@@ -84,8 +84,38 @@ pub struct Request {
     settings: Vec<(&'static Entry, Ask<String>)>,
     name: Option<Ask<String>>,
     enforcement: Option<Ask<Levers>>,
-    /// An address the write removes from `addresses`, which no body names.
-    drops: Option<addresses::Address>,
+    /// A put-back of the sign-in address, which no body names.
+    put_back: Option<PutBack>,
+}
+
+/// Puts the sign-in address back as a link ends, choosing on the stored rows.
+#[derive(Debug)]
+struct PutBack {
+    /// The sign-in address in force before the link moved it; none is the default.
+    previous: Option<addresses::Address>,
+    /// The default sign-in address.
+    own: addresses::Address,
+    /// The link's address, which the write removes from `addresses`.
+    drops: addresses::Address,
+}
+
+impl PutBack {
+    /// The previous address if `addresses` still allows it, else the first address left in it,
+    /// an `https` one first.
+    fn target(&self, listed: Vec<addresses::Address>) -> Option<addresses::Address> {
+        let left: Vec<_> = listed
+            .into_iter()
+            .filter(|address| *address != self.drops)
+            .collect();
+        let wanted = self.previous.as_ref().unwrap_or(&self.own);
+        if left.is_empty() || left.contains(wanted) {
+            return self.previous.clone();
+        }
+        left.iter()
+            .find(|address| address.is_https())
+            .or_else(|| left.first())
+            .cloned()
+    }
 }
 
 fn invalid(errors: Vec<(String, String)>) -> Refusal {
@@ -171,7 +201,7 @@ impl Request {
             settings: Vec::new(),
             name: None,
             enforcement: None,
-            drops: None,
+            put_back: None,
         };
         let null_in_put = |path: &str| {
             (
@@ -257,21 +287,35 @@ impl Request {
         }
     }
 
-    /// Moves the sign-in address to `to`, or removes it, and removes `drops` from `addresses`.
+    /// Moves the sign-in address to `to`.
     pub fn sign_in_move(
-        to: Option<&addresses::Address>,
+        to: &addresses::Address,
         confirmed: bool,
-        drops: Option<addresses::Address>,
         sealer: &Sealer,
     ) -> Result<Request> {
         let mut body = Map::new();
-        body.insert(
-            SIGN_IN_ADDRESS.entry.key.into(),
-            to.map_or(Value::Null, |address| address.origin().into()),
-        );
+        body.insert(SIGN_IN_ADDRESS.entry.key.into(), to.origin().into());
+        body.insert(CONFIRMATION.into(), confirmed.into());
+        Request::from_body(Mode::Patch, &body, &fields(), sealer)
+    }
+
+    /// Removes `drops` from `addresses` and puts the sign-in address back: to `previous` (none
+    /// is the default, `own`) while `addresses` allows it, otherwise to an address left in it.
+    pub fn sign_in_put_back(
+        previous: Option<addresses::Address>,
+        own: addresses::Address,
+        drops: addresses::Address,
+        confirmed: bool,
+        sealer: &Sealer,
+    ) -> Result<Request> {
+        let mut body = Map::new();
         body.insert(CONFIRMATION.into(), confirmed.into());
         let mut request = Request::from_body(Mode::Patch, &body, &fields(), sealer)?;
-        request.drops = drops;
+        request.put_back = Some(PutBack {
+            previous,
+            own,
+            drops,
+        });
         Ok(request)
     }
 
@@ -356,7 +400,31 @@ impl Plan {
             }
             ops.insert(ENFORCEMENT_ROW.to_string(), None);
         }
-        for (entry, ask) in &request.settings {
+        let put_back = match &request.put_back {
+            Some(put_back) => {
+                let listed = match before.get(ADDRESSES.entry.key) {
+                    Some(text) => stored_list(text)?,
+                    None => Vec::new(),
+                };
+                Some(match put_back.target(listed) {
+                    Some(address) => Ask::Set(
+                        SIGN_IN_ADDRESS
+                            .entry
+                            .row_text(address.origin())
+                            .map_err(|rule| Refusal::internal(&format!("a put-back {rule}")))?,
+                    ),
+                    None => Ask::Clear,
+                })
+            }
+            None => None,
+        };
+        let settings: Vec<(&Entry, &Ask<String>)> = request
+            .settings
+            .iter()
+            .map(|(entry, ask)| (*entry, ask))
+            .chain(put_back.as_ref().map(|ask| (SIGN_IN_ADDRESS.entry, ask)))
+            .collect();
+        for (entry, ask) in &settings {
             let text = match ask {
                 Ask::Set(text) => Some(text.clone()),
                 Ask::Clear => None,
@@ -367,8 +435,7 @@ impl Plan {
             }
         }
         // A sign-in address is always one of the addresses.
-        if let Some((_, Ask::Set(sign_in))) = request
-            .settings
+        if let Some((_, Ask::Set(sign_in))) = settings
             .iter()
             .find(|(entry, _)| entry.key == SIGN_IN_ADDRESS.entry.key)
             && !request.names(ADDRESSES.entry.key)
@@ -394,7 +461,7 @@ impl Plan {
                 touched.push(ADDRESSES.entry.key);
             }
         }
-        if let Some(dropped) = &request.drops {
+        if let Some(dropped) = request.put_back.as_ref().map(|put_back| &put_back.drops) {
             let text = match ops.get(ADDRESSES.entry.key) {
                 Some(text) => text.clone(),
                 None => before.get(ADDRESSES.entry.key).cloned(),
@@ -527,8 +594,12 @@ impl Plan {
         if self.drops_secret {
             fields.push(OBJECT_STORE_SECRET_ACCESS_KEY.entry.key);
         }
-        if request.drops.is_some() && !fields.contains(&ADDRESSES.entry.key) {
-            fields.push(ADDRESSES.entry.key);
+        if request.put_back.is_some() {
+            for key in [SIGN_IN_ADDRESS.entry.key, ADDRESSES.entry.key] {
+                if !fields.contains(&key) {
+                    fields.push(key);
+                }
+            }
         }
         fields.sort_unstable();
         fields
@@ -867,6 +938,32 @@ where
     .await
 }
 
+/// Where a put-back would move the sign-in address on the stored rows, or none if
+/// `addresses` does not read.
+pub fn put_back_target(
+    tx: &Transaction<'_>,
+    previous: Option<addresses::Address>,
+    own: addresses::Address,
+    drops: addresses::Address,
+) -> Result<Option<addresses::Address>> {
+    let listed = match stored::rows(tx)?
+        .into_iter()
+        .find(|(key, _)| key == ADDRESSES.entry.key)
+    {
+        Some((_, text)) => match addresses::parse_list(&text) {
+            Ok(listed) => listed,
+            Err(_) => return Ok(None),
+        },
+        None => Vec::new(),
+    };
+    let put_back = PutBack {
+        previous,
+        own,
+        drops,
+    };
+    Ok(Some(put_back.target(listed).unwrap_or(put_back.own)))
+}
+
 /// What a start did with the sign-in address `MARFA_CLAIM_ADDRESS` declares.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Adopted {
@@ -1065,14 +1162,66 @@ mod tests {
         let sealer = Sealer::for_tests();
         let dropped = addresses::Address::parse("https://b.example").unwrap();
         let to = addresses::Address::parse("https://a.example").unwrap();
+        let own = addresses::Address::parse("http://localhost:8080").unwrap();
         for request in [
-            Request::sign_in_move(Some(&to), true, Some(dropped), &sealer).unwrap(),
-            Request::sign_in_move(Some(&to), true, None, &sealer).unwrap(),
+            Request::sign_in_put_back(Some(to.clone()), own, dropped, true, &sealer).unwrap(),
+            Request::sign_in_move(&to, true, &sealer).unwrap(),
         ] {
             let refused = Plan::of(&request, unreadable_addresses())
                 .err()
                 .expect("the plan rewrote the unreadable addresses row");
             assert_eq!(refused.code, Code::ValidationError);
+        }
+    }
+
+    #[test]
+    fn a_put_back_goes_where_addresses_allows() {
+        let at = |text: &str| addresses::Address::parse(text).unwrap();
+        let (cloud, own) = (at("https://river.example"), at("http://localhost:8080"));
+        let put_back = |previous: Option<&str>| PutBack {
+            previous: previous.map(at),
+            own: own.clone(),
+            drops: cloud.clone(),
+        };
+        let list = |texts: &[&str]| texts.iter().map(|text| at(text)).collect::<Vec<_>>();
+        let cases = [
+            (
+                Some("http://o.example"),
+                list(&["https://river.example"]),
+                Some("http://o.example"),
+            ),
+            (
+                Some("http://o.example"),
+                list(&["http://o.example", "https://river.example"]),
+                Some("http://o.example"),
+            ),
+            (
+                Some("http://o.example"),
+                list(&[
+                    "http://a.example",
+                    "https://b.example",
+                    "https://river.example",
+                ]),
+                Some("https://b.example"),
+            ),
+            (
+                None,
+                list(&["https://river.example", "http://a.example"]),
+                Some("http://a.example"),
+            ),
+            (
+                None,
+                list(&["http://localhost:8080", "https://river.example"]),
+                None,
+            ),
+            (None, Vec::new(), None),
+        ];
+        for (previous, listed, wanted) in cases {
+            assert_eq!(
+                put_back(previous).target(listed.clone()),
+                wanted.map(at),
+                "previous {previous:?}, addresses {listed:?}"
+            );
         }
     }
 }
