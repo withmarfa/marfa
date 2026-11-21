@@ -4386,7 +4386,7 @@ export interface components {
             } | null;
             /**
              * @description The namespace's revision: the same for the same document, and another once the document changes. Send it as `read_revision` to write only over what you read.
-             * @example 9f2c41d07be35a68c1e04f9d2a7b8e16
+             * @example 3d6f27ea6701dd6693a9c302e57cb5e3
              */
             revision: string;
         };
@@ -15159,7 +15159,7 @@ export interface operations {
                      *       "document": {
                      *         "pipeline": "enterprise"
                      *       },
-                     *       "revision": "9f2c41d07be35a68c1e04f9d2a7b8e16"
+                     *       "revision": "3d6f27ea6701dd6693a9c302e57cb5e3"
                      *     }
                      */
                     "application/json": components["schemas"]["Extension"];
@@ -15288,7 +15288,7 @@ export interface operations {
             query?: {
                 /**
                  * @description The namespace's `revision` as you read it, absent included. If the namespace changed since, Marfa doesn't replace it and returns `409 version_conflict`. Leave it out to replace it as it stands.
-                 * @example 9f2c41d07be35a68c1e04f9d2a7b8e16
+                 * @example 3d6f27ea6701dd6693a9c302e57cb5e3
                  */
                 read_revision?: string;
             };
@@ -15331,7 +15331,7 @@ export interface operations {
                      *           "document": {
                      *             "pipeline": "enterprise"
                      *           },
-                     *           "revision": "9f2c41d07be35a68c1e04f9d2a7b8e16"
+                     *           "revision": "3d6f27ea6701dd6693a9c302e57cb5e3"
                      *         }
                      *       ]
                      *     }
@@ -15526,7 +15526,7 @@ export interface operations {
             query?: {
                 /**
                  * @description The namespace's `revision` as you read it, absent included. If the namespace changed since, Marfa doesn't delete it and returns `409 version_conflict`. Leave it out to delete it as it stands.
-                 * @example 9f2c41d07be35a68c1e04f9d2a7b8e16
+                 * @example 3d6f27ea6701dd6693a9c302e57cb5e3
                  */
                 read_revision?: string;
             };
@@ -15563,7 +15563,7 @@ export interface operations {
                      *           "document": {
                      *             "pipeline": "enterprise"
                      *           },
-                     *           "revision": "9f2c41d07be35a68c1e04f9d2a7b8e16"
+                     *           "revision": "3d6f27ea6701dd6693a9c302e57cb5e3"
                      *         }
                      *       ]
                      *     }
@@ -15768,7 +15768,7 @@ export interface operations {
                      *           "document": {
                      *             "pipeline": "enterprise"
                      *           },
-                     *           "revision": "9f2c41d07be35a68c1e04f9d2a7b8e16"
+                     *           "revision": "3d6f27ea6701dd6693a9c302e57cb5e3"
                      *         }
                      *       ]
                      *     }

@@ -583,8 +583,7 @@ fn extension_text(namespace: &str, data: Option<&str>) -> String {
 const ABSENT_REVISION: &str = "absent";
 const REVISION_HEX: usize = 32;
 
-/// A namespace's revision: a digest of the document as Marfa serves it, so it
-/// moves exactly when the served document does.
+/// A digest of the served document, so it moves exactly when that document does.
 fn extension_revision(data: Option<&str>) -> String {
     use sha2::Digest;
     match data {
