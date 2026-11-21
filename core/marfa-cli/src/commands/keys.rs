@@ -39,8 +39,10 @@ pub enum KeysCommand {
     ///
     /// `keys.mint` widens a key within what the caller holds and no later
     /// than the caller's own expiry. `keys.manage` without `keys.mint` only
-    /// narrows a key and never moves its expiry later. A key an app made
-    /// only narrows, whoever changes it.
+    /// narrows what a key reaches. `keys.manage` also moves any key's expiry
+    /// later, or clears it with `--no-expiry`, but never past the caller's
+    /// own expiry; the key keeps its secret. A key an app made only narrows
+    /// what it reaches, whoever changes it.
     Update(KeyUpdateArgs),
     /// Revoke a key; the next request bearing it is refused. Needs
     /// `keys.manage`, `keys.mint` (a key within the caller's reach) or local

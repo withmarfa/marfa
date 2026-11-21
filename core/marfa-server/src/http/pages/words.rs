@@ -37,7 +37,7 @@ const POWERS: [(&str, PowerWords); 14] = [
         PowerWords {
             title: "See, edit, narrow and revoke every key",
             note: Some(
-                "On its own, this narrows keys and never widens them. With permission to make keys, this app can also make keys that keep working after you disconnect it, and that save as any connector.",
+                "On its own, this can reduce a key's access and extend its life, but cannot give it more access. With permission to make keys, this app can also make keys that keep working after you disconnect it, and that save as any connector.",
             ),
         },
     ),

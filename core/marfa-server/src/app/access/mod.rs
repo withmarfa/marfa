@@ -470,16 +470,18 @@ impl Caller {
         }
     }
 
-    /// `keys.manage` narrows any key and `keys.mint` widens one within the caller; holding both gives either.
+    /// `keys.manage` narrows any key and lengthens its life within the caller's; `keys.mint` widens one within the caller.
     pub fn check_update(&self, target: &Key, change: &Change<'_>) -> Result<()> {
         if change.levers.is_some() {
             self.require(Permission::ConfigManage)?;
         }
         let limit = target.expires_at.as_deref();
+        let app_made = target.oauth_client_id.is_some();
         let widening = target.grants.first_beyond(&target.source, change.grants);
+        let widens = widening.is_some();
         let lengthens = change.life.is_some_and(|wanted| outlives(wanted, limit));
-        if widening.is_some() || lengthens {
-            let why = if target.oauth_client_id.is_some() {
+        if let Some(beyond) = widening {
+            let why = if app_made {
                 Some("a key an app made can only be narrowed.")
             } else if change.narrow_only {
                 Some("narrow_only refuses a widening.")
@@ -489,11 +491,11 @@ impl Caller {
                 None
             };
             if let Some(why) = why {
-                return Err(match widening {
-                    Some(beyond) => narrows_only(beyond, why),
-                    None => longer_life(limit),
-                });
+                return Err(narrows_only(beyond, why));
             }
+        }
+        if lengthens && (change.narrow_only || (app_made && !self.manages_keys())) {
+            return Err(longer_life(limit));
         }
         if change.narrow_only
             && change
@@ -506,15 +508,20 @@ impl Caller {
             )
             .with_detail("field", "enforcement_override"));
         }
-        let narrows = widening.is_none() && !lengthens;
-        if self.is_local() || (narrows && self.manages_keys()) {
+        if self.is_local() {
             return Ok(());
+        }
+        if !widens && self.manages_keys() {
+            return match change.life {
+                Some(wanted) if lengthens => self.check_life(wanted),
+                _ => Ok(()),
+            };
         }
         self.require(Permission::KeysMint)?;
         self.check_ceiling(change.grants)?;
         match change.life {
             Some(wanted) => self.check_life(wanted),
-            None if widening.is_some() => self.check_life(limit),
+            None if widens => self.check_life(limit),
             None => Ok(()),
         }
     }
@@ -1175,6 +1182,13 @@ mod tests {
         let open = key("t", "t", &[AuditRead], &[]);
         let mut shorter = open.clone();
         shorter.expires_at = Some("2029".into());
+        let app_made = app_key(shorter.clone());
+        let app_manager = app(app_key(held_until("a", &[KeysManage, AuditRead], None)));
+        let expiring_manager = Caller::Key(Box::new(held_until(
+            "e",
+            &[KeysManage, AuditRead],
+            Some("2030"),
+        )));
         for (caller, target, grants, life, allowed) in [
             (&minter, &open, &wider, None, false),
             (&minter, &open, &wider, Some(None), false),
@@ -1194,7 +1208,8 @@ mod tests {
                 true,
             ),
             (&both, &open, &narrower, Some(None), true),
-            (&manager, &shorter, &shorter.grants, Some(None), false),
+            (&manager, &shorter, &shorter.grants, Some(None), true),
+            (&manager, &shorter, &wider, Some(None), false),
             (
                 &manager,
                 &shorter,
@@ -1203,6 +1218,38 @@ mod tests {
                 true,
             ),
             (&manager, &open, &narrower, Some(Some("2028")), true),
+            (&manager, &app_made, &app_made.grants, Some(None), true),
+            (&app_manager, &app_made, &app_made.grants, Some(None), true),
+            (&lasting, &app_made, &app_made.grants, Some(None), false),
+            (&lasting, &shorter, &shorter.grants, Some(None), true),
+            (
+                &expiring_manager,
+                &shorter,
+                &shorter.grants,
+                Some(Some("2030")),
+                true,
+            ),
+            (
+                &expiring_manager,
+                &shorter,
+                &shorter.grants,
+                Some(Some("2031")),
+                false,
+            ),
+            (
+                &expiring_manager,
+                &shorter,
+                &shorter.grants,
+                Some(None),
+                false,
+            ),
+            (
+                &expiring_manager,
+                &open,
+                &narrower,
+                Some(Some("2031")),
+                true,
+            ),
         ] {
             assert_eq!(
                 caller.check_update(target, &change(grants, life)).is_ok(),

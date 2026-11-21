@@ -17,7 +17,7 @@ A credential holds any of these permissions, each a row of the table below, whic
 | `instance.maintain` | Running housekeeping, canceling bulk jobs, updating the server and confirming the server's clock.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `instance.read`     | Reading detailed health, what needs the owner's attention, metrics, housekeeping status, blob storage diagnostics and bulk job status.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `items.purge`       | Destroying a trashed item irrecoverably, through the single-item operation and the bulk one alike, and listing and emptying the trash.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `keys.manage`       | Listing and revoking keys across the instance, changing their metadata or narrowing access, granting any source as a claim, and setting the name and mark of any source.                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `keys.manage`       | Listing and revoking keys across the instance, changing their metadata, narrowing their access or lengthening their life, granting any source as a claim, and setting the name and mark of any source.                                                                                                                                                                                                                                                                                                                                                                                              |
 | `keys.mint`         | Minting keys within the caller's current access, and listing, changing and revoking keys within that access.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `schema.write`      | Removing or replacing type and edge type definitions, within the credential's type or edge write access, and adding, changing or removing a type's guidance when registering, replacing or restoring.                                                                                                                                                                                                                                                                                                                                                                                               |
 | `sign_ins.manage`   | Listing, renaming and ending the owner's sign-ins, listing, renaming and removing the owner's passkeys, getting the link that adds one and changing the owner's password.                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -363,7 +363,7 @@ If a working key's update gives a key a permission, or a type, edge, metadata or
 
 If a caller holding `keys.manage`, and neither `keys.mint` nor local authority, updates a key to hold a permission, map entry or claimed source the key does not already hold, then the server MUST answer `403 forbidden`.
 
-**Reason:** `keys.manage` reaches every key so that it can take access away, and a power to add access to any key would be a power to mint.
+**Reason:** `keys.manage` reaches every key so that it can take access away, and a power to add access to any key would be a power to mint. A later expiry adds no permission, map entry or source, so `keys.manage` may lengthen a key's life (`keys-and-oauth/expiry-manage-lengthens`) and still never widens its reach.
 
 **Tests:** `compliance/keys-update.test.ts › only narrows a key for a caller acting through keys.manage`, `compliance/owner-keys.test.ts › narrows a key through keys.manage alone, and says the key does not hold what a widening adds`, `› narrows only, through an app that holds keys.manage and not keys.mint`.
 
@@ -395,7 +395,7 @@ If a caller holding both `keys.mint` and `keys.manage`, and not local authority,
 
 If an update would give a key an app made a permission, map entry or claimed source the key does not already hold, then the server MUST answer `403 forbidden`, whoever the caller is.
 
-**Reason:** The consent screen tells a person that a key an app makes holds what the app held and never more, and that promise is worth something only if no credential can lift it.
+**Reason:** The consent screen tells a person that a key an app makes holds what the app held and never more, and that promise is worth something only if no credential can lift it. A later expiry lifts nothing the key reaches, so a caller holding `keys.manage` may lengthen it (`keys-and-oauth/expiry-manage-lengthens`).
 
 **Tests:** `compliance/key-reach.test.ts › a signed-in app gives a key within its reach a permission its grant holds, and no other`, `compliance/claimed-sources.test.ts › never widens a key an app made to a new source`, `compliance/owner-keys.test.ts › never widens a key an app made, whoever holds keys.mint and keys.manage`.
 
@@ -623,47 +623,55 @@ If a key that has an `expires_at` sends `POST /keys` naming an `expires_at` late
 
 If a key that has an `expires_at` and does not hold `keys.manage` sends `PATCH /keys/{id}` naming an `expires_at` later than its own, or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
 
-**Reason:** A key that could move its own expiry, or the expiry of a key it made, would hold the bound only until it chose not to. A caller holding `keys.manage` narrows any key, so it is held to the expiry of the key it changes instead (`keys-and-oauth/expiry-manage-narrows`), and to its own only when it also holds `keys.mint` (`keys-and-oauth/expiry-manage-mint-ceiling`).
+**Reason:** A key that could move its own expiry, or the expiry of a key it made, would hold the bound only until it chose not to. A caller holding `keys.manage` is held by `keys-and-oauth/expiry-manage-ceiling` instead.
 
 **Tests:** `compliance/key-expiry.test.ts › neither lengthens nor clears the expiry of a key, its own included, and leaves the key as it was`.
 
-### `keys-and-oauth/expiry-manage-mint-ceiling`
+### `keys-and-oauth/expiry-manage-ceiling`
 
-If a key that has an `expires_at` and holds both `keys.mint` and `keys.manage` sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than both its own and that key's, or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
+If a caller that has an `expires_at` and holds `keys.manage` sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than both its own and that key's, or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
 
-**Reason:** `keys.manage` narrows any key, including to an expiry past the caller's own. A caller that also holds `keys.mint` can lengthen a key, and what it gives a key ends when its own life does.
+**Reason:** What a credential that expires gives a key ends when that credential does. A shorter expiry gives a key nothing, so a caller holding `keys.manage` may shorten any key, even to a time past its own.
 
-**Tests:** `compliance/owner-keys.test.ts › holds a widening by keys.mint and keys.manage to the caller's own expiry`.
+**Tests:** `compliance/key-expiry.test.ts › lengthens a key up to its own expiry, and is refused one past it or none`, `compliance/owner-keys.test.ts › holds a widening by keys.mint and keys.manage to the caller's own expiry`.
 
 ### `keys-and-oauth/expiry-widen-ceiling`
 
 If a key that has an `expires_at` sends `PATCH /keys/{id}` naming no `expires_at`, to give a key whose `expires_at` is later than its own, or `null`, a permission, map entry or claimed source that key does not already hold, then the server MUST answer `403 forbidden` and leave the key as it was.
 
-**Reason:** What a key that expires gives another key ends when it does. An update that only narrows a key, or changes its label or tier, gives it nothing, and an update naming an `expires_at` is held by `keys-and-oauth/expiry-update-ceiling`. A change to `enforcement_override` is held to `config.manage` instead (`keys-and-oauth/levers-permission`), which already changes the instance's own levers for good.
+**Reason:** What a key that expires gives another key ends when it does. An update that only narrows a key, or changes its label or tier, gives it nothing, and an update naming an `expires_at` is held by `keys-and-oauth/expiry-update-ceiling` or `keys-and-oauth/expiry-manage-ceiling`. A change to `enforcement_override` is held to `config.manage` instead (`keys-and-oauth/levers-permission`), which already changes the instance's own levers for good.
 
 **Tests:** `compliance/key-expiry.test.ts › gives a key that outlives it nothing more, unless the update names an expires_at no later than its own, and still narrows or relabels it`, `› widens a key that expires no later than it, and a key that never expires widens any key it reaches`, `compliance/stored-times.test.ts › answers 500 internal_error to an update that widens a key whose stored expiry does not read, and leaves the key as it was`, `compliance/owner-keys.test.ts › holds a widening by keys.mint and keys.manage to the caller's own expiry`.
 
-### `keys-and-oauth/expiry-manage-narrows`
+### `keys-and-oauth/expiry-manage-lengthens`
 
-If a caller holding `keys.manage`, and neither `keys.mint` nor local authority, sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden`.
+When local authority, or a caller holding `keys.manage` that has no `expires_at` of its own, sends `PATCH /keys/{id}` naming a later `expires_at`, or `null`, the server MUST replace the key's `expires_at` with it, whether or not an app made the key.
 
-**Reason:** `keys-and-oauth/manage-narrows-only` holds for a key's life as for its reach: a longer life is more access.
+**Reason:** A later expiry adds no reach, destroys nothing and is undone by shortening the key or revoking it, so it needs no recent sign-in.
 
-**Tests:** `compliance/key-expiry.test.ts › is given an expiry or has it shortened, and is refused a later expiry or none`.
+**Tests:** `compliance/key-expiry.test.ts › lengthens and clears the expiry of a key a key made, refuses either under narrow_only, and the key's secret still works`, `› lengthens or clears the expiry of a key that no app made`, `› is lengthened and cleared by local authority and by a signed-in app that holds keys.manage, and its secret still works`.
+
+### `keys-and-oauth/expiry-manage-within`
+
+When a caller holding `keys.manage` that has an `expires_at` sends `PATCH /keys/{id}` naming an `expires_at` later than the key's and no later than its own, the server MUST replace the key's `expires_at` with it, whether or not an app made the key.
+
+**Tests:** `compliance/key-expiry.test.ts › lengthens a key up to its own expiry, and is refused one past it or none`.
+
+### `keys-and-oauth/expiry-change-keeps-secret`
+
+When `PATCH /keys/{id}` replaces a key's `expires_at` with a later one or `null`, the server MUST authenticate a request bearing the secret the key already had.
+
+**Reason:** The secret does not change, so nothing that uses the key has to change.
+
+**Tests:** `compliance/key-expiry.test.ts › lengthens and clears the expiry of a key a key made, refuses either under narrow_only, and the key's secret still works`, `› is lengthened and cleared by local authority and by a signed-in app that holds keys.manage, and its secret still works`.
 
 ### `keys-and-oauth/expiry-app-key-narrows`
 
-If `PATCH /keys/{id}` is sent for a key an app made that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden`, whoever the caller is.
+If a caller holding neither `keys.manage` nor local authority sends `PATCH /keys/{id}` for a key an app made that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden` and leave the key as it was.
 
-**Reason:** `keys-and-oauth/app-key-narrows-only` holds for a key's life as for its reach.
+**Reason:** `keys.mint` lengthens a key only as it widens one, and `keys-and-oauth/app-key-narrows-only` holds a key an app made to what the app gave it.
 
-**Tests:** `compliance/key-expiry.test.ts › is shortened and never lengthened or cleared, whoever the caller is`.
-
-### `keys-and-oauth/expiry-owner-free`
-
-When local authority sends `PATCH /keys/{id}` naming a later `expires_at`, or `null`, for a key no app made, the server MUST replace the key's `expires_at` with it.
-
-**Tests:** `compliance/key-expiry.test.ts › lengthens or clears the expiry of a key that no app made`.
+**Tests:** `compliance/key-expiry.test.ts › is refused a later expiry or none by a caller that does not hold keys.manage, and is shortened`.
 
 ### `keys-and-oauth/expiry-narrow-only-narrows`
 
@@ -671,7 +679,7 @@ If `PATCH /keys/{id}` names `narrow_only: true` for a key that has an `expires_a
 
 **Reason:** `keys-and-oauth/update-narrow-only` holds for a key's life as for its reach: an update based on an earlier read must not lengthen the key's current life.
 
-**Tests:** `compliance/key-expiry.test.ts › is shortened or given when the key has none, and refused a later expiry or none`.
+**Tests:** `compliance/key-expiry.test.ts › is shortened or given when the key has none, and refused a later expiry or none`, `› lengthens and clears the expiry of a key a key made, refuses either under narrow_only, and the key's secret still works`.
 
 ## Authentication
 
