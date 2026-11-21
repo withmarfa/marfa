@@ -1,8 +1,4 @@
 //! Runs and supervises the tunnel connector that carries a linked instance's traffic through Marfa Cloud.
-//!
-//! The connector is ready when its own `/ready` on its metrics address answers 200. Unlike a line
-//! in its output, `/ready` says so again each time that changes, and it does not depend on the
-//! wording of a release.
 
 use std::fs::{self, DirBuilder, OpenOptions};
 use std::io::{self, ErrorKind, Write};
@@ -586,7 +582,7 @@ async fn free_port() -> Option<u16> {
     listener.local_addr().ok().map(|address| address.port())
 }
 
-/// Asks the connector whether it is ready; any other answer, or none, is no.
+/// Asks the connector's `/ready`, which reports each change in both directions; any answer but 200, or none, is no.
 async fn ready(port: u16) -> bool {
     let asked = async {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).await.ok()?;
