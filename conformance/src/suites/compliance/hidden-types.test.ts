@@ -253,6 +253,14 @@ describe("hidden app types", () => {
     expect(row(shownId), "the witness is in the bin").toBeDefined();
     expect(row(hiddenId), "the app item is in the bin").toBeDefined();
     expect(row(hiddenId)?.eligible_for_deletion_at).toBeTruthy();
+    const scoped = await app.rawRequest<{ data: { id: string }[] }>(
+      "/trash?limit=100",
+    );
+    expect(scoped.status, JSON.stringify(scoped.error)).toBe(200);
+    expect(
+      idsOf(scoped.data.data),
+      "the app's own key does not find its item in the bin",
+    ).toContain(hiddenId);
 
     const restored = await owned(
       `/items/${hiddenId}/restore?version=${String(row(hiddenId)?.version)}`,
@@ -374,5 +382,71 @@ describe("hidden app types", () => {
     const named = await found(`&type=${HIDDEN}`);
     for (const id of hiddenIds) expect(named).toContain(id);
     for (const id of shownIds) expect(named).not.toContain(id);
+  });
+  it("opens no hidden type to a wildcard, which narrows hidden items only where include=hidden asks for them", async () => {
+    const listed = async (query: string) => {
+      const page = await owner.rawRequest<{ data: MarfaItem[] }>(
+        `/items?tier=all&limit=200&${query}`,
+      );
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      return idsOf(page.data.data);
+    };
+    const named = await listed(`type=${HIDDEN}`);
+    for (const id of hiddenIds) expect(named, "the witness").toContain(id);
+    for (const wildcard of ["app.*", "app.acme.*"]) {
+      const opened = await listed(`type=${wildcard}`);
+      for (const id of hiddenIds) {
+        expect(opened, `${wildcard} opened a hidden type`).not.toContain(id);
+      }
+      const asked = await listed(`type=${wildcard}&include=hidden`);
+      for (const id of hiddenIds) expect(asked).toContain(id);
+      expect(asked).not.toContain(shownIds[0]);
+    }
+    const counts = await owner.rawRequest<Record<string, number>>(
+      "/items/stats?by=type&tier=all&type=app.*",
+    );
+    expect(counts.status, JSON.stringify(counts.error)).toBe(200);
+    expect(counts.data).not.toHaveProperty(HIDDEN);
+    const searched = await owner.rawRequest<{ data: { item: MarfaItem }[] }>(
+      `/search?q=${WORD}&tier=all&type=app.*`,
+    );
+    expect(searched.status, JSON.stringify(searched.error)).toBe(200);
+    for (const id of hiddenIds) {
+      expect(searched.data.data.map((hit) => hit.item.id)).not.toContain(id);
+    }
+  });
+  it("lists a visible item beneath a hidden one in a view, as a listing beneath the same item does", async () => {
+    const root = await write(owner, SHOWN, "library");
+    const middle = await write(app, HIDDEN, "library");
+    const leaf = await write(owner, SHOWN, "library");
+    for (const [from, to] of [
+      [root, middle],
+      [middle, leaf],
+    ] as const) {
+      const edge = await owner.createEdge({
+        from_id: from,
+        to_id: to,
+        edge_type: "parent-of",
+      });
+      expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+    }
+    const listing = await owner.rawRequest<{ data: MarfaItem[] }>(
+      `/items?tier=all&beneath=${root}`,
+    );
+    expect(listing.status, JSON.stringify(listing.error)).toBe(200);
+    expect(idsOf(listing.data.data).sort(), "the witness").toEqual(
+      [root, leaf].sort(),
+    );
+    const view = await owner.createView({
+      title: "beneath a hidden item",
+      query: { beneath: root },
+    });
+    expect(view.status, JSON.stringify(view.error)).toBe(201);
+    const viewed = await owner.listViewItems(view.data.item.id, { limit: 200 });
+    expect(viewed.status, JSON.stringify(viewed.error)).toBe(200);
+    expect(
+      idsOf(viewed.data.data).sort(),
+      "the hidden item cut the view's walk short, or was listed",
+    ).toEqual([root, leaf].sort());
   });
 });

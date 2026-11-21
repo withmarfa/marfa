@@ -107,3 +107,41 @@ it("holds no app item in a slice of every type, by hydration or by event, and ho
   ).toBe(true);
   expect((await beside.get(shownBefore)).ok).toBe(true);
 });
+
+it("reads an app item in the bin as the server's bin answers it, with no type named", async () => {
+  const shown = `user.binned-${ctx.runId}`;
+  const hidden = `app.binned-${ctx.runId}.setting`;
+  for (const id of [shown, hidden]) {
+    const registered = await client.registerType({
+      id,
+      fields: { title: { type: "string" } },
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+  }
+  const binned: string[] = [];
+  for (const type of [shown, hidden]) {
+    const id = await made(type, "binned");
+    expect((await client.deleteItem(id)).ok).toBe(true);
+    binned.push(id);
+  }
+  const [shownId, hiddenId] = binned as [string, string];
+  const store = newStore("hidden-types-bin");
+  stores.push(store);
+  const copy = new CliDevice({
+    binary: requireBinary(),
+    store,
+    url: apiUrl,
+    key: apiKey,
+  });
+  value(await copy.hydrate([shown], "library"));
+
+  const seen: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = value(await copy.bin({ limit: 100, cursor }));
+    seen.push(...page.data.map((item) => item.id));
+    cursor = page.next_cursor ?? undefined;
+  } while (cursor !== undefined);
+  expect(seen, "the witness is in the bin").toContain(shownId);
+  expect(seen, "the device's bin left out an app item").toContain(hiddenId);
+});

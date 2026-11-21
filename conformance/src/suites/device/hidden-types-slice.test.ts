@@ -13,9 +13,9 @@ import {
 
 /**
  * A slice that names a visible type takes no hidden subtype of it
- * (`device/slice-hidden-subtype`), and a copy an earlier release made lets go
- * of the hidden items its slice does not take on its first catch-up
- * (`device/catch-up-lets-go-hidden`).
+ * (`device/slice-hidden-subtype`), and a hidden item a copy already holds stays
+ * in it and is left out of what the copy lists and searches, as the server
+ * leaves it out (`device/read-hidden`).
  */
 
 let harness: Harness | undefined;
@@ -54,17 +54,15 @@ it("takes no hidden subtype of a type it names by event, and takes the type's ow
   ).toBe(false);
 });
 
-it("lets go of an unpinned hidden item a copy holds on its first catch-up, and keeps a pinned one", async () => {
-  harness = await startHarness("hidden-subtype-first-catch-up");
+it("keeps a hidden item an earlier release held across a catch-up, and lists or finds it only where its exact type is named", async () => {
+  harness = await startHarness("hidden-subtype-kept");
   const { server, device } = harness;
   scriptHydration(server, { head: "10", catalog });
-  for (const id of ["s1", "s2"]) {
-    server.copyAnswer(
-      "GET",
-      `/items/${id}`,
-      answers.updated(wireItem({ id, type: HIDDEN })),
-    );
-  }
+  server.copyAnswer(
+    "GET",
+    "/items/s1",
+    answers.updated(wireItem({ id: "s1", type: HIDDEN })),
+  );
   server.copyAnswer(
     "GET",
     "/events",
@@ -75,8 +73,6 @@ it("lets go of an unpinned hidden item a copy holds on its first catch-up, and k
   );
   expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
   expect((await device.pin("s1")).ok).toBe(true);
-  expect((await device.pin("s2")).ok).toBe(true);
-  expect((await device.get("s1")).ok, "the witness is held").toBe(true);
 
   // A copy an earlier release made held s1, listed and unpinned, by an event.
   const db = new DatabaseSync(device.store);
@@ -94,9 +90,35 @@ it("lets go of an unpinned hidden item a copy holds on its first catch-up, and k
   expect((await device.get("later")).ok, "the stream was applied").toBe(true);
   expect(
     (await device.get("s1")).ok,
-    "an unpinned hidden item the slice does not take was kept",
-  ).toBe(false);
-  expect((await device.get("s2")).ok, "a pinned hidden item was let go").toBe(
-    true,
-  );
+    "the copy let go of a hidden item it held",
+  ).toBe(true);
+
+  const listed = async (type?: string | string[]) => {
+    const answer = await device.list(type === undefined ? {} : { type });
+    expect(answer.ok, JSON.stringify(answer)).toBe(true);
+    return answer.ok ? answer.value.map((item) => item.id) : [];
+  };
+  const found = async (type?: string) => {
+    const answer = await device.search(
+      "body",
+      type === undefined ? {} : { type },
+    );
+    expect(answer.ok, JSON.stringify(answer)).toBe(true);
+    return answer.ok ? answer.value.map((hit) => hit.item.id) : [];
+  };
+  expect(await listed(HIDDEN), "the witness: its exact type").toContain("s1");
+  expect(await found(HIDDEN)).toContain("s1");
+  for (const answer of [
+    await listed(),
+    await listed("core.note"),
+    await found(),
+    await found("core.note"),
+  ]) {
+    expect(answer, "the visible witness").not.toHaveLength(0);
+    expect(
+      answer,
+      "a read that names no hidden type answered it",
+    ).not.toContain("s1");
+  }
+  expect(await listed("app.*"), "a wildcard opened a hidden type").toEqual([]);
 });

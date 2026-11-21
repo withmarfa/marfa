@@ -480,7 +480,7 @@ When `GET /items` names `include=edges`, the server MUST add to each item its ou
 
 ### `search-and-filters/system-named-type`
 
-When `GET /items` names a `type` that is a hidden type (`items/hidden-types`), the server MUST list the items of that type, and of its subtypes that are hidden, that the credential may read.
+When `GET /items` names a `type` that is a hidden type written exactly, not as a wildcard (`items/hidden-types`), the server MUST list the items of that type, and of its subtypes that are hidden, that the credential may read.
 
 **Reason:** a caller that asks for `system.folder` has already said what it wants, so the default that leaves hidden items out of a listing does not apply to it.
 
@@ -1252,7 +1252,7 @@ When `GET /search` carries a `q`, the server MUST answer the items whose searcha
 
 ### `search-and-filters/search-hidden`
 
-The server MUST leave hidden items (`items/hidden-types`) out of the matches of `GET /search` unless the request names `include=hidden` or a `type` that is a hidden type.
+The server MUST leave hidden items (`items/hidden-types`) out of the matches of `GET /search` unless the request names `include=hidden` or a `type` that is a hidden type written exactly (`search-and-filters/type-hidden-exact`).
 
 **Reason:** a search that names a hidden type has said what it wants, as a listing does (`search-and-filters/system-named-type`).
 
@@ -1644,15 +1644,15 @@ When `GET /items/stats` names `include=hidden`, the server MUST count the hidden
 
 ### `search-and-filters/type-hidden-exact`
 
-If a listing, a search or a count names types, then the server MUST NOT return an item of a hidden type unless a hidden type among the names is that type or is above it.
+If a listing, a search or a count names types and does not name `include=hidden`, then the server MUST NOT return an item of a hidden type unless one of the names is a hidden type written exactly, not as a wildcard, that is that type or is above it.
 
-**Reason:** naming a type opts in only to that hidden type. A hidden subtype of a visible type stays hidden, and naming one hidden type opens no other.
+**Reason:** naming a type opts in only to that hidden type. A hidden subtype of a visible type stays hidden, naming one hidden type opens no other, and a wildcard such as `app.*` narrows hidden items a request asked for with `include=hidden` but does not ask for them itself, so it cannot gather every app's machinery at once.
 
-**Tests:** `compliance/hidden-types.test.ts › opens a type filter to the hidden type it names and no other, though a visible type it names has that other as a subtype`.
+**Tests:** `compliance/hidden-types.test.ts › opens a type filter to the hidden type it names and no other, though a visible type it names has that other as a subtype`, `› opens no hidden type to a wildcard, which narrows hidden items only where include=hidden asks for them`.
 
 ### `search-and-filters/stats-system-default`
 
-When `GET /items/stats` names neither `include=hidden` nor a `type` that is a hidden type, the server MUST leave the hidden items (`items/hidden-types`) out of its counts.
+When `GET /items/stats` names neither `include=hidden` nor a `type` that is a hidden type written exactly, the server MUST leave the hidden items (`items/hidden-types`) out of its counts.
 
 **Tests:** `compliance/item-stats.test.ts › counts the system items under include=hidden and refuses any other include`.
 

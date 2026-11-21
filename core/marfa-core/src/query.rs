@@ -39,7 +39,7 @@ pub(crate) fn list_with(
 
     clauses.push(LISTED.into());
     // A list of the bin alone is the bin, which holds hidden items as the server's does
-    // (`items/hidden-types-bin`).
+    // (`device/read-hidden-bin`).
     let bin = filters.states.as_deref() == Some(&[ItemState::Trashed]);
     narrow_by_types(
         catalog,

@@ -1163,7 +1163,7 @@ fn instance_changed(refusal: &CoreError) {
     }
 }
 
-/// The bin is for recovery, so its read asks for hidden items too (`items/hidden-types-bin`).
+/// The bin is for recovery, so its read asks for hidden items too (`device/read-hidden-bin`).
 #[test]
 fn the_bin_and_a_binned_item_are_read_with_hidden_items() {
     let server = Scripted::start();

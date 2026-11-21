@@ -210,6 +210,14 @@ Where a view names `query.beneath`, the server MUST list that item and every ite
 
 **Tests:** `compliance/views-items.test.ts › lists the item beneath and everything under it by parent-of, at any depth`.
 
+### `views/items-beneath-hidden`
+
+Where a view names `query.beneath`, the server MUST walk `parent-of` through a hidden item (`items/hidden-types`) the credential may read, and list each item below it that is not hidden and that the view's query otherwise matches.
+
+**Reason:** a view lists the same items as a listing beneath the same item (`search-and-filters/beneath-listing`), so an app's hidden item between two of a person's items hides only itself, not what is below it.
+
+**Tests:** `compliance/hidden-types.test.ts › lists a visible item beneath a hidden one in a view, as a listing beneath the same item does`.
+
 ### `views/items-beneath-state`
 
 Where a view names `query.beneath`, the server MUST NOT list a trashed item.

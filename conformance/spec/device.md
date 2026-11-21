@@ -1130,19 +1130,27 @@ While a device's slice is `*` alone, a device MUST NOT apply an event for a hidd
 
 ### `device/slice-hidden-subtype`
 
-While a device's slice names a visible type, a device MUST NOT hold an item of a hidden subtype of it that is not pinned, whether a hydration or an event brings it.
+While a device's slice names a visible type and does not name a hidden subtype of it exactly, a device MUST NOT take an item of that hidden subtype that is neither pinned nor named by a queued write, whether a hydration or an event brings it.
 
 **Reason:** naming a type opens only that type's own hidden items (`search-and-filters/type-hidden-exact`), so a copy that took a hidden subtype by event would hold what no hydration of the same slice holds.
 
 **Tests:** `device/hidden-types-slice.test.ts › takes no hidden subtype of a type it names by event, and takes the type's own item`.
 
-### `device/catch-up-lets-go-hidden`
+### `device/read-hidden`
 
-When a device catches up, a device MUST let go of each hidden item the copy holds that is not pinned, not named by a queued write and not taken by the slice, and keep every pinned item and queued write.
+When a caller lists or searches a working copy, a device MUST leave out each hidden item (`items/hidden-types`) the copy holds, unless a type the request names is that item's hidden type, written exactly and not as a wildcard, or is above it.
 
-**Reason:** a copy made before a hidden type was left out of a slice holds hidden items no event will correct, so the first catch-up after the upgrade lets them go, and a later one finds none.
+**Reason:** a copy can hold a hidden item that a pin, a slice naming its type or an earlier release took, and a device keeps every row it holds, so nothing a person made is lost to a server restored behind the copy. It hides such an item when it reads, by the server's rule (`search-and-filters/type-hidden-exact`), so the copy answers what the server answers.
 
-**Tests:** `device/hidden-types-slice.test.ts › lets go of an unpinned hidden item a copy holds on its first catch-up, and keeps a pinned one`.
+**Tests:** `device/hidden-types-slice.test.ts › keeps a hidden item an earlier release held across a catch-up, and lists or finds it only where its exact type is named`.
+
+### `device/read-hidden-bin`
+
+When a caller reads the bin, or a local list names the bin's state alone, a device MUST answer an `app.*` item in the bin as it answers an item of any other type.
+
+**Reason:** the bin is for recovery (`items/hidden-types-bin`), so a device's bin holds what the server's bin holds.
+
+**Tests:** `device/hidden-types-live.test.ts › reads an app item in the bin as the server's bin answers it, with no type named`.
 
 ### `device/hydrate-every-type-expected`
 

@@ -125,9 +125,9 @@ stays because that thing is what it checks.
   type below another. A build that ships a field, a status word or a thumbnail
   above a registered type leaves it holding what its chain refuses; every door
   refuses that, and no fault ships a build.
-- `device/hidden-types-slice.test.ts`, "lets go of an unpinned hidden item a
-  copy holds on its first catch-up, and keeps a pinned one", removes a pin row
-  from the device's store. A copy an earlier release made holds a hidden item
+- `device/hidden-types-slice.test.ts`, "keeps a hidden item an earlier release
+  held across a catch-up, and lists or finds it only where its exact type is
+  named", removes a pin row from the device's store. A copy an earlier release made holds a hidden item
   that no door of this release leaves unpinned and held.
 - `compliance/hidden-types-saved-view.test.ts` rewrites the stored query of a
   view to name an app type while the server is stopped. A view door refuses a
