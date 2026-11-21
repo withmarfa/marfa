@@ -134,19 +134,27 @@ When a drain sends a write again that it sent before, a device MUST send it unde
 
 ### `queue-and-verdicts/resend-read-first`
 
-When a drain comes to a write it sent before under a credential other than its current one, a renewed access token counting as the credential it replaced, a device MUST read what the server holds of the write's subject before it sends the write again, unless the write is a create that names its id, an edge create, a write to a table's rows or an upload.
+When a drain comes to a write it sent before under a credential other than its current one, a renewed access token counting as the credential it replaced, a device MUST read what the server holds of the write's subject before it sends the write again, unless the write is a create that names its id and no `source_id`, an edge create, a write to a table's rows or an upload.
 
-**Reason:** the server holds an idempotency key to the credential that sent it (`items/idempotency-credential`), so under another credential the same key runs the write afresh: an edit the server applied would be applied again, and a delete refused as one of an item already in the bin. A renewed token is the same credential (`items/idempotency-signed-in`). A create that names its id and an edge create are answered for what they made whoever repeats them (`items/create-repeat`, `edges/id-repeat`), a row write is answered by its row keys and values (`tables/rows-put-repeat`), and an upload is sent again under its own rule (`queue-and-verdicts/upload-sent-as-writer`), so these go again unread. A create by natural key is read by that key, under the source the server stamped it with.
+**Reason:** the server holds an idempotency key to the credential that sent it (`items/idempotency-credential`), so under another credential the same key runs the write afresh: an edit the server applied would be applied again, and a delete refused as one of an item already in the bin. A renewed token is the same credential (`items/idempotency-signed-in`). A create that names its id and no natural key and an edge create are answered for what they made whoever repeats them (`items/create-repeat`, `edges/id-repeat`), a row write is answered by its row keys and values (`tables/rows-put-repeat`), and an upload is sent again under its own rule (`queue-and-verdicts/upload-sent-as-writer`), so these go again unread. A create that names its id and a natural key is applied as an upsert onto the item its key resolves (`items/create-id-and-natural-key`), so sent again it would replace what was written to that item since it landed. A create by natural key is read by that key, under the source the server stamped it with.
 
-**Tests:** `device/resend-credential-live.test.ts › settles an edit and a delete whose answers were lost under a replaced key from what the server holds, writing neither again`, `› sends again under the replaced key's successor an edit and a delete the server never received, and each is applied once`.
+**Tests:** `device/resend-credential-live.test.ts › settles an edit and a delete whose answers were lost under a replaced key from what the server holds, writing neither again`, `› sends again under the replaced key's successor an edit and a delete the server never received, and each is applied once`, `device/server-restored-live.test.ts › keeps another client's edit to a kept item whose create's answer was lost, draining again under a key of another source that claims the item's`.
+
+### `queue-and-verdicts/resend-create-by-id`
+
+When a device reads a create that names its id for `queue-and-verdicts/resend-read-first`, a device MUST read the item by that id.
+
+**Reason:** only a create naming an id makes an item under it, so the server holds an item there only where the create landed. A read by natural key would find the item only while its key is unchanged.
+
+**Tests:** `device/server-restored-live.test.ts › keeps another client's edit to a kept item whose create's answer was lost, draining again under a key of another source that claims the item's`.
 
 ### `queue-and-verdicts/resend-read-holds`
 
 When the read of `queue-and-verdicts/resend-read-first` finds that the server holds what the write asks for, a device MUST give the write the verdict `accepted` without sending it again.
 
-**Reason:** the write was applied under the credential that sent it. An edit is held when its subject's version is past the one it was based on and each field it sends has the value it sent. A delete is held when its subject is in the bin, a restore when its subject is out of it, a lifecycle move when the item is in the state it names, a tag or extension write when the server has the tags or the document it sent, and an edge edit when the edge's version is past the one it was based on with each value it sent. A create by natural key is held when an item has that key and each field it sends, and, where it made the item rather than merged into one, the state and place it sends; each edge type it names holds exactly the targets it sends, read to the end of the listing that continues a block of the item read (`edges/hydrate-cursor`). A write the server does not hold goes again (`queue-and-verdicts/resend-names-version`), except where `queue-and-verdicts/resend-create-elsewhere` or `queue-and-verdicts/resend-create-hidden` holds it.
+**Reason:** the write was applied under the credential that sent it. An edit is held when its subject's version is past the one it was based on and each field it sends has the value it sent. A delete is held when its subject is in the bin, a restore when its subject is out of it, a lifecycle move when the item is in the state it names, a tag or extension write when the server has the tags or the document it sent, and an edge edit when the edge's version is past the one it was based on with each value it sent. A create that names its id is held when the server holds an item under that id, whatever has been written to it since. A create by natural key is held when an item has that key and each field it sends, and, where it made the item rather than merged into one, the state and place it sends; each edge type it names holds exactly the targets it sends, read to the end of the listing that continues a block of the item read (`edges/hydrate-cursor`). A write the server does not hold goes again (`queue-and-verdicts/resend-names-version`), except where `queue-and-verdicts/resend-create-elsewhere` or `queue-and-verdicts/resend-create-hidden` holds it.
 
-**Tests:** `device/resend-credential-live.test.ts › settles an edit and a delete whose answers were lost under a replaced key from what the server holds, writing neither again`, `› settles a move to the bin whose answer was lost under a replaced key from the item it finds in the bin, sending nothing again`, `› settles a create whose edge type holds more targets than one block of an item read carries from every page, sending nothing again`.
+**Tests:** `device/resend-credential-live.test.ts › settles an edit and a delete whose answers were lost under a replaced key from what the server holds, writing neither again`, `› settles a move to the bin whose answer was lost under a replaced key from the item it finds in the bin, sending nothing again`, `› settles a create whose edge type holds more targets than one block of an item read carries from every page, sending nothing again`, `device/server-restored-live.test.ts › keeps another client's edit to a kept item whose create's answer was lost, draining again under a key of another source that claims the item's`.
 
 ### `queue-and-verdicts/resend-read-any-state`
 
@@ -2224,7 +2232,7 @@ An edit is queued against the version the copy holds, and an edit waiting in the
 
 ### `queue-and-verdicts/own-create-edit-on-answer`
 
-When this device's create of an item or an edge is answered, a device MUST send each later unsent edit of it based on version 0 on the version the answer names, but where `queue-and-verdicts/create-merged-over`, `queue-and-verdicts/create-repeat-edit-rebased` or `queue-and-verdicts/page-create-edit-rebased` says otherwise.
+When this device's create of an item or an edge is answered, a device MUST send each later unsent edit of it based on version 0 on the version the answer names, but where `queue-and-verdicts/create-merged-over`, `queue-and-verdicts/create-repeat-edit-rebased`, `queue-and-verdicts/resend-held-edit-rebased` or `queue-and-verdicts/page-create-edit-rebased` says otherwise.
 
 **Reason:** an item or edge of this device's own unanswered create is at version 0, which the server never mints (`versions/create-claim-none`), so sent as it stands the edit names a snapshot no server holds and is blocked `ancestor_unavailable`.
 
@@ -2253,6 +2261,14 @@ When the server answers this device's create of an item or an edge as a repeat i
 **Reason:** a repeat is answered with the item or edge as it stands, whoever has written it since (`items/create-repeat` and `edges/id-repeat`); version 1 is the one that create made, and the server merges an item's edit against it, or refuses an edge's edit as stale wherever the edge has moved on.
 
 **Tests:** `device/queue.test.ts › sends an edit of its own create on the version that create made where the server answers a repeat of it`.
+
+### `queue-and-verdicts/resend-held-edit-rebased`
+
+When a device gives this device's create naming its id the verdict `accepted` under `queue-and-verdicts/resend-read-holds`, a device MUST send each later unsent edit of the item based on version 0 on version 1.
+
+**Reason:** the read answers the item as it stands, whoever has written it since; version 1 is the one that create made, and the server merges the edit against it, so the edit neither replaces another writer's change nor is replaced by it.
+
+**Tests:** `device/server-restored-live.test.ts › keeps another client's edit to a kept item whose create's answer was lost, draining again under a key of another source that claims the item's`.
 
 ### `queue-and-verdicts/page-create-edit-rebased`
 

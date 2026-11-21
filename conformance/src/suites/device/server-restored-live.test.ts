@@ -81,6 +81,8 @@ interface World {
   restore(image: string): Promise<void>;
   /** From now on, answers in the server's place each request `answer` returns an answer for. */
   answerInstead(answer: Instead): void;
+  /** From now on, drops the server's answer to each request `lose` names, once the server has answered. */
+  loseAnswers(lose: (method: string, path: string) => boolean): void;
 }
 
 /**
@@ -102,6 +104,7 @@ async function world(
   let upstream = original.apiUrl;
   let state = original.stateDir;
   let instead: Instead = () => undefined;
+  let lose = (_method: string, _path: string) => false;
   let contract: string | null = null;
   const sent: string[] = [];
   const listener = createServer((request, response) => {
@@ -145,6 +148,11 @@ async function world(
         },
       );
       contract = answer.headers.get("x-marfa-contract") ?? contract;
+      if (lose(method, path)) {
+        await answer.arrayBuffer();
+        response.destroy();
+        return;
+      }
       const returned: Record<string, string> = {};
       answer.headers.forEach((kept, name) => {
         if (
@@ -202,6 +210,9 @@ async function world(
     },
     answerInstead(answer) {
       instead = answer;
+    },
+    loseAnswers(losing) {
+      lose = losing;
     },
   };
 }
@@ -1002,6 +1013,82 @@ describe("a server restored behind work this device sent it", () => {
       const back = await w.client().getItem(id);
       expect(back.ok, JSON.stringify(back.error)).toBe(true);
       expect(back.data.item.source).toBe("restored-unclaimed-folder");
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "keeps another client's edit to a kept item whose create's answer was lost, draining again under a key of another source that claims the item's",
+    async () => {
+      const w = await world("restored-lost-answer");
+      await claim(w, "restored-lost-folder");
+      value(await w.device.catchUp());
+      const image = await w.original.image();
+      const id = await keyed(
+        w,
+        "made under the claim",
+        "restored-lost-folder",
+        `${randomUUID()}.md`,
+      );
+
+      await w.restore(image);
+      expect(expired(await w.device.catchUp())).toBe("copy_expired");
+      value(await w.device.hydrate(["core.note"], "library"));
+      expect(await keptBlocked(w.device)).toEqual([["create_item", id]]);
+      const kept = value(await w.device.get(id));
+      value(
+        await w.device.update(id, {
+          properties: { body: "edited on the device" },
+          version: kept.version,
+        }),
+      );
+      value(await w.device.release({ reason: "server_restored" }));
+      w.loseAnswers((method, path) => method === "POST" && path === "/items");
+      value(await w.device.drain());
+      w.loseAnswers(() => false);
+      const landed = await w.client().getItem(id);
+      expect(landed.ok, "the kept create never reached the server").toBe(true);
+      expect(landed.data.item.properties.title).toBe("made under the claim");
+
+      const edited = await w.client().updateItem(id, {
+        properties: { title: "edited elsewhere" },
+        version: landed.data.item.version,
+      });
+      expect(edited.ok, JSON.stringify(edited.error)).toBe(true);
+
+      const minted = await controlRequest(w.socket(), "/keys", {
+        method: "POST",
+        body: {
+          label: "restored-lost-answer-other",
+          source: `restored-lost-other-${randomUUID().slice(0, 8)}`,
+          type_permissions: { "core.note": "write" },
+          sources: ["restored-lost-folder"],
+        },
+      });
+      expect(minted.status, JSON.stringify(minted.body)).toBe(201);
+      const other = w.device.reopen({ key: minted.body.key as string });
+      value(await other.hydrate(["core.note"], "library"));
+      const before = w.sent.length;
+      const report = value(await other.drain());
+
+      expect(
+        w.sent.slice(before).filter((line) => line === "POST /items"),
+        "the kept create went again under the other key",
+      ).toEqual([]);
+      expect(
+        report.verdicts.find((entry) => entry.kind === "create_item")?.verdict,
+        JSON.stringify(report),
+      ).toBe("accepted");
+      const read = await w.client().getItem(id);
+      expect(read.ok, JSON.stringify(read.error)).toBe(true);
+      expect(
+        [read.data.item.properties.title, read.data.item.properties.body],
+        "the other client's edit or the device's later edit was lost",
+      ).toEqual(["edited elsewhere", "edited on the device"]);
+      expect(value(await other.get(id)).properties).toMatchObject({
+        title: "edited elsewhere",
+        body: "edited on the device",
+      });
     },
     TIMEOUT,
   );
