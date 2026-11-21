@@ -640,26 +640,34 @@ it(
       }
 
       // Writes land again while the disk is still short: the entry is
-      // listed, and not announced a second time. A fault at the same time
-      // is the sentinel, from the log.
-      await own.setFault("fail:audit=item.create");
+      // listed, and not announced a second time. A fault of another route,
+      // which the refused write above did not raise, is the sentinel, from
+      // the log.
+      await own.setFault("fail:audit=items.bulk");
       try {
-        const failed = await fetch(`${own.apiUrl}/items`, {
+        const failed = await fetch(`${own.apiUrl}/items/bulk`, {
           method: "POST",
           headers: {
             authorization: `Bearer ${writerKey}`,
             "content-type": "application/json",
           },
           body: JSON.stringify({
-            type: "core.note",
-            properties: { title: `note ${randomUUID()}` },
+            mode: "upsert",
+            atomic: true,
+            items: [
+              {
+                type: "core.note",
+                source_id: randomUUID(),
+                properties: { title: "bulk" },
+              },
+            ],
           }),
         });
         expect(failed.status).toBe(500);
       } finally {
         await own.clearFault("fail:audit");
       }
-      const sentinel = "database:POST /items";
+      const sentinel = "database:POST /items/bulk";
       await hook.waitFor(
         (received) =>
           received.path.endsWith("/good") &&
@@ -667,11 +675,16 @@ it(
             ?.reference === sentinel &&
           "event_id" in bodyOf(received),
       );
-      const ran = await controlRequest(
-        own.controlSocket,
-        "/housekeeping/attention-check/run",
-        { method: "POST" },
-      );
+      // The job also runs on its own each second, and a run asked for while
+      // one is under way is refused.
+      const ran = await waitFor("a run of the attention check", async () => {
+        const asked = await controlRequest(
+          own.controlSocket,
+          "/housekeeping/attention-check/run",
+          { method: "POST" },
+        );
+        return asked.status === 409 ? undefined : asked;
+      });
       expect(ran.status, JSON.stringify(ran.body)).toBe(200);
       expect(hook.received.filter(toDisk)).toHaveLength(1);
     } finally {
