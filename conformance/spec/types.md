@@ -1350,17 +1350,17 @@ If a folder, view or webhook setting names the type in a way a move can't rewrit
 
 If the key sending `POST /types/{id}/move` couldn't change a folder, view or webhook naming the type through that setting's own operation, then the server MUST answer `409 type_move_blocked` with that setting's `reason` `not_permitted`, and move nothing.
 
-**Reason:** a move must not reach a setting its caller couldn't change directly: a folder or view takes write on `system.folder` or `system.view`, and a webhook takes `webhooks.manage` and the key or app that made it.
+**Reason:** a move must not reach a setting its caller couldn't change directly: a folder or view takes write on `system.folder` or `system.view`, and a webhook takes `webhooks.manage` and the key or app that made it. An owner's key that holds `keys.manage` removes another maker's webhook instead, and the move then goes through.
 
-**Tests:** `compliance/type-move.test.ts › refuses a move naming a setting the key may not change, before moving anything`.
+**Tests:** `compliance/type-move.test.ts › refuses a move naming a setting the key may not change, before moving anything`, `compliance/webhooks-owner-reach.test.ts › deletes a revoked key's subscription, after which a type move it blocked goes through`.
 
 ### `types/move-settings-ids`
 
-When the server names a folder, view or webhook setting in a type move's answer, its job's `result.settings` or a `type_in_use` refusal, the server MUST give the setting's `id` only to a credential that may read it, and name any other setting by its `kind` and `field` alone, with `reason` `not_permitted` on a move: a folder to one whose type map grants read on `system.folder`, a view to one that grants read on `system.view`, and a webhook to the key or app that made it, holding `webhooks.manage`.
+When the server names a folder, view or webhook setting in a type move's answer, its job's `result.settings` or a `type_in_use` refusal, the server MUST give the setting's `id` only to a credential that may read it, and name any other setting by its `kind` and `field` alone, with `reason` `not_permitted` on a move: a folder to one whose type map grants read on `system.folder`, a view to one that grants read on `system.view`, and a webhook to a credential holding `webhooks.manage` that made it or that also holds `keys.manage`.
 
 **Reason:** a setting's own operations hide it from a credential that may not read it, and a move or a delete must not tell that credential more.
 
-**Tests:** `compliance/type-move.test.ts › names a setting the key may not read without its ID, on a move and a delete`.
+**Tests:** `compliance/type-move.test.ts › names a setting the key may not read without its ID, on a move and a delete`, `compliance/webhooks-owner-reach.test.ts › deletes a revoked key's subscription, after which a type move it blocked goes through`.
 
 ### `types/move-cascade-mark`
 

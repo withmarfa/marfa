@@ -1528,7 +1528,7 @@ If a `marfa_manage_key` call with `action: "narrow"` names `owner_key` or `sourc
 
 ## Managing a webhook
 
-`marfa_manage_webhook` makes, changes and deletes webhooks. Making a webhook, or changing its `url`, `events` or `type_filter`, takes two calls, as `marfa_delete` trashes: a preview of where the webhook would post and what it would send, with a `confirm` token, and a call with that token. A token is refused, as `marfa_delete`'s is, when five minutes have passed, and a token to make a webhook is refused once a webhook the credential can read, the one it made included, has been made or deleted since the preview. A new webhook starts active. Pausing, resuming or deleting a webhook takes one call.
+`marfa_manage_webhook` makes, changes and deletes webhooks. Making a webhook, or changing its `url`, `events` or `type_filter`, takes two calls, as `marfa_delete` trashes: a preview of where the webhook would post and what it would send, with a `confirm` token, and a call with that token. A token is refused, as `marfa_delete`'s is, when five minutes have passed, and a token to make a webhook is refused once the credential has registered a webhook, the one it confirmed included, or one it registered has been deleted, since the preview. A new webhook starts active. Pausing, resuming or deleting a webhook takes one call.
 
 ### `mcp/webhook-preview`
 
@@ -1540,7 +1540,7 @@ When `marfa_manage_webhook` is called without `confirm` to make a webhook, or to
 
 ### `mcp/webhook-confirmed`
 
-When `marfa_manage_webhook` is called with the `confirm` token its preview of the same arguments gave, by the same credential, within five minutes, while the webhook it would change is unchanged or, to make one, while the webhooks the credential can read are those it could read at the preview, the server MUST make or change the webhook as the preview showed.
+When `marfa_manage_webhook` is called with the `confirm` token its preview of the same arguments gave, by the same credential, within five minutes, while the webhook it would change is unchanged or, to make one, while the webhooks the credential registered are those it had registered at the preview, the server MUST make or change the webhook as the preview showed.
 
 **Tests:** `compliance/mcp.test.ts › makes a webhook with the confirmation the preview gave`.
 
@@ -1554,7 +1554,7 @@ If the `url`, `events`, `type_filter` or active state a `marfa_manage_webhook` c
 
 ### `mcp/webhook-made-once`
 
-If a `marfa_manage_webhook` call to make a webhook carries a `confirm` token and a webhook the credential can read has been made or deleted since the preview that gave it, then the server MUST refuse the call with the tool error code `confirmation_stale`.
+If a `marfa_manage_webhook` call to make a webhook carries a `confirm` token and the credential has registered a webhook, or one it registered has been deleted, since the preview that gave it, then the server MUST refuse the call with the tool error code `confirmation_stale`.
 
 **Reason:** a token stays unexpired after the webhook it confirmed is made, so a client that retries the confirmation, or sends it twice, would otherwise make a second webhook posting the same events to the same address.
 

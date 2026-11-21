@@ -1142,6 +1142,55 @@ describe("the instance from the terminal", () => {
     expect(gone.envelope.error.code).toBe("not_found");
   });
 
+  it("lists another key's webhooks with their maker and removes them, from an owner's key and through the private socket", async () => {
+    const register = async (label: string) => {
+      const made = await c.cli.json<{ id: string }>([
+        "webhooks",
+        "create",
+        "--delivery-url",
+        `https://hooks.example/${label}`,
+        "--event",
+        "item.created",
+      ]);
+      trackWebhook(c.ctx, made.id);
+      return made.id;
+    };
+    const byOwner = await register("owner-removes");
+    const bySocket = await register("socket-removes");
+    const keyLabel = `${c.ctx.source}-key`;
+
+    const listed = await c.operator.json<{
+      data: Array<{ id: string; maker: { kind: string; name: string } }>;
+    }>(["webhooks", "list"]);
+    for (const id of [byOwner, bySocket]) {
+      expect(listed.data.find((hook) => hook.id === id)?.maker).toMatchObject({
+        kind: "key",
+        name: keyLabel,
+      });
+    }
+    const text = await c.operator.run(["webhooks", "list"]);
+    expect(text.code, text.stderr).toBe(0);
+    expect(text.stdout).toContain(byOwner);
+    expect(text.stdout).toContain(keyLabel);
+
+    await c.operator.json(["webhooks", "delete", byOwner]);
+    expect(
+      (await c.cli.refused(["webhooks", "get", byOwner])).envelope.error.code,
+    ).toBe("not_found");
+
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    expect(socket, "MARFA_CONTROL_SOCKET is unset").toBeTruthy();
+    const local = c.cli.viaSocket(socket!);
+    // The witness: the key's subscription is there to remove.
+    expect(
+      (await c.cli.json<{ id: string }>(["webhooks", "get", bySocket])).id,
+    ).toBe(bySocket);
+    await local.json(["webhooks", "delete", bySocket]);
+    expect(
+      (await c.cli.refused(["webhooks", "get", bySocket])).envelope.error.code,
+    ).toBe("not_found");
+  });
+
   it("redelivers a failed webhook delivery and reports permission and state refusals", async () => {
     const failing = await startReceiver({ status: 400 });
     try {

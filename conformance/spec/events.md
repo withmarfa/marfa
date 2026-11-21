@@ -1059,9 +1059,41 @@ The server MUST answer a subscription with the members `id`, `url`, `events`, `t
 
 ### `events/webhook-list`
 
-When a credential holding `webhooks.manage` sends `GET /webhooks`, the server MUST answer the subscriptions the requesting key registered, or for a signed-in app those any token of its grant registered, with `next_cursor` `null`.
+When a credential holding `webhooks.manage` and not `keys.manage` sends `GET /webhooks`, the server MUST answer the subscriptions the requesting key registered, or for a signed-in app those any token of its grant registered, with `next_cursor` `null`.
 
-**Tests:** `compliance/webhooks.test.ts › answers a subscription another credential registered as an unknown id on every door`, `compliance/webhook-delivery.test.ts › shows subscription configuration with maker identity on reads`.
+**Tests:** `compliance/webhooks.test.ts › answers a subscription another credential registered as an unknown id on every door`, `compliance/webhook-delivery.test.ts › shows subscription configuration with maker identity on reads`, `compliance/webhooks-owner-reach.test.ts › keeps a webhooks.manage key to its own subscriptions, answering 404 on another's`.
+
+### `events/webhook-owner-list`
+
+When a credential holding both `webhooks.manage` and `keys.manage` sends `GET /webhooks`, the server MUST answer every subscription, whichever key or app registered it, with `next_cursor` `null`.
+
+**Reason:** `keys.manage` reaches every key, and a subscription sends events out under the credential that registered it, so the owner sees every subscription and who made it, including one whose maker was revoked or has expired.
+
+**Tests:** `compliance/webhooks-owner-reach.test.ts › lists and gets another key's and an app's subscriptions with their maker`, `› reaches every maker from an app that holds keys.manage and webhooks.manage`, `cli/instance.test.ts › lists another key's webhooks with their maker and removes them, from an owner's key and through the private socket`.
+
+### `events/webhook-owner-read`
+
+When a credential holding both `webhooks.manage` and `keys.manage` sends `GET /webhooks/{id}` or `GET /webhooks/{id}/deliveries` for a subscription another key or app registered, the server MUST answer it as it answers the subscription's maker.
+
+**Reason:** a delivery's record carries its status, event type, the receiver's status code and an error, never the event it sent, so the record shows nothing the maker's reach on the instance guards.
+
+**Tests:** `compliance/webhooks-owner-reach.test.ts › lists and gets another key's and an app's subscriptions with their maker`.
+
+### `events/webhook-owner-delete`
+
+When a credential holding both `webhooks.manage` and `keys.manage` sends `DELETE /webhooks/{id}` for a subscription another key or app registered, the server MUST remove it, whether or not its maker is revoked, has expired or still holds `webhooks.manage`.
+
+**Reason:** a revoked or expired key keeps no claim on its subscriptions, and a move of a type a subscription names is refused to every credential but its maker until the subscription goes (`types/move-settings-authority`).
+
+**Tests:** `compliance/webhooks-owner-reach.test.ts › deletes another key's subscription, and the key's own list no longer holds it`, `› deletes an app's subscription`, `› reaches every maker from an app that holds keys.manage and webhooks.manage`, `› deletes a revoked key's subscription, after which a type move it blocked goes through`, `› deletes an expired key's subscription`, `cli/instance.test.ts › lists another key's webhooks with their maker and removes them, from an owner's key and through the private socket`.
+
+### `events/webhook-owner-no-change`
+
+If a credential holding both `webhooks.manage` and `keys.manage` sends `PATCH /webhooks/{id}` or a redelivery for a subscription another key or app registered, then the server MUST answer `403 forbidden`.
+
+**Reason:** a change or a redelivery sends events to an address under the maker's credential, so only the maker makes one. The owner ends a subscription instead of changing it.
+
+**Tests:** `compliance/webhooks-owner-reach.test.ts › is refused an update and a redelivery of another maker's subscription with 403 forbidden, leaving it as it was`.
 
 ### `events/webhook-direct-read`
 
@@ -1073,7 +1105,7 @@ When private local authority sends `GET /webhooks`, `GET /webhooks/{id}` or `GET
 
 If the owner's browser session sends a request to any `/webhooks` door, then the server MUST answer `401 unauthorized`.
 
-**Reason:** a subscription belongs to the key or app that registered it, and a browser's session is neither. Its sign-in proves the owner is present now, which says nothing about whether the maker may still read what a redelivery would send. The private local socket keeps the owner's direct reads and redelivery.
+**Reason:** a subscription belongs to the key or app that registered it, and a browser's session is neither. Its sign-in proves the owner is present now, which says nothing about whether the maker may still read what a redelivery would send. The private local socket keeps the owner's direct reads, redelivery and removal, and a key the owner approves with `keys.manage` reads and removes every subscription.
 
 **Tests:** `compliance/webhooks-owner.test.ts › refuses an owner's browser session on every webhook door with 401`.
 
@@ -1093,9 +1125,17 @@ When private local authority requests redelivery, the server MUST apply the same
 
 ### `events/webhook-direct-mutations`
 
-When private local authority sends a subscription create, update or delete, the server MUST refuse it with `401 unauthorized`.
+When private local authority sends a subscription create or update, the server MUST refuse it with `401 unauthorized`.
 
-**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through local authority while ordinary keys stay isolated`.
+**Reason:** a subscription sends events under the credential that registered it, and local authority is no credential.
+
+**Tests:** `compliance/webhooks-owner.test.ts › reads every maker through local authority while ordinary keys stay isolated`, `compliance/webhooks-owner-reach.test.ts › deletes any maker's subscription through local authority, and still refuses a create and an update`.
+
+### `events/webhook-direct-delete`
+
+When private local authority sends `DELETE /webhooks/{id}`, the server MUST remove the subscription, whichever key or app registered it.
+
+**Tests:** `compliance/webhooks-owner-reach.test.ts › deletes any maker's subscription through local authority, and still refuses a create and an update`, `cli/instance.test.ts › lists another key's webhooks with their maker and removes them, from an owner's key and through the private socket`.
 
 ### `events/webhook-update`
 
@@ -1119,7 +1159,7 @@ When `DELETE /webhooks/{id}` names a subscription the credential holds, the serv
 
 ### `events/webhook-unknown`
 
-If an operation that names a subscription is given an id no subscription of the credential holds, then the server MUST answer `404 webhook_not_found`.
+If an operation that names a subscription is given an id that names no subscription the credential reaches, then the server MUST answer `404 webhook_not_found`.
 
 **Tests:** `compliance/webhooks.test.ts › answers 404 for an unknown subscription on every door`, `› deletes a subscription and answers 404 for it afterwards`.
 
@@ -1259,17 +1299,17 @@ When a credential holding `webhooks.manage` registers a subscription, the server
 
 ### `events/webhook-owner-only`
 
-When a key or app request names a subscription that neither the requesting key nor the requesting app's grant registered, the server MUST answer `404 webhook_not_found` on `GET`, `PATCH`, `DELETE` and the delivery log.
+When a key or app request from a credential that does not hold `keys.manage` names a subscription that neither the requesting key nor the requesting app's grant registered, the server MUST answer `404 webhook_not_found` on `GET`, `PATCH`, `DELETE` and the delivery log.
 
 **Reason:** to another credential the subscription is an id nobody holds.
 
-**Tests:** `compliance/webhooks.test.ts › answers a subscription another credential registered as an unknown id on every door`.
+**Tests:** `compliance/webhooks.test.ts › answers a subscription another credential registered as an unknown id on every door`, `compliance/webhooks-owner-reach.test.ts › keeps a webhooks.manage key to its own subscriptions, answering 404 on another's`.
 
 ### `events/webhook-redeliver-owner-only`
 
-When a key or app redelivery names a subscription that neither the requesting key nor the requesting app's grant registered, the server MUST answer `404 webhook_not_found`.
+When a key or app redelivery from a credential that does not hold `keys.manage` names a subscription that neither the requesting key nor the requesting app's grant registered, the server MUST answer `404 webhook_not_found`.
 
-**Tests:** `compliance/webhook-delivery.test.ts › answers a redelivery on a subscription another credential registered 404 webhook_not_found, and accepts the owner's`.
+**Tests:** `compliance/webhook-delivery.test.ts › answers a redelivery on a subscription another credential registered 404 webhook_not_found, and accepts the owner's`, `compliance/webhooks-owner-reach.test.ts › keeps a webhooks.manage key to its own subscriptions, answering 404 on another's`.
 
 ### `events/webhook-revoked-silent`
 
