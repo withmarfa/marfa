@@ -905,7 +905,7 @@ fn keep_create(
         tags: Vec::new(),
         tier: held.tier,
         state: (held.state == ItemState::Archived).then_some(ItemState::Archived),
-        source: None,
+        source: Some(held.source.clone()),
         source_id: held.source_id.clone(),
         occurred_at: Some(held.occurred_at.clone()),
         capture_latitude: held.capture_latitude,
@@ -1366,5 +1366,35 @@ mod tests {
         marker.min_retained_id = Some("9".into());
         let mut opening = anchored(7, 5, "x");
         assert_eq!(opening.heard("catchup_too_old", None, &marker), Heard::Take);
+    }
+
+    #[test]
+    fn a_kept_create_names_the_source_the_copy_held() {
+        let conn = store::testing::conn();
+        let catalog = Catalog::new(Default::default(), None);
+        let held = Item {
+            id: "i".into(),
+            r#type: "note".into(),
+            properties: Default::default(),
+            state: ItemState::Active,
+            tier: None,
+            version: 2,
+            schema_version: 1,
+            source: "claimed".into(),
+            source_id: Some("k".into()),
+            occurred_at: TEN.into(),
+            created_at: TEN.into(),
+            updated_at: TEN.into(),
+            capture_latitude: None,
+            capture_longitude: None,
+            trashed_at: None,
+            read_only: false,
+            tags: Vec::new(),
+        };
+        let create = keep_create(&conn, &catalog, &held, &[], &mut Vec::new()).unwrap();
+        let queued = store::queued_write(&conn, &create).unwrap().unwrap();
+        assert_eq!(queued.body["source"], "claimed");
+        assert_eq!(queued.body["source_id"], "k");
+        assert_eq!(queued.body["id"], "i");
     }
 }

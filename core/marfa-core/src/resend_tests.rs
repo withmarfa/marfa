@@ -1500,3 +1500,163 @@ fn a_judging_read_renewed_partway_sends_no_item_id_to_another_instance_at_the_ad
         assert_eq!(verdict(&core, &queued.id), None);
     }
 }
+
+const NAMED: &str = "01a1f3ff-eae0-7c1d-8f2b-3a4c5d6e7f80";
+
+/// The server's item for a create naming the id `NAMED` and the natural key
+/// `ext-1` under the source `claimed`, at `version`, with `title`.
+fn named_item(title: &str, version: i64) -> serde_json::Value {
+    let mut made = item(NAMED, title, version);
+    made["source"] = "claimed".into();
+    made["source_id"] = "ext-1".into();
+    made
+}
+
+fn named_read(item: serde_json::Value) -> Answer {
+    certified(scripted::json(
+        200,
+        &serde_json::json!({ "item": item, "metadata": { "tags": [] }, "listed": true })
+            .to_string(),
+    ))
+}
+
+/// Queues a create naming its id, a source and a natural key on a copy under
+/// the key `first`, with an edit of it behind, and sends the create with its
+/// answer lost.
+fn named_create_lost_under_first(
+    server: &Scripted,
+    dir: &std::path::Path,
+) -> (QueuedWrite, QueuedWrite) {
+    let core = copy_in_keyed(server, dir, "first");
+    holding_a_catalog(&core);
+    let queued = core
+        .create_item(&crate::Draft {
+            r#type: "core.note".into(),
+            id: Some(NAMED.into()),
+            properties: serde_json::json!({ "title": "made" })
+                .as_object()
+                .unwrap()
+                .clone(),
+            source: Some("claimed".into()),
+            source_id: Some("ext-1".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    let later = core
+        .update_item(
+            NAMED,
+            &crate::Edit {
+                properties: serde_json::json!({ "body": "later" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                base_version: Some(0),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    server.on(
+        "/keys/current",
+        vec![certified(scripted::json(
+            200,
+            r#"{"source":"first-source"}"#,
+        ))],
+    );
+    server.on("/items", vec![scripted::unnamed(502, "bad_gateway")]);
+    core.drain().unwrap();
+    assert!(
+        sent(&core, &queued.id),
+        "the lost create was not kept as sent"
+    );
+    assert!(!sent(&core, &later.id));
+    let first = under(server, "/items", "first");
+    let sent: serde_json::Value = serde_json::from_slice(&first[0].body).unwrap();
+    assert_eq!(
+        (&sent["id"], &sent["source_id"]),
+        (&NAMED.into(), &"ext-1".into())
+    );
+    (queued, later)
+}
+
+/// Sent again under another key, a create naming its id and a natural key is
+/// a natural-key upsert, which would replace an edit made since it landed.
+#[test]
+fn a_create_naming_its_id_and_natural_key_is_settled_from_its_item_without_replacing_a_later_edit()
+{
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let (queued, later) = named_create_lost_under_first(&server, dir.path());
+
+    server.on_query(
+        &path(NAMED),
+        "state=any",
+        vec![named_read(named_item("edited elsewhere", 2))],
+    );
+    let mut answered = named_item("edited elsewhere", 3);
+    answered["properties"]["body"] = "later".into();
+    server.on(&path(NAMED), vec![named_read(answered)]);
+    server.on(
+        "/items",
+        vec![certified(scripted::json(
+            200,
+            &serde_json::json!({ "item": named_item("made", 3) }).to_string(),
+        ))],
+    );
+    let core = copy_in_keyed(&server, dir.path(), "second");
+    server.on(
+        "/keys/current",
+        vec![certified(scripted::json(200, r#"{"source":"claimed"}"#))],
+    );
+    let report = core.drain().unwrap();
+
+    assert!(
+        under(&server, "/items", "second").is_empty(),
+        "the create went again and would replace the later edit"
+    );
+    assert_eq!(asked_under(&server, &path(NAMED), "second")[0], "read");
+    assert_eq!(
+        verdict(&core, &queued.id),
+        Some(Verdict::Accepted),
+        "{report:?}"
+    );
+    let edits = writes_under(&server, &path(NAMED), "second");
+    assert_eq!(edits.len(), 1, "{report:?}");
+    let sent: serde_json::Value = serde_json::from_slice(&edits[0].body).unwrap();
+    assert_eq!(
+        sent["version"], 1,
+        "the later edit was not sent on the version the create made"
+    );
+    assert_eq!(verdict(&core, &later.id), Some(Verdict::Accepted));
+}
+
+/// The witness: a create the server holds nothing of at its id goes again,
+/// once, under the new key.
+#[test]
+fn a_create_naming_its_id_and_natural_key_that_never_landed_goes_again_under_another_key() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let (queued, _) = named_create_lost_under_first(&server, dir.path());
+
+    server.on_query(
+        &path(NAMED),
+        "state=any",
+        vec![certified(scripted::refusal(404, "item_not_found"))],
+    );
+    server.on(&path(NAMED), vec![named_read(named_item("made", 1))]);
+    server.on(
+        "/items",
+        vec![certified(scripted::json(
+            201,
+            &serde_json::json!({ "item": named_item("made", 1) }).to_string(),
+        ))],
+    );
+    let core = copy_in_keyed(&server, dir.path(), "second");
+    server.on(
+        "/keys/current",
+        vec![certified(scripted::json(200, r#"{"source":"claimed"}"#))],
+    );
+    let report = core.drain().unwrap();
+
+    assert_eq!(under(&server, "/items", "second").len(), 1, "{report:?}");
+    assert_eq!(verdict(&core, &queued.id), Some(Verdict::Accepted));
+}
