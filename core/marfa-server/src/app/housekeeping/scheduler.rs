@@ -230,13 +230,20 @@ async fn run_unclaimed(app: &Arc<App>, job: &'static Job) {
 /// what it finds is not left until someone looks. One run at a time, and the next waits for the
 /// job's interval, however often the scheduler tries again.
 fn run_without_claim(app: &Arc<App>) {
-    for job in JOBS.iter().filter(|job| job.unclaimed && job.runs_here(app)) {
+    for job in JOBS
+        .iter()
+        .filter(|job| job.unclaimed && job.runs_here(app))
+    {
         start_unclaimed(app, job);
     }
 }
 
 fn start_unclaimed(app: &Arc<App>, job: &'static Job) {
-    let Some(turn) = app.housekeeping.unclaimed.begin(job.name, app.clock.now_ms()) else {
+    let Some(turn) = app
+        .housekeeping
+        .unclaimed
+        .begin(job.name, app.clock.now_ms())
+    else {
         return;
     };
     let active = app.housekeeping.active();
@@ -614,8 +621,7 @@ mod tests {
             "the one run is still under way, however many passes tried"
         );
 
-        app.faults
-            .clear(Some("hold:housekeeping:attention-check"));
+        app.faults.clear(Some("hold:housekeeping:attention-check"));
         let next = next_run_ms(&app).await;
         let interval = JOBS
             .iter()
@@ -663,8 +669,7 @@ mod tests {
         })
         .await
         .expect("the check ran again while its last run could not be recorded");
-        app.faults
-            .clear(Some("hold:housekeeping:attention-check"));
+        app.faults.clear(Some("hold:housekeeping:attention-check"));
         claimed.abort();
     }
 
@@ -676,7 +681,10 @@ mod tests {
         app.faults.set("refuse:write", None).unwrap();
         let _holding = app
             .db
-            .hold_writes(Refusal::new(Code::WriteContention, "a restore holds writes"))
+            .hold_writes(Refusal::new(
+                Code::WriteContention,
+                "a restore holds writes",
+            ))
             .unwrap();
         make_check_due(&app);
         assert!(pass(&app).await.is_err());
