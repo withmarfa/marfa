@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::write::stale_bare;
-use super::{Door, Item, Mark, is_hidden, is_system, not_found, parsed, rows};
+use super::{Door, Item, Mark, is_system, not_found, parsed, rows};
 use crate::app::access::{Caller, Level, Permission};
 use crate::app::catalog::Catalog;
 use crate::app::edges::write::touching;
@@ -98,7 +98,7 @@ impl<'c> Gate<'_, 'c> {
     pub fn owner_row(&self, id: &str) -> Result<Item> {
         let levers = self.caller.levers()?;
         rows::by_id(self.tx, id)?
-            .filter(|row| !is_hidden(&row.type_id))
+            .filter(|row| !is_system(&row.type_id))
             .filter(|row| self.caller.may_read_type(&row.type_id))
             .filter(|row| levers.lists(&self.catalog.rules, &row.type_id, &row.source))
             .ok_or_else(not_found)

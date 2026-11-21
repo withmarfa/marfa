@@ -144,7 +144,7 @@ fn order_of(id: &str, settings: &Map<String, Json>, catalog: &Catalog) -> Result
 }
 
 fn page(read: &Reader<'_, '_>, secret: &super::Secret, view: &ViewPage) -> Result<String> {
-    let reach = Reach::of(read)?;
+    let reach = Reach::of(read)?.narrowed(|type_id| !items::is_hidden(type_id));
     let row = items::row(read.tx, &view.id)?
         .filter(|row| {
             row.type_id == VIEW_TYPE

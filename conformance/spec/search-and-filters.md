@@ -480,7 +480,7 @@ When `GET /items` names `include=edges`, the server MUST add to each item its ou
 
 ### `search-and-filters/system-named-type`
 
-When `GET /items` names a `type` that is a hidden type (`items/hidden-types`), the server MUST list the items of that type that the credential may read.
+When `GET /items` names a `type` that is a hidden type (`items/hidden-types`), the server MUST list the items of that type, and of its subtypes that are hidden, that the credential may read.
 
 **Reason:** a caller that asks for `system.folder` has already said what it wants, so the default that leaves hidden items out of a listing does not apply to it.
 
@@ -1252,9 +1252,11 @@ When `GET /search` carries a `q`, the server MUST answer the items whose searcha
 
 ### `search-and-filters/search-hidden`
 
-The server MUST leave hidden items (`items/hidden-types`) out of the matches of `GET /search` unless the request names `include=hidden`.
+The server MUST leave hidden items (`items/hidden-types`) out of the matches of `GET /search` unless the request names `include=hidden` or a `type` that is a hidden type.
 
-**Tests:** `compliance/hidden-types.test.ts › leaves an app item out of a search unless the search asks for hidden items`.
+**Reason:** a search that names a hidden type has said what it wants, as a listing does (`search-and-filters/system-named-type`).
+
+**Tests:** `compliance/hidden-types.test.ts › leaves an app item out of a search unless the search asks for hidden items`, `› answers a search that names a hidden type with the items of that type, as a listing does`.
 
 ### `search-and-filters/search-id-not-text`
 
@@ -1639,6 +1641,14 @@ If `GET /items/stats` carries `limit`, `cursor`, `sort` or `direction`, then the
 When `GET /items/stats` names `include=hidden`, the server MUST count the hidden items (`items/hidden-types`) that the credential may read.
 
 **Tests:** `compliance/item-stats.test.ts › counts the system items under include=hidden and refuses any other include`.
+
+### `search-and-filters/type-hidden-exact`
+
+If a listing, a search or a count names types, then the server MUST NOT return an item of a hidden type unless a hidden type among the names is that type or is above it.
+
+**Reason:** naming a type opts in only to that hidden type. A hidden subtype of a visible type stays hidden, and naming one hidden type opens no other.
+
+**Tests:** `compliance/hidden-types.test.ts › opens a type filter to the hidden type it names and no other, though a visible type it names has that other as a subtype`.
 
 ### `search-and-filters/stats-system-default`
 
