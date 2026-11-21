@@ -535,34 +535,78 @@ describe("a key that expires", () => {
   });
 });
 
+/** A key that holds keys.manage and not keys.mint, which expires when `expiresAt` says. */
+async function managingKey(expiresAt?: string): Promise<MarfaClient> {
+  const name = unique("manager");
+  const made = await management.createKey({
+    label: name,
+    source: name,
+    permissions: ["keys.manage"],
+    ...(expiresAt === undefined ? {} : { expires_at: expiresAt }),
+  });
+  expect(made.status, JSON.stringify(made.error)).toBe(201);
+  return new MarfaClient({ baseUrl: server.apiUrl, apiKey: made.data.key });
+}
+
 describe("a key changed through keys.manage", () => {
-  it("is given an expiry or has it shortened, and is refused a later expiry or none", async () => {
-    const open = await mint("managed");
-    // keys.manage without keys.mint, which would lengthen within its own life.
-    const name = unique("manager");
-    const made = await management.createKey({
-      label: name,
-      source: name,
-      permissions: ["keys.manage"],
-    });
-    expect(made.status, JSON.stringify(made.error)).toBe(201);
-    const manager = new MarfaClient({
+  it("lengthens and clears the expiry of a key a key made, refuses either under narrow_only, and the key's secret still works", async () => {
+    const manager = await managingKey();
+    const target = await mint("managed", SOON);
+    const bearer = new MarfaClient({
       baseUrl: server.apiUrl,
-      apiKey: made.data.key,
+      apiKey: target.key,
     });
-    const given = await manager.updateKey(open.id, { expires_at: LATER });
-    expect(given.status).toBe(200);
-    const shorter = await manager.updateKey(open.id, { expires_at: SOON });
-    expect(shorter.status).toBe(200);
 
     for (const bad of [LATER, null]) {
-      const refused = await manager.updateKey(open.id, {
+      const refused = await manager.updateKey(target.id, {
         expires_at: bad,
+        narrow_only: true,
       });
-      expect(refused.status, String(bad)).toBe(403);
+      expect(refused.status, `narrow_only ${String(bad)}`).toBe(403);
       expect(refused.error?.error.code).toBe("forbidden");
     }
-    expect(await expiryOf(open.id)).toBe(SOON);
+    expect(await expiryOf(target.id)).toBe(SOON);
+
+    const lengthened = await manager.updateKey(target.id, {
+      expires_at: LATER,
+    });
+    expect(lengthened.status, JSON.stringify(lengthened.error)).toBe(200);
+    expect(lengthened.data.expires_at).toBe(LATER);
+    const after = await bearer.getCurrentKey();
+    expect(after.status, "the same secret after a later expiry").toBe(200);
+    expect(after.data.expires_at).toBe(LATER);
+
+    const cleared = await manager.updateKey(target.id, { expires_at: null });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect(cleared.data.expires_at).toBeNull();
+    const open = await bearer.getCurrentKey();
+    expect(open.status, "the same secret after the expiry is cleared").toBe(
+      200,
+    );
+    expect(open.data.expires_at).toBeNull();
+  });
+
+  it("lengthens a key up to its own expiry, and is refused one past it or none", async () => {
+    const manager = await managingKey(LATER);
+    const target = await mint("managed-held", SOON);
+
+    for (const bad of [LATEST, null]) {
+      const refused = await manager.updateKey(target.id, { expires_at: bad });
+      expect(refused.status, String(bad)).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+      expect(refused.error?.error.details?.expires_at).toBe(LATER);
+    }
+    expect(await expiryOf(target.id)).toBe(SOON);
+
+    const upTo = await manager.updateKey(target.id, { expires_at: LATER });
+    expect(upTo.status, JSON.stringify(upTo.error)).toBe(200);
+    expect(upTo.data.expires_at).toBe(LATER);
+
+    // Shortening a key that outlives it gives the key nothing.
+    const open = await mint("outlives-manager");
+    const shortened = await manager.updateKey(open.id, { expires_at: LATEST });
+    expect(shortened.status, JSON.stringify(shortened.error)).toBe(200);
+    expect(shortened.data.expires_at).toBe(LATEST);
   });
 });
 
@@ -622,66 +666,113 @@ describe("the owner and an expiry with narrow_only", () => {
 });
 
 describe("a key an app made", () => {
-  it(
-    "is shortened and never lengthened or cleared, whoever the caller is",
-    async () => {
-      // An app's key is minted through a sign-in, which needs an owner, and
-      // an instance has one: the story needs a server of its own.
-      const own = await bootFreshServer("key-expiry-app");
-      try {
-        const app = new MarfaClient({
-          baseUrl: own.apiUrl,
-          apiKey: await approvedAppToken(own),
-        });
-        const person = new MarfaClient({
-          baseUrl: own.apiUrl,
-          controlSocket: own.controlSocket,
-        });
+  // An app's key is minted through a sign-in, which needs an owner, and an
+  // instance has one: these stories need a server of their own.
+  let own: FreshServer;
+  let person: MarfaClient;
+  /** A signed-in app with the default scopes, which hold keys.mint and not keys.manage. */
+  let minting: MarfaClient;
+  /** A signed-in app that holds keys.manage, as an owner's own app does. */
+  let managing: MarfaClient;
 
-        const made = await app.createKey({
-          label: "app-made",
-          source: "app-made",
-          expires_at: LATER,
-        });
-        expect(
-          made.status,
-          "the app could not mint a key with an expiry, so there is no key an app made to hold to the rule",
-        ).toBe(201);
-        expect(made.data.oauth_client_id).toBeDefined();
-        expect(made.data.expires_at).toBe(LATER);
+  beforeAll(async () => {
+    own = await bootFreshServer("key-expiry-app");
+    person = new MarfaClient({
+      baseUrl: own.apiUrl,
+      controlSocket: own.controlSocket,
+    });
+    minting = new MarfaClient({
+      baseUrl: own.apiUrl,
+      apiKey: await approvedAppToken(own),
+    });
+    managing = new MarfaClient({
+      baseUrl: own.apiUrl,
+      apiKey: await approvedAppToken(own, ["core.note:read", "keys.manage"]),
+    });
+  }, FRESH_SERVER_TIMEOUT_MS + 120_000);
 
-        // The witness. The owner lengthens a key it made itself, so the
-        // refusals below are the key's and not the caller's.
-        const plain = await person.createKey({
-          label: "plain",
-          source: "plain",
-          expires_at: SOON,
-        });
-        expect(plain.status).toBe(201);
-        const lengthened = await person.updateKey(plain.data.id, {
-          expires_at: LATER,
-        });
-        expect(
-          lengthened.status,
-          "the owner could not lengthen a key it made, so the refusals below may be every update",
-        ).toBe(200);
+  afterAll(async () => {
+    await own?.stop();
+  }, FRESH_SERVER_TIMEOUT_MS);
 
-        for (const bad of [LATEST, null]) {
-          const refused = await person.updateKey(made.data.id, {
-            expires_at: bad,
-          });
-          expect(refused.status, String(bad)).toBe(403);
-          expect(refused.error?.error.code).toBe("forbidden");
-        }
-        const shorter = await person.updateKey(made.data.id, {
-          expires_at: SOON,
-        });
-        expect(shorter.status).toBe(200);
-        expect(shorter.data.expires_at).toBe(SOON);
-      } finally {
-        await own.stop();
-      }
-    },
-    2 * FRESH_SERVER_TIMEOUT_MS + 120_000,
-  );
+  async function appKey(label: string): Promise<{ id: string; key: string }> {
+    const made = await minting.createKey({
+      label,
+      source: unique(label),
+      expires_at: SOON,
+    });
+    expect(
+      made.status,
+      "the app could not mint a key with an expiry, so there is no key an app made to hold to the rule",
+    ).toBe(201);
+    expect(made.data.oauth_client_id).toBeDefined();
+    expect(made.data.expires_at).toBe(SOON);
+    return made.data;
+  }
+
+  async function expiryOn(id: string): Promise<string | null | undefined> {
+    const listed = await person.listKeys();
+    return listed.data.data.find((key) => key.id === id)?.expires_at;
+  }
+
+  it("is refused a later expiry or none by a caller that does not hold keys.manage, and is shortened", async () => {
+    const made = await appKey("app-made-held");
+
+    // The witness: the same app lengthens a key no app made, so the
+    // refusals below are the key's and not the caller's.
+    const plain = await person.createKey({
+      label: "plain",
+      source: unique("plain"),
+      permissions: [],
+      expires_at: SOON,
+    });
+    expect(plain.status).toBe(201);
+    const lengthened = await minting.updateKey(plain.data.id, {
+      expires_at: LATER,
+    });
+    expect(lengthened.status, JSON.stringify(lengthened.error)).toBe(200);
+
+    for (const bad of [LATER, null]) {
+      const refused = await minting.updateKey(made.id, { expires_at: bad });
+      expect(refused.status, String(bad)).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+    }
+    expect(await expiryOn(made.id)).toBe(SOON);
+
+    const shorter = await minting.updateKey(made.id, {
+      expires_at: "2998-01-01T00:00:00.000Z",
+    });
+    expect(shorter.status, JSON.stringify(shorter.error)).toBe(200);
+    expect(shorter.data.expires_at).toBe("2998-01-01T00:00:00.000Z");
+  });
+
+  it("is lengthened and cleared by local authority and by a signed-in app that holds keys.manage, and its secret still works", async () => {
+    for (const [who, caller] of [
+      ["local authority", person],
+      ["an app that holds keys.manage", managing],
+    ] as const) {
+      const made = await appKey("app-made-lengthened");
+      const bearer = new MarfaClient({
+        baseUrl: own.apiUrl,
+        apiKey: made.key,
+      });
+
+      const lengthened = await caller.updateKey(made.id, {
+        expires_at: LATER,
+      });
+      expect(lengthened.status, `${who}: ${JSON.stringify(lengthened.error)}`).toBe(200);
+      expect(lengthened.data.expires_at, who).toBe(LATER);
+      const after = await bearer.getCurrentKey();
+      expect(after.status, `${who}: the same secret after a later expiry`).toBe(200);
+      expect(after.data.expires_at, who).toBe(LATER);
+
+      const cleared = await caller.updateKey(made.id, { expires_at: null });
+      expect(cleared.status, `${who}: ${JSON.stringify(cleared.error)}`).toBe(200);
+      expect(cleared.data.expires_at, who).toBeNull();
+      const open = await bearer.getCurrentKey();
+      expect(open.status, `${who}: the same secret with no expiry`).toBe(200);
+      expect(open.data.expires_at, who).toBeNull();
+      expect(open.data.oauth_client_id, who).toBeDefined();
+    }
+  });
 });
