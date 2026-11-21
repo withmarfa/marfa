@@ -1311,10 +1311,10 @@ pub(crate) mod tests {
                 if message.contains(&format!("listed at {}", root.display()))
         ));
         assert!(root.join(STATE_DIR).join("core.sqlite").exists());
-        assert_eq!(
+        assert!(matches!(
             Folder::remove_at(&root).unwrap(),
-            crate::folder::Removal::Deleted(root.clone())
-        );
+            crate::folder::Removal::Deleted { dir, unsent: 0, .. } if dir == root
+        ));
         assert!(!root.join(STATE_DIR).join("core.sqlite").exists());
 
         let (_registry, _own) = own_registry();
@@ -1874,10 +1874,10 @@ pub(crate) mod tests {
         assert!(!listed().contains(&first));
         assert!(Folder::remove_at(alias.path().join("base/b/notes")).is_err());
         intact(&second);
-        assert_eq!(
+        assert!(matches!(
             Folder::remove_at(&second).unwrap(),
-            crate::folder::Removal::Deleted(second.clone())
-        );
+            crate::folder::Removal::Deleted { dir, unsent: 0, .. } if dir == second
+        ));
         assert!(!second.join(STATE_DIR).join("core.sqlite").exists());
     }
 

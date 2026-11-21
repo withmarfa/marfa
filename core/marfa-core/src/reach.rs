@@ -1504,16 +1504,14 @@ mod tests {
         ready(&core);
         let answered = || store::another_instance_answered(&core.conn().unwrap()).unwrap();
         // The witness: an expiry for another reason records nothing.
-        Context::capture(&core.conn().unwrap())
-            .unwrap()
-            .expire(&core, "reach_changed")
-            .unwrap();
+        let context = Context::capture(&core.conn().unwrap()).unwrap();
+        context.expire(&core, "reach_changed").unwrap();
         assert!(!answered());
         ready(&core);
         server.on("/", vec![root("11111111-1111-7111-8111-111111111111")]);
-        let refused = crate::catch_up::refuse_another_instance(&core, core.http().unwrap());
+        let refused = crate::catch_up::refuse_another_instance(&core, core.http().unwrap()).err();
         assert!(
-            matches!(&refused, Err(CoreError::CopyExpired { reason, .. }) if reason == crate::http::INSTANCE_CHANGED),
+            matches!(&refused, Some(CoreError::CopyExpired { reason, .. }) if reason == crate::http::INSTANCE_CHANGED),
             "{refused:?}"
         );
         assert!(answered());

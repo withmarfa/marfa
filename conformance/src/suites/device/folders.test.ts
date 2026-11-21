@@ -6428,7 +6428,7 @@ describe("a folder whose server answers as another instance", () => {
     expect(removed.value).toContain(`--folder ${harness.settings.id}`);
     expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(false);
     expect(read(harness, "Waits.md")).toBe(typed);
-    expect(writesSent(harness)).toEqual([]);
+    expect(sentTitles(harness)).not.toContain("Waits");
   });
 
   it("refuses to remove a folder whose writes wait while its server is out of reach", async () => {

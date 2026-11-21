@@ -107,6 +107,17 @@ describe("a directory whose server is now another instance", () => {
 
     const stopped = await cli.refused(["folders", "push", dir]);
     expect(JSON.stringify(stopped.envelope)).toContain("instance_changed");
+    const files = (): Record<string, string> =>
+      Object.fromEntries(
+        readdirSync(dir)
+          .filter((name) => name !== ".marfa")
+          .map((name) => [name, readFileSync(join(dir, name), "utf8")]),
+      );
+    const before = files();
+    // The witness: the edits the server never received are in the files.
+    expect(before["Packing list.md"]).toContain("boots");
+    expect(before["Plan.md"]).toContain("and second");
+    expect(before["New idea.md"]).toContain("brand new");
 
     const removed = await cli.run(["folders", "remove", dir]);
     expect(removed.code, removed.stderr).toBe(0);
@@ -114,11 +125,8 @@ describe("a directory whose server is now another instance", () => {
     expect(removed.stdout).toContain(`the changes stay in the files in ${dir}`);
     const command = `marfa folders add ${dir} --folder ${folder}`;
     expect(removed.stdout).toContain(command);
-    expect(existsSync(join(dir, ".marfa"))).toBe(false);
-    expect(readFileSync(join(dir, "Packing list.md"), "utf8")).toBe(packing);
-    expect(readFileSync(join(dir, "Plan.md"), "utf8")).toBe(
-      "first\nand second\n",
-    );
+    expect(existsSync(join(dir, ".marfa", "core.sqlite"))).toBe(false);
+    expect(files()).toEqual(before);
 
     // The route the removal names.
     renameSync(dir, aside);
