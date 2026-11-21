@@ -184,7 +184,7 @@ describe("the workflow builds the programs for every platform", () => {
     expect(copy("programs-macos", "$RUNNER_TEMP/artifacts/")).toBeDefined();
     expect(copy("sign", "$RUNNER_TEMP/pack/")).toBeDefined();
     const signing = steps("sign").filter((step) =>
-      (step.run ?? "").match(/sign-binary\.sh|codesign --force/),
+      /sign-binary\.sh|codesign --force/.exec(step.run ?? ""),
     );
     expect(signing).toHaveLength(2);
     for (const step of signing) {
@@ -473,9 +473,9 @@ describe("check-archive.sh", () => {
   });
 
   it("refuses a cloudflared that is not executable", () => {
-    const result = check(good("0.0.9"), "0.0.9", [], {}, {}, {}, (folder) =>
-      chmodSync(join(folder, "cloudflared"), 0o644),
-    );
+    const result = check(good("0.0.9"), "0.0.9", [], {}, {}, {}, (folder) => {
+      chmodSync(join(folder, "cloudflared"), 0o644);
+    });
     expect(result.status).toBe(1);
     expect(result.stdout).toContain(
       "cloudflared in out.tar.gz is not an executable file",
@@ -878,14 +878,14 @@ describe("cloudflared-licences.txt", () => {
     expect(bodies).toHaveLength(entries.length);
     for (const [index, body] of bodies.entries()) {
       // Every module's text is one or more files, each opened by its name.
-      const label = `${entries[index]![1]} ${entries[index]![2]}`;
+      const label = `${entries[index]![1]!} ${entries[index]![2]!}`;
       if (index > 0) expect(body, label).toMatch(/^--- \S+ ---$/m);
       expect(body.trim().length, label).toBeGreaterThan(200);
     }
   });
 
   it("names each module once", () => {
-    const names = entries.map((entry) => `${entry[1]} ${entry[2]}`);
+    const names = entries.map((entry) => `${entry[1]!} ${entry[2]!}`);
     expect(new Set(names).size).toBe(names.length);
   });
 
