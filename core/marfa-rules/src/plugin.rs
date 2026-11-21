@@ -407,9 +407,11 @@ fn read_source(files: &[SourceFile]) -> Source {
             misnamed(TYPES, &file.name, &read_object(&path, &file.content))
         })
         .collect();
-    misnamed_files.extend(edge_types.iter().filter_map(|(path, read)| {
-        misnamed(EDGE_TYPES, below(path, EDGE_TYPES)?, read)
-    }));
+    misnamed_files.extend(
+        edge_types
+            .iter()
+            .filter_map(|(path, read)| misnamed(EDGE_TYPES, below(path, EDGE_TYPES)?, read)),
+    );
     Source {
         manifest,
         types,
@@ -1503,14 +1505,16 @@ mod tests {
             verdict
                 .problems
                 .iter()
-                .any(|held| held.code == "file_name_mismatch" && held.path == "edge-types/first.json"),
+                .any(|held| held.code == "file_name_mismatch"
+                    && held.path == "edge-types/first.json"),
             "{verdict:?}"
         );
         let refused = build_bundle(&files, "1.0.0").unwrap_err();
         assert!(
             refused
                 .iter()
-                .any(|held| held.code == "file_name_mismatch" && held.path == "edge-types/first.json"),
+                .any(|held| held.code == "file_name_mismatch"
+                    && held.path == "edge-types/first.json"),
             "{refused:?}"
         );
         let mut files = folder();
@@ -1520,7 +1524,8 @@ mod tests {
         assert!(
             refused
                 .iter()
-                .any(|held| held.code == "file_name_mismatch" && held.path == "types/common.other.json"),
+                .any(|held| held.code == "file_name_mismatch"
+                    && held.path == "types/common.other.json"),
             "{refused:?}"
         );
     }

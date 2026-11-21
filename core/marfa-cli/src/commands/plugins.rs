@@ -238,8 +238,8 @@ fn object(bytes: &[u8], said: &str) -> Result<Obj, CliError> {
 /// The bytes as text, once they read as one JSON object.
 fn object_text(bytes: Vec<u8>, said: &str) -> Result<(Obj, String), CliError> {
     let bundle = object(&bytes, said)?;
-    let text = String::from_utf8(bytes)
-        .map_err(|_| CliError::Invalid(format!("{said} is not UTF-8")))?;
+    let text =
+        String::from_utf8(bytes).map_err(|_| CliError::Invalid(format!("{said} is not UTF-8")))?;
     Ok((bundle, text))
 }
 

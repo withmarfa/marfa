@@ -152,7 +152,13 @@ describe("a plugin's source folder from the terminal", () => {
       }),
     ]);
     const bundled = await marfa(
-      ["plugins", "bundle", folder, "--output", tempFolder("marfa-plugin-misnamed-")],
+      [
+        "plugins",
+        "bundle",
+        folder,
+        "--output",
+        tempFolder("marfa-plugin-misnamed-"),
+      ],
       NO_KEYCHAIN,
     );
     expect(bundled.code).not.toBe(0);

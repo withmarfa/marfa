@@ -128,7 +128,15 @@ describe("plugins from the terminal", () => {
     expect(fromFile.fingerprint).toBe(sha256(readFileSync(file)));
     const folder = sourceFolder(`${root}-folder`, folderType);
     const output = tempFolder("marfa-plugin-built-");
-    await c.cli.json(["plugins", "bundle", folder, "--version", "2.1.0", "--output", output]);
+    await c.cli.json([
+      "plugins",
+      "bundle",
+      folder,
+      "--version",
+      "2.1.0",
+      "--output",
+      output,
+    ]);
     const built = sha256(
       readFileSync(join(output, `${root}-folder.plugin.json`)),
     );

@@ -10,7 +10,10 @@ pub enum Body {
     Json(Value),
     /// JSON sent as these exact bytes.
     JsonText(String),
-    File { path: PathBuf, content_type: String },
+    File {
+        path: PathBuf,
+        content_type: String,
+    },
     Form(Vec<(String, String)>),
 }
 

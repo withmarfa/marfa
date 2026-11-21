@@ -377,7 +377,11 @@ pub fn write_restored(unit: &Unit<'_, '_>, plan: Restoring) -> Result<()> {
 }
 
 /// Both names of each edge type a bundle names, and the reverse name the instance holds under its id.
-pub fn require_install_names(caller: &Caller, catalog: &Catalog, definitions: &[Obj]) -> Result<()> {
+pub fn require_install_names(
+    caller: &Caller,
+    catalog: &Catalog,
+    definitions: &[Obj],
+) -> Result<()> {
     for body in definitions {
         let Some(id) = text_of(body, "id") else {
             continue;

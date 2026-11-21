@@ -302,7 +302,9 @@ fn archived_origin(line: &Value, version: u64) -> Result<Origin> {
     };
     if version >= 2
         && origin != Some("plugin")
-        && line.pointer("/provenance/plugin").is_some_and(|held| !held.is_null())
+        && line
+            .pointer("/provenance/plugin")
+            .is_some_and(|held| !held.is_null())
     {
         return Err(refused(
             "The archive names a plugin for a type whose origin is not plugin.".into(),

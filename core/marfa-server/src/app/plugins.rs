@@ -90,9 +90,7 @@ fn read_row(
     };
     let edge_types = edge_type_names(&serde_json::from_str(&edge_types).unwrap_or(Value::Null))
         .ok_or_else(|| {
-            Refusal::internal(&format!(
-                "the edge types plugin {name} brought do not read"
-            ))
+            Refusal::internal(&format!("the edge types plugin {name} brought do not read"))
         })?;
     let installed_by = match installed_by {
         None => None,
@@ -476,10 +474,7 @@ pub fn is_actor(value: &Value) -> bool {
     };
     let text = |key: &str| actor.get(key).and_then(Value::as_str);
     actor.len() == 3
-        && matches!(
-            text("kind"),
-            Some("local" | "key" | "browser" | "app")
-        )
+        && matches!(text("kind"), Some("local" | "key" | "browser" | "app"))
         && text("id").is_some_and(|id| !id.is_empty())
         && text("name").is_some()
 }

@@ -1359,9 +1359,9 @@ describe("an edge type an earlier version brought", () => {
     });
     const restored = await local.restoreArchive(archive.data);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-    expect((await elsewhere.getPlugin("review-plugin")).data.edge_types).toEqual(
-      ["review-link"],
-    );
+    expect(
+      (await elsewhere.getPlugin("review-plugin")).data.edge_types,
+    ).toEqual(["review-link"]);
     const removed = await owner.removePlugin("review-plugin");
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
     expect(removed.data.kept).toEqual({

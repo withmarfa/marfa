@@ -389,8 +389,16 @@ impl App {
             // On the writer, so every write admitted before the hold has landed.
             app.db
                 .write(Write::own().unsynced(), move |tx| {
-                    let (app, caller, settings, secrets, enforcement, types, edge_types, archived_plugins) =
-                        judged;
+                    let (
+                        app,
+                        caller,
+                        settings,
+                        secrets,
+                        enforcement,
+                        types,
+                        edge_types,
+                        archived_plugins,
+                    ) = judged;
                     let caller = caller.current(tx, &app.clock.stamp())?;
                     caller.require_settings_restore(&stored::restoring(
                         tx,
