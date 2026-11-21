@@ -90,6 +90,7 @@ codes! {
     WebhookNotFound = "webhook_not_found", 404;
     RequestTimeout = "request_timeout", 408;
     AncestorUnavailable = "ancestor_unavailable", 409;
+    CloudLinkExists = "cloud_link_exists", 409;
     Conflict = "conflict", 409;
     ConnectorHeld = "connector_held", 409;
     CopiesBelowMinimum = "copies_below_minimum", 409;
@@ -106,6 +107,7 @@ codes! {
     ItemExists = "item_exists", 409;
     LinkTaken = "link_taken", 409;
     NoBackupDestination = "no_backup_destination", 409;
+    NoPublicListener = "no_public_listener", 409;
     OwnerExists = "owner_exists", 409;
     PluginChildConflict = "plugin_child_conflict", 409;
     PluginNarrows = "plugin_narrows", 409;
@@ -135,6 +137,7 @@ codes! {
     RateLimited = "rate_limited", 429;
     InternalError = "internal_error", 500;
     BlobStoreUnavailable = "blob_store_unavailable", 503;
+    CloudUnavailable = "cloud_unavailable", 503;
     InboundUnavailable = "inbound_unavailable", 503;
     StreamCapacityExhausted = "stream_capacity_exhausted", 503;
     TooManyConnections = "too_many_connections", 503;

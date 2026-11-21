@@ -25,6 +25,7 @@ Every event and stream frame the server sends is a row of the table below, which
 | `edge.deleted`       | Streams and webhooks | An edge is deleted.                                                                                                                                        | `edges/delete-announced`, `events/edge-inline-announced`, `items/purge-edges`, `events/sweep-purge-edges`                                                                 |
 | `attention.raised`   | Streams and webhooks | A check of what needs the owner's attention first finds an entry, or the server first meets a fault.                                                       | `events/attention-raised`, `events/attention-fault-at-once`                                                                                                               |
 | `stream_cursor`      | Streams              | First, when the stream read the log as it opened: where the log stood then.                                                                                | None                                                                                                                                                                      |
+| `cloud_link.changed` | Streams              | A link to Marfa Cloud starts, links, fails or ends, or the sign-in address it moves changes state.                                                         | `cloud/event`, `cloud/event-reader`                                                                                                                                       |
 | `stream_live`        | Streams              | Once the catch-up is over: everything up to its cursor has been sent or withheld, and what follows is live.                                                | None                                                                                                                                                                      |
 | `stream_incomplete`  | Streams              | Last, when the stream can no longer deliver what it opened with.                                                                                           | None                                                                                                                                                                      |
 | `catchup_too_old`    | Streams              | Last, when the log no longer holds the events after the `Last-Event-ID` the client sent.                                                                   | None                                                                                                                                                                      |
@@ -2112,6 +2113,11 @@ Each entry names what it records in `action`. The first table gives the `action`
 | `inbound_endpoint.create`    | An inbound endpoint is created.                                                 | `settings`     |
 | `inbound_endpoint.retire`    | An inbound endpoint is retired.                                                 | `settings`     |
 | `backup_folder.adopt`        | A caller with `backups.manage` adopts the backup folder.                        | `settings`     |
+| `cloud.link_start`           | A link to Marfa Cloud starts.                                                   | `settings`     |
+| `cloud.linked`               | Marfa Cloud approves a link.                                                    | `settings`     |
+| `cloud.link_failed`          | A link to Marfa Cloud is denied, expires or is refused.                         | `settings`     |
+| `cloud.sign_in_address_move` | The server moves the sign-in address to or back from the Cloud address.         | `settings`     |
+| `cloud.unlink`               | A link to Marfa Cloud ends, is cancelled or is ended on Marfa Cloud.            | `settings`     |
 | `items.trash_purged`         | The trash retention job purges items that stayed in the bin past the retention. | `housekeeping` |
 | `items.feed_expired`         | The feed expiry job moves expired feed items to the bin.                        | `housekeeping` |
 | `item.versions_thinned`      | The version thinning job removes versions of an item.                           | `housekeeping` |
@@ -2307,9 +2313,9 @@ The server MUST filter `GET /audit` by `action`, `resource_type` and `resource_i
 
 ### `events/audit-kind`
 
-The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, as the two tables of audit actions give, and by the part of the `action` before its first period for an action the tables do not list: `access` for `auth`, `owner`, `key`, `keys`, `instance`, `profile` and `folder`, `settings` for `config`, `webhook`, `connector`, `connector_state`, `inbound_endpoint` and `backup_folder`, and `data` for the rest, so that each entry is of exactly one kind.
+The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, as the two tables of audit actions give, and by the part of the `action` before its first period for an action the tables do not list: `access` for `auth`, `owner`, `key`, `keys`, `instance`, `profile` and `folder`, `settings` for `config`, `cloud`, `webhook`, `connector`, `connector_state`, `inbound_endpoint` and `backup_folder`, and `data` for the rest, so that each entry is of exactly one kind.
 
-**Reason:** `kind` lets a reader ask for one area of activity at a time. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks, connectors and the backup folder; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
+**Reason:** `kind` lets a reader ask for one area of activity at a time. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, the link to Marfa Cloud, webhooks, connectors and the backup folder; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
 
 **Tests:** `compliance/audit.test.ts › sorts entries by kind, each into exactly one`.
 

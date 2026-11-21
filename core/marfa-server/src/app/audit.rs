@@ -28,8 +28,9 @@ const HOUSEKEEPING: [&str; 12] = [
 const ACCESS_FAMILIES: [&str; 7] = [
     "auth", "owner", "key", "keys", "instance", "profile", "folder",
 ];
-const SETTINGS_FAMILIES: [&str; 6] = [
+const SETTINGS_FAMILIES: [&str; 7] = [
     "config",
+    "cloud",
     "webhook",
     "connector",
     "connector_state",
@@ -324,6 +325,7 @@ mod tests {
             ("keys.purged", "housekeeping"),
             ("config.update", "settings"),
             ("backup_folder.adopt", "settings"),
+            ("cloud.link_start", "settings"),
             ("blob.purge", "housekeeping"),
             ("source.update", "data"),
             ("item.create", "data"),

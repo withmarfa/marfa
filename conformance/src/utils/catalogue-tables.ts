@@ -170,6 +170,10 @@ const EVENT_TEXT: Readonly<
       "events/edge-bulk-announced",
     ],
   },
+  "cloud_link.changed": {
+    when: "A link to Marfa Cloud starts, links, fails or ends, or the sign-in address it moves changes state.",
+    statements: ["cloud/event", "cloud/event-reader"],
+  },
   "attention.raised": {
     when: "A check of what needs the owner's attention first finds an entry, or the server first meets a fault.",
     statements: ["events/attention-raised", "events/attention-fault-at-once"],
