@@ -58,7 +58,7 @@ function source(types: Record<string, string>, extra: object = {}): string {
 }
 
 describe("a plugin's source folder from the terminal", () => {
-  it("judges a source folder as installing would: takes common.ticket and refuses user.ticket, which types check takes", async () => {
+  it("judges a source folder as installing would: takes common.ticket, which types check refuses, and refuses user.ticket, which types check takes", async () => {
     const common = source({
       "common.ticket.json": definition("common.ticket"),
     });
@@ -72,6 +72,15 @@ describe("a plugin's source folder from the terminal", () => {
     expect(verdict.types).toEqual([
       expect.objectContaining({ file: "types/common.ticket.json", ok: true }),
     ]);
+    // `types check` judges as `POST /types` does, which refuses a new `common.*` type.
+    const commonAsRegistered = await marfa(
+      ["--json", "types", "check", join(common, "types")],
+      NO_KEYCHAIN,
+    );
+    expect(commonAsRegistered.code).toBe(1);
+    expect(JSON.stringify(JSON.parse(commonAsRegistered.stdout))).toContain(
+      "forbidden",
+    );
 
     const owned = source({ "user.ticket.json": definition("user.ticket") });
     const refused = await marfa(
