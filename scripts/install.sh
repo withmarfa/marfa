@@ -120,7 +120,7 @@ for program in $programs; do
 done
 say "Installed marfa $version and marfa-server $version to $dir."
 case "$programs" in
-  *cloudflared) say "Installed cloudflared beside them: the server runs it only once you link it to Marfa Cloud." ;;
+  *cloudflared) say "Installed cloudflared beside them. Marfa does not run it unless you link this server to Marfa Cloud." ;;
 esac
 
 case ":$PATH:" in

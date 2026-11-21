@@ -101,7 +101,9 @@ describe("the server image in a release", () => {
     const context = ci.jobs.image?.steps?.find((step) =>
       (step.run ?? "").includes("image-context"),
     );
-    expect(context?.run).toContain("{marfa,marfa-server,cloudflared,NOTICES.txt}");
+    expect(context?.run).toContain(
+      "{marfa,marfa-server,cloudflared,NOTICES.txt}",
+    );
   });
 
   it("describes the image as the Marfa server, in both builds", () => {

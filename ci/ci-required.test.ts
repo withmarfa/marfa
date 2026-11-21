@@ -612,7 +612,10 @@ describe("what a change runs", () => {
     ],
     [
       "the connector's pins and the script that fetches them, which the image job's build runs",
-      ["scripts/release/cloudflared.txt", "scripts/release/fetch-cloudflared.sh"],
+      [
+        "scripts/release/cloudflared.txt",
+        "scripts/release/fetch-cloudflared.sh",
+      ],
       ["quick-checks", "workspace", "image"],
     ],
     [

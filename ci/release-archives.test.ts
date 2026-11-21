@@ -492,13 +492,7 @@ describe("check-archive.sh", () => {
   it("holds the real pin file to the same check: a stand-in is not the pinned program", () => {
     const { directory, folder, archive } = archiveOf(good("0.0.9"));
     try {
-      spawnSync("tar", [
-        "-czf",
-        archive,
-        "-C",
-        folder,
-        ...readdirSync(folder),
-      ]);
+      spawnSync("tar", ["-czf", archive, "-C", folder, ...readdirSync(folder)]);
       const result = spawnSync("bash", [CHECK, archive, "0.0.9"], {
         encoding: "utf8",
       });
@@ -889,7 +883,10 @@ describe("fetch-cloudflared.sh", () => {
     expect(done.placed).toBe(PROGRAM);
     for (const codesign of [
       { ...signed, verifies: false },
-      { ...signed, details: "TeamIdentifier=ZZZZZZZZZZ\nflags=0x10000(runtime)" },
+      {
+        ...signed,
+        details: "TeamIdentifier=ZZZZZZZZZZ\nflags=0x10000(runtime)",
+      },
       { ...signed, details: "TeamIdentifier=ABCDE12345\nflags=0x0(none)" },
     ]) {
       const refused = fetchWith({ target: MAC, codesign });
@@ -1005,6 +1002,8 @@ describe("fetch-cloudflared.sh", () => {
     expect(first.ran.status).toBe(0);
     const twice = fetchWith({ notices: first.notices });
     expect(twice.ran.status).toBe(1);
-    expect(twice.ran.stdout).toContain("already carries the cloudflared notice");
+    expect(twice.ran.stdout).toContain(
+      "already carries the cloudflared notice",
+    );
   });
 });

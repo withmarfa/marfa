@@ -86,7 +86,9 @@ describe("the formula is written from the release's checksum file", () => {
 
   it("installs the programs, checks their versions, and keeps cloudflared off the path", () => {
     const { out } = formula("0.0.23", SUMS);
-    expect(out).toContain('libexec.install "marfa", "marfa-server", "cloudflared"');
+    expect(out).toContain(
+      'libexec.install "marfa", "marfa-server", "cloudflared"',
+    );
     expect(out).toContain(
       'bin.install_symlink libexec/"marfa", libexec/"marfa-server"',
     );

@@ -184,7 +184,9 @@ describe("a release is installed after it is checked", () => {
     });
     expect(done.status, done.err).toBe(0);
     expect(existsSync(join(done.dir, CONNECTOR))).toBe(false);
-    expect(done.out).toContain("Installed marfa 0.0.22 and marfa-server 0.0.22");
+    expect(done.out).toContain(
+      "Installed marfa 0.0.22 and marfa-server 0.0.22",
+    );
     expect(done.out).not.toContain("cloudflared");
   });
 });
