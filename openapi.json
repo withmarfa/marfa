@@ -55451,10 +55451,13 @@
                     "description": "Display name. Defaults to the username when omitted or blank."
                   },
                   "email": {
-                    "type": "string",
+                    "type": [
+                      "string",
+                      "null"
+                    ],
                     "maxLength": 254,
                     "format": "email",
-                    "description": "The owner's email address. It plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed."
+                    "description": "The owner's email address, which plays no part in signing in. Marfa stores it in lowercase, with spaces at each end trimmed. Leave it out or send `null` to set none."
                   },
                   "code": {
                     "type": "string",
