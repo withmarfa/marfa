@@ -124,6 +124,26 @@ fn not_found() -> Refusal {
     )
 }
 
+/// The subscription `maker` registered. One the caller reaches but did not register is refused
+/// as `forbidden`, since the caller can already see it.
+fn registered_by(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    id: &str,
+    maker: &Maker,
+) -> Result<Subscription> {
+    if let Some(subscription) = store::by_id(tx, id, Some(maker))? {
+        return Ok(subscription);
+    }
+    if caller.reaches_every_webhook() && store::by_id(tx, id, None)?.is_some() {
+        return Err(Refusal::new(
+            Code::Forbidden,
+            "Only the key or app that registered this webhook can change it or redeliver it.",
+        ));
+    }
+    Err(not_found())
+}
+
 /// An inconclusive registration lookup leaves the decision to the send attempt.
 pub async fn check_address(app: &App, maker: &Maker, address: &request::Address) -> Result<()> {
     if app
@@ -275,7 +295,7 @@ pub fn turns_of(tx: &Transaction<'_>, caller: &Caller) -> Result<i64> {
 /// One subscription the caller made, or `webhook_not_found`.
 pub fn made_by(tx: &Transaction<'_>, caller: &Caller, id: &str) -> Result<Subscription> {
     let maker = caller.webhook_maker()?;
-    store::by_id(tx, id, Some(&maker))?.ok_or_else(not_found)
+    registered_by(tx, caller, id, &maker)
 }
 
 pub async fn list(app: &App, caller: &Caller) -> Result<Value> {
@@ -333,7 +353,7 @@ pub fn apply_update(
     .collect();
     let maker = unit.caller.webhook_maker()?;
     let tx = unit.tx();
-    let existing = store::by_id(tx, &id, Some(&maker))?.ok_or_else(not_found)?;
+    let existing = registered_by(tx, &unit.caller, &id, &maker)?;
     let mut next = existing.clone();
     if let Some(address) = request.url {
         next.url = address.text;
@@ -371,11 +391,11 @@ pub fn apply_update(
 }
 
 pub async fn delete(app: &App, caller: &Caller, id: String) -> Result<()> {
-    caller.webhook_maker()?;
+    caller.webhook_reach()?;
     app.write(caller, "webhook.delete", move |unit| {
-        let maker = unit.caller.webhook_maker()?;
+        let reach = unit.caller.webhook_reach()?;
         let tx = unit.tx();
-        let held = store::by_id(tx, &id, Some(&maker))?.ok_or_else(not_found)?;
+        let held = store::by_id(tx, &id, reach.as_ref())?.ok_or_else(not_found)?;
         store::delete(tx, &held)?;
         unit.audit("webhook", &id, None)
     })
@@ -446,12 +466,14 @@ pub async fn redeliver(
     id: String,
     delivery_id: String,
 ) -> Result<Value> {
-    caller.webhook_reach()?;
+    caller.webhook_redelivery_reach()?;
     let (live, clock) = (app.clone(), app.clock.clone());
     app.write(caller, "webhook.delivery.redeliver", move |unit| {
-        let reach = unit.caller.webhook_reach()?;
         let tx = unit.tx();
-        let subscription = store::by_id(tx, &id, reach.as_ref())?.ok_or_else(not_found)?;
+        let subscription = match unit.caller.webhook_redelivery_reach()? {
+            Some(maker) => registered_by(tx, &unit.caller, &id, &maker)?,
+            None => store::by_id(tx, &id, None)?.ok_or_else(not_found)?,
+        };
         let delivery = store::delivery(tx, &id, &delivery_id)?.ok_or_else(not_found)?;
         if !subscription.active {
             return Err(redelivery_refused(

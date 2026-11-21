@@ -24,13 +24,33 @@ impl Caller {
         }
     }
 
-    /// Local authority reaches every maker for reads and redelivery.
+    /// The makers whose subscriptions the caller reads and removes: every one for local
+    /// authority and for a credential that also holds `keys.manage`.
     pub fn webhook_reach(&self) -> Result<Option<Maker>> {
+        if self.reaches_every_webhook() {
+            return Ok(None);
+        }
+        self.webhook_redelivery_reach()
+    }
+
+    /// Redelivery reaches only the caller's own subscriptions, or every one for local authority.
+    pub fn webhook_redelivery_reach(&self) -> Result<Option<Maker>> {
         self.require(Permission::WebhooksManage)?;
         match self {
             Caller::Local(_) => Ok(None),
             Caller::Owner(_) | Caller::Server => Err(unauthorized()),
             Caller::Key(_) | Caller::App { .. } => self.webhook_maker().map(Some),
+        }
+    }
+
+    /// A key or an app that manages both keys and webhooks reads and removes every one.
+    pub fn reaches_every_webhook(&self) -> bool {
+        match self {
+            Caller::Local(_) => self.holds(Permission::WebhooksManage),
+            Caller::Key(_) | Caller::App { .. } => {
+                self.holds(Permission::WebhooksManage) && self.holds(Permission::KeysManage)
+            }
+            Caller::Owner(_) | Caller::Server => false,
         }
     }
 }

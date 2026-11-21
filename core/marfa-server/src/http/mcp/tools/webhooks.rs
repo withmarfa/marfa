@@ -22,7 +22,7 @@ pub fn list_definition() -> Definition {
     Definition {
         name: LIST_NAME,
         title: "List webhooks",
-        description: "Use to see the webhooks this credential made: where each sends events, which events, and whether it is active.",
+        description: "Use to see webhooks: where each sends events, which events, whether it is active and which key or app made it. A credential that also manages keys sees every webhook; others see the ones they made.",
         input: json!({
             "type": "object",
             "properties": {},

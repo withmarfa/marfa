@@ -61,7 +61,7 @@ impl Caller {
         match setting {
             Setting::Folder => self.level_on(Axis::Type, FOLDER_TYPE) >= Level::Read,
             Setting::View => self.level_on(Axis::Type, VIEW_TYPE) >= Level::Read,
-            Setting::Webhook(maker) => self.makes(maker),
+            Setting::Webhook(maker) => self.makes(maker) || self.reaches_every_webhook(),
         }
     }
 
