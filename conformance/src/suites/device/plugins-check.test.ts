@@ -91,6 +91,38 @@ describe("a plugin's source folder from the terminal", () => {
     expect(asRegistered.code, asRegistered.stdout).toBe(0);
   });
 
+  it("refuses an edge type that redefines a shipped one, or names a shipped edge as its reverse, as installing does", async () => {
+    const cases: [string, Record<string, unknown>, string][] = [
+      ["about", { id: "about", cardinality: "many-to-many" }, "conflict"],
+      [
+        "cites",
+        { id: "cites", cardinality: "many-to-many", reverse_name: "about" },
+        "conflict",
+      ],
+      [
+        "Bad_Name",
+        { id: "Bad_Name", cardinality: "many-to-many" },
+        "validation_error",
+      ],
+    ];
+    for (const [id, edge, code] of cases) {
+      const folder = source({
+        "common.ticket.json": definition("common.ticket"),
+      });
+      writeFileSync(
+        join(folder, "edge-types", `${id}.json`),
+        JSON.stringify(edge),
+      );
+      const refused = await marfa(
+        ["--json", "plugins", "check", folder],
+        NO_KEYCHAIN,
+      );
+      expect(refused.code, id).toBe(1);
+      const verdict = JSON.parse(refused.stdout) as Verdict;
+      expect(verdict.problems, id).toEqual([expect.objectContaining({ code })]);
+    }
+  });
+
   it("refuses a plugin.json that names a version, which a release stamps from its tag", async () => {
     const folder = source(
       { "common.ticket.json": definition("common.ticket") },

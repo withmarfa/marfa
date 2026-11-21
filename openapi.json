@@ -13523,7 +13523,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The IDs of the edge types the installed version holds."
+            "description": "The IDs of the edge types the installed version brought that the instance still holds."
           },
           "connector": {
             "type": [
@@ -13635,7 +13635,7 @@
             "items": {
               "type": "string"
             },
-            "description": "The IDs of the edge types the installed version holds."
+            "description": "The IDs of the edge types the installed version brought that the instance still holds."
           },
           "connector": {
             "type": [
@@ -13732,14 +13732,14 @@
                 "items": {
                   "type": "string"
                 },
-                "description": "The types the plugin installed, which stay with their items and provenance."
+                "description": "The types the plugin installed that the instance still holds, which stay with their items and provenance."
               },
               "edge_types": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 },
-                "description": "The edge types the plugin held, which stay with their edges."
+                "description": "The edge types the plugin brought that the instance still holds, which stay with their edges."
               }
             },
             "required": [
@@ -32413,7 +32413,7 @@
           "Plugins"
         ],
         "summary": "Install a plugin",
-        "description": "Installs a plugin's bundle: registers its edge types and types in one write, records the plugin and version on each type, and keeps the bundle. Needs `schema.write` and write on each type and edge type it holds.",
+        "description": "Installs a plugin's bundle: registers its edge types and types in one write, records the plugin and version on each type, and keeps the bundle. Needs `schema.write`, write on each type it holds and on both names of each edge type it holds. An app's access token, or a key an app made, can install only a bundle whose types carry no guidance.",
         "security": [
           {
             "bearerAuth": []

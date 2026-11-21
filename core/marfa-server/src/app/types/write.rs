@@ -763,12 +763,36 @@ fn narrows_refusal(changes: Vec<Value>) -> Refusal {
     .with_detail("changes", changes)
 }
 
-/// Bundled types may refer to one another in either order.
+fn narrowed(id: &str, narrowing: marfa_rules::plugin::Narrowing) -> Value {
+    json!({ "type": id, "path": narrowing.path, "message": narrowing.message })
+}
+
+fn dropped(id: &str) -> Value {
+    json!({
+        "type": id,
+        "path": "",
+        "message": format!("The plugin no longer holds {id}, which a newer version cannot do"),
+    })
+}
+
+fn early_install_refusal(definition: &Obj, id: &str) -> Result<()> {
+    let early = early_refusal(definition)
+        .map_err(|error| Refusal::internal(&format!("the type grammar did not read: {error}")))?;
+    match early.filter(|early| early.applies_to_install()) {
+        Some(Early::NoFields) => Err(missing_field("fields").with_detail("type_id", id)),
+        Some(_) => Err(invalid_id("types.id").with_detail("type_id", id)),
+        None => Ok(()),
+    }
+}
+
+/// Bundled types may refer to one another in either order. A newer version is held to the
+/// version installed, as its stored bundle gives it, and to the catalog the owner may have changed.
 pub fn plan_install(
     caller: &Caller,
     catalog: &Catalog,
     name: &str,
     definitions: &[Obj],
+    installed: Option<&Obj>,
 ) -> Result<InstallPlan> {
     let ids: Vec<&str> = definitions
         .iter()
@@ -790,25 +814,34 @@ pub fn plan_install(
             .with_detail("type_id", *id));
         }
     }
-    let mut changes: Vec<Value> = catalog
-        .provenance
-        .iter()
-        .filter(|(id, held)| held.origin.plugin() == Some(name) && !ids.contains(&id.as_str()))
-        .map(|(id, _)| {
-            json!({
-                "type": id,
-                "path": "",
-                "message": format!("The plugin no longer holds {id}, which a newer version cannot do"),
-            })
-        })
+    let published: Vec<Obj> = installed
+        .and_then(|bundle| bundle.get("types"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_object)
+        .cloned()
         .collect();
+    let mut changes: Vec<Value> = published
+        .iter()
+        .filter_map(|held| text_of(held, "id"))
+        .filter(|id| !ids.contains(id))
+        .map(dropped)
+        .collect();
+    changes.extend(
+        catalog
+            .provenance
+            .iter()
+            .filter(|(id, held)| held.origin.plugin() == Some(name) && !ids.contains(&id.as_str()))
+            .map(|(id, _)| dropped(id)),
+    );
     let registry = with_set_stored(&catalog.types, definitions);
     let shaped = definitions
         .iter()
         .fold(catalog.types.clone(), |held, definition| {
             held.with(marfa_rules::plugin::provisional(definition))
         });
-    let clashes = marfa_rules::plugin::child_clashes(&shaped, &ids);
+    let clashes = marfa_rules::plugin::child_clashes(&catalog.types, &shaped, &ids);
     if !clashes.is_empty() {
         return Err(clashes_refusal(clashes));
     }
@@ -832,6 +865,7 @@ pub fn plan_install(
     };
     for definition in definitions {
         let id = text_of(definition, "id").unwrap_or_default();
+        early_install_refusal(definition, id)?;
         let input = Value::Object(definition.clone());
         let stored = catalog.types.get(id).filter(|_| catalog.holds(id));
         let judged = match stored {
@@ -840,13 +874,24 @@ pub fn plan_install(
         };
         let schema =
             labelled(judged.map_err(|issues| schema_refusal(issues).with_detail("type_id", id))?);
+        if let Some(before) = published
+            .iter()
+            .find(|held| text_of(held, "id") == Some(id))
+        {
+            changes.extend(
+                marfa_rules::plugin::narrowings(before, definition)
+                    .into_iter()
+                    .map(|narrowing| narrowed(id, narrowing)),
+            );
+        }
         match stored {
             Some(held) => {
-                changes.extend(marfa_rules::plugin::narrowings(held, &schema).into_iter().map(
-                    |narrowing| {
-                        json!({ "type": id, "path": narrowing.path, "message": narrowing.message })
-                    },
-                ));
+                caller.require_guidance(text_of(held, "guidance"), text_of(&schema, "guidance"))?;
+                changes.extend(
+                    marfa_rules::plugin::narrowings(held, &schema)
+                        .into_iter()
+                        .map(|narrowing| narrowed(id, narrowing)),
+                );
                 plan.replaced.push(schema);
             }
             None => plan.fresh.push(schema),
@@ -856,6 +901,7 @@ pub fn plan_install(
         changes.sort_by(|a, b| {
             (a["type"].as_str(), a["path"].as_str()).cmp(&(b["type"].as_str(), b["path"].as_str()))
         });
+        changes.dedup_by(|a, b| a["type"] == b["type"] && a["path"] == b["path"]);
         return Err(narrows_refusal(changes));
     }
     Ok(plan)

@@ -1666,6 +1666,14 @@ When `marfa plugins install` is given a plugin's name that is no path on the mac
 
 **Tests:** `cli/plugins.test.ts › installs a plugin by name from a release's index, checking its SHA-256, and sends no credential`.
 
+### `cli/plugins-address-credential`
+
+If the release address `MARFA_PLUGINS_URL` names, or an address a release redirects to, carries a user name or a password, then the CLI MUST refuse it before it sends any request, without printing the user name or the password.
+
+**Reason:** an HTTP client turns user info in an address into an `Authorization` header, and `cli/plugins-install-name` sends no credential.
+
+**Tests:** `cli/plugins.test.ts › refuses a plugins address carrying a user name or password before it fetches, printing and sending neither`.
+
 ### `cli/plugins-install-digest`
 
 If the bundle a release serves has another SHA-256 than its `plugins.json` lists, or the release cannot be read, then the CLI MUST exit 3 with `plugins_unreachable`, naming the release's address, and send nothing to the server.
@@ -1674,11 +1682,11 @@ If the bundle a release serves has another SHA-256 than its `plugins.json` lists
 
 ### `cli/plugins-check-judges`
 
-When `marfa plugins check` is given a source folder, the CLI MUST report every problem installing its bundle would be refused for, with no server: each problem of `plugin.json` and the edge types with its path, and each file in `types/` as `cli/types-check-judges` reports it, except that a type under `common` is taken and a type under `core`, `system`, `marfa`, `app` or `user` is refused `forbidden`.
+When `marfa plugins check` is given a source folder, the CLI MUST report every problem installing its bundle would be refused for, with no server: each problem of `plugin.json` with its path, each edge type as installing judges it (`plugins/install-edge-conflict`, `plugins/install-edge-refused`) against the shipped edge types and the folder's own, and each file in `types/` as `cli/types-check-judges` reports it, except that a type under `common` is taken and a type under `core`, `system`, `marfa`, `app` or `user` is refused `forbidden`.
 
 **Reason:** the plugins repository checks a plugin as installing will, while `marfa types check` keeps judging as `POST /types` does.
 
-**Tests:** `device/plugins-check.test.ts › judges a source folder as installing would: takes common.ticket and refuses user.ticket, which types check takes`.
+**Tests:** `device/plugins-check.test.ts › judges a source folder as installing would: takes common.ticket and refuses user.ticket, which types check takes`, `› refuses an edge type that redefines a shipped one, or names a shipped edge as its reverse, as installing does`.
 
 ### `cli/plugins-check-version`
 

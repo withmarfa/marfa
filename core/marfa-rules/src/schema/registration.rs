@@ -16,6 +16,11 @@ pub enum Early {
 }
 
 impl Early {
+    /// Installing a plugin judges its own roots, so only a definition's shape applies.
+    pub fn applies_to_install(self) -> bool {
+        matches!(self, Early::NoFields | Early::InvalidId)
+    }
+
     pub fn code(self) -> &'static str {
         match self {
             Early::NoFields => "missing_required_field",

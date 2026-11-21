@@ -371,6 +371,89 @@ describe("installing a plugin", () => {
     expect((await owner.getType("edgeclash.thing")).status).toBe(404);
   });
 
+  it("refuses 403 a key without write on an edge type's reverse name, as registering the edge type does", async () => {
+    const thing = single("reverse-permission", "reversepermission.thing", {
+      edge_types: [
+        {
+          id: "guards",
+          cardinality: "many-to-many",
+          reverse_name: "guarded-by",
+        },
+      ],
+    });
+    const forwardOnly = await ownerKey(
+      origin,
+      ["schema.write"],
+      { "*": "write" },
+      { guards: "write" },
+    );
+    const refused = await forwardOnly.installPlugin(thing);
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.code).toBe("edge_type_not_permitted");
+    expect((await owner.getType("reversepermission.thing")).status).toBe(404);
+    // The witness: a key holding both names installs it.
+    const both = await ownerKey(
+      origin,
+      ["schema.write"],
+      { "*": "write" },
+      { guards: "write", "guarded-by": "write" },
+    );
+    const taken = await both.installPlugin(thing);
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+  });
+
+  it("refuses 409 conflict a bundle whose edge type redefines a shipped one, and 400 missing_required_field a type with no fields, as registration does", async () => {
+    const shipped = await owner.installPlugin(
+      single("shipped-edge", "shippededge.thing", {
+        edge_types: [{ id: "about", cardinality: "many-to-many" }],
+      }),
+    );
+    expect(shipped.status).toBe(409);
+    expect(shipped.error?.error.code).toBe("conflict");
+    expect(shipped.error?.error.details?.edge_type).toBe("about");
+    const fieldless = await owner.installPlugin(
+      single("fieldless", "fieldless.thing", {
+        types: [{ id: "fieldless.thing", description: "No fields." }],
+      }),
+    );
+    expect(fieldless.status).toBe(400);
+    expect(fieldless.error?.error.code).toBe("missing_required_field");
+    expect(fieldless.error?.error.details?.type_id).toBe("fieldless.thing");
+    const registered = await owner.registerType({
+      id: "fieldless.registered",
+    } as never);
+    expect(registered.error?.error.code).toBe("missing_required_field");
+  });
+
+  it("refuses 409 conflict a bundle that changes the label of an edge type another source registered, and takes it with the labels as registered", async () => {
+    const made = await owner.registerEdgeType({
+      id: "relabelled",
+      cardinality: "many-to-many",
+      label: "Relabelled",
+      reverse_name: "relabelled-by",
+      reverse_label: "Relabelled by",
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const edge = (label: string) =>
+      single("relabel", "relabel.thing", {
+        edge_types: [
+          {
+            id: "relabelled",
+            cardinality: "many-to-many",
+            label,
+            reverse_name: "relabelled-by",
+            reverse_label: "Relabelled by",
+          },
+        ],
+      });
+    const refused = await owner.installPlugin(edge("Something else"));
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("conflict");
+    expect(refused.error?.error.details?.changes).toEqual(["label"]);
+    const taken = await owner.installPlugin(edge("Relabelled"));
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+  });
+
   it("refuses 409 type_exists a bundle with a type the plugin did not install", async () => {
     const made = await owner.registerType({
       id: "taken.thing",
@@ -449,7 +532,7 @@ describe("a newer version of an installed plugin", () => {
     expect((await owner.deleteType("user.ticket-child")).status).toBe(200);
   });
 
-  it("takes a version that adds a field, a status word and an enum value, and reads the new version on its types", async () => {
+  it("takes a version that adds a field and an enum value, and reads the new version on its types", async () => {
     const grown = ticket({
       kind: { type: "enum", enum_values: ["bug", "chore", "spike"] },
       estimate: { type: "integer" },
@@ -465,6 +548,193 @@ describe("a newer version of an installed plugin", () => {
     expect((await owner.getType(SPIKE)).data.provenance?.plugin?.version).toBe(
       "1.3.0",
     );
+  });
+});
+
+/** A root type with a status field, a list of entries and a table, at `version`. */
+function shapes(
+  version: string,
+  change: (thing: Record<string, any>) => void = () => {},
+) {
+  const thing: Record<string, any> = {
+    id: "shapes.thing",
+    description: "A thing with every kind of shape.",
+    fields: {
+      title: { type: "string" },
+      stage: {
+        type: "status",
+        status_values: [
+          { value: "open", group: "not_started" },
+          { value: "shut", group: "completed" },
+        ],
+      },
+      kind: { type: "enum", enum_values: ["small", "large"] },
+      parts: {
+        type: "array",
+        items_type: "object",
+        items_fields: { name: { type: "string" } },
+      },
+    },
+    tables: {
+      lines: { columns: { note: { type: "string", max_length: 100 } } },
+    },
+  };
+  change(thing);
+  return bundle("shapes", { version, types: [thing], edge_types: [] });
+}
+
+describe("what a newer version may change", () => {
+  beforeAll(async () => {
+    const installed = await owner.installPlugin(shapes("1.0.0"));
+    expect(installed.status, JSON.stringify(installed.error)).toBe(201);
+  });
+
+  it("refuses 409 plugin_narrows a version that adds a required field, makes a list member required, lowers a table column's limit or moves a status word to another group", async () => {
+    const cases: [string, (thing: Record<string, any>) => void][] = [
+      [
+        "fields.due",
+        (thing) => (thing.fields.due = { type: "date", required: true }),
+      ],
+      [
+        "fields.parts.items_fields.name",
+        (thing) => (thing.fields.parts.items_fields.name.required = true),
+      ],
+      [
+        "tables.lines.columns.note.max_length",
+        (thing) => (thing.tables.lines.columns.note.max_length = 50),
+      ],
+      [
+        "fields.stage.status_values.shut",
+        (thing) => (thing.fields.stage.status_values[1].group = "canceled"),
+      ],
+    ];
+    for (const [path, change] of cases) {
+      const refused = await owner.installPlugin(shapes("1.1.0", change));
+      expect(refused.status, path).toBe(409);
+      expect(refused.error?.error.code).toBe("plugin_narrows");
+      expect(refused.error?.error.details?.changes).toEqual([
+        expect.objectContaining({ type: "shapes.thing", path }),
+      ]);
+    }
+    expect((await owner.getPlugin("shapes")).data.version).toBe("1.0.0");
+  });
+
+  it("takes a version that adds a field, a status word, an enum value and an optional list member", async () => {
+    const grown = await owner.installPlugin(
+      shapes("1.2.0", (thing) => {
+        thing.fields.note = { type: "string" };
+        thing.fields.stage.status_values.push({
+          value: "held",
+          group: "in_progress",
+        });
+        thing.fields.kind.enum_values.push("medium");
+        thing.fields.parts.items_fields.size = { type: "integer" };
+      }),
+    );
+    expect(grown.status, JSON.stringify(grown.error)).toBe(200);
+    expect(grown.data.outcome).toBe("updated");
+    const read = await owner.getType("shapes.thing");
+    expect(
+      (read.data.fields as Record<string, any>).stage.status_values.map(
+        (word: { value: string }) => word.value,
+      ),
+    ).toContain("held");
+  });
+
+  it("refuses 409 plugin_narrows a version that drops a type the owner already deleted, naming it", async () => {
+    const pair = (version: string, both: boolean) =>
+      bundle("dropping", {
+        version,
+        edge_types: [],
+        types: [
+          {
+            id: "dropping.kept",
+            description: "Kept.",
+            fields: { title: { type: "string" } },
+          },
+          ...(both
+            ? [
+                {
+                  id: "dropping.gone",
+                  description: "Deleted by the owner.",
+                  fields: { title: { type: "string" } },
+                },
+              ]
+            : []),
+        ],
+      });
+    const installed = await owner.installPlugin(pair("1.0.0", true));
+    expect(installed.status, JSON.stringify(installed.error)).toBe(201);
+    expect((await owner.deleteType("dropping.gone")).status).toBe(200);
+    const refused = await owner.installPlugin(pair("1.1.0", false));
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("plugin_narrows");
+    expect(refused.error?.error.details?.changes).toEqual([
+      expect.objectContaining({ type: "dropping.gone", path: "" }),
+    ]);
+    // The witness: the newer version that still holds it installs.
+    const taken = await owner.installPlugin(pair("1.1.0", true));
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+
+  it("names the type that declared a status word when a newer version adds it to a type two generations above an owner's type that declares it", async () => {
+    const family = (version: string, words: string[]) =>
+      bundle("family", {
+        version,
+        edge_types: [],
+        types: [
+          {
+            id: "family.base",
+            description: "The top of a family.",
+            fields: {
+              stage: {
+                type: "status",
+                status_values: words.map((value) => ({
+                  value,
+                  group: "not_started",
+                })),
+              },
+            },
+          },
+        ],
+      });
+    expect((await owner.installPlugin(family("1.0.0", ["open"]))).status).toBe(
+      201,
+    );
+    const middle = await owner.registerType({
+      id: "user.family-middle",
+      parent: "family.base",
+      fields: {
+        stage: {
+          type: "status",
+          status_values: [{ value: "waiting", group: "in_progress" }],
+        },
+      },
+    } as never);
+    expect(middle.status, JSON.stringify(middle.error)).toBe(201);
+    const low = await owner.registerType({
+      id: "user.family-low",
+      parent: "user.family-middle",
+      fields: {
+        stage: {
+          type: "status",
+          status_values: [{ value: "parked", group: "not_started" }],
+        },
+      },
+    } as never);
+    expect(low.status, JSON.stringify(low.error)).toBe(201);
+    const refused = await owner.installPlugin(
+      family("1.1.0", ["open", "parked"]),
+    );
+    expect(refused.status).toBe(409);
+    expect(refused.error?.error.code).toBe("plugin_child_conflict");
+    expect(refused.error?.error.details?.conflicts).toEqual([
+      expect.objectContaining({
+        type: "user.family-low",
+        inherited: "parked",
+        inherited_from: "family.base",
+      }),
+    ]);
   });
 });
 
@@ -508,6 +778,27 @@ describe("listing and removing plugins", () => {
       version: "1.0.0",
     });
     expect((await owner.removePlugin("removable")).status).toBe(404);
+  });
+});
+
+describe("removing a plugin whose edge type the owner deleted", () => {
+  it("reports as kept only the edge types the instance still holds", async () => {
+    const installed = await owner.installPlugin(
+      single("edge-removed", "edgeremoved.thing", {
+        edge_types: [
+          { id: "edge-removed-a", cardinality: "many-to-many" },
+          { id: "edge-removed-b", cardinality: "many-to-many" },
+        ],
+      }),
+    );
+    expect(installed.status, JSON.stringify(installed.error)).toBe(201);
+    expect((await owner.deleteEdgeType("edge-removed-a")).status).toBe(200);
+    const removed = await owner.removePlugin("edge-removed");
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
+    expect(removed.data.kept).toEqual({
+      types: ["edgeremoved.thing"],
+      edge_types: ["edge-removed-b"],
+    });
   });
 });
 
@@ -618,6 +909,99 @@ describe("plugins in an archive", () => {
   });
 });
 
+describe("a version 2 archive's provenance and install records", () => {
+  const archiveOf = (lines: Record<string, unknown>[], plugins: number) =>
+    tar([
+      {
+        name: "manifest.json",
+        body: JSON.stringify(
+          emptyManifest({
+            version: 2,
+            type_count: lines.length - plugins,
+            plugin_count: plugins,
+          }),
+        ),
+      },
+      lineFile("files", ""),
+      lineFile("instance", ndjson(lines)),
+      lineFile("items", ""),
+      lineFile("versions", ""),
+      lineFile("edges", ""),
+      lineFile("rows", ""),
+    ]);
+  const restore = (archive: Uint8Array) =>
+    new MarfaClient({
+      baseUrl: destination.apiUrl,
+      controlSocket: destination.controlSocket,
+    }).restoreArchive(archive);
+
+  it("refuses a type whose origin is not text, and one whose creator is not a sign-in", async () => {
+    const id = "user.mistyped-origin";
+    const typed = (provenance: Record<string, unknown>) =>
+      archiveOf(
+        [{ type: { id, fields: { title: { type: "string" } } }, provenance }],
+        0,
+      );
+    for (const provenance of [
+      { origin: 7, created_by: null },
+      { origin: "registered", created_by: {} },
+    ]) {
+      const refused = await restore(typed(provenance));
+      expect(refused.status, JSON.stringify(provenance)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+    }
+    expect((await elsewhere.getType(id)).status).toBe(404);
+    // The witness: the same archive with a well-formed provenance restores.
+    const restored = await restore(
+      typed({
+        origin: "registered",
+        created_by: { kind: "key", id: "k1", name: "A key" },
+      }),
+    );
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+  });
+
+  it("refuses a plugin line whose times are not in the stored form, or whose installer is not a sign-in", async () => {
+    const plugin = single("archived-record", "archivedrecord.thing");
+    const line = (fields: Record<string, unknown>) => ({
+      plugin: {
+        name: plugin.name,
+        version: plugin.version,
+        bundle: plugin,
+        installed_at: "2026-11-01T10:00:00.000Z",
+        installed_by: null,
+        updated_at: "2026-11-01T10:00:00.000Z",
+        ...fields,
+      },
+    });
+    for (const fields of [
+      { installed_at: "yesterday" },
+      { updated_at: "2026-11-01" },
+      { installed_by: {} },
+    ]) {
+      const refused = await restore(archiveOf([line(fields)], 1));
+      expect(refused.status, JSON.stringify(fields)).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+    }
+    expect((await elsewhere.getPlugin(plugin.name)).status).toBe(404);
+    // The witness: the same line with a sign-in and stored times restores.
+    const restored = await restore(
+      archiveOf(
+        [
+          line({
+            installed_by: { kind: "local", id: "local", name: "Local command" },
+          }),
+        ],
+        1,
+      ),
+    );
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    const read = await elsewhere.getPlugin(plugin.name);
+    expect(read.status).toBe(200);
+    await expectMatchesSchema("GET", "/plugins/{name}", 200, read.data);
+  });
+});
+
 describe("who writes a type's guidance", () => {
   it("refuses guidance to an app holding user.*:write and schema.write, and takes the same registration without it", async () => {
     const app = await appToken(
@@ -663,7 +1047,7 @@ describe("who writes a type's guidance", () => {
     expect(taken.data.guidance).toBe("Use it.");
   });
 
-  it("lets an app holding schema.write install a plugin whose types carry guidance", async () => {
+  it("refuses 403 an app installing a plugin whose types carry guidance, and installs the same plugin without it", async () => {
     // A grant names a root the instance holds a type under.
     const anchor = await owner.registerType({
       id: "guided.anchor",
@@ -671,21 +1055,111 @@ describe("who writes a type's guidance", () => {
     } as never);
     expect(anchor.status, JSON.stringify(anchor.error)).toBe(201);
     const app = await appToken(origin, "guided.*:write schema.write");
-    const installed = await app.installPlugin(
+    const guided = (guidance?: string) =>
       single("guided-by-app", "guided.thing", {
         types: [
           {
             id: "guided.thing",
             description: "A guided thing.",
-            guidance: "Installing writes this.",
+            ...(guidance === undefined ? {} : { guidance }),
+            fields: { title: { type: "string" } },
+          },
+        ],
+      });
+    const refused = await app.installPlugin(guided("Installing writes this."));
+    expect(refused.status, JSON.stringify(refused.error)).toBe(403);
+    expect(refused.error?.error.code).toBe("forbidden");
+    expect(refused.error?.error.details?.changes).toEqual(["guidance"]);
+    expect((await owner.getType("guided.thing")).status).toBe(404);
+    const plain = await app.installPlugin(guided());
+    expect(plain.status, JSON.stringify(plain.error)).toBe(201);
+  });
+
+  it("refuses an app's newer version that would remove guidance the owner's install wrote", async () => {
+    const anchor = await owner.registerType({
+      id: "unguided.anchor",
+      fields: { title: { type: "string" } },
+    } as never);
+    expect(anchor.status, JSON.stringify(anchor.error)).toBe(201);
+    const at = (version: string, guidance?: string) =>
+      single("unguided", "unguided.thing", {
+        version,
+        types: [
+          {
+            id: "unguided.thing",
+            description: "A guided thing.",
+            ...(guidance === undefined ? {} : { guidance }),
+            fields: { title: { type: "string" } },
+          },
+        ],
+      });
+    const installed = await owner.installPlugin(at("1.0.0", "Read me."));
+    expect(installed.status, JSON.stringify(installed.error)).toBe(201);
+    const app = await appToken(origin, "unguided.*:write schema.write");
+    const refused = await app.installPlugin(at("1.1.0"));
+    expect(refused.status).toBe(403);
+    expect(refused.error?.error.details?.changes).toEqual(["guidance"]);
+    expect((await owner.getType("unguided.thing")).data.guidance).toBe(
+      "Read me.",
+    );
+    // The witness: the owner's key installs the same version.
+    const taken = await owner.installPlugin(at("1.1.0"));
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
+  });
+
+  it("refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it", async () => {
+    // An app is offered a root's wildcard only once the instance holds a type under it.
+    const seeded = await owner.registerType({
+      id: "minted.seed",
+      fields: { title: { type: "string" } },
+    } as never);
+    expect(seeded.status, JSON.stringify(seeded.error)).toBe(201);
+    const app = await appToken(
+      origin,
+      "minted.*:write metadata.types:write schema.write keys.mint keys.manage",
+    );
+    const minted = await app.createKey({
+      label: "minted by an app",
+      source: `plugins-minted-${String(++keysMinted)}`,
+      permissions: ["schema.write"],
+      type_permissions: { "minted.*": "write" },
+      metadata_permissions: { types: "write" },
+      owner_key: true,
+    } as never);
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    expect(minted.data).not.toHaveProperty("oauth_client_id");
+    const key = new MarfaClient({
+      baseUrl: origin.apiUrl,
+      apiKey: minted.data.key!,
+    });
+    const registered = await key.registerType({
+      id: "minted.guided",
+      guidance: "Use it.",
+      fields: { title: { type: "string" } },
+    } as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(403);
+    expect(registered.error?.error.details?.changes).toEqual(["guidance"]);
+    const installed = await key.installPlugin(
+      single("minted", "minted.thing", {
+        types: [
+          {
+            id: "minted.thing",
+            description: "A thing.",
+            guidance: "Use it.",
             fields: { title: { type: "string" } },
           },
         ],
       }),
     );
-    expect(installed.status, JSON.stringify(installed.error)).toBe(201);
-    expect((await owner.getType("guided.thing")).data.guidance).toBe(
-      "Installing writes this.",
-    );
+    expect(installed.status).toBe(403);
+    expect(installed.error?.error.details?.changes).toEqual(["guidance"]);
+    // The witness: the same key registers and installs without guidance.
+    const plain = await key.registerType({
+      id: "minted.guided",
+      fields: { title: { type: "string" } },
+    } as never);
+    expect(plain.status, JSON.stringify(plain.error)).toBe(201);
+    const bare = await key.installPlugin(single("minted", "minted.thing"));
+    expect(bare.status, JSON.stringify(bare.error)).toBe(201);
   });
 });

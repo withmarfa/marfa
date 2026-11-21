@@ -839,7 +839,7 @@ export interface paths {
         put?: never;
         /**
          * Install a plugin
-         * @description Installs a plugin's bundle: registers its edge types and types in one write, records the plugin and version on each type, and keeps the bundle. Needs `schema.write` and write on each type and edge type it holds.
+         * @description Installs a plugin's bundle: registers its edge types and types in one write, records the plugin and version on each type, and keeps the bundle. Needs `schema.write`, write on each type it holds and on both names of each edge type it holds. An app's access token, or a key an app made, can install only a bundle whose types carry no guidance.
          */
         post: operations["installPlugin"];
         delete?: never;
@@ -8635,7 +8635,7 @@ export interface components {
             version: string;
             /** @description The IDs of the types the plugin installed, at any version. */
             types: string[];
-            /** @description The IDs of the edge types the installed version holds. */
+            /** @description The IDs of the edge types the installed version brought that the instance still holds. */
             edge_types: string[];
             /** @description The installed version's connector, as its bundle gave it, or `null`. */
             connector: {
@@ -8695,7 +8695,7 @@ export interface components {
             version: string;
             /** @description The IDs of the types the plugin installed, at any version. */
             types: string[];
-            /** @description The IDs of the edge types the installed version holds. */
+            /** @description The IDs of the edge types the installed version brought that the instance still holds. */
             edge_types: string[];
             /** @description The installed version's connector, as its bundle gave it, or `null`. */
             connector: {
@@ -8738,9 +8738,9 @@ export interface components {
             };
             /** @description What stays. */
             kept: {
-                /** @description The types the plugin installed, which stay with their items and provenance. */
+                /** @description The types the plugin installed that the instance still holds, which stay with their items and provenance. */
                 types: string[];
-                /** @description The edge types the plugin held, which stay with their edges. */
+                /** @description The edge types the plugin brought that the instance still holds, which stay with their edges. */
                 edge_types: string[];
             };
         };

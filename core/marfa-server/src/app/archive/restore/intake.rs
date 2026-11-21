@@ -291,13 +291,21 @@ const PROVENANCE: &str = "provenance";
 /// Where an archived type came from. Version 1 names a registered type `user`.
 fn archived_origin(line: &Value, version: u64) -> Result<Origin> {
     let refused = |message: String| invalid(message).with_detail("entry", INSTANCE);
-    let origin = line.pointer("/provenance/origin").and_then(Value::as_str);
+    let origin = match line.pointer("/provenance/origin") {
+        None => None,
+        Some(Value::String(origin)) => Some(origin.as_str()),
+        Some(_) => {
+            return Err(refused(
+                "The archive names a type's origin that is not text.".into(),
+            ));
+        }
+    };
     match (version, origin) {
         (_, Some("platform")) => Err(Refusal::new(
             Code::Forbidden,
             "The archive claims a type is platform-shipped, which no archive can restore.",
         )),
-        (_, None) | (1, Some("user")) => Ok(Origin::Registered),
+        (1, None | Some("user")) => Ok(Origin::Registered),
         (2.., Some("registered")) => Ok(Origin::Registered),
         (2.., Some("plugin")) => {
             let named = |key: &str| {
@@ -318,9 +326,28 @@ fn archived_origin(line: &Value, version: u64) -> Result<Origin> {
                 )),
             }
         }
+        (_, None) => Err(refused(format!(
+            "The archive names a type with no origin, which an archive at version {version} holds."
+        ))),
         (_, Some(other)) => Err(refused(format!(
             "The archive names a type's origin {other}, which an archive at version {version} does not hold."
         ))),
+    }
+}
+
+/// From version 2 a creator is `null` or a sign-in; version 1 keeps only a sign-in it holds.
+fn archived_creator(line: &Value, version: u64) -> Result<Option<Value>> {
+    let held = line.pointer("/provenance/created_by");
+    if version == 1 {
+        return Ok(held.filter(|by| plugins::is_actor(by)).cloned());
+    }
+    match held {
+        None | Some(Value::Null) => Ok(None),
+        Some(by) if plugins::is_actor(by) => Ok(Some(by.clone())),
+        Some(_) => Err(invalid(
+            "The archive names a type's creator in no form a sign-in is named.",
+        )
+        .with_detail("entry", INSTANCE)),
     }
 }
 
@@ -547,10 +574,7 @@ impl Rows {
                 registrations.types.push(types::write::Archived {
                     definition: body.clone(),
                     origin,
-                    created_by: line
-                        .pointer("/provenance/created_by")
-                        .filter(|by| by.is_object())
-                        .cloned(),
+                    created_by: archived_creator(line, self.version)?,
                 });
             }
             "plugin" => {

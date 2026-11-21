@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use serde_json::{Map, Value};
 
 use super::{
-    Early, ITEM_KIND, Obj, Registry, SchemaVerdict, early_refusal, labelled, parent_chain_fault,
+    ITEM_KIND, Obj, Registry, SchemaVerdict, early_refusal, labelled, parent_chain_fault,
     validate_type,
 };
 use crate::builtin;
@@ -548,7 +548,7 @@ fn judge(
         )]));
     }
     if let Some(early) = early_refusal(&entry.body)?
-        && !(door == Door::Install && matches!(early, Early::Reserved(_)))
+        && (door == Door::Register || early.applies_to_install())
     {
         return Ok(Err(vec![problem(
             early.path(),

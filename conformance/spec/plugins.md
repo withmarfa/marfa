@@ -4,7 +4,7 @@ A plugin is what an owner adds to Marfa: types under `common.*` or a root of its
 
 A bundle sets `format` to 1 and identifies the plugin by its `name`, `title`, `description`, `mark`, `maker` and `version`. The `marfa` field names the oldest Marfa release it supports. The `types` array holds type definitions with their guidance, and `edge_types` holds edge type definitions. The server stores the optional `connector` object with the install record. `PluginBundle` in `openapi.json` defines each field.
 
-`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, a type under a reserved root, the Marfa release it needs, the caller's permission, the version installed, a type the plugin did not install, a clash with a type below, a parent outside the bundle the caller may not write, each type's definition, what a newer version narrows, and each edge type.
+`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, a type under a reserved root, the Marfa release it needs, the caller's permission, guidance an app sends, the version installed, a type the plugin did not install, a clash with a type below, a parent outside the bundle the caller may not write, each type's definition, what a newer version narrows, and each edge type.
 
 ## Installing
 
@@ -28,7 +28,7 @@ If `POST /plugins` sends a bundle with a type `POST /types` would refuse for its
 
 **Reason:** installing uses the rules of registration, which the CLI shares (`cli/plugins-check-judges`). The types of one bundle are judged together, so they may name each other in any order.
 
-**Tests:** `compliance/plugins.test.ts › registers neither type of a bundle whose second type is refused, though the bundle without it installs`.
+**Tests:** `compliance/plugins.test.ts › registers neither type of a bundle whose second type is refused, though the bundle without it installs`, `› refuses 409 conflict a bundle whose edge type redefines a shipped one, and 400 missing_required_field a type with no fields, as registration does`.
 
 ### `plugins/install-unknown-key`
 
@@ -86,9 +86,11 @@ If a caller whose type map does not grant write on a type of the bundle sends `P
 
 ### `plugins/install-edge-write`
 
-If a caller whose edge map does not grant write on an edge type of the bundle sends `POST /plugins`, then the server MUST answer `403 edge_type_not_permitted`.
+If a caller whose edge map does not grant write on the `id` or the `reverse_name` of an edge type of the bundle, or on the reverse name of an edge type the instance holds under that `id`, sends `POST /plugins`, then the server MUST answer `403 edge_type_not_permitted`.
 
-**Tests:** `compliance/plugins.test.ts › refuses 403 a key without schema.write, one without write on a type of the bundle, and one without write on an edge type`.
+**Reason:** `POST /edge-types` checks both names of an edge type (`edges/types-register-id`), and installing registers edge types as it does.
+
+**Tests:** `compliance/plugins.test.ts › refuses 403 a key without schema.write, one without write on a type of the bundle, and one without write on an edge type`, `› refuses 403 a key without write on an edge type's reverse name, as registering the edge type does`.
 
 ### `plugins/install-parent-reach`
 
@@ -108,15 +110,23 @@ If a bundle holds a type the instance holds that the same plugin did not install
 
 When `POST /plugins` installs or updates a type, the server MUST record the plugin's `name` and `version` as the type's provenance, which a read answers as `types/provenance-read` says.
 
-**Tests:** `compliance/plugins.test.ts › reads a type a plugin installed with origin plugin, naming the plugin and its version`, `› takes a version that adds a field, a status word and an enum value, and reads the new version on its types`.
+**Tests:** `compliance/plugins.test.ts › reads a type a plugin installed with origin plugin, naming the plugin and its version`, `› takes a version that adds a field and an enum value, and reads the new version on its types`.
 
 ### `plugins/install-guidance`
 
-When `POST /plugins` installs a type whose definition carries `guidance`, the server MUST store the guidance as the bundle gives it, whichever credential that holds the install's permission sends it.
+When a caller that is neither an app's access token nor a key an app made sends `POST /plugins` with a type whose definition carries `guidance`, the server MUST store the guidance as the bundle gives it.
 
-**Reason:** installing a plugin is how guidance reaches a type, besides the owner (`types/guidance-app-made`).
+**Reason:** installing a plugin is the owner's way to give a type guidance, besides writing it directly (`types/guidance-app-made`).
 
-**Tests:** `compliance/plugins.test.ts › reads a type a plugin installed with origin plugin, naming the plugin and its version`, `› lets an app holding schema.write install a plugin whose types carry guidance`.
+**Tests:** `compliance/plugins.test.ts › reads a type a plugin installed with origin plugin, naming the plugin and its version`.
+
+### `plugins/install-guidance-app`
+
+If an app's access token, or a key an app made, sends `POST /plugins` with a bundle whose types carry `guidance`, or a later version that would change or remove a type's `guidance`, then the server MUST answer `403 forbidden` with `details.changes` listing `guidance` and write nothing.
+
+**Reason:** installing is an owner action, and an app may not write guidance by any door (`types/guidance-app-made`). The same app installs the same plugin without guidance.
+
+**Tests:** `compliance/plugins.test.ts › refuses 403 an app installing a plugin whose types carry guidance, and installs the same plugin without it`, `› refuses an app's newer version that would remove guidance the owner's install wrote`, `› refuses guidance to an owner's key an app minted, on registration and on install, and takes both without it`.
 
 ### `plugins/install-edge-types`
 
@@ -126,11 +136,19 @@ When `POST /plugins` installs a bundle, the server MUST register each of its edg
 
 ### `plugins/install-edge-conflict`
 
-If a bundle holds an edge type that Marfa ships, or one the instance holds that differs beyond the types its ends take, then the server MUST answer `409 conflict` with `details.edge_type` naming it.
+If a bundle holds an edge type that Marfa ships, one whose `id` or `reverse_name` another edge type holds as a name, or one the instance holds that differs beyond the types its ends take, its `label` and `reverse_label` included, then the server MUST answer `409 conflict` with `details.edge_type` naming it.
 
-**Reason:** a plugin names its edge types plainly, and the plugins repository keeps those names from clashing; an edge type registered in another shape is someone else's.
+**Reason:** a plugin names its edge types plainly, and the plugins repository keeps those names from clashing; an edge type registered in another shape, or under other labels, is someone else's.
 
-**Tests:** `compliance/plugins.test.ts › refuses 409 conflict an edge type the instance holds in another shape`.
+**Tests:** `compliance/plugins.test.ts › refuses 409 conflict an edge type the instance holds in another shape`, `› refuses 409 conflict a bundle whose edge type redefines a shipped one, and 400 missing_required_field a type with no fields, as registration does`, `› refuses 409 conflict a bundle that changes the label of an edge type another source registered, and takes it with the labels as registered`.
+
+### `plugins/install-edge-refused`
+
+If a bundle holds an edge type `POST /edge-types` would refuse for its definition, such as an identifier outside the edge type grammar or a key it does not read, then the server MUST answer with the status and code that registration answers, with `details.edge_type` naming it.
+
+**Reason:** installing, registration and `marfa plugins check` judge an edge type by the same rules (`cli/plugins-check-judges`).
+
+**Tests:** `device/plugins-check.test.ts › refuses an edge type that redefines a shipped one, or names a shipped edge as its reverse, as installing does`.
 
 ## A newer version
 
@@ -148,27 +166,27 @@ If `POST /plugins` sends a bundle of an earlier version than the plugin installe
 
 ### `plugins/update-only-adds`
 
-If `POST /plugins` sends a later version of an installed plugin that would remove from a type it installed a field, a status word, an enum value, a table or a column, change a field's kind, lower a limit, raise a minimum, make a field required, change the type's parent, or leave out a type it installed, then the server MUST answer `409 plugin_narrows` with `details.changes` naming each `type` and `path`, and write nothing.
+If `POST /plugins` sends a later version of an installed plugin that, compared with the bundle of the version installed or with the type as stored, would remove a field, a list member, a status word, an enum value, a table or a column, move a status word to another group, change a field's, member's or column's kind, lower a limit or raise a minimum anywhere, take fewer types at an item field or column, make a field, member or column required or add one as required, change a type's parent, or leave out a type the version installed published, then the server MUST answer `409 plugin_narrows` with `details.changes` naming each `type` and `path`, and write nothing.
 
-**Reason:** an app or another plugin builds on a published type, so a newer version only adds. The owner can still change the type with `PUT /types/{id}`; installing compares with the type as it is stored.
+**Reason:** an app or another plugin builds on a published type, so a newer version only adds. The version installed is what was published, so a type it held stays refused to drop even after the owner deletes it. The owner can still change a type with `PUT /types/{id}`, and installing protects that change too by comparing with the type as stored.
 
-**Tests:** `compliance/plugins.test.ts › refuses 409 plugin_narrows a version that drops a field or a type, naming each, and keeps the type as installed`.
+**Tests:** `compliance/plugins.test.ts › refuses 409 plugin_narrows a version that drops a field or a type, naming each, and keeps the type as installed`, `› refuses 409 plugin_narrows a version that adds a required field, makes a list member required, lowers a table column's limit or moves a status word to another group`, `› refuses 409 plugin_narrows a version that drops a type the owner already deleted, naming it`.
 
 ### `plugins/update-adds`
 
-When `POST /plugins` sends a later version of an installed plugin that only adds fields, status words or enum values to its types, or adds types, the server MUST answer `200` with `outcome` `updated` and replace each type with the bundle's.
+When `POST /plugins` sends a later version of an installed plugin that only adds optional fields, list members, columns, status words or enum values to its types, widens a limit, or adds types, the server MUST answer `200` with `outcome` `updated` and replace each type with the bundle's.
 
 **Reason:** a status word or an enum value is a schema change beyond `types/evolve-free`, and installing already holds `schema.write`, the owner's permission for it.
 
-**Tests:** `compliance/plugins.test.ts › takes a version that adds a field, a status word and an enum value, and reads the new version on its types`.
+**Tests:** `compliance/plugins.test.ts › takes a version that adds a field and an enum value, and reads the new version on its types`, `› takes a version that adds a field, a status word, an enum value and an optional list member`.
 
 ### `plugins/update-child-clash`
 
-If a later version of an installed plugin would give a type a field or a status word that a type below it, outside the bundle, declares in another shape (`types/child-shape`, `types/status-word-redeclared`), then the server MUST answer `409 plugin_child_conflict` with a message naming each such type and `details.conflicts` holding, for each field, its `type`, `field`, `attribute`, `inherited_from`, `inherited` and `declared`, and write nothing.
+If a later version of an installed plugin would give a type a field or a status word that a type below it, outside the bundle, declares in another shape (`types/child-shape`, `types/status-word-redeclared`), and that type below did not already conflict so, then the server MUST answer `409 plugin_child_conflict` with a message naming each such type and `details.conflicts` holding, for each field, its `type`, `field`, `attribute`, `inherited_from` naming the type above that declares the field or the status word, `inherited` and `declared`, and write nothing.
 
 **Reason:** an owner extends a plugin's type with a child of their own, and an update must not leave that child in conflict. The entry has the shape of `types/conflict-listed` with the child named, so the owner changes or removes the field on the child and installs again.
 
-**Tests:** `compliance/plugins.test.ts › refuses 409 plugin_child_conflict a version that gives a field an owner's child declares in another shape, naming the child`.
+**Tests:** `compliance/plugins.test.ts › refuses 409 plugin_child_conflict a version that gives a field an owner's child declares in another shape, naming the child`, `› names the type that declared a status word when a newer version adds it to a type two generations above an owner's type that declares it`.
 
 ## Reading and removing
 
@@ -192,11 +210,11 @@ If a caller sends `GET /plugins/{name}` or `DELETE /plugins/{name}` for a name n
 
 ### `plugins/remove-keeps-types`
 
-When a caller holding `schema.write` sends `DELETE /plugins/{name}`, the server MUST remove the plugin's install record, keep every type and edge type it installed with their items, edges and provenance, and answer `200` with `removed` naming its `name` and `version` and `kept` listing the `types` and `edge_types` that stay.
+When a caller holding `schema.write` sends `DELETE /plugins/{name}`, the server MUST remove the plugin's install record, keep every type and edge type it installed with their items, edges and provenance, and answer `200` with `removed` naming its `name` and `version` and `kept` listing the `types` and `edge_types` from the plugin that the instance holds.
 
-**Reason:** removing a plugin never deletes a type. The owner deletes one with `DELETE /types/{id}`, refused while items or a child type hold it, as for any type.
+**Reason:** removing a plugin never deletes a type. The owner deletes one with `DELETE /types/{id}`, refused while items or a child type hold it, as for any type, so an edge type or type the owner already deleted is not listed.
 
-**Tests:** `compliance/plugins.test.ts › removes a plugin's record and keeps its types, which keep their provenance, saying what it removed and kept`.
+**Tests:** `compliance/plugins.test.ts › removes a plugin's record and keeps its types, which keep their provenance, saying what it removed and kept`, `› reports as kept only the edge types the instance still holds`.
 
 ### `plugins/remove-permission`
 
