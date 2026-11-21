@@ -4920,13 +4920,6 @@
             "type": "string",
             "description": "The identifier of the type this one inherits from."
           },
-          "compatible_with": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "The types this one is a structural superset of."
-          },
           "roles": {
             "type": "array",
             "items": {
@@ -5214,41 +5207,6 @@
         ],
         "description": "An error response."
       },
-      "CompatibleWithViolationRefusal": {
-        "type": "object",
-        "properties": {
-          "error": {
-            "type": "object",
-            "properties": {
-              "code": {
-                "type": "string",
-                "enum": [
-                  "compatible_with_violation"
-                ],
-                "description": "A machine-readable code for the error. Use it in your logic."
-              },
-              "message": {
-                "type": "string",
-                "description": "A description of the error for a person to read. It can change, so don't match on it."
-              },
-              "details": {
-                "type": "object",
-                "additionalProperties": {},
-                "description": "More about the error, such as the field it concerns. Each code defines its own details."
-              }
-            },
-            "required": [
-              "code",
-              "message"
-            ],
-            "description": "What went wrong."
-          }
-        },
-        "required": [
-          "error"
-        ],
-        "description": "An error response."
-      },
       "TypeDefinitionInput": {
         "type": "object",
         "properties": {
@@ -5304,20 +5262,6 @@
               "type": "string"
             },
             "description": "The names of the fields an item of the type must have. It means the same as `required: true` on each of them."
-          },
-          "compatible_with": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            ],
-            "description": "The types this one is a structural superset of. Marfa checks the claim when you save the type. A bare string names one type."
           },
           "display_hints": {
             "allOf": [
@@ -5539,20 +5483,6 @@
               "type": "string"
             },
             "description": "The names of the fields an item of the type must have. It means the same as `required: true` on each of them."
-          },
-          "compatible_with": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                }
-              }
-            ],
-            "description": "The types this one is a structural superset of. Marfa checks the claim when you save the type. A bare string names one type."
           },
           "display_hints": {
             "allOf": [
@@ -32021,7 +31951,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `metadata.types:write`, the type has `guidance` and you lack `schema.write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.\n- `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` or `compatible_with` target (`details.grant` names it).",
+            "description": "- `forbidden`: you don't have `metadata.types:write`, the type has `guidance` and you lack `schema.write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.\n- `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` (`details.grant` names it).",
             "content": {
               "application/json": {
                 "schema": {
@@ -32117,27 +32047,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RequestTooLargeRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "422": {
-            "description": "`compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CompatibleWithViolationRefusal"
                 }
               }
             },
@@ -32694,7 +32603,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map lacks write on the type or a new non-platform `parent` or `compatible_with` target (`details.grant` names it).",
+            "description": "- `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`.\n- `core_type_immutable`: Marfa ships this type.\n- `type_not_permitted`: your type map lacks write on the type or a new non-platform `parent` (`details.grant` names it).",
             "content": {
               "application/json": {
                 "schema": {
@@ -32829,27 +32738,6 @@
               }
             }
           },
-          "422": {
-            "description": "`compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy, or the change breaks another type's claim (`details.dependent_type_ids`).",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CompatibleWithViolationRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
           "429": {
             "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
             "content": {
@@ -32969,10 +32857,10 @@
           {
             "schema": {
               "type": "boolean",
-              "description": "Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes or compatibility dependents."
+              "description": "Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes."
             },
             "required": false,
-            "description": "Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes or compatibility dependents.",
+            "description": "Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes.",
             "name": "force",
             "in": "query"
           },
@@ -33148,27 +33036,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RequestTooLargeRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "422": {
-            "description": "`compatible_with_violation`: other types name this type in `compatible_with`. `details.dependent_type_ids` lists them. Remove their claims before deleting the target; `force=true` does not bypass this check.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CompatibleWithViolationRefusal"
                 }
               }
             },
@@ -33923,27 +33790,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RequestTooLargeRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "422": {
-            "description": "`compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CompatibleWithViolationRefusal"
                 }
               }
             },
@@ -65577,27 +65423,6 @@
               }
             }
           },
-          "422": {
-            "description": "`compatible_with_violation`: an archived type's `compatible_with` names a type neither the archive nor this instance holds, or one the type doesn't satisfy.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CompatibleWithViolationRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
           "429": {
             "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
             "content": {
@@ -67010,27 +66835,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RequestTooLargeRefusal"
-                }
-              }
-            },
-            "headers": {
-              "X-Marfa-Contract": {
-                "$ref": "#/components/headers/X-Marfa-Contract"
-              },
-              "X-Request-ID": {
-                "$ref": "#/components/headers/X-Request-ID"
-              },
-              "X-Error-Code": {
-                "$ref": "#/components/headers/X-Error-Code"
-              }
-            }
-          },
-          "422": {
-            "description": "`compatible_with_violation`: an archived type's `compatible_with` names a type neither the archive nor this instance holds, or one the type doesn't satisfy.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CompatibleWithViolationRefusal"
                 }
               }
             },

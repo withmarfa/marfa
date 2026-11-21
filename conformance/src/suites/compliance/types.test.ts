@@ -620,29 +620,32 @@ describe("type registration and listing", () => {
     expect(r.error?.error.code).toBe("property_shadows_field");
   });
 
-  it("refuses a replacement that breaks its compatible_with claim, as registration does", async () => {
-    const id = `user.compat-replace-${ctx.runId}`;
-    const registered = await client.registerType({
+  it("refuses compatible_with, which no type takes, on registration and replacement, naming it", async () => {
+    const id = `user.compat-gone-${ctx.runId}`;
+    const fields = { title: { type: "string" as const, required: true } };
+    const refused = await client.registerType({
       id,
-      fields: { title: { type: "string", required: true } },
+      fields,
       compatible_with: "core.task",
-    });
-    expect(registered.status).toBe(201);
+    } as never);
+    expect(refused.status, JSON.stringify(refused.error)).toBe(400);
+    expect(refused.error?.error.code).toBe("invalid_schema");
+    const named = refused.error?.error.details?.errors as
+      { field: string }[] | undefined;
+    expect(named?.map((e) => e.field)).toEqual(["compatible_with"]);
+    expect((await client.getType(id)).status).toBe(404);
 
-    // core.task requires `title`; the replacement drops it.
-    const missingField = await client.replaceType(id, {
-      fields: { extra: { type: "string" } },
-      compatible_with: "core.task",
-    });
-    expect(missingField.status).toBe(422);
-    expect(missingField.error?.error.code).toBe("compatible_with_violation");
-
-    const unknownTarget = await client.replaceType(id, {
-      fields: { body: { type: "string", required: true } },
-      compatible_with: "no.such-type-exists",
-    });
-    expect(unknownTarget.status).toBe(422);
-    expect(unknownTarget.error?.error.code).toBe("compatible_with_violation");
+    // The witness: the same body without the key registers, and a replacement with it is refused.
+    expect((await client.registerType({ id, fields })).status).toBe(201);
+    const replaced = await client.replaceType(id, {
+      fields,
+      compatible_with: ["core.task"],
+    } as never);
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(400);
+    expect(replaced.error?.error.code).toBe("invalid_schema");
+    const again = replaced.error?.error.details?.errors as
+      { field: string }[] | undefined;
+    expect(again?.map((e) => e.field)).toEqual(["compatible_with"]);
   });
 
   it("refuses a key the type schema does not define, at the top level, in a field and in a block, naming each path", async () => {

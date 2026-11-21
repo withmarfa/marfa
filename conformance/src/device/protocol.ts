@@ -359,7 +359,6 @@ export interface ItemType {
   icon: string | null;
   link_field: string | null;
   roles: string[];
-  compatible_with: string[];
 }
 
 /** An edge type as the copy holds it. */

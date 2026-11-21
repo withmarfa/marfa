@@ -1,15 +1,14 @@
 use marfa_rules::grammar;
 use marfa_rules::schema::{
-    Early, Issue, OWN_TABLE_TYPE, Obj, Registry, broken_compatible_dependents, descendant_depth,
-    early_refusal, evolution_of, icon_issue, labelled, parent_chain_fault, read_back_free, resolve,
-    validate_replacing_type, validate_restored_type, validate_type, with_set_stored,
+    Early, Issue, OWN_TABLE_TYPE, Obj, Registry, descendant_depth, early_refusal, evolution_of,
+    icon_issue, labelled, parent_chain_fault, read_back_free, resolve, validate_replacing_type,
+    validate_restored_type, validate_type, with_set_stored,
 };
 use rusqlite::{Transaction, params};
 use serde_json::{Value, json};
 
 use super::{
-    chain_refusal, check_id, dependents_refusal, invalid_id, missing_field, presented,
-    require_reach, schema_refusal,
+    chain_refusal, check_id, invalid_id, missing_field, presented, require_reach, schema_refusal,
 };
 use crate::app::App;
 use crate::app::access::{Axis, Caller, Door, Level, Permission, SchemaKind};
@@ -103,10 +102,6 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
                     Code::TypeExists,
                     format!("Type \"{id}\" already exists"),
                 ));
-            }
-            let broken = broken_compatible_dependents(&catalog.types.with(schema.clone()), &[&id]);
-            if !broken.is_empty() {
-                return Err(dependents_refusal(broken));
             }
             let creator = caller.actor();
             unit.tx().execute(
@@ -328,10 +323,6 @@ async fn replacing(
             }
             store(unit.tx(), &id, &schema, &unit.at)?;
             let next = catalog.types.with(schema);
-            let broken = broken_compatible_dependents(&next, &[&id]);
-            if !broken.is_empty() {
-                return Err(dependents_refusal(broken));
-            }
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, &family)?;
             tables::rekey_types(unit.tx(), &catalog, &after, &family, &unit.at)?;
@@ -437,10 +428,6 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
                 ),
             )
             .with_detail("subtype_ids", subtypes));
-        }
-        let broken = broken_compatible_dependents(&catalog.types.without(&id), &[&id]);
-        if !broken.is_empty() {
-            return Err(dependents_refusal(broken));
         }
         let held = items::count_of_type(unit.tx(), &id)?;
         let settings = super::moving::naming(unit.tx(), caller, &id)?;
@@ -594,8 +581,7 @@ fn reserved(id: &str, why: String) -> Refusal {
     )
 }
 
-/// Judges every type an archive registers together, so registrations that name each other
-/// restore in any order: each is held to what `POST /types` takes.
+/// Judges registrations together so a type can refer to one that appears later in the archive.
 pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restoring> {
     let mut raw = Vec::new();
     for line in archived {
@@ -610,7 +596,10 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restori
                 format!("a type in the reserved {root}.* namespace"),
             ));
         }
-        raw.push(definition.clone());
+        let mut definition = definition.clone();
+        // An archive written before the key was removed may still carry it.
+        definition.remove("compatible_with");
+        raw.push(definition);
     }
     let registry = with_set_stored(&catalog.types, &raw);
     let mut plan = Restoring {
@@ -643,17 +632,6 @@ pub fn plan_restored(catalog: &Catalog, archived: &[Archived]) -> Result<Restori
             Some(_) if catalog.holds(&id) => plan.conflicts.push(id),
             _ => plan.fresh.push((id, schema, line.created_by.clone())),
         }
-    }
-    let ids: Vec<&str> = plan.fresh.iter().map(|(id, _, _)| id.as_str()).collect();
-    let written = plan
-        .fresh
-        .iter()
-        .fold(catalog.types.clone(), |held, (_, schema, _)| {
-            held.with(schema.clone())
-        });
-    let broken = broken_compatible_dependents(&written, &ids);
-    if !broken.is_empty() {
-        return Err(dependents_refusal(broken));
     }
     Ok(plan)
 }

@@ -140,7 +140,6 @@ pub struct ItemType {
     pub icon: Option<String>,
     pub link_field: Option<String>,
     pub roles: Vec<String>,
-    pub compatible_with: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -762,7 +761,6 @@ pub fn resolve_item_type(
         icon: hints.icon(id).map(str::to_string),
         link_field: text(own, "link_field"),
         roles: texts(own, "roles"),
-        compatible_with: texts(own, "compatible_with"),
     }))
 }
 

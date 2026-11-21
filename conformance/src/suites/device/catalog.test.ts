@@ -128,7 +128,6 @@ describe("The type catalog a working copy holds", () => {
       icon: "lucide:sticky-note",
       link_field: null,
       roles: [],
-      compatible_with: [],
     };
     const { fields, ...rest } = recipe;
     expect(

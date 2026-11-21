@@ -27,6 +27,12 @@ pub const MIGRATIONS: &[Migration] = &[
              WHERE name = 'login_after')",
         ),
     },
+    // Removing a key twice changes nothing, so no `done` check.
+    Migration {
+        version: 3,
+        sql: include_str!("migrations/0003_remove_compatible_with.sql"),
+        done: None,
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

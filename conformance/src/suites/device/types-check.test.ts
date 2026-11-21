@@ -325,30 +325,6 @@ describe("a folder of type definitions, checked offline", () => {
       "was refused in this folder",
     );
 
-    const malformedClaim = await verdictOf(
-      folderOf([
-        {
-          id: "acme.claim",
-          compatible_with: ["acme.below", 1],
-          fields: { x: note },
-        },
-        under("acme.below", "acme.claim"),
-      ]),
-      1,
-    );
-    expect(problemsOf(malformedClaim, "acme.claim.json")).toMatchObject([
-      { path: "compatible_with", code: "invalid_schema" },
-    ]);
-    expect(problemsOf(malformedClaim, "acme.below.json")).toMatchObject([
-      {
-        code: "validation_error",
-        message: 'Parent type "acme.claim" not found',
-      },
-    ]);
-    for (const file of ["acme.claim.json", "acme.below.json"]) {
-      expect(contextOf(malformedClaim, file)).not.toContain("loop");
-    }
-
     const columns = await verdictOf(
       folderOf([
         holder("acme.a-holder", "acme.z-person"),

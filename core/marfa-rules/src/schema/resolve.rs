@@ -214,7 +214,7 @@ pub fn resolve(
     if !tables.is_empty() {
         out.insert("tables".into(), Value::Object(tables));
     }
-    for key in ["parent", "compatible_with", "label"] {
+    for key in ["parent", "label"] {
         if let Some(value) = own.get(key) {
             out.insert(key.into(), value.clone());
         }

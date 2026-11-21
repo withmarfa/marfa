@@ -820,13 +820,21 @@ If an archive registers a type with a `link_field` in which two items that a for
 
 **Tests:** `compliance/links.test.ts › stops a restore registering a link the items a forced delete left share`.
 
-### `archive/restore-compatible-types`
+### `archive/restore-types-any-order`
 
 When an otherwise valid archive carries a set of registrations accepted through the server's registration and replacement routes, the server MUST restore those registrations into an empty store regardless of their order in the archive.
 
-**Reason:** an exported backup remains restorable when its registrations refer to each other, including mutual compatibility declarations and display hints, links, and merge policies that name inherited fields.
+**Reason:** an exported backup remains restorable when its registrations refer to each other, including display hints, links, merge policies and tables that name inherited fields.
 
-**Tests:** `compliance/restore-compatible-types.test.ts › round-trips accepted registrations into an empty store (reversed: %s)`, `› refuses a target change that breaks a reader and restores the accepted registry`, `compliance/type-tables.test.ts › restores a subtype whose type line restates a table of its parent (reversed: %s)`.
+**Tests:** `compliance/restore-types-any-order.test.ts › round-trips accepted registrations into an empty store (reversed: %s)`, `compliance/type-tables.test.ts › restores a subtype whose type line restates a table of its parent (reversed: %s)`.
+
+### `archive/restore-type-compatible-with-dropped`
+
+When an archive registers a type whose definition carries `compatible_with`, the server MUST restore the type without that key.
+
+**Reason:** an archive written by a release through 0.0.89, still version 1, may hold a key Marfa no longer reads, and refusing it as an unread key (`archive/restore-type-unknown-key`) would keep an owner from restoring a backup the server itself wrote.
+
+**Tests:** `compliance/restore-types-any-order.test.ts › restores a type of an older archive that carries compatible_with, without the key`.
 
 ### `archive/restore-type-guidance`
 
@@ -908,7 +916,7 @@ If an archive carries a core edge type, then the server MUST answer `409 conflic
 
 ### `archive/restore-type-unknown-key`
 
-If an archive registers a type with a key `types/unknown-key` refuses, or an edge type with a key `edges/types-register-unknown-key` refuses, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
+If an archive registers a type with a key `types/unknown-key` refuses, except `compatible_with` as specified by `archive/restore-type-compatible-with-dropped`, or an edge type with a key `edges/types-register-unknown-key` refuses, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
 
 **Reason:** an archive is held to what the registration doors take, so a registration they would refuse cannot come in by restore.
 

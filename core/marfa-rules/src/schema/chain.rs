@@ -1,8 +1,8 @@
-//! How long a parent chain may be, and which types a change reaches.
+//! How long a parent chain may be.
 
 use std::collections::HashSet;
 
-use super::{Issue, Registry, text, validate_type};
+use super::{Registry, text};
 
 /// The most ancestors a type may have, counting the subtype levels below it that would move with it.
 pub const MAX_REGISTRATION_CHAIN_DEPTH: usize = 10;
@@ -60,60 +60,6 @@ pub fn descendant_depth(registry: &Registry, id: &str) -> usize {
         }
     }
     deepest
-}
-
-/// A claim is reached when its type, or a target of it, is changed or below a changed type. Sorted by id.
-pub fn broken_compatible_dependents(
-    registry: &Registry,
-    changed: &[&str],
-) -> Vec<(String, Vec<Issue>)> {
-    let mut affected: HashSet<String> = changed.iter().map(|id| id.to_string()).collect();
-    loop {
-        let before = affected.len();
-        for id in registry.ids() {
-            if registry
-                .parent_of(id)
-                .is_some_and(|parent| affected.contains(parent))
-            {
-                affected.insert(id.to_string());
-            }
-        }
-        if affected.len() == before {
-            break;
-        }
-    }
-    let mut broken = Vec::new();
-    for id in registry.ids() {
-        let Some(row) = registry.get(id) else {
-            continue;
-        };
-        let targets: Vec<&str> = row
-            .get("compatible_with")
-            .and_then(|v| v.as_array())
-            .into_iter()
-            .flatten()
-            .filter_map(|v| v.as_str())
-            .collect();
-        if targets.is_empty()
-            || !(affected.contains(id) || targets.iter().any(|t| affected.contains(*t)))
-        {
-            continue;
-        }
-        let issues: Vec<Issue> = validate_type(&serde_json::Value::Object(row.clone()), registry)
-            .err()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|issue| issue.code == Some("compatible_with_violation"))
-            .map(|mut issue| {
-                issue.field = format!("types.{id}.{}", issue.field);
-                issue
-            })
-            .collect();
-        if !issues.is_empty() {
-            broken.push((id.to_string(), issues));
-        }
-    }
-    broken
 }
 
 #[cfg(test)]

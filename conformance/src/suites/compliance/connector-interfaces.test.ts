@@ -168,16 +168,19 @@ describe("connector interfaces", () => {
       expect(
         (await call("/types/normalize", "POST", candidate, readKey)).status,
       ).toBe(400);
-    expect(
-      (
-        await call(
-          "/types/normalize",
-          "POST",
-          { ...input, compatible_with: ["user.absent_compat"] },
-          readKey,
-        )
-      ).status,
-    ).toBe(422);
+    const removedKey = await call(
+      "/types/normalize",
+      "POST",
+      { ...input, compatible_with: ["core.note"] },
+      readKey,
+    );
+    expect(removedKey.status).toBe(400);
+    expect(await removedKey.json()).toMatchObject({
+      error: {
+        code: "invalid_schema",
+        details: { errors: [{ field: "compatible_with" }] },
+      },
+    });
     expect(await audit()).toEqual(witnessed);
   });
 

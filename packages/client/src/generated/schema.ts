@@ -4682,8 +4682,6 @@ export interface components {
             guidance?: string;
             /** @description The identifier of the type this one inherits from. */
             parent?: string;
-            /** @description The types this one is a structural superset of. */
-            compatible_with?: string[];
             /** @description The structural roles the type plays, including those it inherits. */
             roles?: components["schemas"]["TypeRole"][];
             /** @description The type's own fields, by name. `GET /types/{id}` adds the fields it inherits. */
@@ -4780,23 +4778,6 @@ export interface components {
                 };
             };
         };
-        /** @description An error response. */
-        CompatibleWithViolationRefusal: {
-            /** @description What went wrong. */
-            error: {
-                /**
-                 * @description A machine-readable code for the error. Use it in your logic.
-                 * @enum {string}
-                 */
-                code: "compatible_with_violation";
-                /** @description A description of the error for a person to read. It can change, so don't match on it. */
-                message: string;
-                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
-                details?: {
-                    [key: string]: unknown;
-                };
-            };
-        };
         /** @description A declared item type. */
         TypeDefinitionInput: {
             /** @description The type's own fields, by name. */
@@ -4823,8 +4804,6 @@ export interface components {
             roles?: string[];
             /** @description The names of the fields an item of the type must have. It means the same as `required: true` on each of them. */
             required?: string[];
-            /** @description The types this one is a structural superset of. Marfa checks the claim when you save the type. A bare string names one type. */
-            compatible_with?: string | string[];
             display_hints?: components["schemas"]["DisplayHints"] & unknown;
             /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `"` or `\`. */
             link_field?: string;
@@ -4914,8 +4893,6 @@ export interface components {
             roles?: string[];
             /** @description The names of the fields an item of the type must have. It means the same as `required: true` on each of them. */
             required?: string[];
-            /** @description The types this one is a structural superset of. Marfa checks the claim when you save the type. A bare string names one type. */
-            compatible_with?: string | string[];
             display_hints?: components["schemas"]["DisplayHints"] & unknown;
             /** @description The name of a string field, declared or inherited, that holds each item's own ID at the vendor that writes the type. No two items of the type, in any state, hold the same value. A subtype names its own link. The name has no `"` or `\`. */
             link_field?: string;
@@ -18893,7 +18870,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: you don't have `metadata.types:write`, the type has `guidance` and you lack `schema.write`, or the identifier is under `core.*`, `system.*` or `marfa.*`, which no credential can register.
-             *     - `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` or `compatible_with` target (`details.grant` names it).
+             *     - `type_not_permitted`: your type map lacks write on the identifier or a non-platform `parent` (`details.grant` names it).
              */
             403: {
                 headers: {
@@ -18955,18 +18932,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /** @description `compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy. */
-            422: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -19302,7 +19267,7 @@ export interface operations {
             /**
              * @description - `forbidden`: you lack `schema.write` and `metadata.types:write`, or `details.changes` names changes needing `schema.write`.
              *     - `core_type_immutable`: Marfa ships this type.
-             *     - `type_not_permitted`: your type map lacks write on the type or a new non-platform `parent` or `compatible_with` target (`details.grant` names it).
+             *     - `type_not_permitted`: your type map lacks write on the type or a new non-platform `parent` (`details.grant` names it).
              */
             403: {
                 headers: {
@@ -19378,18 +19343,6 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description `compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy, or the change breaks another type's claim (`details.dependent_type_ids`). */
-            422: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
-                };
-            };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
@@ -19445,7 +19398,7 @@ export interface operations {
     deleteType: {
         parameters: {
             query?: {
-                /** @description Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes or compatibility dependents. */
+                /** @description Delete the type even if items of it exist, in any state, or a folder, view or webhook names it. It doesn't cover subtypes. */
                 force?: boolean;
             };
             header?: {
@@ -19565,18 +19518,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /** @description `compatible_with_violation`: other types name this type in `compatible_with`. `details.dependent_type_ids` lists them. Remove their claims before deleting the target; `force=true` does not bypass this check. */
-            422: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -20064,18 +20005,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /** @description `compatible_with_violation`: `compatible_with` names a type this instance doesn't hold, or one the type doesn't satisfy. */
-            422: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -38213,18 +38142,6 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
                 };
             };
-            /** @description `compatible_with_violation`: an archived type's `compatible_with` names a type neither the archive nor this instance holds, or one the type doesn't satisfy. */
-            422: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
-                };
-            };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
             429: {
                 headers: {
@@ -39020,18 +38937,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
-                };
-            };
-            /** @description `compatible_with_violation`: an archived type's `compatible_with` names a type neither the archive nor this instance holds, or one the type doesn't satisfy. */
-            422: {
-                headers: {
-                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
-                    "X-Request-ID": components["headers"]["X-Request-ID"];
-                    "X-Error-Code": components["headers"]["X-Error-Code"];
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CompatibleWithViolationRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

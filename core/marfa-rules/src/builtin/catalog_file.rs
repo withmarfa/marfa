@@ -497,9 +497,6 @@ fn written_type(held: &Registered, tables: Option<&Value>) -> Obj {
     {
         put(&mut out, "roles", roles_value(&held.roles));
     }
-    if let Some(value) = stored.get("compatible_with") {
-        put(&mut out, "compatible_with", value.clone());
-    }
     put(&mut out, "plural", Value::String(plural_of(stored)));
     if !held.roles.is_empty() {
         put(&mut out, "roles", roles_value(&held.roles));

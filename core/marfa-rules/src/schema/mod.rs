@@ -18,8 +18,7 @@ mod unread;
 use serde_json::{Map, Value, json};
 
 pub use chain::{
-    CIRCULAR_INHERITANCE, MAX_REGISTRATION_CHAIN_DEPTH, broken_compatible_dependents,
-    descendant_depth, parent_chain_fault,
+    CIRCULAR_INHERITANCE, MAX_REGISTRATION_CHAIN_DEPTH, descendant_depth, parent_chain_fault,
 };
 pub use check::{
     FileVerdict, FolderVerdict, GuidanceFileFault, Problem, TypeFile, check_type_files,

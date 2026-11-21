@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::{Map, Value, json};
 
-use super::compat::{describe_compatibility_conflict, inherited_shape_conflicts};
+use super::compat::inherited_shape_conflicts;
 use super::field::{Shape, Stray, label_issue, normalize_field, validate_field_shape};
 use super::registry::Ancestry;
 use super::tables::judge_tables;
@@ -362,14 +362,6 @@ fn judge_type(
     validate_version_policy(obj, &mut errors);
     validate_merge_policy(obj, &visible, &mut errors);
     validate_retention_policy(obj, &mut errors);
-    validate_compatible_with(
-        obj,
-        fields,
-        &required_names,
-        ancestry,
-        registry,
-        &mut errors,
-    );
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -561,15 +553,6 @@ fn stored_form(
         roles.sort_unstable();
         roles.dedup();
         schema.insert("roles".into(), json!(roles));
-    }
-    match obj.get("compatible_with") {
-        Some(Value::Array(targets)) => {
-            schema.insert("compatible_with".into(), Value::Array(targets.clone()));
-        }
-        Some(Value::String(target)) => {
-            schema.insert("compatible_with".into(), json!([target]));
-        }
-        _ => {}
     }
     if let Some(hints) = as_obj(obj.get("display_hints")) {
         let mut kept = Map::new();
@@ -1024,121 +1007,6 @@ fn validate_retention_policy(obj: &Obj, errors: &mut Vec<Issue>) {
             describe(days),
             "Set null to keep feed items; omit retention_policy to inherit the parent's window.",
         ));
-    }
-}
-
-fn validate_compatible_with(
-    obj: &Obj,
-    fields: Option<&Obj>,
-    required_names: &[String],
-    ancestry: &Ancestry,
-    registry: &Registry,
-    errors: &mut Vec<Issue>,
-) {
-    let Some(raw) = obj.get("compatible_with") else {
-        return;
-    };
-    let hint = "Write compatible_with as [\"core.note\"].";
-    let targets: Vec<&str> = match raw {
-        Value::Array(entries) => {
-            if entries.iter().any(|t| !t.is_string()) {
-                errors.push(Issue::new(
-                    "compatible_with",
-                    "every entry to be a type identifier string",
-                    describe(Some(raw)),
-                    hint,
-                ));
-                return;
-            }
-            entries.iter().filter_map(Value::as_str).collect()
-        }
-        Value::String(target) => vec![target.as_str()],
-        other => {
-            errors.push(Issue::new(
-                "compatible_with",
-                "an array of type identifiers, or nothing",
-                describe(Some(other)),
-                hint,
-            ));
-            return;
-        }
-    };
-    let mut candidates = Ordered::default();
-    for (name, held) in ancestry.iter() {
-        let mut definition = held.definition.clone();
-        let needed = required(&definition) || required_names.iter().any(|n| n == name);
-        definition.insert("required".into(), json!(needed));
-        candidates.set(name, definition);
-    }
-    for (name, raw) in fields.into_iter().flatten() {
-        let Some(record) = raw.as_object() else {
-            continue;
-        };
-        let normalized = normalize_field(record, Some(required_names.contains(name)));
-        let above = ancestry.get(name).map(|h| &h.definition);
-        candidates.set(name, merged(above, &normalized));
-    }
-    for target in targets {
-        if !registry.contains(target) {
-            errors.push(
-                Issue::new(
-                    format!("compatible_with.{target}"),
-                    "a registered type identifier",
-                    format!("\"{target}\", which is not registered"),
-                    "Register the target type first, or drop the claim.",
-                )
-                .coded("compatible_with_violation"),
-            );
-            continue;
-        }
-        for (field, held) in registry.ancestry(target).iter() {
-            let wanted = &held.definition;
-            let candidate = candidates
-                .0
-                .iter()
-                .find(|(n, _)| n == field)
-                .map(|(_, d)| d);
-            let coded = |at: String, expected: String, actual: String, hint: String| {
-                Issue::new(at, expected, actual, hint).coded("compatible_with_violation")
-            };
-            if !required(wanted) {
-                let Some(candidate) = candidate else { continue };
-                if let Some(conflict) = describe_compatibility_conflict(candidate, wanted) {
-                    errors.push(coded(
-                        format!("compatible_with.{target}.{field}.{}", conflict.attribute),
-                        format!("{}, matching \"{target}\"", conflict.expected),
-                        conflict.actual,
-                        format!("A reader of \"{target}\" reads \"{field}\" whenever it is present and would mis-parse this one. Match its shape, rename this field, or drop the claim."),
-                    ));
-                }
-                continue;
-            }
-            let Some(candidate) = candidate else {
-                errors.push(coded(
-                    format!("compatible_with.{target}.{field}"),
-                    format!("a \"{field}\" field, required by \"{target}\""),
-                    "nothing".into(),
-                    format!("Declaring compatibility with \"{target}\" promises every field it requires. Add \"{field}\", or drop the claim."),
-                ));
-                continue;
-            };
-            if !required(candidate) {
-                errors.push(coded(
-                    format!("compatible_with.{target}.{field}.required"),
-                    format!("\"{field}\" to be required, matching \"{target}\""),
-                    format!("\"{field}\" is optional"),
-                    format!("A reader of \"{target}\" expects this field on every item. Mark it required, or drop the claim."),
-                ));
-            }
-            if let Some(conflict) = describe_compatibility_conflict(candidate, wanted) {
-                errors.push(coded(
-                    format!("compatible_with.{target}.{field}.{}", conflict.attribute),
-                    format!("{}, matching \"{target}\"", conflict.expected),
-                    conflict.actual,
-                    format!("A reader of \"{target}\" would mis-parse this field. Match its shape, or drop the claim."),
-                ));
-            }
-        }
     }
 }
 
@@ -2087,20 +1955,6 @@ mod tests {
 
     #[test]
     fn what_is_stored_drops_the_defaults_and_folds_the_format() {
-        let stored = validate_type(
-            &json!({"id": "user.leaf", "roles": ["container", "container"], "fields": {
-                "link": {"type": "string", "format": "url", "searchable": true, "required": false}
-            }, "compatible_with": "user.base", "required": ["link"]}),
-            &registry(),
-        );
-        let Err(errors) = stored else {
-            panic!("user.base requires a title")
-        };
-        assert!(
-            errors
-                .iter()
-                .all(|i| i.code == Some("compatible_with_violation"))
-        );
         let stored = validate_type(
             &json!({"id": "user.leaf", "roles": ["container", "container"], "fields": {
                 "link": {"type": "string", "format": "url", "searchable": true, "required": false}

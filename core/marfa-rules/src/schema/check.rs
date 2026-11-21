@@ -154,21 +154,7 @@ fn read(bytes: &[u8]) -> Result<Obj, Problem> {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Link {
     Parent,
-    Compat,
     Column,
-}
-
-/// A server looks up the targets only where every entry is a string; one that is not is refused first.
-fn compat_targets(body: &Obj) -> Vec<&str> {
-    match body.get("compatible_with") {
-        Some(Value::String(target)) => vec![target.as_str()],
-        Some(Value::Array(targets)) => targets
-            .iter()
-            .map(Value::as_str)
-            .collect::<Option<Vec<&str>>>()
-            .unwrap_or_default(),
-        _ => Vec::new(),
-    }
 }
 
 /// An item column may name its own type before registration.
@@ -200,11 +186,6 @@ fn references<'a>(body: &'a Obj, own: &str) -> Vec<(Link, &'a str)> {
     parent
         .map(|parent| (Link::Parent, parent))
         .into_iter()
-        .chain(
-            compat_targets(body)
-                .into_iter()
-                .map(|id| (Link::Compat, id)),
-        )
         .chain(
             column_targets(body, own)
                 .into_iter()
@@ -495,7 +476,6 @@ fn context_of(
         }
         let subject = match link {
             Link::Parent => "The parent",
-            Link::Compat => "compatible_with names",
             Link::Column => "A table column's type_constraints names",
         };
         let why = if by_id.contains_key(named) {
@@ -883,78 +863,6 @@ mod tests {
     }
 
     #[test]
-    fn a_type_is_judged_after_the_folder_type_it_claims_to_be_compatible_with() {
-        let target = definition(
-            "user.z-target",
-            json!({ "fields": { "x": { "type": "string", "required": true } } }),
-        );
-        let claimant = |claims: &str| {
-            definition(
-                "user.a-claimant",
-                json!({ "compatible_with": claims, "fields": {
-                    "x": { "type": "string", "required": true },
-                    "y": { "type": "string" }
-                } }),
-            )
-        };
-        let verdict = check(&[claimant("user.z-target"), target.clone()]);
-        assert_eq!(verdict.problem_count(), 0, "{verdict:?}");
-        let looped = check(&[
-            claimant("user.z-target"),
-            definition(
-                "user.z-target",
-                json!({ "compatible_with": "user.a-claimant", "fields": { "x": { "type": "string", "required": true } } }),
-            ),
-        ]);
-        for (name, target) in [
-            ("user.a-claimant.json", "user.z-target"),
-            ("user.z-target.json", "user.a-claimant"),
-        ] {
-            let found = problems_of(&looped, name);
-            assert_eq!(found.len(), 1, "{name}: {found:?}");
-            assert_eq!(found[0].code, "compatible_with_violation");
-            assert_eq!(found[0].path, format!("compatible_with.{target}"));
-            assert!(
-                found[0].message.contains("which is not registered"),
-                "{found:?}"
-            );
-            assert!(context_of_file(&looped, name).unwrap().contains("loop"));
-        }
-        let broken = check(&[claimant("user.nothing"), target]);
-        let found = problems_of(&broken, "user.a-claimant.json");
-        assert_eq!(found.len(), 1, "{found:?}");
-        assert_eq!(found[0].code, "compatible_with_violation");
-    }
-
-    #[test]
-    fn a_compatibility_claim_missing_a_required_field_is_refused() {
-        let target = definition(
-            "user.z-target",
-            json!({ "fields": { "x": { "type": "string", "required": true } } }),
-        );
-        let claimant = |fields: Value| {
-            definition(
-                "user.a-claimant",
-                json!({ "compatible_with": "user.z-target", "fields": fields }),
-            )
-        };
-        let met = check(&[
-            claimant(json!({ "x": { "type": "string", "required": true } })),
-            target.clone(),
-        ]);
-        assert_eq!(met.problem_count(), 0, "witness: {met:?}");
-        let unmet = check(&[claimant(json!({ "y": { "type": "string" } })), target]);
-        let found = problems_of(&unmet, "user.a-claimant.json");
-        assert!(!found.is_empty());
-        assert!(
-            found
-                .iter()
-                .all(|problem| problem.code == "compatible_with_violation")
-        );
-        assert!(problems_of(&unmet, "user.z-target.json").is_empty());
-    }
-
-    #[test]
     fn a_table_column_is_judged_after_the_type_it_names_whatever_order_the_files_sort_in() {
         for (referrer, target) in [
             ("user.a-holder", "user.z-person"),
@@ -1127,41 +1035,6 @@ mod tests {
                 "{name}: {found:?}"
             );
         }
-    }
-
-    #[test]
-    fn a_malformed_claim_is_not_a_reference_so_it_makes_no_loop() {
-        let claim = |targets: Value| {
-            definition(
-                "review.false-a",
-                json!({ "compatible_with": targets, "fields": { "x": { "type": "string" } } }),
-            )
-        };
-        let witness = check(&[
-            claim(json!(["review.false-b"])),
-            child_of("review.false-b", "review.false-a"),
-        ]);
-        let context = context_of_file(&witness, "review.false-a.json").unwrap_or_default();
-        assert!(context.contains("loop"), "witness: {context}");
-
-        let verdict = check(&[
-            claim(json!(["review.false-b", 1])),
-            child_of("review.false-b", "review.false-a"),
-        ]);
-        for name in ["review.false-a.json", "review.false-b.json"] {
-            let context = context_of_file(&verdict, name).unwrap_or_default();
-            assert!(!context.contains("loop"), "{name}: {context}");
-        }
-        let found = problems_of(&verdict, "review.false-a.json");
-        assert_eq!(found.len(), 1, "{found:?}");
-        assert_eq!(found[0].path, "compatible_with");
-        let found = problems_of(&verdict, "review.false-b.json");
-        assert_eq!(found.len(), 1, "{found:?}");
-        assert_eq!(found[0].message, "Parent type \"review.false-a\" not found");
-        assert_eq!(
-            context_of_file(&verdict, "review.false-b.json"),
-            Some("The parent \"review.false-a\" was refused in this folder.")
-        );
     }
 
     #[test]
