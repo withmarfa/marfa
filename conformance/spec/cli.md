@@ -1672,15 +1672,15 @@ When `marfa plugins install` is given a plugin's name that is no path on the mac
 
 If the release address `MARFA_PLUGINS_URL` names, or an address a release redirects to, carries a user name or a password, then the CLI MUST refuse it before it sends any request, without printing the user name or the password.
 
+**Reason:** an HTTP client turns user info in an address into an `Authorization` header, and `cli/plugins-install-name` sends no credential.
+
+**Tests:** `cli/plugins.test.ts › refuses a plugins address carrying a user name or password before it fetches, printing and sending neither`.
+
 ### `cli/plugins-address-unread`
 
 If the release address `MARFA_PLUGINS_URL` names is not an `http` or `https` address with a host and no query or fragment, then the CLI MUST refuse it before it sends any request, naming `MARFA_PLUGINS_URL` without printing its value.
 
 **Reason:** an address that does not parse cannot be checked for a user name or a password, so the CLI prints none of it.
-
-**Tests:** `cli/plugins.test.ts › refuses a plugins address carrying a user name or password before it fetches, printing and sending neither`.
-
-**Reason:** an HTTP client turns user info in an address into an `Authorization` header, and `cli/plugins-install-name` sends no credential.
 
 **Tests:** `cli/plugins.test.ts › refuses a plugins address carrying a user name or password before it fetches, printing and sending neither`.
 
@@ -1700,7 +1700,7 @@ When `marfa plugins check` is given a source folder, the CLI MUST report every p
 
 ### `cli/plugins-file-name`
 
-If a source folder holds a file in `types/` or `edge-types/` whose definition has an `id` that is a string and whose name is not that `id` followed by `.json`, then `marfa plugins check`, `marfa plugins bundle` and `marfa plugins install` MUST refuse the folder with `file_name_mismatch`, naming the file.
+If a source folder holds a file in `types/` or `edge-types/` whose definition has an `id` that is a string and whose name is not that `id` followed by `.json`, then the CLI MUST refuse the folder with `file_name_mismatch`, naming the file, in `marfa plugins check`, `marfa plugins bundle` and `marfa plugins install` alike.
 
 **Reason:** the three commands read a source folder the same way, so the folder `marfa plugins check` refuses never installs.
 
