@@ -2158,7 +2158,7 @@ If the stream of `marfa export --output <path>` ends early, then the CLI MUST le
 
 When a person runs `marfa cloud status`, the CLI MUST print the link's state, and for a link that is waiting, made or failed its code and page, its name and address, or its reason, and exit 0 whatever the state.
 
-**Tests:** `cli/cloud.test.ts › reads the link in every state, prints it plainly, and under --json prints the server's answer unchanged`.
+**Tests:** `cli/cloud.test.ts › reads the link in every state, prints it plainly naming the service as alpha, and under --json prints the server's answer unchanged`.
 
 ### `cli/cloud-status-json`
 
@@ -2166,7 +2166,7 @@ When a person runs `marfa cloud status --json`, the CLI MUST print the answer of
 
 **Reason:** a script reads the link from the server's own shape, not from the CLI's wording.
 
-**Tests:** `cli/cloud.test.ts › reads the link in every state, prints it plainly, and under --json prints the server's answer unchanged`.
+**Tests:** `cli/cloud.test.ts › reads the link in every state, prints it plainly naming the service as alpha, and under --json prints the server's answer unchanged`.
 
 ### `cli/cloud-link-start`
 
@@ -2223,6 +2223,28 @@ When a person runs `marfa cloud link --json`, the CLI MUST print the link as it 
 **Reason:** a script reads the code as soon as it exists, and the outcome once it is decided.
 
 **Tests:** `cli/cloud.test.ts › starts a link to move the sign-in address, prints the code and the page, opens nothing, waits through the server's reads until it is approved, and leaves the move waiting with the command that makes it`.
+
+### `cli/cloud-link-json-code-on-stderr`
+
+When a person runs `marfa cloud link --json`, the CLI MUST print the link's user code, its approval URL and the instruction to approve only if the code on the approval page matches on standard error, and keep standard output to the server's answers.
+
+**Reason:** a person reading a terminal must still be told what to check, and a script reads standard output as JSON alone.
+
+**Tests:** `cli/cloud.test.ts › under --json prints the code, the page and what to check on standard error, and leaves standard output the server's answer`.
+
+### `cli/cloud-link-alpha-notice`
+
+When a person runs `marfa cloud link`, the CLI MUST print, before it starts the link, that Marfa Cloud is in alpha, may change, may sometimes be unavailable, and that the person's data stays on this machine, on standard error under `--json`.
+
+**Reason:** Marfa Cloud is an alpha service, and a person is told so before they link to it.
+
+**Tests:** `cli/cloud.test.ts › keeps the sign-in address with --keep-sign-in-address, says plainly what to approve and check, and ends once the link is made`, `› under --json prints the code, the page and what to check on standard error, and leaves standard output the server's answer`.
+
+### `cli/cloud-status-alpha-name`
+
+When a person runs `marfa cloud status` without `--json`, the CLI MUST name the service as "Marfa Cloud (alpha)".
+
+**Tests:** `cli/cloud.test.ts › reads the link in every state, prints it plainly naming the service as alpha, and under --json prints the server's answer unchanged`.
 
 ### `cli/cloud-link-failed`
 

@@ -1,6 +1,6 @@
 use std::io::{BufRead, IsTerminal, Write};
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
@@ -8,15 +8,18 @@ use serde_json::{Value, json};
 use crate::commands::login::open_browser;
 use crate::error::{CliError, Exit};
 use crate::interrupt;
-use crate::output::Printer;
+use crate::output::{Printer, said};
 use crate::remote::Remote;
 use crate::remote::request::Request;
+use crate::style::Stream;
 
 #[derive(Debug, Subcommand)]
 pub enum CloudCommand {
     /// Link this instance to Marfa Cloud: print a code and an approval page,
     /// wait for the owner to approve the link there, then show the link.
     /// Needs `config.manage`.
+    ///
+    /// Marfa Cloud is in alpha, and the command says so before it starts.
     ///
     /// Check that the code on the approval page matches the one printed here,
     /// and approve only if it does. The page is opened in a browser only when
@@ -44,8 +47,10 @@ pub enum CloudCommand {
     /// the server could not be reached for a minute. Exit 5: the credential
     /// was refused. Exit 130: ended with Ctrl-C.
     ///
-    /// Under --json two records come out, one per line: the pending link as
-    /// soon as it exists, then the link as the wait ended.
+    /// Under --json two records come out on standard output, one per line:
+    /// the pending link as soon as it exists, then the link as the wait ended.
+    /// The code, the approval page and the instruction to check the code are
+    /// printed on standard error.
     Link(LinkArgs),
     /// End the link, or cancel one that is still pending. Needs
     /// `config.manage`.
@@ -91,6 +96,12 @@ pub struct UnlinkArgs {
     confirm_address_change: bool,
 }
 
+/// What the service is called in what the commands say, while it is in alpha.
+const SERVICE: &str = "Marfa Cloud (alpha)";
+
+/// Said once before `cloud link` starts, while the service is in alpha.
+const ALPHA_NOTICE: &str = "Marfa Cloud is in alpha: it may change, and may sometimes be unavailable. Your data stays on this machine.";
+
 const UNCONFIRMED: &str = "sign_in_address_change_unconfirmed";
 
 /// How often the link is read while waiting on it.
@@ -100,8 +111,9 @@ const POLL: Duration = Duration::from_secs(2);
 /// read before the result is printed with the move still pending.
 const SETTLE: Duration = Duration::from_secs(20);
 
-/// How long the server may fail to answer, one read after another, before the
-/// wait gives up and says how to resume.
+/// How long the server may fail to answer, one read after another, counted
+/// in real time from the first read that failed, before the wait gives up and
+/// says how to resume.
 const OUTAGE: Duration = Duration::from_secs(60);
 
 /// How often the stop is looked for between two reads.
@@ -129,6 +141,8 @@ trait Waiter {
     fn arm(&mut self);
     /// Pauses, and says whether the person stopped the command meanwhile.
     fn stopped_after(&mut self, pause: Duration) -> bool;
+    /// How long the server may fail to answer before the wait gives up.
+    fn outage(&self) -> Duration;
 }
 
 struct Live;
@@ -149,6 +163,10 @@ impl Waiter for Live {
             left -= step;
         }
         interrupt::stop().load(Ordering::Relaxed)
+    }
+
+    fn outage(&self) -> Duration {
+        OUTAGE
     }
 }
 
@@ -257,6 +275,11 @@ fn link(
     out: &Printer,
     waiter: &mut impl Waiter,
 ) -> Result<(), CliError> {
+    if out.json {
+        crate::errln!("{ALPHA_NOTICE}");
+    } else {
+        out.line(ALPHA_NOTICE)?;
+    }
     let seen = remote.json(&status_request())?;
     let (pending, fresh) = match state(&seen) {
         "linking" => {
@@ -287,7 +310,15 @@ fn link(
         }
     };
     let local = remote.is_local();
-    out.record(&pending, approval_text)?;
+    out.record(&pending, |link| approval_text(link, Stream::Out))?;
+    if out.json {
+        // Standard output is the server's answer alone, so the person is
+        // told what to check where they will read it.
+        crate::errln!(
+            "{}",
+            said(&pending, |link| approval_text(link, Stream::Err))
+        );
+    }
     if fresh && local {
         open_approval(&pending);
     }
@@ -305,14 +336,14 @@ fn open_approval(link: &Value) {
     }
 }
 
-fn approval_text(link: &Value) -> String {
+fn approval_text(link: &Value, stream: Stream) -> String {
     let linking = link.get("linking").cloned().unwrap_or(Value::Null);
     let mut lines = vec![
         "Approve the link on this page:".to_string(),
         format!("  {}", text(&linking, "approval_url")),
         format!(
             "The code on that page must read: {}",
-            crate::style::bold(crate::style::Stream::Out, text(&linking, "user_code"))
+            crate::style::bold(stream, text(&linking, "user_code"))
         ),
         "Approve it only if the code matches; if it differs, the page is not for this link."
             .to_string(),
@@ -364,19 +395,19 @@ pub fn status_text(link: &Value) -> String {
     let mut lines = Vec::new();
     match state(link) {
         "not_linked" => {
-            lines.push("Not linked to Marfa Cloud.".to_string());
+            lines.push(format!("Not linked to {SERVICE}."));
             if let Some(ended) = link.get("ended") {
                 lines.push(match text(ended, "reason") {
                     "unlinked_by_service" => {
-                        format!("Marfa Cloud ended the link at {}.", text(ended, "ended_at"))
+                        format!("{SERVICE} ended the link at {}.", text(ended, "ended_at"))
                     }
                     other => format!("The last link ended: {other}."),
                 });
             }
         }
         "linking" => {
-            lines.push("Waiting for the link to be approved.".to_string());
-            lines.push(approval_text(link));
+            lines.push(format!("Waiting for the link to {SERVICE} to be approved."));
+            lines.push(approval_text(link, Stream::Out));
             if let Some(expires) = link
                 .get("linking")
                 .map(|linking| text(linking, "expires_at"))
@@ -386,7 +417,7 @@ pub fn status_text(link: &Value) -> String {
             return lines.join("\n");
         }
         "linked" => {
-            lines.push(format!("Linked to Marfa Cloud as {}.", text(link, "name")));
+            lines.push(format!("Linked to {SERVICE} as {}.", text(link, "name")));
             lines.push(format!("  Address:   {}", text(link, "address")));
             lines.push(format!("  Linked at: {}", text(link, "linked_at")));
             if let Some(connector) = link.get("connector") {
@@ -400,7 +431,10 @@ pub fn status_text(link: &Value) -> String {
         }
         "failed" => {
             let failure = link.get("failure").cloned().unwrap_or(Value::Null);
-            lines.push(format!("The link failed: {}.", failure_sentence(&failure)));
+            lines.push(format!(
+                "The link to {SERVICE} failed: {}.",
+                failure_sentence(&failure)
+            ));
         }
         other => lines.push(format!("The link is {other}.")),
     }
@@ -422,11 +456,14 @@ fn follow(remote: &Remote, out: &Printer, waiter: &mut impl Waiter) -> Result<()
         "Waiting for approval. Ctrl-C leaves the link pending; `marfa cloud link` waits on it again."
     );
     let mut settled = Duration::ZERO;
-    let mut away = Duration::ZERO;
+    // When the first of the reads now failing began, so a read that hangs
+    // counts for as long as it took.
+    let mut away_since: Option<Instant> = None;
     loop {
+        let asked = Instant::now();
         match remote.json(&status_request()) {
             Ok(link) => {
-                away = Duration::ZERO;
+                away_since = None;
                 match state(&link) {
                     "linked" => {
                         if sign_in_state(&link) != "pending" || settled >= SETTLE {
@@ -460,8 +497,7 @@ fn follow(remote: &Remote, out: &Printer, waiter: &mut impl Waiter) -> Result<()
                 }
             }
             Err(error) if transient(&error) => {
-                away += POLL;
-                if away > OUTAGE {
+                if away_since.get_or_insert(asked).elapsed() > waiter.outage() {
                     crate::errln!(
                         "The link stays pending. Run `marfa cloud link` to wait on it again, or `marfa cloud status` to read it."
                     );
@@ -520,12 +556,15 @@ fn unlinked_text(before: &Value, answer: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Instant;
+
     use super::*;
     use crate::door::{Answer, Door};
 
     struct Scripted {
         stops_after: Option<usize>,
         pauses: usize,
+        outage: Duration,
     }
 
     impl Scripted {
@@ -533,6 +572,7 @@ mod tests {
             Scripted {
                 stops_after: None,
                 pauses: 0,
+                outage: OUTAGE,
             }
         }
     }
@@ -541,7 +581,11 @@ mod tests {
         fn arm(&mut self) {}
         fn stopped_after(&mut self, _: Duration) -> bool {
             self.pauses += 1;
+            std::thread::sleep(Duration::from_millis(5));
             self.stops_after == Some(self.pauses)
+        }
+        fn outage(&self) -> Duration {
+            self.outage
         }
     }
 
@@ -746,7 +790,7 @@ mod tests {
         ]);
         let mut waiter = Scripted {
             stops_after: Some(1),
-            pauses: 0,
+            ..Scripted::never_stopped()
         };
         link(
             &args(false, false),
@@ -762,10 +806,12 @@ mod tests {
     }
 
     #[test]
-    fn an_outage_longer_than_the_allowance_ends_the_wait_with_the_link_pending() {
+    fn an_outage_is_the_real_time_the_server_has_failed_to_answer() {
         let door = Door::open(vec![ok(linking("waiting"))]);
         let remote = by_key(&door);
         let mut waiter = Scripted::never_stopped();
+        waiter.outage = Duration::from_millis(300);
+        let began = Instant::now();
         let error = link(
             &args(false, false),
             &remote,
@@ -774,8 +820,49 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.exit(), Exit::Environment, "{error:?}");
-        let allowed = (OUTAGE.as_secs() / POLL.as_secs()) as usize;
-        assert_eq!(waiter.pauses, allowed, "one pause per failed read");
+        assert!(began.elapsed() >= waiter.outage, "{:?}", began.elapsed());
+        assert!(waiter.pauses > 1, "one failed read is not an outage");
+    }
+
+    /// A server that takes every connection and never answers, and how many
+    /// it took.
+    fn hanging() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let taken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = taken.clone();
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = listener.accept() {
+                counted.fetch_add(1, Ordering::Relaxed);
+                held.push(stream);
+            }
+        });
+        (url, taken)
+    }
+
+    #[test]
+    fn a_server_that_hangs_ends_the_wait_after_the_outage_in_real_time() {
+        let (url, taken) = hanging();
+        let remote = Remote::with_http(
+            marfa_core::http::Http::with_timeouts(
+                &url,
+                "marfa_k1_x",
+                Duration::from_millis(300),
+                Duration::from_millis(300),
+            )
+            .unwrap(),
+            Some("marfa_k1_x"),
+        );
+        let mut waiter = Scripted::never_stopped();
+        waiter.outage = Duration::from_secs(1);
+        let began = Instant::now();
+        let error = follow(&remote, &Printer { json: true }, &mut waiter).unwrap_err();
+        let lasted = began.elapsed();
+        assert_eq!(error.exit(), Exit::Environment, "{error:?}");
+        assert!(lasted >= waiter.outage, "{lasted:?}");
+        assert!(lasted < waiter.outage * 3, "{lasted:?}");
+        assert!(taken.load(Ordering::Relaxed) >= 2, "reads were tried again");
     }
 
     #[test]
@@ -806,7 +893,10 @@ mod tests {
             "command": "marfa config set sign_in_address https://home.cloud.example --confirm-address-change",
         });
         let said = status_text(&waiting);
-        assert!(said.contains("Linked to Marfa Cloud as Home."), "{said}");
+        assert!(
+            said.contains("Linked to Marfa Cloud (alpha) as Home."),
+            "{said}"
+        );
         assert!(
             said.contains("marfa config set sign_in_address https://home.cloud.example"),
             "{said}"
@@ -816,10 +906,12 @@ mod tests {
     #[test]
     fn status_says_each_state_in_words() {
         let said = |link: Value| status_text(&link);
-        assert!(said(json!({"state": "not_linked"})).starts_with("Not linked"));
+        assert!(
+            said(json!({"state": "not_linked"})).starts_with("Not linked to Marfa Cloud (alpha).")
+        );
         assert!(
             said(json!({"state": "not_linked", "ended": {"reason": "unlinked_by_service", "ended_at": "2026-01-01T00:00:00Z"}}))
-                .contains("Marfa Cloud ended the link at 2026-01-01T00:00:00Z.")
+                .contains("Marfa Cloud (alpha) ended the link at 2026-01-01T00:00:00Z.")
         );
         let pending = said(linking("kept"));
         assert!(pending.contains("ABCD-1234"), "{pending}");

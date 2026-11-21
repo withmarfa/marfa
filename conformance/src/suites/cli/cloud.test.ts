@@ -29,6 +29,10 @@ import { Cli, once, releaseHeld, requireBinary } from "./harness.js";
  * which, and no browser starts.
  */
 
+/** What `cloud link` says first about the service. */
+const ALPHA_NOTICE =
+  "Marfa Cloud is in alpha: it may change, and may sometimes be unavailable. Your data stays on this machine.";
+
 const clouds: FakeCloud[] = [];
 const cleanups: (() => Promise<void>)[] = [];
 
@@ -193,7 +197,7 @@ async function opens(server: FreshServer, cookie: string): Promise<number> {
 
 describe("cloud status", () => {
   it(
-    "reads the link in every state, prints it plainly, and under --json prints the server's answer unchanged",
+    "reads the link in every state, prints it plainly naming the service as alpha, and under --json prints the server's answer unchanged",
     async () => {
       const r = await rig("cli-cloud-status");
       expect(await r.key.json(["cloud", "status"])).toEqual({
@@ -201,12 +205,13 @@ describe("cloud status", () => {
       });
       const none = await r.key.run(["cloud", "status"]);
       expect(none.code).toBe(0);
-      expect(none.stdout).toContain("Not linked to Marfa Cloud.");
+      expect(none.stdout).toContain("Not linked to Marfa Cloud (alpha).");
 
       const started = await r.start({ sign_in_address: "keep" });
       expect(await r.key.json(["cloud", "status"])).toEqual(await r.status());
       const waiting = await r.key.run(["cloud", "status"]);
       expect(waiting.code).toBe(0);
+      expect(waiting.stdout).toContain("Marfa Cloud (alpha)");
       expect(waiting.stdout).toContain(started.linking.user_code);
       expect(waiting.stdout).toContain(started.linking.approval_url);
 
@@ -216,7 +221,7 @@ describe("cloud status", () => {
       const linked = await r.key.run(["cloud", "status"]);
       expect(linked.code).toBe(0);
       expect(linked.stdout).toContain(
-        `Linked to Marfa Cloud as ${String(made.name)}.`,
+        `Linked to Marfa Cloud (alpha) as ${String(made.name)}.`,
       );
       expect(linked.stdout).toContain(made.address);
 
@@ -227,7 +232,9 @@ describe("cloud status", () => {
       expect(await r.key.json(["cloud", "status"])).toEqual(failed);
       const refused = await r.key.run(["cloud", "status"]);
       expect(refused.code).toBe(0);
-      expect(refused.stdout).toContain("The link failed");
+      expect(refused.stdout).toContain(
+        "The link to Marfa Cloud (alpha) failed",
+      );
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -282,6 +289,10 @@ describe("cloud link", () => {
         r.cloud.links.at(-1),
       );
       await run.says(started.userCode);
+      expect(run.stdout).toContain(ALPHA_NOTICE);
+      expect(run.stdout.indexOf(ALPHA_NOTICE)).toBeLessThan(
+        run.stdout.indexOf(started.userCode),
+      );
       expect(run.stdout).toContain(started.approvalUrl);
       expect(run.stdout).toMatch(/code on that page must read/i);
       expect(run.stdout).toMatch(/only if the code matches/i);
@@ -289,9 +300,37 @@ describe("cloud link", () => {
 
       r.cloud.approve();
       expect(await run.closed).toBe(0);
-      expect(run.stdout).toContain("Linked to Marfa Cloud as");
+      expect(run.stdout).toContain("Linked to Marfa Cloud (alpha) as");
       expect(run.stdout).toContain("kept as");
       expect((await r.status()).sign_in_address.state).toBe("kept");
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "under --json prints the code, the page and what to check on standard error, and leaves standard output the server's answer",
+    async () => {
+      const r = await rig("cli-cloud-json-says");
+      const run = link(r.key, ["--keep-sign-in-address"]);
+      const pending = await run.record(0);
+      await run.says("Waiting for approval");
+      expect(run.stderr).toContain(pending.linking.user_code);
+      expect(run.stderr).toContain(pending.linking.approval_url);
+      expect(run.stderr).toMatch(/only if the code matches/i);
+      expect(run.stderr).toMatch(/code on that page must read/i);
+      expect(run.stderr).toContain(ALPHA_NOTICE);
+      expect(run.stderr.indexOf(ALPHA_NOTICE)).toBeLessThan(
+        run.stderr.indexOf(pending.linking.user_code),
+      );
+
+      r.cloud.approve();
+      expect(await run.closed).toBe(0);
+      const lines = run.stdout.split("\n").filter(Boolean);
+      expect(lines).toHaveLength(2);
+      expect(JSON.parse(lines[0]!)).toEqual(pending);
+      expect(JSON.parse(lines[1]!)).toEqual(await r.status());
+      expect(run.stdout).not.toMatch(/only if the code matches/i);
+      expect(run.stdout).not.toMatch(/alpha/i);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -458,7 +497,7 @@ describe("cloud link", () => {
       r.cloud.approve();
       const answered = await yes;
       expect(answered.code, answered.stdout).toBe(0);
-      expect(answered.stdout).toContain("Linked to Marfa Cloud as");
+      expect(answered.stdout).toContain("Linked to Marfa Cloud (alpha) as");
       expect((await r.status()).sign_in_address.state).toBe("moved");
     },
     FRESH_SERVER_TIMEOUT_MS,

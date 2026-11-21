@@ -528,6 +528,8 @@ marfa cloud [OPTIONS] <COMMAND>
 
 Link this instance to Marfa Cloud: print a code and an approval page, wait for the owner to approve the link there, then show the link. Needs `config.manage`.
 
+Marfa Cloud is in alpha, and the command says so before it starts.
+
 Check that the code on the approval page matches the one printed here, and approve only if it does. The page is opened in a browser only when this command runs on the instance's own machine and reaches it through its local socket; with a key or an app sign-in it is printed and never opened, so nothing the server sends can lead a browser to approve another instance.
 
 The command waits until the link is approved, refused or has expired, as the server decides; it has no time limit of its own. Ctrl-C leaves the link pending: run `marfa cloud link` again to wait on it, or `marfa cloud unlink` to cancel it. A link that is already pending is waited on as it was started, and a link that is already made is refused.
@@ -536,7 +538,7 @@ The instance's sign-in address moves to Marfa Cloud by default. A key cannot mov
 
 Exit 0: linked, or the sign-in address move waits as printed. Exit 1: the server refused, or the link was refused, expired or ended. Exit 3: the server could not be reached for a minute. Exit 5: the credential was refused. Exit 130: ended with Ctrl-C.
 
-Under --json two records come out, one per line: the pending link as soon as it exists, then the link as the wait ended.
+Under --json two records come out on standard output, one per line: the pending link as soon as it exists, then the link as the wait ended. The code, the approval page and the instruction to check the code are printed on standard error.
 
 ```text
 marfa cloud link [OPTIONS]
