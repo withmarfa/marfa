@@ -362,18 +362,19 @@ describe("a key of unknown maker after an upgrade", () => {
     "records as of unknown maker a key and the key it minted when no record shows the owner made them, and as the owner's when the record stays",
     async () => {
       const { unknown, known } = await pair();
-      // Owner-made keys reach an app's item through `*`, and an app's own key
-      // reaches its own vendor, so a refusal below is the maker's doing.
+      // Owner-made keys reach an app's item through `*`, so a refusal below is
+      // the maker's doing.
       expectOk(await readItem(known, WORKING_KEY, HELD_ITEM));
       expectOk(await readItem(known, CHILD_KEY, HELD_ITEM));
+      // The consent names the app whose grant minted the app's key, so that key
+      // is not of unknown maker on either: it reaches the app's vendor.
       expectOk(await readItem(known, APP_KEY, HELD_ITEM));
       expectOk(await readItem(unknown, APP_KEY, HELD_ITEM));
       // No record names who made the working key or the key it minted.
       for (const key of [WORKING_KEY, CHILD_KEY]) {
         expectConcealed(await readItem(unknown, key, HELD_ITEM));
       }
-      // The consent names the app whose grant minted the app's key, so that
-      // key is an app's and not of unknown maker: its app holds the vendor.
+      // The app holds the vendor on both.
       expect(await holder(known, HELD)).toBe(CLIENT);
       expect(await holder(unknown, HELD)).toBe(CLIENT);
     },

@@ -125,17 +125,17 @@ stays because that thing is what it checks.
   build carries.
 - `compliance/upgrade-unknown-maker.test.ts` loads the same dump and adds rows
   to it before each start: a key the working key minted and its `key.create`
-  record, a key an app's grant minted with that app's client, consent and
-  types, and a key a grant that has ended minted with the grant's record and
-  types. On one server of each pair it also removes the working key's
-  `key.create` record, and in one test the working key's own row. It reads the
-  database file afterwards to count items. A key that outlives the record of
-  who minted it is a state no operation on this build makes, the keys and the
-  consent must be in the file before the upgrade reads it, and the API does not
-  name a key's maker, so each test holds the refusal against the same request
-  from the same key with its record kept. Everything an owner can make
-  (the owner-held vendors, their items, the type with guidance) is made through
-  the control socket after the start.
+  record, a key an app's grant minted with that app's client, consent, types
+  and items, and a key a grant that has ended minted with the grant's record,
+  type and item. On one server of each pair it removes the working key's
+  `key.create` record, and in one test it removes the working key's own row
+  from both. It reads the database file afterwards to count items. A key that
+  outlives the record of who minted it is a state no operation on this build
+  makes, the keys and the consent must be in the file before the upgrade reads
+  it, and the API does not name a key's maker, so each test holds the refusal
+  against the same request from the same key with its record kept. The owner
+  makes the owner-held vendors and the type with guidance through the control
+  socket after the start, and their items through a key it mints there.
 - `compliance/device-grant.test.ts`, "is held by the server as something other
   than the code it issued", searches the database file and the log beside it for
   the issued device code, because the contract is about the bytes at rest.
