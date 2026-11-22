@@ -968,6 +968,10 @@ describe("what a change runs", () => {
         expect(beyond(path), path).toEqual(["core-checks-linux"]);
       } else if (path === "GLOSSARY.md") {
         expect(beyond(path), path).toEqual(["workspace"]);
+      } else if (/^core\/marfa-rules\/types\/(?!README\.md$)/.test(path)) {
+        expect(beyond(path), path).toEqual(
+          beyond("core/marfa-rules/types/note.json"),
+        );
       } else if (docs?.test(path)) {
         expect(beyond(path), path).toEqual(
           /^(packages|core)\/.+\/README[^/]*$/.test(path)
