@@ -1402,7 +1402,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 .is_some_and(|declared| declared != row.type_id);
         if moving {
             if let Some(destination) = update.type_id.as_deref() {
-                self.gate().type_gate(destination)?;
+                self.gate()
+                    .type_gate_under(destination, Some(&row.source))?;
             }
         } else if let Some(declared) = update.type_id.as_deref() {
             require_declared(declared, &row)?;
@@ -2314,7 +2315,10 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         named_by_id: bool,
     ) -> Result<Landing> {
         let moving = retype && put.type_id != row.type_id;
-        if !moving {
+        if moving {
+            self.gate()
+                .type_gate_under(&put.type_id, Some(&row.source))?;
+        } else {
             refuse_other_type(&row, &put.type_id, named_by_id)?;
         }
         let writing = Writing {
@@ -2634,7 +2638,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let gate = self.gate();
         let row = gate.readable_row(&selected.id)?;
         gate.row_gate(&row)?;
-        gate.type_gate(to)?;
+        gate.type_gate_under(to, Some(&row.source))?;
         self.change_row(
             row,
             Writing {

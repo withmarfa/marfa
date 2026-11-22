@@ -311,6 +311,24 @@ fn field_of(value: &Value) -> Option<Field> {
     }
 }
 
+/// A kind's entry as a save names it, over its default. Fields it leaves out are those both
+/// types declare, for the target it names.
+fn read_named(
+    value: &Value,
+    default: Entry,
+    kind: &Kind,
+    catalog: &Catalog,
+    at: &str,
+    problems: &mut Vec<Problem>,
+) -> Option<Entry> {
+    let own_target = default.target_type.clone();
+    let mut entry = read_entry(value, default, at, &ENTRY_MEMBERS, problems)?;
+    if value.get("fields").is_none() && entry.target_type != own_target {
+        entry.fields = identity(&kind.own_type, &entry.target_type, catalog);
+    }
+    Some(entry)
+}
+
 /// A mapping as `PUT` sends it: its `version` and an entry for every kind, a kind or member it
 /// leaves out taken from the default. Judged only for its shape.
 pub fn read_body(
@@ -358,11 +376,12 @@ pub fn read_body(
         let default = default_entry(kind, Some(catalog));
         let entry = match named.get(&kind.name) {
             None => Some(default),
-            Some(value) => read_entry(
+            Some(value) => read_named(
                 value,
                 default,
+                kind,
+                catalog,
                 &format!("kinds.{}", kind.name),
-                &ENTRY_MEMBERS,
                 &mut problems,
             ),
         };
@@ -453,7 +472,7 @@ pub fn read_draft(
 ) -> Result<Entry, Vec<Problem>> {
     let mut problems = Vec::new();
     let base = default_entry(kind, Some(catalog));
-    let Some(entry) = read_entry(value, base, at, &ENTRY_MEMBERS, &mut problems) else {
+    let Some(entry) = read_named(value, base, kind, catalog, at, &mut problems) else {
         return Err(problems);
     };
     if entry.enabled {
