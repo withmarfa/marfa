@@ -3056,11 +3056,11 @@ describe("a local read answers the listing grammar as the server does", () => {
       "1",
     );
     const letters = await seed(
-      { title: "letters", s: "abc", list: [1e20], note: "100% done" },
+      { title: "letters", s: "abc", nested: { n: 1e20 }, note: "100% done" },
       [],
     );
     const blank = await seed(
-      { title: "blank", s: "", list: [0.0000015], note: "Éclair" },
+      { title: "blank", s: "", nested: { n: 0.0000015 }, note: "Éclair" },
       [],
     );
     // Differs from `blank` in the case of one non-ASCII letter only, which
@@ -3117,8 +3117,8 @@ describe("a local read answers the listing grammar as the server does", () => {
       "source_id eq true",
       "properties.t eq 5",
       "properties.t eq true",
-      'properties.list contains "100000000000000000000"',
-      'properties.list contains "0.0000015"',
+      'properties.nested contains "100000000000000000000"',
+      'properties.nested contains "0.0000015"',
       `id eq "${stranger}"`,
       // The server binds every number as a REAL, which a text column reads
       // as `5.0`: this selects the item spelled that way, not the one
@@ -3191,8 +3191,8 @@ describe("a local read answers the listing grammar as the server does", () => {
       ["source_id eq true", ["five"]],
       ["properties.t eq 5", ["grandchild"]],
       ["properties.t eq true", ["root"]],
-      ['properties.list contains "100000000000000000000"', ["letters"]],
-      ['properties.list contains "0.0000015"', ["blank"]],
+      ['properties.nested contains "100000000000000000000"', ["letters"]],
+      ['properties.nested contains "0.0000015"', ["blank"]],
       ['properties.note contains "%"', ["letters"]],
       ['properties.note starts_with "web_"', ["ten"]],
       ['properties.note contains "\\\\"', ["five"]],

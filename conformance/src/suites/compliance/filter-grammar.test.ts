@@ -710,6 +710,69 @@ describe("contains and starts_with", () => {
   });
 });
 
+describe("a property holding a list", () => {
+  it("compares each member of a list, never the list's JSON text", async () => {
+    const kitchen = await seed({ words: ["kitchen"] });
+    const split = await seed({ words: ["a", "kit,"] });
+    const scalar = await seed({ words: "kitchen" });
+    const mixed = await seed({ words: [3, "pantry", null] });
+    const entries = await seed({ words: [{ word: "kitchen" }] });
+    const empty = await seed({ words: [] });
+    const absent = await seed({});
+    const group = [kitchen, split, scalar, mixed, entries, empty, absent];
+
+    expect(await among('properties.words eq "kitchen"', group)).toEqual(
+      sorted(kitchen, scalar),
+    );
+    expect(await among('properties.words eq "[\\"kitchen\\"]"', group)).toEqual(
+      [],
+    );
+    expect(await among('properties.words eq "pantry"', group)).toEqual([mixed]);
+    // A range and a number still select no list.
+    expect(await among('properties.words gt "a"', group)).toEqual([scalar]);
+    expect(await among("properties.words eq 3", group)).toEqual([]);
+    expect(await among('properties.words contains "kit"', group)).toEqual(
+      sorted(kitchen, split, scalar),
+    );
+    expect(await among('properties.words starts_with "kit"', group)).toEqual(
+      sorted(kitchen, split, scalar),
+    );
+    expect(await among('properties.words contains "KIT,"', group)).toEqual([
+      split,
+    ]);
+    // Each would match the JSON text of a list that holds "kitchen" or "kit,".
+    expect(await among('properties.words contains "\\"kit"', group)).toEqual(
+      [],
+    );
+    expect(
+      await among('properties.words contains "a\\",\\"kit"', group),
+    ).toEqual([]);
+    expect(await among('properties.words contains "["', group)).toEqual([]);
+    expect(await among('properties.words starts_with "["', group)).toEqual([]);
+  });
+
+  it("selects by neq a list that holds no member equal to the value", async () => {
+    const kitchen = await seed({ words: ["kitchen", "pantry"] });
+    const split = await seed({ words: ["a", "kit,"] });
+    const scalar = await seed({ words: "kitchen" });
+    const other = await seed({ words: "pantry" });
+    const entries = await seed({ words: [{ word: "kitchen" }] });
+    const empty = await seed({ words: [] });
+    const absent = await seed({});
+    const group = [kitchen, split, scalar, other, entries, empty, absent];
+
+    expect(await among('properties.words eq "kitchen"', group)).toEqual(
+      sorted(kitchen, scalar),
+    );
+    expect(await among('properties.words neq "kitchen"', group)).toEqual(
+      sorted(split, other, entries, empty),
+    );
+    expect(await among('properties.words neq "pantry"', group)).toEqual(
+      sorted(split, scalar, entries, empty),
+    );
+  });
+});
+
 describe("a tags term", () => {
   it("takes a whole tag, with regard to case", async () => {
     const tag = `Tag-${marker}`;

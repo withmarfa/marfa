@@ -580,6 +580,22 @@ When a `filter` compares a property using an operator that takes a value, the se
 
 **Tests:** `compliance/filter-grammar.test.ts › selects no item whose property is absent or null, with any operator that takes a value`.
 
+### `search-and-filters/filter-list-member`
+
+When a `filter` compares a property whose value is a list with a double-quoted string using `eq`, `contains` or `starts_with`, the server MUST select the items whose list holds at least one member, other than a list or an object, that the condition would select were that member the property's whole value.
+
+**Reason:** `properties.words eq "kitchen"` finds an item whose words include `kitchen`, and `contains "kit"` matches within one member, never within the list's JSON text or across two members. A range, and `eq` with a number, still select no list (`search-and-filters/filter-range-numbers`, `search-and-filters/filter-range-text`, `search-and-filters/filter-numeric-only`).
+
+**Tests:** `compliance/filter-grammar.test.ts › compares each member of a list, never the list's JSON text`.
+
+### `search-and-filters/filter-list-member-neq`
+
+When a `filter` compares a property whose value is a list with a double-quoted string using `neq`, the server MUST select the items whose list holds no member, other than a list or an object, equal to the value.
+
+**Reason:** among the items that hold the property, `neq` selects what `eq` does not, so an empty list is selected and an absent property is not (`search-and-filters/filter-absent-unselected`).
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by neq a list that holds no member equal to the value`.
+
 ### `search-and-filters/filter-contains`
 
 When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` using `contains`, the server MUST select the items whose value holds the text.
