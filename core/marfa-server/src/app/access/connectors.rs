@@ -147,8 +147,7 @@ impl Caller {
         self.require_cascade_to(type_id)
     }
 
-    /// The caller as a door that reads by the type map alone answers it: a plugin's connector
-    /// key without its mapping.
+    /// The caller as a door that reads by the type map alone answers it.
     pub fn by_type_map(&self) -> Caller {
         match self {
             Caller::Key(key) => {

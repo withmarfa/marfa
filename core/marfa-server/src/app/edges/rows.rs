@@ -192,12 +192,10 @@ pub(super) struct Page<'a> {
 const EDGE_FROM: &str = "SELECT e.seq, e.id, e.from_id, e.to_id, e.edge_type, json(e.properties), \
      e.version, e.created_at, e.updated_at FROM edges e JOIN items f ON f.id = e.from_id";
 
-/// The fewest edges a narrowed page walks in order before it asks the indexes instead.
+/// The fewest edges a narrowed page walks in order before it asks the other indexes.
 const WINDOW: i64 = 1_000;
 
-/// `from` holds the from item to a reach and `page.edge_types` the edge types, both in the
-/// query; `keeps` judges each edge type too, before the limit, so a page comes back short only
-/// at its end.
+/// Judged before the limit, so a page comes back short only at its end.
 pub(super) fn page(
     tx: &Transaction<'_>,
     page: &Page<'_>,
@@ -226,9 +224,7 @@ pub(super) fn page(
     Ok(kept)
 }
 
-/// A dense page fills from the newest edges in order, but the order index finds a sparse one
-/// only by walking the table, where an index on what the caller reads finds it at once. So a
-/// narrowed page walks a window first, and asks the indexes only when the window runs out.
+/// The order index fills a dense page at once but a sparse one only by walking the table.
 fn window_of(page: &Page<'_>, from: Option<&Reach>) -> Option<i64> {
     let ordered_by_type = page.edge_types.len() == 1 && !page.by_change;
     let narrowed = from.is_some() || !page.edge_types.is_empty();
