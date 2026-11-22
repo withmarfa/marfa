@@ -1158,9 +1158,9 @@ describe("the edges the connector reads from its own items on the target type", 
       include: ["edges"],
     });
     expect(looked.status, JSON.stringify(looked.error)).toBe(200);
-    expect(
-      blockIds(looked.data.data[0]?.edges as never, "references"),
-    ).toEqual([ownEdge]);
+    expect(blockIds(looked.data.data[0]?.edges as never, "references")).toEqual(
+      [ownEdge],
+    );
 
     // The per-item doors and the edge listing.
     const out = await own.listItemEdges(mine.id, { edge_type: "references" });
@@ -1297,7 +1297,9 @@ describe("the edges the connector reads from its own items on the target type", 
 describe("the MCP tools", () => {
   it("finds none of its own items of the mapped type through marfa_find, which GET /items lists", async () => {
     const { plugin, key } = await mapped();
-    const mine = await ticket(key.client, plugin, { source_id: `m-${fresh()}` });
+    const mine = await ticket(key.client, plugin, {
+      source_id: `m-${fresh()}`,
+    });
     // The witness: the listing door lists the connector's own item.
     const listed = await key.client.listItems({ type: plugin.ticket });
     expect(listed.data.data.map((item) => item.id)).toEqual([mine.id]);
