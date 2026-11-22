@@ -36,7 +36,7 @@ let client: MarfaClient;
 let apiUrl: string;
 let mcp: McpConnection;
 
-const FIELDS = { title: { type: "string" } };
+const FIELDS = { title: { type: "string" as const } };
 
 function unique(): string {
   return Math.random().toString(36).slice(2, 10);

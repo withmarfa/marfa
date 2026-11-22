@@ -536,9 +536,17 @@ describe("a type's guidance beside its definition", () => {
     expect(text.stdout).toContain(
       `guidance of ${parent}:\nParent rules.\n\nSecond paragraph.`,
     );
-    // A type with no guidance prints none.
-    const none = await marfa(["types", "get", "core.note"], env);
+    // A type with no guidance, and no ancestor that has any, prints none.
+    const plain = idOf("print_plain");
+    expect(
+      (await client.registerType({ id: plain, fields: FIELDS } as never))
+        .status,
+    ).toBe(201);
+    trackType(ctx, plain, client);
+    const none = await marfa(["types", "get", plain], env);
     expect(none.code, none.stderr).toBe(0);
-    expect(none.stdout).not.toContain("guidance");
+    expect(none.stdout).toContain(plain);
+    expect(none.stdout).not.toContain("guidance:");
+    expect(none.stdout).not.toContain("guidance of ");
   });
 });
