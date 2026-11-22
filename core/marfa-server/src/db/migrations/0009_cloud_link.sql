@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS cloud_link (
     -- time it sent the start plus the expires_in Marfa Cloud answered.
     expires_at TEXT NOT NULL,
     interval_ms INTEGER NOT NULL CHECK (interval_ms >= 1000),
+    -- The port of the 127.0.0.1 listener Marfa Cloud's connector reaches,
+    -- chosen as the link started.
+    origin_port INTEGER NOT NULL CHECK (origin_port BETWEEN 1 AND 65535),
     started_at TEXT NOT NULL,
     poll_secret TEXT,
     sign_in_move TEXT NOT NULL

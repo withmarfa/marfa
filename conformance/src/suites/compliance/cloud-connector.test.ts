@@ -1248,9 +1248,7 @@ describe("the tunnel listener", () => {
       await linked.link();
       await linked.connector("connected");
       const tunnel = tunnelOf(linked);
-      expect(new URL(tunnel).port).not.toBe(
-        new URL(linked.server.apiUrl).port,
-      );
+      expect(new URL(tunnel).port).not.toBe(new URL(linked.server.apiUrl).port);
       expect(await healthAt(tunnel)).toBe(200);
       await withStreamAtCursor(
         tunnel,
@@ -1314,7 +1312,10 @@ describe("the tunnel listener", () => {
       expect(await healthAt(endedAt)).toBe(200);
       linked.cloud.forget();
       await linked.server.advanceClock(16 * 60 * 1000);
-      await linked.until("the link to be ended", (s) => s.state === "not_linked");
+      await linked.until(
+        "the link to be ended",
+        (s) => s.state === "not_linked",
+      );
       await gone(second!.pid);
       await closedAt(endedAt);
     },

@@ -9126,10 +9126,10 @@ export interface components {
                  */
                 state: "stopped" | "starting" | "connected" | "reconnecting" | "failed";
                 /**
-                 * @description Why a `failed` connector can't run: `missing` (no connector file the server can run), `refused` (Marfa Cloud refuses its tunnel token and has no newer one) or `token` (the server can't read or write the token file).
+                 * @description Why a `failed` connector can't run: `missing` (no connector file the server can run), `port_taken` (another program holds the port on 127.0.0.1 where Marfa listens for the connector), `refused` (Marfa Cloud refuses its tunnel token and has no newer one) or `token` (the server can't read or write the token file).
                  * @enum {string}
                  */
-                reason?: "missing" | "refused" | "token";
+                reason?: "missing" | "port_taken" | "refused" | "token";
                 /**
                  * Format: date-time
                  * @description Since when the connector has been in this state, in UTC.
@@ -44294,7 +44294,7 @@ export interface operations {
              * @description - `cloud_link_exists`: a link is linking or linked.
              *     - `conflict`: the instance changed during the start. Send it again.
              *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance.
-             *     - `no_public_listener`: this server has no public listener on 127.0.0.1.
+             *     - `no_public_listener`: this server runs with only its control socket.
              *     - `sign_in_address_change_unconfirmed`: the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists the effects.
              */
             409: {

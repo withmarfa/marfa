@@ -783,18 +783,18 @@ A line with a string `level` and a string `message` is a log record, and the
 gate skips it. Any other line is a request record, with the fields of `LogEntry`
 in `core/marfa-server/src/log.rs` (`Request`):
 
-| Field         | Type    | Notes                                                                         |
-| ------------- | ------- | ----------------------------------------------------------------------------- |
-| `timestamp`   | string  | ISO 8601.                                                                     |
-| `request_id`  | string  |                                                                               |
-| `method`      | string  |                                                                               |
-| `transport`   | string  | `http` for the public listener, `local_socket` for the private socket.        |
-| `path`        | string  | The concrete path.                                                            |
-| `route`       | string  | The route template, as the document spells it. Absent when no route answered. |
-| `status`      | integer |                                                                               |
-| `duration_ms` | number  |                                                                               |
-| `key_id`      | string  | Present when a key made the request.                                          |
-| `error_code`  | string  | Present on a refusal that has a code.                                         |
+| Field         | Type    | Notes                                                                              |
+| ------------- | ------- | ---------------------------------------------------------------------------------- |
+| `timestamp`   | string  | ISO 8601.                                                                          |
+| `request_id`  | string  |                                                                                    |
+| `method`      | string  |                                                                                    |
+| `transport`   | string  | `http` for the public and tunnel listeners, `local_socket` for the private socket. |
+| `path`        | string  | The concrete path.                                                                 |
+| `route`       | string  | The route template, as the document spells it. Absent when no route answered.      |
+| `status`      | integer |                                                                                    |
+| `duration_ms` | number  |                                                                                    |
+| `key_id`      | string  | Present when a key made the request.                                               |
+| `error_code`  | string  | Present on a refusal that has a code.                                              |
 
 The gate fails on a line that is not JSON, is not an object, or is a request
 record missing `method`, `path`, `status` or `transport`. It names the file and

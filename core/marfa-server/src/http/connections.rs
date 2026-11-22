@@ -7,18 +7,29 @@ use std::sync::{Arc, Mutex, PoisonError};
 use super::answer::refusal_body;
 use super::listening::Peer;
 use crate::app::refusal::{Code, Refusal};
-use crate::listener::{Trust, Tunnel, network};
+use crate::listener::{Trust, network};
 
 /// What a refused caller is told to wait, in seconds.
 const RETRY_AFTER_SECONDS: u64 = 5;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Caps {
     pub total: usize,
     pub per_address: usize,
+}
+
+/// One listener's way through a gate the listeners share.
+#[derive(Clone)]
+pub struct Entrance {
+    pub gate: Arc<Gate>,
     /// A believed proxy carries many callers, so it counts in the total alone.
     pub trust: Trust,
-    pub tunnel: Tunnel,
+}
+
+impl Entrance {
+    pub fn enter(&self, peer: Peer) -> Result<Slot, Turned> {
+        self.gate.enter(peer, &self.trust)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -52,16 +63,10 @@ impl Gate {
         })
     }
 
-    pub fn enter(self: &Arc<Gate>, peer: Peer) -> Result<Slot, Turned> {
+    pub fn enter(self: &Arc<Gate>, peer: Peer, trust: &Trust) -> Result<Slot, Turned> {
         let counted = peer
             .0
-            .filter(|address| {
-                !self
-                    .caps
-                    .tunnel
-                    .trust(&self.caps.trust, *address)
-                    .believes(*address)
-            })
+            .filter(|address| !trust.believes(*address))
             .map(network);
         let mut held = self.held.lock().unwrap_or_else(PoisonError::into_inner);
         if held.total >= self.caps.total {
@@ -122,13 +127,11 @@ pub fn turned_away() -> Vec<u8> {
 mod tests {
     use super::*;
 
-    fn gate(total: usize, per_address: usize, trust: Trust) -> Arc<Gate> {
-        Gate::new(Caps {
-            total,
-            per_address,
+    fn gate(total: usize, per_address: usize, trust: Trust) -> Entrance {
+        Entrance {
+            gate: Gate::new(Caps { total, per_address }),
             trust,
-            tunnel: Tunnel::default(),
-        })
+        }
     }
 
     fn peer(text: &str) -> Peer {
@@ -136,19 +139,25 @@ mod tests {
     }
 
     #[test]
-    fn a_linked_instance_counts_loopback_in_the_total_alone_whichever_proxies_the_owner_trusts() {
-        for proxies in ["10.0.0.0/8", "127.0.0.0/8"] {
-            let trust = Trust::Proxies(crate::listener::proxy_ranges(proxies).unwrap());
-            let gate = gate(10, 1, trust);
-            gate.caps.tunnel.set(true);
-            // Past the share of one address, so none of these is counted against loopback.
-            let held: Vec<_> = (0..3).map(|_| gate.enter(peer("127.0.0.1"))).collect();
-            assert!(held.iter().all(Result::is_ok), "{proxies}");
-            let first = gate.enter(peer("192.0.2.1"));
-            let second = gate.enter(peer("192.0.2.1"));
-            assert!(first.is_ok(), "{proxies}");
-            assert_eq!(second.err(), Some(Turned::Address), "{proxies}");
-        }
+    fn listeners_share_one_total_and_each_counts_an_address_by_its_own_trust() {
+        let public = gate(4, 1, Trust::Nothing);
+        let tunnel = Entrance {
+            gate: public.gate.clone(),
+            trust: crate::listener::Declaration::tunnel().trust,
+        };
+        let _public = public.enter(peer("127.0.0.1")).unwrap();
+        assert_eq!(public.enter(peer("127.0.0.1")).err(), Some(Turned::Address));
+        let _tunnel: Vec<_> = (0..3)
+            .map(|_| tunnel.enter(peer("127.0.0.1")).unwrap())
+            .collect();
+        assert_eq!(
+            tunnel.enter(peer("127.0.0.1")).err(),
+            Some(Turned::Listener)
+        );
+        assert_eq!(
+            public.enter(peer("192.0.2.1")).err(),
+            Some(Turned::Listener)
+        );
     }
 
     #[test]

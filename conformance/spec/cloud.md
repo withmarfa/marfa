@@ -36,7 +36,7 @@ When a caller holding `config.manage` sends `POST /cloud/link` while no link is 
 
 **Reason:** the owner approves the link on Marfa Cloud with the code, at the address.
 
-**Tests:** `compliance/cloud-link.test.ts › answers a start with the code and the address to approve it at, and sends the instance's id, name and public port`.
+**Tests:** `compliance/cloud-link.test.ts › answers a start with the code and the address to approve it at, and sends the instance's id, name and the port of a listener of its own on 127.0.0.1`.
 
 ### `cloud/expires-own-clock`
 
@@ -48,11 +48,11 @@ When Marfa Cloud answers a start, the server MUST take as the link's `expires_at
 
 ### `cloud/start-sends`
 
-When the server starts a link, the server MUST send Marfa Cloud the instance's `instance_id`, its `name` as `instance_name`, and the port of its public listener as `origin_port`.
+When the server starts a link, the server MUST send Marfa Cloud the instance's `instance_id`, its `name` as `instance_name`, and as `origin_port` a port on `127.0.0.1` that no other program held as the link started, which the link keeps as long as it lasts.
 
-**Reason:** Marfa Cloud's connector reaches the instance at that port on the machine it runs on.
+**Reason:** Marfa Cloud's connector reaches the instance at that port on the machine it runs on, at the tunnel listener (`cloud/tunnel-listener-open`).
 
-**Tests:** `compliance/cloud-link.test.ts › answers a start with the code and the address to approve it at, and sends the instance's id, name and public port`.
+**Tests:** `compliance/cloud-link.test.ts › answers a start with the code and the address to approve it at, and sends the instance's id, name and the port of a listener of its own on 127.0.0.1`.
 
 ### `cloud/start-exists`
 
@@ -62,19 +62,19 @@ While a link is linking or linked, when a caller sends `POST /cloud/link`, the s
 
 ### `cloud/start-no-listener`
 
-While the server runs with no public listener, when a caller sends `POST /cloud/link`, the server MUST answer `409 no_public_listener` and send nothing to Marfa Cloud.
+While the server runs with only its control socket (`MARFA_CONTROL_ONLY`), when a caller sends `POST /cloud/link`, the server MUST answer `409 no_public_listener` and send nothing to Marfa Cloud.
 
-**Reason:** Marfa Cloud reaches the instance only through its public listener.
+**Reason:** such a server runs no background work and serves nothing over the network, so it could neither follow a link nor serve the traffic Marfa Cloud carries.
 
 **Tests:** `compliance/cloud-link.test.ts › refuses a start where the server has no public listener`.
 
-### `cloud/start-not-on-loopback`
+### `cloud/start-any-listen-host`
 
-While the server's public listener is bound to an address that `127.0.0.1` does not reach, being neither a loopback address of IPv4 nor an unspecified address, when a caller sends `POST /cloud/link`, the server MUST answer `409 no_public_listener` and send nothing to Marfa Cloud.
+When a caller sends `POST /cloud/link` while the public listener is bound to an address that `127.0.0.1` does not reach, the server MUST start the link as it would on any other address.
 
-**Reason:** Marfa Cloud's connector runs on the instance's machine and sends to `127.0.0.1` at the port the start sends.
+**Reason:** Marfa Cloud's connector reaches the tunnel listener on `127.0.0.1`, wherever the public listener is bound.
 
-**Tests:** `compliance/cloud-link.test.ts › refuses a start where the public listener is not reached at 127.0.0.1, which Marfa Cloud's connector sends to`.
+**Tests:** `compliance/cloud-link.test.ts › starts a link where the public listener is not reached at 127.0.0.1, and listens for the connector there`.
 
 ### `cloud/start-unavailable`
 
@@ -430,9 +430,77 @@ While a link is linked, the server MUST ask Marfa Cloud whether it still stands 
 
 **Tests:** `compliance/cloud-link.test.ts › notices a link ended on Marfa Cloud, puts back the sign-in address the link moved, and says why`, `› checks a linked link as it starts again, and notices it was ended on Marfa Cloud while it was stopped`.
 
+## The tunnel listener
+
+While a link is linking or linked, the server listens on `127.0.0.1` at the port the start sent as `origin_port`, beside its public listener. This is the tunnel listener, which Marfa Cloud's connector reaches, and it serves the same API as the public listener.
+
+### `cloud/tunnel-listener-open`
+
+While a link is linking or linked, the server MUST serve, on `127.0.0.1` at the link's `origin_port`, every request the public listener serves, event streams included.
+
+**Reason:** Marfa Cloud's connector carries the instance's traffic to that port.
+
+**Tests:** `compliance/cloud-link.test.ts › answers a start with the code and the address to approve it at, and sends the instance's id, name and the port of a listener of its own on 127.0.0.1`, `compliance/cloud-connector.test.ts › listens on 127.0.0.1 at a port of its own while linked, and serves an event stream through it`.
+
+### `cloud/tunnel-listener-port-kept`
+
+When the server starts again while a link is linking or linked, the server MUST listen for the connector at the `origin_port` the link started with.
+
+**Reason:** Marfa Cloud sends the link's traffic to the port the start sent, and has no way to be told another.
+
+**Tests:** `compliance/cloud-connector.test.ts › listens at the port the link started with when the server starts again`.
+
+### `cloud/tunnel-listener-port-taken`
+
+While a link is linked and another program holds the link's `origin_port` on `127.0.0.1`, the server MUST report the connector as `failed` with `reason` `port_taken` and not run it.
+
+**Reason:** the connector would carry the instance's traffic to the other program. The owner can unlink and link again for another port.
+
+**Tests:** `compliance/cloud-connector.test.ts › reports the connector as failed with reason port_taken while another program holds the tunnel listener's port, and runs it once the port is free`.
+
+### `cloud/tunnel-listener-port-freed`
+
+When the link's `origin_port` is free again after another program held it, the server MUST listen there and run the connector.
+
+**Tests:** `compliance/cloud-connector.test.ts › reports the connector as failed with reason port_taken while another program holds the tunnel listener's port, and runs it once the port is free`.
+
+### `cloud/tunnel-listener-closed-unlink`
+
+When a link is unlinked, the server MUST stop listening at its `origin_port` once the connector has stopped.
+
+**Tests:** `compliance/cloud-connector.test.ts › stops listening once the connector has stopped, when the link is unlinked and when Marfa Cloud ends it`.
+
+### `cloud/tunnel-listener-closed-ended`
+
+When Marfa Cloud ends a link, the server MUST stop listening at its `origin_port` once the connector has stopped.
+
+**Tests:** `compliance/cloud-connector.test.ts › stops listening once the connector has stopped, when the link is unlinked and when Marfa Cloud ends it`.
+
+### `cloud/tunnel-connections-total`
+
+The server MUST count each connection the tunnel listener holds open in the one total that `MARFA_MAX_CONNECTIONS` caps for the public listener, as `instance/connections-listener-cap` says.
+
+**Reason:** every connection takes a file descriptor, and the caps are what the server's open-file limit leaves room for.
+
+**Tests:** `compliance/cloud-connector.test.ts › holds the tunnel listener's connections in the public listener's cap, and counts a loopback peer by its address on the public listener alone`.
+
+### `cloud/tunnel-connections-per-address`
+
+The server MUST NOT count a connection to the tunnel listener against `MARFA_MAX_CONNECTIONS_PER_ADDRESS`.
+
+**Reason:** every connection to it comes from the connector, which carries many callers.
+
+**Tests:** `compliance/cloud-connector.test.ts › holds the tunnel listener's connections in the public listener's cap, and counts a loopback peer by its address on the public listener alone`.
+
+### `cloud/public-connections-per-address`
+
+While no trusted proxy setting includes a connection's peer, the server MUST count a connection to the public listener against `MARFA_MAX_CONNECTIONS_PER_ADDRESS` by its peer's address, whether or not a link is linked.
+
+**Tests:** `compliance/cloud-connector.test.ts › holds the tunnel listener's connections in the public listener's cap, and counts a loopback peer by its address on the public listener alone`.
+
 ## The connector
 
-While a link is linked, the server runs the tunnel connector `cloudflared`, which carries the instance's traffic from its name on Marfa Cloud to the public listener, and supervises it. The connector's state is in `GET /cloud/link` as `connector`.
+While a link is linked, the server runs the tunnel connector `cloudflared`, which carries the instance's traffic from its name on Marfa Cloud to the tunnel listener, and supervises it. The connector's state is in `GET /cloud/link` as `connector`.
 
 ### `cloud/connector-path-absolute`
 
@@ -626,31 +694,29 @@ When the answer to the request for the link's tunnel token is a `401` with any o
 
 **Tests:** `compliance/cloud-connector.test.ts › keeps the link when the answer to the request for a new tunnel token is a 401 that is not Marfa Cloud's own`.
 
-### `cloud/caller-address-linked`
+### `cloud/caller-address-tunnel`
 
-While a link is linked and no trusted proxy setting includes the request's peer, the server MUST read a caller's address from the `CF-Connecting-IP` header only when the request's peer is a loopback address, and the peer's address stands for any other request.
+When a request reaches the tunnel listener from a loopback peer, the server MUST read the caller's address from its `CF-Connecting-IP` header, whatever the trusted proxy settings say.
 
-**Reason:** the connector runs on the instance's machine and writes the address of the caller it carries into that header.
+**Reason:** the connector runs on the instance's machine and writes the address of the caller it carries into that header. The trusted proxy settings describe the routes to the public listener.
 
-**Tests:** `compliance/cloud-connector.test.ts › believes CF-Connecting-IP from loopback only while a link is linked`, `compliance/cloud-connector.test.ts › counts tunnel callers by their own address while a trusted proxy setting names another route`.
+**Tests:** `compliance/cloud-connector.test.ts › reads CF-Connecting-IP on the tunnel listener alone, and never on the public listener, linked or not`, `compliance/cloud-connector.test.ts › keeps the trusted proxy settings an owner gave to the public listener, and the tunnel listener to its own`, `compliance/cloud-connector.test.ts › counts tunnel callers by their own address while a trusted proxy setting names another route`.
 
-### `cloud/caller-address-unlinked`
+### `cloud/caller-address-public`
 
-While no link is linked and no trusted proxy setting names the header, the server MUST use the peer's address as the caller's address, whatever `CF-Connecting-IP` holds.
+While no trusted proxy setting includes a request's peer, the server MUST use the peer's address as the caller's address of a request to the public listener, whatever `CF-Connecting-IP` holds and whether or not a link is linked.
 
-**Tests:** `compliance/cloud-connector.test.ts › believes CF-Connecting-IP from loopback only while a link is linked`.
+**Tests:** `compliance/cloud-connector.test.ts › reads CF-Connecting-IP on the tunnel listener alone, and never on the public listener, linked or not`.
 
 ### `cloud/caller-address-configured`
 
-When `MARFA_TRUSTED_PROXY_CIDRS` includes a request's peer, the server MUST read the caller's address as `instance/proxy-header-trusted-peer` and `instance/proxy-forwarded-walk` say, whether or not a link is linked.
+When `MARFA_TRUSTED_PROXY_CIDRS` includes the peer of a request to the public listener, the server MUST read the caller's address as `instance/proxy-header-trusted-peer` and `instance/proxy-forwarded-walk` say, whether or not a link is linked.
 
-**Reason:** an owner who told the server which proxy to believe is believed over what the link assumes, and a setting for a route that does not include loopback leaves the connector's requests to the link's rule.
-
-**Tests:** `compliance/cloud-connector.test.ts › keeps the trusted proxy settings an owner gave over the link's`.
+**Tests:** `compliance/cloud-connector.test.ts › keeps the trusted proxy settings an owner gave to the public listener, and the tunnel listener to its own`.
 
 ### `cloud/caller-address-until-stopped`
 
-When a link ends, the server MUST keep reading a caller's address from the `CF-Connecting-IP` header of a loopback request until the connector has stopped.
+When a link ends, the server MUST keep reading a caller's address from the `CF-Connecting-IP` header of a request to the tunnel listener until the connector has stopped.
 
 **Reason:** the connector still carries requests while it stops, and read as loopback they would count against the owner's own address.
 
@@ -658,11 +724,17 @@ When a link ends, the server MUST keep reading a caller's address from the `CF-C
 
 ### `cloud/caller-address-limits`
 
-While a link is linked, when requests reach the server through the connector, the server MUST count the sign-in attempts and the other limits of each caller against the address in `CF-Connecting-IP` and not against loopback.
+When requests reach the tunnel listener, the server MUST count the sign-in attempts and the other limits of each caller against the address in `CF-Connecting-IP` and not against loopback.
 
 **Reason:** every caller then shares the loopback address, so one stranger's wrong passwords would lock the owner out.
 
 **Tests:** `compliance/cloud-connector.test.ts › counts a stranger's wrong passwords through the tunnel against the stranger's address, not loopback`.
+
+### `cloud/limits-public-peer`
+
+While no trusted proxy setting includes a request's peer, the server MUST count the sign-in attempts and the other limits of a request to the public listener against the peer's address, whatever `CF-Connecting-IP` holds.
+
+**Tests:** `compliance/cloud-connector.test.ts › counts wrong passwords sent to the public listener against their peer, never against the address a CF-Connecting-IP header names`.
 
 ## Reading a link
 

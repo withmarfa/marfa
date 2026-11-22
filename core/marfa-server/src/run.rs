@@ -15,10 +15,10 @@ use crate::app::{App, blocking, cloud, housekeeping, jobs, take_files, updates, 
 use crate::control_socket::Claim;
 use crate::failure::Failure;
 use crate::http;
-use crate::http::Caps;
 use crate::http::listening::{
     CONTROL_HEADER_READ_TIMEOUT, PUBLIC_HEADER_READ_TIMEOUT, Socket, Tcp,
 };
+use crate::http::{Caps, Entrance, Gate};
 use crate::listener::Declaration;
 use crate::open_files;
 use crate::settings::Accepted;
@@ -100,12 +100,7 @@ fn caps(app: &App) -> Caps {
     } else {
         tracing::info!(open_files, total, per_address, "Connection caps");
     }
-    Caps {
-        total,
-        per_address,
-        trust: start.public_listener.trust.clone(),
-        tunnel: app.cloud.tunnel().clone(),
-    }
+    Caps { total, per_address }
 }
 
 fn listen(
@@ -115,13 +110,33 @@ fn listen(
     private: UnixListener,
 ) {
     if let Some(listener) = public {
+        let gate = Gate::new(caps(app));
+        let public = app.settings.start.public_listener.clone();
         servers.spawn(http::serve(
-            Tcp::new(listener, app.settings.start.public_listener.name),
+            Tcp::new(listener, public.name),
             http::public(app.clone()),
             stopped(app.stopping()),
             PUBLIC_HEADER_READ_TIMEOUT,
-            Some(caps(app)),
+            Some(Entrance {
+                gate: gate.clone(),
+                trust: public.trust,
+            }),
         ));
+        // The tunnel listener shares the public listener's caps, which fit the open-file limit.
+        cloud::tunnel::install(app, move |app, listener, stop| {
+            let tunnel = Declaration::tunnel();
+            let entrance = Entrance {
+                gate: gate.clone(),
+                trust: tunnel.trust.clone(),
+            };
+            Box::pin(http::serve(
+                Tcp::new(listener, tunnel.name),
+                http::public_on(app, tunnel),
+                stop,
+                PUBLIC_HEADER_READ_TIMEOUT,
+                Some(entrance),
+            ))
+        });
     }
     servers.spawn(http::serve(
         Socket::new(private, Declaration::control().name),

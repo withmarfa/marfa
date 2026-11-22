@@ -24,7 +24,7 @@ use tokio::sync::{Notify, Semaphore, watch};
 use tokio::task::JoinSet;
 use tower::ServiceExt;
 
-use super::connections::{self, Caps, Gate};
+use super::connections::{self, Entrance};
 
 /// Long enough for a server out of file descriptors not to spin.
 const ACCEPT_PAUSE: Duration = Duration::from_millis(250);
@@ -89,9 +89,8 @@ pub async fn serve<L: Source>(
     router: Router,
     stop: impl Future<Output = ()> + Send + 'static,
     header_read_timeout: Duration,
-    caps: Option<Caps>,
+    entrance: Option<Entrance>,
 ) -> io::Result<()> {
-    let gate = caps.map(Gate::new);
     let turned_away: Arc<[u8]> = connections::turned_away().into();
     let refusals = Arc::new(Semaphore::new(MOST_REFUSALS_AT_ONCE));
     let (stopping, _) = watch::channel(false);
@@ -104,7 +103,7 @@ pub async fn serve<L: Source>(
             () = &mut stop => break,
         };
         let peer = L::peer(&address);
-        let slot = match gate.as_ref().map(|gate| gate.enter(peer)) {
+        let slot = match entrance.as_ref().map(|entrance| entrance.enter(peer)) {
             Some(Err(turned)) => {
                 tracing::debug!(?turned, "A connection was turned away");
                 turn_away(stream, turned_away.clone(), &refusals);
@@ -489,18 +488,19 @@ mod tests {
     async fn a_listener_at_its_total_turns_a_connection_away_and_serves_again_once_one_ends() {
         let dir = TempDir::new().unwrap();
         let (connect, incoming) = mpsc::unbounded_channel();
-        let caps = Caps {
-            total: 2,
-            per_address: 2,
+        let entrance = connections::Entrance {
+            gate: connections::Gate::new(connections::Caps {
+                total: 2,
+                per_address: 2,
+            }),
             trust: Trust::Nothing,
-            tunnel: crate::listener::Tunnel::default(),
         };
         let server = tokio::spawn(serve(
             Memory(incoming),
             router(&dir, "10.0.0.0/8").await,
             std::future::pending(),
             PUBLIC_HEADER_READ_TIMEOUT,
-            Some(caps),
+            Some(entrance),
         ));
         let open = |peer: &str| {
             let (near, far) = duplex(4096);
@@ -529,18 +529,19 @@ mod tests {
     async fn an_address_at_its_share_is_turned_away_and_another_address_is_served() {
         let dir = TempDir::new().unwrap();
         let (connect, incoming) = mpsc::unbounded_channel();
-        let caps = Caps {
-            total: 10,
-            per_address: 1,
+        let entrance = connections::Entrance {
+            gate: connections::Gate::new(connections::Caps {
+                total: 10,
+                per_address: 1,
+            }),
             trust: Trust::Nothing,
-            tunnel: crate::listener::Tunnel::default(),
         };
         let server = tokio::spawn(serve(
             Memory(incoming),
             router(&dir, "10.0.0.0/8").await,
             std::future::pending(),
             PUBLIC_HEADER_READ_TIMEOUT,
-            Some(caps),
+            Some(entrance),
         ));
         let open = |peer: &str| {
             let (near, far) = duplex(4096);

@@ -13621,10 +13621,11 @@
                 "type": "string",
                 "enum": [
                   "missing",
+                  "port_taken",
                   "refused",
                   "token"
                 ],
-                "description": "Why a `failed` connector can't run: `missing` (no connector file the server can run), `refused` (Marfa Cloud refuses its tunnel token and has no newer one) or `token` (the server can't read or write the token file)."
+                "description": "Why a `failed` connector can't run: `missing` (no connector file the server can run), `port_taken` (another program holds the port on 127.0.0.1 where Marfa listens for the connector), `refused` (Marfa Cloud refuses its tunnel token and has no newer one) or `token` (the server can't read or write the token file)."
               },
               "since": {
                 "type": "string",
@@ -75354,7 +75355,7 @@
             }
           },
           "409": {
-            "description": "- `cloud_link_exists`: a link is linking or linked.\n- `conflict`: the instance changed during the start. Send it again.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance.\n- `no_public_listener`: this server has no public listener on 127.0.0.1.\n- `sign_in_address_change_unconfirmed`: the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists the effects.",
+            "description": "- `cloud_link_exists`: a link is linking or linked.\n- `conflict`: the instance changed during the start. Send it again.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance.\n- `no_public_listener`: this server runs with only its control socket.\n- `sign_in_address_change_unconfirmed`: the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists the effects.",
             "content": {
               "application/json": {
                 "schema": {

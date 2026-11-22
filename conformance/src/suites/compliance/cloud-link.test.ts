@@ -1050,7 +1050,7 @@ describe("the sign-in address", () => {
   it(
     "takes a confirmed move as done where the sign-in address is already the Cloud address, and writes and records nothing for it",
     async () => {
-      const { linkable, linked } = await movedLink("cloud-move-already");
+      const { linkable } = await movedLink("cloud-move-already");
       // The witness: a move from another address is recorded.
       const moves = await audited(linkable, "cloud.sign_in_address_move");
       expect(moves).toHaveLength(1);
@@ -1060,6 +1060,11 @@ describe("the sign-in address", () => {
         "/cloud/link?confirm_sign_in_address_change=true",
       );
       expect(unlinked.status, JSON.stringify(unlinked.body)).toBe(200);
+      // A Cloud address that answers as this instance with no link in place.
+      const cloudAddress = await gate(linkable.server.apiUrl);
+      cleanups.push(() => cloudAddress.close());
+      cloudAddress.open();
+      const linked = { address: cloudAddress.address };
       const set = await linkable.call("socket", "PATCH", "/config", {
         sign_in_address: linked.address,
         confirm_sign_in_address_change: true,
