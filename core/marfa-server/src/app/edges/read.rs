@@ -45,25 +45,27 @@ pub struct ItemListing {
 #[derive(Debug, PartialEq, Eq)]
 enum Kinds {
     Every,
-    Only(Vec<String>),
+    Named(Vec<String>),
+    Read {
+        read: Vec<String>,
+        catalog: Vec<String>,
+    },
 }
 
 fn kinds_read(catalog: &Catalog, asked: &[String], reads: impl Fn(&str) -> bool) -> Kinds {
     if !asked.is_empty() {
-        return Kinds::Only(asked.iter().filter(|kind| reads(kind)).cloned().collect());
+        return Kinds::Named(asked.iter().filter(|kind| reads(kind)).cloned().collect());
     }
-    let mut every = 0;
-    let mut read: Vec<String> = catalog
-        .edge_kinds()
-        .inspect(|_| every += 1)
-        .filter(|kind| reads(&kind.id))
-        .map(|kind| kind.id.clone())
-        .collect();
-    if read.len() == every {
+    let mut every: Vec<String> = catalog.edge_kinds().map(|kind| kind.id.clone()).collect();
+    every.sort();
+    let read: Vec<String> = every.iter().filter(|kind| reads(kind)).cloned().collect();
+    if read.len() == every.len() {
         return Kinds::Every;
     }
-    read.sort();
-    Kinds::Only(read)
+    Kinds::Read {
+        read,
+        catalog: every,
+    }
 }
 
 fn readable(tx: &Transaction<'_>, caller: &Caller, edge: &Edge) -> Result<bool> {
@@ -90,15 +92,17 @@ fn page_of(
     scope: &str,
 ) -> Result<(Vec<String>, Option<String>)> {
     let (tx, caller) = (read.tx, &read.caller);
-    let kinds = match kinds_read(&read.catalog, asked.edge_types, |edge_type| {
+    let (kinds, catalog) = match kinds_read(&read.catalog, asked.edge_types, |edge_type| {
         caller.may_read_edge_type(edge_type)
     }) {
-        Kinds::Every => Vec::new(),
-        Kinds::Only(kinds) if kinds.is_empty() => return Ok((Vec::new(), None)),
-        Kinds::Only(kinds) => kinds,
+        Kinds::Every => (Vec::new(), Vec::new()),
+        Kinds::Named(kinds) if kinds.is_empty() => return Ok((Vec::new(), None)),
+        Kinds::Named(kinds) => (kinds, Vec::new()),
+        Kinds::Read { read, catalog } => (read, catalog),
     };
     let wider = Page {
         edge_types: &kinds,
+        catalog_types: &catalog,
         limit: asked.limit + 1,
         ..*asked
     };
@@ -163,6 +167,7 @@ pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String
                 from: None,
                 to: None,
                 edge_types: &listing.edge_types,
+                catalog_types: &[],
                 updated_after: listing.updated_after.as_deref(),
                 updated_before: listing.updated_before.as_deref(),
                 after: after.as_ref(),
@@ -214,6 +219,7 @@ pub async fn of_item(
                 from,
                 to,
                 edge_types: &listing.edge_types,
+                catalog_types: &[],
                 updated_after: None,
                 updated_before: None,
                 after: after.as_ref(),
@@ -273,6 +279,7 @@ pub(crate) fn hydrate(
             from,
             to,
             edge_types: &only,
+            catalog_types: &[],
             updated_after: None,
             updated_before: None,
             after: None,
@@ -326,23 +333,31 @@ mod tests {
         let catalog = Catalog::shipped();
         let shipped = catalog.edge_kinds().count();
         assert!(shipped > 2, "{shipped} shipped edge types");
+        let mut every: Vec<String> = catalog.edge_kinds().map(|kind| kind.id.clone()).collect();
+        every.sort();
         assert_eq!(kinds_read(&catalog, &[], |_| true), Kinds::Every);
         assert_eq!(
             kinds_read(&catalog, &[], |edge_type| edge_type == "references"),
-            Kinds::Only(names(&["references"]))
+            Kinds::Read {
+                read: names(&["references"]),
+                catalog: every.clone()
+            }
         );
         assert_eq!(
             kinds_read(&catalog, &[], |_| false),
-            Kinds::Only(Vec::new())
+            Kinds::Read {
+                read: Vec::new(),
+                catalog: every
+            }
         );
         let asked = names(&["references", "attached-to", "mock.unknown"]);
         assert_eq!(
             kinds_read(&catalog, &asked, |edge_type| edge_type != "attached-to"),
-            Kinds::Only(names(&["references", "mock.unknown"]))
+            Kinds::Named(names(&["references", "mock.unknown"]))
         );
         assert_eq!(
             kinds_read(&catalog, &asked, |_| false),
-            Kinds::Only(Vec::new())
+            Kinds::Named(Vec::new())
         );
     }
 }

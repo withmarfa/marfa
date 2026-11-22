@@ -1940,7 +1940,7 @@ While an edge's type is not registered, the server MUST return the edge from `GE
 
 **Reason:** a forced delete keeps the edges (`edges/types-delete-force-keeps`), and an edge nothing can describe is still an edge a person made. An edge restored under an edge type that is not registered is read the same way (`archive/restore-edges-unregistered`).
 
-**Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
+**Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`, `compliance/edge-types.test.ts › lists an edge whose type a forced delete removed to a key whose edge map reads every edge type but one, on every edge door, as GET /edges/{id} reads it`.
 
 ### `edges/types-delete-unused`
 
