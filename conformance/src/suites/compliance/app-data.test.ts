@@ -1151,9 +1151,12 @@ describe("a vendor's data and the caller's type map", () => {
 
   it("refuses a key whose map reads but cannot write the vendor's types its removal and remove_data, and changes nothing", async () => {
     const { vendor, signed, items, types } = await appWithData();
-    const reader = await mint(["grants.manage", "items.purge", "schema.write"], {
-      [`${vendor}.*`]: "read",
-    });
+    const reader = await mint(
+      ["grants.manage", "items.purge", "schema.write"],
+      {
+        [`${vendor}.*`]: "read",
+      },
+    );
     // The witness: the key reads every type under the vendor.
     expect(ids(await dataOf(reader, vendor))).toEqual(items);
 
@@ -1321,9 +1324,12 @@ describe("repeating a marfa_app_data confirmation", () => {
     const setting = `${vendor}.setting`;
     await registerType(signed.token, setting);
     await createItem(signed.token, setting, "one");
-    const narrow = await mint(["grants.manage", "items.purge", "schema.write"], {
-      [setting]: "write",
-    });
+    const narrow = await mint(
+      ["grants.manage", "items.purge", "schema.write"],
+      {
+        [setting]: "write",
+      },
+    );
     const mcp = await connectMcp(
       server.apiUrl,
       narrow,
