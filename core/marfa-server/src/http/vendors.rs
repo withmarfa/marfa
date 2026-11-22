@@ -7,12 +7,12 @@ use serde_json::{Value, json};
 use super::answer::{Answer, json_answer};
 use super::body::JsonBody;
 use super::caller::OwnerOrCredential;
+use super::trash::{limit_of, named_in};
 use super::{named_instance, query};
 use crate::app::App;
 use crate::app::refusal::{Code, Refusal};
-use crate::app::vendors;
 use crate::app::vendor_data;
-use super::trash::{limit_of, named_in};
+use crate::app::vendors;
 
 const FIELDS: [&str; 1] = ["client_id"];
 const DATA_PAGE: i64 = 25;

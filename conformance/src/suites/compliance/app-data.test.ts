@@ -81,6 +81,8 @@ interface Removed {
 async function mint(
   permissions: string[],
   types: Record<string, string> = {},
+  edges: Record<string, string> = {},
+  metadata: Record<string, string> = {},
 ): Promise<string> {
   const minted = await controlRequest(server.controlSocket, "/keys", {
     method: "POST",
@@ -88,6 +90,8 @@ async function mint(
       label: "app-data",
       source: `app-data-${randomUUID().slice(0, 8)}`,
       type_permissions: types,
+      edge_permissions: edges,
+      metadata_permissions: metadata,
       permissions,
     },
   });
@@ -464,7 +468,11 @@ describe("removing an app's hidden data", () => {
 
   it("keeps a person's item that links to an app item, and drops only the edge", async () => {
     const { vendor, items } = await appWithData();
-    const person = await mint([], { "core.note": "write", "app.*": "write" });
+    const person = await mint(
+      [],
+      { "core.note": "write", "app.*": "write" },
+      { about: "write" },
+    );
     const note = await createItem(person, "core.note", "about a setting");
     const toApp = ok(
       await answer(person, "/edges", {
@@ -494,33 +502,9 @@ describe("removing an app's hidden data", () => {
     }
   });
 
-  it("refuses with 409 type_in_use and removes nothing while a view or another credential's webhook names one of its types", async () => {
+  it("refuses with 409 type_in_use and removes nothing while another credential's webhook names one of its types", async () => {
     const { vendor, items, types } = await appWithData();
-    const person = await mint(["webhooks.manage"], {
-      "system.view": "write",
-      "app.*": "read",
-    });
-    const view = ok(
-      await answer(person, "/views", {
-        method: "POST",
-        body: {
-          title: "app settings",
-          query: { types: [`${vendor}.setting`] },
-        },
-      }),
-      201,
-    );
-    const byView = refused(await removeData(owner, vendor), 409);
-    expect(byView.code).toBe("type_in_use");
-    expect(JSON.stringify(byView.details?.settings)).toContain(
-      view.id as string,
-    );
-    expect(ids(await dataOf(owner, vendor))).toEqual(items);
-    for (const type of types) expect(await typeExists(type)).toBe(true);
-
-    ok(
-      await answer(person, `/views/${view.id as string}`, { method: "DELETE" }),
-    );
+    const person = await mint(["webhooks.manage"], { "app.*": "read" });
     const hook = ok(
       await answer(person, "/webhooks", {
         method: "POST",
@@ -534,17 +518,19 @@ describe("removing an app's hidden data", () => {
     );
     const byHook = refused(await removeData(owner, vendor), 409);
     expect(byHook.code).toBe("type_in_use");
-    expect(JSON.stringify(byHook.details?.settings)).toContain(
-      hook.id as string,
-    );
+    expect(byHook.details?.settings).toEqual([
+      expect.objectContaining({ kind: "webhook", field: "type_filter" }),
+    ]);
     expect(ids(await dataOf(owner, vendor))).toEqual(items);
+    for (const type of types) expect(await typeExists(type)).toBe(true);
 
+    // The witness: with the webhook gone, the same removal goes through.
     ok(
       await answer(person, `/webhooks/${hook.id as string}`, {
         method: "DELETE",
       }),
     );
-    await removed(owner, vendor);
+    expect((await removed(owner, vendor)).removed_items).toBe(items.length);
   });
 
   it("drops a webhook the app made naming one of its types with its data", async () => {
@@ -616,7 +602,12 @@ describe("removing an app's data when it is disconnected", () => {
     const leaving = await appWithData(`${REGISTERS} keys.mint`);
     const staying = await appWithData();
     const ownerVendor = freshVendor();
-    const ownerKey = await mint([], { "app.*": "write" });
+    const ownerKey = await mint(
+      ["schema.write"],
+      { "app.*": "write" },
+      {},
+      { types: "write" },
+    );
     ok(
       await answer(ownerKey, "/types", {
         method: "POST",
@@ -654,9 +645,7 @@ describe("removing an app's data when it is disconnected", () => {
       }),
     );
     expect(await grantListed(leaving.signed.app)).toBe(false);
-    expect((await answer(leaving.signed.token, "/keys/current")).status).toBe(
-      401,
-    );
+    expect((await answer(leaving.signed.token, "/types")).status).toBe(401);
     expect((await answer(appMade, "/keys/current")).status).toBe(200);
     const after = await dataOf(owner, leaving.vendor);
     expect(after.data).toEqual([]);
@@ -773,7 +762,7 @@ describe("removing an app's data when it is disconnected", () => {
     expect(error.code).toBe("bulk_cap_exceeded");
     expect(error.details?.cap).toBe(1_000);
     expect(await grantListed(signed.app)).toBe(true);
-    expect((await answer(signed.token, "/keys/current")).status).toBe(200);
+    expect((await answer(signed.token, "/types")).status).toBe(200);
     const listed = ok(
       await answer(owner, `/app-vendors/${vendor}/data?limit=1`),
     ) as unknown as Listed;

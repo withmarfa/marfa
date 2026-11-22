@@ -794,7 +794,10 @@ pub fn versions_of_types(
 }
 
 /// How many items of each of `types` stand in each state.
-pub fn counts_of_types(tx: &Transaction<'_>, types: &[String]) -> Result<Vec<(String, String, i64)>> {
+pub fn counts_of_types(
+    tx: &Transaction<'_>,
+    types: &[String],
+) -> Result<Vec<(String, String, i64)>> {
     rows::counts_of_types(tx, types)
 }
 

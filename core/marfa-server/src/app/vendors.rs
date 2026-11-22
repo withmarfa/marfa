@@ -284,7 +284,10 @@ pub async fn listed(app: &App, caller: &Caller) -> Result<Vec<Value>> {
     app.db
         .read(move |tx| {
             caller.current(tx, &at)?.require_vendor_door()?;
-            list(tx)?.iter().map(|binding| listed_with_name(tx, binding)).collect()
+            list(tx)?
+                .iter()
+                .map(|binding| listed_with_name(tx, binding))
+                .collect()
         })
         .await
 }

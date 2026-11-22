@@ -258,7 +258,9 @@ pub async fn remove(app: &App, caller: &Caller, vendor: String) -> Result<Value>
     let cache = app.catalog_handle();
     let named = vendor.clone();
     let removal = app
-        .write(caller, REMOVED, move |unit| remove_in(unit, &cache, &vendor))
+        .write(caller, REMOVED, move |unit| {
+            remove_in(unit, &cache, &vendor)
+        })
         .await?;
     if removal.types > 0 {
         app.publish_catalog().await;
@@ -269,4 +271,25 @@ pub async fn remove(app: &App, caller: &Caller, vendor: String) -> Result<Value>
         "removed_types": removal.types,
         "remaining_items": removal.remaining,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_type_counts_its_items_by_state_and_a_type_with_none_counts_zero() {
+        let types = vec!["app.acme.a".to_string(), "app.acme.b".to_string()];
+        let counts = vec![
+            ("app.acme.a".to_string(), "active".to_string(), 2),
+            ("app.acme.a".to_string(), "trashed".to_string(), 1),
+        ];
+        assert_eq!(
+            counts_json(&types, &counts),
+            vec![
+                json!({ "type": "app.acme.a", "active": 2, "archived": 0, "trashed": 1 }),
+                json!({ "type": "app.acme.b", "active": 0, "archived": 0, "trashed": 0 }),
+            ]
+        );
+    }
 }

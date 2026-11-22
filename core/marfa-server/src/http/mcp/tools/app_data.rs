@@ -18,8 +18,10 @@ use crate::http::mcp::results::Outcome;
 pub const NAME: &str = app_data::TOOL;
 
 const PREVIEW_NEXT: &str = "Nothing has been deleted. Deleting removes for good every item of these types in every state, the trash included, and then the types themselves; items of other types that point at them keep their item and lose the link. Only a backup taken before brings them back: run marfa_take_backup first if the person may want them. Show the person and ask; only if they agree, call marfa_app_data again with the same vendor and confirm.";
-const READ_ONLY: &str = "Deleting this data needs items.purge, which this credential does not hold.";
-const REMOVED_ALL: &str = "Deleted. The vendor's items and types are gone; the vendor stays with the app that holds it.";
+const READ_ONLY: &str =
+    "Deleting this data needs items.purge, which this credential does not hold.";
+const REMOVED_ALL: &str =
+    "Deleted. The vendor's items and types are gone; the vendor stays with the app that holds it.";
 const REMOVED_PART: &str = "Deleted one page of the vendor's items. Preview again and confirm to delete the rest; the types go with the last page.";
 const REPEATED: &str = "This confirmation already did this. This call changed nothing.";
 const STALE: &str = "This confirmation does not hold for this vendor. This call changed nothing. Preview again to get a new confirmation.";
@@ -83,7 +85,9 @@ async fn preview(app: &App, caller: &Caller, vendor: &str) -> Outcome {
     body.insert("expires_at".into(), token.expires_at.text().into());
     let mut next = PREVIEW_NEXT.to_string();
     if held.items > MOST_REMOVED {
-        next.push_str(" One confirmation deletes the first 1,000 items; preview again for the rest.");
+        next.push_str(
+            " One confirmation deletes the first 1,000 items; preview again for the rest.",
+        );
     }
     body.insert("next".into(), next.into());
     Ok(Value::Object(body))

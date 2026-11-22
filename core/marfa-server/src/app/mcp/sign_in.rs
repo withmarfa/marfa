@@ -354,9 +354,7 @@ pub async fn end_confirmed(
         },
         move |unit: &Unit<'_, '_>| {
             let ended = match kind {
-                Kind::Browser => {
-                    sign_ins::end_in(unit, &cache, &id, Ending::default(), &visit)?
-                }
+                Kind::Browser => sign_ins::end_in(unit, &cache, &id, Ending::default(), &visit)?,
                 Kind::App if unit.caller.holds(Permission::SignInsManage) => {
                     sign_ins::end_in(unit, &cache, &id, asked, &visit)?
                 }

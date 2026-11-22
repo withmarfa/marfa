@@ -358,7 +358,12 @@ pub(crate) fn purge_of_types(
             claim: None,
             server_own: false,
         };
-        let rows = rows::of_types(unit.tx(), types, None, i64::try_from(limit).unwrap_or(i64::MAX))?;
+        let rows = rows::of_types(
+            unit.tx(),
+            types,
+            None,
+            i64::try_from(limit).unwrap_or(i64::MAX),
+        )?;
         let walk = plan::rows_walk(unit.tx(), rows)?;
         let done = job.purged_walk(&walk)?;
         index::settle(unit.tx(), &job.catalog.rules)?;

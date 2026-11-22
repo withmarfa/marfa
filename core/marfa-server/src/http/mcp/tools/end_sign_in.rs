@@ -28,7 +28,8 @@ const APP_NEXT: &str = "Nothing has been ended. Ending this app ends its access 
 const PASSKEY_NEXT: &str = "Nothing has been removed. Removing this passkey means it can no longer sign the owner in. This cannot be undone: the owner adds a new passkey from a browser.";
 const OWN: &str = "This is the credential making this call. Ending it ends this connection at /mcp, /mcp/schema and /mcp/admin alike, so no call after the confirming one works until the app is connected again.";
 const DATA_GOES: &str = "With remove_data, every item of the app's own data in every state, the trash included, and the types it registered are deleted for good, and only a backup taken before brings them back: run marfa_take_backup first if the person may want them. Items of other types that point at them keep their item and lose the link.";
-const DATA_KEPT: &str = "The app's own data stays. To delete it with the app, preview again with remove_data.";
+const DATA_KEPT: &str =
+    "The app's own data stays. To delete it with the app, preview again with remove_data.";
 const KEYS_KEPT: &str =
     "The app's keys keep working. To revoke them with the app, preview again with revoke_keys.";
 const UNBOUND: &str = "Token chains are counted as they stand now. The app refreshes them and is issued codes as it works, and events are queued for its webhooks as items change, so the confirmation does not cover them: ending the app ends every token chain and unredeemed code it has, and every delivery queued for its webhooks, when it happens.";
@@ -228,7 +229,12 @@ pub async fn run(
         Some("passkey") => Named::Passkey,
         _ => Named::SignIn,
     };
-    let flag = |name: &str| arguments.get(name).and_then(Value::as_bool).unwrap_or(false);
+    let flag = |name: &str| {
+        arguments
+            .get(name)
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
     let asked = Ending {
         revoke_keys: flag("revoke_keys"),
         remove_data: flag("remove_data"),

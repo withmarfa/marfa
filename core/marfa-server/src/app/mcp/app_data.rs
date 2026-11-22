@@ -45,7 +45,9 @@ pub async fn remove_confirmed(
                 }) => return Ok(None),
                 Err(refused) => return Err(refused),
             };
-            Ok(Some(vendor_data::held(unit.tx(), &reading, &holder)?.digest))
+            Ok(Some(
+                vendor_data::held(unit.tx(), &reading, &holder)?.digest,
+            ))
         },
         move |unit| {
             let removal = vendor_data::remove_in(unit, &cache, &vendor)?;
