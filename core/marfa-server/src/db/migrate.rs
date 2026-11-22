@@ -72,6 +72,11 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0009_cloud_link.sql"),
         done: None,
     },
+    Migration {
+        version: 10,
+        sql: include_str!("migrations/0010_connector_sign_ins.sql"),
+        done: Some("SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE name = 'connector_sign_ins')"),
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

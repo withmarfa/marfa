@@ -27,6 +27,10 @@ const UNPUBLISHED: &[(&str, &str)] = &[
     ),
     ("GET /openapi.json", "the document itself"),
     (
+        "GET /connect/oauth/callback",
+        "where a provider sends the owner's browser back from a connector's sign-in, which its state authorizes",
+    ),
+    (
         "GET /.well-known/oauth-authorization-server",
         "RFC 8414 discovery",
     ),

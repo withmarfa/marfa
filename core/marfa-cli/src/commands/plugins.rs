@@ -49,6 +49,9 @@ pub enum PluginsCommand {
         #[command(subcommand)]
         command: MappingCommand,
     },
+    /// Start a plugin connector's sign-in to its provider and print the address to open in a browser, where the owner signs in; nothing is opened for you. With `--wait`, stay until the browser finishes this sign-in, printing a second line, or it fails, expires or a later start replaces it. Requires `connectors.manage`, and the connector's client ID and client secret set.
+    #[command(name = "sign-in")]
+    SignIn(SignInArgs),
     /// Judge a plugin's source folder as installing it would, with no server: `common.*` types are taken, and the roots kept for Marfa, apps and the owner are refused.
     Check {
         /// The source folder, holding `plugin.json`, `types/` and `edge-types/`.
@@ -148,6 +151,18 @@ pub struct SecretArgs {
     pub value: Option<String>,
 }
 
+#[derive(Debug, Args)]
+pub struct SignInArgs {
+    /// The plugin's name.
+    pub name: String,
+    /// A path on the server, or an address on its sign-in address, to send the browser to once the sign-in finishes.
+    #[arg(long, value_name = "PATH")]
+    pub return_to: Option<String>,
+    /// Stay until the browser finishes this sign-in, and exit 0 once the token is set. Exits 1 if it fails, expires or a later start replaces it.
+    #[arg(long)]
+    pub wait: bool,
+}
+
 pub fn list_request() -> Request {
     Request::get(&["plugins"])
 }
@@ -171,6 +186,18 @@ pub fn settings_request(name: &str) -> Request {
 
 pub fn update_settings_request(name: &str, body: Value) -> Request {
     Request::patch(&["plugins", name, "connector", "settings"]).json(body)
+}
+
+pub fn sign_in_request(name: &str, return_to: Option<&str>) -> Request {
+    let body = match return_to {
+        Some(back) => serde_json::json!({ "return_to": back }),
+        None => serde_json::json!({}),
+    };
+    Request::post(&["plugins", name, "connector", "sign-in"]).json(body)
+}
+
+pub fn sign_in_status_request(name: &str) -> Request {
+    Request::get(&["plugins", name, "connector", "sign-in"])
 }
 
 pub fn assign_request(name: &str, host: Option<&str>) -> Request {
@@ -298,6 +325,7 @@ pub fn run(
             });
         }
         PluginsCommand::Mapping { command } => return mapping(command, remote, out),
+        PluginsCommand::SignIn(args) => return sign_in(&remote()?, args, out),
         _ => return run_offline(command, out),
     };
     let remote = remote()?;
@@ -307,6 +335,54 @@ pub fn run(
         PluginsCommand::Remove { .. } => out.report(&answer, removed_words),
         PluginsCommand::Settings(_) => out.report(&answer, settings_words),
         _ => out.value(&answer),
+    }
+}
+
+/// How often `--wait` reads whether the sign-in finished.
+const SIGN_IN_STEP: Duration = Duration::from_secs(2);
+
+fn sign_in(remote: &Remote, args: &SignInArgs, out: &Printer) -> Result<(), CliError> {
+    let started = remote.json(&sign_in_request(&args.name, args.return_to.as_deref()))?;
+    out.record(&started, |shown| {
+        format!(
+            "Open this address in a browser to sign in:\n{}",
+            shown["url"].as_str().unwrap_or_default()
+        )
+    })?;
+    if !args.wait {
+        return Ok(());
+    }
+    let Some(own) = started["id"].as_str() else {
+        return Err(CliError::Invalid(
+            "the server answered a sign-in's start with no id".into(),
+        ));
+    };
+    loop {
+        std::thread::sleep(SIGN_IN_STEP);
+        let status = remote.json(&sign_in_status_request(&args.name))?;
+        if status["id"].as_str() != Some(own) {
+            return Err(CliError::SignInEnded {
+                plugin: args.name.clone(),
+                status: "replaced".into(),
+            });
+        }
+        match status["status"].as_str() {
+            Some("pending") => {}
+            Some("signed_in") => {
+                return out.record(&status, |_| format!("signed in {}", args.name));
+            }
+            Some(ended) => {
+                return Err(CliError::SignInEnded {
+                    plugin: args.name.clone(),
+                    status: ended.to_string(),
+                });
+            }
+            None => {
+                return Err(CliError::Invalid(
+                    "the server answered a sign-in with no status".into(),
+                ));
+            }
+        }
     }
 }
 

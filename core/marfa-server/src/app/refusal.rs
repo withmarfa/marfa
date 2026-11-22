@@ -97,6 +97,8 @@ codes! {
     Conflict = "conflict", 409;
     ConnectorHeld = "connector_held", 409;
     ConnectorMappingStale = "connector_mapping_stale", 409;
+    ConnectorSignInNotDeclared = "connector_sign_in_not_declared", 409;
+    ConnectorSignInSettingsMissing = "connector_sign_in_settings_missing", 409;
     ConnectorSourceHeld = "connector_source_held", 409;
     CopiesBelowMinimum = "copies_below_minimum", 409;
     BackupFilesMissing = "backup_files_missing", 409;

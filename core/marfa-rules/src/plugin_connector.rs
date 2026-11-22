@@ -579,6 +579,38 @@ impl Setting {
     }
 }
 
+/// The `sign_in` a checked connector section declares.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignIn {
+    pub provider: String,
+    pub scopes: Vec<String>,
+    pub client_id_setting: String,
+    pub client_secret_setting: String,
+    pub token_setting: String,
+}
+
+/// `Some(None)` when the section declares no sign-in; `None` when it is not one the install check passed.
+pub fn sign_in(section: &Obj) -> Option<Option<SignIn>> {
+    let Some(held) = section.get("sign_in") else {
+        return Some(None);
+    };
+    let held = held.as_object()?;
+    let text = |key: &str| held.get(key).and_then(Value::as_str).map(str::to_string);
+    let scopes = held
+        .get("scopes")?
+        .as_array()?
+        .iter()
+        .map(|scope| scope.as_str().map(str::to_string))
+        .collect::<Option<Vec<_>>>()?;
+    Some(Some(SignIn {
+        provider: text("provider").filter(|word| PROVIDERS.contains(&word.as_str()))?,
+        scopes,
+        client_id_setting: text("client_id_setting")?,
+        client_secret_setting: text("client_secret_setting")?,
+        token_setting: text("token_setting")?,
+    }))
+}
+
 /// The type of each kind a checked connector section brings, each once.
 pub fn kind_types(section: &Obj) -> Vec<&str> {
     let mut types: Vec<&str> = section
@@ -762,6 +794,22 @@ mod tests {
         assert!(connector_faults(&section(odd), None).is_empty());
         assert_eq!(kind_types(&section(base())), ["rss.entry"]);
         assert_eq!(source(&section(base())), Some("rss"));
+    }
+
+    #[test]
+    fn a_checked_sign_in_reads_whole_and_an_absent_one_reads_as_none() {
+        assert_eq!(sign_in(&section(base())), Some(None));
+        let mut held = base();
+        held["sign_in"] = json!({
+            "kind": "oauth2", "provider": "google", "scopes": ["a", "b"],
+            "client_id_setting": "id", "client_secret_setting": "secret", "token_setting": "token",
+        });
+        let read = sign_in(&section(held.clone())).flatten().unwrap();
+        assert_eq!(read.provider, "google");
+        assert_eq!(read.scopes, ["a", "b"]);
+        assert_eq!(read.token_setting, "token");
+        held["sign_in"]["provider"] = json!("elsewhere");
+        assert_eq!(sign_in(&section(held)), None);
     }
 
     #[test]

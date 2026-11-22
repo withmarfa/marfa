@@ -22,6 +22,7 @@ const MCP_FETCH_TOTAL: usize = 4;
 const RELEASE_TOTAL: usize = 1;
 const SIGN_IN_ADDRESS_TOTAL: usize = 2;
 const CLOUD_TOTAL: usize = 1;
+const CONNECTOR_SIGN_IN_TOTAL: usize = 2;
 
 /// Who asks for a lookup; each kind has slots of its own.
 #[derive(Clone, Copy, Debug)]
@@ -40,6 +41,8 @@ pub enum Asker<'a> {
     SignInAddress,
     /// A link to Marfa Cloud.
     Cloud,
+    /// The token request that finishes a connector's sign-in.
+    ConnectorSignIn,
 }
 
 pub(super) struct Lane {
@@ -108,6 +111,8 @@ static RELEASE: LazyLock<Lane> = LazyLock::new(|| Lane::new(RELEASE_TOTAL, None,
 static SIGN_IN_ADDRESS: LazyLock<Lane> =
     LazyLock::new(|| Lane::new(SIGN_IN_ADDRESS_TOTAL, None, false));
 static CLOUD: LazyLock<Lane> = LazyLock::new(|| Lane::new(CLOUD_TOTAL, None, false));
+static CONNECTOR_SIGN_IN: LazyLock<Lane> =
+    LazyLock::new(|| Lane::new(CONNECTOR_SIGN_IN_TOTAL, None, false));
 
 impl<'a> Asker<'a> {
     pub(super) fn lane(self) -> &'static Lane {
@@ -120,6 +125,7 @@ impl<'a> Asker<'a> {
             Asker::Release => &RELEASE,
             Asker::SignInAddress => &SIGN_IN_ADDRESS,
             Asker::Cloud => &CLOUD,
+            Asker::ConnectorSignIn => &CONNECTOR_SIGN_IN,
         }
     }
 
@@ -131,7 +137,8 @@ impl<'a> Asker<'a> {
             | Asker::McpFetch
             | Asker::Release
             | Asker::SignInAddress
-            | Asker::Cloud => None,
+            | Asker::Cloud
+            | Asker::ConnectorSignIn => None,
         }
     }
 }

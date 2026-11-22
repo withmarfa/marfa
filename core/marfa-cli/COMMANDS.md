@@ -48,7 +48,7 @@ With --json a refusal is the last line of stderr, one JSON object, after any pla
 {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...,"request_id":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
-where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `sync_paused`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `instance_changed`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `file_name_mismatch`, `cloud_link_failed`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `plugins_unreachable`, `conflict`, `too_large`.
+where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `sync_paused`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `instance_changed`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `sign_in_ended`, `file_name_mismatch`, `cloud_link_failed`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `plugins_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 
@@ -82,6 +82,7 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | Choose which machine runs a plugin's connector | `marfa plugins assign` |
 | Set a plugin connector's settings and secrets | `marfa plugins settings`, `marfa plugins secret` |
 | Map what a connector brings, and rewrite its items | `marfa plugins mapping set`, `marfa plugins mapping rewrite` |
+| Sign a plugin's connector in to its service | `marfa plugins sign-in` |
 | See what a key can read | `marfa overview` |
 | Read the instance's name and enforcement | `marfa config get` |
 | Change one setting, or return it to its default | `marfa config set`, `marfa config unset` |
@@ -1482,7 +1483,7 @@ marfa hosts remove [OPTIONS] <HOST>
 
 ## plugins
 
-Plugins: install one, by name or from a file or folder, assign its connector to a host, set its connector's settings and secrets, list and remove them, and check or build a plugin's source folder.
+Plugins: install one, by name or from a file or folder, assign its connector to a host, set its connector's settings and secrets, sign it in to its service, list and remove them, and check or build a plugin's source folder.
 
 ### marfa plugins
 
@@ -1638,6 +1639,23 @@ marfa plugins mapping rewrite [OPTIONS] <NAME>
 | --- | --- |
 | `--dry-run` | Only count the items. |
 | `--kind <KIND>` | A kind to rewrite; repeat for more. Without it, every kind that comes in. |
+
+### marfa plugins sign-in
+
+Start a plugin connector's sign-in to its provider and print the address to open in a browser, where the owner signs in; nothing is opened for you. With `--wait`, stay until the browser finishes this sign-in, printing a second line, or it fails, expires or a later start replaces it. Requires `connectors.manage`, and the connector's client ID and client secret set.
+
+```text
+marfa plugins sign-in [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
+| Option | Description |
+| --- | --- |
+| `--return-to <PATH>` | A path on the server, or an address on its sign-in address, to send the browser to once the sign-in finishes. |
+| `--wait` | Stay until the browser finishes this sign-in, and exit 0 once the token is set. Exits 1 if it fails, expires or a later start replaces it. |
 
 ### marfa plugins check
 

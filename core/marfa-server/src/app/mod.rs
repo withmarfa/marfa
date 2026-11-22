@@ -14,6 +14,7 @@ pub mod cloud;
 pub mod config;
 pub mod connector_hosts;
 pub mod connector_settings;
+pub mod connector_sign_in;
 pub mod connectors;
 pub mod consequences;
 pub mod edge_types;

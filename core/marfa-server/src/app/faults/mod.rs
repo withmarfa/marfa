@@ -104,6 +104,16 @@ pub enum ReleaseFeed {
     At(String),
 }
 
+/// Where a connector's sign-in sends the owner's browser and asks for a token.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SignInProvider {
+    Public,
+    /// A build with test hooks asks no provider for a token until a fault names one.
+    Nowhere,
+    /// The origin a fault names, which may be on this machine.
+    At(String),
+}
+
 /// What a blob fault makes the disk store read of a blob it names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Lie {

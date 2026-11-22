@@ -80,11 +80,15 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
   ],
   [
     "openapi.json",
-    "carries the descriptions of the two settings the server declares",
+    "carries the descriptions of the two settings the server declares, and Google's addresses in the example of a connector's sign-in",
   ],
   [
     "packages/client/src/generated/schema.ts",
-    "generated from openapi.json, with the same descriptions",
+    "generated from openapi.json, with the same descriptions and example",
+  ],
+  [
+    "core/marfa-server/src/app/connector_sign_in.rs",
+    "the one table of a connector's sign-in providers, called only to finish a sign-in the owner started",
   ],
   [
     "core/marfa-rules/icons/icon-set-simple-icons.json",
@@ -173,7 +177,18 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
 ];
 
 /** A vendor token starts `phc_`; a name is matched in any case. */
-const VENDOR = ["-e", "posthog", "-e", "phc_", "-e", "cloudflared"];
+const VENDOR = [
+  "-e",
+  "posthog",
+  "-e",
+  "phc_",
+  "-e",
+  "cloudflared",
+  "-e",
+  "accounts.google.com",
+  "-e",
+  "googleapis.com",
+];
 
 function allows(path: string): boolean {
   return ALLOWED.some(([entry]) =>

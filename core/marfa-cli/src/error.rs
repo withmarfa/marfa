@@ -111,6 +111,13 @@ pub enum CliError {
     /// new `marfa login` replaces.
     #[error("the sign-in code is no longer valid: run `marfa login` again")]
     DeviceCodeEnded,
+    /// The connector sign-in `plugins sign-in --wait` waited on ended with no token set:
+    /// `status` is `failed`, `expired` or `replaced`.
+    #[error(
+        "the sign-in of plugin {plugin} {}, so it set no token: run `marfa plugins sign-in {plugin}` again",
+        sign_in_end(status)
+    )]
+    SignInEnded { plugin: String, status: String },
     #[error("{0}")]
     Invalid(String),
     /// A plugin source folder's definition file named other than its id.
@@ -390,6 +397,7 @@ own_codes! {
     CliError::SignedOut { .. } => "signed_out",
     CliError::CredentialEnded => "unauthorized",
     CliError::DeviceCodeEnded => "device_code_ended",
+    CliError::SignInEnded { .. } => "sign_in_ended",
     CliError::Invalid(_) => "invalid",
     CliError::FileNameMismatch(_) => "file_name_mismatch",
     CliError::CloudLinkFailed(_) => "cloud_link_failed",
@@ -515,7 +523,8 @@ impl CliError {
             | CliError::DocsPageNotFound { .. }
             | CliError::DocsSectionNotFound { .. }
             | CliError::ContractMismatch { .. }
-            | CliError::Redirected { .. } => Exit::Refused,
+            | CliError::Redirected { .. }
+            | CliError::SignInEnded { .. } => Exit::Refused,
             CliError::ClosedOutput => Exit::Done,
             CliError::Refused { status, code, .. } => match status {
                 401 if code == "setup_proof_invalid" => Exit::Refused,
@@ -693,6 +702,13 @@ fn hash_list(hashes: &[String]) -> String {
     match hashes.len().saturating_sub(SHOWN) {
         0 => shown,
         more => format!("{shown} and {more} more"),
+    }
+}
+
+fn sign_in_end(status: &str) -> &str {
+    match status {
+        "replaced" => "was replaced by a later start",
+        other => other,
     }
 }
 
@@ -969,6 +985,7 @@ mod tests {
             "key_command",
             "device_code_ended",
             "cloud_link_failed",
+            "sign_in_ended",
             "docs_page_not_found",
             "docs_section_not_found",
             "docs_unreachable",
@@ -1019,6 +1036,10 @@ mod tests {
             },
             CliError::CredentialEnded,
             CliError::DeviceCodeEnded,
+            CliError::SignInEnded {
+                plugin: String::new(),
+                status: String::new(),
+            },
             CliError::Invalid(String::new()),
             CliError::FileNameMismatch(String::new()),
             CliError::CloudLinkFailed(String::new()),
