@@ -600,7 +600,7 @@ When a `filter` compares a property whose value is a list with a double-quoted s
 
 When a `filter` compares a property whose value is a list with a number or a boolean using `eq`, the server MUST select the items whose list holds at least one member, other than a list or an object, that `eq` with that value would select were that member the property's whole value.
 
-**Reason:** `properties.marks eq 5` finds a list that holds `5` or `5.0`, and `eq true` finds a list that holds `true` or `1`, the same pairs a single value matches. A member that is text, such as `"5"`, is not that number. A range still selects no list (`search-and-filters/filter-range-numbers`, `search-and-filters/filter-range-text`).
+**Reason:** `properties.marks eq 5` finds a list that holds `5`, and `eq true` finds a list that holds `true` or `1`, the same pairs a single value matches. A member that is text, such as `"5"`, is not that number. A range still selects no list (`search-and-filters/filter-range-numbers`, `search-and-filters/filter-range-text`).
 
 **Tests:** `compliance/filter-grammar.test.ts › compares a list's scalar members with a number or a boolean`.
 

@@ -793,7 +793,6 @@ describe("a property holding a list of numbers or booleans", () => {
       textFive: await make(["5"]),
       flag: await make([true]),
       one: await make([1]),
-      whole: await make([5.0]),
       fraction: await make([5.5]),
       nested: await make([[5]]),
       object: await make([{ n: 5 }]),
@@ -832,10 +831,11 @@ describe("a property holding a list of numbers or booleans", () => {
     // The witness: the same items, with the marks comparison removed.
     expect(await among(narrow, group)).toEqual(sorted(...group));
 
-    const equalToFive = sorted(ids.five, ids.both, ids.whole, ids.scalarFive);
+    const equalToFive = sorted(ids.five, ids.both, ids.scalarFive);
     expect(await picked(batch, "properties.marks eq 5", group)).toEqual(
       equalToFive,
     );
+    // 5.0 in a filter is the number 5. The server stores that value as 5.
     expect(await picked(batch, "properties.marks eq 5.0", group)).toEqual(
       equalToFive,
     );
@@ -844,7 +844,6 @@ describe("a property holding a list of numbers or booleans", () => {
       sorted(
         ids.five,
         ids.both,
-        ids.whole,
         ids.scalarFive,
         ids.scalarFifteen,
         ids.scalarFraction,
@@ -908,7 +907,7 @@ describe("a property holding a list of numbers or booleans", () => {
     const narrow = `properties.batch eq "${batch}"`;
     expect(await among(narrow, group)).toEqual(sorted(...group));
 
-    const equalToFive = [ids.five, ids.both, ids.whole, ids.scalarFive];
+    const equalToFive = [ids.five, ids.both, ids.scalarFive];
     const equalToTrue = [ids.flag, ids.one, ids.both, ids.scalarTrue];
     const holders = group.filter((id) => id !== ids.absent);
     const except = (drop: string[]) =>
