@@ -1,6 +1,6 @@
 ## Before you upgrade
 
-Before Marfa 0.1, a newer release may not read an earlier release's database. `marfa update start` and `marfa server upgrade` move an install to this release when it can read the database. When it can't, the install stays on its release and the database stays as it was. A release that changes how the database is laid out keeps a copy of it first, as `marfa.db.before-upgrade` beside it.
+Each release opens the database of the release before it and upgrades it in place, keeping a copy first, when the database holds any rows, as `marfa.db.before-upgrade` beside it. A database v0.0.88 wrote is the one exception: it is refused unchanged. `marfa update start` and `marfa server upgrade` move an install to this release when it can read the database. When it can't, the install stays on its release and the database stays as it was.
 
 Note the release your instance runs: `marfa server status` shows it, and so does `version` in the JSON that `GET /` answers. `marfa server upgrade` asks this release first whether it runs on the install's settings and database, and changes nothing when it says no. On a native install, the programs you installed are still this release's, so install the earlier release again and run `marfa server upgrade` with its `marfa`, as the command's message shows. On a Docker install, the earlier image keeps running.
 
