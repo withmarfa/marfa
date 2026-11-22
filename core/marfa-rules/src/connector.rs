@@ -458,7 +458,14 @@ pub fn read_draft(
         return Err(problems);
     };
     if entry.enabled {
-        judge_entry(&kind.own_type, &entry, at, catalog, &may_write, &mut problems);
+        judge_entry(
+            &kind.own_type,
+            &entry,
+            at,
+            catalog,
+            &may_write,
+            &mut problems,
+        );
     }
     if problems.is_empty() {
         Ok(entry)

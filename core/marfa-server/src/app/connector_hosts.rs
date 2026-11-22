@@ -7,10 +7,10 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
 use super::App;
-use super::connector_control;
 use super::access::{Axis, Caller, Grants, Permission};
 use super::auth::limits::{connector_link_lanes, hold_to};
 use super::clock::Stamp;
+use super::connector_control;
 use super::connectors;
 use super::keys::{self, Maker};
 use super::plugins;

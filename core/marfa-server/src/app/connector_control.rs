@@ -334,7 +334,10 @@ fn asked(
 ) -> Result<Asked> {
     let what = "The preview cannot be asked for";
     let Some(held) = body.as_object() else {
-        return Err(invalid(what, &[problem("", "Must be an object holding kind.")]));
+        return Err(invalid(
+            what,
+            &[problem("", "Must be an object holding kind.")],
+        ));
     };
     let mut problems: Vec<Problem> = held
         .keys()
@@ -393,7 +396,12 @@ fn asked(
     }
 }
 
-pub async fn request_preview(app: &App, caller: &Caller, name: String, body: Value) -> Result<Value> {
+pub async fn request_preview(
+    app: &App,
+    caller: &Caller,
+    name: String,
+    body: Value,
+) -> Result<Value> {
     let cache = app.catalog_handle();
     app.write(caller, PREVIEW_REQUESTED, move |unit| {
         let held = held(unit.tx(), &unit.caller, &name, Door::Owner)?;
@@ -448,10 +456,10 @@ pub async fn request_preview(app: &App, caller: &Caller, name: String, body: Val
 /// Refuses a status a listing does not take.
 pub fn checked_status(status: Option<String>) -> Result<Option<String>> {
     match status {
-        Some(status) if !STATUSES.contains(&status.as_str()) => Err(Refusal::validation(
-            "status is pending, ready or failed.",
-        )
-        .with_detail("field", "status")),
+        Some(status) if !STATUSES.contains(&status.as_str()) => {
+            Err(Refusal::validation("status is pending, ready or failed.")
+                .with_detail("field", "status"))
+        }
         status => Ok(status),
     }
 }
@@ -491,7 +499,10 @@ pub async fn read_preview(app: &App, caller: &Caller, name: String, id: String) 
 fn answer_of(body: &Value) -> Result<(Option<String>, Option<String>)> {
     let what = "The answer cannot be kept";
     let Some(held) = body.as_object() else {
-        return Err(invalid(what, &[problem("", "Must be an object holding result or error.")]));
+        return Err(invalid(
+            what,
+            &[problem("", "Must be an object holding result or error.")],
+        ));
     };
     let mut problems: Vec<Problem> = held
         .keys()

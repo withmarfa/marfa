@@ -398,7 +398,9 @@ pub fn run(
         PluginsCommand::Pause { name }
         | PluginsCommand::Resume { name }
         | PluginsCommand::Run { name }
-        | PluginsCommand::Status { name } => out.report(&answer, |answer| control_words(name, answer)),
+        | PluginsCommand::Status { name } => {
+            out.report(&answer, |answer| control_words(name, answer))
+        }
         _ => out.value(&answer),
     }
 }
