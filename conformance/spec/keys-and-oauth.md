@@ -98,7 +98,7 @@ When the server upgrades a database written before it kept who made each key, th
 
 **Reason:** an app could mint an owner's key, which carries no `oauth_client_id`, and the audit records that name its minter are kept for a limited time while the key can live forever. Treating such a key as the owner's would let the app it was given to reach other apps' machinery and move vendors. A grant's records pair the grant with its app, so they name the app where the mint record survives and the grant has ended. A database that already kept whether an app made each key holds a record of its own, which says the owner made a key where its mint records are gone.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-unknown-maker.test.ts › records as of unknown maker a key and the key it minted when no record shows the owner made them, and as the owner's when the record stays`, `› records as of unknown maker a key whose minting key was removed with its record, and as the owner's when the record stays`, `› records as an app's the key a grant that has ended minted, named through the records of the grant`.
 
 ### `keys-and-oauth/unknown-maker-descendant`
 
@@ -106,7 +106,7 @@ When a key of unknown maker (`keys-and-oauth/unknown-maker`) mints a key, the se
 
 **Reason:** a key minted from one whose maker no record names is no more the owner's than its parent.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-unknown-maker.test.ts › records as of unknown maker the key an unknown key mints`.
 
 ### `keys-and-oauth/host-made-unknown`
 
@@ -122,7 +122,7 @@ While a key of unknown maker (`keys-and-oauth/unknown-maker`) holds a type map, 
 
 **Reason:** no record says the key is the owner's, so it reaches no app's machinery the owner did not approve, and an entry such as `*` gives nothing under `app.*`. The owner mints a new key with an owner credential to reach every vendor.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-unknown-maker.test.ts › reaches the items of a type under app.* only as its map names them there, and only where the owner holds the vendor, never where an app holds it`, `› reaches nothing under app.* through the entry * alone`.
 
 ### `keys-and-oauth/app-key-other-app-data`
 
@@ -2586,7 +2586,7 @@ If a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `PUT /app-vendo
 
 **Reason:** no record says the key is the owner's, and only the owner gives a vendor to an app. A new key the owner mints moves vendors.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-unknown-maker.test.ts › is refused a vendor move whatever permissions it holds, and the vendor stays with its holder`.
 
 ### `keys-and-oauth/app-vendor-move-unknown-client`
 
@@ -2890,7 +2890,7 @@ If a key or an app's sign-in without `schema.write` sends `DELETE /app-vendors/{
 
 If a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `GET /app-vendors/{vendor}/data` or `DELETE /app-vendors/{vendor}/data` for a vendor an app holds, then the server MUST answer `403 forbidden` and remove nothing.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-unknown-maker.test.ts › is refused the list and the removal of an app's vendor data, and removes nothing`.
 
 ### `keys-and-oauth/app-data-remove`
 

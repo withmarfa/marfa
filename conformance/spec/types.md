@@ -314,7 +314,7 @@ If a key of unknown maker (`keys-and-oauth/unknown-maker`) adds, changes or remo
 
 **Reason:** agents read guidance as instructions, and no record says the key is the owner's rather than an app's. A new key the owner mints writes guidance.
 
-**Tests:** waiting on #2802.
+**Tests:** `compliance/upgrade-unknown-maker.test.ts › is refused adding, changing or removing a type's guidance, and the type stays as it was`.
 
 ### `types/guidance-empty`
 
