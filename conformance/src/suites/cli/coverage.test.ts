@@ -13,13 +13,15 @@ import { Cli, requireBinary } from "./harness.js";
 
 /**
  * Published operations no command sends: a person's browser sends the first,
- * and the connector host program, holding its own key, sends the rest.
+ * the connector host program, holding its own key, sends the next three, and
+ * a plugin's connector, holding its own key, sends the last.
  */
 const NO_COMMAND = [
   "authorizeApp",
   "redeemConnectorHostLink",
   "getOwnConnectorHost",
   "createConnectorKey",
+  "getConnectorSettings",
 ];
 
 interface Row {
