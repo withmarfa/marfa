@@ -151,9 +151,10 @@ impl Caller {
     /// key without its mapping.
     pub fn by_type_map(&self) -> Caller {
         match self {
-            Caller::Key(key) if key.mapped.is_some() => {
+            Caller::Key(key) => {
                 let mut key = key.clone();
                 key.mapped = None;
+                key.by_type_map = true;
                 Caller::Key(key)
             }
             other => other.clone(),
