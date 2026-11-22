@@ -8312,6 +8312,7 @@ A refusal the CLI reports carries one `code`, a lowercase snake case word. The f
 | `too_large`              | A server answered `413` to a command.                                                            |
 | `plugins_unreachable`    | The plugins release, or the address `MARFA_PLUGINS_URL` names, could not be read.                |
 | `file_name_mismatch`     | A file in a plugin's source folder is not named after the id it defines.                         |
+| `cloud_link_failed`      | A Marfa Cloud link the command waited on ended as failed, or ended before it was made.           |
 
 ### `device/error-codes-closed`
 
