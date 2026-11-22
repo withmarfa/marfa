@@ -20,8 +20,7 @@ pub fn token(app: &App, caller: &Caller, held: &Held) -> Result<confirm::Token> 
     connector::issue(app, caller, TOOL, &target(&held.vendor), &held.digest)
 }
 
-/// Removes one page of the vendor's data once the token holds for what it holds now; answers
-/// how many items went.
+/// Removes one page of the vendor's data while the token holds; answers how many items went.
 pub async fn remove_confirmed(
     app: &Arc<App>,
     caller: &Caller,
