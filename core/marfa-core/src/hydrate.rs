@@ -454,6 +454,7 @@ fn attempt(
             store::meta_set(&tx, store::META_EVENT_CURSOR, &cursor)?;
             crate::reach::build_under(&tx, &fence)?;
             store::meta_set(&tx, store::META_INSTANCE_ID, &instance)?;
+            store::meta_delete(&tx, store::META_ANOTHER_INSTANCE)?;
             store::meta_set(&tx, store::META_SERVER_ORIGIN, &http.origin())?;
             store::meta_set(&tx, store::META_SLICE_TYPES, &serde_json::to_string(types)?)?;
             store::meta_set(&tx, store::META_SLICE_TIER, tier.as_str())?;
@@ -985,7 +986,10 @@ fn expire_if_built_elsewhere(
     };
     let interrupted = store::meta_get(&conn, store::META_HYDRATE_RESUME)?.is_some();
     let tx = conn.transaction()?;
-    crate::reach::expire(&tx)?;
+    match reason {
+        HydrateRestart::InstanceChanged => crate::reach::expire_for_another_instance(&tx)?,
+        _ => crate::reach::expire(&tx)?,
+    }
     tx.commit()?;
     Ok(interrupted.then_some(reason))
 }

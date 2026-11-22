@@ -242,7 +242,7 @@ impl Context {
             {
                 store::restored::hold_copy(tx)?;
             }
-            expire(tx)?;
+            expire_for(tx, reason)?;
             if in_place && let Some(cursor) = cursor {
                 store::meta_set(
                     tx,
@@ -323,10 +323,26 @@ impl Before {
             {
                 store::restored::hold_copy(&tx)?;
             }
-            expire(&tx)?;
+            expire_for(&tx, reason)?;
         }
         tx.commit()?;
         Ok(error)
+    }
+}
+
+/// `expire`, recording that a server at the copy's origin answered as
+/// another instance (`store::another_instance_answered`).
+pub(crate) fn expire_for_another_instance(conn: &Connection) -> Result<()> {
+    expire(conn)?;
+    store::meta_set(conn, store::META_ANOTHER_INSTANCE, "1")
+}
+
+/// `expire`, for the `copy_expired` reason `reason`.
+fn expire_for(conn: &Connection, reason: &str) -> Result<()> {
+    if reason == crate::http::INSTANCE_CHANGED {
+        expire_for_another_instance(conn)
+    } else {
+        expire(conn)
     }
 }
 
@@ -1478,5 +1494,53 @@ mod tests {
                 .verdict,
             Some(crate::Verdict::Accepted)
         );
+    }
+
+    #[test]
+    fn a_copy_another_instance_expired_says_so_until_a_hydration_begins() {
+        use crate::scripted::*;
+        let server = Scripted::start();
+        let (_dir, core) = core(&server);
+        ready(&core);
+        let answered = || store::another_instance_answered(&core.conn().unwrap()).unwrap();
+        // The witness: an expiry for another reason records nothing.
+        let context = Context::capture(&core.conn().unwrap()).unwrap();
+        context.expire(&core, "reach_changed").unwrap();
+        assert!(!answered());
+        ready(&core);
+        server.on("/", vec![root("11111111-1111-7111-8111-111111111111")]);
+        let refused = crate::catch_up::refuse_another_instance(&core, core.http().unwrap()).err();
+        assert!(
+            matches!(&refused, Some(CoreError::CopyExpired { reason, .. }) if reason == crate::http::INSTANCE_CHANGED),
+            "{refused:?}"
+        );
+        assert!(answered());
+
+        server.on("/", vec![root(INSTANCE)]);
+        catalog(&server);
+        server.on(
+            "/keys/current",
+            vec![certified(json(
+                200,
+                r#"{"type_permissions":{"core.note":"read"}}"#,
+            ))],
+        );
+        server.on(
+            "/items",
+            vec![certified(json(200, r#"{"data":[],"next_cursor":null}"#))],
+        );
+        server.on(
+            "/events",
+            vec![stream(
+                vec![
+                    copy_marker("stream_cursor", "10"),
+                    copy_marker("stream_live", "11"),
+                ],
+                Then::End,
+            )],
+        );
+        core.hydrate(&["core.note".into()], crate::SliceTier::Library)
+            .unwrap();
+        assert!(!answered());
     }
 }

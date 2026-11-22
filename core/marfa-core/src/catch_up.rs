@@ -1350,7 +1350,7 @@ pub(crate) fn expire_for_another_instance(
             server,
         });
     }
-    reach::expire(tx)?;
+    reach::expire_for_another_instance(tx)?;
     Ok(CoreError::CopyExpired {
         reason: crate::http::INSTANCE_CHANGED.into(),
         server,
@@ -1422,10 +1422,14 @@ fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
     }
     let held = store::meta_get(&tx, store::META_INSTANCE_ID)?;
     if held.as_deref() == Some(served) {
+        if core.handle() == Handle::Writer && store::another_instance_answered(&tx)? {
+            store::meta_delete(&tx, store::META_ANOTHER_INSTANCE)?;
+            tx.commit()?;
+        }
         return Ok(());
     }
     if core.handle() == Handle::Writer {
-        reach::expire(&tx)?;
+        reach::expire_for_another_instance(&tx)?;
         tx.commit()?;
     }
     Err(CoreError::expired(crate::http::INSTANCE_CHANGED))

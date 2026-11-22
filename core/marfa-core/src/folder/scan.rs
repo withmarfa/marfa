@@ -1461,6 +1461,7 @@ impl Folder {
                     bound: Some(bound),
                 }) => {
                     self.unbind_if_still(&bound)?;
+                    state::note_left(&*self.core.conn()?, &self.folder, &item_id, &bound.path)?;
                     state::clear_moved_from(&*self.core.conn()?, &item_id)?;
                     // A file item's bytes are no document, whatever its name now.
                     let document = (carries_frontmatter(&file.path)
@@ -2434,6 +2435,12 @@ impl Folder {
         let mut writes = bound.writes.clone();
         if bound.path != file.key {
             self.unbind_if_still(&bound)?;
+            state::note_left(
+                &*self.core.conn()?,
+                &self.folder,
+                &bound.item_id,
+                &bound.path,
+            )?;
             // The name alone says the title; the unread line is the pull's
             // to rewrite.
             let shown = bound
@@ -3201,6 +3208,7 @@ impl Folder {
                         if let Some(missing) = put_back()? {
                             return Ok(missing);
                         }
+                        state::note_left(&*self.core.conn()?, &self.folder, item_id, path)?;
                         // Queued only while the item is as the decision read
                         // it, so a change heard meanwhile is decided again
                         // rather than trashed.

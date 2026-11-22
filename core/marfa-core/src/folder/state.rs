@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::fields::OwnBase;
 use crate::error::CoreError;
-use crate::model::ItemState;
+use crate::model::{ItemState, QueuedWrite, Verdict, WriteKind};
 use crate::store::now_iso;
 use marfa_rules::catalog::End;
 
@@ -406,6 +406,59 @@ pub fn moved_from(conn: &Connection) -> Result<HashMap<String, MovedFrom>, CoreE
         .into_iter()
         .filter_map(|(item, value)| Some((item, serde_json::from_str(&value).ok()?)))
         .collect())
+}
+
+/// One `meta` row per item whose file a scan moved or deleted while writes
+/// to it waited, naming the path it had before the first of them: the path
+/// the server last held it at, which no file says once it has gone.
+const LEFT_AT: &str = "folder_left_at:";
+
+/// Whether `write` has yet to reach the server: unanswered, or blocked.
+pub fn unsent(write: &QueuedWrite) -> bool {
+    matches!(write.verdict, None | Some(Verdict::Blocked))
+}
+
+/// Whether `write` moves its item's file in `folder`: a placement that names
+/// a path.
+pub fn moves(write: &QueuedWrite, folder: &str) -> bool {
+    matches!(write.kind, WriteKind::CreateEdge | WriteKind::UpdateEdge)
+        && write.to_id.as_deref() == Some(folder)
+        && write.body["properties"]
+            .get(super::placement::PATH_PROPERTY)
+            .is_some()
+}
+
+/// Notes that the file of `item_id` leaves `path`, before the write that
+/// sends its move or delete is queued. A row stands only while an unsent
+/// write moves or deletes its item's file, so a row whose move or delete
+/// was answered is replaced, not kept.
+pub fn note_left(
+    conn: &Connection,
+    folder: &str,
+    item_id: &str,
+    path: &str,
+) -> Result<(), CoreError> {
+    for (item, _) in under(conn, LEFT_AT)? {
+        let leaving = crate::store::waiting_writes_for_item(conn, &item)?
+            .iter()
+            .any(|write| {
+                unsent(write) && (write.kind == WriteKind::DeleteItem || moves(write, folder))
+            });
+        if !leaving {
+            crate::store::meta_delete(conn, &format!("{LEFT_AT}{item}"))?;
+        }
+    }
+    let key = format!("{LEFT_AT}{item_id}");
+    if crate::store::meta_get(conn, &key)?.is_none() {
+        crate::store::meta_set(conn, &key, path)?;
+    }
+    Ok(())
+}
+
+/// The rows `note_left` keeps, by item; one counts only while an unsent
+/// write moves or deletes its item's file.
+pub fn left_at(conn: &Connection) -> Result<HashMap<String, String>, CoreError> {
+    Ok(under(conn, LEFT_AT)?.into_iter().collect())
 }
 
 /// One `meta` row per old buffer held at the path a pull moved a file from:
@@ -1339,6 +1392,64 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::{BOUND_COLUMNS, bindings, prune_unheld, set_unheld, unheld};
+
+    #[test]
+    fn keeps_where_a_file_left_only_while_an_unsent_write_moves_or_deletes_it() {
+        use crate::model::WriteKind;
+        let core = crate::Core::open_in_memory(None).unwrap();
+        let conn = core.conn().unwrap();
+        let queue = |kind: WriteKind, item: &str, payload: &str| {
+            let edge = matches!(kind, WriteKind::UpdateEdge);
+            crate::store::enqueue(
+                &conn,
+                &crate::store::NewWrite {
+                    kind,
+                    item_id: Some(item),
+                    to_id: edge.then_some("folder"),
+                    edge_id: edge.then_some("placement"),
+                    namespace: None,
+                    tag: None,
+                    blob: None,
+                    base_version: Some(1),
+                    payload,
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        let moved = r#"{"properties":{"path":"next.md"}}"#;
+        let answer = |verdict: &str| {
+            conn.execute("UPDATE queue SET verdict = ?1", [verdict])
+                .unwrap();
+        };
+        let note = |item: &str, path: &str| super::note_left(&conn, "folder", item, path).unwrap();
+        let left = |item: &str| super::left_at(&conn).unwrap().get(item).cloned();
+
+        note("a", "first.md");
+        queue(WriteKind::UpdateEdge, "a", moved);
+        note("a", "second.md");
+        assert_eq!(left("a").as_deref(), Some("first.md"));
+        note("b", "other.md");
+        assert_eq!(left("a").as_deref(), Some("first.md"));
+
+        // An answered move counts for nothing, though an edit after it waits.
+        answer("accepted");
+        queue(WriteKind::UpdateItem, "a", "{}");
+        note("a", "second.md");
+        assert_eq!(left("a").as_deref(), Some("second.md"));
+        assert_eq!(left("b"), None);
+
+        // A delete waiting keeps the row as a move does.
+        queue(WriteKind::DeleteItem, "a", "{}");
+        note("a", "third.md");
+        assert_eq!(left("a").as_deref(), Some("second.md"));
+
+        // A dead write is not sent, and a placement naming no path moves nothing.
+        answer("dead");
+        queue(WriteKind::UpdateEdge, "a", r#"{"properties":{"form":{}}}"#);
+        note("a", "fourth.md");
+        assert_eq!(left("a").as_deref(), Some("fourth.md"));
+    }
 
     #[test]
     fn keeps_an_unheld_answer_until_its_file_changes_is_bound_or_goes() {

@@ -1074,9 +1074,41 @@ When a bound file’s directory becomes another folder, a device MUST NOT journa
 
 ### `folder-setup/remove-waiting-refused`
 
-When a confirmed folder has unanswered or blocked queued writes, a device MUST refuse to remove its state.
+If a confirmed folder has unanswered or blocked queued writes, and no server at its address has answered as another Marfa instance since its copy's last hydration began, or the server there now answers as the copy's own instance, then a device MUST refuse to remove its state.
 
-**Tests:** `device/folders-one-mac.test.ts › refuses to remove a folder with a blocked write`.
+**Reason:** a server that cannot be reached may still take the writes later, and only an answer from another instance shows that none of them can reach the folder; the copy's own instance answering again takes them once the copy is rebuilt.
+
+**Tests:** `device/folders-one-mac.test.ts › refuses to remove a folder with a blocked write`, `device/folders.test.ts › refuses to remove a folder whose writes wait while its server is out of reach`, `› refuses to remove a folder whose writes wait once its server answers as its own instance again after another instance answered`.
+
+### `folder-setup/remove-instance-changed`
+
+If a confirmed folder that has unanswered or blocked queued writes is removed while the server at its address answers as another Marfa instance, or cannot be asked after a server there answered as another Marfa instance since its copy's last hydration began, then a device MUST remove its state and leave its files as they are.
+
+**Reason:** the other instance holds neither the folder nor its key, so no write the copy holds can be sent to it, and a directory added again with a key for that instance sends the changes once they are made in it again.
+
+**Tests:** `device/folders.test.ts › removes a folder whose server answers as another instance while writes wait, and answers the folder's ID, how many writes were not sent and each file holding a change by kind`, `› removes a folder whose writes wait where its server cannot be asked, after another instance answered there`, `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`.
+
+### `folder-setup/remove-instance-changed-files`
+
+When a device removes a folder under `folder-setup/remove-instance-changed`, a device MUST answer the folder's ID, how many writes were not sent, and each file holding a change the server never received, by its path and whether it is changed, new, moved from another path, which it names, or deleted.
+
+**Reason:** a deletion or a move is in no file, and the removal deletes the queue that held them, so this answer is the only record of what to do again; copying back only the files it names keeps another computer's edits to the others. The answer names only what the folder could not send: a change it sent after the backup the other instance was restored from was made is in no queue, so a file that differs from that instance's copy but is not named may be missing from the backup, and the person checks it.
+
+**Tests:** `device/folders.test.ts › removes a folder whose server answers as another instance while writes wait, and answers the folder's ID, how many writes were not sent and each file holding a change by kind`, `› names no move its server took, removing a folder whose server answers as another instance, though a later edit to the moved file waits`, `› names a file moved again after its server took its first move, removing a folder whose server answers as another instance, as moved from where the server last held it`, `› names, removing a folder whose server answers as another instance, a file made while no write reached the server as new wherever it moved, and none made and deleted`.
+
+### `folder-setup/remove-instance-changed-said`
+
+When `folders remove` removes a folder under `folder-setup/remove-instance-changed`, the CLI MUST report how many writes were not sent, each file `folder-setup/remove-instance-changed-files` names with its kind, that the changes to changed, new and moved files stay in the files in the directory, the `folders add` command that names the directory and the folder's ID, that a file which differs from the moved directory but is not named may hold a change the other instance lacks, and that the directory is pushed until `folders status` shows nothing waiting.
+
+**Tests:** `device/folders.test.ts › says, removing a folder whose server answers as another instance, how many writes were not sent, each file holding a change by kind, and the folders add command with the directory and folder ID`, `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`.
+
+### `folder-setup/remove-names-folder`
+
+When `folders remove` removes a folder's state, the CLI MUST report the ID of the folder it followed.
+
+**Reason:** the removal deletes the state that held the ID, and following the folder again takes it.
+
+**Tests:** `cli/folder.test.ts › adds a folder named through a linked directory where it resolves, and follows no link inside it`, `device/folders.test.ts › says, removing a folder whose server answers as another instance, how many writes were not sent, each file holding a change by kind, and the folders add command with the directory and folder ID`.
 
 ### `folder-setup/registry-one-directory`
 

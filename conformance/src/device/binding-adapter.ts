@@ -7,6 +7,7 @@ import type {
   SliceTier,
   Tier,
 } from "./protocol.js";
+import type { FolderRemovalJson } from "./cli-adapter.js";
 
 /**
  * The device's binding, driven as the device under test.
@@ -1046,7 +1047,7 @@ export class BindingFolder {
   }> {
     return this.device.folderCall("restore", this.dir);
   }
-  remove(): Call<void> {
+  remove(): Call<FolderRemovalJson> {
     return this.device.folderCall("remove", this.dir);
   }
   /** Pauses the directory's sync; false where it was paused already (`folder-sync/pause-running-watch-stays`). */

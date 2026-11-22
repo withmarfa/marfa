@@ -249,7 +249,8 @@ impl Folder {
 
     /// Takes the folder at `dir` off this machine: its own state under
     /// `.marfa` goes, and its files stay. Refused while writes wait, unless
-    /// the first sync still waits to be confirmed. No symbolic link is
+    /// the first sync still waits to be confirmed or another instance
+    /// answered at the folder's server (`Folder::remove`). No symbolic link is
     /// followed, and a path through one is taken only where it is the path
     /// the registry lists. A listed folder's state goes
     /// only where the store at its listed path is the one the registry lists
@@ -302,8 +303,14 @@ impl Folder {
         match registry::listed_at(&root, &listed) {
             Some(entry) => Folder::remove_listed(entry, wait),
             None => {
-                Folder::open_without_listing(root.clone(), None, wait)?.remove()?;
-                Ok(Removal::Deleted(root))
+                let folder = Folder::open_without_listing(root.clone(), None, wait)?;
+                let id = folder.folder_id().to_string();
+                let unsent = folder.remove()?;
+                Ok(Removal::Deleted {
+                    dir: root,
+                    folder: id,
+                    unsent,
+                })
             }
         }
     }
@@ -319,8 +326,13 @@ impl Folder {
             let folder = Folder::open_without_listing(entry.dir.clone(), None, wait)?;
             match (&entry.store, elsewhere::listed_store(&folder.core)) {
                 (Some(listed), Some(found)) if *listed == found => {
-                    folder.remove()?;
-                    return Ok(Removal::Deleted(entry.dir));
+                    let id = folder.folder_id().to_string();
+                    let unsent = folder.remove()?;
+                    return Ok(Removal::Deleted {
+                        dir: entry.dir,
+                        folder: id,
+                        unsent,
+                    });
                 }
                 (None, _) => "the registry lists no store for it, so the state there cannot be shown to be its own".to_string(),
                 (Some(_), None) => "no store id can be read from the folder state there, so it cannot be shown to be its own".to_string(),
@@ -342,7 +354,13 @@ impl Folder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Removal {
     /// The folder's own state at this directory went; its files stay.
-    Deleted(PathBuf),
+    /// `unsent` is what waited that no server could take, because another
+    /// instance answers at the folder's server.
+    Deleted {
+        dir: PathBuf,
+        folder: String,
+        unsent: super::UnsentChanges,
+    },
     /// Only the registry entry for this directory went, and nothing was
     /// deleted, for the reason given.
     Unlisted { dir: PathBuf, reason: String },

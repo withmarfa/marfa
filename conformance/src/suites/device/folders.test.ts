@@ -6392,6 +6392,314 @@ describe("a folder whose server answers as another instance", () => {
       "a status still said the watch stopped the folder after a later watch left it in step",
     ).toBeNull();
   });
+
+  /**
+   * A folder that sent five notes, then changed, added, deleted and moved
+   * some, read by a scan, before its server answered as another instance,
+   * and changed and added more after: with the count of writes its removal
+   * was refused for while that server was its own.
+   */
+  async function stoppedWithChanges(
+    name: string,
+  ): Promise<{ folder: FolderHarness; count: string }> {
+    const folder = await folderHarness(name);
+    scriptFolderWrites(folder);
+    for (const title of ["Same", "Edited", "Gone", "Before", "Later edit"]) {
+      put(folder, `${title}.md`, `---\ntitle: ${title}\n---\nas sent\n`);
+    }
+    const sent = await folder.folder.push();
+    expect(sent.ok, JSON.stringify(sent)).toBe(true);
+    put(folder, "Edited.md", "---\ntitle: Edited\n---\nedited, not sent\n");
+    put(folder, "New.md", "---\ntitle: New\n---\nnever sent\n");
+    rmSync(join(folder.dir, "Gone.md"));
+    renameSync(join(folder.dir, "Before.md"), join(folder.dir, "After.md"));
+    const scanned = await folder.folder.scan();
+    expect(scanned.ok, JSON.stringify(scanned)).toBe(true);
+    if (!scanned.ok) throw new Error("the scan failed");
+    expect(scanned.value.renamed, "the move was not read as one").toBe(1);
+    // The witness: writes wait, so the removal is refused.
+    const waiting = await folder.folder.remove();
+    expect(waiting.ok, "a folder was removed with a write waiting").toBe(false);
+    if (waiting.ok) throw new Error("removed");
+    const count = /has (\d+) write\(s\) not yet sent/.exec(
+      waiting.refusal.raw,
+    )?.[1];
+    expect(count, waiting.refusal.raw).toBeDefined();
+    expect(existsSync(join(folder.dir, ".marfa", "core.sqlite"))).toBe(true);
+
+    folder.server.answer("GET", "/", answers.root(Number(BUILT_FOR), other));
+    const pushed = await folder.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(false);
+    if (pushed.ok) throw new Error("pushed");
+    expect(pushed.refusal.code).toBe("copy_expired");
+    expect(pushed.refusal.raw).toContain("instance_changed");
+    // Changed after the copy stopped, so no scan read them.
+    put(folder, "Later edit.md", "---\ntitle: Later edit\n---\nedited later\n");
+    put(folder, "Later.md", "---\ntitle: Later\n---\nnever scanned\n");
+    return { folder, count: count! };
+  }
+
+  const unsentFiles = [
+    { change: "moved", path: "After.md", from: "Before.md" },
+    { change: "changed", path: "Edited.md" },
+    { change: "deleted", path: "Gone.md" },
+    { change: "changed", path: "Later edit.md" },
+    { change: "new", path: "Later.md" },
+    { change: "new", path: "New.md" },
+  ];
+
+  it("removes a folder whose server answers as another instance while writes wait, and answers the folder's ID, how many writes were not sent and each file holding a change by kind", async () => {
+    const stopped = await stoppedWithChanges("folder-remove-instance-changed");
+    harness = stopped.folder;
+    const removed = await harness.folder.remove();
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    const answer = removed.value as {
+      removed: boolean;
+      folder: string;
+      unsent: number;
+      files: Array<{
+        change: string;
+        path?: string | null;
+        from?: string | null;
+      }>;
+    };
+    expect(answer.removed).toBe(true);
+    expect(answer.folder).toBe(harness.settings.id);
+    expect(answer.unsent).toBe(Number(stopped.count));
+    expect(
+      answer.files.map(({ change, path, from }) => ({
+        change,
+        path,
+        ...(from ? { from } : {}),
+      })),
+      "Same.md, unchanged since it was sent, is the witness that not every file is named",
+    ).toEqual(unsentFiles);
+    expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(false);
+    expect(read(harness, "Edited.md")).toContain("edited, not sent");
+    expect(existsSync(join(harness.dir, "Gone.md"))).toBe(false);
+    expect(sentTitles(harness)).not.toContain("New");
+  });
+
+  it("says, removing a folder whose server answers as another instance, how many writes were not sent, each file holding a change by kind, and the folders add command with the directory and folder ID", async () => {
+    const stopped = await stoppedWithChanges("folder-remove-instance-said");
+    harness = stopped.folder;
+    const removed = await harness.folder
+      .device()
+      .rootText(["folders", "remove", harness.dir]);
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    const said = removed.value;
+    expect(said).toContain(
+      `${harness.dir} no longer follows the folder ${harness.settings.id}`,
+    );
+    expect(said).toContain(`${stopped.count} write(s) could not be sent`);
+    for (const line of [
+      "  moved    After.md, from Before.md",
+      "  changed  Edited.md",
+      "  deleted  Gone.md",
+      "  changed  Later edit.md",
+      "  new      Later.md",
+      "  new      New.md",
+    ]) {
+      expect(said.split("\n"), said).toContain(line);
+    }
+    expect(said, "a file unchanged since it was sent was named").not.toContain(
+      "Same.md",
+    );
+    expect(said).toContain(
+      `The changes to changed, new and moved files stay in the files in ${harness.dir}`,
+    );
+    expect(said).toContain(
+      `marfa folders add ${harness.dir} --folder ${harness.settings.id}`,
+    );
+    expect(said).toContain("delete each deleted file again");
+    expect(said).toContain("move each moved file again");
+    expect(said).toContain(
+      "A file that differs but is not named above may hold a change this folder sent that the new instance lacks",
+    );
+    expect(said).toContain(
+      `until \`marfa folders status ${harness.dir}\` shows nothing waiting`,
+    );
+    expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(false);
+  });
+
+  it("refuses to remove a folder whose writes wait once its server answers as its own instance again after another instance answered", async () => {
+    harness = await folderHarness("folder-remove-instance-back");
+    scriptFolderWrites(harness);
+    let instance = other;
+    harness.server.answer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
+    put(harness, "Waits.md", "---\ntitle: Waits\n---\nfor its own instance\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(false);
+    if (pushed.ok) return;
+    expect(pushed.refusal.raw).toContain("instance_changed");
+
+    instance = SCRIPTED_INSTANCE;
+    const refused = await harness.folder.remove();
+    expect(
+      refused.ok,
+      "a folder was removed with writes its own instance answers to take",
+    ).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal.raw).toContain("not yet sent");
+    expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(true);
+    // And the record of the other instance is gone with its answer.
+    await harness.server.stop();
+    const still = await harness.folder.remove();
+    expect(still.ok, JSON.stringify(still)).toBe(false);
+    expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(true);
+  });
+
+  /** The files a removal answered, by kind, path and where one moved from. */
+  function removedFiles(
+    removed: Awaited<ReturnType<FolderHarness["folder"]["remove"]>>,
+  ): Array<{ change: string; path?: string | null; from?: string }> {
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) throw new Error("not removed");
+    const answer = removed.value as {
+      files: Array<{
+        change: string;
+        path?: string | null;
+        from?: string | null;
+      }>;
+    };
+    return answer.files.map(({ change, path, from }) => ({
+      change,
+      path,
+      ...(from ? { from } : {}),
+    }));
+  }
+
+  /** Stops the folder: its server now answers as another instance. */
+  async function stopByAnotherInstance(folder: FolderHarness): Promise<void> {
+    folder.server.answer("GET", "/", answers.root(Number(BUILT_FOR), other));
+    const pushed = await folder.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(false);
+    if (pushed.ok) throw new Error("pushed");
+    expect(pushed.refusal.raw).toContain("instance_changed");
+  }
+
+  it("names no move its server took, removing a folder whose server answers as another instance, though a later edit to the moved file waits", async () => {
+    harness = await folderHarness("folder-remove-instance-move-taken");
+    scriptFolderWrites(harness);
+    for (const title of ["Old name", "First", "Pending"]) {
+      put(harness, `${title}.md`, `---\ntitle: ${title}\n---\nas sent\n`);
+    }
+    expect((await harness.folder.push()).ok).toBe(true);
+    renameSync(
+      join(harness.dir, "Old name.md"),
+      join(harness.dir, "New name.md"),
+    );
+    renameSync(join(harness.dir, "First.md"), join(harness.dir, "Second.md"));
+    const moved = await harness.folder.push();
+    expect(moved.ok && moved.value.scan.renamed, JSON.stringify(moved)).toBe(2);
+    put(harness, "Pending.md", "---\ntitle: Pending\n---\nedited, not sent\n");
+    put(harness, "Second.md", "---\ntitle: First\n---\nedited, not sent\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    await stopByAnotherInstance(harness);
+
+    expect(removedFiles(await harness.folder.remove())).toEqual([
+      { change: "changed", path: "Pending.md" },
+      { change: "changed", path: "Second.md" },
+    ]);
+  });
+
+  it("names a file moved again after its server took its first move, removing a folder whose server answers as another instance, as moved from where the server last held it", async () => {
+    harness = await folderHarness("folder-remove-instance-moved-again");
+    scriptFolderWrites(harness);
+    put(harness, "Third.md", "---\ntitle: Third\n---\nas sent\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    renameSync(
+      join(harness.dir, "Third.md"),
+      join(harness.dir, "Third moved.md"),
+    );
+    const moved = await harness.folder.push();
+    expect(moved.ok && moved.value.scan.renamed, JSON.stringify(moved)).toBe(1);
+    put(
+      harness,
+      "Third moved.md",
+      "---\ntitle: Third\n---\nedited, not sent\n",
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+    renameSync(
+      join(harness.dir, "Third moved.md"),
+      join(harness.dir, "Third moved again.md"),
+    );
+    const again = await harness.folder.scan();
+    expect(again.ok && again.value.renamed, JSON.stringify(again)).toBe(1);
+    await stopByAnotherInstance(harness);
+
+    expect(removedFiles(await harness.folder.remove())).toEqual([
+      { change: "moved", path: "Third moved again.md", from: "Third moved.md" },
+    ]);
+  });
+
+  it("names, removing a folder whose server answers as another instance, a file made while no write reached the server as new wherever it moved, and none made and deleted", async () => {
+    harness = await folderHarness("folder-remove-instance-unsent-new");
+    scriptFolderWrites(harness);
+    put(harness, "Sent.md", "---\ntitle: Sent\n---\nas sent\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    put(harness, "Ghost.md", "---\ntitle: Ghost\n---\nnever sent\n");
+    put(harness, "Fresh.md", "---\ntitle: Fresh\n---\nnever sent\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    rmSync(join(harness.dir, "Ghost.md"));
+    renameSync(join(harness.dir, "Fresh.md"), join(harness.dir, "Fresher.md"));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    // A missing file's item goes once the folder's grace for a rename passes.
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    await stopByAnotherInstance(harness);
+
+    expect(
+      removedFiles(await harness.folder.remove()),
+      "Sent.md, unchanged since it was sent, is the witness that not every file is named",
+    ).toEqual([{ change: "new", path: "Fresher.md" }]);
+  });
+
+  it("removes a folder whose writes wait where its server cannot be asked, after another instance answered there", async () => {
+    harness = await folderHarness("folder-remove-instance-unasked");
+    scriptFolderWrites(harness);
+    harness.server.answer("GET", "/", answers.root(Number(BUILT_FOR), other));
+    put(harness, "Waits.md", "---\ntitle: Waits\n---\nfor its own instance\n");
+    const pushed = await harness.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(false);
+    if (pushed.ok) return;
+    expect(pushed.refusal.raw).toContain("instance_changed");
+    await harness.server.stop();
+    const removed = await harness.folder.remove();
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) return;
+    expect(
+      (removed.value as { files: Array<{ path?: string }> }).files.map(
+        (file) => file.path,
+      ),
+    ).toEqual(["Waits.md"]);
+    expect(read(harness, "Waits.md")).toContain("for its own instance");
+  });
+
+  it("refuses to remove a folder whose writes wait while its server is out of reach", async () => {
+    harness = await folderHarness("folder-remove-unreachable");
+    scriptFolderWrites(harness);
+    put(harness, "Waits.md", "---\ntitle: Waits\n---\nfor a server\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    await harness.server.stop();
+    const pushed = await harness.folder.push();
+    expect(
+      pushed.ok && pushed.value.drain.undelivered,
+      JSON.stringify(pushed),
+    ).toBe(1);
+    const refused = await harness.folder.remove();
+    expect(
+      refused.ok,
+      "a folder was removed with writes its own server may still take",
+    ).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal.raw).toContain("not yet sent");
+    expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(true);
+  });
 });
 
 describe("a watch started straight after a folder is added", () => {
