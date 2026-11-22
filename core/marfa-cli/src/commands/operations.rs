@@ -73,6 +73,8 @@ pub const OPERATIONS: &[Operation] = &[
     reached("replacePluginConnectorHost", "plugins assign"),
     reached("getPluginConnectorSettings", "plugins settings"),
     reached("updatePluginConnectorSettings", "plugins secret"),
+    reached("startPluginConnectorSignIn", "plugins sign-in"),
+    reached("getPluginConnectorSignIn", "plugins sign-in"),
     reached("createConnectorHost", "hosts add"),
     reached("listConnectorHosts", "hosts list"),
     reached("getConnectorHost", "hosts get"),
