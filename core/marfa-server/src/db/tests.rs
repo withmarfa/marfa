@@ -2804,7 +2804,7 @@ async fn a_database_at_schema_version_7_upgrades_to_hold_mappings_that_go_with_t
 }
 
 #[tokio::test]
-async fn a_database_at_schema_version_9_upgrades_through_10_and_a_sign_in_goes_with_its_connector() {
+async fn a_schema_9_database_upgrades_through_10_and_a_sign_in_goes_with_its_connector() {
     let place = folder();
     db_open(&options(&place.file, &MIGRATIONS[..9]), Arc::default())
         .map_err(|f| f.message)
