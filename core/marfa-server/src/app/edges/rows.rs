@@ -896,7 +896,15 @@ mod tests {
         let k2 = vec!["k2".to_string()];
         let k1k2 = vec!["k1".to_string(), "k2".to_string()];
         type Reads = Box<dyn Fn(&Row) -> bool>;
-        let cases: Vec<(&str, Option<Reach>, Reads, &Vec<String>, bool, Option<&str>)> = vec![
+        type Case<'a> = (
+            &'a str,
+            Option<Reach>,
+            Reads,
+            &'a Vec<String>,
+            bool,
+            Option<&'a str>,
+        );
+        let cases: Vec<Case<'_>> = vec![
             (
                 "open a, held b to s1",
                 Some(Reach::testing(&["acme.a"], &["acme.b"], &["s1"])),
