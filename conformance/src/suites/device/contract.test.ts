@@ -1261,6 +1261,8 @@ const invocations: Record<string, () => string[]> = {
   "profile update": () => ["--name", "Profile"],
   "apps list": () => [],
   "apps revoke": () => [ID],
+  "apps vendors data delete": () => ["app.fixture", "--confirm", "PURGE"],
+  "apps vendors data list": () => ["app.fixture"],
   "apps vendors list": () => [],
   "apps vendors move": () => ["app.fixture", "fixture-client"],
   "sign-ins list": () => [],
@@ -1492,9 +1494,16 @@ const DESCRIBES = "status";
  * reads a stream, and the stream test above reads one on its own contract;
  * `login` needs a sign-in the door cannot complete, so its refusal is held
  * by its code alone; `views get` refuses an item that is not a view, and
- * `{}` names no type; `config set` finds no setting in a listing of `{}`.
+ * `{}` names no type; `config set` finds no setting in a listing of `{}`;
+ * `apps vendors data delete` reads no count in `{}`, so it stops unprinted.
  */
-const SILENT_HERE = ["events", "login", "views get", "config set"];
+const SILENT_HERE = [
+  "events",
+  "login",
+  "views get",
+  "config set",
+  "apps vendors data delete",
+];
 
 describe("every command holds the server to the contract", () => {
   async function table(): Promise<{ operation_id: string; command: string }[]> {

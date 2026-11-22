@@ -46,6 +46,7 @@ let hook = "";
 let view = "";
 let connector = "";
 let ledger = "";
+let vendor = "";
 
 const doors: Door[] = [
   {
@@ -161,6 +162,12 @@ const doors: Door[] = [
     path: () => `/connectors/${connector}/deliveries`,
   },
   { door: "GET /folders", who: "owner", max: 200, path: () => "/folders" },
+  {
+    door: "GET /app-vendors/{vendor}/data",
+    who: "owner",
+    max: 200,
+    path: () => `/app-vendors/${vendor}/data`,
+  },
 ];
 const sized = doors.filter((door) => door.size !== undefined);
 const refusing = doors.filter((door) => door.capped !== true);
@@ -295,6 +302,15 @@ beforeAll(async () => {
     });
     expect(more.status, JSON.stringify(more.error)).toBe(200);
   }
+
+  // The local command claims the vendor; a listing of it needs no items.
+  vendor = `app.pagelimits${String(Date.now())}`;
+  const own = await localFetch(server.controlSocket, `${server.apiUrl}/types`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: `${vendor}.note`, fields: {} }),
+  });
+  expect(own.status, await own.clone().text()).toBe(201);
 
   const registered = await working.registerConnector({ name: "page limits" });
   expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
