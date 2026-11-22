@@ -50,11 +50,23 @@ impl Folder {
             (state::every_bound(&conn)?, state::left_at(&conn)?)
         };
         let mut kinds: HashMap<&str, Vec<WriteKind>> = HashMap::new();
+        let mut leaving = HashSet::new();
         for write in waiting {
             if let Some(item) = write.item_id.as_deref() {
                 kinds.entry(item).or_default().push(write.kind);
+                if write.kind == WriteKind::DeleteItem || state::moves(write, &self.folder) {
+                    leaving.insert(item);
+                }
             }
         }
+        // The server never held an item whose create waits.
+        let created = |item: &str| {
+            kinds
+                .get(item)
+                .is_some_and(|kinds| kinds.contains(&WriteKind::CreateItem))
+        };
+        // Where the server holds an item whose file moved or went unsent.
+        let held_at = |item: &str| left.get(item).filter(|_| leaving.contains(item));
         // Read from the store as it stands, since the copy is expired.
         let held =
             crate::store::items_by_ids(&*self.core.conn()?, std::slice::from_ref(&self.folder))?
@@ -85,22 +97,28 @@ impl Folder {
             bound_paths.insert(row.path.as_str());
             bound_items.insert(row.item_id.as_str());
             let writes = kinds.get(row.item_id.as_str());
-            let file = |change, from: Option<&String>| UnsentFile {
+            let file = |change, path: &String, from: Option<&String>| UnsentFile {
                 change,
-                path: Some(row.path.clone()),
+                path: Some(path.clone()),
                 from: from.cloned(),
                 item: Some(row.item_id.clone()),
             };
-            let Some(path) = on_disk.get(&row.path) else {
+            let present = on_disk.get(&row.path);
+            if created(&row.item_id) {
+                if present.is_some() {
+                    files.push(file(UnsentChange::New, &row.path, None));
+                }
+                continue;
+            }
+            let from = held_at(&row.item_id);
+            let Some(path) = present else {
                 if !unreached(&row.path) {
-                    files.push(file(UnsentChange::Deleted, None));
+                    files.push(file(UnsentChange::Deleted, from.unwrap_or(&row.path), None));
                 }
                 continue;
             };
-            if let Some(from) = left.get(&row.item_id).filter(|from| **from != row.path) {
-                files.push(file(UnsentChange::Moved, Some(from)));
-            } else if writes.is_some_and(|kinds| kinds.contains(&WriteKind::CreateItem)) {
-                files.push(file(UnsentChange::New, None));
+            if let Some(from) = from.filter(|from| **from != row.path) {
+                files.push(file(UnsentChange::Moved, &row.path, Some(from)));
             } else if writes.is_some()
                 || walked
                     .opened
@@ -108,14 +126,17 @@ impl Folder {
                     .and_then(|captured| captured.read().ok())
                     .is_none_or(|bytes| state::hash(&bytes) != row.content_hash)
             {
-                files.push(file(UnsentChange::Changed, None));
+                files.push(file(UnsentChange::Changed, &row.path, None));
             }
         }
         for (item, writes) in &kinds {
-            if writes.contains(&WriteKind::DeleteItem) && !bound_items.contains(item) {
+            if writes.contains(&WriteKind::DeleteItem)
+                && !created(item)
+                && !bound_items.contains(item)
+            {
                 files.push(UnsentFile {
                     change: UnsentChange::Deleted,
-                    path: left.get(*item).cloned(),
+                    path: held_at(item).cloned(),
                     from: None,
                     item: Some((*item).to_string()),
                 });

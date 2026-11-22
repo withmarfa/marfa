@@ -789,9 +789,7 @@ impl Folder {
         } else {
             crate::store::queued_writes(&*self.core.conn()?)?
                 .into_iter()
-                .filter(|write| {
-                    matches!(write.verdict, None | Some(crate::model::Verdict::Blocked))
-                })
+                .filter(state::unsent)
                 .collect()
         };
         let unsent = if self.another_instance_answers()? {
