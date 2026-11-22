@@ -443,8 +443,7 @@ pub fn judge(
     problems
 }
 
-/// A draft of one kind's entry as a save would store it, each member it leaves out taken from the
-/// kind's default, and judged as a save judges the kind, its faults named under `at`.
+/// One kind's draft entry, read and judged as a save would, its faults named under `at`.
 pub fn read_draft(
     value: &Value,
     kind: &Kind,

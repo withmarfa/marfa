@@ -1,6 +1,4 @@
-//! The owner's pause and run-now choices for a plugin's connector, and the mapping previews it
-//! renders. The server stores each and the connector follows it; nothing here starts, stops or
-//! renders anything.
+//! What the owner asks of a plugin's connector. The server stores it; the connector acts on it.
 
 use marfa_rules::connector::{self, Connector};
 use marfa_rules::schema::Problem;
@@ -226,8 +224,7 @@ pub async fn run(app: &App, caller: &Caller, name: String) -> Result<Value> {
     .await
 }
 
-/// Clears the run the owner asked of the plugin whose connector holds `source`, once its key
-/// reports a run that started at or after the request. `started_at` is the connector's clock.
+/// `started_at` is the connector's clock, not the server's.
 pub(crate) fn run_reported(tx: &Transaction<'_>, source: &str, started_at: &str) -> Result<()> {
     let Some(plugin) = connector_hosts::plugin_holding(tx, source)? else {
         return Ok(());
