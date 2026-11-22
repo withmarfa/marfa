@@ -128,13 +128,22 @@ fn every_schema_version_makes_the_database_pinned_for_it() {
     );
 }
 
-/// The SQL without its comments, on one line, in capitals.
+/// The SQL without its comments, on one line, in capitals. A quoted string or
+/// name is reduced to its empty quotes, so nothing inside one is read as a
+/// comment or a statement.
 fn plain(sql: &str) -> String {
     let mut out = String::new();
     let mut rest = sql;
-    while let Some(at) = rest.find(['-', '/']) {
+    while let Some(at) = rest.find(['-', '/', '\'', '"']) {
         out.push_str(&rest[..at]);
         let tail = &rest[at..];
+        if let Some(quote) = tail.chars().next().filter(|c| *c == '\'' || *c == '"') {
+            let end = tail[1..].find(quote).map_or(tail.len(), |end| end + 2);
+            out.push(quote);
+            out.push(quote);
+            rest = &tail[end..];
+            continue;
+        }
         if tail.starts_with("--") {
             rest = tail.find('\n').map_or("", |end| &tail[end..]);
         } else if tail.starts_with("/*") {
@@ -161,7 +170,7 @@ fn cannot_run_twice(sql: &str) -> bool {
                 .any(|(at, _)| !sql[at + start.len()..].starts_with(guard))
         })
     };
-    ["ADD COLUMN", "DROP COLUMN", "RENAME"]
+    ["ADD COLUMN", "DROP COLUMN", " RENAME "]
         .iter()
         .any(|part| sql.contains(part))
         || unguarded(
@@ -228,8 +237,18 @@ fn a_migration_without_done_is_caught_when_it_cannot_run_twice() {
         sql: "DROP TRIGGER t;",
         done: None,
     };
+    let quoted = Migration {
+        version: 94,
+        sql: "UPDATE a SET b = 'https://*.example -- x', renamed_at = 1;\nCREATE TABLE c (d TEXT);",
+        done: None,
+    };
+    let named = Migration {
+        version: 93,
+        sql: "UPDATE a SET renamed_at = '/* ADD COLUMN */';",
+        done: None,
+    };
     assert_eq!(
-        missing_done(&[added, made, safe, renamed, dropped]),
-        [99, 98, 96, 95]
+        missing_done(&[added, made, safe, renamed, dropped, quoted, named]),
+        [99, 98, 96, 95, 94]
     );
 }

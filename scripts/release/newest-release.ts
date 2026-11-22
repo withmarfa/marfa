@@ -15,7 +15,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-const FETCH_TAGS =
+export const FETCH_TAGS =
   "fetch the tags (`git fetch --tags`, or `git fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*'` in a shallow checkout)";
 
 const byVersion = (a: string, b: string): number => {
@@ -70,5 +70,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     ["ls-remote", "--tags", "--refs", "origin", "refs/tags/v*"],
     { encoding: "utf8" },
   );
-  console.log(newestPublished(tagsListed(listed), abandonedVersions()));
+  const tags = tagsListed(listed);
+  if (tags.length === 0) {
+    console.error("origin lists no v* release tag.");
+    process.exit(1);
+  }
+  console.log(newestPublished(tags, abandonedVersions()));
 }

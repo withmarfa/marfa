@@ -1,5 +1,5 @@
 /**
- * What a published release wrote keeps opening.
+ * What a published release shipped stays as it shipped.
  *
  * A release's databases must keep opening, and a migration's SQL is what makes
  * them. `core/marfa-server/src/db/pinned.rs` pins each migration's digest, but a
@@ -12,7 +12,9 @@
  * - every entry of `PINS` (version, file and holds), so a released version
  *   cannot be pointed at another file, dropped or re-pinned;
  * - every entry of the device store's `SHAPES`, which must be a prefix of the
- *   tree's list.
+ *   tree's list. Whether a store a release wrote still opens is
+ *   `OLDEST_UPGRADED`'s choice in `core/marfa-core/src/store/open.rs`, not
+ *   this test's.
  *
  * Something the tag lacks is new, and allowed. The Rust tests tie `PINS` and
  * `SHAPES` to what the build makes, so together they cover a change the files
@@ -29,6 +31,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  FETCH_TAGS,
   abandoned,
   abandonedVersions,
   newestPublished,
@@ -46,9 +49,6 @@ const git = (...args: string[]): string =>
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
-
-const FETCH_TAGS =
-  "fetch the tags (`git fetch --tags`, or `git fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*'` in a shallow checkout)";
 
 const releaseTag = (): string => {
   const named = process.env.MARFA_RELEASE_TAG;
@@ -89,12 +89,16 @@ const hashHere = (path: string): string | undefined => {
 
 /** Each `PINS` entry of `pinned.rs`, by version, as `file holds`. */
 export function pins(source: string): Map<string, string> {
-  const table = source.slice(source.indexOf("const PINS"));
+  const start = source.indexOf("const PINS");
+  const table = source.slice(start, source.indexOf("];", start));
   const found = new Map<string, string>();
   const entry =
     /Pin\s*\{\s*version:\s*(\d+),\s*file:\s*"([0-9a-f]+)",\s*holds:\s*"([0-9a-f]+)",?\s*\}/g;
   for (const [, version, file, holds] of table.matchAll(entry)) {
     if (version !== undefined && file !== undefined && holds !== undefined) {
+      if (found.has(version)) {
+        throw new Error(`PINS names schema version ${version} twice.`);
+      }
       found.set(version, `${file} ${holds}`);
     }
   }
