@@ -210,7 +210,7 @@ pub(super) fn page(
     let page = if page.catalog_types.is_empty() {
         page
     } else {
-        listed = with_orphans(tx, page.edge_types, page.catalog_types)?;
+        listed = with_orphans(tx, page.edge_types, page.catalog_types, &keeps)?;
         if listed.is_empty() {
             return Ok(Vec::new());
         }
@@ -243,11 +243,13 @@ pub(super) fn page(
     Ok(kept)
 }
 
-/// The listed types and every stored type outside the catalog, so the page keeps its index.
+/// The listed types and every stored type outside the catalog that `keeps`, so the page keeps
+/// its index.
 fn with_orphans(
     tx: &Transaction<'_>,
     listed: &[String],
     catalog: &[String],
+    keeps: impl Fn(&str) -> bool,
 ) -> Result<Vec<String>> {
     let mut statement = tx.prepare_cached(
         "WITH RECURSIVE stored(edge_type) AS (SELECT MIN(edge_type) FROM edges \
@@ -259,7 +261,7 @@ fn with_orphans(
     let mut kinds = listed.to_vec();
     for edge_type in stored {
         let edge_type = edge_type?;
-        if !catalog.contains(&edge_type) && !kinds.contains(&edge_type) {
+        if !catalog.contains(&edge_type) && !kinds.contains(&edge_type) && keeps(&edge_type) {
             kinds.push(edge_type);
         }
     }
@@ -741,6 +743,17 @@ mod tests {
         };
         let only = super::page(&tx, &reads_none, None, |_| true).unwrap();
         assert_eq!(only.len(), 1, "a key reading no catalog type loses it");
+        let references = vec!["references".to_string()];
+        let unread = |kind: &str| kind != "acme.gone";
+        assert_eq!(
+            with_orphans(&tx, &references, &every, unread).unwrap(),
+            references,
+            "an orphan type the key does not read joins its one-type page"
+        );
+        assert_eq!(
+            with_orphans(&tx, &references, &every, reads).unwrap(),
+            vec!["acme.gone".to_string(), "references".to_string()],
+        );
     }
 
     struct Rng(u64);
