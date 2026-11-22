@@ -94,8 +94,7 @@ fn item_total(tx: &Transaction<'_>, types: &[String]) -> Result<usize> {
     Ok(usize::try_from(total).unwrap_or(usize::MAX))
 }
 
-/// Removes up to [`MOST_REMOVED`] items of the holder's vendors, and all their types once none
-/// is left, judging the types as one set so a column under one vendor naming another's is free.
+/// Removes a page of the vendors' items, then their types as one set, freeing columns among them.
 fn remove_sets(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,

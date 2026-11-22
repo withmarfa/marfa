@@ -166,8 +166,7 @@ where
     .await
 }
 
-/// [`confirmed`], with the act answering what it did beside the total it spends, and a repeat
-/// reading, in the same write, what to answer of the change the token spent.
+/// [`confirmed`], answering the act's own result, and on a repeat what `repeat` reads in the write.
 pub(super) async fn confirmed_as<R, A, P, D, S>(
     app: &Arc<App>,
     caller: &Caller,
