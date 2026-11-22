@@ -1870,7 +1870,7 @@ If the server starts on a database file whose structure is not the one the schem
 
 When the server starts on a database an earlier schema version of its own wrote, whose structure is the one that version declares, the server MUST upgrade it before it takes a request, and answer it from then on as at the version it now has.
 
-**Tests:** `compliance/upgrade-from-release.test.ts › upgrades the database v0.0.90 wrote and answers every read as that release did`.
+**Tests:** `compliance/upgrade-from-release.test.ts › upgrades the database v0.0.90 wrote to the schema version this build makes, and answers its type as before but for the origin v0.0.91 renamed`.
 
 ### `instance/upgrade-failure-keeps-old`
 
@@ -1878,7 +1878,7 @@ If upgrading a database fails before it is whole, then the server MUST refuse to
 
 **Reason:** an upgrade that stops partway must not leave a database that is neither version.
 
-**Tests:** `compliance/upgrade-from-release.test.ts › refuses to start when a migration fails, and leaves the database at the version it was with its rows`.
+**Tests:** `compliance/upgrade-from-release.test.ts › refuses to start when a migration fails, and leaves the database at the version it was with its rows`, `› refuses to start when the upgrade would leave a row referring to one the database does not hold, and changes nothing`.
 
 ### `instance/upgrade-keeps-references`
 
@@ -1894,7 +1894,7 @@ When the server upgrades a database, the server MUST answer every read a client 
 
 **Reason:** an upgrade that rebuilds what holds the data can lose what refers to it along the way.
 
-**Tests:** `compliance/upgrade-from-release.test.ts › upgrades the database v0.0.90 wrote and answers every read as that release did`.
+**Tests:** `compliance/upgrade-from-release.test.ts › answers the items, the edge and the list after an upgrade as v0.0.90 did`.
 
 ### `instance/upgrade-copy-before`
 
@@ -1908,7 +1908,7 @@ When the server upgrades a database that holds a row, the server MUST write a co
 
 If the copy before an upgrade cannot be written, or would leave less free space on the database's volume than `disk_reserve_bytes`, then the server MUST refuse to start and leave the database file byte for byte as it found it.
 
-**Tests:** `compliance/upgrade-from-release.test.ts › refuses to start when the copy would leave less free space than the disk reserve, and changes nothing`.
+**Tests:** `compliance/upgrade-from-release.test.ts › refuses to start when the copy would leave less free space than the disk reserve, and changes nothing`, `› refuses to start when the copy cannot be written, and changes nothing`.
 
 ### `instance/upgrade-copy-last`
 
@@ -1960,7 +1960,7 @@ If the server refuses to start on a database under `instance/upgrade-refuses-sch
 
 **Reason:** what supervises the process tells a stop that starting again will not mend from one that it may.
 
-**Tests:** `compliance/database-file.test.ts › exits with status 78, not 1, when it refuses a database this build did not write`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`, `› refuses to start on a database a newer build wrote, and leaves it as it was`.
+**Tests:** `compliance/database-file.test.ts › exits with status 78, not 1, when it refuses a database this build did not write`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`, `› refuses to start on a database a newer build wrote, and leaves it as it was`, `compliance/upgrade-from-release.test.ts › refuses to start when the upgrade would leave a row referring to one the database does not hold, and changes nothing`.
 
 ### `instance/upgrade-exit-failure`
 

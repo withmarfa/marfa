@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
@@ -11,7 +11,21 @@ import {
   type RefusedBoot,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
-import { listened, refusalText } from "../../utils/refused-boot.js";
+import {
+  expectDatabaseUnchanged,
+  listened,
+  stopServerAtCleanup,
+} from "../../utils/refused-boot.js";
+import {
+  EDGE_ID,
+  ITEM_IDS,
+  KEY_SALT,
+  loadDump,
+  OLD_SCHEMA,
+  SOURCE,
+  TYPE_ID,
+  WORKING_KEY,
+} from "../../utils/release-dump.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 import {
   bootUnclaimedServer,
@@ -29,30 +43,14 @@ import {
  * The fixture never reads a migration the server carries, so it follows no edit
  * to one.
  *
- * **The first test is the witness for the rest.** The file starts, takes
- * requests and answers every read as v0.0.90 did, so a refusal below is the
- * alteration's doing and not a file this build cannot upgrade.
+ * **The first tests are the witness for the rest.** The file starts, takes
+ * requests and answers its reads as v0.0.90 did (the type's origin apart, which
+ * v0.0.91 renamed), so a refusal below is the alteration's doing and not a file
+ * this build cannot upgrade.
  */
 
-const DUMP = join(import.meta.dirname, "fixtures", "database-v0.0.90.sql");
-/** The salt the release generated for its keys, which a key is valid only against. */
-const KEY_SALT =
-  "7cfda7f179b0d70e6efd313c6557d3373939fa041fcfd865246abbc0b87c02c7";
-
-/** The working key v0.0.90 minted for the dump, which holds only its hash. */
-const WORKING_KEY =
-  "marfa_k1_e44eeff0eb91f8df57ecbe088e4a903dde5a66a38f2e3231feeae41ebe0a477a";
-const SOURCE = "upgrade-fixture";
-const ITEM_IDS = [
-  "01f00000-0000-7000-8000-000000000001",
-  "01f00000-0000-7000-8000-000000000002",
-  "01f00000-0000-7000-8000-000000000003",
-] as const;
-const EDGE_ID = "01f00000-0000-7000-8000-0000000000e1";
-const TYPE_ID = "user.upgrade_witness";
 const COPY = "marfa.db.before-upgrade";
-/** The schema version v0.0.90 wrote. */
-const OLD_SCHEMA = 3;
+/** The disk reserve setting's maximum, 1 TiB: the fixture needs less than that free. */
 const HUGE_RESERVE = String(2 ** 40);
 
 /** What v0.0.90 answered to each read, recorded when the dump was made. */
@@ -215,26 +213,6 @@ const TYPE = {
 
 type Database = DatabaseSync;
 
-/**
- * Writes the dump into `sqlitePath` as the release left it: a file in
- * write-ahead mode with no log beside it. Foreign keys are off for `alter`, so
- * a row can refer to what the file does not hold. The dump writes the schema of
- * two full-text tables, which a connection refuses while it is defensive.
- */
-function loadDump(sqlitePath: string, alter?: (db: Database) => void): void {
-  const db = new DatabaseSync(sqlitePath, {
-    defensive: false,
-    enableForeignKeyConstraints: false,
-  });
-  try {
-    db.exec(readFileSync(DUMP, "utf8"));
-    db.exec("PRAGMA journal_mode = WAL");
-    alter?.(db);
-  } finally {
-    db.close();
-  }
-}
-
 /** Every file beside the database that holds a copy from before an upgrade. */
 function copiesBeside(state: string): string[] {
   return readdirSync(state).filter((name) => name.startsWith(COPY));
@@ -242,6 +220,46 @@ function copiesBeside(state: string): string[] {
 
 function userVersion(db: Database): number {
   return Number(db.prepare("PRAGMA user_version").get()?.user_version);
+}
+
+interface Snapshot {
+  userVersion: number;
+  /** A hash of each table's rows, in an order that does not depend on how the file stores them. */
+  tables: Record<string, string>;
+}
+
+/**
+ * The schema version and what every table holds. The rows are hashed whole and
+ * sorted, because a copy made with VACUUM INTO is a different file that may
+ * number its rows differently. The full-text tables are virtual and this
+ * connection has no module to read them; the ordinary tables that hold their
+ * index (the shadow tables) are included.
+ */
+function snapshot(db: Database): Snapshot {
+  const tables: Record<string, string> = {};
+  const names = db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND sql NOT LIKE 'CREATE VIRTUAL TABLE%' ORDER BY name",
+    )
+    .all()
+    .map((row) => String(row.name));
+  for (const name of names) {
+    const rows = db
+      .prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`)
+      .all()
+      .map((row) =>
+        JSON.stringify(row, (_key, value: unknown) =>
+          value instanceof Uint8Array
+            ? `blob:${Buffer.from(value).toString("hex")}`
+            : typeof value === "bigint"
+              ? `int:${String(value)}`
+              : value,
+        ),
+      )
+      .sort();
+    tables[name] = createHash("sha256").update(rows.join("\n")).digest("hex");
+  }
+  return { userVersion: userVersion(db), tables };
 }
 
 function itemIds(db: Database): string[] {
@@ -284,6 +302,7 @@ async function startedOn<T>(
     state,
     env: { MARFA_KEY_SALT: KEY_SALT, ...options.env },
   });
+  stopServerAtCleanup(state);
   try {
     return await use({
       state,
@@ -303,22 +322,9 @@ function expectRefusedWhole(refused: RefusedBoot): void {
   expect(listened(refused)).toBe(false);
 }
 
-const EMPTY_FILE = createHash("sha256").update("").digest("hex");
-
-/**
- * The database file is byte for byte what it was, and the log beside it holds
- * nothing: opening a database in write-ahead mode makes an empty log and an
- * index of it even when the open is refused, and neither is a change to what
- * the database holds.
- */
-function expectDatabaseUnchanged(refused: RefusedBoot): void {
-  expect(refused.after.db).toBe(refused.before.db);
-  expect(["absent", EMPTY_FILE]).toContain(refused.after.wal);
-}
-
 describe("starting on a database an earlier release wrote", () => {
   it(
-    "upgrades the database v0.0.90 wrote and answers every read as that release did",
+    "answers the items, the edge and the list after an upgrade as v0.0.90 did",
     async () => {
       await startedOn(async ({ url, client }) => {
         expect((await fetch(`${url}/health`)).status).toBe(200);
@@ -331,26 +337,6 @@ describe("starting on a database an earlier release wrote", () => {
           expect(read.ok, JSON.stringify(read.error)).toBe(true);
           expect(read.data, id).toEqual(recorded);
         }
-        const type = await client.getType(TYPE_ID);
-        expect(type.ok, JSON.stringify(type.error)).toBe(true);
-        // The type is read as the build now declares it: a shipped parent may
-        // have gained fields, and the origin "user" is now named "registered".
-        // What the owner registered, and who registered it, is as it was.
-        expect(type.data).toMatchObject({
-          id: TYPE.id,
-          parent: TYPE.parent,
-          label: TYPE.label,
-          plural: TYPE.plural,
-          fields: {
-            priority: TYPE.fields.priority,
-            stars: TYPE.fields.stars,
-            body: TYPE.fields.body,
-          },
-          provenance: {
-            origin: "registered",
-            created_by: TYPE.provenance.created_by,
-          },
-        });
         const edge = await client.getEdge(EDGE_ID);
         expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
         expect(edge.data.edge).toEqual(ITEM3.item.edges.about.data[0]);
@@ -365,29 +351,76 @@ describe("starting on a database an earlier release wrote", () => {
   );
 
   it(
-    "leaves a copy of the database as v0.0.90 wrote it beside the file the start upgraded",
+    "upgrades the database v0.0.90 wrote to the schema version this build makes, and answers its type as before but for the origin v0.0.91 renamed",
     async () => {
-      await startedOn(async ({ state, sqlitePath }) => {
-        expect(copiesBeside(state)).toEqual([COPY]);
-        withInstanceDatabase(sqlitePath, (db) => {
-          expect(userVersion(db)).toBeGreaterThan(OLD_SCHEMA);
-        });
-        withInstanceDatabase(join(state, COPY), (db) => {
-          expect(userVersion(db)).toBe(OLD_SCHEMA);
-          expect(itemIds(db)).toEqual([...ITEM_IDS]);
-          // A shape only the schema this build left behind no longer has.
-          expect(
-            db.prepare("SELECT origin FROM types WHERE id = ?").get(TYPE_ID)
-              ?.origin,
-          ).toBe("user");
-          expect(
-            db
-              .prepare("SELECT id FROM edges")
-              .all()
-              .map((row) => row.id),
-          ).toEqual([EDGE_ID]);
+      // The version a database this build makes from nothing has.
+      const empty = tempFolder("marfa-upgrade-empty-");
+      await startedOn(async () => undefined, { state: empty });
+      const made = withInstanceDatabase(join(empty, "marfa.db"), userVersion);
+      expect(made).toBeGreaterThan(OLD_SCHEMA);
+
+      let sqlitePath = "";
+      await startedOn(async (started) => {
+        sqlitePath = started.sqlitePath;
+        const type = await started.client.getType(TYPE_ID);
+        expect(type.ok, JSON.stringify(type.error)).toBe(true);
+        // The one difference in what the type holds is the origin "user", named
+        // "registered" since v0.0.91. A shipped parent may have gained fields,
+        // so the fields are read as a superset. The read also carries two
+        // members v0.0.90 did not have: `ancestor_guidance` and
+        // `provenance.plugin`, which is null for a type the owner registered.
+        expect(type.data).toEqual({
+          ...TYPE,
+          fields: expect.objectContaining(TYPE.fields),
+          ancestor_guidance: expect.any(Array),
+          provenance: {
+            ...TYPE.provenance,
+            origin: "registered",
+            plugin: null,
+          },
         });
       });
+      expect(withInstanceDatabase(sqlitePath, userVersion)).toBe(made);
+    },
+    FRESH_SERVER_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "leaves a copy of the database as v0.0.90 wrote it beside the file the start upgraded",
+    async () => {
+      let loaded: Snapshot | undefined;
+      await startedOn(
+        async ({ state, sqlitePath }) => {
+          expect(copiesBeside(state)).toEqual([COPY]);
+          withInstanceDatabase(sqlitePath, (db) => {
+            expect(userVersion(db)).toBeGreaterThan(OLD_SCHEMA);
+          });
+          withInstanceDatabase(join(state, COPY), (db) => {
+            // The copy holds what the file held before the start, row for row.
+            expect(snapshot(db)).toEqual(loaded);
+            expect(userVersion(db)).toBe(OLD_SCHEMA);
+            expect(itemIds(db)).toEqual([...ITEM_IDS]);
+            // A shape only the schema this build left behind no longer has.
+            expect(
+              db.prepare("SELECT origin FROM types WHERE id = ?").get(TYPE_ID)
+                ?.origin,
+            ).toBe("user");
+            expect(
+              db
+                .prepare("SELECT id FROM edges")
+                .all()
+                .map((row) => row.id),
+            ).toEqual([EDGE_ID]);
+          });
+        },
+        {
+          alter: (db) => {
+            loaded = snapshot(db);
+            expect(loaded.userVersion).toBe(OLD_SCHEMA);
+            expect(Object.keys(loaded.tables).length).toBeGreaterThan(10);
+          },
+        },
+      );
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -474,9 +507,7 @@ describe("refusing to start on a database an earlier release wrote", () => {
         (refused) => {
           expectRefusedWhole(refused);
           expectDatabaseUnchanged(refused);
-          expect(refused.after.shm).toBe(refused.before.shm);
           expect(copiesBeside(refused.stateDir)).toEqual([]);
-          expect(refusalText(refused)).toContain(refused.sqlitePath);
           withInstanceDatabase(refused.sqlitePath, (db) => {
             expect(userVersion(db)).toBe(OLD_SCHEMA);
             expect(itemIds(db)).toEqual([...ITEM_IDS]);
@@ -484,6 +515,41 @@ describe("refusing to start on a database an earlier release wrote", () => {
         },
         { MARFA_DISK_RESERVE_BYTES: HUGE_RESERVE },
       );
+    },
+    FRESH_SERVER_TIMEOUT_MS * 2,
+  );
+
+  it(
+    "refuses to start when the copy cannot be written, and changes nothing",
+    async () => {
+      // The witness: the same file, with nothing in the copy's way, starts and
+      // is copied.
+      await startedOn(async ({ state }) => {
+        expect(copiesBeside(state)).toEqual([COPY]);
+      });
+
+      // A directory where the server writes the copy before it renames it.
+      const inTheWay = `${COPY}.partial`;
+      const refused = await bootRefused("upgrade-copy-unwritable", {
+        prepare: (sqlitePath, state) => {
+          loadDump(sqlitePath);
+          mkdirSync(join(state, inTheWay));
+        },
+        extraEnv: { MARFA_KEY_SALT: KEY_SALT },
+      });
+      try {
+        expectRefusedWhole(refused);
+        expectDatabaseUnchanged(refused);
+        expect(copiesBeside(refused.stateDir)).toEqual([inTheWay]);
+        expect(statSync(join(refused.stateDir, inTheWay)).isDirectory()).toBe(
+          true,
+        );
+        withInstanceDatabase(refused.sqlitePath, (db) => {
+          expect(userVersion(db)).toBe(OLD_SCHEMA);
+        });
+      } finally {
+        await refused.stop();
+      }
     },
     FRESH_SERVER_TIMEOUT_MS * 2,
   );
@@ -502,6 +568,8 @@ describe("refusing to start on a database an earlier release wrote", () => {
         },
         (refused) => {
           expectRefusedWhole(refused);
+          // The upgrade began, and the copy shows it, before it failed.
+          expect(copiesBeside(refused.stateDir)).toEqual([COPY]);
           withInstanceDatabase(refused.sqlitePath, (db) => {
             expect(userVersion(db)).toBe(OLD_SCHEMA);
             expect(itemIds(db)).toEqual([...ITEM_IDS]);
@@ -515,14 +583,6 @@ describe("refusing to start on a database an earlier release wrote", () => {
                 .all()
                 .map((row) => row.id),
             ).toEqual([EDGE_ID]);
-            // Nothing a migration made is left behind.
-            expect(
-              db
-                .prepare(
-                  "SELECT name FROM sqlite_schema WHERE name IN ('types_next', 'plugins')",
-                )
-                .all(),
-            ).toEqual([]);
           });
         },
       );
@@ -544,8 +604,8 @@ describe("refusing to start on a database an earlier release wrote", () => {
         (refused) => {
           expectRefusedWhole(refused);
           expectDatabaseUnchanged(refused);
-          expect(refused.after.shm).toBe(refused.before.shm);
-          expect(refusalText(refused)).toContain("edges");
+          expect(refused.code).toBe(78);
+          expect(copiesBeside(refused.stateDir)).toEqual([COPY]);
           withInstanceDatabase(refused.sqlitePath, (db) => {
             expect(userVersion(db)).toBe(OLD_SCHEMA);
             // The row is the one the check can see, and the file still has it.

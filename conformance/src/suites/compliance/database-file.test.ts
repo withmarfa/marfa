@@ -25,7 +25,12 @@ import {
   type ServerExit,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
-import { listened, refusalText } from "../../utils/refused-boot.js";
+import {
+  expectDatabaseUnchanged,
+  listened,
+  refusalText,
+  stopServerAtCleanup,
+} from "../../utils/refused-boot.js";
 import { parseEnvFile, TEST_OWNER } from "../../utils/target.js";
 import {
   bootServer,
@@ -499,6 +504,7 @@ describe("a completed claim after credential rows disappear", () => {
             db.exec("DELETE FROM sign_ins; DELETE FROM owner");
         });
         const restarted = await bootUnclaimedServer({ state: server.stateDir });
+        stopServerAtCleanup(server.stateDir);
         const status = await controlRequest(
           restarted.controlSocket,
           "/_control/setup/status",
@@ -561,19 +567,6 @@ describe("a completed claim after credential rows disappear", () => {
 /** The exit status of a database this build did not write, which a
  *  supervisor reads as "starting again will meet the same file". */
 const REFUSED_DATABASE_STATUS = 78;
-
-const EMPTY_FILE = createHash("sha256").update("").digest("hex");
-
-/**
- * The database file is byte for byte what it was, and the log beside it holds
- * nothing: opening a database that is in WAL mode makes an empty log and an
- * index of it even when the open is refused, and neither is a change to what
- * the database holds.
- */
-function expectDatabaseUnchanged(refused: RefusedBoot): void {
-  expect(refused.after.db).toBe(refused.before.db);
-  expect(["absent", EMPTY_FILE]).toContain(refused.after.wal);
-}
 
 type Database = Parameters<Parameters<typeof withInstanceDatabase>[1]>[0];
 
@@ -793,6 +786,7 @@ describe("starting on a database that holds some of the server's tables and no r
     await stopServer({ state: server.stateDir });
     withInstanceDatabase(server.sqlitePath, change);
     const started = await bootUnclaimedServer({ state: server.stateDir });
+    stopServerAtCleanup(server.stateDir);
     server.apiUrl = started.url;
     server.controlSocket = started.controlSocket;
   }

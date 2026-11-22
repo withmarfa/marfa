@@ -14,8 +14,8 @@
 -- key is valid only against; a server started on this file is given it as MARFA_KEY_SALT:
 --   7cfda7f179b0d70e6efd313c6557d3373939fa041fcfd865246abbc0b87c02c7
 --
--- The one change made to the dump: the disk store's path in the stores table, which named the folder it
--- was made in, is /data/blobs.
+-- Two changes were made to the dump: PRAGMA user_version = 3 at the end, as above, and the disk store's
+-- path in the stores table, which named the folder it was made in, is now /data/blobs.
 --
 -- Loading it needs a connection with defensive mode off, because the dump writes the schema
 -- of its two full-text tables and their shadow tables.
