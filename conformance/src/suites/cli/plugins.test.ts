@@ -195,7 +195,9 @@ describe("plugins from the terminal", () => {
         ...bundleOf(name, `${source}.issue`, "1.0.0"),
         connector: {
           source,
+          source_name: "Issues",
           kinds: [{ name: "issue", type: `${source}.issue`, direction: "in" }],
+          runs: { on: "host" },
         },
       }),
     );

@@ -414,7 +414,7 @@ When `POST /restore` restores a plugin with a connector that the instance does n
 
 ### `plugins/restore-default-mapping`
 
-If `POST /restore` would restore a plugin whose connector names a `default_mapping` that `plugins/connector-default-mapping` refuses, judged against the types as restored and the restoring caller's write, then the server MUST answer `400 validation_error` with `details.entry` `instance.ndjson.gz` and `details.line` naming the plugin's line, and restore nothing.
+If `POST /restore` would restore a plugin whose connector names a `default_mapping` that `plugins/connector-default-mapping` refuses, judged against the types as restored, then the server MUST answer `400 validation_error` with `details.entry` `instance.ndjson.gz` and `details.line` naming the plugin's line, and restore nothing.
 
 **Reason:** a restored plugin's default is the mapping its connector's key reaches by until the owner saves one, so it is judged as installing judges it.
 

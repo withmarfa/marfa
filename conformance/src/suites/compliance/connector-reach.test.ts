@@ -504,7 +504,7 @@ describe("a connector or mapping that does not read", () => {
 
   it("keeps the key a plugin connector key when its stored mapping does not read: its trash leaves the owner's child, and it writes no target type", async () => {
     await failsClosed(
-      "UPDATE connector_mappings SET kinds = 'unreadable' WHERE plugin = ?",
+      `UPDATE connector_mappings SET kinds = '{"issue":{"tier":"archive"}}' WHERE plugin = ?`,
     );
   });
 });

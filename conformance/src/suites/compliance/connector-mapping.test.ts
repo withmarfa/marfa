@@ -916,7 +916,7 @@ describe("a mapping in an archive", () => {
         });
 
         const misfit = withDefault({
-          fields: { opened_by: { from: "nothing" } },
+          fields: { title: { from: "title" }, opened_by: { from: "nothing" } },
         });
         const judged = await local(target).restoreArchive(misfit.edited);
         expect(judged.status).toBe(400);
