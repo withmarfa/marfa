@@ -9017,7 +9017,7 @@ export interface components {
                      */
                     reason: string;
                 };
-                /** @description How to move the sign-in address yourself. Present while linked and `state` is `waiting`, and while `state` is `not_put_back` if `addresses` reads. */
+                /** @description How to move the sign-in address yourself. Present while linked and `state` is `waiting`, and while `state` is `not_put_back` and `addresses` reads. */
                 next_step?: {
                     /** @description The request that moves it, sent from an app someone signed in to recently. */
                     request: {

@@ -155,14 +155,12 @@ fn seen_in<'a>(
     if let Some(link) = link.filter(|link| link.state == State::Ended)
         && let Some(cloud) = status::cloud_address(link).filter(|cloud| cloud == sign_in)
     {
+        // A stored previous address that does not read leaves the target to the next rule.
         let previous = link
             .previous_sign_in_address
             .as_deref()
             .and_then(|text| Address::parse(text).ok());
-        let unread = link.previous_sign_in_address.is_some() && previous.is_none();
-        if !unread {
-            seen.put_back = config::put_back_target(tx, previous, own_sign_in(app), cloud)?;
-        }
+        seen.put_back = config::put_back_target(tx, previous, own_sign_in(app), cloud)?;
     }
     Ok(seen)
 }

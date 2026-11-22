@@ -13664,7 +13664,7 @@
               },
               "next_step": {
                 "type": "object",
-                "description": "How to move the sign-in address yourself. Present while linked and `state` is `waiting`, and while `state` is `not_put_back` if `addresses` reads.",
+                "description": "How to move the sign-in address yourself. Present while linked and `state` is `waiting`, and while `state` is `not_put_back` and `addresses` reads.",
                 "additionalProperties": false,
                 "required": [
                   "request",
