@@ -134,7 +134,7 @@ pub(super) fn unknown_maker(action: &str) -> Refusal {
     Refusal::new(
         Code::Forbidden,
         format!(
-            "No record shows who made this key, so it cannot {action}. Mint a new key with an owner credential."
+            "No record shows the owner made this key, so it cannot {action}. Mint a new key with an owner credential."
         ),
     )
 }
@@ -168,9 +168,9 @@ impl Caller {
         }
     }
 
-    /// Whether the caller is a key no record names a maker for.
+    /// Whether the caller is a key no record shows the owner or an app made, a host's included.
     pub fn maker_unknown(&self) -> bool {
-        matches!(self, Caller::Key(key) if key.made_by == Maker::Unknown)
+        matches!(self, Caller::Key(key) if matches!(key.made_by, Maker::Unknown | Maker::Host(_)))
     }
 
     /// The registration needs the caller's new reach in the transaction that claims the vendor.

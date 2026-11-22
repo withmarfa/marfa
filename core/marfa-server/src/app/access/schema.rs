@@ -98,7 +98,7 @@ impl Caller {
             }
             return Err(Refusal::new(
                 Code::Forbidden,
-                "Type guidance is written by installing a plugin, or by the owner. An app, or a key an app made, cannot add, change or remove it.",
+                "Type guidance is written by installing a plugin, or by the owner. An app, or a key the owner did not make, cannot add, change or remove it.",
             )
             .with_detail("changes", vec!["guidance"]));
         }

@@ -108,6 +108,14 @@ When a key of unknown maker (`keys-and-oauth/unknown-maker`) mints a key, the se
 
 **Tests:** waiting on #2802.
 
+### `keys-and-oauth/host-made-unknown`
+
+When a key a connector host minted, or a host's own key, sends a request the server refuses to a key of unknown maker (`keys-and-oauth/unknown-maker`), the server MUST refuse it as it refuses a key of unknown maker, whatever permissions the owner gave it.
+
+**Reason:** a host is a machine the owner linked to run connectors, not the owner, so a key it holds is no more the owner's than one whose maker no record names, even after the owner widens it.
+
+**Tests:** `compliance/connector-hosts.test.ts › refuses 403 a vendor move to a key a host minted, given grants.manage, which the owner's key gets past`.
+
 ### `keys-and-oauth/unknown-maker-reach`
 
 While a key of unknown maker (`keys-and-oauth/unknown-maker`) holds a type map, the server MUST let the key reach the items of a type under `app.*` only as the entries of its map under `app.*` give, only where the owner holds the type's vendor or no one holds it, and never where an app holds it.

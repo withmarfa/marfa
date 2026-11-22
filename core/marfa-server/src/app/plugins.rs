@@ -341,7 +341,7 @@ fn require_install(caller: &Caller, bundle: &Obj, catalog: &Catalog) -> Result<(
     if guided && caller.app_made() {
         return Err(Refusal::new(
             Code::Forbidden,
-            "Installing a plugin whose types carry guidance is the owner's to do. An app, or a key an app made, can install it only without guidance.",
+            "Installing a plugin whose types carry guidance is the owner's to do. An app, or a key the owner did not make, can install it only without guidance.",
         )
         .with_detail("changes", vec!["guidance"]));
     }

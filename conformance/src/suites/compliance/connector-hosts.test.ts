@@ -35,6 +35,7 @@ beforeAll(async () => {
     "keys.manage",
     "keys.mint",
     "audit.read",
+    "grants.manage",
   ]);
   owner = made.client;
   ownerKeyId = made.id;
@@ -513,6 +514,33 @@ describe("a connector's key", () => {
     expect((await third.client.registerConnector({ name: "x" })).status).toBe(
       401,
     );
+  });
+
+  it("refuses 403 a vendor move to a key a host minted, given grants.manage, which the owner's key gets past", async () => {
+    const { name } = await plugin("vendormove");
+    const host = await linkedHost(server, owner, `vendor ${fresh()}`);
+    expect((await owner.assignConnector(name, host.id)).status).toBe(200);
+    const made = await host.client.mintConnectorKey(name);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const widened = await owner.updateKey(made.data.key_id, {
+      permissions: ["grants.manage"],
+    });
+    expect(widened.status, JSON.stringify(widened.error)).toBe(200);
+    const witness = await ownerKey(server, ["grants.manage"]);
+    const move = (key: string) =>
+      fetch(`${server.apiUrl}/app-vendors/app.v${fresh()}`, {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${key}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ client_id: "no-such-client" }),
+      });
+    const refused = await move(made.data.key);
+    expect(refused.status).toBe(403);
+    const body = (await refused.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("forbidden");
+    expect((await move(witness.key)).status).not.toBe(403);
   });
 
   it("answers 404 plugin_not_found to a host minting for a plugin not assigned to it", async () => {
