@@ -866,11 +866,11 @@ When distinct spellings of an integer round to the same double, the server MUST 
 
 ### `search-and-filters/filter-numeric-only`
 
-The server MUST NOT turn text, an object, a missing property or `null` into a number when a numeric `filter` compares with `eq`.
+The server MUST NOT turn text, a list, an object, a missing property or `null` into a number when a numeric `filter` compares with `eq`.
 
-**Reason:** a list is not one number either. `eq` reads each scalar member (`search-and-filters/filter-list-number`), so an empty list still matches nothing.
+**Reason:** an empty list is not the number `0`. A list is selected only when one of its scalar members would be (`search-and-filters/filter-list-number`).
 
-**Tests:** `compliance/numeric-property-filters.test.ts › does not turn text, arrays, objects, missing or null properties into numeric equality matches`.
+**Tests:** `compliance/numeric-property-filters.test.ts › does not turn text, a list, an object, a missing property or null into a number`.
 
 ### `search-and-filters/filter-range-numbers`
 

@@ -863,9 +863,9 @@ describe("a property holding a list of numbers or booleans", () => {
       equalToTrue,
     );
     // contains true matches the text "true", not the boolean true.
-    expect(await picked(batch, "properties.marks contains true", group)).toEqual(
-      sorted(ids.flag, ids.one, ids.both, ids.textTrue),
-    );
+    expect(
+      await picked(batch, "properties.marks contains true", group),
+    ).toEqual(sorted(ids.flag, ids.one, ids.both, ids.textTrue));
     expect(await picked(batch, "properties.marks contains 1", group)).toEqual(
       sorted(
         ids.flag,
@@ -883,9 +883,9 @@ describe("a property holding a list of numbers or booleans", () => {
     expect(await picked(batch, "properties.marks eq 0", group)).toEqual(
       sorted(ids.falseList, ids.scalarFalse),
     );
-    expect(await picked(batch, "properties.marks contains false", group)).toEqual(
-      [ids.falseList],
-    );
+    expect(
+      await picked(batch, "properties.marks contains false", group),
+    ).toEqual([ids.falseList]);
     expect(await picked(batch, "properties.marks contains 0", group)).toEqual(
       sorted(ids.falseList, ids.scalarFalse),
     );
@@ -914,11 +914,11 @@ describe("a property holding a list of numbers or booleans", () => {
     const except = (drop: string[]) =>
       sorted(...holders.filter((id) => !drop.includes(id)));
 
-    expect(await picked(batch, "properties.marks eq 5", group)).toEqual(
-      sorted(...equalToFive),
-    );
     expect(await picked(batch, "properties.marks neq 5", group)).toEqual(
       except(equalToFive),
+    );
+    expect(await picked(batch, "properties.marks eq 5", group)).toEqual(
+      sorted(...equalToFive),
     );
     expect(await picked(batch, "properties.marks eq true", group)).toEqual(
       sorted(...equalToTrue),
