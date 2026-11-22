@@ -1299,6 +1299,104 @@ describe("the edges the connector reads from its own items on the target type", 
   });
 });
 
+describe("what the connector reads of its own item's history, extensions and tables", () => {
+  it("reads the versions, extensions and table rows of its own item of the mapped type, and answers the owner's item of that type as one it cannot read", async () => {
+    const namespace = `reachext.${fresh()}`;
+    const { plugin, key } = await mapped({
+      extension_permissions: { [namespace]: "read" },
+    });
+    const own = key.client;
+    const mine = await ticket(own, plugin, { source_id: `h-${fresh()}` });
+    const theirs = await ticket(owner, plugin, { source_id: `o-${fresh()}` });
+    const extender = (
+      await mint(
+        server,
+        `reach-ext-${fresh()}`,
+        [],
+        { "*": "write" },
+        {
+          extension_permissions: { [namespace]: "write" },
+        },
+      )
+    ).client;
+    for (const [by, item] of [
+      [own, mine],
+      [owner, theirs],
+    ] as const) {
+      const patched = await by.updateItem(item.id, {
+        version: item.version,
+        properties: { title: "a second version" },
+      });
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+      const rows = await by.writeRows(item.id, "log", {
+        operations: [{ op: "put", values: { line: "opened" } }],
+      });
+      expect(rows.status, JSON.stringify(rows.error)).toBe(200);
+      const extended = await extender.setItemExtension(item.id, namespace, {
+        synced: true,
+      });
+      expect(extended.status, JSON.stringify(extended.error)).toBe(200);
+    }
+
+    const doors: [string, (id: string) => Promise<ApiResponse<any>>][] = [
+      ["versions", (id) => own.getVersions(id)],
+      ["extensions", (id) => own.listItemExtensions(id)],
+      ["extension", (id) => own.getItemExtension(id, namespace)],
+      ["tables", (id) => own.listTables(id)],
+      ["rows", (id) => own.listRows(id, "log")],
+      ["totals", (id) => own.rowTotals(id, "log")],
+      ["batches", (id) => own.listBatches(id, "log")],
+    ];
+    const answered = new Map<string, any>();
+    for (const [door, call] of doors) {
+      const answer = await call(mine.id);
+      expect(answer.status, `${door}: ${JSON.stringify(answer.error)}`).toBe(
+        200,
+      );
+      answered.set(door, answer.data);
+    }
+    // A key whose type map reads the type reads the same history of it.
+    const history = (await owner.getVersions(mine.id)).data.data;
+    expect(history.length).toBeGreaterThan(0);
+    expect(answered.get("versions").data).toEqual(history);
+    expect(
+      (answered.get("extensions").data as { namespace: string }[]).map(
+        (entry) => entry.namespace,
+      ),
+    ).toContain(namespace);
+    expect(answered.get("extension").document).toEqual({ synced: true });
+    expect(
+      (answered.get("tables").data as { name: string }[]).map(
+        (table) => table.name,
+      ),
+    ).toContain("log");
+    const rows = answered.get("rows").data as { id: string; values: unknown }[];
+    expect(rows.map((row) => row.values)).toEqual([{ line: "opened" }]);
+    expect(answered.get("batches").data).toHaveLength(1);
+    const row = await own.getRow(mine.id, "log", rows[0]!.id);
+    expect(row.status, JSON.stringify(row.error)).toBe(200);
+    expect(row.data.values).toEqual({ line: "opened" });
+
+    // The witness: the owner reads the same doors on its own item.
+    const ownerVersions = await owner.getVersions(theirs.id);
+    expect(ownerVersions.data.data.length).toBeGreaterThan(0);
+    const ownerRows = await owner.listRows(theirs.id, "log");
+    expect(ownerRows.data.data).toHaveLength(1);
+    const unreached = await own.getItem(theirs.id);
+    expect(unreached.status).toBe(404);
+    const refusal = (answer: ApiResponse<unknown>) => ({
+      status: answer.status,
+      code: answer.error?.error.code,
+    });
+    for (const [door, call] of doors) {
+      expect(refusal(await call(theirs.id)), door).toEqual(refusal(unreached));
+    }
+    expect(
+      refusal(await own.getRow(theirs.id, "log", ownerRows.data.data[0]!.id)),
+    ).toEqual(refusal(unreached));
+  });
+});
+
 describe("the MCP tools", () => {
   it("finds none of its own items of the mapped type through marfa_find, which GET /items lists", async () => {
     const { plugin, key } = await mapped();

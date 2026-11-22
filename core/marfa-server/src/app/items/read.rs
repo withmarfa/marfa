@@ -187,7 +187,7 @@ impl<'a, 'c> Reader<'a, 'c> {
                 break;
             };
             for snapshot in batch {
-                if self.caller.may_read_type(&snapshot.type_id) {
+                if self.caller.may_read_item(&snapshot.type_id, &row.source) {
                     page.push(snapshot);
                     if page.len() as i64 > limit {
                         break 'filling;
