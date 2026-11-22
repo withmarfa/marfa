@@ -371,9 +371,9 @@ describe("pageDoors", () => {
     ).toThrow("#/components/schemas/Loop refers back to itself");
   });
 
-  it("names exactly the thirty-eight GET pages of the committed document", () => {
+  it("names exactly the thirty-nine GET pages of the committed document", () => {
     const pages = pageDoors(committed);
-    expect(pages).toHaveLength(38);
+    expect(pages).toHaveLength(39);
     expect(pages.every((door) => door.startsWith("GET "))).toBe(true);
     expect(pages).toContain("GET /items");
     expect(pages).toContain("GET /items/{id}/tables");

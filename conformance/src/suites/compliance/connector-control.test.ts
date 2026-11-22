@@ -65,12 +65,28 @@ async function control(name: string, by: MarfaClient = owner) {
 async function acted(name: string, act: "pause" | "resume" | "run") {
   const answer = await owner.controlConnector(name, act);
   expect(answer.status, JSON.stringify(answer.error)).toBe(200);
-  await expectMatchesSchema(
-    "POST",
-    `/plugins/{name}/connector/${act}`,
-    200,
-    answer.data,
-  );
+  if (act === "pause") {
+    await expectMatchesSchema(
+      "POST",
+      "/plugins/{name}/connector/pause",
+      200,
+      answer.data,
+    );
+  } else if (act === "resume") {
+    await expectMatchesSchema(
+      "POST",
+      "/plugins/{name}/connector/resume",
+      200,
+      answer.data,
+    );
+  } else {
+    await expectMatchesSchema(
+      "POST",
+      "/plugins/{name}/connector/run",
+      200,
+      answer.data,
+    );
+  }
   return answer.data;
 }
 
