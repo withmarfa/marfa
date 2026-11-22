@@ -62,7 +62,7 @@ The server MUST name no entry of an archive with a colon, naming the `blobs/` en
 
 ### `archive/archive-manifest`
 
-The server MUST write into the manifest of an archive its `version`, its `format`, its `written_by`, a `created_at` instant, and in `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` and `app_vendor_count` the number of each kind of entry or line the archive holds.
+The server MUST write into the manifest of an archive its `version`, its `format`, its `written_by`, a `created_at` instant, and in `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count`, `plugin_count`, `app_vendor_count`, `connector_setting_count` and `connector_mapping_count` the number of each kind of entry or line the archive holds.
 
 **Reason:** `archive/archive-version`, `archive/archive-format`, `archive/archive-written-by` and `archive/id-in-archive` state the version, the format, the writing build and the instance's name in the manifest, and a restore checks every count against what it read (`archive/restore-line-counts`).
 
@@ -498,6 +498,50 @@ When `POST /restore` writes an `app_vendor` line whose `claimed_at` is an RFC 33
 
 **Tests:** `compliance/app-vendors.test.ts › restores a claimed_at in any RFC 3339 form and keeps it as the instant`.
 
+### `archive/archive-connector-mapping`
+
+When the credential requesting `GET /export?format=archive` holds `connectors.manage`, the server MUST carry in `instance.ndjson.gz` one `connector_mapping` line, holding the plugin's name as `plugin`, the mapping's `version` and its `kinds` as saved, for each installed plugin with a saved mapping.
+
+**Reason:** the owner's mapping is work they did, and it restores with its plugin. A rewrite the connector has not carried out stays out.
+
+**Tests:** `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`.
+
+### `archive/restore-connector-mapping`
+
+When `POST /restore` reads a `connector_mapping` line naming a plugin that the archive or the instance holds, the server MUST store the mapping only where the instance holds no saved mapping for that plugin, counting it in `connector_mappings_added`, and count one it keeps in `connector_mappings_skipped`.
+
+**Tests:** `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`.
+
+### `archive/restore-connector-mapping-refused`
+
+If `POST /restore` reads a `connector_mapping` line naming a plugin neither the archive nor the instance holds or whose bundle holds no connector, with a `version` that is not a whole number from 1, or with `kinds` that `PUT /plugins/{name}/connector/mapping` would refuse for its shape (`plugins/mapping-shape`), then the server MUST answer `400 validation_error` with `details.entry` `instance.ndjson.gz` and `details.line` the line's number, and restore nothing of the archive.
+
+**Tests:** `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`.
+
+### `archive/restore-connector-mapping-judged`
+
+If `POST /restore` would store a `connector_mapping` line whose `kinds` `PUT /plugins/{name}/connector/mapping` would refuse from the restoring caller, judged against the types as the restore leaves them, then the server MUST answer `400 validation_error` with `details.entry` `instance.ndjson.gz`, `details.line` the line's number, `details.plugin` and `details.errors` naming each fault as a save names it, and restore nothing of the archive.
+
+**Reason:** a restored mapping gives the connector's key the same reach a saved one does (`plugins/reach-target-own-source`), so it passes the same judgment.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses a restore whose mapping the types as restored would refuse, naming its line, and restores nothing`.
+
+### `archive/restore-connector-mapping-permission`
+
+If a caller without `connectors.manage` sends `POST /restore` with an archive holding a `connector_mapping` line, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage` and `details.connector_mappings` naming the plugin of each such line, and restore nothing of the archive.
+
+**Reason:** a mapping decides what a connector's key may write (`plugins/reach-target-own-source`), which only a caller holding `connectors.manage` sets.
+
+**Tests:** `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`.
+
+### `archive/restore-connector-permission-once`
+
+If a restore needs `connectors.manage` under more than one of `plugins/restore-connector-permission`, `archive/restore-connector-settings-permission` and `archive/restore-connector-mapping-permission`, then the server MUST answer one `403 forbidden` whose `details.plugins`, `details.connector_settings` and `details.connector_mappings` each name what its own statement names.
+
+**Reason:** the caller learns from one answer everything the restore needs `connectors.manage` for.
+
+**Tests:** `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`.
+
 ### `archive/restore-connector-state`
 
 When `POST /restore` reads a `connector_state` line, the server MUST store that state document only where the instance holds none for the source, and replace none it holds.
@@ -714,7 +758,7 @@ When a caller the operation admits sends `POST /restore` with an archive that `G
 
 ### `archive/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `secrets_to_set`, `connector_secrets_to_set`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `app_vendors_added`, `app_vendors_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts, and the lists `enforcement_added` and `enforcement_skipped`, each naming the enforcement settings it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `secrets_to_set`, `connector_secrets_to_set`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `app_vendors_added`, `app_vendors_skipped`, `connector_mappings_added`, `connector_mappings_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts, and the lists `enforcement_added` and `enforcement_skipped`, each naming the enforcement settings it counts.
 
 **Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
 
@@ -1060,15 +1104,15 @@ When `POST /restore` reads an archive at version 1, the server MUST read its man
 
 ### `archive/restore-version-two`
 
-When `POST /restore` reads an archive at version 2, the server MUST read its manifest without `connector_setting_count`.
+When `POST /restore` reads an archive at version 2, the server MUST read its manifest without `connector_setting_count` and `connector_mapping_count`.
 
-**Reason:** version 2 carried no setting of a plugin's connector, so a backup taken before version 3 still restores.
+**Reason:** version 2 carried no setting of a plugin's connector and no connector mapping, so a backup taken before version 3 still restores.
 
-**Tests:** `compliance/connector-settings.test.ts › refuses a version 3 manifest that leaves out or mistypes connector_setting_count, and restores a version 2 archive without it`.
+**Tests:** `compliance/connector-settings.test.ts › refuses a version 3 manifest that leaves out or mistypes connector_setting_count, and restores a version 2 archive without it`, `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`.
 
 ### `archive/restore-type-origin`
 
-If `POST /restore` reads an archive at version 2 with a `type` line whose `provenance.origin` is missing, is not text, is neither `registered` nor `plugin`, or is `plugin` without a `provenance.plugin` naming a plugin `name` and `version`, whose `provenance.plugin` is not `null` while `provenance.origin` is `registered`, or whose `provenance.created_by` is missing or is neither `null` nor a sign-in's `kind` (`browser`, `app`, `key` or `local`), `id` and `name`, then the server MUST answer `400 validation_error` and register no type of the archive.
+If `POST /restore` reads an archive at version 2 or later with a `type` line whose `provenance.origin` is missing, is not text, is neither `registered` nor `plugin`, or is `plugin` without a `provenance.plugin` naming a plugin `name` and `version`, whose `provenance.plugin` is not `null` while `provenance.origin` is `registered`, or whose `provenance.created_by` is missing or is neither `null` nor a sign-in's `kind` (`browser`, `app`, `key` or `local`), `id` and `name`, then the server MUST answer `400 validation_error` and register no type of the archive.
 
 **Reason:** a restored type is read back as `types/provenance-read` says, so it holds only a provenance that answer's schema allows, never one that loses a field it was given. A type may name a plugin no `plugin` line holds: removing a plugin keeps its types and their provenance (`plugins/remove-keeps-types`).
 
@@ -1178,7 +1222,7 @@ When a restore reads an archive that lacks a field or a line kind added to the a
 
 ### `archive/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` or, from version 2, `plugin_count` and `app_vendor_count`, or, from version 3, `connector_setting_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
+If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count`, `connector_agreement_count` or, from version 2, `plugin_count` and `app_vendor_count`, or, from version 3, `connector_setting_count` and `connector_mapping_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
 
 **Reason:** a later version is free to lay out its fields differently, so a manifest naming one is refused for its version (`archive/restore-version`) and not its shape.
 
@@ -1576,9 +1620,9 @@ When a restore leaves an entry of an archive unread under `archive/restore-unrea
 
 ### `archive/restore-unknown-line-kind`
 
-When a line of the `instance.ndjson.gz` of an archive is an object holding none of `type`, `edge_type`, `type_icon`, `source`, `setting`, `connector_state` and `connector_agreement`, and some key other than `provenance`, the server MUST skip the line and restore the rest of the archive.
+When a line of the `instance.ndjson.gz` of an archive is an object holding none of `type`, `edge_type`, `type_icon`, `source`, `setting`, `enforcement`, `connector_state`, `connector_agreement`, `plugin`, `app_vendor`, `connector_setting` and `connector_mapping`, and some key other than `provenance`, the server MUST skip the line and restore the rest of the archive.
 
-**Reason:** a later build of the same archive version may add a kind of line, which is optional to a reader of that version (`archive/archive-version-additions`). The manifest's counts name only the seven kinds, so such a line is in none of them (`archive/restore-line-counts`).
+**Reason:** a later build of the same archive version may add a kind of line, which is optional to a reader of that version (`archive/archive-version-additions`). The manifest's counts name only the kinds this statement lists, so such a line is in none of them (`archive/restore-line-counts`).
 
 **Tests:** `compliance/restore-archive.test.ts › skips an instance line of a kind it does not know, names the kind in line_kinds_skipped, and restores the rest`.
 

@@ -29,6 +29,9 @@ import type {
   HousekeepingRun,
   UpdateStatus,
   ConnectorAgreementRow,
+  ConnectorMapping,
+  ConnectorRewrite,
+  ConnectorRewriteRequest,
   ConnectorAgreementsInput,
   ConnectorAgreementsWritten,
   ConnectorHoldTaken,
@@ -728,6 +731,42 @@ export class MarfaClient {
   ): Promise<ApiResponse<Record<string, any>>> {
     return this.request<Record<string, any>>(
       `/connectors/${registration}/settings`,
+    );
+  }
+
+  async getConnectorMapping(
+    name: string,
+  ): Promise<ApiResponse<ConnectorMapping>> {
+    return this.request<ConnectorMapping>(`/plugins/${name}/connector/mapping`);
+  }
+
+  async saveConnectorMapping(
+    name: string,
+    body: Record<string, unknown>,
+  ): Promise<ApiResponse<ConnectorMapping>> {
+    return this.request<ConnectorMapping>(
+      `/plugins/${name}/connector/mapping`,
+      { method: "PUT", body },
+    );
+  }
+
+  async rewriteConnectorItems(
+    name: string,
+    body: Record<string, unknown> = {},
+  ): Promise<ApiResponse<ConnectorRewrite>> {
+    return this.request<ConnectorRewrite>(
+      `/plugins/${name}/connector/mapping/rewrite`,
+      { method: "POST", body },
+    );
+  }
+
+  async finishConnectorRewrite(
+    name: string,
+    body: Record<string, unknown>,
+  ): Promise<ApiResponse<{ rewrites: ConnectorRewriteRequest[] }>> {
+    return this.request<{ rewrites: ConnectorRewriteRequest[] }>(
+      `/plugins/${name}/connector/mapping/rewrite/done`,
+      { method: "POST", body },
     );
   }
 

@@ -269,21 +269,24 @@ impl<'c> Writing<'_, '_, 'c> {
             type_id: row.type_id.clone(),
             write: true,
         });
-        self.caller().require_type(&row.type_id, Level::Write)
+        self.caller()
+            .require_item_type(&row.type_id, &row.source, Level::Write)
     }
 
     pub(super) fn row_as_from(&self, id: &str) -> Result<Item> {
         self.note(Need::Reach);
         self.caller().require_reach()?;
         items::row(self.tx(), id)?
-            .filter(|row| row.state != "trashed" && self.caller().may_read_type(&row.type_id))
+            .filter(|row| {
+                row.state != "trashed" && self.caller().may_read_item(&row.type_id, &row.source)
+            })
             .ok_or_else(|| from_missing(id))
     }
 
     /// A row in the bin takes only a part arriving late.
     fn row_as_to(&self, kind: &EdgeType, id: &str) -> Result<Item> {
         let row = items::row(self.tx(), id)?
-            .filter(|row| self.caller().may_read_type(&row.type_id))
+            .filter(|row| self.caller().may_read_item(&row.type_id, &row.source))
             .ok_or_else(|| to_missing(id))?;
         let parts = OnDelete::of(Some(&kind.cascade_on_delete)) == OnDelete::WithHosts;
         if row.state == "trashed" && !parts {
@@ -306,7 +309,10 @@ impl<'c> Writing<'_, '_, 'c> {
         };
         let from = items::row(self.tx(), &edge.from_id)?
             .ok_or_else(|| Refusal::internal("an edge outlived its from item"))?;
-        if !self.caller().may_read_edge(&edge.edge_type, &from.type_id) {
+        if !self
+            .caller()
+            .may_read_edge_from(&edge.edge_type, &from.type_id, &from.source)
+        {
             return Err(not_found(id));
         }
         self.note_edge(id, &from);
@@ -381,8 +387,10 @@ impl<'c> Writing<'_, '_, 'c> {
         if OnDelete::of(Some(&kind.cascade_on_delete)) == OnDelete::Cascade {
             self.note(Need::CascadeTo {
                 name: to.type_id.clone(),
+                under: Some(to.source.clone()),
             });
-            self.caller().require_cascade_to(&to.type_id)?;
+            self.caller()
+                .require_cascade_onto(&to.type_id, &to.source)?;
         }
         Ok(())
     }

@@ -464,6 +464,38 @@ export interface ConnectorRunInput {
   error?: string;
 }
 
+export type MappingField =
+  { from: string } | { fixed: unknown } | { template: string };
+
+export interface MappingKind {
+  enabled: boolean;
+  target_type: string;
+  tier: "feed" | "library";
+  status_overrides: Record<string, string>;
+  fields: Record<string, MappingField>;
+}
+
+export interface ConnectorMapping {
+  version: number;
+  kinds: Record<string, MappingKind>;
+  rewrites: ConnectorRewriteRequest[];
+}
+
+export interface ConnectorRewriteRequest {
+  number: number;
+  version: number;
+  kinds: string[];
+  requested_at: string;
+}
+
+export interface ConnectorRewrite {
+  dry_run: boolean;
+  /** The request's number; a dry run stores none. */
+  number?: number;
+  version: number;
+  kinds: Record<string, { target_type: string; count: number }>;
+}
+
 export interface ConnectorRow {
   id: string;
   key_id: string;

@@ -61,6 +61,12 @@ pub const MIGRATIONS: &[Migration] = &[
             "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE name = 'plugin_connector_settings')",
         ),
     },
+    // Every statement names IF NOT EXISTS, so running it twice changes nothing.
+    Migration {
+        version: 8,
+        sql: include_str!("migrations/0008_connector_mappings.sql"),
+        done: None,
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

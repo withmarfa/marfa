@@ -2116,6 +2116,9 @@ Each entry names what it records in `action`. The first table gives the `action`
 | `webhook.delivery.redeliver` | A failed delivery is queued again.                                              | `settings`     |
 | `connector.register`         | A connector is registered.                                                      | `settings`     |
 | `connector.delete`           | A connector is deleted.                                                         | `settings`     |
+| `connector.mapping_change`   | A plugin connector's mapping is saved.                                          | `settings`     |
+| `connector.rewrite_request`  | A rewrite of a plugin connector's items is asked for.                           | `settings`     |
+| `connector.rewrite_done`     | A plugin's connector clears the rewrite it carried out.                         | `settings`     |
 | `connector_state.delete`     | A connector's state is deleted.                                                 | `settings`     |
 | `inbound_endpoint.create`    | An inbound endpoint is created.                                                 | `settings`     |
 | `inbound_endpoint.retire`    | An inbound endpoint is retired.                                                 | `settings`     |

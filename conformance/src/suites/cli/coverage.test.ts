@@ -14,7 +14,7 @@ import { Cli, requireBinary } from "./harness.js";
 /**
  * Published operations no command sends: a person's browser sends the first,
  * the connector host program, holding its own key, sends the next three, and
- * a plugin's connector, holding its own key, sends the last.
+ * a plugin's connector, under its own key, sends the last two.
  */
 const NO_COMMAND = [
   "authorizeApp",
@@ -22,6 +22,7 @@ const NO_COMMAND = [
   "getOwnConnectorHost",
   "createConnectorKey",
   "getConnectorSettings",
+  "finishConnectorRewrite",
 ];
 
 interface Row {

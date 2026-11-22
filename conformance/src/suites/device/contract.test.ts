@@ -1122,6 +1122,12 @@ const invocations: Record<string, () => string[]> = {
   "hosts get": () => [HOST_ID],
   "hosts link": () => [HOST_ID],
   "hosts remove": () => [HOST_ID],
+  "plugins mapping show": () => ["fixture"],
+  "plugins mapping set": () => [
+    "fixture",
+    fileOf("mapping.json", '{"version":0,"kinds":{}}'),
+  ],
+  "plugins mapping rewrite": () => ["fixture", "--dry-run"],
   "plugins install": () => [
     fileOf(
       "fixture.plugin.json",

@@ -5,8 +5,9 @@ use std::collections::{BTreeSet, HashMap};
 
 use serde_json::{Map, Value, json};
 
+use crate::catalog::Catalog;
 use crate::error::RuleError;
-use crate::plugin_connector::connector_faults;
+use crate::plugin_connector::{connector_faults, default_faults};
 use crate::schema::{
     EdgeIssues, FolderVerdict, Judging, Obj, Problem, Registry, TypeFile, check_plugin_type_files,
     edge_id, edge_type_from_request, icon_issue, is_guidance_file, is_type_file, request_shape,
@@ -539,7 +540,7 @@ pub fn check_source(files: &[SourceFile], registry: &Registry) -> Result<SourceV
         Ok(manifest) => manifest_faults(manifest),
         Err(refused) => vec![refused.clone()],
     };
-    let types = check_plugin_type_files(&source.types, registry)?;
+    let (types, accepted) = check_plugin_type_files(&source.types, registry)?;
     // A misnamed type file is in `types`, as `marfa types check` reports it.
     problems.extend(
         source
@@ -570,7 +571,39 @@ pub fn check_source(files: &[SourceFile], registry: &Registry) -> Result<SourceV
             Err(issues) => problems.push(edge_type_problem(path, issues)),
         }
     }
+    if let Ok(manifest) = &source.manifest
+        && let Some(Value::Object(connector)) = manifest.get(CONNECTOR)
+    {
+        problems.extend(default_mapping_faults(connector, &accepted));
+    }
     Ok(SourceVerdict { problems, types })
+}
+
+/// Each default mapping that install would refuse against `accepted`, which a mapping's shape
+/// alone does not show. A kind whose type the folder did not register is left to its own check.
+fn default_mapping_faults(connector: &Obj, accepted: &Registry) -> Vec<Problem> {
+    let (catalog, _) = Catalog::from_rows(accepted.rows().values());
+    let mut held = connector.clone();
+    if let Some(Value::Array(kinds)) = held.get_mut("kinds") {
+        for kind in kinds {
+            let own = kind.get("type").and_then(Value::as_str);
+            if !own.is_some_and(|id| accepted.contains(id))
+                && let Value::Object(kind) = kind
+            {
+                kind.remove("default_mapping");
+            }
+        }
+    }
+    let shaped: Vec<String> = connector_faults(connector, None)
+        .into_iter()
+        .map(|held| held.path)
+        .collect();
+    let mut faults = default_faults(&held, &catalog, |_| true);
+    faults.retain(|held| !shaped.contains(&held.path));
+    for held in &mut faults {
+        held.path = format!("{MANIFEST}: {}", held.path);
+    }
+    faults
 }
 
 /// Builds the bundle a source folder installs as, stamped with `version`, or says what stops it.
@@ -1479,6 +1512,95 @@ mod tests {
                 .any(|held| held.code == "missing_required_field"),
             "{problems:?}"
         );
+    }
+
+    fn connector_folder(opened_by: Value) -> Vec<SourceFile> {
+        let mut named = manifest();
+        named["connector"] = json!({
+            "source": "dfltest",
+            "source_name": "Dfltest",
+            "kinds": [{
+                "name": "issue",
+                "type": "common.issue",
+                "direction": "in",
+                "default_mapping": {
+                    "fields": {
+                        "title": { "from": "title" },
+                        "opened_by": opened_by,
+                    },
+                },
+            }],
+            "runs": { "on": "host" },
+        });
+        vec![
+            file(MANIFEST, named),
+            file(
+                "types/common.issue.json",
+                json!({
+                    "id": "common.issue",
+                    "parent": "core.task",
+                    "description": "An issue.",
+                    "fields": {
+                        "number": { "type": "integer" },
+                        "opened_by": { "type": "string" },
+                    },
+                }),
+            ),
+        ]
+    }
+
+    #[test]
+    fn the_check_refuses_a_default_mapping_from_a_field_its_type_lacks_as_installing_does() {
+        let registry = shipped_registry().unwrap();
+        let passed =
+            check_source(&connector_folder(json!({ "from": "title" })), &registry).unwrap();
+        assert_eq!(passed.problem_count(), 0, "witness: {passed:?}");
+        let inherited =
+            check_source(&connector_folder(json!({ "from": "status" })), &registry).unwrap();
+        assert_eq!(inherited.problem_count(), 0, "witness: {inherited:?}");
+        let refused =
+            check_source(&connector_folder(json!({ "from": "nothing" })), &registry).unwrap();
+        assert_eq!(refused.types.problem_count(), 0, "{refused:?}");
+        let paths: Vec<&str> = refused
+            .problems
+            .iter()
+            .map(|held| held.path.as_str())
+            .collect();
+        assert_eq!(
+            paths,
+            ["plugin.json: connector.kinds.0.default_mapping.fields.opened_by.from"],
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn the_check_judges_a_default_mapping_once_when_its_shape_is_wrong() {
+        let verdict = check_source(
+            &connector_folder(json!({ "from": 3 })),
+            &shipped_registry().unwrap(),
+        )
+        .unwrap();
+        let paths: Vec<&str> = verdict
+            .problems
+            .iter()
+            .map(|held| held.path.as_str())
+            .collect();
+        let mut once = paths.clone();
+        once.dedup();
+        assert!(!paths.is_empty(), "{verdict:?}");
+        assert_eq!(paths, once, "{verdict:?}");
+    }
+
+    #[test]
+    fn the_check_judges_no_default_mapping_of_a_type_that_failed_its_own_check() {
+        let mut files = connector_folder(json!({ "from": "nothing" }));
+        files[1] = file(
+            "types/common.issue.json",
+            json!({ "id": "common.issue", "parent": "core.task", "description": "No fields." }),
+        );
+        let verdict = check_source(&files, &shipped_registry().unwrap()).unwrap();
+        assert!(verdict.types.problem_count() > 0, "{verdict:?}");
+        assert!(verdict.problems.is_empty(), "{verdict:?}");
     }
 
     #[test]

@@ -611,6 +611,16 @@ pub(crate) fn row(tx: &Transaction<'_>, id: &str) -> Result<Option<Item>> {
     rows::by_id(tx, id)
 }
 
+/// The items outside the bin of `type_id` under `source`.
+pub fn count_outside_bin(tx: &Transaction<'_>, type_id: &str, source: &str) -> Result<i64> {
+    rows::count_outside_bin(tx, type_id, source)
+}
+
+/// The type and source of the item that holds `id`, whatever its state.
+pub fn type_and_source_of(tx: &Transaction<'_>, id: &str) -> Result<Option<(String, String)>> {
+    rows::type_and_source_by_id(tx, id)
+}
+
 pub fn type_of(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
     Ok(rows::type_by_id(tx, id)?.map(|(type_id, _)| type_id))
 }

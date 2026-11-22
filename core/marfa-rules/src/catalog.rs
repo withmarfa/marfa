@@ -898,6 +898,23 @@ impl Catalog {
         )
     }
 
+    /// A catalog of the stored type `rows`, and how many rows did not read as a type and were left out.
+    pub fn from_rows<'a>(
+        rows: impl IntoIterator<Item = &'a Map<String, Value>>,
+    ) -> (Catalog, usize) {
+        let mut unread = 0;
+        let mut entries = HashMap::new();
+        for row in rows {
+            match serde_json::from_value::<WireType>(Value::Object(row.clone())) {
+                Ok(wire) => {
+                    entries.insert(wire.id.clone(), CatalogEntry::from_wire(&wire));
+                }
+                Err(_) => unread += 1,
+            }
+        }
+        (Catalog::new(entries, None), unread)
+    }
+
     pub fn request_limit(&self) -> Option<usize> {
         self.request_limit
     }
@@ -1097,6 +1114,11 @@ impl Catalog {
             }
         }
         Ok(fields)
+    }
+
+    /// The type's one `status` field as it resolves, if its chain resolves and declares one.
+    pub fn status_field(&self, type_id: &str) -> Option<StatusField> {
+        StatusField::of(type_id, &self.resolved(type_id).ok()?)
     }
 
     /// A type whose chain cannot be resolved has none.

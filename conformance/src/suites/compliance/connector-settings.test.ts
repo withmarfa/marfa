@@ -1117,6 +1117,7 @@ describe("a restore of a plugin's connector and connectors.manage", () => {
           plugin_count: 0,
           app_vendor_count: 0,
           connector_setting_count: 0,
+          connector_mapping_count: 0,
         }),
       ),
       "instance",

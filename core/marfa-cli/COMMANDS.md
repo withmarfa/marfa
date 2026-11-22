@@ -81,6 +81,7 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | Make, link and remove the machines that run connectors | `marfa hosts add`, `marfa hosts list`, `marfa hosts get`, `marfa hosts link`, `marfa hosts remove` |
 | Choose which machine runs a plugin's connector | `marfa plugins assign` |
 | Set a plugin connector's settings and secrets | `marfa plugins settings`, `marfa plugins secret` |
+| Map what a connector brings, and rewrite its items | `marfa plugins mapping set`, `marfa plugins mapping rewrite` |
 | See what a key can read | `marfa overview` |
 | Read the instance's name and enforcement | `marfa config get` |
 | Change one setting, or return it to its default | `marfa config set`, `marfa config unset` |
@@ -1523,6 +1524,56 @@ marfa plugins secret [OPTIONS] <NAME> <SETTING>
 | Option | Description |
 | --- | --- |
 | `--clear` | Remove the value set, reading nothing. |
+
+### marfa plugins mapping
+
+A plugin connector's mapping: for each kind it brings, whether it comes in, the type and tier it lands as, its status words and its fields.
+
+```text
+marfa plugins mapping [OPTIONS] <COMMAND>
+```
+
+### marfa plugins mapping show
+
+Show the mapping. A kind no mapping was saved for shows its default, at version 0. Works with `connectors.manage` or the connector's own key.
+
+```text
+marfa plugins mapping show [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
+### marfa plugins mapping set
+
+Replace the mapping with the `kinds` a JSON or YAML file holds, such as one `marfa plugins mapping show` printed and you edited. Sends the file's `version`, or the version read now if it names none, so a mapping saved since is refused rather than overwritten. A kind or member left out takes its default. Needs `connectors.manage`.
+
+```text
+marfa plugins mapping set [OPTIONS] <NAME> <FILE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+| `<FILE>` | The file, JSON or YAML. |
+
+### marfa plugins mapping rewrite
+
+Count the connector's items on each kind's target type and ask the connector to rewrite them to the mapping on its next run, as a numbered request it clears when done. Marfa changes no item itself. Needs `connectors.manage`.
+
+```text
+marfa plugins mapping rewrite [OPTIONS] <NAME>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<NAME>` | The plugin's name. |
+
+| Option | Description |
+| --- | --- |
+| `--dry-run` | Only count the items. |
+| `--kind <KIND>` | A kind to rewrite; repeat for more. Without it, every kind that comes in. |
 
 ### marfa plugins check
 

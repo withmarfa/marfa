@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 use marfa_rules::builtin;
-use marfa_rules::catalog::{Catalog as Rules, CatalogEntry, EdgeType};
+use marfa_rules::catalog::{Catalog as Rules, EdgeType};
 use marfa_rules::edges::OnDelete;
 use marfa_rules::schema::{Obj, Registry};
-use marfa_rules::wire::{WireEdgeType, WireType};
+use marfa_rules::wire::WireEdgeType;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
@@ -300,17 +300,11 @@ fn edge_kinds_of(registered: &[Obj]) -> Result<HashMap<String, EdgeType>> {
 }
 
 fn rules_of(rows: &[Obj]) -> Rules {
-    let entries = rows.iter().filter_map(|row| {
-        let wire = serde_json::from_value::<WireType>(Value::Object(row.clone()));
-        match wire {
-            Ok(wire) => Some((wire.id.clone(), CatalogEntry::from_wire(&wire))),
-            Err(_) => {
-                tracing::error!("A stored type does not read as a type");
-                None
-            }
-        }
-    });
-    Rules::new(entries.collect(), None)
+    let (rules, unread) = Rules::from_rows(rows);
+    for _ in 0..unread {
+        tracing::error!("A stored type does not read as a type");
+    }
+    rules
 }
 
 /// A shared catalog read from a newer snapshot is never replaced by an older one.

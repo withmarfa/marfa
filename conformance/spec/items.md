@@ -54,9 +54,17 @@ While a connector registration whose key is neither revoked nor expired has an i
 
 **Tests:** `compliance/connector-read-only.test.ts › reads an item editable once the key of the connector that held it may no longer write its type`.
 
+### `items/read-only-mapped`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` is an item's type and the item's `source` is the key's own, the server MUST count that key as one that may write the item's type when it decides the item's `read_only`.
+
+**Reason:** the connector writes its own items of a mapped type (`plugins/reach-target-own-source`), so one it declares read only puts back an edit made in Marfa as it does for its own types.
+
+**Tests:** `compliance/connector-reach.test.ts › reads the connector's item of a mapped type read only while it declares the type, and editable once the kind is off`.
+
 ### `items/read-only-current`
 
-When a connector registration or its key changes, the server MUST answer `read_only` on every later read, every event frame sent after it and every outbound webhook delivery attempted after it as the registrations and keys then stand.
+When a connector registration, its key or the mapping of the plugin whose connector key it is changes, the server MUST answer `read_only` on every later read, every event frame sent after it and every outbound webhook delivery attempted after it as the registrations and keys then stand.
 
 **Tests:** `compliance/connector-read-only.test.ts › reads an item read only while its connector declares the type, and editable once the declaration is gone`, `› reads an item editable once the key of the connector that held it is revoked`, `› reads an item editable once the key of the connector that held it may no longer write its type`.
 
@@ -396,9 +404,17 @@ When a write names `capture_latitude` or `capture_longitude`, the server MUST st
 
 ### `items/tier-new`
 
-When a write creates an item, the server MUST give it the `tier` the write names, else the credential's `default_tier`, else `library`.
+When a write creates an item, the server MUST give it the `tier` the write names, else, for a credential other than a plugin's connector key (`items/tier-connector`), the credential's `default_tier`, else `library`.
 
 **Tests:** `compliance/tier-axis.test.ts › default-when-omitted is library`, `› credential default_tier stamps tier when client omits`, `› client per-item tier overrides credential default_tier`, `› uses the credential default and explicit tier on new bulk items ($mode, $defaultTier)`.
+
+### `items/tier-connector`
+
+When a plugin's connector key creates an item without naming a `tier`, the server MUST give it the `tier` of the enabled kind of its mapping whose `target_type` is the item's type, or `feed` where no enabled kind has that `target_type` or two such kinds name different tiers, never the key's `default_tier`.
+
+**Reason:** the mapping is the one place the owner sets a connector's tier (`plugins/mapping-read`), and a new connector starts at the feed. A write that names a tier keeps it (`items/tier-new`).
+
+**Tests:** `compliance/connector-reach.test.ts › gives a connector's new item the tier of its mapping, the feed by default, whatever the key's default_tier`.
 
 ### `items/tier-upsert`
 

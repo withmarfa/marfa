@@ -2757,6 +2757,7 @@ dependencies = [
  "tracing-subscriber",
  "ureq",
  "url",
+ "yaml-rust2",
 ]
 
 [[package]]

@@ -9,6 +9,7 @@ use crate::app::access::{Axis, Level};
 use crate::app::catalog::Snapshot;
 use crate::app::clock::Stamp;
 use crate::app::keys;
+use crate::app::mapping;
 use crate::app::refusal::{Refusal, Result};
 
 #[derive(Clone, Copy)]
@@ -55,6 +56,15 @@ impl Registry {
                 Err(refused) => return Err(refused),
             };
             let map = key.grants.map(Axis::Type);
+            let mapped = mapping::reach(tx, &key.source)?;
+            let own: HashSet<String> = declared
+                .iter()
+                .filter(|name| {
+                    Axis::Type.level(map, name) == Level::Write
+                        || mapped.as_ref().is_some_and(|mapped| mapped.writes(name))
+                })
+                .cloned()
+                .collect();
             let declared: HashSet<String> = declared
                 .into_iter()
                 .filter(|name| Axis::Type.level(map, name) == Level::Write)
@@ -63,10 +73,17 @@ impl Registry {
                 None => End::Never,
                 Some(at) => Stamp::parsed(at).map_or(End::Unread, |at| End::At(at.ms())),
             };
-            let reached: HashSet<&String> = std::iter::once(&key.source)
-                .chain(&key.grants.sources)
+            holdings
+                .entry(key.source.clone())
+                .or_default()
+                .push(Holding { end, declared: own });
+            let claimed: HashSet<&String> = key
+                .grants
+                .sources
+                .iter()
+                .filter(|source| **source != key.source)
                 .collect();
-            for source in reached {
+            for source in claimed {
                 holdings.entry(source.clone()).or_default().push(Holding {
                     end,
                     declared: declared.clone(),

@@ -83,6 +83,7 @@ codes! {
     NotFound = "not_found", 404;
     OwnerNotFound = "owner_not_found", 404;
     PasskeyNotFound = "passkey_not_found", 404;
+    PluginConnectorNotFound = "plugin_connector_not_found", 404;
     PluginNotFound = "plugin_not_found", 404;
     RowNotFound = "row_not_found", 404;
     SignInNotFound = "sign_in_not_found", 404;
@@ -94,6 +95,7 @@ codes! {
     AncestorUnavailable = "ancestor_unavailable", 409;
     Conflict = "conflict", 409;
     ConnectorHeld = "connector_held", 409;
+    ConnectorMappingStale = "connector_mapping_stale", 409;
     ConnectorSourceHeld = "connector_source_held", 409;
     CopiesBelowMinimum = "copies_below_minimum", 409;
     BackupFilesMissing = "backup_files_missing", 409;

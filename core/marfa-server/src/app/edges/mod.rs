@@ -108,9 +108,10 @@ pub fn naming_host(
     Ok(None)
 }
 
-pub fn from_type(tx: &Transaction<'_>, id: &str) -> Result<Option<String>> {
+/// The type and source of the from item of the edge `id`.
+pub fn from_type_and_source(tx: &Transaction<'_>, id: &str) -> Result<Option<(String, String)>> {
     match rows::by_id(tx, id)? {
-        Some(edge) => super::items::type_of(tx, &edge.from_id),
+        Some(edge) => super::items::type_and_source_of(tx, &edge.from_id),
         None => Ok(None),
     }
 }

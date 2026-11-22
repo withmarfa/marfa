@@ -4,6 +4,8 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
+use crate::catalog::Catalog;
+use crate::connector;
 use crate::schema::{Obj, Problem, icon_issue};
 
 /// The longest source, as a key's own source is held.
@@ -229,14 +231,21 @@ impl Judge {
                 Some(_) => self.wrong(format!("{at}.type"), "type must be a type identifier"),
             }
             self.word(kind, &at, "direction", &DIRECTIONS);
-            if kind
-                .get("default_mapping")
-                .is_some_and(|held| !held.is_object())
-            {
-                self.wrong(
+            match (kind.get("default_mapping"), kind.get("type")) {
+                (None, _) => {}
+                (Some(held), _) if !held.is_object() => self.wrong(
                     format!("{at}.default_mapping"),
                     "default_mapping must be an object",
-                );
+                ),
+                (Some(held), Some(Value::String(own_type))) => {
+                    connector::read_default(
+                        Some(held),
+                        own_type,
+                        &format!("{at}.default_mapping"),
+                        &mut self.faults,
+                    );
+                }
+                (Some(_), _) => {}
             }
         }
     }
@@ -414,6 +423,36 @@ pub fn connector_faults(section: &Obj, types: Option<&BTreeSet<&str>>) -> Vec<Pr
     judge.sign_in(section, &declared);
     judge.runs(section);
     judge.faults
+}
+
+/// Each kind's `default_mapping` in a checked connector section, judged as a save of the mapping
+/// judges the kind's entry on its own type, against the types `catalog` holds. `may_write` says
+/// whether a type may be a target.
+pub fn default_faults(
+    section: &Obj,
+    catalog: &Catalog,
+    may_write: impl Fn(&str) -> bool,
+) -> Vec<Problem> {
+    let mut problems = Vec::new();
+    let kinds = section.get("kinds").and_then(Value::as_array);
+    for (index, kind) in kinds.into_iter().flatten().enumerate() {
+        let Some(own_type) = kind.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(default) = kind.get("default_mapping") else {
+            continue;
+        };
+        let at = format!("connector.kinds.{index}.default_mapping");
+        if let Some((mut entry, fields)) =
+            connector::read_default(Some(default), own_type, &at, &mut problems)
+        {
+            if !fields {
+                entry.fields = connector::identity(own_type, own_type, catalog);
+            }
+            connector::judge_entry(own_type, &entry, &at, catalog, &may_write, &mut problems);
+        }
+    }
+    problems
 }
 
 /// The source a checked connector section writes under.
@@ -599,6 +638,27 @@ mod tests {
             "client_id_setting": "id", "client_secret_setting": "secret", "token_setting": "token",
         });
         assert!(paths(full).is_empty());
+    }
+
+    #[test]
+    fn a_default_mapping_sets_only_tier_overrides_and_fields() {
+        let mut odd = base();
+        odd["kinds"] = json!([
+            { "name": "entry", "type": "rss.entry", "direction": "in",
+              "default_mapping": { "target_type": "core.note", "enabled": false, "colour": 1 } },
+            { "name": "item", "type": "rss.entry", "direction": "in",
+              "default_mapping": { "tier": "library" } },
+        ]);
+        let mut found = paths(odd);
+        found.sort_unstable();
+        assert_eq!(
+            found,
+            [
+                "connector.kinds.0.default_mapping.colour",
+                "connector.kinds.0.default_mapping.enabled",
+                "connector.kinds.0.default_mapping.target_type",
+            ]
+        );
     }
 
     #[test]

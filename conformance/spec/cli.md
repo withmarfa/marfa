@@ -1654,6 +1654,14 @@ When `marfa plugins install` is given a path to a file that holds one JSON objec
 
 **Tests:** `cli/plugins.test.ts › installs a plugin from a bundle file and from a source folder, and lists, reads and removes it`.
 
+### `cli/plugins-mapping-set`
+
+When `marfa plugins mapping set` is given a file that holds, as JSON or as YAML, an object with `kinds`, the CLI MUST send `PUT /plugins/{name}/connector/mapping` with those `kinds` and the file's `version`, or, where the file names none, the `version` `GET /plugins/{name}/connector/mapping` answers just before.
+
+**Reason:** an owner edits the mapping `marfa plugins mapping show` printed, and a mapping saved since is refused (`plugins/mapping-stale`) rather than overwritten.
+
+**Tests:** `cli/plugins.test.ts › sets a connector's mapping from a YAML file at the version read, shows it, refuses a stale version and counts a rewrite`.
+
 ### `cli/plugins-install-folder`
 
 When `marfa plugins install` is given a source folder, the CLI MUST send to `POST /plugins` the bytes of the bundle `marfa plugins bundle` writes from it, at the version `--version` names or `0.0.0` without it, and print their SHA-256 on standard error.
@@ -1692,11 +1700,11 @@ If the bundle a release serves has another SHA-256 than its `plugins.json` lists
 
 ### `cli/plugins-check-judges`
 
-When `marfa plugins check` is given a source folder, the CLI MUST report every problem installing its bundle would be refused for, with no server: each problem of `plugin.json` with its path, each edge type as installing judges it (`plugins/install-edge-conflict`, `plugins/install-edge-refused`) against the shipped edge types and the folder's own, and each file in `types/` as `cli/types-check-judges` reports it, except that a type under `common` is taken and a type under `core`, `system`, `marfa`, `app` or `user` is refused `forbidden`.
+When `marfa plugins check` is given a source folder, the CLI MUST report every problem installing its bundle would be refused for, with no server: each problem of `plugin.json` with its path, each edge type as installing judges it (`plugins/install-edge-conflict`, `plugins/install-edge-refused`) against the shipped edge types and the folder's own, and each file in `types/` as `cli/types-check-judges` reports it, except that a type under `common` is taken and a type under `core`, `system`, `marfa`, `app` or `user` is refused `forbidden`, and each `default_mapping` of its connector's kinds as installing judges it (`plugins/connector-default-mapping`) against the shipped types and the folder's own.
 
 **Reason:** the plugins repository checks a plugin as installing will, while `marfa types check` keeps judging as `POST /types` does.
 
-**Tests:** `device/plugins-check.test.ts › judges a source folder as installing would: takes common.ticket, which types check refuses, and refuses user.ticket, which types check takes`, `› refuses an edge type that redefines a shipped one, or names a shipped edge as its reverse, as installing does`.
+**Tests:** `device/plugins-check.test.ts › judges a source folder as installing would: takes common.ticket, which types check refuses, and refuses user.ticket, which types check takes`, `› refuses an edge type that redefines a shipped one, or names a shipped edge as its reverse, as installing does`, `› refuses a connector default mapping from a field its type lacks, as installing does`.
 
 ### `cli/plugins-file-name`
 

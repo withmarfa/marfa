@@ -213,6 +213,61 @@ describe("a plugin's source folder from the terminal", () => {
     ]);
   });
 
+  it("refuses a connector default mapping from a field its type lacks, as installing does", async () => {
+    const issue = JSON.stringify({
+      id: "common.issue",
+      parent: "core.task",
+      description: "An issue.",
+      fields: {
+        number: { type: "integer" },
+        opened_by: { type: "string" },
+      },
+    });
+    const withDefault = (openedBy: object) =>
+      source(
+        { "common.issue.json": issue },
+        {
+          connector: {
+            source: "dfltest",
+            source_name: "Dfltest",
+            kinds: [
+              {
+                name: "issue",
+                type: "common.issue",
+                direction: "in",
+                default_mapping: {
+                  fields: {
+                    title: { from: "title" },
+                    opened_by: openedBy,
+                  },
+                },
+              },
+            ],
+            runs: { on: "host" },
+          },
+        },
+      );
+    // The witness: a default that names fields the type has, own and inherited, passes.
+    for (const from of ["title", "status"]) {
+      const passed = await marfa(
+        ["--json", "plugins", "check", withDefault({ from })],
+        NO_KEYCHAIN,
+      );
+      expect(passed.code, passed.stdout).toBe(0);
+    }
+    const refused = await marfa(
+      ["--json", "plugins", "check", withDefault({ from: "nothing" })],
+      NO_KEYCHAIN,
+    );
+    expect(refused.code, refused.stdout).toBe(1);
+    const verdict = JSON.parse(refused.stdout) as Verdict;
+    expect(verdict.problems).toEqual([
+      expect.objectContaining({
+        path: "plugin.json: connector.kinds.0.default_mapping.fields.opened_by.from",
+      }),
+    ]);
+  });
+
   it("builds a source folder into a bundle stamped with its version, and writes an index naming its SHA-256", async () => {
     const folder = source({
       "common.ticket.json": definition("common.ticket"),

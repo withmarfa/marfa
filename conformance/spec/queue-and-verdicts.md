@@ -2646,7 +2646,7 @@ When a create is refused `trashed`, a device MUST report the refusal as about an
 
 When a caller creates an item naming no tier, and its natural key names neither an item the copy holds from the server nor this device's own create still waiting, a device MUST show the create at the tier the copy's slice holds, `library` for a slice of both tiers.
 
-**Reason:** left out, the server gives a new item its credential's `default_tier` (`items/tier-new`), which need not be the slice's, and the copy would show the item at one tier and get it back at another. In a slice of both, `library` is the tier a create naming none takes on the server.
+**Reason:** left out, the server gives a new item its credential's `default_tier` (`items/tier-new`), or for a plugin's connector key its mapping's tier (`items/tier-connector`), which need not be the slice's, and the copy would show the item at one tier and get it back at another. In a slice of both, `library` is the tier a create naming none takes on the server.
 
 **Tests:** `device/queue.test.ts › sends a create naming no tier with the tier the slice holds`, `› sends a create naming no tier from a slice of both tiers at the library, and one naming the feed at the feed`, `› asks the server about a create's natural key before it sends it, and sends no tier where an item holds the key`, `device/slice-tiers-live.test.ts › creates offline at each tier in a slice of both, and the server holds each where it was shown`, `› re-saves an item moved to the feed by its natural key from a copy of the library without moving it`.
 
@@ -2654,7 +2654,7 @@ When a caller creates an item naming no tier, and its natural key names neither 
 
 When a device sends a create that a caller made naming no tier and that carries no `source_id`, a device MUST send it at the tier the copy shows it at.
 
-**Reason:** left out, the server gives the item its credential's `default_tier` (`items/tier-new`), and the copy would show the item at one tier and get it back at another.
+**Reason:** left out, the server gives the item its credential's `default_tier` (`items/tier-new`) or its mapping's tier (`items/tier-connector`), and the copy would show the item at one tier and get it back at another.
 
 **Tests:** `device/queue.test.ts › sends a create naming no tier with the tier the slice holds`, `› sends a create naming no tier from a slice of both tiers at the library, and one naming the feed at the feed`, `device/slice-tiers-live.test.ts › creates offline at each tier in a slice of both, and the server holds each where it was shown`.
 
@@ -2708,7 +2708,7 @@ When the lookup of a create's natural key answers an item, in any state, a devic
 
 When the lookup of a create's natural key answers no item, a device MUST send the create at the tier the copy shows it at.
 
-**Reason:** left out, the new item would take the credential's `default_tier` (`items/tier-new`). An item another writer makes under the key between the lookup and the send takes this tier; it is new, so no person has moved it.
+**Reason:** left out, the new item would take the credential's `default_tier` (`items/tier-new`) or its mapping's tier (`items/tier-connector`). An item another writer makes under the key between the lookup and the send takes this tier; it is new, so no person has moved it.
 
 **Tests:** `device/queue.test.ts › asks the server about a create's natural key before it sends it, and sends no tier where an item holds the key`, `› sends a create naming no tier whose natural key names its own create still waiting at that create's tier`, `› asks again in halves when a lookup of several keys is refused, and sends a key refused alone with no tier`, `device/slice-tiers-live.test.ts › re-saves an item moved to the feed by its natural key from a copy of the library without moving it`.
 
@@ -2716,7 +2716,7 @@ When the lookup of a create's natural key answers no item, a device MUST send th
 
 If the server refuses the lookup of a create's natural key with a status no retry clears, `400`, `403`, `404` and `413` among them, but for a `400` or `413` to a lookup of more than one key (`queue-and-verdicts/keyed-create-lookup-halves`), or answers it in a shape the device cannot read, or the key names an empty `source` or `source_id`, or `GET /keys/current` will not name the source of a create naming none, then a device MUST send the create with no `tier`.
 
-**Reason:** the copy cannot say whether an item holds the key. Sent with no tier, an item a person placed keeps its tier as it stands (`items/tier-upsert`), and a new item takes the credential's `default_tier`; moving an item a person placed is the harm, and a new item at another tier the lesser one. A refusal that no retry clears would otherwise hold the queue for good.
+**Reason:** the copy cannot say whether an item holds the key. Sent with no tier, an item a person placed keeps its tier as it stands (`items/tier-upsert`), and a new item takes the credential's `default_tier` or its mapping's tier (`items/tier-connector`); moving an item a person placed is the harm, and a new item at another tier the lesser one. A refusal that no retry clears would otherwise hold the queue for good.
 
 **Tests:** `device/queue.test.ts › sends a create with no tier where a lookup cannot say whether an item holds its key`, `› asks again in halves when a lookup of several keys is refused, and sends a key refused alone with no tier`, `› looks a create naming no source up under its credential's own, and sends it with no tier where that cannot be learned`.
 

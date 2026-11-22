@@ -103,6 +103,11 @@ These fixtures read or change something no published door or fault reaches, so
 they judge only a server that keeps the same files or runs the same image. Each
 stays because that thing is what it checks.
 
+- `compliance/connector-reach.test.ts`, "keeps the key a plugin connector key
+  when its stored connector does not read" and "when its stored mapping does
+  not read", rewrites a plugin's stored bundle or its stored mapping so that it
+  does not read. Installing, saving a mapping and a restore each refuse one, and
+  no fault stores one.
 - `compliance/database-file.test.ts` reads, copies or damages the database
   file and the log beside it: a stop that moves the log into the file, a copy
   taken file by file under a read transaction, credential rows removed, a file
