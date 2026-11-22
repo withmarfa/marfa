@@ -453,7 +453,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     [...FIXTURES, "mcp-conformance"],
   ],
   [
-    /^conformance\/src\/utils\/(platform|fresh-server-teardown|temp-folder-teardown|rust-score)\.ts$/,
+    /^conformance\/src\/utils\/(platform|plugin-connector|fresh-server-teardown|temp-folder-teardown|rust-score)\.ts$/,
     [...FIXTURES, RELEASE],
   ],
   [/^conformance\/src\/utils\//, FIXTURES],
