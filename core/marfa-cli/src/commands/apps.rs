@@ -24,7 +24,8 @@ pub enum AppsCommand {
         clear: bool,
     },
     /// End an app's grant. Its keys and its own data stay unless asked.
-    /// Requires `grants.manage`, and `items.purge` with --remove-data.
+    /// Requires `grants.manage`, and `items.purge` with --remove-data; a key
+    /// also needs write on the app's types, and `schema.write`.
     Revoke {
         /// The app grant's ID.
         id: String,
@@ -91,7 +92,8 @@ pub enum DataCommand {
     /// gone as it does. Run `marfa backups run` first: only a backup taken
     /// before brings them back, and `marfa items restore` cannot. Items of
     /// other types that link to them stay and lose the link. The namespace
-    /// stays with the app that holds it. Requires `items.purge` as well.
+    /// stays with the app that holds it. Requires `items.purge` as well; a
+    /// key also needs write on the namespace's types, and `schema.write`.
     Delete {
         /// The namespace, such as `app.acme`.
         vendor: String,
@@ -193,11 +195,27 @@ fn data_text(answer: &Value) -> String {
     lines.join("\n")
 }
 
+/// The removed items, removed types and remaining items one removal answered.
+fn removal_counts(vendor: &str, answer: &Value) -> Result<(u64, u64, u64), CliError> {
+    let count = |name: &str| {
+        answer.get(name).and_then(Value::as_u64).ok_or_else(|| {
+            CliError::Invalid(format!(
+                "the server's answer to deleting {vendor}'s data gave no readable {name}, so deleting stopped"
+            ))
+        })
+    };
+    Ok((
+        count("removed_items")?,
+        count("removed_types")?,
+        count("remaining_items")?,
+    ))
+}
+
 /// Each request takes up to 1,000 items; the types go with the one that empties the namespace.
 fn delete_data(vendor: &str, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let (mut items, mut types) = (0_u64, 0_u64);
     loop {
-        let answer = remote.json(&data_delete_request(vendor)).map_err(|error| {
+        let after = |error: CliError| {
             if items == 0 {
                 error
             } else {
@@ -205,15 +223,15 @@ fn delete_data(vendor: &str, remote: &Remote, out: &Printer) -> Result<(), CliEr
                     "{items} items of {vendor} were deleted, then: {error}. Run this again to carry on."
                 ))
             }
-        })?;
-        let count = |name: &str| answer.get(name).and_then(Value::as_u64).unwrap_or(0);
-        items += count("removed_items");
-        types += count("removed_types");
-        let remaining = count("remaining_items");
+        };
+        let answer = remote.json(&data_delete_request(vendor)).map_err(after)?;
+        let (removed, removed_types, remaining) = removal_counts(vendor, &answer).map_err(after)?;
+        items += removed;
+        types += removed_types;
         if remaining == 0 {
             break;
         }
-        if count("removed_items") == 0 {
+        if removed == 0 {
             return Err(CliError::Invalid(format!(
                 "the server deleted nothing of {vendor} while {remaining} items remain, so deleting stopped"
             )));
@@ -363,6 +381,21 @@ mod tests {
         ]);
         assert!(deleted.is_err());
     }
+
+    #[test]
+    fn a_removal_answer_without_readable_counts_is_an_error_not_an_end() {
+        let full = json!({ "removed_items": 3, "removed_types": 1, "remaining_items": 0 });
+        assert_eq!(removal_counts("app.acme", &full).unwrap(), (3, 1, 0));
+        for broken in [
+            json!({ "removed_items": 3, "removed_types": 1 }),
+            json!({ "removed_items": 3, "removed_types": 1, "remaining_items": "none" }),
+            json!({ "removed_types": 1, "remaining_items": 0 }),
+            json!({ "removed_items": 3, "remaining_items": -1 }),
+        ] {
+            assert!(removal_counts("app.acme", &broken).is_err(), "{broken}");
+        }
+    }
+
     #[test]
     fn sends_the_complete_choice_and_the_grant_seen_before_it() {
         let req = narrow_request(
