@@ -2,7 +2,7 @@
   "id": "derived-from",
   "label": "Derived from",
   "reverse_label": "Basis for",
-  "description": "Says that an item was made from another item, such as an imported copy or a summary generated from a note.",
+  "description": "Runs from the derived item to its source. When saving an item, derived-from names that source.",
   "cardinality": "many-to-many",
   "from_type_constraints": ["*"],
   "to_type_constraints": ["*"],

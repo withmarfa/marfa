@@ -4,6 +4,7 @@
    "id": "core.bookmark",
    "label": "Bookmark",
    "description": "Something you saved from elsewhere, such as a link, a highlighted excerpt or a clipped paragraph.",
+   "guidance": "**Use for**\n\n- A web address to come back to.\n\n**Not for**\n\n- A copy of the page. Saved HTML is a `core.file.webpage`. The article's own text is a `core.media.article`.\n- A passage highlighted in an item you already keep. That is a `core.highlight`, linked to the item with `excerpt-of`. A passage clipped with its web address belongs in this bookmark's `body`.\n\n**Body**\n\n- `url` is the address. `title` is the page title. `body` is text you captured from it, such as a clipped paragraph. `notes` holds your own comments.\n\n**Edges**\n\n- `in-collection` runs from this bookmark to a `core.collection`, such as a reading list.",
    "version": 0,
    "fields": {
     "url": {
@@ -74,6 +75,7 @@
    "id": "core.collection",
    "label": "Collection",
    "description": "A named group of items of any type, such as a reading list or the plans for a trip.",
+   "guidance": "**Use for**\n\n- A named group of items, such as a reading list, a watch list, or a project's references.\n\n**Not for**\n\n- The items in the group. Each one is its own item.\n- Another collection. A collection does not nest.\n\n**Body**\n\n- `title` is required and is the group's name. `description` says what the group is for.\n\n**Edges**\n\n- `in-collection` runs from each member to this collection. When saving a member, `in-collection` names this collection.",
    "version": 0,
    "fields": {
     "title": {
@@ -709,6 +711,7 @@
    "id": "core.file",
    "label": "File",
    "description": "A file you keep, such as a PDF or a spreadsheet.",
+   "guidance": "**Use for**\n\n- A file you keep, such as a PDF or a spreadsheet.\n\n**Not for**\n\n- Text with no file. That is a `core.note`.\n- A web address with no saved file. That is a `core.bookmark`.\n\n**Body**\n\n- The file's bytes are stored with it. `title` is its name. A saved HTML page is a `core.file.webpage`.\n\n**Edges**\n\n- `attached-to` runs from this file to the item it belongs to. When saving the file, `attached-to` names that item.",
    "version": 0,
    "fields": {
     "blob_ref": {
@@ -1122,6 +1125,7 @@
    "id": "core.highlight",
    "label": "Highlight",
    "description": "A passage you highlighted, with any note you added.",
+   "guidance": "**Use for**\n\n- A passage highlighted in something you keep.\n\n**Not for**\n\n- The source itself. Writing of your own is a `core.note`. A web address to come back to is a `core.bookmark`.\n\n**Body**\n\n- `text` is the passage and is required. `note` is what you add about it.\n\n**Edges**\n\n- `excerpt-of` runs from this highlight to the item the passage came from. A highlight has one source.",
    "version": 0,
    "fields": {
     "text": {
@@ -2252,6 +2256,7 @@
    "id": "core.note",
    "label": "Note",
    "description": "Text you wrote, such as a thought, a meeting note or a list.",
+   "guidance": "**Use for**\n\n- A thought, a meeting note, or other writing that belongs together.\n\n**Not for**\n\n- A list of separate things to keep. A reading list is a `core.collection`, and each book or link is its own item linked with `in-collection`.\n- Several unrelated files or documents as one note. Each file is a `core.file`.\n- Something to do. That is a `core.task`.\n- A web address to come back to. That is a `core.bookmark`.\n\n**Body**\n\n- `body` is the note. `title` is its heading. `notes` holds your own comments, apart from the note.\n\n**Edges**\n\n- `in-collection` runs from this note to the `core.collection` it belongs to.",
    "version": 0,
    "fields": {
     "body": {
@@ -2321,6 +2326,7 @@
    "id": "core.task",
    "label": "Task",
    "description": "Something you need to do, such as booking flights or sending an invoice.",
+   "guidance": "**Use for**\n\n- Something to do.\n\n**Not for**\n\n- Notes about the work. Those are a `core.note`. When saving that note, `about` names the task.\n\n**Body**\n\n- `title` is what needs doing. `status` is `not_started`, `in_progress`, `completed`, or `canceled`. `due_at` is when it is due.\n\n**Edges**\n\n- `about` runs from this task to the item the work is about.",
    "version": 0,
    "fields": {
     "title": {
@@ -2586,7 +2592,7 @@
    "id": "about",
    "label": "About",
    "reverse_label": "Subject of",
-   "description": "Says that an item is about another item, such as a note about a book.",
+   "description": "Runs from the item to what it is about. When saving an item, about names that subject.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
     "*"
@@ -2605,7 +2611,7 @@
    "id": "attached-to",
    "label": "Attached to",
    "reverse_label": "Attachments",
-   "description": "Says that an item is attached to another item and exists for it, such as a scanned page attached to the document it was scanned for.",
+   "description": "Runs from the attachment to the item it belongs to. When saving an attachment, attached-to names that item.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
     "*"
@@ -2630,7 +2636,7 @@
    "id": "comments-on",
    "label": "Comment on",
    "reverse_label": "Comments",
-   "description": "Says that an item is a comment on another item, including a reply to another comment.",
+   "description": "Runs from the comment to the item it comments on. When saving a comment, comments-on names that item. A comment has one subject.",
    "cardinality": "many-to-one",
    "from_type_constraints": [
     "*"
@@ -2649,7 +2655,7 @@
    "id": "derived-from",
    "label": "Derived from",
    "reverse_label": "Basis for",
-   "description": "Says that an item was made from another item, such as an imported copy or a summary generated from a note.",
+   "description": "Runs from the derived item to its source. When saving an item, derived-from names that source.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
     "*"
@@ -2668,7 +2674,7 @@
    "id": "excerpt-of",
    "label": "Excerpt from",
    "reverse_label": "Excerpts",
-   "description": "Says that an item is a highlight, quote or clip taken from another item, such as a quote from a book.",
+   "description": "Runs from the excerpt to the item it was taken from. When saving a highlight or quote, excerpt-of names that item. An excerpt has one source.",
    "cardinality": "many-to-one",
    "from_type_constraints": [
     "*"
@@ -2687,7 +2693,7 @@
    "id": "in-collection",
    "label": "In collection",
    "reverse_label": "Contents",
-   "description": "Says that an item is a member of a container, such as a collection, a series or an album.",
+   "description": "Runs from the member to its container, such as a collection, a series or an album. When saving a member, in-collection names the container. A container does not nest inside another.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
     "*"
@@ -2711,7 +2717,7 @@
    "id": "in-folder",
    "label": "In folder",
    "reverse_label": "Folder contents",
-   "description": "Says where an item's file sits in a synced folder.",
+   "description": "Runs from the item to the system.folder its file sits in. Saving an item cannot set this edge, because the edge needs the file's path.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
     "*"
@@ -2739,7 +2745,7 @@
    "id": "in-thread",
    "label": "In thread",
    "reverse_label": "Messages",
-   "description": "Says that an item is a message in a thread, such as a reply in a conversation.",
+   "description": "Runs from the message to its thread. When saving a message, in-thread names the thread. A message has one thread.",
    "cardinality": "many-to-one",
    "from_type_constraints": [
     "*"
@@ -2763,7 +2769,7 @@
    "id": "parent-of",
    "label": "Children",
    "reverse_label": "Parent",
-   "description": "Says that an item is the parent of another item, so that items form a hierarchy.",
+   "description": "Runs from the parent to the child. Each child has one parent. When saving an item, parent-of names its children. To give this item a parent, save the parent and name this item.",
    "cardinality": "one-to-many",
    "from_type_constraints": [
     "*"
@@ -2783,7 +2789,7 @@
    "id": "references",
    "label": "References",
    "reverse_label": "Referenced by",
-   "description": "Says that an item mentions another item, such as a note that links to another note.",
+   "description": "Runs from the item to the item it mentions. When saving an item, references names what it mentions.",
    "cardinality": "many-to-many",
    "from_type_constraints": [
     "*"
@@ -2802,7 +2808,7 @@
    "id": "supersedes",
    "label": "Supersedes",
    "reverse_label": "Superseded by",
-   "description": "Says that an item replaces another item as the current version, such as a revised document that replaces its earlier draft.",
+   "description": "Runs from the newer item to the item it replaces. Each end holds one item. When saving the current item, supersedes names the one it replaces.",
    "cardinality": "one-to-one",
    "from_type_constraints": [
     "*"

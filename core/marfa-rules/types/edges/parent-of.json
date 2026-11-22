@@ -2,7 +2,7 @@
   "id": "parent-of",
   "label": "Children",
   "reverse_label": "Parent",
-  "description": "Says that an item is the parent of another item, so that items form a hierarchy.",
+  "description": "Runs from the parent to the child. Each child has one parent. When saving an item, parent-of names its children. To give this item a parent, save the parent and name this item.",
   "cardinality": "one-to-many",
   "from_type_constraints": ["*"],
   "to_type_constraints": ["*"],

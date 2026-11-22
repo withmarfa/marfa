@@ -6327,7 +6327,12 @@
           },
           "description": {
             "type": "string",
-            "description": "What the type holds, cut at 100 characters. Absent when the type has none."
+            "description": "What the type holds, cut at 200 characters. Absent when the type has none."
+          },
+          "parent": {
+            "type": "string",
+            "description": "The parent type's identifier. Absent when the type has none.",
+            "example": "core.file"
           },
           "count": {
             "type": "integer",
@@ -6350,7 +6355,7 @@
           },
           "description": {
             "type": "string",
-            "description": "What the edge type means, cut at 100 characters. Absent when it has none."
+            "description": "What the edge type means, cut at 200 characters. Absent when it has none."
           },
           "access": {
             "allOf": [

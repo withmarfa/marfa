@@ -4,10 +4,11 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value, json};
 
-use super::{Definition, text};
+use super::Definition;
 use crate::app::access::Caller;
+use crate::app::refusal::{Code, Refusal};
 use crate::app::{App, overview, types};
-use crate::http::mcp::results::Outcome;
+use crate::http::mcp::results::{Outcome, Stop};
 
 pub const NAME: &str = "marfa_overview";
 
@@ -15,12 +16,23 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Overview of this Marfa",
-        description: "Call first, before finding or saving anything. Without arguments, returns what this Marfa holds and what you may do: the item types with counts, edge types, the most used tags, views and folders. With `type`, returns that type's fields and tables.",
+        description: "Call first. Without arguments, returns what this Marfa holds and what you may do. With `type`, one id or up to 20, returns those types and their guidance. Read a type here before saving an item of it, and choose the type whose guidance fits.",
         input: json!({
             "type": "object",
             "properties": {
-                "type": { "type": "string", "minLength": 1,
-                    "description": "A type's ID, such as `core.note`, to see its fields and tables." },
+                "type": {
+                    "description": "One type id, or 1 to 20 distinct ids, such as `core.note`.",
+                    "anyOf": [
+                        { "type": "string", "minLength": 1 },
+                        {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "uniqueItems": true,
+                            "items": { "type": "string", "minLength": 1 },
+                        },
+                    ],
+                },
             },
             "additionalProperties": false,
         }),
@@ -29,14 +41,20 @@ pub fn definition() -> Definition {
             "properties": {
                 "instance": { "type": "object" },
                 "credential": { "type": "object" },
-                "types": { "type": "array", "items": { "type": "object" } },
+                "types": { "type": "array", "items": { "type": "object" },
+                    "description": "Without arguments, each type you can read, with `parent` when it has one. With several type ids, those types in the order asked." },
+                "unknown": { "type": "array", "items": { "type": "string" },
+                    "description": "Ids from a type array that are not types. Absent when every id is a type." },
+                "unreadable": { "type": "array", "items": { "type": "string" },
+                    "description": "Ids from a type array whose stored definition cannot be read now. Absent when every type reads." },
                 "total": { "type": "integer" },
                 "edge_types": { "type": "array", "items": { "type": "object" } },
                 "tags": { "type": "array", "items": { "type": "object" } },
                 "views": { "type": "array", "items": { "type": "object" } },
                 "folders": { "type": "array", "items": { "type": "object" } },
                 "truncated": { "type": "object" },
-                "type": { "type": "object" },
+                "type": { "type": "object",
+                    "description": "The one type asked for, with `guidance` and `ancestor_guidance` when any is set, and each status word's description." },
             },
         }),
         annotations: super::reads(),
@@ -144,14 +162,81 @@ pub fn compact(schema: &Value) -> Value {
             out.insert(key.into(), value.clone());
         }
     }
+    if let Some(guidance) = schema
+        .get("guidance")
+        .and_then(Value::as_str)
+        .filter(|guidance| !guidance.is_empty())
+    {
+        out.insert("guidance".into(), guidance.into());
+    }
+    if let Some(above) = schema
+        .get("ancestor_guidance")
+        .and_then(Value::as_array)
+        .filter(|above| !above.is_empty())
+    {
+        out.insert("ancestor_guidance".into(), Value::Array(above.clone()));
+    }
     Value::Object(out)
 }
 
 pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>) -> Outcome {
-    match text(&arguments, "type") {
-        Some(id) => Ok(json!({ "type": compact(&types::get(app, id).await?) })),
+    match arguments.get("type") {
+        Some(asked) => asked_types(app, asked).await,
         None => Ok(overview::read(app, caller).await?),
     }
+}
+
+async fn asked_types(app: &Arc<App>, asked: &Value) -> Outcome {
+    let ids: Vec<String> = match asked {
+        Value::String(id) => {
+            return Ok(json!({ "type": compact(&types::get(app, id.clone()).await?) }));
+        }
+        Value::Array(ids) => ids
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect(),
+        _ => {
+            return Err(Stop::invalid(
+                "type must be a string or an array of type ids.",
+            ));
+        }
+    };
+    let mut found = Vec::new();
+    let mut unknown = Vec::new();
+    let mut unreadable = Vec::new();
+    let mut first_fault = None;
+    for id in ids {
+        match types::get(app, id.clone()).await {
+            Ok(schema) => found.push(compact(&schema)),
+            Err(refusal) if refusal.code == Code::TypeNotFound => unknown.push(id),
+            Err(refusal) => {
+                unreadable.push(id);
+                first_fault.get_or_insert(refusal);
+            }
+        }
+    }
+    if found.is_empty()
+        && let Some(refusal) = first_fault
+    {
+        return Err(refusal.into());
+    }
+    if found.is_empty() {
+        let message = match unknown.as_slice() {
+            [id] => format!("Type \"{id}\" not found"),
+            other => format!("Type \"{}\" not found", other.join("\", \"")),
+        };
+        return Err(Refusal::new(Code::TypeNotFound, message).into());
+    }
+    let mut out = Map::new();
+    out.insert("types".into(), Value::Array(found));
+    if !unknown.is_empty() {
+        out.insert("unknown".into(), json!(unknown));
+    }
+    if !unreadable.is_empty() {
+        out.insert("unreadable".into(), json!(unreadable));
+    }
+    Ok(Value::Object(out))
 }
 
 #[cfg(test)]
@@ -178,5 +263,40 @@ mod tests {
             json!({ "type": "string", "required": true })
         );
         assert_eq!(compacted["fields"]["serves"]["minimum"], 1);
+    }
+
+    #[test]
+    fn guidance_and_status_word_descriptions_stay_and_empty_guidance_is_left_out() {
+        let kept = compact(&json!({
+            "id": "user.child",
+            "guidance": "Own.",
+            "ancestor_guidance": [{ "type": "core.note", "guidance": "From the parent." }],
+            "fields": {
+                "status": {
+                    "type": "status",
+                    "label": "Status",
+                    "status_values": [{
+                        "value": "open",
+                        "group": "not_started",
+                        "description": "Not begun.",
+                    }],
+                },
+            },
+        }));
+        assert_eq!(kept["guidance"], "Own.");
+        assert_eq!(kept["ancestor_guidance"][0]["type"], "core.note");
+        assert_eq!(
+            kept["fields"]["status"]["status_values"][0]["description"],
+            "Not begun."
+        );
+        assert!(kept["fields"]["status"].get("label").is_none());
+        let bare = compact(&json!({
+            "id": "core.entity",
+            "guidance": "",
+            "ancestor_guidance": [],
+            "fields": {},
+        }));
+        assert!(bare.get("guidance").is_none());
+        assert!(bare.get("ancestor_guidance").is_none());
     }
 }

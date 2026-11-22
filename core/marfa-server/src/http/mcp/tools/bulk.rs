@@ -37,7 +37,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Save many items at once",
-        description: "Use to save many items in one call, at most 200, such as an import. By default it only creates: an entry whose source_id or id is saved already is skipped. With mode upsert, it updates those items instead.",
+        description: "Use to save many items in one call, at most 200, such as an import. Read each type with marfa_overview first, several at once, and pick the type whose guidance fits. By default it only creates: an entry whose source_id or id is saved already is skipped. With mode upsert, it updates those items instead.",
         input: json!({
             "type": "object",
             "properties": {

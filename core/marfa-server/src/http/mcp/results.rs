@@ -209,6 +209,9 @@ pub fn check(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
     } else {
         path
     };
+    if let Some(options) = schema.get("anyOf").and_then(Value::as_array) {
+        return any_of(options, value, path, at);
+    }
     if let Some(kind) = schema.get("type").and_then(Value::as_str) {
         let fits = match kind {
             "object" => value.is_object(),
@@ -265,6 +268,15 @@ pub fn check(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
         {
             return Err(format!("{at} must hold at most {most} items."));
         }
+        if schema.get("uniqueItems") == Some(&Value::Bool(true)) {
+            let mut seen: Vec<&Value> = Vec::new();
+            for item in list {
+                if seen.contains(&item) {
+                    return Err(format!("{at} must list each value once."));
+                }
+                seen.push(item);
+            }
+        }
         if let Some(items) = schema.get("items") {
             for (index, item) in list.iter().enumerate() {
                 check(items, item, &format!("{path}[{index}]"))?;
@@ -306,6 +318,36 @@ pub fn check(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// A refusal names the form whose JSON kind the value has, or says none of the forms fits.
+fn any_of(options: &[Value], value: &Value, path: &str, at: &str) -> Result<(), String> {
+    let mut same_kind = None;
+    for option in options {
+        match check(option, value, path) {
+            Ok(()) => return Ok(()),
+            Err(message) => {
+                let declared = option.get("type").and_then(Value::as_str);
+                if same_kind.is_none() && (declared.is_none() || declared == Some(json_kind(value)))
+                {
+                    same_kind = Some(message);
+                }
+            }
+        }
+    }
+    Err(same_kind.unwrap_or_else(|| format!("{at} is not one of the accepted forms.")))
+}
+
+fn json_kind(value: &Value) -> &'static str {
+    match value {
+        Value::Object(_) => "object",
+        Value::Array(_) => "array",
+        Value::String(_) => "string",
+        Value::Bool(_) => "boolean",
+        Value::Number(number) if number.is_i64() || number.is_u64() => "integer",
+        Value::Number(_) => "number",
+        Value::Null => "null",
+    }
 }
 
 fn member(path: &str, name: &str) -> String {
@@ -353,6 +395,40 @@ mod tests {
         assert!(error.contains("typ"), "{error}");
         assert!(check(&schema, &json!({ "type": "core.note" }), "").is_ok());
         assert!(check(&schema, &json!({ "type": "" }), "").is_err());
+    }
+
+    #[test]
+    fn a_type_argument_that_is_not_one_string_or_a_short_list_of_them_is_named() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "type": {
+                    "anyOf": [
+                        { "type": "string", "minLength": 1 },
+                        {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 20,
+                            "uniqueItems": true,
+                            "items": { "type": "string", "minLength": 1 },
+                        },
+                    ],
+                },
+            },
+            "additionalProperties": false,
+        });
+        assert!(check(&schema, &json!({ "type": "core.note" }), "").is_ok());
+        assert!(check(&schema, &json!({ "type": ["core.note", "core.task"] }), "").is_ok());
+        for value in [
+            json!({ "type": [] }),
+            json!({ "type": (0..21).map(|n| format!("user.t{n}")).collect::<Vec<_>>() }),
+            json!({ "type": ["core.note", "core.note"] }),
+            json!({ "type": ["core.note", 1] }),
+            json!({ "type": 5 }),
+        ] {
+            let error = check(&schema, &value, "").unwrap_err();
+            assert!(error.contains("type"), "{error}");
+        }
     }
 
     #[test]

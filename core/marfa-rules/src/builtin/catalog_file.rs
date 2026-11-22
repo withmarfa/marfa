@@ -13,8 +13,9 @@ use super::{
     SEARCHED_FIELD_NAMES,
 };
 use crate::schema::{
-    EdgeIssues, Judging, Obj, Registry, edge_id, edge_type_from_request, labelled, plural_of,
-    request_shape, unread_edge_keys, validate_type,
+    EdgeIssues, Judging, MAX_GUIDANCE_LENGTH, MAX_TYPE_DESCRIPTION_LENGTH, Obj, Registry, edge_id,
+    edge_type_from_request, labelled, plural_of, read_guidance_file, request_shape,
+    unread_edge_keys, validate_type,
 };
 
 /// Edge types where an edge can close a cycle over more than one edge.
@@ -22,8 +23,15 @@ const ACYCLIC_EDGE_TYPES: [&str; 2] = ["parent-of", "supersedes"];
 /// The edge type whose source must not itself be a valid target.
 const FLAT_EDGE_TYPE: &str = "in-collection";
 
-/// Keys a definition carries only for a person reading it.
-const PROSE_KEYS: [&str; 5] = ["label", "plural", "reverse_label", "description", "id"];
+/// Keys a definition carries only for a person reading it. Guidance is prose, so it does not move the shape digest.
+const PROSE_KEYS: [&str; 6] = [
+    "label",
+    "plural",
+    "reverse_label",
+    "description",
+    "id",
+    "guidance",
+];
 
 /// Keep names such as a field called `description` in a shape digest.
 const NAMED_MAPS: [&str; 5] = [
@@ -79,20 +87,12 @@ pub(super) fn read_folder(folder: &Path) -> Result<Vec<Source>, String> {
                 .map_err(|e| format!("{}: {e}", folder.display()))
         })
         .collect::<Result<_, _>>()?;
-    let present: BTreeSet<String> = names.iter().cloned().collect();
     names.retain(|name| Path::new(name).extension().is_some_and(|ext| ext == "json"));
     names.sort();
     names
         .into_iter()
         .map(|name| {
             let path = folder.join(&name);
-            let sibling = format!("{}.md", name.trim_end_matches(".json"));
-            if present.contains(&sibling) {
-                return Err(format!(
-                    "{}: shipped types carry no guidance yet, so {sibling} must not sit beside {name}",
-                    folder.join(&sibling).display()
-                ));
-            }
             let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             let parsed: Value = serde_json::from_str(&text)
                 .map_err(|e| format!("{}: not valid JSON: {e}", path.display()))?;
@@ -101,14 +101,44 @@ pub(super) fn read_folder(folder: &Path) -> Result<Vec<Source>, String> {
             };
             if row.contains_key("guidance") {
                 return Err(format!(
-                    "{}: shipped types carry no guidance yet, so the definition must not name `guidance`",
+                    "{}: a shipped definition names `guidance`, which belongs in the Markdown file beside it",
                     path.display()
                 ));
             }
             row.values_mut().for_each(javascript_numbers);
+            join_guidance(folder, &name, &mut row)?;
             Ok((name, row))
         })
         .collect()
+}
+
+/// Item types take guidance from `<name>.md`. System types and edge types have no guidance field.
+fn join_guidance(folder: &Path, name: &str, row: &mut Obj) -> Result<(), String> {
+    let sibling = format!("{}.md", name.trim_end_matches(".json"));
+    let path = folder.join(&sibling);
+    if !path.is_file() {
+        return Ok(());
+    }
+    let shown = path.display().to_string();
+    let place = folder.file_name().and_then(|folder| folder.to_str());
+    if place == Some("system") || place == Some("edges") {
+        return Err(format!(
+            "{shown}: only a shipped item type carries guidance, so {sibling} must not sit beside {name}"
+        ));
+    }
+    let bytes = fs::read(&path).map_err(|e| format!("{shown}: {e}"))?;
+    let text = read_guidance_file(&bytes).map_err(|fault| fault.message(&shown))?;
+    if text.trim().is_empty() {
+        return Err(format!("{shown}: guidance is empty"));
+    }
+    let length = text.chars().count();
+    if length > MAX_GUIDANCE_LENGTH {
+        return Err(format!(
+            "{shown}: guidance: a string of at most {MAX_GUIDANCE_LENGTH} characters (it has {length})"
+        ));
+    }
+    row.insert("guidance".into(), Value::String(text));
+    Ok(())
 }
 
 pub(super) fn shipped_sources(root: &Path) -> Result<(Vec<Source>, Vec<Source>), String> {
@@ -369,6 +399,14 @@ pub(super) fn register_edges(edges: &[Source]) -> Result<Vec<Obj>, Vec<String>> 
                 "reverse_name: \"{reverse}\" is not one lowercase kebab word"
             ));
         }
+        if let Some(text) = row.get("description").and_then(Value::as_str) {
+            let length = text.chars().count();
+            if length > MAX_TYPE_DESCRIPTION_LENGTH {
+                problems.push(format!(
+                    "description: a string of at most {MAX_TYPE_DESCRIPTION_LENGTH} characters (it has {length})"
+                ));
+            }
+        }
         for side in ["from_type_constraints", "to_type_constraints"] {
             if row
                 .get(side)
@@ -462,7 +500,7 @@ fn written_type(held: &Registered, tables: Option<&Value>) -> Obj {
     let stored = &held.stored;
     let mut out = Obj::new();
     put(&mut out, "id", Value::String(held.id.clone()));
-    for key in ["parent", "label", "plural", "description"] {
+    for key in ["parent", "label", "plural", "description", "guidance"] {
         if let Some(value) = non_empty(stored, key) {
             put(&mut out, key, value.clone());
         }
@@ -918,15 +956,74 @@ mod tests {
     }
 
     #[test]
-    fn a_markdown_file_beside_a_shipped_definition_is_refused_with_its_file() {
+    fn a_markdown_file_beside_an_item_type_is_its_guidance() {
         let copy = Copy::new();
+        fs::write(copy.0.join("note.md"), "Use for a note.\n").unwrap();
+        let written = copy.written();
+        let catalog: Value = serde_json::from_str(&written.catalog).unwrap();
+        let note = catalog["types"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == "core.note")
+            .unwrap();
+        assert_eq!(note["guidance"], "Use for a note.");
+        let bare = Copy::new();
+        fs::remove_file(bare.0.join("note.md")).ok();
+        assert_eq!(bare.written().digest, written.digest);
+        assert_ne!(bare.written().catalog, written.catalog);
+        fs::write(copy.0.join("system").join("README.md"), "Notes.").unwrap();
         assert!(write(&copy.0).is_ok());
-        fs::write(copy.0.join("note.md"), "Use it.").unwrap();
+    }
+
+    #[test]
+    fn a_markdown_file_beside_a_system_or_edge_type_is_refused_with_its_file() {
+        for (folder, file) in [("system", "view.md"), ("edges", "about.md")] {
+            let copy = Copy::new();
+            fs::write(copy.0.join(folder).join(file), "Use it.").unwrap();
+            let refused = write(&copy.0).err().unwrap().join("\n");
+            assert!(refused.contains(file), "{refused}");
+            assert!(refused.contains("guidance"), "{refused}");
+        }
+    }
+
+    #[test]
+    fn an_empty_guidance_file_is_refused_with_its_file() {
+        for text in ["", " \n\t", "\n"] {
+            let copy = Copy::new();
+            let path = copy.0.join("note.md");
+            fs::write(&path, text).unwrap();
+            let refused = write(&copy.0).err().unwrap().join("\n");
+            assert!(refused.contains("note.md"), "{refused}");
+            assert!(refused.contains("guidance is empty"), "{refused}");
+        }
+    }
+
+    #[test]
+    fn guidance_longer_than_registration_allows_is_refused_with_its_file() {
+        let copy = Copy::new();
+        let path = copy.0.join("note.md");
+        fs::write(&path, "😀".repeat(1_001)).unwrap();
         let refused = write(&copy.0).err().unwrap().join("\n");
         assert!(refused.contains("note.md"), "{refused}");
         assert!(refused.contains("guidance"), "{refused}");
-        fs::remove_file(copy.0.join("note.md")).unwrap();
-        fs::write(copy.0.join("system").join("README.md"), "Notes.").unwrap();
+        assert!(refused.contains("1000"), "{refused}");
+        fs::write(&path, "😀".repeat(1_000)).unwrap();
+        assert!(write(&copy.0).is_ok());
+    }
+
+    #[test]
+    fn a_shipped_edge_description_over_200_characters_is_refused_with_its_file() {
+        let copy = Copy::new();
+        copy.edit("edges/about.json", |row| {
+            row["description"] = Value::String(format!("{}😀", "a".repeat(200)));
+        });
+        let refused = write(&copy.0).err().unwrap().join("\n");
+        assert!(refused.contains("about.json"), "{refused}");
+        assert!(refused.contains("description"), "{refused}");
+        copy.edit("edges/about.json", |row| {
+            row["description"] = Value::String(format!("{}😀", "a".repeat(199)));
+        });
         assert!(write(&copy.0).is_ok());
     }
 

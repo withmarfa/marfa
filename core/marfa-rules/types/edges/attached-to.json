@@ -2,7 +2,7 @@
   "id": "attached-to",
   "label": "Attached to",
   "reverse_label": "Attachments",
-  "description": "Says that an item is attached to another item and exists for it, such as a scanned page attached to the document it was scanned for.",
+  "description": "Runs from the attachment to the item it belongs to. When saving an attachment, attached-to names that item.",
   "cardinality": "many-to-many",
   "from_type_constraints": ["*"],
   "to_type_constraints": ["*"],

@@ -2,7 +2,7 @@
   "id": "in-thread",
   "label": "In thread",
   "reverse_label": "Messages",
-  "description": "Says that an item is a message in a thread, such as a reply in a conversation.",
+  "description": "Runs from the message to its thread. When saving a message, in-thread names the thread. A message has one thread.",
   "cardinality": "many-to-one",
   "from_type_constraints": ["*"],
   "to_type_constraints": ["*"],

@@ -7,6 +7,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { callTool, connectMcp, toolResult } from "../../utils/mcp.js";
 
 interface Overview {
   instance: { name: string; version: string; release?: string };
@@ -16,7 +17,12 @@ interface Overview {
     type_permissions?: Record<string, string[]>;
     permissions?: string[];
   };
-  types?: { id: string; description?: string; count: number }[];
+  types?: {
+    id: string;
+    parent?: string;
+    description?: string;
+    count: number;
+  }[];
   total?: number;
   edge_types?: { id: string; description?: string; access: string }[];
   tags?: { tag: string; count: number }[];
@@ -82,7 +88,107 @@ async function create(
   expect(response.status, await response.clone().text()).toBe(201);
 }
 
+/** A string of `count` Unicode code points. */
+function points(count: number, unit = "a"): string {
+  return unit.repeat(count);
+}
+
 describe("GET /overview", () => {
+  it("gives each type its parent and clips descriptions at 200 code points, leaving 200 whole", async () => {
+    // Its own server: the views and edge types it adds would change the
+    // counts the later tests on this file's server assert exactly.
+    const own = await bootFreshServer("overview-clip");
+    const post = async (path: string, body: Record<string, unknown>) => {
+      const response = await fetch(`${own.apiUrl}${path}`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${own.workingKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      expect(response.status, await response.clone().text()).toBe(201);
+    };
+    try {
+      const child = "user.aaa_parent";
+      const exact = `${points(199)}😀`;
+      const over = points(250);
+      expect(Array.from(exact).length).toBe(200);
+      await post("/types", {
+        id: child,
+        parent: "core.note",
+        description: exact,
+        fields: { title: { type: "string" } },
+      });
+      await post("/items", { type: child, properties: { title: "one" } });
+      await post("/edge-types", {
+        id: "aaa-exact",
+        label: "Exact",
+        description: exact,
+        cardinality: "many-to-many",
+        cascade_on_delete: "orphan",
+      });
+      await post("/edge-types", {
+        id: "aaa-over",
+        label: "Over",
+        description: over,
+        cardinality: "many-to-many",
+        cascade_on_delete: "orphan",
+      });
+      const wholeTitle = points(100, "t");
+      const longTitle = `0 clip ${points(140)}`;
+      await post("/views", { title: wholeTitle });
+      await post("/views", { title: longTitle });
+
+      const response = await fetch(`${own.apiUrl}/overview`, {
+        headers: { authorization: `Bearer ${own.workingKey}` },
+      });
+      expect(response.status, await response.clone().text()).toBe(200);
+      const answer = (await response.json()) as Overview;
+      const listed = (id: string) =>
+        answer.types?.find((entry) => entry.id === id);
+      expect(listed("core.note")).not.toHaveProperty("parent");
+      expect(listed("core.file.webpage")?.parent).toBe("core.file");
+      expect(listed(child)?.parent).toBe("core.note");
+      expect(listed(child)?.description).toBe(exact);
+      const edges = Object.fromEntries(
+        (answer.edge_types ?? []).map((entry) => [entry.id, entry.description]),
+      );
+      expect(edges["aaa-exact"]).toBe(exact);
+      expect(Array.from(edges["aaa-over"] ?? "").length).toBe(200);
+      expect(edges["aaa-over"]?.endsWith("\u2026")).toBe(true);
+      expect(edges["aaa-over"]).not.toBe(over);
+      const titles = (answer.views ?? []).map((entry) => entry.title);
+      expect(titles).toContain(wholeTitle);
+      const clipped = titles.find((title) => title.startsWith("0 clip"));
+      expect(Array.from(clipped ?? "").length).toBe(100);
+      expect(clipped?.endsWith("\u2026")).toBe(true);
+
+      const mcp = await connectMcp(own.apiUrl, own.workingKey);
+      try {
+        const body = toolResult(await callTool(mcp, "marfa_overview", {}));
+        const types = body.types as { id: string; parent?: string }[];
+        expect(
+          types.find((entry) => entry.id === "core.note"),
+        ).not.toHaveProperty("parent");
+        expect(types.find((entry) => entry.id === child)?.parent).toBe(
+          "core.note",
+        );
+        const mcpEdges = Object.fromEntries(
+          (body.edge_types as { id: string; description?: string }[]).map(
+            (entry) => [entry.id, entry.description],
+          ),
+        );
+        expect(mcpEdges["aaa-exact"]).toBe(exact);
+        expect(Array.from(mcpEdges["aaa-over"] ?? "").length).toBe(200);
+      } finally {
+        await mcp.close();
+      }
+    } finally {
+      await own.stop();
+    }
+  });
+
   it("answers the instance, the key, and what it reads with counts, tags, edge types, views and folders", async () => {
     await create("/items", {
       type: "core.note",
@@ -305,9 +411,12 @@ describe("GET /overview", () => {
     expect(answer.truncated?.edge_types).toBeGreaterThanOrEqual(55);
     expect(answer.edge_types?.every((e) => e.access === "read")).toBe(true);
     for (const entry of answer.edge_types ?? []) {
-      expect(Array.from(entry.description ?? "").length).toBeLessThanOrEqual(
-        100,
-      );
+      const length = Array.from(entry.description ?? "").length;
+      expect(length).toBeLessThanOrEqual(200);
+      if (entry.id.startsWith("bulk.edge_")) {
+        expect(length).toBe(200);
+        expect(entry.description?.endsWith("\u2026")).toBe(true);
+      }
     }
     expect(answer.tags).toHaveLength(30);
     expect(answer.truncated?.tags).toBeGreaterThanOrEqual(40);
@@ -326,10 +435,11 @@ describe("GET /overview", () => {
     expect(answer.truncated?.["credential.type_permissions.read"]).toBe(41);
     for (const entry of answer.types ?? []) {
       expect(Array.from(entry.description ?? "").length).toBeLessThanOrEqual(
-        100,
+        200,
       );
     }
-    expect(text.length).toBeLessThan(30_000);
+    // Full lists at the 200-character cut stay under this. Uncut edge text does not.
+    expect(text.length).toBeLessThan(40_000);
     const witness = await overview(server.workingKey);
     expect(witness.truncated?.types).toBeGreaterThanOrEqual(61);
   });

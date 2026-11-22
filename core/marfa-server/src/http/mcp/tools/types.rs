@@ -17,7 +17,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Register or change a type",
-        description: "Use to add a type of item, or to change one's label, description, fields or tables. Changing merges what you send into the type's own definition: a field or table set to null is removed, and items keep their values for a removed field. A field or table the type inherits is changed or removed on the type it comes from.",
+        description: "Use to add a type of item, or to change one's label, description, guidance, fields or tables. Guidance is Markdown for an agent choosing and filling the type. Changing merges what you send into the type's own definition: a field or table set to null is removed, and an empty guidance string removes it. Items keep their values for a removed field. A field or table the type inherits is changed or removed on the type it comes from.",
         input: json!({
             "type": "object",
             "properties": {
@@ -26,6 +26,8 @@ pub fn definition() -> Definition {
                     "description": "The type's identifier, such as `user.recipe`. An owner's own type goes under `user.*`. An app's own state goes under `app.<app>.*` and is hidden. Shared types come from a plugin, so a new `common.*` type is refused." },
                 "label": { "type": "string", "minLength": 1 },
                 "description": { "type": "string" },
+                "guidance": { "type": "string", "maxLength": 1000,
+                    "description": "Markdown for an agent choosing and filling this type, at most 1,000 characters. On a change, an empty string removes it, and leaving it out keeps it." },
                 "fields": { "type": "object",
                     "description": "Fields by name. Required to register. To change, the fields to add or replace, and null for each to remove." },
                 "tables": { "type": "object",
@@ -84,7 +86,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
         if !tables.is_empty() {
             body.insert("tables".into(), Value::Object(tables));
         }
-        for name in ["label", "description", "parent"] {
+        for name in ["label", "description", "parent", "guidance"] {
             if let Some(value) = arguments.get(name) {
                 body.insert(name.into(), value.clone());
             }
@@ -103,6 +105,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
     let merge = Merge {
         label: text(&arguments, "label"),
         description: text(&arguments, "description"),
+        guidance: text(&arguments, "guidance"),
         fields: fields.unwrap_or_default(),
         tables,
     };

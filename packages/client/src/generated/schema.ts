@@ -5757,8 +5757,13 @@ export interface components {
              * @example core.note
              */
             id: string;
-            /** @description What the type holds, cut at 100 characters. Absent when the type has none. */
+            /** @description What the type holds, cut at 200 characters. Absent when the type has none. */
             description?: string;
+            /**
+             * @description The parent type's identifier. Absent when the type has none.
+             * @example core.file
+             */
+            parent?: string;
             /** @description How many active items of the type you can read. */
             count: number;
         };
@@ -5769,7 +5774,7 @@ export interface components {
              * @example parent-of
              */
             id: string;
-            /** @description What the edge type means, cut at 100 characters. Absent when it has none. */
+            /** @description What the edge type means, cut at 200 characters. Absent when it has none. */
             description?: string;
             access: components["schemas"]["PermissionLevel"] & unknown;
         };

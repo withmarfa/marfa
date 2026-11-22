@@ -19,17 +19,18 @@ const TAGS: usize = 30;
 const VIEWS: usize = 30;
 const FOLDERS: usize = 30;
 const PATTERNS: usize = 30;
-const TEXT: usize = 100;
+const DESCRIPTION: usize = 200;
+const TITLE: usize = 100;
 const VIEW_TYPE: &str = "system.view";
 const FOLDER_TYPE: &str = "system.folder";
 const LEVELS: [&str; 3] = ["write", "read", "none"];
 
 /// Text over the cap ends in an ellipsis that counts toward it.
-fn clipped(text: &str) -> String {
-    if text.chars().count() <= TEXT {
+fn clipped(cap: usize, text: &str) -> String {
+    if text.chars().count() <= cap {
         return text.to_string();
     }
-    let mut cut: String = text.chars().take(TEXT - 1).collect();
+    let mut cut: String = text.chars().take(cap - 1).collect();
     cut.push('\u{2026}');
     cut
 }
@@ -83,7 +84,16 @@ fn credential(described: Described, truncated: &mut Map<String, Value>) -> Value
 
 fn described(catalog: &Catalog, id: &str) -> Option<String> {
     let text = catalog.types.get(id)?.get("description")?.as_str()?;
-    (!text.is_empty()).then(|| clipped(text))
+    (!text.is_empty()).then(|| clipped(DESCRIPTION, text))
+}
+
+fn parent_of<'a>(catalog: &'a Catalog, id: &str) -> Option<&'a str> {
+    catalog
+        .types
+        .get(id)?
+        .get("parent")
+        .and_then(Value::as_str)
+        .filter(|parent| !parent.is_empty())
 }
 
 fn edge_types(
@@ -99,7 +109,12 @@ fn edge_types(
             let level = caller.edge_level(id);
             (level >= Level::Read).then(|| {
                 let text = edge.get("description").and_then(Value::as_str);
-                (id, text.filter(|text| !text.is_empty()).map(clipped), level)
+                (
+                    id,
+                    text.filter(|text| !text.is_empty())
+                        .map(|text| clipped(DESCRIPTION, text)),
+                    level,
+                )
             })
         })
         .collect();
@@ -173,6 +188,9 @@ pub async fn read(app: &App, caller: &Caller) -> Result<Value> {
             .map(|(id, count)| {
                 let mut entry = Map::new();
                 entry.insert("id".into(), id.into());
+                if let Some(parent) = parent_of(catalog, id) {
+                    entry.insert("parent".into(), parent.into());
+                }
                 if let Some(description) = described(catalog, id) {
                     entry.insert("description".into(), description.into());
                 }
@@ -208,7 +226,7 @@ pub async fn read(app: &App, caller: &Caller) -> Result<Value> {
             if !titled.is_empty() {
                 let entries: Vec<Value> = titled
                     .into_iter()
-                    .map(|entry| json!({ "id": entry.id, "title": clipped(&entry.title) }))
+                    .map(|entry| json!({ "id": entry.id, "title": clipped(TITLE, &entry.title) }))
                     .collect();
                 body.insert(name.into(), entries.into());
             }
@@ -219,4 +237,27 @@ pub async fn read(app: &App, caller: &Caller) -> Result<Value> {
         Ok(Value::Object(body))
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn descriptions_clip_at_200_code_points_and_titles_at_100() {
+        let exact: String = "a".repeat(199) + "😀";
+        assert_eq!(exact.chars().count(), 200);
+        assert_eq!(clipped(DESCRIPTION, &exact), exact);
+        let over = format!("{exact}b");
+        let cut = clipped(DESCRIPTION, &over);
+        assert_eq!(cut.chars().count(), 200);
+        assert!(cut.ends_with('\u{2026}'));
+        assert_eq!(clipped(DESCRIPTION, &"b".repeat(250)).chars().count(), 200);
+        let title = format!("{}x", "t".repeat(100));
+        let titled = clipped(TITLE, &title);
+        assert_eq!(titled.chars().count(), 100);
+        assert!(titled.ends_with('\u{2026}'));
+        let exact_title = "t".repeat(100);
+        assert_eq!(clipped(TITLE, &exact_title), exact_title);
+    }
 }

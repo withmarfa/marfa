@@ -2,7 +2,7 @@
   "id": "supersedes",
   "label": "Supersedes",
   "reverse_label": "Superseded by",
-  "description": "Says that an item replaces another item as the current version, such as a revised document that replaces its earlier draft.",
+  "description": "Runs from the newer item to the item it replaces. Each end holds one item. When saving the current item, supersedes names the one it replaces.",
   "cardinality": "one-to-one",
   "from_type_constraints": ["*"],
   "to_type_constraints": ["*"],

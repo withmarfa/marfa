@@ -606,6 +606,12 @@ When `GET /overview` is answered `200`, the server MUST list in `types` each typ
 
 **Tests:** `compliance/overview.test.ts › answers the instance, the key, and what it reads with counts, tags, edge types, views and folders`.
 
+### `instance/overview-type-parent`
+
+When `GET /overview` or `marfa_overview` with no arguments lists a type, the server MUST give `parent` as that type's parent id when the type has one and omit `parent` when it has none.
+
+**Tests:** `compliance/overview.test.ts › gives each type its parent and clips descriptions at 200 code points, leaving 200 whole`.
+
 ### `instance/overview-total`
 
 When `GET /overview` is answered `200` with `types`, the server MUST give in `total` the number of active items the credential may read across every type `types` would list before its cut.
@@ -674,9 +680,15 @@ When the server cuts a list of the `GET /overview` answer at its cap, the server
 
 ### `instance/overview-text-cap`
 
-The server MUST cut each description and title in the `GET /overview` answer at 100 characters.
+The server MUST cut each type description and each edge-type description in the `GET /overview` answer, and in `marfa_overview` called with no arguments, at 200 characters, counting the ending ellipsis as one and leaving a description of 200 characters whole.
 
-**Tests:** `compliance/overview.test.ts › holds each list to its cap, says what was cut and keeps the answer small`.
+**Tests:** `compliance/overview.test.ts › holds each list to its cap, says what was cut and keeps the answer small`, `› gives each type its parent and clips descriptions at 200 code points, leaving 200 whole`.
+
+### `instance/overview-title-cap`
+
+The server MUST cut each view title and each folder title in the `GET /overview` answer, and in `marfa_overview` called with no arguments, at 100 characters, counting the ending ellipsis as one.
+
+**Tests:** `compliance/overview.test.ts › holds each list to its cap, says what was cut and keeps the answer small`, `› gives each type its parent and clips descriptions at 200 code points, leaving 200 whole`.
 
 ## Backing up
 
