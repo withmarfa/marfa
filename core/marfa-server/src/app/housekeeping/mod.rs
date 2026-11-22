@@ -7,10 +7,11 @@ mod jobs;
 mod schedule;
 mod scheduler;
 
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -76,6 +77,8 @@ pub struct Job {
     deletes: bool,
     /// Whether a change to a file's record asks this job to run soon.
     wakes_on_files: bool,
+    /// Whether the job runs with no record while writes fail; only for one that reads only.
+    unclaimed: bool,
     run: Body,
 }
 
@@ -128,6 +131,7 @@ impl Job {
             statements: true,
             deletes: false,
             wakes_on_files: false,
+            unclaimed: false,
             run,
         }
     }
@@ -144,6 +148,11 @@ impl Job {
 
     const fn waking_on_files(mut self) -> Job {
         self.wakes_on_files = true;
+        self
+    }
+
+    const fn run_unclaimed_when_writes_fail(mut self) -> Job {
+        self.unclaimed = true;
         self
     }
 
@@ -214,6 +223,67 @@ pub struct Housekeeping {
     stopping: watch::Sender<bool>,
     cut: watch::Sender<bool>,
     running: watch::Sender<usize>,
+    unclaimed: Arc<Unclaimed>,
+}
+
+/// Whether an unclaimed run is under way, and when the next may start, in memory only.
+#[derive(Debug, Default)]
+struct Unclaimed(Mutex<HashMap<&'static str, UnclaimedState>>);
+
+#[derive(Debug, Default)]
+struct UnclaimedState {
+    running: bool,
+    next_ms: i64,
+}
+
+/// The one unclaimed run of a job; dropping it frees the job for a run at `next_ms` or later.
+struct UnclaimedRun {
+    held: Arc<Unclaimed>,
+    name: &'static str,
+}
+
+impl Unclaimed {
+    fn states(&self) -> MutexGuard<'_, HashMap<&'static str, UnclaimedState>> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn begin(self: &Arc<Self>, name: &'static str, now_ms: i64) -> Option<UnclaimedRun> {
+        let mut states = self.states();
+        let state = states.entry(name).or_default();
+        if state.running || now_ms < state.next_ms {
+            return None;
+        }
+        state.running = true;
+        Some(UnclaimedRun {
+            held: self.clone(),
+            name,
+        })
+    }
+}
+
+impl Unclaimed {
+    /// Keeps the job's next unclaimed run from starting before `next_ms`, whatever it was.
+    fn not_before(&self, name: &'static str, next_ms: i64) {
+        let mut states = self.states();
+        let state = states.entry(name).or_default();
+        state.next_ms = state.next_ms.max(next_ms);
+    }
+}
+
+impl UnclaimedRun {
+    fn next_not_before(&self, next_ms: i64) {
+        if let Some(state) = self.held.states().get_mut(self.name) {
+            state.next_ms = next_ms;
+        }
+    }
+}
+
+impl Drop for UnclaimedRun {
+    fn drop(&mut self) {
+        if let Some(state) = self.held.states().get_mut(self.name) {
+            state.running = false;
+        }
+    }
 }
 
 impl Default for Housekeeping {
@@ -223,6 +293,7 @@ impl Default for Housekeeping {
             stopping: watch::Sender::new(false),
             cut: watch::Sender::new(false),
             running: watch::Sender::new(0),
+            unclaimed: Arc::default(),
         }
     }
 }

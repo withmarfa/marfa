@@ -34,11 +34,16 @@ impl Memory {
         self.marks.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Marks an entry as on its way to the sender, unless it already is or was sent.
-    pub fn begin(self: &Arc<Memory>, kind: &str, reference: &str) -> Option<Pending> {
+    /// Checks freshness under the commit snapshot's lock before marking.
+    pub fn begin(
+        self: &Arc<Memory>,
+        kind: &str,
+        reference: &str,
+        current: impl FnOnce() -> bool,
+    ) -> Option<Pending> {
         let key = (kind.to_string(), reference.to_string());
         let mut marks = self.marks();
-        if marks.contains_key(&key) {
+        if marks.contains_key(&key) || !current() {
             return None;
         }
         let serial = self.serial.fetch_add(1, Ordering::Relaxed);
@@ -118,26 +123,34 @@ mod tests {
     #[test]
     fn an_entry_dropped_before_any_send_is_unmarked_and_one_handed_stays_sent() {
         let memory = Arc::new(Memory::default());
-        let dropped = memory.begin("fault", "a").expect("a new mark");
-        assert!(memory.begin("fault", "a").is_none());
+        let dropped = memory.begin("fault", "a", || true).expect("a new mark");
+        assert!(memory.begin("fault", "a", || true).is_none());
         assert!(matches!(memory.get("fault", "a"), Some(Mark::Pending(_))));
         drop(dropped);
         assert_eq!(memory.get("fault", "a"), None);
 
-        let handed = memory.begin("fault", "a").expect("marked again");
+        let handed = memory.begin("fault", "a", || true).expect("marked again");
         handed.handed();
         assert!(matches!(memory.get("fault", "a"), Some(Mark::Sent(_))));
-        assert!(memory.begin("fault", "a").is_none());
+        assert!(memory.begin("fault", "a", || true).is_none());
+    }
+
+    #[test]
+    fn an_entry_is_not_marked_once_a_newer_check_has_taken_over() {
+        let memory = Arc::new(Memory::default());
+        assert!(memory.begin("health", "disk", || false).is_none());
+        assert_eq!(memory.get("health", "disk"), None, "no mark is left behind");
+        assert!(memory.begin("health", "disk", || true).is_some());
     }
 
     #[test]
     fn a_settle_leaves_a_mark_made_since() {
         let memory = Arc::new(Memory::default());
-        let first = memory.begin("health", "disk").unwrap();
+        let first = memory.begin("health", "disk", || true).unwrap();
         let serial = first.serial;
         first.handed();
         memory.forget("health", "disk");
-        memory.begin("health", "disk").unwrap().handed();
+        memory.begin("health", "disk", || true).unwrap().handed();
         memory.settle(&[(("health".into(), "disk".into()), serial)]);
         assert!(matches!(memory.get("health", "disk"), Some(Mark::Sent(_))));
     }

@@ -795,7 +795,7 @@ The server MUST NOT send a `ConnectorRunFailed` exception report for an entry of
 
 ## A new entry while the database fails
 
-When the write that announces a new entry in what needs the owner's attention fails in the database, the server sends the entry's `attention.raised` from memory, straight to the webhooks that may hear it. This covers a fault's entry and every entry a check finds, such as the health entry for a full volume. The event is in no log, so it carries no `event_id`, an open stream does not receive it and `Last-Event-ID` cannot replay it. The delivery is not recorded, so no delivery list shows it and nothing redelivers it. The subscriptions the server sends to are the ones its last committed state gave, so a server that starts while its database cannot be read has none. An entry no webhook could hear, or one past too many waiting, waits for the log. The `attention-check` housekeeping job is claimed by a write, so while every write fails, only a fault or a read of `GET /attention` finds a new entry. While reads fail too, the server cannot tell which entries are new, so only a fault's entry goes from memory, and `GET /attention` answers only through the private local listener, since a credential cannot be read.
+When the write that announces a new entry in what needs the owner's attention fails in the database, the server sends the entry's `attention.raised` from memory, straight to the webhooks that may hear it. This covers a fault's entry and every entry a check finds, such as the health entry for a full volume. The event is in no log, so it carries no `event_id`, an open stream does not receive it and `Last-Event-ID` cannot replay it. The delivery is not recorded, so no delivery list shows it and nothing redelivers it. The subscriptions the server sends to are the ones its last committed state gave, so a server that starts while its database cannot be read has none. An entry no webhook could hear, or one past too many waiting, waits for the log. The `attention-check` housekeeping job still runs while every write fails, without a record of the run, so it finds a new entry that no fault or read of `GET /attention` has. While reads fail too, the server cannot tell which entries are new, so only a fault's entry goes from memory, and `GET /attention` answers only through the private local listener, since a credential cannot be read.
 
 ### `events/attention-memory`
 
@@ -804,6 +804,14 @@ When the write that announces a new entry in what needs the owner's attention fa
 **Reason:** the database failing is the fault an owner most needs to hear of, and a connector reading Marfa cannot tell them, so only the server can. A full volume and a disk that fails both fail a write at its commit.
 
 **Tests:** `compliance/attention-faults.test.ts › sends a fault from memory while writes fail, signed, to each webhook that may read it and no other, and not again once writes land`, `› sends a fault from memory when the commit of its announcement fails, and not again once writes land`, `› sends the health entry from memory while the database volume is full, and lists no fault for the refused write`.
+
+### `events/attention-check-unclaimed`
+
+While every write fails for a reason other than a restore holding writes, the server MUST run the `attention-check` housekeeping job each time its interval passes, without recording the run, including after a run whose record could not be written.
+
+**Reason:** the server records that a job has started before it runs it, and that record is a write. A job that waited for it would not run on a full volume, which is when an owner most needs to hear of it. The job only reads, and its announcement already handles a failed write (`events/attention-memory`).
+
+**Tests:** `compliance/attention-faults.test.ts › sends the health entry the attention check finds from memory while every write fails, with nobody reading the list`.
 
 ### `events/attention-memory-reader`
 

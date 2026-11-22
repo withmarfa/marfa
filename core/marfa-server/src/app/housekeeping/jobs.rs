@@ -91,7 +91,8 @@ pub(super) const JOBS: &[Job] = &[
         60_000,
         ATTENTION_DEADLINE,
         |app, run| Box::pin(attention::check(app, run)),
-    ),
+    )
+    .run_unclaimed_when_writes_fail(),
     Job::stored(
         "backup",
         BACKUP_INTERVAL_SECONDS,

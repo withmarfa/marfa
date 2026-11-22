@@ -187,40 +187,61 @@ pub fn unhandled(request_id: &str, method: &str, path: &str, route: Option<&str>
     tracing::error!(request_id, method, path, route, error, "Unhandled error");
 }
 
+/// A current-thread runtime's tasks share this thread's log capture.
+#[cfg(test)]
+pub(crate) struct Capture {
+    buffer: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    _guard: tracing::subscriber::DefaultGuard,
+}
+
+#[cfg(test)]
+impl Capture {
+    pub(crate) fn start() -> Capture {
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        #[derive(Clone, Default)]
+        struct Buffer(Arc<Mutex<Vec<u8>>>);
+
+        impl Write for Buffer {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl MakeWriter<'_> for Buffer {
+            type Writer = Buffer;
+
+            fn make_writer(&self) -> Buffer {
+                self.clone()
+            }
+        }
+
+        let buffer = Buffer::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(fmt::layer().event_format(Lines).with_writer(buffer.clone()));
+        Capture {
+            buffer: buffer.0,
+            _guard: tracing::subscriber::set_default(subscriber),
+        }
+    }
+
+    pub(crate) fn log(&self) -> String {
+        String::from_utf8(self.buffer.lock().unwrap().clone()).unwrap()
+    }
+}
+
 /// What `f` logs, as the server writes it.
 #[cfg(test)]
 pub(crate) fn captured<R>(f: impl FnOnce() -> R) -> (R, String) {
-    use std::sync::{Arc, Mutex};
-    use tracing_subscriber::fmt::MakeWriter;
-
-    #[derive(Clone, Default)]
-    struct Buffer(Arc<Mutex<Vec<u8>>>);
-
-    impl Write for Buffer {
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    impl MakeWriter<'_> for Buffer {
-        type Writer = Buffer;
-
-        fn make_writer(&self) -> Buffer {
-            self.clone()
-        }
-    }
-
-    let buffer = Buffer::default();
-    let subscriber = tracing_subscriber::registry()
-        .with(fmt::layer().event_format(Lines).with_writer(buffer.clone()));
-    let result = tracing::subscriber::with_default(subscriber, f);
-    let log = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
-    (result, log)
+    let capture = Capture::start();
+    let result = f();
+    (result, capture.log())
 }
 
 #[cfg(test)]

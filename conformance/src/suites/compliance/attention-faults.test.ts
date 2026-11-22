@@ -8,6 +8,7 @@ import {
 import { controlRequest } from "../../utils/control-request.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
+import { tuning } from "../../utils/tuning.js";
 import { waitFor } from "../../utils/wait.js";
 import {
   expectSignedBy,
@@ -54,8 +55,9 @@ afterAll(async () => {
 
 async function mint(
   body: Record<string, unknown>,
+  on: FreshServer = server,
 ): Promise<{ id: string; key: string }> {
-  const answer = await controlRequest(server.controlSocket, "/keys", {
+  const answer = await controlRequest(on.controlSocket, "/keys", {
     method: "POST",
     body: { label: "faults", source: `faults-${randomUUID()}`, ...body },
   });
@@ -177,13 +179,17 @@ async function subscribe(
   label: string,
   permissions: string[],
   extra: Record<string, unknown> = {},
+  on: FreshServer = server,
 ): Promise<{ key: { id: string; key: string }; id: string; secret: string }> {
-  const key = await mint({
-    permissions,
-    type_permissions: { "core.note": "read" },
-    ...extra,
-  });
-  const made = await fetch(`${server.apiUrl}/webhooks`, {
+  const key = await mint(
+    {
+      permissions,
+      type_permissions: { "core.note": "read" },
+      ...extra,
+    },
+    on,
+  );
+  const made = await fetch(`${on.apiUrl}/webhooks`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${key.key}`,
@@ -567,6 +573,143 @@ it(
       expect(told).toHaveLength(1);
     } finally {
       await server.clearFault("free:database");
+    }
+  },
+);
+
+it(
+  "sends the health entry the attention check finds from memory while every write fails, with nobody reading the list",
+  // It leaves the disk entry recorded, so a second run would find nothing new.
+  { retry: 0, timeout: 2 * FRESH_SERVER_TIMEOUT_MS },
+  async () => {
+    const disk = "disk";
+    const own = await bootFreshServer("attention-check-failing-writes", {
+      MARFA_OBJECT_STORE_BUCKET: "",
+      MARFA_OBJECT_STORE_ENDPOINT: "",
+      ...tuning("interval.attention-check=1000"),
+    });
+    const hook = await startReceiver();
+    try {
+      const heard = await subscribe(
+        hook,
+        "good",
+        ["instance.read", "webhooks.manage"],
+        {},
+        own,
+      );
+      const writerKey = (
+        await mint({ type_permissions: { "core.note": "write" } }, own)
+      ).key;
+      const toDisk = (received: Received) =>
+        received.path.endsWith("/good") &&
+        (bodyOf(received).attention as { reference?: string } | undefined)
+          ?.reference === disk;
+
+      // Every write fails first, so nothing can claim a job and the disk
+      // entry is not yet there to be found by one that could.
+      await own.setFault("refuse:write");
+      try {
+        await own.setFault("free:database=0");
+        // Nothing reads the list, and no write lands: only the job can find it.
+        const delivered = await hook.waitFor(toDisk);
+        expectSignedBy(delivered, heard.secret);
+        expect(bodyOf(delivered)).toMatchObject({
+          event_type: "attention.raised",
+          attention: {
+            kind: "health",
+            reference: disk,
+            description: "A part of the server is degraded or down.",
+          },
+        });
+        expect("event_id" in bodyOf(delivered)).toBe(false);
+        const refused = await fetch(`${own.apiUrl}/items`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${writerKey}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            type: "core.note",
+            properties: { title: `note ${randomUUID()}` },
+          }),
+        });
+        // The witness that writes failed while it was announced.
+        expect(refused.status).toBe(500);
+      } finally {
+        await own.clearFault("refuse:write");
+      }
+
+      // Writes land again while the disk is still short: the entry is
+      // listed, and not announced a second time. A fault of another route,
+      // which the refused write above did not raise, is the sentinel, from
+      // the log.
+      await own.setFault("fail:audit=items.bulk");
+      try {
+        const failed = await fetch(`${own.apiUrl}/items/bulk`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${writerKey}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            mode: "upsert",
+            atomic: true,
+            items: [
+              {
+                type: "core.note",
+                source_id: randomUUID(),
+                properties: { title: "bulk" },
+              },
+            ],
+          }),
+        });
+        expect(failed.status).toBe(500);
+      } finally {
+        await own.clearFault("fail:audit");
+      }
+      const sentinel = "database:POST /items/bulk";
+      await hook.waitFor(
+        (received) =>
+          received.path.endsWith("/good") &&
+          (bodyOf(received).attention as { reference?: string } | undefined)
+            ?.reference === sentinel &&
+          "event_id" in bodyOf(received),
+      );
+      // The job also runs on its own each second, and a run asked for while
+      // one is under way is refused.
+      const ran = await waitFor("a run of the attention check", async () => {
+        const asked = await controlRequest(
+          own.controlSocket,
+          "/housekeeping/attention-check/run",
+          { method: "POST" },
+        );
+        return asked.status === 409 ? undefined : asked;
+      });
+      expect(ran.status, JSON.stringify(ran.body)).toBe(200);
+      // A duplicate queued by that run would arrive before a fault raised
+      // after it, so a fault of a third route settles the count.
+      await own.setFault("fail:audit=config.update");
+      try {
+        const configured = await controlRequest(own.controlSocket, "/config", {
+          method: "PATCH",
+          body: { allow_private_addresses: true },
+        });
+        expect(configured.status).toBe(500);
+      } finally {
+        await own.clearFault("fail:audit");
+      }
+      const settled = "database:PATCH /config";
+      await hook.waitFor(
+        (received) =>
+          received.path.endsWith("/good") &&
+          (bodyOf(received).attention as { reference?: string } | undefined)
+            ?.reference === settled &&
+          "event_id" in bodyOf(received),
+      );
+      expect(hook.received.filter(toDisk)).toHaveLength(1);
+    } finally {
+      await hook.close();
+      await own.stop();
     }
   },
 );

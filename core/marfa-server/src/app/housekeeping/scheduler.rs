@@ -12,7 +12,7 @@ use super::super::refusal::{Code, Refusal, Result};
 use super::super::{App, restore_running};
 use super::jobs::JOBS;
 use super::schedule::{self, Finish, Wanted};
-use super::{Active, Ended, Job, Report, Run};
+use super::{Active, Ended, Job, Report, Run, UnclaimedRun};
 use crate::db::Write;
 use crate::telemetry::{Fault, Finished, caught};
 
@@ -53,13 +53,22 @@ async fn pass(app: &Arc<App>) -> Result<Option<Duration>> {
         ));
     }
     let clock = app.clock.clone();
-    let (claimed, started) = app
+    let written = app
         .db
         .write(Write::own(), move |tx| {
             let started = clock.stamp();
             Ok((schedule::apply(tx, &steps, Some(&started))?, started))
         })
-        .await?;
+        .await;
+    let (claimed, started) = match written {
+        Ok(claimed) => claimed,
+        Err(refused) => {
+            if app.db.writes_held().is_none() {
+                run_without_claim(app);
+            }
+            return Err(refused);
+        }
+    };
     for name in claimed {
         if let Some(job) = JOBS.iter().find(|job| job.name == name) {
             let active = app.housekeeping.active();
@@ -117,6 +126,7 @@ pub fn start(app: Arc<App>) {
         let mut moves = app.clock.moves();
         watch_schedule(&app).await;
         let longest = app.settings.start.tuning.housekeeping_poll;
+        let mut failing = false;
         while !*stopping.borrow() {
             if app.db.writes_held().is_some() {
                 tracing::info!("Housekeeping waits until the restore ends");
@@ -131,11 +141,19 @@ pub fn start(app: Arc<App>) {
             let _ = app.housekeeping.wake.notified().now_or_never();
             moves.borrow_and_update();
             let left = match caught(pass(&app)).await {
-                Ok(Ok(Some(left))) => left,
-                Ok(Ok(None)) => continue,
+                Ok(Ok(left)) => {
+                    if std::mem::take(&mut failing) {
+                        tracing::info!("Housekeeping passes finish again");
+                    }
+                    match left {
+                        Some(left) => left,
+                        None => continue,
+                    }
+                }
                 Ok(Err(refused)) => {
-                    if app.db.writes_held().is_none() {
-                        tracing::warn!(error = %refused, "A housekeeping pass did not finish");
+                    // A failing disk fails every retry, so the log says so once.
+                    if app.db.writes_held().is_none() && !std::mem::replace(&mut failing, true) {
+                        tracing::warn!(error = %refused, "A housekeeping pass did not finish; passes retry every second until one does");
                     }
                     RETRY.min(longest)
                 }
@@ -174,34 +192,7 @@ async fn while_restoring(app: &Arc<App>) {
             if *at > now {
                 continue;
             }
-            let run = Run {
-                job: job.name,
-                given_up: Arc::new(AtomicBool::new(false)),
-                stopping: app.housekeeping.stopping.subscribe(),
-                kept_unread: Arc::new(AtomicI64::new(0)),
-            };
-            let given_up = run.given_up.clone();
-            let deadline = app.faults.deadline(job.name).unwrap_or(job.deadline);
-            let body = tokio::spawn(perform(app.clone(), job, run));
-            match tokio::time::timeout(deadline, body).await {
-                Ok(Ok(Ok(_))) => {}
-                Ok(Ok(Err(failed))) => {
-                    tracing::warn!(job = job.name, error = %failed.message, "A housekeeping run during a restore failed");
-                }
-                Ok(Err(_)) => {
-                    tracing::warn!(
-                        job = job.name,
-                        "A housekeeping run's task during a restore ended early"
-                    );
-                }
-                Err(_) => {
-                    given_up.store(true, Ordering::Release);
-                    tracing::warn!(
-                        job = job.name,
-                        "A housekeeping run during a restore did not finish in time"
-                    );
-                }
-            }
+            run_unclaimed(app, job, None).await;
             let interval = i64::try_from(job.interval.ms(job.name, app)).unwrap_or(i64::MAX);
             *at = app.clock.now_ms().saturating_add(interval);
         }
@@ -211,6 +202,82 @@ async fn while_restoring(app: &Arc<App>) {
         let left = u64::try_from(next.saturating_sub(app.clock.now_ms())).unwrap_or(0);
         tokio::time::sleep(Duration::from_millis(left)).await;
     }
+}
+
+fn next_unclaimed_ms(app: &App, job: &Job) -> i64 {
+    let interval = i64::try_from(job.interval.ms(job.name, app)).unwrap_or(i64::MAX);
+    app.clock.now_ms().saturating_add(interval)
+}
+
+/// Keeps a timed-out body's hold until that body ends.
+async fn run_unclaimed(app: &Arc<App>, job: &'static Job, hold: Option<UnclaimedRun>) {
+    let run = Run {
+        job: job.name,
+        given_up: Arc::new(AtomicBool::new(false)),
+        stopping: app.housekeeping.stopping.subscribe(),
+        kept_unread: Arc::new(AtomicI64::new(0)),
+    };
+    let given_up = run.given_up.clone();
+    let deadline = app.faults.deadline(job.name).unwrap_or(job.deadline);
+    let mut cut = app.housekeeping.cut.subscribe();
+    let paced = hold.is_some();
+    let body = tokio::spawn({
+        let app = app.clone();
+        async move {
+            let done = perform(app.clone(), job, run).await;
+            if let Some(hold) = &hold {
+                hold.next_not_before(next_unclaimed_ms(&app, job));
+            }
+            done
+        }
+    });
+    tokio::select! {
+        ended = tokio::time::timeout(deadline, body) => match ended {
+            Ok(Ok(Ok(_))) => {}
+            Ok(Ok(Err(failed))) => {
+                tracing::warn!(job = job.name, error = %failed.message, "A housekeeping run without its claim failed");
+            }
+            Ok(Err(_)) => {
+                tracing::warn!(job = job.name, "A housekeeping run's task without its claim ended early");
+            }
+            Err(_) => {
+                given_up.store(true, Ordering::Release);
+                tracing::warn!(job = job.name, "A housekeeping run without its claim did not finish in time");
+            }
+        },
+        _ = cut.wait_for(|cut| *cut) => given_up.store(true, Ordering::Release),
+    }
+    if paced {
+        app.housekeeping
+            .unclaimed
+            .not_before(job.name, next_unclaimed_ms(app, job));
+    }
+}
+
+/// While writes fail, runs each unclaimed job one at a time, paced by its interval.
+fn run_without_claim(app: &Arc<App>) {
+    for job in JOBS
+        .iter()
+        .filter(|job| job.unclaimed && job.runs_here(app))
+    {
+        start_unclaimed(app, job);
+    }
+}
+
+fn start_unclaimed(app: &Arc<App>, job: &'static Job) {
+    let Some(turn) = app
+        .housekeeping
+        .unclaimed
+        .begin(job.name, app.clock.now_ms())
+    else {
+        return;
+    };
+    let active = app.housekeeping.active();
+    let app = app.clone();
+    tokio::spawn(async move {
+        let _active = active;
+        run_unclaimed(&app, job, Some(turn)).await;
+    });
 }
 
 struct Failed {
@@ -293,10 +360,11 @@ fn report(app: &Arc<App>, name: &str, fault: &Arc<Fault>) {
 
 /// Records a run. A busy database must not lose the record, so this goes on
 /// trying until a stop gives up on it, which leaves the next start to clear it.
-async fn record(app: &Arc<App>, job: &Job, ended: &Ended, again: bool) {
+async fn record(app: &Arc<App>, job: &'static Job, ended: &Ended, again: bool) {
     let mut cut = app.housekeeping.cut.subscribe();
     let held = ended.outcome == HELD;
     let mut wait = RECORD_RETRY_FIRST;
+    let mut unrecorded = false;
     let result = ended.result.as_ref().map(ToString::to_string);
     loop {
         let name = job.name;
@@ -330,6 +398,9 @@ async fn record(app: &Arc<App>, job: &Job, ended: &Ended, again: bool) {
             })
             .await;
         let Err(refused) = written else {
+            if unrecorded {
+                tracing::info!(job = job.name, "A housekeeping run is recorded");
+            }
             return;
         };
         if app.db.writes_held().is_some() {
@@ -338,7 +409,18 @@ async fn record(app: &Arc<App>, job: &Job, ended: &Ended, again: bool) {
                 _ = cut.wait_for(|cut| *cut) => return,
             }
         }
-        tracing::warn!(job = job.name, error = %refused, "A housekeeping run is not yet recorded");
+        if job.unclaimed {
+            // The job stays marked as running until this record lands.
+            let interval = i64::try_from(job.interval.ms(job.name, app)).unwrap_or(i64::MAX);
+            let finished = Stamp::parsed(&ended.finished_at).map_or(app.clock.now_ms(), Stamp::ms);
+            app.housekeeping
+                .unclaimed
+                .not_before(job.name, finished.saturating_add(interval));
+            start_unclaimed(app, job);
+        }
+        if !std::mem::replace(&mut unrecorded, true) {
+            tracing::warn!(job = job.name, error = %refused, "A housekeeping run is not yet recorded; the record retries until it lands");
+        }
         tokio::select! {
             () = tokio::time::sleep(wait) => {}
             _ = cut.wait_for(|cut| *cut) => return,
@@ -474,7 +556,53 @@ pub async fn supervise(
 
 #[cfg(test)]
 mod tests {
+    use super::super::Unclaimed;
     use super::*;
+    use crate::log::Capture;
+    use crate::settings::{Environment, Settings};
+
+    const CHECK: &str = "attention-check";
+
+    async fn started() -> (tempfile::TempDir, Arc<App>) {
+        started_with("").await
+    }
+
+    async fn started_with(tuning: &str) -> (tempfile::TempDir, Arc<App>) {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("marfa.db");
+        let blobs = dir.path().join("blobs");
+        let socket = dir.path().join("s.sock");
+        let pairs = [
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+            ("MARFA_TEST_HOOKS", "true"),
+            ("MARFA_TEST_TUNING", tuning),
+        ];
+        let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
+        (dir, App::start(settings).await.unwrap())
+    }
+
+    /// Moves the clock until the check, which first runs a minute after start, is due.
+    fn make_check_due(app: &Arc<App>) {
+        app.clock.jump(10 * 60_000).unwrap();
+    }
+
+    /// Waits until no unclaimed run of the check is under way, and says when the next may start.
+    async fn next_run_ms(app: &Arc<App>) -> i64 {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                if let Some(turn) = app.housekeeping.unclaimed.begin(CHECK, i64::MAX) {
+                    drop(turn);
+                    let states = app.housekeeping.unclaimed.states();
+                    return states[CHECK].next_ms;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the unclaimed run ended")
+    }
 
     #[tokio::test]
     async fn a_panic_in_a_run_is_caught_and_the_next_goes_on() {
@@ -486,5 +614,190 @@ mod tests {
         .await;
         assert!(fault.is_err());
         assert_eq!(caught(async { 1 }).await.ok(), Some(1));
+    }
+
+    #[test]
+    fn an_unclaimed_job_has_one_run_at_a_time_and_waits_for_its_next_turn() {
+        let held = Arc::new(Unclaimed::default());
+        let turn = held.begin(CHECK, 100).expect("the first run starts");
+        assert!(held.begin(CHECK, 100).is_none(), "a second run at once");
+        assert!(held.begin(CHECK, i64::MAX).is_none(), "however late it is");
+        turn.next_not_before(5_100);
+        drop(turn);
+        assert!(held.begin(CHECK, 5_099).is_none(), "before its interval");
+        assert!(held.begin(CHECK, 5_100).is_some(), "at its interval");
+    }
+
+    #[test]
+    fn a_run_that_ends_without_saying_when_the_next_may_start_does_not_hold_the_job_for_good() {
+        let held = Arc::new(Unclaimed::default());
+        drop(held.begin(CHECK, 0).unwrap());
+        assert!(held.begin(CHECK, 0).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_pass_that_cannot_write_runs_the_attention_check_once_and_then_waits_its_interval() {
+        let (_dir, app) = started().await;
+        app.faults
+            .set("hold:housekeeping:attention-check", None)
+            .unwrap();
+        app.faults.set("refuse:write", None).unwrap();
+        make_check_due(&app);
+        for _ in 0..5 {
+            assert!(pass(&app).await.is_err(), "the claim cannot be written");
+        }
+        assert!(
+            app.housekeeping.unclaimed.begin(CHECK, i64::MAX).is_none(),
+            "the one run is still under way, however many passes tried"
+        );
+
+        app.faults.clear(Some("hold:housekeeping:attention-check"));
+        let next = next_run_ms(&app).await;
+        let interval = JOBS
+            .iter()
+            .find(|job| job.name == CHECK)
+            .map(|job| i64::try_from(job.interval.ms(CHECK, &app)).unwrap())
+            .unwrap();
+        assert!(next >= app.clock.now_ms() + interval - 5_000);
+        for _ in 0..5 {
+            assert!(pass(&app).await.is_err());
+        }
+        assert!(
+            app.housekeeping
+                .unclaimed
+                .begin(CHECK, app.clock.now_ms())
+                .is_none(),
+            "passes inside the interval start no run"
+        );
+    }
+
+    fn logged(capture: &Capture, message: &str) -> usize {
+        capture.log().matches(message).count()
+    }
+
+    #[tokio::test]
+    async fn passes_that_keep_failing_are_logged_once_and_their_recovery_once() {
+        let capture = Capture::start();
+        let (_dir, app) = started().await;
+        start(app.clone());
+        app.faults.set("refuse:write", None).unwrap();
+        make_check_due(&app);
+        tokio::time::sleep(Duration::from_millis(3_500)).await;
+        assert_eq!(
+            logged(&capture, "A housekeeping pass did not finish"),
+            1,
+            "the pass failed on each retry, and the log says so once"
+        );
+        assert_eq!(logged(&capture, "Housekeeping passes finish again"), 0);
+
+        app.faults.clear(Some("refuse:write"));
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while logged(&capture, "Housekeeping passes finish again") == 0 {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the recovery is logged");
+        assert_eq!(logged(&capture, "Housekeeping passes finish again"), 1);
+        assert_eq!(logged(&capture, "A housekeeping pass did not finish"), 1);
+    }
+
+    #[tokio::test]
+    async fn a_run_that_cannot_be_recorded_does_not_stop_the_check_while_writes_fail() {
+        let capture = Capture::start();
+        let (_dir, app) = started_with("interval.attention-check=1500").await;
+        let job = JOBS.iter().find(|job| job.name == CHECK).unwrap();
+        app.faults.set("refuse:write", None).unwrap();
+        let claimed = tokio::spawn(supervise(
+            app.clone(),
+            job,
+            app.clock.stamp(),
+            app.housekeeping.active(),
+        ));
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while app.housekeeping.unclaimed.states().get(CHECK).is_none() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the run that could not be recorded paced the check");
+        app.faults
+            .set("hold:housekeeping:attention-check", None)
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(20), async {
+            while !app.housekeeping.unclaimed.states()[CHECK].running {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the check ran again while its last run could not be recorded");
+        assert_eq!(
+            logged(&capture, "A housekeeping run is not yet recorded"),
+            1,
+            "the record retried many times, and the log says so once"
+        );
+        app.faults.clear(Some("hold:housekeeping:attention-check"));
+        claimed.abort();
+    }
+
+    fn bodies_held(app: &Arc<App>) -> u64 {
+        app.faults
+            .list()
+            .iter()
+            .find(|fault| fault.name == "hold:housekeeping:attention-check")
+            .map_or(0, |fault| fault.waiting)
+    }
+
+    #[tokio::test]
+    async fn a_stuck_unclaimed_run_never_lets_a_second_start() {
+        let (_dir, app) = started_with("interval.attention-check=1000").await;
+        app.faults
+            .set("hold:housekeeping:attention-check", None)
+            .unwrap();
+        app.faults.set("refuse:write", None).unwrap();
+        app.faults
+            .set("deadline:attention-check", Some("10"))
+            .unwrap();
+        make_check_due(&app);
+        for _ in 0..30 {
+            assert!(pass(&app).await.is_err(), "the claim cannot be written");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(bodies_held(&app), 1, "one body, however long it is stuck");
+        assert!(
+            app.housekeeping.unclaimed.states()[CHECK].running,
+            "the job is held while its body lives"
+        );
+
+        app.faults.clear(Some("hold:housekeeping:attention-check"));
+        next_run_ms(&app).await;
+    }
+
+    #[tokio::test]
+    async fn a_pass_that_cannot_write_during_a_restore_runs_nothing() {
+        let (_dir, app) = started().await;
+        // A hold refuses only a caller's writes, so the claim needs this fault to fail.
+        app.faults.set("refuse:write", None).unwrap();
+        let _holding = app
+            .db
+            .hold_writes(Refusal::new(
+                Code::WriteContention,
+                "a restore holds writes",
+            ))
+            .unwrap();
+        make_check_due(&app);
+        assert!(pass(&app).await.is_err());
+        assert!(
+            app.housekeeping.unclaimed.begin(CHECK, i64::MAX).is_some(),
+            "no run started"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pass_that_can_write_claims_the_check_and_starts_no_unclaimed_run() {
+        let (_dir, app) = started().await;
+        make_check_due(&app);
+        assert!(pass(&app).await.is_ok());
+        assert!(app.housekeeping.unclaimed.begin(CHECK, i64::MAX).is_some());
     }
 }

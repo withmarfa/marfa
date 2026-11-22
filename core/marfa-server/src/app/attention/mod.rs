@@ -836,10 +836,11 @@ async fn announce(app: &Arc<App>, gathered: &Gathered) -> Result<usize> {
     let written = match write_new(app, gathered, chosen.clone()).await {
         Ok(written) => written,
         Err(refused) => {
-            if database_failed(&refused)
-                && app.attention.looked.load(Ordering::Acquire) <= gathered.order
-            {
-                send_from_memory(app, &chosen.or(fresh));
+            if database_failed(&refused) {
+                let looked = &app.attention.looked;
+                send_from_memory(app, &chosen.or(fresh), || {
+                    looked.load(Ordering::Acquire) <= gathered.order
+                });
             }
             return Err(refused);
         }
@@ -911,9 +912,13 @@ fn database_failed(refused: &Refusal) -> bool {
 }
 
 /// A failed commit may have landed, so the log can deliver an entry sent here too.
-fn send_from_memory(app: &Arc<App>, concerns: &[Concern]) {
+fn send_from_memory(app: &Arc<App>, concerns: &[Concern], current: impl Fn() -> bool) {
     for concern in concerns {
-        if let Some(pending) = app.attention.told.begin(concern.kind, &concern.reference) {
+        if let Some(pending) = app
+            .attention
+            .told
+            .begin(concern.kind, &concern.reference, &current)
+        {
             webhooks::tell_from_memory(app, concern.to_event(), Box::new(move || pending.handed()));
         }
     }
@@ -929,7 +934,7 @@ fn raise_fault(app: &Arc<App>, entry: Entry) {
         match write_fault(&app, concern.clone(), entry.first_ms, chosen.clone()).await {
             Ok(written) => app.attention.told.settle(&written.settled),
             Err(refused) if database_failed(&refused) => {
-                send_from_memory(&app, &chosen.or(vec![concern]));
+                send_from_memory(&app, &chosen.or(vec![concern]), || true);
             }
             Err(refused) => {
                 tracing::warn!(error = %refused, "A fault's attention entry was not announced");
