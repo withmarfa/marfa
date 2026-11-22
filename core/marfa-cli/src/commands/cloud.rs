@@ -396,9 +396,9 @@ const PORT_TAKEN: &str = "another program holds the port on 127.0.0.1 that Marfa
 /// Why a connector in state `failed` cannot run, and what to do about it.
 fn connector_failure(reason: &str) -> String {
     match reason {
-        "missing" => "no connector program can be run: `cloudflared` beside the server's program, or the file MARFA_CLOUDFLARED names. Put it in place, and the server runs it on its next try".to_string(),
+        "missing" => "no connector program can be run. It belongs beside the server's own program, or at the path the server's connector setting names; once it is in place, the server runs it on its next try".to_string(),
         "port_taken" => PORT_TAKEN.to_string(),
-        "refused" => format!("{SERVICE} refuses the connector's tunnel token and has no newer one. Unlink and link again"),
+        "refused" => format!("{SERVICE} refuses the connector's tunnel token. The server asks it for a new one on its own; if this lasts, unlink and link again"),
         "token" => "the server cannot read the tunnel token or write the file it gives the connector".to_string(),
         "" => "no reason was given".to_string(),
         other => other.to_string(),
