@@ -532,7 +532,7 @@ describe("the owner's settings doors", () => {
 });
 
 describe("the connector's own settings", () => {
-  it("answers every setting with its secret opened to the connector's own key alone, and 403 to the owner, an app, the host's key and another connector's key", async () => {
+  it("answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key", async () => {
     const name = `own-${fresh()}`;
     await installed(owner, name);
     const secret = `secret-${randomUUID()}`;
@@ -579,7 +579,6 @@ describe("the connector's own settings", () => {
       ["another connector's key", other.client],
       ["a key holding connectors.manage", owner],
       ["an app holding connectors.manage", app],
-      ["the host's key", host.client],
       ["the private socket", ownerOf(origin)],
     ] as const;
     for (const [who, client] of refusals) {
@@ -590,6 +589,13 @@ describe("the connector's own settings", () => {
       expect(refused.error?.error.code, who).toBe("forbidden");
       expect(JSON.stringify(refused), who).not.toContain(secret);
     }
+    // A host's key is no credential on any door but its own.
+    const hosted = await host.client.readOwnConnectorSettings(
+      connector.registration,
+    );
+    expect(hosted.status).toBe(401);
+    expect(hosted.error?.error.code).toBe("unauthorized");
+    expect(JSON.stringify(hosted)).not.toContain(secret);
     const unknown =
       await connector.client.readOwnConnectorSettings(randomUUID());
     expect(unknown.status).toBe(404);

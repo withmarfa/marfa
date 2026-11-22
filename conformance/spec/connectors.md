@@ -410,13 +410,13 @@ A plugin's connector reads its settings, its secrets opened, from its own regist
 
 When the key a connector host minted for a plugin's connector, and under which the registration was made, sends `GET /connectors/{id}/settings`, the server MUST answer `200` with `plugin`, `settings` holding an entry for each setting the connector declares, in the order it declares them, with its `name`, `kind`, `secret`, `required`, `value`, `set` and `unreadable`, and `missing` as `plugins/settings-missing` says.
 
-**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, and 403 to the owner, an app, the host's key and another connector's key`.
+**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
 
 ### `connectors/settings-secret-opened`
 
 When the server answers `GET /connectors/{id}/settings`, the server MUST answer a secret setting's `value` as the value set for it, or `null` while none is set.
 
-**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, and 403 to the owner, an app, the host's key and another connector's key`.
+**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
 
 ### `connectors/settings-unreadable`
 
@@ -428,19 +428,19 @@ If the server cannot open the value stored for a secret setting when it answers 
 
 If a caller that is not the key the registration was made under, such as another connector's key, a key holding `connectors.manage`, an app token or the private socket, sends `GET /connectors/{id}/settings` naming a registered connector, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, and 403 to the owner, an app, the host's key and another connector's key`.
+**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
 
 ### `connectors/settings-unknown-connector`
 
 If a caller sends `GET /connectors/{id}/settings` naming an ID no connector has, then the server MUST answer `404 connector_not_found`.
 
-**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, and 403 to the owner, an app, the host's key and another connector's key`.
+**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
 
 ### `connectors/settings-no-plugin`
 
 If the key a registration was made under sends `GET /connectors/{id}/settings`, and that key is not the key a connector host minted for a plugin's connector that the plugin still holds, then the server MUST answer `404 connector_not_found`.
 
-**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, and 403 to the owner, an app, the host's key and another connector's key`.
+**Tests:** `compliance/connector-settings.test.ts › answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
 
 ### `connectors/settings-standing-rechecked`
 
@@ -456,7 +456,7 @@ The server MUST NOT include the value of a secret setting of a plugin's connecto
 
 **Reason:** the owner, an app holding `connectors.manage`, the private socket, a connector host's key and another connector's key are not trusted with a credential the owner gave one connector.
 
-**Tests:** `compliance/connector-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds a connector's secret, where a setting that is no secret is shown`, `› answers every setting with its secret opened to the connector's own key alone, and 403 to the owner, an app, the host's key and another connector's key`.
+**Tests:** `compliance/connector-settings.test.ts › is shown back nowhere: no answer, refusal, audit entry, log, export, backup or database page holds a connector's secret, where a setting that is no secret is shown`, `› answers every setting with its secret opened to the connector's own key alone, 403 to the owner, an app and another connector's key, and 401 to the host's key`.
 
 ### `connectors/secret-audit-no-value`
 

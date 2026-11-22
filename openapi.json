@@ -35013,7 +35013,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you lack `connectors.manage`, or your key is a connector host's.",
+            "description": "- `forbidden`: you lack `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -35334,7 +35334,7 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you lack `connectors.manage`, or your key is a connector host's.",
+            "description": "- `forbidden`: you lack `connectors.manage`.",
             "content": {
               "application/json": {
                 "schema": {

@@ -20733,7 +20733,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you lack `connectors.manage`, or your key is a connector host's. */
+            /** @description - `forbidden`: you lack `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20930,7 +20930,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you lack `connectors.manage`, or your key is a connector host's. */
+            /** @description - `forbidden`: you lack `connectors.manage`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
