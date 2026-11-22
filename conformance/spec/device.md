@@ -6228,9 +6228,17 @@ If a view groups by an edge type the copy does not hold whole, with or without t
 
 **Tests:** `device/views.test.ts › groups by each %s other end only with the edge type held whole`, `› groups by presence of a property, tags, an edge and a backref, matching exists`.
 
+### `device/view-group-bucket-field`
+
+If a view's `group.bucket` is `presence` and its `group.by` is not `tags`, `properties.<name>`, `edge[<type>]` or `backref[<type>]`, then a device MUST refuse its groups with `invalid`, naming `group.bucket` and the bucket.
+
+**Reason:** only those fields can lack a value: the system fields always hold one (`search-and-filters/filter-system-presence`), the filter has no `title exists` term, and `status_group` already has a null group.
+
+**Tests:** `device/views.test.ts › groups by presence of a property, tags, an edge and a backref, matching exists`.
+
 ### `device/view-group-presence`
 
-When a caller reads a view grouped with the `presence` bucket, a device MUST put in the group `true` each item that `<group.by> exists` selects, and in the group `false` every other item the view lists, with no null group.
+When a caller reads a view grouped with the `presence` bucket on `tags`, `properties.<name>`, or an edge type the copy holds whole, a device MUST put in the group `true` each item that `<group.by> exists` selects, and in the group `false` every other item the view lists, with no null group.
 
 **Reason:** a group and the filter it suggests then select the same items, so an empty string, an empty list and an object count as set, and a missing value and a JSON null do not.
 

@@ -376,7 +376,6 @@ fn scope(conn: &Connection, id: &str, completeness: Completeness) -> Result<Scop
     })
 }
 
-/// A `group` setting that is not text is refused as an unknown value.
 fn named_setting<'a>(group: Option<&'a Value>, name: &str) -> Result<Option<&'a str>> {
     match group.and_then(|g| g.get(name)) {
         None => Ok(None),
@@ -438,7 +437,6 @@ fn presence_sql(
     ))
 }
 
-/// The status group a `status_group eq` term selects the item for, else null.
 fn status_group_sql(catalog: &Catalog, values: &mut Vec<Value>) -> Result<String> {
     let mut cases = String::new();
     for group in STATUS_GROUPS {
