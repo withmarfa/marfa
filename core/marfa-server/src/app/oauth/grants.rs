@@ -16,7 +16,7 @@ use crate::app::catalog::Catalog;
 use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::unit::Unit;
-use crate::app::{App, instance, keys, vendors};
+use crate::app::{App, instance, keys, vendor_data, vendors};
 
 const COMMAND_LINE_SOFTWARE_ID: &str = "so.marfa.cli";
 const APP_SOURCE_PREFIX: &str = "oauth:";
@@ -113,6 +113,7 @@ fn listed(tx: &Connection, consent: &Consent) -> Result<Value> {
         "client_name": client_name,
         "origins": origins,
         "scopes": consent.scopes.literals(),
+        "vendors": vendors::of_client(tx, &consent.client_id)?,
         "status": "active",
         "granted_at": granted_at(consent),
         "last_used_at": consent.last_used_at,
@@ -230,13 +231,21 @@ pub async fn narrow(
     .await
 }
 
+/// What ending an app takes with it beside its access.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Ending {
+    pub revoke_keys: bool,
+    pub remove_data: bool,
+}
+
 /// Answers how many of the app's keys it ended.
 pub(crate) fn withdraw(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
     consent: &Consent,
-    with_keys: bool,
+    ending: Ending,
 ) -> Result<usize> {
+    let with_keys = ending.revoke_keys;
     grant::end(unit, cache, &consent.client_id, &consent.owner_id)?;
     unit.audit_also(
         REVOKED,
@@ -247,12 +256,18 @@ pub(crate) fn withdraw(
             "owner_id": consent.owner_id,
             "grant_item_id": consent.grant_id,
             "revoke_keys": with_keys,
+            "remove_data": ending.remove_data,
         })),
     )?;
-    if with_keys {
-        return keys::end_all_of_app(unit, &consent.client_id);
+    let ended = if with_keys {
+        keys::end_all_of_app(unit, &consent.client_id)?
+    } else {
+        0
+    };
+    if ending.remove_data {
+        vendor_data::remove_of_client(unit, cache, &consent.client_id)?;
     }
-    Ok(0)
+    Ok(ended)
 }
 
 /// `DELETE /grants/{id}` in the caller's transaction; answers how many keys it ended.
@@ -260,19 +275,26 @@ pub(crate) fn revoke_in(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
     id: &str,
-    with_keys: bool,
+    ending: Ending,
 ) -> Result<usize> {
     unit.caller.require(Permission::GrantsManage)?;
+    if ending.remove_data {
+        unit.caller.require(Permission::ItemsPurge)?;
+    }
     let consent = of_owner(unit.tx(), id)?.ok_or_else(no_such_grant)?;
-    withdraw(unit, cache, &consent, with_keys)
+    withdraw(unit, cache, &consent, ending)
 }
 
-pub async fn revoke(app: &Arc<App>, caller: &Caller, id: String, with_keys: bool) -> Result<()> {
+pub async fn revoke(app: &Arc<App>, caller: &Caller, id: String, ending: Ending) -> Result<()> {
     let cache = app.catalog_handle();
     app.write(caller, REVOKED, move |unit| {
-        revoke_in(unit, &cache, &id, with_keys).map(drop)
+        revoke_in(unit, &cache, &id, ending).map(drop)
     })
-    .await
+    .await?;
+    if ending.remove_data {
+        app.publish_catalog().await;
+    }
+    Ok(())
 }
 
 /// The grant's `system.connection` item version, which every change to the grant moves.

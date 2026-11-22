@@ -7,12 +7,15 @@ use serde_json::{Value, json};
 use super::answer::{Answer, json_answer};
 use super::body::JsonBody;
 use super::caller::OwnerOrCredential;
+use super::trash::{limit_of, named_in};
 use super::{named_instance, query};
 use crate::app::App;
 use crate::app::refusal::{Code, Refusal};
+use crate::app::vendor_data;
 use crate::app::vendors;
 
 const FIELDS: [&str; 1] = ["client_id"];
+const DATA_PAGE: i64 = 25;
 
 pub async fn list(
     State(app): State<Arc<App>>,
@@ -59,4 +62,35 @@ pub async fn give(
     };
     let binding = vendors::give(&app, &caller, vendor, client_id).await?;
     Ok(json_answer(StatusCode::OK, &binding))
+}
+
+pub async fn data(
+    State(app): State<Arc<App>>,
+    Path(vendor): Path<String>,
+    OwnerOrCredential(caller): OwnerOrCredential,
+    uri: Uri,
+) -> Answer {
+    caller.require_vendor_door()?;
+    query::only(&uri, &["limit", "cursor"])?;
+    vendors::check_vendor(&vendor)?;
+    let limit = limit_of(&uri, DATA_PAGE)?;
+    let cursor = named_in(&uri, "cursor")?;
+    let page = vendor_data::listed(&app, &caller, vendor, cursor, limit).await?;
+    Ok(json_answer(StatusCode::OK, &page))
+}
+
+/// The owner's session is no credential to the instance header's layer, so this door judges it.
+pub async fn remove_data(
+    State(app): State<Arc<App>>,
+    Path(vendor): Path<String>,
+    headers: HeaderMap,
+    OwnerOrCredential(caller): OwnerOrCredential,
+    uri: Uri,
+) -> Answer {
+    named_instance::judge(&app, &headers)?;
+    caller.require_vendor_door()?;
+    query::only(&uri, &[])?;
+    vendors::check_vendor(&vendor)?;
+    let removed = vendor_data::remove(&app, &caller, vendor).await?;
+    Ok(json_answer(StatusCode::OK, &removed))
 }

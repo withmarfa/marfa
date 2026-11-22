@@ -10135,6 +10135,9 @@
               "scopes": [
                 "core.note:read"
               ],
+              "vendors": [
+                "app.reader"
+              ],
               "status": "active",
               "granted_at": "2026-10-03T09:30:00.000Z",
               "last_used_at": null
@@ -10186,6 +10189,16 @@
             },
             "description": "The access the owner approved for the app."
           },
+          "vendors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Each `app.<vendor>` namespace the app holds. `GET /app-vendors/{vendor}/data` lists what it keeps there.",
+            "example": [
+              "app.reader"
+            ]
+          },
           "status": {
             "type": "string",
             "description": "The grant's status."
@@ -10211,6 +10224,7 @@
           "client_name",
           "origins",
           "scopes",
+          "vendors",
           "status",
           "granted_at",
           "last_used_at"
@@ -10224,6 +10238,9 @@
           "origins": [],
           "scopes": [
             "core.note:read"
+          ],
+          "vendors": [
+            "app.reader"
           ],
           "status": "active",
           "granted_at": "2026-10-03T09:30:00.000Z",
@@ -14546,6 +14563,14 @@
             "description": "The OAuth client ID of the app that holds the namespace, or `null` while the owner holds it because no one app is known to have made its types.",
             "example": "01a10127-d974-7c54-8cc4-5c5581d45c4c"
           },
+          "client_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The name the app that holds the namespace registered, or `null` while the owner holds it or the app registered none.",
+            "example": "Reader"
+          },
           "claimed_at": {
             "type": "string",
             "format": "date-time",
@@ -14556,6 +14581,7 @@
         "required": [
           "vendor",
           "client_id",
+          "client_name",
           "claimed_at"
         ],
         "additionalProperties": false
@@ -16507,6 +16533,248 @@
         ],
         "additionalProperties": false,
         "description": "A mapping preview the connector rendered: the item as it would land under the mapping."
+      },
+      "InstanceChangedOrTypeHasSubtypesOrTypeInUseRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "instance_changed",
+                  "type_has_subtypes",
+                  "type_in_use"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "BulkCapExceededOrValidationErrorRefusal": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": [
+                  "bulk_cap_exceeded",
+                  "validation_error"
+                ],
+                "description": "A machine-readable code for the error. Use it in your logic."
+              },
+              "message": {
+                "type": "string",
+                "description": "A description of the error for a person to read. It can change, so don't match on it."
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "More about the error, such as the field it concerns. Each code defines its own details."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "description": "What went wrong."
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "description": "An error response."
+      },
+      "AppVendorDataType": {
+        "type": "object",
+        "description": "A type registered under an `app.<vendor>` namespace, with how many items of it stand in each state.",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "The type's identifier.",
+            "example": "app.acme.setting"
+          },
+          "active": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many of its items are active."
+          },
+          "archived": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many of its items are archived."
+          },
+          "trashed": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many of its items are in the trash."
+          }
+        },
+        "required": [
+          "type",
+          "active",
+          "archived",
+          "trashed"
+        ],
+        "additionalProperties": false
+      },
+      "AppVendorDataItem": {
+        "type": "object",
+        "description": "An item of a type under an `app.<vendor>` namespace, in any state.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the item.",
+            "example": "019980d6-7612-7000-8000-000000000002"
+          },
+          "type": {
+            "type": "string",
+            "description": "The item's type.",
+            "example": "app.acme.setting"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "The item's version."
+          },
+          "name": {
+            "type": "string",
+            "description": "The item's title, or a name Marfa gives an item without one."
+          },
+          "source": {
+            "type": "string",
+            "description": "The source that wrote the item."
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "archived",
+              "trashed"
+            ],
+            "description": "The item's state: `active`, `archived`, or `trashed` while it is in the trash."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the item was created, in UTC.",
+            "example": "2026-11-21T09:30:00.000Z"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "version",
+          "name",
+          "source",
+          "state",
+          "created_at"
+        ],
+        "additionalProperties": false
+      },
+      "AppVendorDataPage": {
+        "type": "object",
+        "description": "What an app keeps under one `app.<vendor>` namespace: its types with counts, and a page of its items in every state.",
+        "properties": {
+          "vendor": {
+            "type": "string",
+            "description": "The namespace, as `app.<vendor>`.",
+            "example": "app.acme"
+          },
+          "client_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The OAuth client ID of the app that holds the namespace, or `null` while the owner holds it.",
+            "example": "01a10127-d974-7c54-8cc4-5c5581d45c4c"
+          },
+          "types": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppVendorDataType"
+            },
+            "description": "Every type registered under the namespace, by identifier, each in every page."
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AppVendorDataItem"
+            },
+            "description": "A page of the namespace's items, oldest first."
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Send as `cursor` for the next page, or `null` on the last page.",
+            "example": null
+          }
+        },
+        "required": [
+          "vendor",
+          "client_id",
+          "types",
+          "data",
+          "next_cursor"
+        ],
+        "additionalProperties": false
+      },
+      "AppVendorDataRemoval": {
+        "type": "object",
+        "description": "What one removal of an `app.<vendor>` namespace's data deleted, and how many of its items are left.",
+        "properties": {
+          "vendor": {
+            "type": "string",
+            "description": "The namespace, as `app.<vendor>`.",
+            "example": "app.acme"
+          },
+          "removed_items": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many items this call deleted, at most 1,000."
+          },
+          "removed_types": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many types this call deleted: every type under the namespace, in the call that leaves no item."
+          },
+          "remaining_items": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "How many items of the namespace are left. Call again until it is `0`."
+          }
+        },
+        "required": [
+          "vendor",
+          "removed_items",
+          "removed_types",
+          "remaining_items"
+        ],
+        "additionalProperties": false
       }
     },
     "parameters": {},
@@ -65741,6 +66009,9 @@
                       "scopes": [
                         "core.note:read"
                       ],
+                      "vendors": [
+                        "app.reader"
+                      ],
                       "status": "active",
                       "granted_at": "2026-10-03T09:30:00.000Z",
                       "last_used_at": null
@@ -66293,7 +66564,7 @@
           }
         ],
         "summary": "Revoke an app grant",
-        "description": "Revokes the app's tokens and consent. Requires `grants.manage`.",
+        "description": "Revokes the app's tokens and consent. Its keys stay unless `revoke_keys` is `true`, and its data stays unless `remove_data` is `true`. Requires `grants.manage`.",
         "parameters": [
           {
             "schema": {
@@ -66313,6 +66584,16 @@
             "required": false,
             "description": "Also revoke every key the app minted, and every key those keys minted, but an owner's key (`owner_key`). Omitting it, or `false`, leaves them working.",
             "name": "revoke_keys",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "boolean",
+              "description": "For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`; a key also needs write on those types and `schema.write`. Omitting it, or `false`, keeps them."
+            },
+            "required": false,
+            "description": "For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`; a key also needs write on those types and `schema.write`. Omitting it, or `false`, keeps them.",
+            "name": "remove_data",
             "in": "query"
           }
         ],
@@ -66339,11 +66620,11 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take, or `revoke_keys` is neither `true` nor `false`, or is named more than once. Nothing is revoked.",
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take, or `revoke_keys` or `remove_data` is neither `true` nor `false`, or is named more than once. Nothing is revoked.\n- `bulk_cap_exceeded`: with `remove_data`, the app holds more than 1,000 items. Nothing is revoked; delete them first with `DELETE /app-vendors/{vendor}/data`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/BulkCapExceededOrValidationErrorRefusal"
                 }
               }
             },
@@ -66381,11 +66662,11 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: the credential lacks `grants.manage`.",
+            "description": "- `forbidden`: the credential lacks `grants.manage`, or with `remove_data` `items.purge` or `schema.write` (`details.required_scope`), or with `remove_data` it is an app's sign-in or a key an app made and the grant is another app's.\n- `type_not_permitted`: a key or an app's sign-in lacks write on a type under the app's namespaces with `remove_data`. `details.grant` names `<vendor>.*`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                  "$ref": "#/components/schemas/ForbiddenOrTypeNotPermittedRefusal"
                 }
               }
             },
@@ -66407,6 +66688,27 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GrantNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "- `type_in_use`: with `remove_data`, a folder, view, webhook or table column outside the app's namespaces names one of its types. Nothing is revoked.\n- `type_has_subtypes`: with `remove_data`, a type outside the app's namespaces inherits from one of its types. Nothing is revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TypeHasSubtypesOrTypeInUseRefusal"
                 }
               }
             },
@@ -66588,6 +66890,7 @@
                     {
                       "vendor": "app.acme",
                       "client_id": "01a10127-d974-7c54-8cc4-5b1e0f3c2a10",
+                      "client_name": "Reader",
                       "claimed_at": "2026-11-20T09:30:00.000Z"
                     }
                   ],
@@ -66854,6 +67157,7 @@
                 "example": {
                   "vendor": "app.acme",
                   "client_id": "01a10127-d974-7c54-8cc4-5b1e0f3c2a10",
+                  "client_name": "Reader",
                   "claimed_at": "2026-11-20T09:30:00.000Z"
                 }
               }
@@ -67020,6 +67324,561 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/RequestTooLargeRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "507": {
+            "description": "`insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InsufficientStorageRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/app-vendors/{vendor}/data": {
+      "get": {
+        "operationId": "listAppVendorData",
+        "tags": [
+          "Apps"
+        ],
+        "security": [
+          {
+            "ownerSession": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List an app's data",
+        "description": "Returns each type under an `app.<vendor>` namespace, registered or held by an item, with its items counted by state, and a page of those items in every state. Requires the browser session or `grants.manage`; a key also needs read on those types.",
+        "x-marfa-local-command": true,
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The namespace, as `app.<vendor>`.",
+              "example": "app.acme"
+            },
+            "required": true,
+            "description": "The namespace, as `app.<vendor>`.",
+            "name": "vendor",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 25,
+              "description": "The maximum number of results to return."
+            },
+            "required": false,
+            "description": "The maximum number of results to return.",
+            "name": "limit",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "The `next_cursor` from the previous page. Leave it out to get the first page."
+            },
+            "required": false,
+            "description": "The `next_cursor` from the previous page. Leave it out to get the first page.",
+            "name": "cursor",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns the namespace's types and a page of its items.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppVendorDataPage"
+                },
+                "example": {
+                  "vendor": "app.acme",
+                  "client_id": "01a10127-d974-7c54-8cc4-5c5581d45c4c",
+                  "types": [
+                    {
+                      "type": "app.acme.setting",
+                      "active": 1,
+                      "archived": 0,
+                      "trashed": 1
+                    }
+                  ],
+                  "data": [
+                    {
+                      "id": "019980d6-7612-7000-8000-000000000002",
+                      "type": "app.acme.setting",
+                      "version": 3,
+                      "name": "Preferences",
+                      "source": "oauth:01a10127-d974-7c54-8cc4-5c5581d45c4c",
+                      "state": "active",
+                      "created_at": "2026-11-21T09:30:00.000Z"
+                    }
+                  ],
+                  "next_cursor": null
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the vendor is not an `app.<vendor>` namespace, `limit` is not a whole number from 1 to 200, `cursor` is not one this listing gave, or the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `forbidden`: the credential lacks `grants.manage`, and `details.required_scope` names it, or it is an app's sign-in or a key an app made and another app or the owner holds the namespace.\n- `type_not_permitted`: a key or an app's sign-in lacks read on a type under the namespace. `details.grant` names `<vendor>.*`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenOrTypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "404": {
+            "description": "- `not_found`: no app or owner holds the namespace, and `details.vendor` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "429": {
+            "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RateLimitedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          },
+          "500": {
+            "description": "`internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InternalErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "503": {
+            "description": "`write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WriteContentionRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteAppVendorData",
+        "tags": [
+          "Apps"
+        ],
+        "security": [
+          {
+            "ownerSession": []
+          },
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Delete an app's data",
+        "description": "Deletes for good up to 1,000 items under an `app.<vendor>` namespace, in every state, and its registered types once none is left. Needs `items.purge` and the browser session or `grants.manage`; a key also needs write on its types and `schema.write`.",
+        "x-marfa-local-command": true,
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "The namespace, as `app.<vendor>`.",
+              "example": "app.acme"
+            },
+            "required": true,
+            "description": "The namespace, as `app.<vendor>`.",
+            "name": "vendor",
+            "in": "path"
+          },
+          {
+            "name": "X-Marfa-Instance-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "description": "The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Returns what the call deleted and how many items are left.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppVendorDataRemoval"
+                },
+                "example": {
+                  "vendor": "app.acme",
+                  "removed_items": 2,
+                  "removed_types": 1,
+                  "remaining_items": 0
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              }
+            }
+          },
+          "400": {
+            "description": "- `validation_error`: the vendor is not an `app.<vendor>` namespace, or the query has a parameter this endpoint doesn't take.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "403": {
+            "description": "- `forbidden`: the credential lacks `grants.manage`, `items.purge`, or `schema.write` while types are registered there (`details.required_scope`), or it is an app's sign-in or a key an app made and another app or the owner holds the namespace.\n- `type_not_permitted`: a key or an app's sign-in lacks write on a type under the namespace. `details.grant` names `<vendor>.*`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForbiddenOrTypeNotPermittedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "404": {
+            "description": "- `not_found`: no app or owner holds the namespace, and `details.vendor` names it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "409": {
+            "description": "- `instance_changed`: `X-Marfa-Instance-Id` names another instance.\n- `type_in_use`: a folder, view, webhook or table column outside the namespace names one of its types; `details.settings` and `details.columns` name them.\n- `type_has_subtypes`: a type outside the namespace inherits from one of its types.\n\nNothing is deleted.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceChangedOrTypeHasSubtypesOrTypeInUseRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
+          "412": {
+            "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractMismatchRefusal"
                 }
               }
             },
@@ -70313,7 +71172,7 @@
           "Sign-ins and passkeys"
         ],
         "summary": "End a sign-in",
-        "description": "Ends a sign-in at once: it can't refresh or make another request, even when it is your own. An app's keys stay unless `revoke_keys` is `true`. Requires `sign_ins.manage`.",
+        "description": "Ends a sign-in at once: it can't refresh or make another request, even when it is your own. An app's keys stay unless `revoke_keys` is `true`, and its data unless `remove_data` is `true`. Requires `sign_ins.manage`.",
         "parameters": [
           {
             "schema": {
@@ -70333,6 +71192,16 @@
             "required": false,
             "description": "For an app, also revoke every key it minted but an owner's key (`owner_key`), as its `minted_by` entries show. Only an app takes it.",
             "name": "revoke_keys",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "boolean",
+              "description": "For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`; a key also needs write on those types and `schema.write`. Omitting it, or `false`, keeps them."
+            },
+            "required": false,
+            "description": "For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`; a key also needs write on those types and `schema.write`. Omitting it, or `false`, keeps them.",
+            "name": "remove_data",
             "in": "query"
           },
           {
@@ -70369,11 +71238,11 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `revoke_keys` is neither `true` nor `false`, or is named more than once, or it is `true` and the ID names a browser or a key. Nothing ends.",
+            "description": "- `validation_error`: `revoke_keys` or `remove_data` is neither `true` nor `false`, or is named more than once, or it is `true` and the ID names a browser or a key. Nothing ends.\n- `bulk_cap_exceeded`: with `remove_data`, the app holds more than 1,000 items. Nothing ends; delete them first with `DELETE /app-vendors/{vendor}/data`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ValidationErrorRefusal"
+                  "$ref": "#/components/schemas/BulkCapExceededOrValidationErrorRefusal"
                 }
               }
             },
@@ -70411,11 +71280,11 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: the credential lacks `sign_ins.manage`. `details.required_scope` names it.",
+            "description": "- `forbidden`: the credential lacks `sign_ins.manage`, or with `remove_data` `items.purge` or `schema.write` (`details.required_scope`), or with `remove_data` it is an app's sign-in or a key an app made and the ID names another app.\n- `type_not_permitted`: a key or an app's sign-in lacks write on a type under the app's namespaces with `remove_data`. `details.grant` names `<vendor>.*`.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ForbiddenRefusal"
+                  "$ref": "#/components/schemas/ForbiddenOrTypeNotPermittedRefusal"
                 }
               }
             },
@@ -70453,11 +71322,11 @@
             }
           },
           "409": {
-            "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "description": "- `instance_changed`: `X-Marfa-Instance-Id` names another instance. Rebuild the working copy from the instance at this address.\n- `type_in_use`: with `remove_data`, a folder, view, webhook or table column outside the app's namespaces names one of its types.\n- `type_has_subtypes`: with `remove_data`, a type outside them inherits from one.\n\nNothing ends.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InstanceChangedRefusal"
+                  "$ref": "#/components/schemas/InstanceChangedOrTypeHasSubtypesOrTypeInUseRefusal"
                 }
               }
             },
@@ -81107,6 +81976,8 @@
         "revokeAppGrant",
         "listAppVendors",
         "giveAppVendor",
+        "listAppVendorData",
+        "deleteAppVendorData",
         "authorizeApp",
         "requestDeviceCode",
         "exchangeToken",

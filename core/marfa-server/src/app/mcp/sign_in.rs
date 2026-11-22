@@ -14,11 +14,11 @@ use crate::app::access::{Caller, Permission};
 use crate::app::auth::session::ENDED;
 use crate::app::auth::sign_ins::{self, Held};
 use crate::app::auth::{Visit, passkeys};
-use crate::app::oauth::grants;
+use crate::app::oauth::grants::{self, Ending};
 use crate::app::oauth::store::Consent;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::unit::Unit;
-use crate::app::{App, keys, webhooks};
+use crate::app::{App, keys, vendor_data, webhooks};
 
 pub const TOOL: &str = "marfa_end_sign_in";
 
@@ -54,8 +54,13 @@ impl Kind {
         }
     }
 
-    fn target(self, id: &str, revoke_keys: bool) -> String {
-        let named = format!("{} {id} {revoke_keys}", self.word());
+    fn target(self, id: &str, ending: Ending) -> String {
+        let named = format!(
+            "{} {id} {} {}",
+            self.word(),
+            ending.revoke_keys,
+            ending.remove_data
+        );
         confirm::ids_digest(&[named])
     }
 }
@@ -69,12 +74,14 @@ pub struct AppEnding {
     pub keys: Option<Vec<Value>>,
     /// The app's live keys, which keep working unless the call asks to end them.
     pub keys_held: usize,
+    /// What each vendor the app holds keeps, which goes with it when the call asks for that.
+    pub data: Option<Vec<Value>>,
     pub token_chains: usize,
     /// Whether the act ends the credential making the call.
     pub ends_caller: bool,
 }
 
-pub enum Ending {
+pub enum Closing {
     Browser {
         sign_in: Value,
         digest: String,
@@ -91,22 +98,22 @@ pub enum Ending {
     Key,
 }
 
-impl Ending {
+impl Closing {
     fn kind(&self) -> Option<Kind> {
         match self {
-            Ending::Browser { .. } => Some(Kind::Browser),
-            Ending::App { .. } => Some(Kind::App),
-            Ending::Passkey { .. } => Some(Kind::Passkey),
-            Ending::Key => None,
+            Closing::Browser { .. } => Some(Kind::Browser),
+            Closing::App { .. } => Some(Kind::App),
+            Closing::Passkey { .. } => Some(Kind::Passkey),
+            Closing::Key => None,
         }
     }
 
     fn digest(&self) -> Option<&str> {
         match self {
-            Ending::Browser { digest, .. }
-            | Ending::App { digest, .. }
-            | Ending::Passkey { digest, .. } => Some(digest),
-            Ending::Key => None,
+            Closing::Browser { digest, .. }
+            | Closing::App { digest, .. }
+            | Closing::Passkey { digest, .. } => Some(digest),
+            Closing::Key => None,
         }
     }
 }
@@ -121,7 +128,9 @@ fn sorted(mut list: Vec<String>) -> Vec<String> {
 }
 
 fn only_an_app() -> Refusal {
-    Refusal::validation("revoke_keys applies only to an app; this ID names a browser or a passkey.")
+    Refusal::validation(
+        "revoke_keys and remove_data apply only to an app; this ID names a browser or a passkey.",
+    )
 }
 
 fn ends_caller(caller: &Caller, consent: &Consent, revoke_keys: bool) -> bool {
@@ -140,9 +149,10 @@ fn app_ending(
     caller: &Caller,
     sign_in: Value,
     consent: &Consent,
-    revoke_keys: bool,
+    ending: Ending,
     at: &str,
-) -> Result<Ending> {
+) -> Result<Closing> {
+    let revoke_keys = ending.revoke_keys;
     let scopes = sorted(consent.scopes.literals().to_vec());
     let destinations = sorted(grants::destinations(tx, consent)?);
     let version = grants::item_version(tx, consent)?;
@@ -161,6 +171,21 @@ fn app_ending(
         bound.sort_unstable();
         bound
     });
+    let data = if ending.remove_data {
+        let held = vendor_data::held_of_client(tx, caller, &consent.client_id)?;
+        let total: usize = held.iter().map(|one| one.items).sum();
+        if total > vendor_data::MOST_REMOVED {
+            let names: Vec<&str> = held.iter().map(|one| one.vendor.as_str()).collect();
+            return Err(vendor_data::over_cap(
+                &names.join(", "),
+                total,
+                super::app_data::TOOL,
+            ));
+        }
+        Some(held)
+    } else {
+        None
+    };
     let digest = hashed(&json!({
         "client_id": consent.client_id,
         "version": version,
@@ -168,6 +193,7 @@ fn app_ending(
         "destinations": destinations,
         "webhooks": bound_hooks,
         "keys": bound_keys,
+        "data": data.as_ref().map(|held| held.iter().map(|one| one.digest.clone()).collect::<Vec<_>>()),
     }));
     let app = AppEnding {
         sign_in,
@@ -190,10 +216,11 @@ fn app_ending(
                 .collect()
         }),
         keys_held: held.len(),
+        data: data.map(|held| held.iter().map(vendor_data::Held::to_json).collect()),
         token_chains: grants::token_chains(tx, consent)?,
         ends_caller: ends_caller(caller, consent, revoke_keys),
     };
-    Ok(Ending::App {
+    Ok(Closing::App {
         app: Box::new(app),
         digest,
     })
@@ -204,34 +231,38 @@ fn ending(
     caller: &Caller,
     named: Named,
     id: &str,
-    revoke_keys: bool,
+    ending: Ending,
     at: &str,
     days: u64,
-) -> Result<Ending> {
+) -> Result<Closing> {
+    let for_app = ending.revoke_keys || ending.remove_data;
     if named == Named::Passkey {
         let (listed, credential_id) = passkeys::held(tx, caller, id)?;
-        if revoke_keys {
+        if for_app {
             return Err(only_an_app());
         }
         let digest = hashed(&json!([listed.id, credential_id, listed.host, listed.name]));
-        return Ok(Ending::Passkey {
+        return Ok(Closing::Passkey {
             passkey: listed.to_json(),
             digest,
         });
     }
     match sign_ins::held(tx, caller, id, at, days)? {
-        Held::Browser { .. } if revoke_keys => Err(only_an_app()),
+        Held::Browser { .. } if for_app => Err(only_an_app()),
         Held::Browser {
             shown,
             token_digest,
-        } => Ok(Ending::Browser {
+        } => Ok(Closing::Browser {
             sign_in: shown.to_json(),
             digest: hashed(&json!([id, token_digest])),
         }),
         Held::App { shown, consent } => {
-            app_ending(tx, caller, shown.to_json(), &consent, revoke_keys, at)
+            if ending.remove_data {
+                caller.require(Permission::ItemsPurge)?;
+            }
+            app_ending(tx, caller, shown.to_json(), &consent, ending, at)
         }
-        Held::Key => Ok(Ending::Key),
+        Held::Key => Ok(Closing::Key),
     }
 }
 
@@ -241,15 +272,15 @@ pub async fn preview(
     caller: &Caller,
     named: Named,
     id: String,
-    revoke_keys: bool,
-) -> Result<Ending> {
+    asked: Ending,
+) -> Result<Closing> {
     let caller = caller.clone();
     let at = app.clock.stamp();
     let days = sign_ins::inactivity_days(app);
     app.db
         .read(move |tx| {
             let caller = caller.current(tx, &at)?;
-            ending(tx, &caller, named, &id, revoke_keys, &at, days)
+            ending(tx, &caller, named, &id, asked, &at, days)
         })
         .await
 }
@@ -259,13 +290,13 @@ pub fn token(
     app: &App,
     caller: &Caller,
     id: &str,
-    revoke_keys: bool,
-    ending: &Ending,
+    asked: Ending,
+    closing: &Closing,
 ) -> Result<Option<confirm::Token>> {
-    let (Some(kind), Some(digest)) = (ending.kind(), ending.digest()) else {
+    let (Some(kind), Some(digest)) = (closing.kind(), closing.digest()) else {
         return Ok(None);
     };
-    connector::issue(app, caller, TOOL, &kind.target(id, revoke_keys), digest).map(Some)
+    connector::issue(app, caller, TOOL, &kind.target(id, asked), digest).map(Some)
 }
 
 /// A sign-in or passkey that is no longer there reads as gone; a refusal of the caller stands.
@@ -285,7 +316,7 @@ pub fn read_now<T>(read: Result<T>) -> Result<Option<T>> {
 pub async fn end_confirmed(
     app: &Arc<App>,
     caller: &Caller,
-    (named, id, revoke_keys): (Named, String, bool),
+    (named, id, asked): (Named, String, Ending),
     bound: Bound,
     visit: Visit,
 ) -> Result<(Option<Kind>, Confirmed)> {
@@ -296,7 +327,7 @@ pub async fn end_confirmed(
     };
     let mut signed = None;
     for kind in kinds {
-        let target = kind.target(&id, revoke_keys);
+        let target = kind.target(&id, asked);
         if app
             .mcp
             .signer
@@ -323,21 +354,21 @@ pub async fn end_confirmed(
                 &unit.caller,
                 named,
                 &reading,
-                revoke_keys,
+                asked,
                 &unit.at,
                 days,
             );
             Ok(read_now(read)?
-                .filter(|ending| ending.kind() == Some(kind))
-                .and_then(|ending| ending.digest().map(str::to_string)))
+                .filter(|closing| closing.kind() == Some(kind))
+                .and_then(|closing| closing.digest().map(str::to_string)))
         },
         move |unit: &Unit<'_, '_>| {
             let ended = match kind {
-                Kind::Browser => sign_ins::end_in(unit, &cache, &id, false, &visit)?,
+                Kind::Browser => sign_ins::end_in(unit, &cache, &id, Ending::default(), &visit)?,
                 Kind::App if unit.caller.holds(Permission::SignInsManage) => {
-                    sign_ins::end_in(unit, &cache, &id, revoke_keys, &visit)?
+                    sign_ins::end_in(unit, &cache, &id, asked, &visit)?
                 }
-                Kind::App => grants::revoke_in(unit, &cache, &id, revoke_keys)?,
+                Kind::App => grants::revoke_in(unit, &cache, &id, asked)?,
                 Kind::Passkey => {
                     passkeys::remove_in(unit, &id)?;
                     0
@@ -347,5 +378,8 @@ pub async fn end_confirmed(
         },
     )
     .await?;
+    if asked.remove_data && matches!(confirmed, Confirmed::Done { .. }) {
+        app.publish_catalog().await;
+    }
     Ok((Some(kind), confirmed))
 }

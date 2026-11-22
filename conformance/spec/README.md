@@ -32,7 +32,7 @@ The contract has two halves.
 - `search-and-filters.md`: the query grammar every listing shares, search, the counts, the lookup by link, natural key or id, and the export of items.
 - `archive.md`: the archive an export writes and a restore reads: its entries and manifest, what it carries, and what a restore takes from it.
 - `occurrences.md`: how `GET /occurrences` unfolds a series across zones and clock changes, what a window includes, and what a write may store as a schedule.
-- `keys-and-oauth.md`: keys, what they reach and their levers, and sign-in: discovery, registration, authorization with consent, tokens, grants, the device grant and the sign-in pages.
+- `keys-and-oauth.md`: keys, what they reach and their levers, and sign-in: discovery, registration, authorization with consent, tokens, grants, an app's own data, the device grant and the sign-in pages.
 - `mcp.md`: the MCP endpoint, who may call it, the tools a credential is offered, and how the tools guard the items they change and the files they fetch.
 - `authentication.md`: owner passkeys, their browser sessions, password-lock independence and removal, and changing the password.
 - `instance-claim.md`: setup proof, the one owner, browser handoff and password recovery.
@@ -45,7 +45,7 @@ The contract has two halves.
 
 - `device.md`: the working copy, the slice, hydration, catch-up, and what a device never does locally.
 - `queue-and-verdicts.md`: the queue, the version on every write, the six verdicts, and which failures retry.
-- `cli.md`: the `marfa` program: its profiles, the server it talks to and the contract it names, its keys, stores, drain, output and telemetry, the docs site, and the commands for the bin, summaries, connector problems, export, restore and the link to Marfa Cloud. A folder command's rules are in the `folder-` chapters, which use the word folder for the `system.folder` on the instance and directory for the place on a machine's disk that follows one (`GLOSSARY.md`).
+- `cli.md`: the `marfa` program: its profiles, the server it talks to and the contract it names, its keys, stores, drain, output and telemetry, the docs site, and the commands for the bin, an app's data, summaries, connector problems, export, restore and the link to Marfa Cloud. A folder command's rules are in the `folder-` chapters, which use the word folder for the `system.folder` on the instance and directory for the place on a machine's disk that follows one (`GLOSSARY.md`).
 - `folder-setup.md`: setting a directory up to follow a folder: binding and settings, the first sync, the machine's registry, the record of watches, handing a directory to a command and syncing from login.
 - `folder-documents.md`: what a document is to a directory: which files it admits, a document's fields, name, title, versions, edge lines and links, and the files it cannot read.
 - `folder-files.md`: files on disk: identity and placement, writes and recovery, deletion, paths and links, and another directory's file.

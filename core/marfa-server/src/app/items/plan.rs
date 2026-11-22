@@ -499,16 +499,7 @@ fn purge_walk(gate: &Gate<'_, '_>, named: &[Item], cap: usize) -> Result<Vec<Pur
     let mut taken = HashSet::new();
     let mut purging = Vec::new();
     while let Some(item) = waiting.pop_front() {
-        let mut edges = Vec::new();
-        let mut held = touching(gate.tx, &item.id)?;
-        held.sort_by(|left, right| left.id.cmp(&right.id));
-        for edge in held {
-            if taken.insert(edge.id.clone()) {
-                let source = rows::by_id(gate.tx, &edge.from_id)?
-                    .ok_or_else(|| Refusal::internal("an edge outlived its source"))?;
-                edges.push((edge, source));
-            }
-        }
+        let edges = edges_taken(gate.tx, &item.id, &mut taken)?;
         for link in gate.carried().inbound(&item.id)? {
             if with_hosts(gate, &link.edge_type)
                 && !going.contains(&link.from)
@@ -525,6 +516,36 @@ fn purge_walk(gate: &Gate<'_, '_>, named: &[Item], cap: usize) -> Result<Vec<Pur
         purging.push(Purging { item, edges });
     }
     Ok(purging)
+}
+
+/// The edges touching `id` that no earlier row took, each with its source.
+fn edges_taken(
+    tx: &Transaction<'_>,
+    id: &str,
+    taken: &mut HashSet<String>,
+) -> Result<Vec<(Edge, Item)>> {
+    let mut edges = Vec::new();
+    let mut held = touching(tx, id)?;
+    held.sort_by(|left, right| left.id.cmp(&right.id));
+    for edge in held {
+        if taken.insert(edge.id.clone()) {
+            let source = rows::by_id(tx, &edge.from_id)?
+                .ok_or_else(|| Refusal::internal("an edge outlived its source"))?;
+            edges.push((edge, source));
+        }
+    }
+    Ok(edges)
+}
+
+/// A purge of exactly `rows`; a part or neighbor outside them loses only the edge.
+pub(super) fn rows_walk(tx: &Transaction<'_>, rows: Vec<Item>) -> Result<Vec<Purging>> {
+    let mut taken = HashSet::new();
+    rows.into_iter()
+        .map(|item| {
+            let edges = edges_taken(tx, &item.id, &mut taken)?;
+            Ok(Purging { item, edges })
+        })
+        .collect()
 }
 
 pub(super) fn walked_purge(gate: &Gate<'_, '_>, row: Item) -> Result<Vec<Purging>> {

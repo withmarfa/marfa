@@ -123,6 +123,10 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         &["apps vendors list", "apps vendors move"],
     ),
     (
+        "List and delete an app's own data",
+        &["apps vendors data list", "apps vendors data delete"],
+    ),
+    (
         "Manage the owner's passkeys",
         &[
             "owner passkeys list",

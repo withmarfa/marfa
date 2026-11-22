@@ -28,7 +28,7 @@ impl SchemaKind {
 /// Each item names an app the owner approved and what it holds, so it is read as the grants are.
 pub(super) const SIGN_IN_TYPE: &str = "system.connection";
 
-fn grant(kind: &str, name: &str, level: Level) -> serde_json::Value {
+pub(super) fn grant(kind: &str, name: &str, level: Level) -> serde_json::Value {
     json!({ "kind": kind, "name": name, "level": level.word() })
 }
 

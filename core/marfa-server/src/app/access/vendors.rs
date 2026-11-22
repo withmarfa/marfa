@@ -234,6 +234,78 @@ impl Caller {
         }
     }
 
+    /// Listing or removing a vendor's data at its own door, decided on who holds it now.
+    pub fn require_vendor_data(
+        &self,
+        tx: &Connection,
+        vendor: &str,
+        removing: bool,
+    ) -> Result<Holder> {
+        self.require_vendor_door()?;
+        if removing && !matches!(self, Caller::Owner(_)) {
+            self.require(Permission::ItemsPurge)?;
+        }
+        let holder = vendors::holder_of(tx, vendor)?.ok_or_else(|| {
+            Refusal::new(
+                Code::NotFound,
+                format!("No app or owner holds {vendor}, so it has no data."),
+            )
+            .with_detail("vendor", vendor)
+        })?;
+        self.require_vendor_reach(vendor, &holder)?;
+        Ok(holder)
+    }
+
+    /// An app reaches only its own vendors' data, and a key of unknown maker none an app holds.
+    pub fn require_vendor_reach(&self, vendor: &str, holder: &Holder) -> Result<()> {
+        if let Some(client) = self.app_client() {
+            if *holder != Holder::App(client.to_string()) {
+                return Err(Refusal::new(
+                    Code::Forbidden,
+                    format!(
+                        "An app's sign-in or a key an app made reaches only the data of its own vendors, and {vendor} is not one."
+                    ),
+                )
+                .with_detail("namespace", vendor));
+            }
+        } else if self.maker_unknown() && matches!(holder, Holder::App(_)) {
+            return Err(unknown_maker("reach the data of a vendor an app holds"));
+        }
+        Ok(())
+    }
+
+    /// A credential reaches a vendor's data only as its type map reaches every type in it.
+    pub fn require_vendor_types(
+        &self,
+        vendor: &str,
+        types: &[String],
+        removing: bool,
+        deletes_types: bool,
+    ) -> Result<()> {
+        if self.key().is_none() {
+            return Ok(());
+        }
+        let level = if removing { Level::Write } else { Level::Read };
+        if types
+            .iter()
+            .any(|type_id| self.level_on(Axis::Type, type_id) < level)
+        {
+            let pattern = format!("{vendor}.*");
+            return Err(Refusal::new(
+                Code::TypeNotPermitted,
+                format!(
+                    "This credential's type map does not give {} on every type under {vendor}.",
+                    level.word()
+                ),
+            )
+            .with_detail("grant", super::schema::grant("type", &pattern, level)));
+        }
+        if removing && deletes_types {
+            self.require(Permission::SchemaWrite)?;
+        }
+        Ok(())
+    }
+
     /// Moving a vendor hands one app what another keeps for itself, which only the owner approves.
     pub fn require_vendor_move(&self) -> Result<()> {
         self.require_vendor_door()?;

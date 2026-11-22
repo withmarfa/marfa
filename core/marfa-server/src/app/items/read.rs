@@ -749,6 +749,62 @@ impl<'a, 'c> Reader<'a, 'c> {
     }
 }
 
+impl Reader<'_, '_> {
+    /// A page of the items of `types` in every state, oldest first; the caller judged access.
+    pub(crate) fn of_types_page(
+        &self,
+        types: &[String],
+        cursor: Option<&str>,
+        limit: i64,
+    ) -> Result<(Vec<Value>, Option<String>)> {
+        let scope = json!(["of_types", types]).to_string();
+        let after = cursor
+            .map(|cursor| self.cursors.open_at(&scope, cursor))
+            .transpose()?;
+        let mut page = rows::of_types(self.tx, types, after.as_ref(), limit.saturating_add(1))?;
+        let more = page.len() as i64 > limit;
+        page.truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        let next = match page.last().filter(|_| more) {
+            Some(row) => Some(self.cursors.issue_at(&scope, &row.created_at, &row.id)?),
+            None => None,
+        };
+        let data = page
+            .iter()
+            .map(|row| {
+                let mut summary = summary_of(self.tx, &self.catalog, row)?;
+                summary["state"] = json!(row.state);
+                Ok(summary)
+            })
+            .collect::<Result<Vec<Value>>>()?;
+        Ok((data, next))
+    }
+}
+
+/// The ID and version of the oldest `limit` items of `types`, in every state.
+pub fn versions_of_types(
+    tx: &Transaction<'_>,
+    types: &[String],
+    limit: i64,
+) -> Result<Vec<(String, i64)>> {
+    rows::versions_of_types(tx, types, limit)
+}
+
+/// Each type an item holds under the `app.<vendor>` namespace `vendor`, registered or not.
+pub fn types_under_vendor(tx: &Transaction<'_>, vendor: &str) -> Result<Vec<String>> {
+    Ok(rows::types_under(tx, vendor)?
+        .into_iter()
+        .filter(|type_id| crate::app::vendors::vendor_of(type_id) == Some(vendor))
+        .collect())
+}
+
+/// How many items of each of `types` stand in each state.
+pub fn counts_of_types(
+    tx: &Transaction<'_>,
+    types: &[String],
+) -> Result<Vec<(String, String, i64)>> {
+    rows::counts_of_types(tx, types)
+}
+
 pub async fn summaries(app: &App, caller: &Caller, listing: Listing) -> Result<String> {
     reading(app, caller, move |read| {
         let (page, next) = read.named_page(listing, false)?;

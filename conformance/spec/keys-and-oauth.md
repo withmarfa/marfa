@@ -2798,6 +2798,228 @@ Where the limiter is on, the server MUST count every request a signed-in app mak
 
 **Tests:** `compliance/app-rate-window.test.ts › is limited by its grant, so a refreshed token shares the window of the one before it`.
 
+## An app's own data
+
+An app keeps its own data under the `app.<vendor>` namespaces it holds: the types registered there and their items, which listings leave out unless asked. The owner lists that data by the namespace and removes it, and can remove it in the write that ends the app. A removal purges the data rather than moving it to the trash, so only a backup or an export taken before brings it back.
+
+### `keys-and-oauth/grants-vendors`
+
+When `GET /grants` lists a grant, the server MUST give it `vendors`, each `app.<vendor>` namespace the app holds.
+
+**Tests:** `compliance/app-data.test.ts › names each app's vendors in GET /grants and each holder's name in GET /app-vendors`, `cli/app-data.test.ts › ends an app with its data with apps revoke --remove-data, and keeps it without`.
+
+### `keys-and-oauth/app-vendors-client-name`
+
+When `GET /app-vendors` or `PUT /app-vendors/{vendor}` answers a vendor, the server MUST give it `client_name`, the name the app that holds it registered, or `null` while the owner holds it or the app registered none.
+
+**Tests:** `compliance/app-data.test.ts › names each app's vendors in GET /grants and each holder's name in GET /app-vendors`.
+
+### `keys-and-oauth/app-data-list`
+
+When the owner's browser session, the local command or a caller holding `grants.manage` sends `GET /app-vendors/{vendor}/data` for a vendor an app or the owner holds, the server MUST answer the `vendor`, the `client_id` of the app that holds it or `null`, under `types` each type registered under the vendor or held by an item whose type is under it, with how many of its items are `active`, `archived` and `trashed`, and under `data` a page of the items whose type is under the vendor, in every state, each with its `state`.
+
+**Reason:** an app's data is hidden from ordinary listings, so the owner needs one place that shows everything an app keeps, the trash included, before deciding to remove it.
+
+**Tests:** `compliance/app-data.test.ts › lists the named vendor's types with counts by state and its items in every state, and nothing of another vendor`, `› pages a vendor's items with next_cursor`, `› lists and removes the items of a type deleted with force=true under the vendor`, `› lists and deletes a vendor's data for the owner's browser session, and refuses a delete without this instance's origin`, `cli/app-data.test.ts › lists an app's data and deletes it in pages until none is left, and refuses the delete without --confirm PURGE`.
+
+### `keys-and-oauth/app-data-list-one-vendor`
+
+When `GET /app-vendors/{vendor}/data` answers, the server MUST NOT list a type or an item of another vendor.
+
+**Tests:** `compliance/app-data.test.ts › lists the named vendor's types with counts by state and its items in every state, and nothing of another vendor`.
+
+### `keys-and-oauth/app-data-unknown-vendor`
+
+If `GET /app-vendors/{vendor}/data` or `DELETE /app-vendors/{vendor}/data` names a vendor no app or owner holds, then the server MUST answer `404 not_found`.
+
+**Tests:** `compliance/app-data.test.ts › answers 404 not_found for a vendor nobody holds and 400 for a name that is no vendor`.
+
+### `keys-and-oauth/app-data-not-vendor`
+
+If `GET /app-vendors/{vendor}/data` or `DELETE /app-vendors/{vendor}/data` names a vendor that is not an `app.<vendor>` namespace, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/app-data.test.ts › answers 404 not_found for a vendor nobody holds and 400 for a name that is no vendor`.
+
+### `keys-and-oauth/app-data-permission`
+
+If a credential without `grants.manage` sends `GET /app-vendors/{vendor}/data` or `DELETE /app-vendors/{vendor}/data`, then the server MUST answer `403 forbidden` with `details.required_scope` `grants.manage`.
+
+**Tests:** `compliance/app-data.test.ts › refuses a credential without grants.manage with 403 naming it, and a removal without items.purge with 403 naming that`.
+
+### `keys-and-oauth/app-data-remove-permission`
+
+If a credential holding `grants.manage` but not `items.purge` sends `DELETE /app-vendors/{vendor}/data`, then the server MUST answer `403 forbidden` with `details.required_scope` `items.purge` and remove nothing.
+
+**Reason:** the removal purges items, which `items.purge` guards everywhere else, and reading what an app keeps needs no more than seeing which apps hold which vendors.
+
+**Tests:** `compliance/app-data.test.ts › refuses a credential without grants.manage with 403 naming it, and a removal without items.purge with 403 naming that`.
+
+### `keys-and-oauth/app-data-own-vendor`
+
+If an app's sign-in or a key an app made sends `GET /app-vendors/{vendor}/data` or `DELETE /app-vendors/{vendor}/data` for a vendor its app does not hold, then the server MUST answer `403 forbidden` and remove nothing, whatever permissions the credential holds.
+
+**Reason:** an app may look after its own data, and another app's data is the owner's to decide on.
+
+**Tests:** `compliance/app-data.test.ts › lets an app's sign-in list and remove only the data of its own vendors`.
+
+### `keys-and-oauth/app-data-list-type-map`
+
+If a key or an app's sign-in whose type map does not give read on every type under a vendor sends `GET /app-vendors/{vendor}/data`, then the server MUST answer `403 type_not_permitted` with `details.grant` naming `<vendor>.*`, and name none of the vendor's types.
+
+**Reason:** an app's data is items like any other, so a credential lists them only as far as its type map reads them.
+
+**Tests:** `compliance/app-data.test.ts › refuses a key whose map does not reach the vendor's types its list, its removal and remove_data, and changes nothing`.
+
+### `keys-and-oauth/app-data-remove-type-map`
+
+If a key or an app's sign-in whose type map does not give write on every type under a vendor sends `DELETE /app-vendors/{vendor}/data`, or ends the app that holds the vendor with `remove_data` set to `true`, then the server MUST answer `403 type_not_permitted` and remove and end nothing.
+
+**Reason:** a purge needs write on the item's type (`items/purge-type-write`), and removing a vendor's data is a purge of its items.
+
+**Tests:** `compliance/app-data.test.ts › refuses a key whose map does not reach the vendor's types its list, its removal and remove_data, and changes nothing`, `› refuses a key whose map reads but cannot write the vendor's types its removal and remove_data, and changes nothing`.
+
+### `keys-and-oauth/app-data-remove-schema-write`
+
+If a key or an app's sign-in without `schema.write` sends `DELETE /app-vendors/{vendor}/data` while a type is registered under the vendor, or ends the app that holds the vendor with `remove_data` set to `true`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` before it removes any item.
+
+**Reason:** the removal deletes the vendor's types in the call that empties it, and deleting a type needs `schema.write`. Refusing the first call, not the last, means a credential never removes the items and then finds it cannot finish.
+
+**Tests:** `compliance/app-data.test.ts › refuses a removal that would delete types to a key without schema.write before it removes anything`, `› refuses remove_data at DELETE /grants/{id} to a key without schema.write, and ends nothing`.
+
+### `keys-and-oauth/app-data-unknown-maker`
+
+If a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `GET /app-vendors/{vendor}/data` or `DELETE /app-vendors/{vendor}/data` for a vendor an app holds, then the server MUST answer `403 forbidden` and remove nothing.
+
+**Tests:** waiting on #2802.
+
+### `keys-and-oauth/app-data-remove`
+
+When a caller holding `items.purge`, with the owner's browser session, the local command or `grants.manage`, sends `DELETE /app-vendors/{vendor}/data`, the server MUST purge in one write up to 1,000 of the oldest items whose type is under the vendor, registered or not, in every state, the trash included, and answer `removed_items`, `removed_types` and `remaining_items`.
+
+**Reason:** the items purge rather than go to the trash because the vendor's types go with them, and a type cannot be removed while an item of it, trashed or not, remains. Only a backup or an export taken before brings the data back, which is why the command line asks for `--confirm PURGE` and names `marfa backups run`. A page of 1,000 keeps one write short, so other requests are not held up.
+
+**Tests:** `compliance/app-data.test.ts › removes every item of the vendor in every state, then its types children first, and leaves the vendor with its app`, `› removes more than 1,000 items over several calls, its types going in the call that empties it`, `› lists and removes the items of a type deleted with force=true under the vendor`, `› lists and deletes a vendor's data for the owner's browser session, and refuses a delete without this instance's origin`, `cli/app-data.test.ts › lists an app's data and deletes it in pages until none is left, and refuses the delete without --confirm PURGE`.
+
+### `keys-and-oauth/app-data-remove-types`
+
+When `DELETE /app-vendors/{vendor}/data` leaves no item of the vendor, the server MUST delete in the same write every type registered under the vendor, each before the type it inherits from, so that `GET /types` no longer lists them.
+
+**Tests:** `compliance/app-data.test.ts › removes every item of the vendor in every state, then its types children first, and leaves the vendor with its app`, `› removes more than 1,000 items over several calls, its types going in the call that empties it`.
+
+### `keys-and-oauth/app-data-remove-pages`
+
+While a vendor holds items after a `DELETE /app-vendors/{vendor}/data`, the server MUST keep every type registered under it.
+
+**Tests:** `compliance/app-data.test.ts › removes more than 1,000 items over several calls, its types going in the call that empties it`.
+
+### `keys-and-oauth/app-data-keeps-vendor`
+
+When `DELETE /app-vendors/{vendor}/data` removes a vendor's data, the server MUST leave the vendor with the app or the owner that held it.
+
+**Tests:** `compliance/app-data.test.ts › removes every item of the vendor in every state, then its types children first, and leaves the vendor with its app`.
+
+### `keys-and-oauth/app-data-keeps-others`
+
+When `DELETE /app-vendors/{vendor}/data` removes a vendor's data, the server MUST keep every item and type outside the vendor, the items and types of an app whose grant names the vendor included.
+
+**Tests:** `compliance/app-data.test.ts › removes every item of the vendor in every state, then its types children first, and leaves the vendor with its app`, `› removes what another app wrote under the vendor through a grant that names it, and leaves that app's own vendor`.
+
+### `keys-and-oauth/app-data-keeps-linked`
+
+When a removal of a vendor's data purges an item that an item outside the vendor has an edge to or from, the server MUST keep the other item and delete only the edge.
+
+**Reason:** the removal takes exactly the vendor's items. An owner's note about an app's item is the owner's, and a part outside the vendor does not go with an app item as it would with a purge from the trash.
+
+**Tests:** `compliance/app-data.test.ts › keeps a person's item that links to an app item, and drops only the edge`.
+
+### `keys-and-oauth/app-data-type-in-use`
+
+If a folder, view, webhook or table column outside a vendor names one of its types, then the server MUST answer `DELETE /app-vendors/{vendor}/data` with `409 type_in_use` and remove nothing.
+
+**Tests:** `compliance/app-data.test.ts › refuses with 409 type_in_use and removes nothing while another credential's webhook names one of its types`, `› refuses with 409 type_in_use while a table item outside the vendor has a column naming one of its types`.
+
+### `keys-and-oauth/app-data-own-table-column`
+
+When a table column that names one of a vendor's types belongs to a type under the vendor or to an item of one, the server MUST NOT refuse `DELETE /app-vendors/{vendor}/data` for that column, whoever sends it.
+
+**Reason:** the column goes with the vendor's data, so it names nothing that remains.
+
+**Tests:** `compliance/app-data.test.ts › removes a vendor whose own table item has a column naming one of its types, for the local command, a key and the browser session`, `› refuses with 409 type_in_use while a table item outside the vendor has a column naming one of its types`.
+
+### `keys-and-oauth/app-data-drops-app-webhooks`
+
+When a removal of a vendor's data deletes its types, the server MUST delete in the same write each webhook that the app holding the vendor, or a key that app made, made with a `type_filter` naming one of them.
+
+**Tests:** `compliance/app-data.test.ts › drops a webhook the app made naming one of its types with its data`.
+
+### `keys-and-oauth/app-data-remove-again`
+
+When `DELETE /app-vendors/{vendor}/data` names a vendor whose data is already removed, the server MUST answer `removed_items`, `removed_types` and `remaining_items` as `0`.
+
+**Tests:** `compliance/app-data.test.ts › answers zero counts for a second removal`.
+
+### `keys-and-oauth/grant-revoke-keeps-data`
+
+When an app is ended at `DELETE /grants/{id}` or `DELETE /owner/sign-ins/{id}` without `remove_data`, the server MUST keep every item and type of the vendors the app holds, and leave each vendor with the app.
+
+**Reason:** ending an app disconnects it, and its data stays unless the caller says so, as its keys stay without `revoke_keys` (`keys-and-oauth/grant-revoke-keeps-keys`).
+
+**Tests:** `compliance/app-data.test.ts › keeps the app's data and types when its grant is revoked without remove_data`, `cli/app-data.test.ts › ends an app with its data with apps revoke --remove-data, and keeps it without`.
+
+### `keys-and-oauth/grant-revoke-remove-data`
+
+When an app is ended at `DELETE /grants/{id}` or `DELETE /owner/sign-ins/{id}` with `remove_data` set to `true`, the server MUST remove in the same write every item and type of every vendor the app holds, as `DELETE /app-vendors/{vendor}/data` removes them.
+
+**Reason:** an owner who disconnects an app for good often wants what it kept gone too, and one write means the app is never ended with its data half removed. The data purges, so only a backup or an export taken before brings it back.
+
+**Tests:** `compliance/app-data.test.ts › removes the app's data in the write that ends its grant with remove_data, and leaves another app's and the owner's vendors`, `› ends the app's keys and removes its data with remove_data and revoke_keys together`, `› ends an app with its data at DELETE /owner/sign-ins/{id} with remove_data, and refuses remove_data for a sign-in that is no app`, `cli/app-data.test.ts › ends an app with its data with apps revoke --remove-data, and keeps it without`.
+
+### `keys-and-oauth/remove-data-own-columns`
+
+When a table column that names a type under one vendor an app holds belongs to a type under another vendor it holds, or to an item of one, the server MUST NOT refuse ending the app with `remove_data` set to `true` for that column.
+
+**Reason:** the column goes with the app's data in the same write, so it names nothing that remains.
+
+**Tests:** `compliance/app-data.test.ts › ends an app with remove_data while a table column under one of its vendors names a type under another`.
+
+### `keys-and-oauth/remove-data-keeps-others`
+
+When an app is ended with `remove_data` set to `true`, the server MUST keep every item and type of the vendors another app or the owner holds.
+
+**Tests:** `compliance/app-data.test.ts › removes the app's data in the write that ends its grant with remove_data, and leaves another app's and the owner's vendors`.
+
+### `keys-and-oauth/remove-data-unreadable`
+
+If `DELETE /grants/{id}` or `DELETE /owner/sign-ins/{id}` carries a `remove_data` value other than `true` or `false`, or names `remove_data` more than once, then the server MUST answer `400 validation_error` and end nothing.
+
+**Tests:** `compliance/app-data.test.ts › refuses a remove_data that is neither true nor false, or is named twice, 400, and ends nothing`.
+
+### `keys-and-oauth/remove-data-permission`
+
+If a credential without `items.purge` sends `DELETE /grants/{id}` or `DELETE /owner/sign-ins/{id}` with `remove_data` set to `true`, then the server MUST answer `403 forbidden` with `details.required_scope` `items.purge` and end nothing.
+
+**Tests:** `compliance/app-data.test.ts › refuses remove_data to a credential without items.purge with 403 naming it, and ends nothing`.
+
+### `keys-and-oauth/remove-data-other-app`
+
+If an app's sign-in or a key an app made ends another app with `remove_data` set to `true`, then the server MUST answer `403 forbidden` and end nothing.
+
+**Tests:** `compliance/app-data.test.ts › refuses an app's sign-in removing another app's data as it ends that app, and ends nothing`.
+
+### `keys-and-oauth/remove-data-cap`
+
+If an app ended with `remove_data` set to `true` holds more than 1,000 items under its vendors, then the server MUST answer `400 bulk_cap_exceeded` with `details.cap` `1000` and end nothing.
+
+**Reason:** ending an app and removing its data is one write, which stays short. The owner removes a larger app's data first with `DELETE /app-vendors/{vendor}/data`, which takes it in pages.
+
+**Tests:** `compliance/app-data.test.ts › refuses a disconnect with remove_data while the app holds more than 1,000 items, and leaves the grant standing`.
+
+### `keys-and-oauth/remove-data-not-app`
+
+If `DELETE /owner/sign-ins/{id}` sets `remove_data` to `true` and the ID names a browser or a key, then the server MUST answer `400 validation_error` and end nothing.
+
+**Tests:** `compliance/app-data.test.ts › ends an app with its data at DELETE /owner/sign-ins/{id} with remove_data, and refuses remove_data for a sign-in that is no app`.
+
 ## Web pages
 
 A web page connects as an app does, registered as a web client, whose redirect URIs registration holds to `https` off the loopback. The owner's approval is what lets the page's address call the instance from a browser. These rules cover the `Access-Control-Allow-Origin` header the server answers a request that carries an `Origin`; what the page may then do is what its credential holds.

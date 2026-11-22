@@ -1802,7 +1802,12 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         ("items.purge", &["marfa_purge", "marfa_trash"]),
         (
             "grants.manage",
-            &["marfa_apps", "marfa_end_sign_in", "marfa_narrow_app"],
+            &[
+                "marfa_app_data",
+                "marfa_apps",
+                "marfa_end_sign_in",
+                "marfa_narrow_app",
+            ],
         ),
         (
             "backups.manage",
@@ -1874,6 +1879,7 @@ async fn each_admin_tool_is_offered_only_to_a_credential_that_holds_its_permissi
         ("marfa_trash", json!({})),
         ("marfa_purge", json!({ "page": {} })),
         ("marfa_apps", json!({})),
+        ("marfa_app_data", json!({ "vendor": "app.acme" })),
         (
             "marfa_narrow_app",
             json!({ "id": "no-such-grant", "scopes": [], "expected_scopes": [] }),

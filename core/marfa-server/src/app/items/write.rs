@@ -341,6 +341,35 @@ pub fn purge_chosen(
     })
 }
 
+/// Purges the oldest `limit` items of `types` alone, in every state; answers how many it took.
+pub(crate) fn purge_of_types(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    types: &[String],
+    limit: usize,
+) -> Result<usize> {
+    let unit = unit.under("item.purge");
+    unit.fanning(true, |unit| {
+        let job = Job {
+            unit,
+            catalog: catalog::current(cache, unit.tx(), Reading::Pending)?,
+            read_only: unit.read_only()?,
+            claim: None,
+            server_own: false,
+        };
+        let rows = rows::of_types(
+            unit.tx(),
+            types,
+            None,
+            i64::try_from(limit).unwrap_or(i64::MAX),
+        )?;
+        let walk = plan::rows_walk(unit.tx(), rows)?;
+        let done = job.purged_walk(&walk)?;
+        index::settle(unit.tx(), &job.catalog.rules)?;
+        Ok(done.carried.len())
+    })
+}
+
 /// With a `claim`, the answer is recorded under it in the same transaction.
 pub async fn run(app: &App, caller: &Caller, claim: Option<Claim>, change: Change) -> Result<Done> {
     let cache = app.catalog_handle();

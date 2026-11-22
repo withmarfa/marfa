@@ -188,7 +188,7 @@ pub async fn trash(State(app): State<Arc<App>>, caller: Caller, sent: Sent) -> A
     .await
 }
 
-fn limit_of(uri: &Uri, page: i64) -> Result<i64> {
+pub(super) fn limit_of(uri: &Uri, page: i64) -> Result<i64> {
     let named = query::pairs(uri)?
         .into_iter()
         .find(|(name, _)| name == "limit");
@@ -207,7 +207,7 @@ fn limit_of(uri: &Uri, page: i64) -> Result<i64> {
         })
 }
 
-fn named_in(uri: &Uri, field: &str) -> Result<Option<String>> {
+pub(super) fn named_in(uri: &Uri, field: &str) -> Result<Option<String>> {
     Ok(query::pairs(uri)?
         .into_iter()
         .find(|(name, _)| name == field)

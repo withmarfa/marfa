@@ -8,6 +8,7 @@ use crate::app::App;
 use crate::app::access::{Caller, Permission};
 use crate::app::auth::Visit;
 use crate::app::auth::sign_ins;
+use crate::app::oauth::grants::Ending;
 use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::JsonBody;
@@ -59,8 +60,14 @@ pub async fn end(
     visit: Visit,
 ) -> Answer {
     caller.require(Permission::SignInsManage)?;
-    query::only(&uri, &["revoke_keys"])?;
-    let with_keys = query::flag(&uri, "revoke_keys")?.unwrap_or(false);
-    sign_ins::end(&app, &caller, id, with_keys, visit).await?;
+    query::only(&uri, &["revoke_keys", "remove_data"])?;
+    let ending = Ending {
+        revoke_keys: query::flag(&uri, "revoke_keys")?.unwrap_or(false),
+        remove_data: query::flag(&uri, "remove_data")?.unwrap_or(false),
+    };
+    if ending.remove_data {
+        caller.require(Permission::ItemsPurge)?;
+    }
+    sign_ins::end(&app, &caller, id, ending, visit).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }

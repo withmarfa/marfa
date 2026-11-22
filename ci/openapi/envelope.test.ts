@@ -36,6 +36,10 @@ interface Document {
 /** The keys a page may carry beside `data` and `next_cursor`, by component. */
 const SIBLINGS: Record<string, { required: string[]; optional: string[] }> = {
   TrashPage: { required: ["retention_days"], optional: [] },
+  AppVendorDataPage: {
+    required: ["vendor", "client_id", "types"],
+    optional: [],
+  },
   BlobStorePage: { required: ["min_copies"], optional: [] },
   OccurrencePage: {
     required: ["scan", "window"],
@@ -195,8 +199,8 @@ function siblingsOf(components: Iterable<string>): {
 }
 
 describe("the page envelope in the document", () => {
-  it("is answered by thirty-nine doors", () => {
-    expect(pages.size).toBe(39);
+  it("is answered by forty doors", () => {
+    expect(pages.size).toBe(40);
   });
 
   it("answers data and next_cursor, required, and only declared siblings, on every door", () => {

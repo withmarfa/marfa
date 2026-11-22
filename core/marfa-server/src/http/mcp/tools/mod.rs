@@ -1,6 +1,7 @@
 //! Validates tool arguments and dispatches with the caller's credential.
 
 mod adopt_backup_folder;
+mod app_data;
 mod apps;
 mod audit;
 mod backups;
@@ -138,6 +139,7 @@ fn definitions() -> Vec<(Home, Definition)> {
         (Home::Admin(Task::Trash), purge::definition()),
         (Home::Admin(Task::Apps), apps::list_definition()),
         (Home::Admin(Task::Apps), apps::narrow_definition()),
+        (Home::Admin(Task::Apps), app_data::definition()),
         (Home::Admin(Task::Backups), backups::list_definition()),
         (Home::Admin(Task::Backups), backups::take_definition()),
         (
@@ -322,6 +324,7 @@ async fn run(
         purge::NAME => purge::run(app, caller, arguments).await,
         apps::LIST_NAME => apps::list(app, caller).await,
         apps::NARROW_NAME => apps::narrow(app, caller, arguments).await,
+        app_data::NAME => app_data::run(app, caller, arguments).await,
         backups::LIST_NAME => backups::list(app, caller).await,
         backups::TAKE_NAME => backups::take(app, caller).await,
         maintain::NAME => maintain::run(app, caller, arguments).await,

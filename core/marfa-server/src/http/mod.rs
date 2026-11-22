@@ -355,6 +355,10 @@ fn vendor_doors() -> Routes {
     Doors::new()
         .route("/app-vendors", get(vendors::list))
         .route("/app-vendors/{vendor}", put(vendors::give))
+        .route(
+            "/app-vendors/{vendor}/data",
+            get(vendors::data).delete(vendors::remove_data),
+        )
         .asking(Asks::Session)
         .route_layer(from_fn(no_store))
 }

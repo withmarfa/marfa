@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use super::App;
 use super::access::Caller;
+use super::auth::names;
 use super::instance;
 use super::oauth::store;
 use super::refusal::{Code, Refusal, Result};
@@ -264,13 +265,29 @@ pub fn check_vendor(vendor: &str) -> Result<()> {
     )
 }
 
+/// A binding with the name its app registered, where the app registered one.
+fn listed_with_name(tx: &Connection, binding: &Binding) -> Result<Value> {
+    let name = match binding.holder.client_id() {
+        Some(client) => store::client(tx, client)?.and_then(|client| {
+            names::usable(client.registration.client_name.as_deref()).map(str::to_string)
+        }),
+        None => None,
+    };
+    let mut listed = binding.to_json();
+    listed["client_name"] = json!(name);
+    Ok(listed)
+}
+
 pub async fn listed(app: &App, caller: &Caller) -> Result<Vec<Value>> {
     let caller = caller.clone();
     let at = app.clock.stamp();
     app.db
         .read(move |tx| {
             caller.current(tx, &at)?.require_vendor_door()?;
-            Ok(list(tx)?.iter().map(Binding::to_json).collect())
+            list(tx)?
+                .iter()
+                .map(|binding| listed_with_name(tx, binding))
+                .collect()
         })
         .await
 }
@@ -297,7 +314,7 @@ pub async fn give(app: &App, caller: &Caller, vendor: String, client_id: String)
         )?;
         let binding = get(tx, &vendor)?
             .ok_or_else(|| Refusal::internal("a vendor just given is not held"))?;
-        Ok(binding.to_json())
+        listed_with_name(tx, &binding)
     })
     .await
 }

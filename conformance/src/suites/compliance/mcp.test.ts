@@ -1246,6 +1246,7 @@ describe("what a client is told about the tools", () => {
   ];
   const DESTRUCTIVE = [
     "marfa_adopt_backup_folder",
+    "marfa_app_data",
     "marfa_bulk_save",
     "marfa_delete",
     "marfa_delete_connector",

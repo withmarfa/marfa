@@ -24,7 +24,7 @@ import { connectorBundle, fresh } from "../../utils/plugin-connector.js";
 /**
  * Every list and every search answers one envelope: the items under `data`
  * and the cursor that continues them under `next_cursor`, `null` on the
- * last page. Three doors carry a sibling about the answer rather than the
+ * last page. Four doors carry a sibling about the answer rather than the
  * page. Nothing else stands beside the two keys.
  */
 
@@ -42,6 +42,7 @@ let viewId: string;
 let blobHash: string;
 let title: string;
 let tabled: string;
+let appVendor: string;
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl, apiKey } = await createTestContext(
@@ -102,6 +103,18 @@ beforeAll(async () => {
   expect(holder.ok, JSON.stringify(holder.error)).toBe(true);
   tabled = holder.data.item.id;
   trackItem(ctx, tabled);
+  appVendor = `app.envelope_${ctx.runId.replaceAll("-", "_")}`;
+  const vendorType = await owned("/types", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      id: `${appVendor}.setting`,
+      version: 1,
+      fields: { title: { type: "string" } },
+    }),
+  });
+  expect(vendorType.status, await vendorType.clone().text()).toBe(201);
+  trackType(ctx, `${appVendor}.setting`, client);
   const part = fresh();
   plugin = `envelope-${part}`;
   const installed = await owned("/plugins", {
@@ -240,6 +253,12 @@ describe("one envelope for every list and search", () => {
     },
     { template: "/grants", path: () => "/grants", owner: true },
     { template: "/app-vendors", path: () => "/app-vendors", owner: true },
+    {
+      template: "/app-vendors/{vendor}/data",
+      path: () => `/app-vendors/${appVendor}/data`,
+      siblings: ["vendor", "client_id", "types"],
+      owner: true,
+    },
     { template: "/folders", path: () => "/folders", owner: true },
     { template: "/owner/sign-ins", path: () => "/owner/sign-ins", owner: true },
     { template: "/owner/passkeys", path: () => "/owner/passkeys", owner: true },
@@ -257,12 +276,12 @@ describe("one envelope for every list and search", () => {
   const credentialOf = (door: (typeof doors)[number]) =>
     door.owner ? LOCAL : door.operator ? managementKey : apiKey;
 
-  it("names thirty-nine doors, every one the document publishes as a page", async () => {
+  it("names forty doors, every one the document publishes as a page", async () => {
     // The derived set holds the items to the document, so a door that starts
     // answering a page without a row here turns this red. The count holds
     // both to the number the specification states, so a new page added with
     // an item beside it turns this red too.
-    expect(doors).toHaveLength(39);
+    expect(doors).toHaveLength(40);
     expect(doors.map((door) => `GET ${door.template}`).sort()).toEqual(
       pageDoors(await servedDocument()).sort(),
     );

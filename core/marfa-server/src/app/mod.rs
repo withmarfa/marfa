@@ -54,6 +54,7 @@ pub mod tables;
 pub mod types;
 pub mod unit;
 pub mod updates;
+pub mod vendor_data;
 pub mod vendors;
 pub mod views;
 pub mod webhooks;

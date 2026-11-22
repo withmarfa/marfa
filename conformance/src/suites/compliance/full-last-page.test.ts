@@ -54,6 +54,7 @@ let receiver: Receiver;
 const extra: TestContext[] = [];
 const connectors: string[] = [];
 const isolated: FreshServer[] = [];
+const appVendors: string[] = [];
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext(
@@ -64,6 +65,11 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
+  for (const vendor of appVendors) {
+    await localFetch(socket(), `${apiUrl}/app-vendors/${vendor}/data`, {
+      method: "DELETE",
+    });
+  }
   await receiver.close();
   for (const server of isolated) await server.stop();
   for (const id of connectors) await client.deleteConnector(id);
@@ -221,6 +227,56 @@ const seeds: Record<string, () => Promise<Read>> = {
       ) as Page;
   },
   "GET /trash": async () => trashSummaryPage(),
+  "GET /app-vendors/{vendor}/data": async () => {
+    const vendor = `app.flp_${ctx.runId.replaceAll("-", "_")}`;
+    appVendors.push(vendor);
+    const owned = (path: string, body: unknown) =>
+      localFetch(socket(), `${apiUrl}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const registered = await owned("/types", {
+      id: `${vendor}.setting`,
+      version: 1,
+      fields: { title: { type: "string" } },
+    });
+    expect(registered.status, await registered.clone().text()).toBe(201);
+    const minted = await owned("/keys", {
+      label: "full-last-page-app-data",
+      source: `${ctx.source}-app-data`,
+      type_permissions: { [`${vendor}.*`]: "write" },
+      permissions: [],
+    });
+    expect(minted.status, await minted.clone().text()).toBe(201);
+    const writer = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: ((await minted.json()) as { key: string }).key,
+    });
+    const ids: string[] = [];
+    for (let i = 0; i < LIMIT; i++) {
+      ids.push(
+        answered(
+          await writer.createItem({
+            type: `${vendor}.setting`,
+            properties: { title: `setting ${String(i)}` },
+          } as never),
+        ).item.id,
+      );
+    }
+    return async ({ limit, cursor }) => {
+      const params = new URLSearchParams({ limit: String(limit) });
+      if (cursor) params.set("cursor", cursor);
+      const response = await localFetch(
+        socket(),
+        `${apiUrl}/app-vendors/${vendor}/data?${params}`,
+      );
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as Page;
+      expect(body.data.every((row) => ids.includes(row.id!))).toBe(true);
+      return body;
+    };
+  },
   "GET /edges": async () => {
     const edgeType = `mock.fulllastpage.${ctx.runId}`;
     const registered = await client.registerEdgeType({
@@ -455,7 +511,7 @@ describe("a full last page answers a null cursor", () => {
         (parameter) => parameter.in === "query" && parameter.name === "cursor",
       );
     });
-    expect(cursorDoors).toHaveLength(17);
+    expect(cursorDoors).toHaveLength(18);
     expect(Object.keys(seeds).sort()).toEqual(cursorDoors.sort());
   });
 

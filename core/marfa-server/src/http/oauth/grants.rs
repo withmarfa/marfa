@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 
 use crate::app::App;
 use crate::app::access::{Caller, Permission};
-use crate::app::oauth::grants::{self, Narrowing};
+use crate::app::oauth::grants::{self, Ending, Narrowing};
 use crate::app::oauth::scope::ScopeSet;
 use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
@@ -79,8 +79,14 @@ pub async fn revoke(
     caller: Caller,
 ) -> Answer {
     caller.require(Permission::GrantsManage)?;
-    query::only(&uri, &["revoke_keys"])?;
-    let with_keys = query::flag(&uri, "revoke_keys")?.unwrap_or(false);
-    grants::revoke(&app, &caller, id, with_keys).await?;
+    query::only(&uri, &["revoke_keys", "remove_data"])?;
+    let ending = Ending {
+        revoke_keys: query::flag(&uri, "revoke_keys")?.unwrap_or(false),
+        remove_data: query::flag(&uri, "remove_data")?.unwrap_or(false),
+    };
+    if ending.remove_data {
+        caller.require(Permission::ItemsPurge)?;
+    }
+    grants::revoke(&app, &caller, id, ending).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }

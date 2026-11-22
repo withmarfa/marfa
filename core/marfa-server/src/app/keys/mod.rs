@@ -753,6 +753,15 @@ pub(crate) fn end_all_of_app(unit: &Unit<'_, '_>, client_id: &str) -> Result<usi
     Ok(ended)
 }
 
+/// Every key, revoked or not, whose `oauth_client_id` names the app.
+pub(crate) fn ids_of_app(tx: &Transaction<'_>, client_id: &str) -> Result<Vec<String>> {
+    let ids = tx
+        .prepare_cached("SELECT id FROM api_keys WHERE oauth_client_id = ?1 ORDER BY id")?
+        .query_map([client_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(ids)
+}
+
 /// The keys [`end_all_of_app`] would end, a key whose expiry does not read among them.
 pub(crate) fn all_of_app(tx: &Transaction<'_>, client_id: &str, at: &str) -> Result<Vec<Key>> {
     let now = Stamp::read(at)?;

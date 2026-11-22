@@ -23,8 +23,11 @@ pub enum SignInsCommand {
         name: String,
     },
     /// End a sign-in at once: its next request is refused, and an app can't
-    /// refresh its tokens. What it wrote stays, and so do the keys an app
-    /// minted unless --revoke-keys is given. Requires `sign_ins.manage`.
+    /// refresh its tokens. What it wrote stays unless --remove-data is given,
+    /// and so do the keys an app minted unless --revoke-keys is given.
+    /// Requires `sign_ins.manage`. With --remove-data, also `items.purge`; a
+    /// key also needs write on every type under the app's namespaces, and
+    /// `schema.write` while a type is registered there.
     End {
         /// The sign-in's id.
         id: String,
@@ -32,6 +35,15 @@ pub enum SignInsCommand {
         /// keys minted, but an owner's key. Refused for a browser or a key.
         #[arg(long)]
         revoke_keys: bool,
+        /// For an app, also delete for good, in the same write, every item and
+        /// type of the `app.<vendor>` namespaces it holds. Run `marfa backups
+        /// run` first: only a backup taken before brings them back. Refused for
+        /// a browser or a key, and above 1,000 items.
+        #[arg(long, requires = "confirm")]
+        remove_data: bool,
+        /// Confirm --remove-data with `PURGE`.
+        #[arg(long, value_name = "WORD", value_parser = ["PURGE"], requires = "remove_data")]
+        confirm: Option<String>,
     },
     /// End every sign-in of the chosen kinds at once, except the ones named
     /// with --keep. With no --kind it ends every browser. It refuses, ending
@@ -74,8 +86,10 @@ pub fn rename_request(id: &str, name: &str) -> Request {
     Request::patch(&["owner", "sign-ins", id]).json(json!({ "name": name }))
 }
 
-pub fn end_request(id: &str, revoke_keys: bool) -> Request {
-    Request::delete(&["owner", "sign-ins", id]).query_flag("revoke_keys", revoke_keys)
+pub fn end_request(id: &str, revoke_keys: bool, remove_data: bool) -> Request {
+    Request::delete(&["owner", "sign-ins", id])
+        .query_flag("revoke_keys", revoke_keys)
+        .query_flag("remove_data", remove_data)
 }
 
 pub fn run(command: SignInsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
@@ -92,8 +106,13 @@ pub fn run(command: SignInsCommand, remote: &Remote, out: &Printer) -> Result<()
             })
         }
         SignInsCommand::EndAll { kind, keep } => end_all(&kind, &keep, remote, out),
-        SignInsCommand::End { id, revoke_keys } => {
-            let answer = remote.json(&end_request(&id, revoke_keys))?;
+        SignInsCommand::End {
+            id,
+            revoke_keys,
+            remove_data,
+            ..
+        } => {
+            let answer = remote.json(&end_request(&id, revoke_keys, remove_data))?;
             out.report(&answer, |_| format!("ended sign-in {}", printable(&id)))
         }
     }
@@ -212,7 +231,7 @@ fn end_chosen(kinds: &[Kind], keep: &[String], remote: &Remote) -> Result<Outcom
         failed: Vec::new(),
     };
     for id in found {
-        match remote.json(&end_request(&id, false)) {
+        match remote.json(&end_request(&id, false, false)) {
             Ok(_) => outcome.ended.push(id),
             Err(error) if is_already_ended(&error) => outcome.ended.push(id),
             Err(error) => outcome.failed.push((id, error)),
@@ -403,15 +422,20 @@ mod tests {
         assert_eq!(rename.method, Method::Patch);
         assert_eq!(rename.segments, ["owner", "sign-ins", "g1"]);
         assert_eq!(rename.body, Body::Json(json!({ "name": "Work laptop" })));
-        let end = end_request("g1", false);
+        let end = end_request("g1", false, false);
         assert_eq!(end.method, Method::Delete);
         assert_eq!(end.segments, ["owner", "sign-ins", "g1"]);
         assert_eq!(end.body, Body::None);
         assert!(end.query.is_empty());
-        let with_keys = end_request("g1", true);
+        let with_keys = end_request("g1", true, false);
         assert_eq!(
             with_keys.query,
             [("revoke_keys".to_string(), "true".to_string())]
+        );
+        let with_data = end_request("g1", false, true);
+        assert_eq!(
+            with_data.query,
+            [("remove_data".to_string(), "true".to_string())]
         );
     }
 
