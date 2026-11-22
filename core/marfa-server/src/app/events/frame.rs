@@ -54,8 +54,7 @@ pub struct Judge<'a> {
     pub rules: &'a Rules,
     pub read_only: &'a ReadOnly,
     pub filter: &'a Filter,
-    /// Whether a plugin's connector key reads the types its mapping lands a kind on, for its own
-    /// items, as the event stream lets it.
+    /// Whether a connector key reads its mapped types for its own items.
     pub own: bool,
 }
 

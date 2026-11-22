@@ -461,8 +461,7 @@ fn ends_on_system(definition: &Obj) -> bool {
         .any(|type_id| type_id.split('.').next() == Some("system"))
 }
 
-/// `types` holds the bundle's own type ids and `edge_types` its own edge types by id; `None`
-/// skips that check, as for a `plugin.json` read alone.
+/// `types` and `edge_types` hold the bundle's own ids; `None` skips that check, as for `plugin.json`.
 pub fn connector_faults(
     section: &Obj,
     types: Option<&BTreeSet<&str>>,

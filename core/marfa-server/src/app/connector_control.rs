@@ -306,8 +306,7 @@ impl Preview {
 }
 
 impl Preview {
-    /// The type the kind lands on: the draft's, or the mapping in force's. `None` once a newer
-    /// version of the plugin has dropped the kind.
+    /// The kind's target type in the draft or the mapping in force; `None` for a dropped kind.
     fn target(&self, tx: &Transaction<'_>, held: &Held) -> Result<Option<String>> {
         let unread =
             || Refusal::unread(&format!("the mapping of preview {} does not read", self.id));
@@ -577,8 +576,7 @@ fn result_faults(result: &Map<String, Value>, target: Option<&str>) -> Vec<Probl
     problems
 }
 
-/// The connector's answer: a `result` rendered for a kind landing on `target`, stored as given,
-/// or an `error` message.
+/// The connector's answer: a `result` for a kind landing on `target`, or an `error` message.
 fn answer_of(body: &Value, target: Option<&str>) -> Result<(Option<String>, Option<String>)> {
     let what = "The answer cannot be kept";
     let Some(held) = body.as_object() else {

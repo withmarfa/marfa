@@ -37,8 +37,7 @@ impl Reach {
         Reach::within(read.tx, &read.caller, &read.catalog)
     }
 
-    /// As `of`, adding the types a plugin's connector key's mapping lands a kind on, for its own
-    /// items alone. Only the doors a connector reconciles through read this way.
+    /// As `of`, adding a connector key's mapped types for its own items alone.
     pub fn of_own(read: &Reader<'_, '_>) -> Result<Reach> {
         read.caller.require_reach()?;
         Reach::build(read.tx, &read.caller, &read.catalog, true)

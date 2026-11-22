@@ -21,8 +21,7 @@ pub use expiry::{UNREAD, expire};
 pub use frame::{Filter, Head, Judge, Judged, Kind};
 pub use stream::{Hangup, Opening, PING, Viewer, Viewers, open};
 
-/// Judge each entry's syntax and access before proceeding to the next. A plugin's connector key
-/// may name a type its mapping lands a kind on, whose events it reads for its own items.
+/// Judge each entry's syntax and access in turn, counting a connector key's mapped types as read.
 pub async fn judge_types(app: &App, caller: &Caller, entries: Vec<String>) -> Result<()> {
     reading(app, caller, move |read| {
         entries.iter().try_for_each(|entry| {
