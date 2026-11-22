@@ -16,6 +16,7 @@ mod conditional;
 mod config;
 mod connections;
 mod connector_hosts;
+mod connector_settings;
 mod connectors;
 mod control;
 mod cors;
@@ -161,6 +162,10 @@ fn connector_host_doors() -> Routes {
         )
         .route("/connector-hosts/{id}/link", post(connector_hosts::link))
         .route("/plugins/{name}/connector", put(connector_hosts::assign))
+        .route(
+            "/plugins/{name}/connector/settings",
+            get(connector_settings::list).patch(connector_settings::set),
+        )
         .route("/connector-hosts/self", get(connector_hosts::own))
         .route(
             "/connector-hosts/self/connectors/{plugin}/key",
@@ -175,6 +180,14 @@ fn connector_host_doors() -> Routes {
         .route("/connector-hosts/redeem", post(connector_hosts::redeem))
         .asking_at(Method::POST, "/connector-hosts/redeem", Asks::Nothing)
         .route_layer(from_fn(no_store))
+}
+
+/// The one door that answers a connector's secrets, to its own key.
+fn connector_setting_doors(app: Arc<App>) -> Routes {
+    Doors::new()
+        .route("/connectors/{id}/settings", get(connector_settings::own))
+        .route_layer(from_fn(no_store))
+        .admitting(app, Admission::Presented)
 }
 
 fn type_move_doors(app: Arc<App>) -> Routes {
@@ -419,6 +432,7 @@ fn shared(app: Arc<App>) -> Routes {
         .merge(folder_status_doors(app.clone()))
         .merge(blob_doors())
         .merge(connector_doors(app.clone()))
+        .merge(connector_setting_doors(app.clone()))
         .merge(overview_doors(app.clone()))
         .merge(attention_doors(app.clone()))
         .merge(count_doors(app))

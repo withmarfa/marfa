@@ -54,6 +54,13 @@ pub const MIGRATIONS: &[Migration] = &[
              WHERE name = 'made_by_host')",
         ),
     },
+    Migration {
+        version: 7,
+        sql: include_str!("migrations/0007_connector_settings.sql"),
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE name = 'plugin_connector_settings')",
+        ),
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

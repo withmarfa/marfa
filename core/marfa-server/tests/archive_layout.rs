@@ -417,10 +417,10 @@ async fn the_bulk_limit_may_not_be_set_above_what_one_line_holds() {
     assert_eq!(taken.status, StatusCode::OK, "{}", taken.body);
 }
 
-/// The layout of archive version 2. A change to any of it raises `VERSION`, and this pin with it.
+/// The layout of archive version 3. A change to any of it raises `VERSION`, and this pin with it.
 #[tokio::test]
 async fn the_layout_is_pinned_to_its_version() {
-    assert_eq!(archive::VERSION, 2);
+    assert_eq!(archive::VERSION, 3);
     let folder = TempDir::new().unwrap();
     let origin = Instance::start(folder.path(), &[]).await;
     let hash = origin.upload(b"a file the archive carries").await;
@@ -497,6 +497,7 @@ async fn the_layout_is_pinned_to_its_version() {
             "app_vendor_count",
             "blob_count",
             "connector_agreement_count",
+            "connector_setting_count",
             "connector_state_count",
             "created_at",
             "edge_count",
@@ -536,6 +537,7 @@ async fn the_layout_is_pinned_to_its_version() {
     let kinds = [
         "app_vendor",
         "connector_agreement",
+        "connector_setting",
         "connector_state",
         "edge_type",
         "enforcement",

@@ -11,7 +11,7 @@ use super::catalog::{self, Catalog, Origin, Snapshot};
 use super::clock::Stamp;
 use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
-use super::{connector_hosts, edge_types, instance, types};
+use super::{connector_hosts, connector_settings, edge_types, instance, types};
 
 #[derive(Clone, Debug)]
 pub struct Installed {
@@ -461,6 +461,11 @@ pub async fn install(
             if let Some(source) = &new_source {
                 connector_hosts::add(unit.tx(), &name, source, &unit.at)?;
             }
+            if let Some(before) = held.as_ref().filter(|_| recorded) {
+                let after = row(unit.tx(), &name)?
+                    .ok_or_else(|| Refusal::internal("an updated plugin has no record"))?;
+                connector_settings::follow_update(unit.tx(), &name, before, &after)?;
+            }
             unit.audit("plugin", &name, Some(json!({ "version": version.to_string() })))?;
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             let installed = row(unit.tx(), &name)?
@@ -645,8 +650,13 @@ pub fn judge_restored(
     Ok(())
 }
 
-pub fn restore(tx: &Transaction<'_>, archived: &[Archived], at: &str) -> Result<(usize, usize)> {
-    let (mut added, mut held) = (0, 0);
+/// The name of each plugin it recorded, and how many it found recorded already.
+pub fn restore(
+    tx: &Transaction<'_>,
+    archived: &[Archived],
+    at: &str,
+) -> Result<(Vec<String>, usize)> {
+    let (mut added, mut held) = (Vec::new(), 0);
     let mut connectors = Vec::new();
     for line in archived {
         let installed = &line.line;
@@ -679,7 +689,7 @@ pub fn restore(tx: &Transaction<'_>, archived: &[Archived], at: &str) -> Result<
         {
             connectors.push((installed.name.clone(), source.to_string()));
         }
-        added += 1;
+        added.push(installed.name.clone());
     }
     connector_hosts::restore(tx, &connectors, at)?;
     Ok((added, held))

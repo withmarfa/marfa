@@ -152,6 +152,7 @@ pub struct Registrations {
     pub dropped_settings: Vec<String>,
     pub states: Vec<(String, Map<String, Value>)>,
     pub vendors: Vec<crate::app::vendors::Binding>,
+    pub connector_settings: Vec<crate::app::connector_settings::Archived>,
 }
 
 /// A body read to its end and checked, ready for the restore's write.
@@ -268,10 +269,11 @@ struct Rows {
     /// The archive version the manifest names.
     version: u64,
     plugin_names: HashSet<String>,
+    connector_setting_names: HashSet<(String, String)>,
 }
 
 /// Each kind of `instance.ndjson.gz` line, with the manifest field that counts it.
-const KINDS: [(&str, &str); 10] = [
+const KINDS: [(&str, &str); 11] = [
     ("type", "type_count"),
     ("edge_type", "edge_type_count"),
     ("type_icon", "type_icon_count"),
@@ -282,10 +284,14 @@ const KINDS: [(&str, &str); 10] = [
     ("connector_agreement", "connector_agreement_count"),
     ("plugin", "plugin_count"),
     ("app_vendor", "app_vendor_count"),
+    ("connector_setting", "connector_setting_count"),
 ];
 
 /// The kinds a version 1 archive's manifest does not count, which it holds none of.
 const SINCE_VERSION_2: [&str; 2] = ["plugin", "app_vendor"];
+
+/// The kinds a version 1 or 2 archive's manifest does not count, which it holds none of.
+const SINCE_VERSION_3: [&str; 1] = ["connector_setting"];
 
 /// The key beside a line's kind that says who registered it.
 const PROVENANCE: &str = "provenance";
@@ -607,6 +613,25 @@ impl Rows {
                     return Err(registered_twice("plugin", &archived.name));
                 }
                 registrations.plugins.push(archived);
+            }
+            "connector_setting" => {
+                let archived = crate::app::connector_settings::archived(body).map_err(|why| {
+                    invalid(format!(
+                        "Line {row} of {INSTANCE} holds a connector setting that {why}."
+                    ))
+                    .with_detail("entry", INSTANCE)
+                    .with_detail("line", row)
+                })?;
+                if !self
+                    .connector_setting_names
+                    .insert((archived.plugin.clone(), archived.name.clone()))
+                {
+                    return Err(invalid(format!(
+                        "The archive carries more than one value for setting {} of plugin {}.",
+                        archived.name, archived.plugin
+                    )));
+                }
+                registrations.connector_settings.push(archived);
             }
             "edge_type" => {
                 let definition = body.as_object().ok_or_else(|| {
@@ -1037,6 +1062,7 @@ impl Intake {
                 last_version: None,
                 version: VERSION,
                 plugin_names: HashSet::new(),
+                connector_setting_names: HashSet::new(),
             }),
             spools,
             carried: Vec::new(),
@@ -1385,7 +1411,7 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
     }
 }
 
-/// Version 1 predates the plugin and vendor counts.
+/// Version 1 predates the plugin and vendor counts, and versions 1 and 2 the connector settings count.
 fn first(held: &Map<String, Value>, version: u64) -> Result<Manifest> {
     let mut errors = Vec::new();
     let mut wrong =
@@ -1404,7 +1430,9 @@ fn first(held: &Map<String, Value>, version: u64) -> Result<Manifest> {
         }
     }
     for (at, (kind, count)) in KINDS.iter().enumerate() {
-        if version == 1 && SINCE_VERSION_2.contains(kind) {
+        if (version == 1 && SINCE_VERSION_2.contains(kind))
+            || (version < 3 && SINCE_VERSION_3.contains(kind))
+        {
             continue;
         }
         match held.get(*count).and_then(Value::as_u64) {

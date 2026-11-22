@@ -27,6 +27,7 @@ macro_rules! point_list {
         HOLD_WEBHOOK_SCHEDULE = Hold "webhook-schedule" None;
         HOLD_WEBHOOK_SCHEDULE_QUEUED = Hold "webhook-schedule:queued" None;
         HOLD_CONNECTOR_WRITE = Hold "connector-write" None;
+        HOLD_CONNECTOR_SETTINGS = Hold "connector-settings" None;
         HOLD_INBOUND_RESERVED = Hold "inbound-reserved" Nth;
         HOLD_ATTENTION = Hold "attention" Write;
         FAIL_ATTENTION = Fail "attention" Write;

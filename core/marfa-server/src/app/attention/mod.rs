@@ -258,7 +258,29 @@ async fn healthy(app: &Arc<App>) -> Result<Vec<Concern>> {
         );
     }
     found.extend(secrets_to_set(&app.settings.live()));
+    found.extend(connector_secrets_to_set(app).await?);
     Ok(found)
+}
+
+/// Each secret setting of a plugin's connector that this server's key cannot open.
+async fn connector_secrets_to_set(app: &Arc<App>) -> Result<Vec<Concern>> {
+    Ok(crate::app::connector_settings::unreadable(app)
+        .await?
+        .into_iter()
+        .map(|(plugin, name)| Concern {
+            kind: "setting",
+            failed_run: false,
+            reference: format!("{plugin}/{name}"),
+            title: format!("Set {name} of {plugin} again"),
+            description: format!(
+                "{name} is a secret setting of the connector of plugin {plugin}, and this server \
+                 cannot read the value stored for it: the instance was restored from a backup or \
+                 an archive, which never holds a secret, or the settings key beside the database \
+                 was lost or replaced. Until it is set again through `PATCH \
+                 /plugins/{plugin}/connector/settings`, the connector reads it as unset."
+            ),
+        })
+        .collect())
 }
 
 /// Each secret setting stored that this server's key cannot open.

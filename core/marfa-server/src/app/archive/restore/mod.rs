@@ -26,7 +26,8 @@ use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM, HOLD_RESTORE_SE
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{
-    connectors, edge_types, instance, plugins, sources, stored, tables, types, vendors,
+    connector_settings, connectors, edge_types, instance, plugins, sources, stored, tables, types,
+    vendors,
 };
 use crate::app::{provenance, restore_running};
 use crate::db::Write;
@@ -490,7 +491,14 @@ impl App {
                             icons.skip("already_set");
                         }
                         let named = sources::restore(tx, &unit.at, &registrations.sources)?;
-                        let (plugins_added, plugins_skipped) = plugins::restore(tx, &registrations.plugins, &unit.at)?;
+                        let (plugins_recorded, plugins_skipped) = plugins::restore(tx, &registrations.plugins, &unit.at)?;
+                        let plugins_added = plugins_recorded.len();
+                        let connector_secrets_to_set = connector_settings::restore(
+                            tx,
+                            &registrations.connector_settings,
+                            &plugins_recorded,
+                            &unit.at,
+                        )?;
                         let restored_settings =
                             stored::restore(
                                 tx,
@@ -621,6 +629,7 @@ impl App {
                             "settings_dropped": registrations.dropped_settings,
                             "settings_without_receiver": restored_settings.without_receiver,
                             "secrets_to_set": restored_settings.secrets_to_set,
+                            "connector_secrets_to_set": connector_secrets_to_set,
                             "enforcement_added": levers.added,
                             "enforcement_skipped": levers.skipped,
                             "connector_states_added": states.added,

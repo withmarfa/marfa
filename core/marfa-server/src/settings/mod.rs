@@ -222,6 +222,11 @@ impl Settings {
         &self.sealer
     }
 
+    /// For work that runs off the request, such as a read on the database's own threads.
+    pub(crate) fn shared_sealer(&self) -> Arc<Sealer> {
+        self.sealer.clone()
+    }
+
     pub fn start_only(&self) -> &[start_only::Listed] {
         &self.start_only
     }
