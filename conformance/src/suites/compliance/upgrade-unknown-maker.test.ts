@@ -30,9 +30,9 @@ import {
  * Besides the working key, the dump gets a key it minted (the child), a key a
  * signed-in app's grant minted, a key a grant that has ended minted, and the
  * types and items an app holds. They are added to the loaded copy before the
- * upgrade, with the columns the upgrade reads set as a release of that time
- * would have set them. The vendors the owner holds, their items and the type
- * with guidance are made through the owner after the start.
+ * upgrade, with every column of their rows and audit records set as v0.0.90
+ * wrote it. The vendors the owner holds, their items, the type with guidance
+ * and the working key's type map are made through the owner after the start.
  */
 
 const WORKING_ID = "01a20551-502b-763f-8813-6908e83cb77c";
@@ -50,6 +50,11 @@ const GRANT = "grant-acme";
 const ENDED_CLIENT = "client-ended";
 const ENDED_GRANT = "grant-ended";
 const AT = "2026-11-22T22:13:00.000Z";
+/** The owner's browser session that approved the ended grant's app. */
+const SESSION = "01f00000-0000-7000-8000-0000000000e5";
+/** Keys of the two apps that minted the keys above, whose rows cleanup had reaped. */
+const APP_MINTER_ID = "01f00000-0000-7000-8000-0000000000f1";
+const ENDED_MINTER_ID = "01f00000-0000-7000-8000-0000000000f2";
 
 /** A vendor the app holds, and one it holds that a test removes the data of. */
 const HELD = "app.acme";
@@ -70,12 +75,10 @@ const GUIDED = "user.guided";
 
 /** The body "a core note", as the dump stores a property bag. */
 const NOTE_BODY = "x'cc1147626f6479b76120636f7265206e6f7465'";
+/** How v0.0.90 names an app's key as the actor of a write: the grant, and the key's label. */
+const APP_ACTOR = { kind: "app", id: GRANT, name: "upgrade-app" };
+const ENDED_ACTOR = { kind: "app", id: ENDED_GRANT, name: "upgrade-ended" };
 const APP_MAKER = JSON.stringify({ kind: "app", id: GRANT, name: "Acme" });
-const ENDED_MAKER = JSON.stringify({
-  kind: "app",
-  id: ENDED_GRANT,
-  name: "Ended",
-});
 
 function hashOf(secret: string): string {
   return createHmac("sha256", KEY_SALT).update(secret).digest("hex");
@@ -114,13 +117,24 @@ function keyRow(
       '{"*":"write"}', '{"*":"write"}', '{"*":"write"}', '{"*":"write"}', '${AT}');`;
 }
 
-function mintRecord(id: string, resourceId: string, actor: string): string {
-  const parsed = JSON.parse(actor) as { kind: string; id: string };
-  const keyId = parsed.kind === "key" ? quoted(parsed.id) : "NULL";
+/**
+ * A `key.create` record as v0.0.90 wrote it for a request made with the minting
+ * key: its id as `key_id`, the actor, the request's address, and the actor's id
+ * in `details`. An app that minted an owner's key adds `owner_key`.
+ */
+function mintRecord(
+  id: string,
+  resourceId: string,
+  minter: { keyId: string; actor: object; ownerKey?: boolean },
+): string {
+  const details = {
+    actor: minter.keyId,
+    ...(minter.ownerKey ? { owner_key: true } : {}),
+  };
   return `INSERT INTO audit_log (id, created_at, key_id, actor, action, kind, resource_type,
-      resource_id, details)
-    VALUES (${quoted(id)}, '${AT}', ${keyId}, ${quoted(actor)},
-      'key.create', 'access', 'key', ${quoted(resourceId)}, '{}');`;
+      resource_id, client_ip, details)
+    VALUES (${quoted(id)}, '${AT}', ${quoted(minter.keyId)}, ${quoted(JSON.stringify(minter.actor))},
+      'key.create', 'access', 'key', ${quoted(resourceId)}, '127.0.0.1', ${quoted(JSON.stringify(details))});`;
 }
 
 const WORKING_PERMISSIONS = [
@@ -153,9 +167,11 @@ function seed(db: DatabaseSync, recordKept: boolean): void {
     INSERT INTO oauth_consents (client_id, owner_id, grant_id, scopes, created_at, updated_at)
     VALUES ('${CLIENT}', '${OWNER_ID}', '${GRANT}', '["content:write","metadata.types:write"]',
       '${AT}', '${AT}');
-    INSERT INTO audit_log (id, created_at, action, kind, resource_type, resource_id, details)
-    VALUES ('01f00000-0000-7000-8000-0000000000d3', '${AT}', 'auth.grant.reused', 'access',
-      'oauth_grant', '${ENDED_CLIENT}',
+    INSERT INTO audit_log (id, created_at, key_id, actor, action, kind, resource_type,
+      resource_id, client_ip, details)
+    VALUES ('01f00000-0000-7000-8000-0000000000d3', '${AT}', 'owner:${SESSION}',
+      '{"kind":"browser","id":"${SESSION}","name":"Browser"}', 'auth.grant.reused', 'access',
+      'oauth_grant', '${ENDED_CLIENT}', '127.0.0.1',
       '{"client_id":"${ENDED_CLIENT}","owner_id":"${OWNER_ID}","scopes":["content:write","metadata.types:write"],"grant_item_id":"${ENDED_GRANT}"}');
     ${typeRow(`${HELD}.note`, APP_MAKER)}
     ${typeRow(`${GONE}.note`, APP_MAKER)}
@@ -164,11 +180,11 @@ function seed(db: DatabaseSync, recordKept: boolean): void {
     ${itemRow(GONE_ITEM, `${GONE}.note`)}
     ${itemRow(ENDED_ITEM, `${ENDED}.note`)}
     ${keyRow(CHILD_ID, CHILD_KEY, "upgrade-child", { "*": "write" }, WORKING_PERMISSIONS)}
-    ${mintRecord("01f00000-0000-7000-8000-0000000000d1", CHILD_ID, JSON.stringify({ kind: "key", id: WORKING_ID, name: "upgrade-fixture" }))}
+    ${mintRecord("01f00000-0000-7000-8000-0000000000d1", CHILD_ID, { keyId: WORKING_ID, actor: { kind: "key", id: WORKING_ID, name: "upgrade-fixture" } })}
     ${keyRow(APP_KEY_ID, APP_KEY, "upgrade-app", { [`${HELD}.*`]: "write" }, [])}
-    ${mintRecord("01f00000-0000-7000-8000-0000000000d2", APP_KEY_ID, APP_MAKER)}
+    ${mintRecord("01f00000-0000-7000-8000-0000000000d2", APP_KEY_ID, { keyId: APP_MINTER_ID, actor: APP_ACTOR, ownerKey: true })}
     ${keyRow(ENDED_KEY_ID, ENDED_KEY, "upgrade-ended", { [`${ENDED}.*`]: "write" }, [])}
-    ${mintRecord("01f00000-0000-7000-8000-0000000000d4", ENDED_KEY_ID, ENDED_MAKER)}
+    ${mintRecord("01f00000-0000-7000-8000-0000000000d4", ENDED_KEY_ID, { keyId: ENDED_MINTER_ID, actor: ENDED_ACTOR, ownerKey: true })}
   `);
   if (!recordKept) {
     db.prepare(
@@ -191,8 +207,8 @@ interface Answer {
 
 interface Upgraded {
   url: string;
-  /** How many items of a type the database holds, read from its file. */
-  itemsOf(type: string): number;
+  /** How many items of a type the owner's listing of its vendor's data counts. */
+  itemsOf(vendor: string, type: string): Promise<number>;
   answer(
     key: string,
     path: string,
@@ -289,16 +305,18 @@ async function upgraded(
   return {
     url,
     owner,
-    itemsOf(type) {
-      const db = new DatabaseSync(join(state, "marfa.db"), { readOnly: true });
-      try {
-        return Number(
-          db.prepare("SELECT count(*) AS n FROM items WHERE type = ?").get(type)
-            ?.n,
-        );
-      } finally {
-        db.close();
-      }
+    async itemsOf(vendor, type) {
+      const listed = await owner(`/app-vendors/${vendor}/data`);
+      expect(listed.status, JSON.stringify(listed.body)).toBe(200);
+      const row = (
+        listed.body.types as Array<{
+          type: string;
+          active: number;
+          archived: number;
+          trashed: number;
+        }>
+      ).find((entry) => entry.type === type);
+      return row === undefined ? 0 : row.active + row.archived + row.trashed;
     },
     answer,
   };
@@ -312,6 +330,20 @@ async function pair(
     unknown: await upgraded(false, alter),
     known: await upgraded(true, alter),
   };
+}
+
+/** The owner sets the working key's type map on both servers, which leaves who made it as it was. */
+async function narrow(
+  servers: { unknown: Upgraded; known: Upgraded },
+  type_permissions: Record<string, string>,
+): Promise<void> {
+  for (const server of [servers.unknown, servers.known]) {
+    const patched = await server.owner(`/keys/${WORKING_ID}`, {
+      method: "PATCH",
+      body: { type_permissions },
+    });
+    expect(patched.status, JSON.stringify(patched.body)).toBe(200);
+  }
 }
 
 function code(got: Answer): unknown {
@@ -407,15 +439,13 @@ describe("a key of unknown maker after an upgrade", () => {
   it(
     "records as an app's the key a grant that has ended minted, named through the records of the grant",
     async () => {
-      const { unknown, known } = await pair();
-      for (const server of [unknown, known]) {
-        // Only the records of the grant pair it with its app: the consent is gone.
-        expect(await holder(server, ENDED)).toBe(ENDED_CLIENT);
-        expectOk(await readItem(server, ENDED_KEY, ENDED_ITEM));
-        expectConcealed(await readItem(server, ENDED_KEY, HELD_ITEM));
-      }
+      const server = await upgraded(true);
+      // Only the records of the grant pair it with its app: the consent is gone.
+      expect(await holder(server, ENDED)).toBe(ENDED_CLIENT);
+      expectOk(await readItem(server, ENDED_KEY, ENDED_ITEM));
+      expectConcealed(await readItem(server, ENDED_KEY, HELD_ITEM));
     },
-    FRESH_SERVER_TIMEOUT_MS * 3,
+    FRESH_SERVER_TIMEOUT_MS,
   );
 
   it(
@@ -466,12 +496,8 @@ describe("a key of unknown maker after an upgrade", () => {
           method: "PATCH",
           body: { version: 1, properties: { body: "changed" } },
         });
-      const named = { "*": "write", "app.*": "write" };
-      const writes = await pair((db) =>
-        db
-          .prepare("UPDATE api_keys SET type_permissions = ? WHERE id = ?")
-          .run(JSON.stringify(named), WORKING_ID),
-      );
+      const writes = await pair();
+      await narrow(writes, { "*": "write", "app.*": "write" });
       // The witness: the same key with its record kept reaches both vendors.
       expectOk(await readItem(writes.known, WORKING_KEY, OWNED_ITEM));
       expectOk(await readItem(writes.known, WORKING_KEY, HELD_ITEM));
@@ -482,14 +508,8 @@ describe("a key of unknown maker after an upgrade", () => {
 
       // Named read for one vendor, that vendor reads and is not written, and
       // another owner-held vendor the map does not name is not reached.
-      const reads = await pair((db) =>
-        db
-          .prepare("UPDATE api_keys SET type_permissions = ? WHERE id = ?")
-          .run(
-            JSON.stringify({ "*": "write", [`${OWNED}.*`]: "read" }),
-            WORKING_ID,
-          ),
-      );
+      const reads = await pair();
+      await narrow(reads, { "*": "write", [`${OWNED}.*`]: "read" });
       expectOk(await readItem(reads.known, WORKING_KEY, MOVED_ITEM));
       expectOk(await readItem(reads.unknown, WORKING_KEY, OWNED_ITEM));
       expectRefused(
@@ -550,10 +570,10 @@ describe("a key of unknown maker after an upgrade", () => {
       );
       // The witness: the owner's key lists the data and removes it.
       expectOk(await known.answer(WORKING_KEY, data));
-      expect(known.itemsOf(`${GONE}.note`)).toBe(1);
+      expect(await known.itemsOf(GONE, `${GONE}.note`)).toBe(1);
       expectOk(await known.answer(WORKING_KEY, data, { method: "DELETE" }));
-      expect(unknown.itemsOf(`${GONE}.note`)).toBe(1);
-      expect(known.itemsOf(`${GONE}.note`)).toBe(0);
+      expect(await unknown.itemsOf(GONE, `${GONE}.note`)).toBe(1);
+      expect(await known.itemsOf(GONE, `${GONE}.note`)).toBe(0);
     },
     FRESH_SERVER_TIMEOUT_MS * 3,
   );

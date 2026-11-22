@@ -124,18 +124,21 @@ stays because that thing is what it checks.
   fixture holds a build to what a release wrote and not to the migrations the
   build carries.
 - `compliance/upgrade-unknown-maker.test.ts` loads the same dump and adds rows
-  to it before each start: a key the working key minted and its `key.create`
-  record, a key an app's grant minted with that app's client, consent, types
-  and items, and a key a grant that has ended minted with the grant's record,
-  type and item. On one server of each pair it removes the working key's
-  `key.create` record, and in one test it removes the working key's own row
-  from both. It reads the database file afterwards to count items. A key that
-  outlives the record of who minted it is a state no operation on this build
-  makes, the keys and the consent must be in the file before the upgrade reads
-  it, and the API does not name a key's maker, so each test holds the refusal
-  against the same request from the same key with its record kept. The owner
-  makes the owner-held vendors and the type with guidance through the control
-  socket after the start, and their items through a key it mints there.
+  to it before each start, with every column set as v0.0.90 wrote it: a key the
+  working key minted and its `key.create` record, a key an app's grant minted
+  and a key a grant that has ended minted, each with the minting app key's
+  `key.create` record, the app's client and consent (the ended grant has only
+  its `auth.grant.reused` record, as the owner's browser wrote it), and the
+  app's types and items. On one server of each pair it deletes the working
+  key's `key.create` record, and in one test it deletes the working key's own
+  row from both. A key that outlives the record of who minted it is a state no
+  operation on this build makes, and the keys, the consent and the records must
+  be in the file before the upgrade reads them. The API does not name a key's
+  maker, so each test holds the refusal against the same request from the same
+  key with its record kept. The owner makes the owner-held vendors, the type
+  with guidance and the working key's type map through the control socket after
+  the start, their items through a key it mints there, and counts the items
+  an app's vendor holds from its vendor data listing.
 - `compliance/device-grant.test.ts`, "is held by the server as something other
   than the code it issued", searches the database file and the log beside it for
   the issued device code, because the contract is about the bytes at rest.
