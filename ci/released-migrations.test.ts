@@ -39,7 +39,6 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const MIGRATIONS = "core/marfa-server/src/db/migrations/";
 const PINNED_RS = "core/marfa-server/src/db/pinned.rs";
 const OPENING_RS = "core/marfa-core/src/store/tests/opening.rs";
-const OPEN_RS = "core/marfa-core/src/store/open.rs";
 
 const git = (...args: string[]): string =>
   execFileSync("git", args, {
@@ -111,11 +110,6 @@ export function shapes(source: string): Map<string, string> {
     if (hash[1] !== undefined) found.set(String(at + 1), hash[1]);
   });
   return found;
-}
-
-export function storeVersion(source: string): number | undefined {
-  const found = /pub const SCHEMA_VERSION: i64 = (\d+);/.exec(source);
-  return found?.[1] === undefined ? undefined : Number(found[1]);
 }
 
 /**
@@ -343,15 +337,12 @@ describe("the device store", () => {
     expect(shapeProblems(tag, atHead(OPENING_RS))).toEqual([]);
   });
 
-  it("reads SHAPES and the version from source", () => {
+  it("reads SHAPES from source", () => {
     const source = `const SHAPES: [&str; 2] = [\n    "ab12",\n    "cd34",\n];\nfn x() {}`;
     expect([...shapes(source)]).toEqual([
       ["1", "ab12"],
       ["2", "cd34"],
     ]);
-    expect(storeVersion("pub const SCHEMA_VERSION: i64 = 11;")).toBe(11);
-    expect(storeVersion("nothing")).toBeUndefined();
-    expect(storeVersion(atHead(OPEN_RS))).toBeDefined();
   });
 
   it("passes a comment-only edit, which leaves SHAPES alone, and an appended shape", () => {
