@@ -95,6 +95,9 @@ beforeAll(async () => {
                 body: "",
               }),
           ...(probe === undefined ? {} : { probe }),
+          ...(type === "core.media.book"
+            ? { progress: i % 2 === 0 ? "planned" : "finished" }
+            : {}),
         },
       }),
     );
@@ -310,24 +313,11 @@ beforeAll(async () => {
       },
     },
     10,
-    (keys) => {
-      const closed = ["not_started", "in_progress", "completed", "canceled"];
-      expect(keys.every((key) => closed.includes(key as string))).toBe(true);
-    },
+    (keys) => expect(keys).toEqual(["completed", "not_started"]),
   );
-  add("status group", { group: { by: "status_group" } }, 10, (keys) => {
-    const closed = [
-      "not_started",
-      "in_progress",
-      "completed",
-      "canceled",
-      null,
-    ];
-    expect(keys.every((key) => closed.includes(key as string | null))).toBe(
-      true,
-    );
-    expect(keys.length).toBeGreaterThan(0);
-  });
+  add("status group", { group: { by: "status_group" } }, 10, (keys) =>
+    expect(keys).toEqual(["not_started", "completed", null]),
+  );
 
   for (const item of cases) {
     const saved = await client.createView({
