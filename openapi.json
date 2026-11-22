@@ -73543,7 +73543,8 @@
               }
             }
           }
-        }
+        },
+        "x-marfa-local-command": true
       },
       "patch": {
         "operationId": "updatePluginConnectorSettings",

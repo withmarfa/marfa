@@ -660,18 +660,18 @@ async fn a_manifest_at_a_later_version_is_refused_naming_the_build_that_wrote_it
     let origin = Instance::start(folder.path(), &[]).await;
     origin.note("written by a later build").await;
     let archive = with_manifest(entries(&origin.archive().await), |manifest| {
-        manifest.insert("version".into(), 3.into());
+        manifest.insert("version".into(), 4.into());
         manifest.insert("written_by".into(), "marfa-server 9.0.0".into());
     });
     let fresh = Instance::start(folder.path(), &[]).await;
     let refused = fresh.restore(archive).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
     let message = refused.body["error"]["message"].as_str().unwrap();
-    assert!(message.contains("version 3"), "{message}");
+    assert!(message.contains("version 4"), "{message}");
     assert!(message.contains("marfa-server 9.0.0"), "{message}");
-    assert!(message.contains("up to version 2"), "{message}");
+    assert!(message.contains("up to version 3"), "{message}");
     let details = &refused.body["error"]["details"];
-    assert_eq!(details["version"], 3, "{details}");
+    assert_eq!(details["version"], 4, "{details}");
     assert_eq!(details["written_by"], "marfa-server 9.0.0", "{details}");
 }
 
