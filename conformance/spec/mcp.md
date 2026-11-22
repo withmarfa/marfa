@@ -1392,11 +1392,17 @@ When `marfa_app_data` is called with the `confirm` token its preview gave, by th
 
 ### `mcp/app-data-changed`
 
-If an item of the vendor was written, changed or removed, or a type was registered or deleted under it, since a `marfa_app_data` preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and delete nothing.
+If an item the confirming call would delete changed, or an item was added under the vendor or removed from it, since a `marfa_app_data` preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and delete nothing.
 
 **Reason:** a confirmation shown for a few items must not delete more written in between.
 
-**Tests:** `compliance/app-data.test.ts › previews a vendor's data with marfa_app_data, deletes nothing on a stale confirmation, and deletes it on a fresh one`.
+**Tests:** `compliance/app-data.test.ts › previews a vendor's data with marfa_app_data, deletes nothing on a stale confirmation, and deletes it on a fresh one`, `› refuses a marfa_app_data confirmation once an item was added under a vendor holding more than 1,000 items`.
+
+### `mcp/app-data-type-map`
+
+If a credential whose type map does not reach every type under a vendor calls `marfa_app_data` for it, or `marfa_end_sign_in` with `remove_data` set to `true` for the app that holds it, then the server MUST answer the tool error code `type_not_permitted` and delete and end nothing.
+
+**Tests:** `compliance/app-data.test.ts › refuses marfa_app_data and remove_data in marfa_end_sign_in to a key whose map does not reach the vendor's types`.
 
 ## Ending a sign-in, an app or a passkey
 
@@ -1526,11 +1532,19 @@ Where a `marfa_end_sign_in` preview of ending an app sets `remove_data` to `true
 
 ### `mcp/end-sign-in-data-changed`
 
-Where a `marfa_end_sign_in` preview of ending an app set `remove_data` to `true`, if an item of a vendor the app holds was written, changed or removed, or a type was registered or deleted under one, since the preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and end nothing.
+Where a `marfa_end_sign_in` preview of ending an app set `remove_data` to `true`, if an item the confirming call would remove changed, or an item was added under a vendor the app holds or removed from one, since the preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale`, or `bulk_cap_exceeded` once the app holds more than 1,000 items under its vendors, and end nothing.
 
 **Reason:** a confirmation shown for a few items must not remove more written in between.
 
 **Tests:** `compliance/app-data.test.ts › previews ending an app with remove_data naming its data, ends nothing on a stale confirmation, and ends it with its data on a fresh one`.
+
+### `mcp/end-sign-in-data-cap`
+
+If a `marfa_end_sign_in` call sets `remove_data` to `true` for an app that holds more than 1,000 items under its vendors, then the server MUST refuse the preview with the tool error code `bulk_cap_exceeded` and `use_tool` as `marfa_app_data`, and give no `confirm` token.
+
+**Reason:** ending an app with its data is one write, which takes at most 1,000 items, so a confirmation for more could only fail. `marfa_app_data` removes the data in pages first.
+
+**Tests:** `compliance/app-data.test.ts › refuses a marfa_end_sign_in preview with remove_data while the app holds more than 1,000 items, naming marfa_app_data`.
 
 ### `mcp/end-sign-in-data-bound`
 

@@ -2816,11 +2816,11 @@ When `GET /app-vendors` or `PUT /app-vendors/{vendor}` answers a vendor, the ser
 
 ### `keys-and-oauth/app-data-list`
 
-When the owner's browser session, the local command or a caller holding `grants.manage` sends `GET /app-vendors/{vendor}/data` for a vendor an app or the owner holds, the server MUST answer the `vendor`, the `client_id` of the app that holds it or `null`, under `types` each type registered under the vendor with how many of its items are `active`, `archived` and `trashed`, and under `data` a page of the vendor's items in every state, each with its `state`.
+When the owner's browser session, the local command or a caller holding `grants.manage` sends `GET /app-vendors/{vendor}/data` for a vendor an app or the owner holds, the server MUST answer the `vendor`, the `client_id` of the app that holds it or `null`, under `types` each type registered under the vendor or held by an item whose type is under it, with how many of its items are `active`, `archived` and `trashed`, and under `data` a page of the items whose type is under the vendor, in every state, each with its `state`.
 
 **Reason:** an app's data is hidden from ordinary listings, so the owner needs one place that shows everything an app keeps, the trash included, before deciding to remove it.
 
-**Tests:** `compliance/app-data.test.ts › lists the named vendor's types with counts by state and its items in every state, and nothing of another vendor`, `› pages a vendor's items with next_cursor`, `cli/app-data.test.ts › lists an app's data and deletes it in pages until none is left, and refuses the delete without --confirm PURGE`.
+**Tests:** `compliance/app-data.test.ts › lists the named vendor's types with counts by state and its items in every state, and nothing of another vendor`, `› pages a vendor's items with next_cursor`, `› lists and removes the items of a type deleted with force=true under the vendor`, `› lists and deletes a vendor's data for the owner's browser session, and refuses a delete without this instance's origin`, `cli/app-data.test.ts › lists an app's data and deletes it in pages until none is left, and refuses the delete without --confirm PURGE`.
 
 ### `keys-and-oauth/app-data-list-one-vendor`
 
@@ -2862,6 +2862,30 @@ If an app's sign-in or a key an app made sends `GET /app-vendors/{vendor}/data` 
 
 **Tests:** `compliance/app-data.test.ts › lets an app's sign-in list and remove only the data of its own vendors`.
 
+### `keys-and-oauth/app-data-list-type-map`
+
+If a key or an app's sign-in whose type map does not give read on every type under a vendor sends `GET /app-vendors/{vendor}/data`, then the server MUST answer `403 type_not_permitted` with `details.grant` naming `<vendor>.*`, and name none of the vendor's types.
+
+**Reason:** an app's data is items like any other, so a credential lists them only as far as its type map reads them.
+
+**Tests:** `compliance/app-data.test.ts › refuses a key whose map does not reach the vendor's types its list, its removal and remove_data, and changes nothing`.
+
+### `keys-and-oauth/app-data-remove-type-map`
+
+If a key or an app's sign-in whose type map does not give write on every type under a vendor sends `DELETE /app-vendors/{vendor}/data`, or ends the app that holds the vendor with `remove_data` set to `true`, then the server MUST answer `403 type_not_permitted` and remove and end nothing.
+
+**Reason:** a purge needs write on the item's type (`items/purge-type-write`), and removing a vendor's data is a purge of its items.
+
+**Tests:** `compliance/app-data.test.ts › refuses a key whose map does not reach the vendor's types its list, its removal and remove_data, and changes nothing`.
+
+### `keys-and-oauth/app-data-remove-schema-write`
+
+If a key or an app's sign-in without `schema.write` sends `DELETE /app-vendors/{vendor}/data` while a type is registered under the vendor, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` before it removes any item.
+
+**Reason:** the removal deletes the vendor's types in the call that empties it, and deleting a type needs `schema.write`. Refusing the first call, not the last, means a credential never removes the items and then finds it cannot finish.
+
+**Tests:** `compliance/app-data.test.ts › refuses a removal that would delete types to a key without schema.write before it removes anything`.
+
 ### `keys-and-oauth/app-data-unknown-maker`
 
 If a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `GET /app-vendors/{vendor}/data` or `DELETE /app-vendors/{vendor}/data` for a vendor an app holds, then the server MUST answer `403 forbidden` and remove nothing.
@@ -2870,11 +2894,11 @@ If a key of unknown maker (`keys-and-oauth/unknown-maker`) sends `GET /app-vendo
 
 ### `keys-and-oauth/app-data-remove`
 
-When a caller holding `items.purge`, with the owner's browser session, the local command or `grants.manage`, sends `DELETE /app-vendors/{vendor}/data`, the server MUST purge in one write up to 1,000 of the oldest items of the types registered under the vendor, in every state, the trash included, and answer `removed_items`, `removed_types` and `remaining_items`.
+When a caller holding `items.purge`, with the owner's browser session, the local command or `grants.manage`, sends `DELETE /app-vendors/{vendor}/data`, the server MUST purge in one write up to 1,000 of the oldest items whose type is under the vendor, registered or not, in every state, the trash included, and answer `removed_items`, `removed_types` and `remaining_items`.
 
 **Reason:** the items purge rather than go to the trash because the vendor's types go with them, and a type cannot be removed while an item of it, trashed or not, remains. Only a backup or an export taken before brings the data back, which is why the command line asks for `--confirm PURGE` and names `marfa backups run`. A page of 1,000 keeps one write short, so other requests are not held up.
 
-**Tests:** `compliance/app-data.test.ts › removes every item of the vendor in every state, then its types children first, and leaves the vendor with its app`, `› removes more than 1,000 items over several calls, its types going in the call that empties it`, `cli/app-data.test.ts › lists an app's data and deletes it in pages until none is left, and refuses the delete without --confirm PURGE`.
+**Tests:** `compliance/app-data.test.ts › removes every item of the vendor in every state, then its types children first, and leaves the vendor with its app`, `› removes more than 1,000 items over several calls, its types going in the call that empties it`, `› lists and removes the items of a type deleted with force=true under the vendor`, `› lists and deletes a vendor's data for the owner's browser session, and refuses a delete without this instance's origin`, `cli/app-data.test.ts › lists an app's data and deletes it in pages until none is left, and refuses the delete without --confirm PURGE`.
 
 ### `keys-and-oauth/app-data-remove-types`
 
@@ -2912,7 +2936,15 @@ When a removal of a vendor's data purges an item that an item outside the vendor
 
 If a folder, view, webhook or table column outside a vendor names one of its types, then the server MUST answer `DELETE /app-vendors/{vendor}/data` with `409 type_in_use` and remove nothing.
 
-**Tests:** `compliance/app-data.test.ts › refuses with 409 type_in_use and removes nothing while another credential's webhook names one of its types`.
+**Tests:** `compliance/app-data.test.ts › refuses with 409 type_in_use and removes nothing while another credential's webhook names one of its types`, `› refuses with 409 type_in_use while a table item outside the vendor has a column naming one of its types`.
+
+### `keys-and-oauth/app-data-own-table-column`
+
+When a table column that names one of a vendor's types belongs to a type under the vendor or to an item of one, the server MUST NOT refuse `DELETE /app-vendors/{vendor}/data` for that column, whoever sends it.
+
+**Reason:** the column goes with the vendor's data, so it names nothing that remains.
+
+**Tests:** `compliance/app-data.test.ts › removes a vendor whose own table item has a column naming one of its types, for the local command, a key and the browser session`, `› refuses with 409 type_in_use while a table item outside the vendor has a column naming one of its types`.
 
 ### `keys-and-oauth/app-data-drops-app-webhooks`
 
