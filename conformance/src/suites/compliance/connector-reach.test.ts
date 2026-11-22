@@ -15,6 +15,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * What a plugin connector's key may write once its mapping lands a kind on a
@@ -172,8 +173,9 @@ describe("the connector's own items on its target type", () => {
 
   it("writes a kind's own type only as its type map allows, whatever the mapping", async () => {
     const plugin = await installed(owner);
-    const reader = await mint(server, plugin.source, [], {
-      [`${plugin.source}.*`]: "read",
+    const reader = await connectorKey(server, plugin, {
+      permissions: [],
+      type_permissions: { [`${plugin.source}.*`]: "read" },
     });
     const mapping = await reader.client.getConnectorMapping(plugin.name);
     expect(mapping.status, JSON.stringify(mapping.error)).toBe(200);
@@ -446,6 +448,64 @@ describe("what the connector's trash, restore and purge carry", () => {
     for (const id of theirs) {
       expect(await state(id), id).toBe("trashed");
     }
+  });
+});
+
+/**
+ * Leaves the plugin's stored connector or mapping unreadable with `statement`,
+ * reaching into the database because every door refuses one, and holds the
+ * key to what its type map writes, with the cascade rule still in force.
+ */
+async function failsClosed(statement: string) {
+  const { plugin, key } = await mapped();
+  const own = key.client;
+  const state = async (id: string) =>
+    (await owner.getItem(id, "any")).data.item.state;
+
+  // The witness: while the connector and mapping read, the key writes the target type.
+  await ticket(own, plugin);
+
+  const changed = withInstanceDatabase(server.sqlitePath, (db) =>
+    db.prepare(statement).run(plugin.name),
+  );
+  expect(Number(changed.changes)).toBe(1);
+
+  const refused = await own.createItem({
+    type: plugin.ticket,
+    properties: { title: "unmapped", reporter: "x" },
+  });
+  expect(refused.status).toBe(403);
+  expect(refused.error?.error.code).toBe("type_not_permitted");
+
+  const made = await own.createItem({
+    type: plugin.issue,
+    properties: { title: "its issue" },
+  });
+  expect(made.status, JSON.stringify(made.error)).toBe(201);
+  const mine = made.data.item.id;
+  const theirChild = (await ticket(owner, plugin)).id;
+  const linked = await owner.createEdge({
+    from_id: mine,
+    to_id: theirChild,
+    edge_type: "parent-of",
+  });
+  expect(linked.status, JSON.stringify(linked.error)).toBe(201);
+  expect((await own.deleteItem(mine)).status).toBe(200);
+  expect(await state(mine)).toBe("trashed");
+  expect(await state(theirChild)).toBe("active");
+}
+
+describe("a connector or mapping that does not read", () => {
+  it("keeps the key a plugin connector key when its stored connector does not read: its trash leaves the owner's child, and it writes no target type", async () => {
+    await failsClosed(
+      "UPDATE plugins SET manifest = json_set(manifest, '$.connector.kinds', 'unreadable') WHERE name = ?",
+    );
+  });
+
+  it("keeps the key a plugin connector key when its stored mapping does not read: its trash leaves the owner's child, and it writes no target type", async () => {
+    await failsClosed(
+      "UPDATE connector_mappings SET kinds = 'unreadable' WHERE plugin = ?",
+    );
   });
 });
 

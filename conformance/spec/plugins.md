@@ -4,7 +4,7 @@ A plugin is what an owner adds to Marfa: types under `common.*` or a root of its
 
 A bundle sets `format` to 1 and identifies the plugin by its `name`, `title`, `description`, `mark`, `maker` and `version`. The `marfa` field names the oldest Marfa release it supports. The `types` array holds type definitions with their guidance, and `edge_types` holds edge type definitions. The optional `connector` object describes the plugin's connector: its source, its kinds, its settings, its sign-in and where it runs. `PluginBundle` and `PluginConnector` in `openapi.json` define each field.
 
-`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, its connector section included, a type under a reserved root, the Marfa release it needs, the caller's permission, a connector without `connectors.manage`, guidance an app sends, the version installed, a newer version's connector source, the connector's source held elsewhere, a type the plugin did not install, a clash with a type below, a parent outside the bundle the caller may not write, each type's definition, what a newer version narrows, and each edge type.
+`POST /plugins` judges a bundle in this order and answers the first refusal: the bundle's shape, its connector section included, a type under a reserved root, the Marfa release it needs, the caller's permission, a connector without `connectors.manage`, guidance an app sends, the version installed, a newer version's connector source, the connector's source held elsewhere, a type the plugin did not install, a clash with a type below, a parent outside the bundle the caller may not write, each type's definition, what a newer version narrows, each edge type, and each kind's `default_mapping` against the types as installed.
 
 ## Installing
 
@@ -411,6 +411,14 @@ When `POST /restore` restores a plugin with a connector that the instance does n
 **Reason:** a host, its link and every key it holds belong to the machine and the instance they were made on, so none travels in an archive.
 
 **Tests:** `compliance/plugin-connectors.test.ts › restores a plugin with a connector with its record and no host or key`.
+
+### `plugins/restore-default-mapping`
+
+If `POST /restore` would restore a plugin whose connector names a `default_mapping` that `plugins/connector-default-mapping` refuses, judged against the types as restored and the restoring caller's write, then the server MUST answer `400 validation_error` with `details.entry` `instance.ndjson.gz` and `details.line` naming the plugin's line, and restore nothing.
+
+**Reason:** a restored plugin's default is the mapping its connector's key reaches by until the owner saves one, so it is judged as installing judges it.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses a restore whose plugin's default_mapping installing would refuse, naming its line, and restores nothing`.
 
 ### `plugins/restore-connector-held`
 
@@ -854,7 +862,7 @@ The server MUST NOT write a one-time link's code, a host's key or a connector's 
 
 ## A connector's mapping
 
-A plugin's `connector` object names its `source` and its `kinds`. Each kind has a `name`, its own `type` (one of the bundle's types), a `direction` (`in`, `out` or `both`) and, optionally, a `default_mapping`: an object with any of `tier`, `status_overrides` and `fields` of one kind's entry below (`plugins/connector-default-mapping`). A plugin's connector key is a live key whose own `source` is the `source` of an installed plugin's `connector`.
+A plugin's `connector` object names its `source` and its `kinds`. Each kind has a `name`, its own `type` (one of the bundle's types), a `direction` (`in`, `out` or `both`) and, optionally, a `default_mapping`: an object with any of `tier`, `status_overrides` and `fields` of one kind's entry below (`plugins/connector-default-mapping`). A plugin's connector key is a live key whose own `source` is the source the server recorded for an installed plugin's connector (`plugins/connector-recorded`), which one plugin alone holds (`plugins/connector-source-plugin`).
 
 The mapping is the owner's choice of what each kind brings: `{ version, kinds, rewrites }`, where `kinds` holds one entry per kind of the connector, `{ enabled, target_type, tier, status_overrides, fields }`. `fields` is keyed by a field of `target_type`, each `{ "from": <field of the kind's own type> }`, `{ "fixed": <value> }` or `{ "template": <Jinja text> }`. `status_overrides` maps a status word of the kind's own type to a status word of `target_type`. The connector applies the mapping as it writes; the server stores it, judges it and decides from it what the connector's key may write.
 
@@ -1047,6 +1055,14 @@ When a plugin's connector key moves an item to the bin, restores it from the bin
 **Reason:** a cascade follows edges the owner made too, such as their child of the connector's item or their comment on it. The owner's items do not go with the connector's, whichever door it uses and whatever type they are. The server decides it on the items as they stand in the write that moves them.
 
 **Tests:** `compliance/connector-reach.test.ts › leaves the owner's child, comment and attachment on its item where they are through its trash, restore and purge, and carries its own`.
+
+### `plugins/reach-fail-closed`
+
+If the stored `connector` object of the plugin whose connector holds a plugin's connector key's source, or that plugin's stored mapping, does not read, then the server MUST answer the key as a plugin's connector key whose mapping holds no enabled kind.
+
+**Reason:** the mapping only widens what a connector's key writes, and the cascade rule (`plugins/reach-cascade`) only narrows it. A stored value that does not read widens nothing and lifts no protection, so the key writes no more than its type map allows, and its trash, restore and purge still leave the owner's items where they are.
+
+**Tests:** `compliance/connector-reach.test.ts › keeps the key a plugin connector key when its stored connector does not read: its trash leaves the owner's child, and it writes no target type`, `› keeps the key a plugin connector key when its stored mapping does not read: its trash leaves the owner's child, and it writes no target type`.
 
 ### `plugins/reach-target-other-source`
 

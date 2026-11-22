@@ -89,17 +89,21 @@ export function connectorBundle(
       },
     ],
     edge_types: [],
-    connector: connector ?? {
-      source: plugin.source,
-      kinds: [
-        { name: "issue", type: plugin.issue, direction: "in" },
-        {
-          name: "comment",
-          type: plugin.comment,
-          direction: "in",
-          default_mapping: { tier: "library" },
-        },
-      ],
+    connector: {
+      source_name: "Tracker",
+      runs: { on: "host" },
+      ...(connector ?? {
+        source: plugin.source,
+        kinds: [
+          { name: "issue", type: plugin.issue, direction: "in" },
+          {
+            name: "comment",
+            type: plugin.comment,
+            direction: "in",
+            default_mapping: { tier: "library" },
+          },
+        ],
+      }),
     },
   };
 }
@@ -139,19 +143,43 @@ export async function installed(owner: MarfaClient): Promise<ConnectorPlugin> {
   return plugin;
 }
 
-/** The plugin's connector key: write on its own types and nothing else. */
+/**
+ * The plugin's connector key, minted by a connector host the plugin is
+ * assigned to, then set by local authority to purge, to write the plugin's
+ * types and every edge type and metadata, with `changes` over that.
+ */
 export async function connectorKey(
   server: FreshServer,
   plugin: ConnectorPlugin,
-  extra: Record<string, unknown> = {},
+  changes: Record<string, unknown> = {},
 ): Promise<{ id: string; client: MarfaClient }> {
-  return mint(
-    server,
-    plugin.source,
-    ["items.purge"],
-    { [`${plugin.source}.*`]: "write" },
-    extra,
-  );
+  const owner = local(server);
+  const host = await owner.createConnectorHost(`host-${fresh()}`);
+  expect(host.status, JSON.stringify(host.error)).toBe(201);
+  const redeemed = await owner.redeemConnectorLink({ code: host.data.code });
+  expect(redeemed.status, JSON.stringify(redeemed.error)).toBe(201);
+  const assigned = await owner.assignConnector(plugin.name, host.data.host.id);
+  expect(assigned.status, JSON.stringify(assigned.error)).toBe(200);
+  const minted = await new MarfaClient({
+    baseUrl: server.apiUrl,
+    apiKey: redeemed.data.key,
+  }).mintConnectorKey(plugin.name);
+  expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+  const set = await owner.updateKey(minted.data.key_id, {
+    permissions: ["items.purge"],
+    type_permissions: { [`${plugin.source}.*`]: "write" },
+    edge_permissions: { "*": "write" },
+    metadata_permissions: { "*": "write" },
+    ...changes,
+  });
+  expect(set.status, JSON.stringify(set.error)).toBe(200);
+  return {
+    id: minted.data.key_id,
+    client: new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: minted.data.key,
+    }),
+  };
 }
 
 /** The mapping that lands `issue` on the owner's ticket type. */

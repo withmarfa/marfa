@@ -874,6 +874,75 @@ describe("a mapping in an archive", () => {
   });
 
   it(
+    "refuses a restore whose plugin's default_mapping installing would refuse, naming its line, and restores nothing",
+    async () => {
+      const plugin = await installed(owner);
+      const archive = await owner.exportArchive({ state: "any" });
+      expect(archive.status).toBe(200);
+      const withDefault = (fault: Record<string, unknown>) => {
+        let line = 0;
+        const edited = editLineFile(archive.data, "instance", (text) =>
+          text
+            .split("\n")
+            .map((held, at) => {
+              if (!held.startsWith('{"plugin"')) return held;
+              const parsed = JSON.parse(held) as {
+                plugin: {
+                  name: string;
+                  bundle: {
+                    connector: { kinds: Record<string, unknown>[] };
+                  };
+                };
+              };
+              if (parsed.plugin.name !== plugin.name) return held;
+              line = at + 1;
+              parsed.plugin.bundle.connector.kinds[0]!.default_mapping = fault;
+              return JSON.stringify(parsed);
+            })
+            .join("\n"),
+        );
+        expect(line).toBeGreaterThan(0);
+        return { edited, line };
+      };
+      const target = await bootFreshServer("connector-mapping-defaults");
+      try {
+        const shape = withDefault({ enabled: false });
+        const misshapen = await local(target).restoreArchive(shape.edited);
+        expect(misshapen.status).toBe(400);
+        expect(misshapen.error?.error.code).toBe("validation_error");
+        expect(misshapen.error?.error.details).toMatchObject({
+          entry: "instance.ndjson.gz",
+          line: shape.line,
+        });
+
+        const misfit = withDefault({
+          fields: { opened_by: { from: "nothing" } },
+        });
+        const judged = await local(target).restoreArchive(misfit.edited);
+        expect(judged.status).toBe(400);
+        expect(judged.error?.error.code).toBe("validation_error");
+        expect(judged.error?.error.details).toMatchObject({
+          entry: "instance.ndjson.gz",
+          line: misfit.line,
+          name: plugin.name,
+        });
+        expect(paths(judged.error)).toEqual([
+          "connector.kinds.0.default_mapping.fields.opened_by.from",
+        ]);
+        expect((await local(target).getPlugin(plugin.name)).status).toBe(404);
+
+        // The witness: the archive as written restores whole.
+        const restored = await local(target).restoreArchive(archive.data);
+        expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+        expect((await local(target).getPlugin(plugin.name)).status).toBe(200);
+      } finally {
+        await target.stop();
+      }
+    },
+    2 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "refuses a restore whose mapping the types as restored would refuse, naming its line, and restores nothing",
     async () => {
       const plugin = await installed(owner);
