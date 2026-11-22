@@ -52,7 +52,7 @@ const FETCH_TAGS =
   "fetch the tags (`git fetch --tags`, or `git fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*'` in a shallow checkout)";
 
 const releaseTag = (): string => {
-  const named = process.env["MARFA_RELEASE_TAG"];
+  const named = process.env.MARFA_RELEASE_TAG;
   if (named !== undefined && named !== "") return named;
   const tags = git("tag", "--list", "v*").split("\n").filter(Boolean);
   return newestPublished(tags, abandonedVersions());
@@ -95,7 +95,9 @@ export function pins(source: string): Map<string, string> {
   const entry =
     /Pin\s*\{\s*version:\s*(\d+),\s*file:\s*"([0-9a-f]+)",\s*holds:\s*"([0-9a-f]+)",?\s*\}/g;
   for (const [, version, file, holds] of table.matchAll(entry)) {
-    if (version !== undefined) found.set(version, `${file} ${holds}`);
+    if (version !== undefined && file !== undefined && holds !== undefined) {
+      found.set(version, `${file} ${holds}`);
+    }
   }
   return found;
 }
@@ -235,7 +237,7 @@ describe("a migration a release has shipped", () => {
 
 describe("the pins", () => {
   const entry = (version: number, file: string, holds: string): string =>
-    `Pin { version: ${version}, file: "${file}", holds: "${holds}" },`;
+    `Pin { version: ${String(version)}, file: "${file}", holds: "${holds}" },`;
   const released = `const PINS: &[Pin] = &[\n${entry(11, "aa", "bb")}\n${entry(12, "cc", "dd")}\n];`;
 
   it("reads each entry as the file writes it", () => {
