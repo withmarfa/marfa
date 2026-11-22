@@ -2,7 +2,7 @@
   "id": "about",
   "label": "About",
   "reverse_label": "Subject of",
-  "description": "Says that an item is about another item, such as a note about a book.",
+  "description": "Runs from the item to what it is about. When saving an item, about names that subject.",
   "cardinality": "many-to-many",
   "from_type_constraints": ["*"],
   "to_type_constraints": ["*"],

@@ -2,7 +2,7 @@
   "id": "in-folder",
   "label": "In folder",
   "reverse_label": "Folder contents",
-  "description": "Says where an item's file sits in a synced folder.",
+  "description": "Runs from the item to the system.folder its file sits in. Saving an item cannot set this edge, because it needs a path, and no item file writes it.",
   "cardinality": "many-to-many",
   "from_type_constraints": ["*"],
   "to_type_constraints": ["system.folder"],

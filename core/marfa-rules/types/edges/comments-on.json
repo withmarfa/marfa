@@ -2,7 +2,7 @@
   "id": "comments-on",
   "label": "Comment on",
   "reverse_label": "Comments",
-  "description": "Says that an item is a comment on another item, including a reply to another comment.",
+  "description": "Runs from the comment to the item it comments on. When saving a comment, comments-on names that item. A comment has one subject.",
   "cardinality": "many-to-one",
   "from_type_constraints": ["*"],
   "to_type_constraints": ["*"],

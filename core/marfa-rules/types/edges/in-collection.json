@@ -2,7 +2,7 @@
   "id": "in-collection",
   "label": "In collection",
   "reverse_label": "Contents",
-  "description": "Says that an item is a member of a container, such as a collection, a series or an album.",
+  "description": "Runs from the member to the collection. When saving a member, in-collection names the collection. A collection does not nest inside another.",
   "cardinality": "many-to-many",
   "from_type_constraints": ["*"],
   "to_type_constraints": ["role:container"],

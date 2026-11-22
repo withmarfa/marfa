@@ -22,7 +22,7 @@ A type file is a JSON object. A key the rules do not read is refused, with the k
 - **`label`**: optional, the name people see for the type, at most 100 characters. A type that names none is shown by one made from the last segment of its `id`
 - **`plural`**: optional, the name of a list of the type's items, at most 100 characters. A type that names none is answered with one made from its label (`Story` makes `Stories`), never from its parent's
 - **`description`**: what the type represents, in one sentence of at most 200 characters
-- **`guidance`**: a shipped type carries none yet. The catalog writer refuses a definition that names `guidance`, and a `<id>.md` beside a definition, and names the file. A registered type may carry optional Markdown guidance of at most 1,000 characters, and `marfa types check` reads `<id>.md` beside `<id>.json` as the guidance of a folder's type. Limits count characters (Unicode code points), as labels do
+- **`guidance`**: optional Markdown for an agent choosing and filling the type, at most 1,000 characters. A shipped item type keeps it in `<name>.md` beside `<name>.json` (so `note.json` and `note.md`). The writer joins that file into the catalog and refuses `guidance` written in the JSON, an empty or whitespace-only file, a file over 1,000 characters, and a `.md` beside a `system/` or `edges/` definition. Each refusal names the file. `marfa types check` reads `<id>.md` beside `<id>.json` as the guidance of a folder's type. Limits count characters (Unicode code points), as labels do
 - **`version`**: a non-negative integer, `0` where a file names none. Every shipped type is at 0
 - **`fields`**: field name to definition
 - **`required`**: optional, an array of field names, which each must be a declared or inherited field. A field may instead say `"required": true`
@@ -61,7 +61,7 @@ Name each edge type file `<id>.json` and give it a lowercase kebab-case `id`, a 
 
 The optional keys are:
 
-- `description`
+- `description`, at most 200 characters, saying which way the edge runs and, where it matters, how to write it from the item being saved
 - `from_type_constraints` and `to_type_constraints`. Use a non-empty list of type IDs or `role:container`. Use `["*"]` or omit the key to allow every type.
 - `cascade_on_delete`. Accepts `cascade`, `orphan`, `block`, or `with-hosts`. The default is `orphan`.
 - `property_schema`. Maps property names to definitions that accept `type`, `description`, `required`, `enum_values`, `items_type`, and `format`.
@@ -83,7 +83,7 @@ MARFA_WRITE_CATALOG=1 cargo nextest run -p marfa-rules builtin::catalog_file
 ../scripts/icon-sets.sh
 ```
 
-Without `MARFA_WRITE_CATALOG`, the same tests fail when `builtin_catalog.json` or `shipped-shapes.sha256` differs from what the definitions write. CI's `Types codegen freshness` and `Generated clients are fresh` jobs run the writers and refuse any difference. The digest includes each type's and edge type's identifier and shape. It omits labels, plurals, and descriptions.
+Without `MARFA_WRITE_CATALOG`, the same tests fail when `builtin_catalog.json` or `shipped-shapes.sha256` differs from what the definitions write. CI's `Types codegen freshness` and `Generated clients are fresh` jobs run the writers and refuse any difference. The digest includes each type's and edge type's identifier and shape. It omits labels, plurals, descriptions, and guidance.
 
 ## Adding a type
 
