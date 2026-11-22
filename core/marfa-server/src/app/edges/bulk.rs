@@ -47,9 +47,11 @@ impl Writing<'_, '_, '_> {
     fn entry_gates(&self, entry: &Entry) -> Result<()> {
         edges::check_entry_ids(entry)?;
         if let Some(from) = items::row(self.unit.tx(), &entry.from_id)?
-            .filter(|row| self.unit.caller.may_read_type(&row.type_id))
+            .filter(|row| self.unit.caller.may_read_item(&row.type_id, &row.source))
         {
-            self.unit.caller.require_type(&from.type_id, Level::Write)?;
+            self.unit
+                .caller
+                .require_item_type(&from.type_id, &from.source, Level::Write)?;
         }
         self.unit
             .caller
@@ -62,7 +64,7 @@ impl Writing<'_, '_, '_> {
         self.require_row_write(&from)?;
         self.require_edge_write(&entry.edge_type)?;
         let reachable = items::row(self.unit.tx(), &entry.to_id)?
-            .is_some_and(|row| self.unit.caller.may_read_type(&row.type_id));
+            .is_some_and(|row| self.unit.caller.may_read_item(&row.type_id, &row.source));
         if !reachable {
             return Err(edges::to_missing(&entry.to_id));
         }

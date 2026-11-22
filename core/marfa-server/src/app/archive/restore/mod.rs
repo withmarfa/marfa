@@ -391,6 +391,7 @@ impl App {
                 registrations.edge_types.clone(),
                 registrations.plugins.clone(),
                 registrations.connector_settings.clone(),
+                registrations.mapped(),
             );
             app.faults.hold(HOLD_RESTORE_SETTINGS, None).await;
             // On the writer, so every write admitted before the hold has landed.
@@ -406,6 +407,7 @@ impl App {
                         edge_types,
                         archived_plugins,
                         archived_settings,
+                        mapped,
                     ) = judged;
                     let caller = caller.current(tx, &app.clock.stamp())?;
                     caller.require_settings_restore(&stored::restoring(
@@ -417,7 +419,7 @@ impl App {
                     )?)?;
                     let (connected, named) =
                         connector_settings::restoring(tx, &archived_settings, &archived_plugins)?;
-                    caller.require_connector_restore(&connected, &named)?;
+                    caller.require_connector_restore(&connected, &named, &mapped)?;
                     let before = catalog::current(&app.catalog_handle(), tx, Snapshot::Pending)?;
                     judge_types(tx, &before, &types, &edge_types, &archived_plugins, &caller)
                         .map(drop)
@@ -459,7 +461,11 @@ impl App {
                             &registrations.connector_settings,
                             &registrations.plugins,
                         )?;
-                        unit.caller.require_connector_restore(&connected, &named)?;
+                        unit.caller.require_connector_restore(
+                            &connected,
+                            &named,
+                            &registrations.mapped(),
+                        )?;
                         let before = catalog::current(&cache, tx, Snapshot::Pending)?;
                         let (types_plan, edges_plan) = judge_types(
                             tx,
@@ -510,6 +516,14 @@ impl App {
                             &plugins_recorded,
                             &unit.at,
                         )?;
+                        let (mappings_added, mappings_skipped) =
+                            crate::app::mapping::restore(
+                                tx,
+                                &registrations.mappings,
+                                &unit.at,
+                                &unit.caller,
+                                &catalog.rules,
+                            )?;
                         let restored_settings =
                             stored::restore(
                                 tx,
@@ -635,6 +649,8 @@ impl App {
                             "sources_skipped_reasons": named.reasons,
                             "plugins_added": plugins_added,
                             "plugins_skipped": plugins_skipped,
+                            "connector_mappings_added": mappings_added,
+                            "connector_mappings_skipped": mappings_skipped,
                             "settings_added": settings_added,
                             "settings_skipped": settings_skipped,
                             "settings_dropped": registrations.dropped_settings,

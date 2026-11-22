@@ -220,6 +220,14 @@ If a bundle's `connector.sign_in` names in `client_id_setting`, `client_secret_s
 
 **Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a connector section with an unknown key, no kinds, a kind type outside the bundle, a choice with no choices, a secret with a default or a sign-in naming an undeclared setting, naming each path and installing nothing`.
 
+### `plugins/connector-default-mapping`
+
+If a kind in a bundle's `connector.kinds` gives a `default_mapping` that holds a member other than `tier`, `status_overrides` and `fields`, or that `PUT /plugins/{name}/connector/mapping` would refuse as the kind's entry with its own type as `target_type`, then the server MUST answer `400 validation_error` with `details.errors` naming each fault as a `path` under `connector.kinds.<index>.default_mapping`.
+
+**Reason:** a default lands a kind on its own type, where the key's type map alone decides what the connector writes (`plugins/reach-own-types`). A default the server takes is the one it answers, gives tiers by and reaches by, so the three never disagree.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses at install a default_mapping that names a target type, enabled or a member a kind's mapping does not hold, or a field its own type refuses, naming each path`.
+
 ### `plugins/connector-refused-nothing`
 
 If `POST /plugins` refuses a bundle for its connector section, then the server MUST register none of its types and keep no install record.
@@ -843,3 +851,299 @@ When the server mints a connector's key for its host, the server MUST record a `
 The server MUST NOT write a one-time link's code, a host's key or a connector's key into an audit entry, a log line or a refusal.
 
 **Tests:** `compliance/connector-hosts.test.ts › keeps every link code, host key and connector key out of audit entries, the log and refusals`.
+
+## A connector's mapping
+
+A plugin's `connector` object names its `source` and its `kinds`. Each kind has a `name`, its own `type` (one of the bundle's types), a `direction` (`in`, `out` or `both`) and, optionally, a `default_mapping`: an object with any of `tier`, `status_overrides` and `fields` of one kind's entry below (`plugins/connector-default-mapping`). A plugin's connector key is a live key whose own `source` is the `source` of an installed plugin's `connector`.
+
+The mapping is the owner's choice of what each kind brings: `{ version, kinds, rewrites }`, where `kinds` holds one entry per kind of the connector, `{ enabled, target_type, tier, status_overrides, fields }`. `fields` is keyed by a field of `target_type`, each `{ "from": <field of the kind's own type> }`, `{ "fixed": <value> }` or `{ "template": <Jinja text> }`. `status_overrides` maps a status word of the kind's own type to a status word of `target_type`. The connector applies the mapping as it writes; the server stores it, judges it and decides from it what the connector's key may write.
+
+### `plugins/mapping-read`
+
+When a caller holding `connectors.manage`, or the plugin's connector key, sends `GET /plugins/{name}/connector/mapping` for an installed plugin with a `connector`, the server MUST answer `200` with `version`, `kinds` holding one entry for each kind the plugin's `connector` names, each with `enabled`, `target_type`, `tier`, `status_overrides` and `fields`, and `rewrites`.
+
+**Reason:** the connector reads its mapping as it runs, and an app draws the owner's mapping page from the same answer.
+
+**Tests:** `compliance/connector-mapping.test.ts › answers the default mapping to connectors.manage and to the connector's own key, and 403 to another key`.
+
+### `plugins/mapping-default`
+
+While no mapping has been saved for a plugin, the server MUST answer `GET /plugins/{name}/connector/mapping` with `version` `0` and each kind's entry holding `enabled` `true`, `target_type` the kind's own type, and each member its `default_mapping` names, and otherwise `tier` `feed`, `status_overrides` `{}` and `fields` holding `{ "from": <field> }` for each field `target_type` declares that the kind's own type also declares.
+
+**Reason:** a new connector starts at the feed under its own types, as the plugin's author meant it, until the owner chooses otherwise.
+
+**Tests:** `compliance/connector-mapping.test.ts › answers the default mapping to connectors.manage and to the connector's own key, and 403 to another key`.
+
+### `plugins/mapping-kinds-from-plugin`
+
+When the server answers or judges a mapping, the server MUST hold an entry for each kind the installed plugin's `connector` names and none for a kind it does not name, giving a kind no saved entry holds its default entry (`plugins/mapping-default`).
+
+**Reason:** a newer version of the plugin may add a kind; the owner's choices for the kinds it keeps stand.
+
+**Tests:** `compliance/connector-mapping.test.ts › saves a mapping that fills a required field with a fixed value, and fills a kind it leaves out with its default`.
+
+### `plugins/mapping-read-permission`
+
+If a caller that neither holds `connectors.manage` nor is the plugin's connector key sends `GET /plugins/{name}/connector/mapping`, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage`.
+
+**Tests:** `compliance/connector-mapping.test.ts › answers the default mapping to connectors.manage and to the connector's own key, and 403 to another key`.
+
+### `plugins/mapping-not-found`
+
+If a caller holding `connectors.manage` sends a request under `/plugins/{name}/connector/` for a name no installed plugin has, then the server MUST answer `404 plugin_not_found`, and for an installed plugin whose bundle holds no `connector` object naming a `source` and `kinds` as this section describes, `404 plugin_connector_not_found`.
+
+**Reason:** a stored `connector` object that does not read is no connector to map.
+
+**Tests:** `compliance/connector-mapping.test.ts › answers 404 plugin_not_found for a plugin not installed and 404 plugin_connector_not_found for one with no connector`.
+
+### `plugins/mapping-save`
+
+When a caller holding `connectors.manage` sends `PUT /plugins/{name}/connector/mapping` with `version` equal to the mapping's current `version` and `kinds` the server takes, the server MUST store the mapping at the next `version` and answer `200` with it as `plugins/mapping-read` gives it.
+
+**Tests:** `compliance/connector-mapping.test.ts › saves a mapping that fills a required field with a fixed value, and fills a kind it leaves out with its default`.
+
+### `plugins/mapping-save-defaults`
+
+When `PUT /plugins/{name}/connector/mapping` leaves out a kind, or a member of a kind's entry, the server MUST store that kind or member as its default (`plugins/mapping-default`) gives it.
+
+**Tests:** `compliance/connector-mapping.test.ts › saves a mapping that fills a required field with a fixed value, and fills a kind it leaves out with its default`.
+
+### `plugins/mapping-stale`
+
+If `PUT /plugins/{name}/connector/mapping` names a `version` other than the mapping's current `version`, then the server MUST answer `409 connector_mapping_stale` with `details.version` holding the current `version`, and store nothing.
+
+**Reason:** two apps editing one mapping would otherwise lose the first one's change without a word.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses 409 connector_mapping_stale a save naming a version that is no longer current`.
+
+### `plugins/mapping-save-permission`
+
+If a caller without `connectors.manage` sends `PUT /plugins/{name}/connector/mapping`, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage`, and store nothing.
+
+**Reason:** the connector reads its mapping but never sets it; the owner's choice is the owner's.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses 403 a save from the connector's own key and from a key without connectors.manage`.
+
+### `plugins/mapping-shape`
+
+If `PUT /plugins/{name}/connector/mapping` sends a body that is not an object holding `version` as a whole number and `kinds` as an object, a member other than `version` and `kinds`, a kind's entry that is not an object or holds a member other than `enabled`, `target_type`, `tier`, `status_overrides` and `fields`, an `enabled` that is not a boolean, a `target_type` that is not text, a `tier` other than `feed` or `library`, a `status_overrides` that is not an object of text, or a field entry that is not an object holding exactly one of `from` as text, `fixed` or `template` as text, then the server MUST answer `400 validation_error` with `details.errors` naming the `path` of each.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses 400 validation_error a mapping whose shape is wrong, naming each path`.
+
+### `plugins/mapping-unknown-kind`
+
+If `PUT /plugins/{name}/connector/mapping` names in `kinds` a kind the plugin's `connector` does not name, then the server MUST answer `400 validation_error` with `details.errors` naming `kinds.<kind>`.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses 400 validation_error a mapping whose shape is wrong, naming each path`.
+
+### `plugins/mapping-target-type`
+
+If `PUT /plugins/{name}/connector/mapping` gives an enabled kind a `target_type` that names no registered type, that sits under `system`, or that the caller's type map does not grant write on, then the server MUST answer `400 validation_error` with `details.errors` naming `kinds.<kind>.target_type`.
+
+**Reason:** a mapping gives the connector's key write on its target type for the connector's own items (`plugins/reach-target-own-source`), so no caller hands on a write it does not hold.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses a target type that is not registered, is a system type or that the caller may not write`.
+
+### `plugins/mapping-required-field`
+
+If `PUT /plugins/{name}/connector/mapping` gives an enabled kind a `target_type` with a required field that no entry in its `fields` fills with `from`, `fixed` or, for a field of type `string`, `template`, then the server MUST answer `400 validation_error` with `details.errors` naming `kinds.<kind>.fields.<field>`.
+
+**Reason:** the connector could not write an item the target type takes. The owner fills such a field with a fixed value.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses a mapping that leaves a required field of the target type unfilled, naming the field`, `› saves a mapping that fills a required field with a fixed value, and fills a kind it leaves out with its default`.
+
+### `plugins/mapping-field-unknown`
+
+If `PUT /plugins/{name}/connector/mapping` names in an enabled kind's `fields` a field its `target_type` does not declare, then the server MUST answer `400 validation_error` with `details.errors` naming `kinds.<kind>.fields.<field>`.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses a from naming no field of the kind's own type, a fixed value the field refuses, a template on a field that is not text and an unknown field`.
+
+### `plugins/mapping-from-unknown`
+
+If an entry of an enabled kind's `fields` holds a `from` naming a field the kind's own type does not declare, then the server MUST answer `400 validation_error` with `details.errors` naming `kinds.<kind>.fields.<field>.from`.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses a from naming no field of the kind's own type, a fixed value the field refuses, a template on a field that is not text and an unknown field`.
+
+### `plugins/mapping-fixed-fit`
+
+If an entry of an enabled kind's `fields` holds a `fixed` value that the target field would refuse in an item of `target_type`, then the server MUST answer `400 validation_error` with `details.errors` naming `kinds.<kind>.fields.<field>.fixed`.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses a from naming no field of the kind's own type, a fixed value the field refuses, a template on a field that is not text and an unknown field`.
+
+### `plugins/mapping-template-text`
+
+If an entry of an enabled kind's `fields` holds a `template` for a target field whose type is not `string`, then the server MUST answer `400 validation_error` with `details.errors` naming `kinds.<kind>.fields.<field>.template`.
+
+**Reason:** a template renders text. The server stores it and never renders it: the connector does, as it writes.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses a from naming no field of the kind's own type, a fixed value the field refuses, a template on a field that is not text and an unknown field`.
+
+### `plugins/mapping-status-override`
+
+If an enabled kind's `status_overrides` names a word that the kind's own type does not declare as a status word, or maps a word to one that `target_type` does not declare as a status word, then the server MUST answer `400 validation_error` with `details.errors` naming `kinds.<kind>.status_overrides.<word>`.
+
+**Reason:** status words map through their group, and an override replaces that for one word, into any group the target type holds.
+
+**Tests:** `compliance/connector-mapping.test.ts › refuses a status override naming a word either type does not declare`.
+
+### `plugins/mapping-disabled-shape`
+
+When `PUT /plugins/{name}/connector/mapping` holds a kind with `enabled` `false`, the server MUST judge that kind's entry only by `plugins/mapping-shape`.
+
+**Reason:** a kind that brings nothing gives no reach, so a target type deleted since it was chosen does not stop the owner saving the rest. Turning the kind on again is a save, judged whole.
+
+**Tests:** `compliance/connector-mapping.test.ts › saves a disabled kind whose target type is not registered, and refuses the same kind enabled`.
+
+### `plugins/mapping-judged-committed`
+
+When the server judges `PUT /plugins/{name}/connector/mapping`, the server MUST judge it against the types and the caller's grants as they stand in the write that stores it.
+
+**Reason:** a type changed between the read and the save is judged as it now is.
+
+**Tests:** `compliance/connector-mapping.test.ts › judges a save against a type changed after the mapping was read`.
+
+### `plugins/mapping-keeps-items`
+
+When the server stores a mapping, the server MUST change no stored item.
+
+**Reason:** a changed mapping applies to what the connector writes next; existing items change only when the owner asks for a rewrite (`plugins/rewrite-request`).
+
+**Tests:** `compliance/connector-mapping.test.ts › counts exactly the items under the connector's source on a kind's target type, and changes no item on a save or a rewrite`.
+
+### `plugins/mapping-audit`
+
+When the server stores a mapping, the server MUST write one audit entry with the action `connector.mapping_change`, the resource the plugin's name and details holding only the mapping's `version`.
+
+**Tests:** `compliance/connector-mapping.test.ts › saves a mapping that fills a required field with a fixed value, and fills a kind it leaves out with its default`.
+
+### `plugins/mapping-removed`
+
+When `DELETE /plugins/{name}` removes a plugin, the server MUST remove its saved mapping and any rewrite it asked for, so that installing it again answers the default mapping at `version` `0` with no `rewrites`.
+
+**Tests:** `compliance/connector-mapping.test.ts › removes the mapping with the plugin, and answers the default once it is installed again`.
+
+## What a connector's key may write
+
+### `plugins/reach-target-own-source`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` is none of its connector's kinds' own types and its type map does not grant write on, when the key creates an item of that type under its own source, or writes an item of that type whose `source` is its own source through any door that writes an item, the server MUST take the write as it would were that type granted write in its type map.
+
+**Reason:** a connector mapped onto a type the owner chose writes there only what it brought. The reach is read from the mapping each time, never copied into the key's type map, so the two cannot disagree.
+
+**Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`, `› leaves the owner's child, comment and attachment on its item where they are through its trash, restore and purge, and carries its own`.
+
+### `plugins/reach-own-types`
+
+When a plugin's connector key reads or writes an item of one of its connector's kinds' own types, the server MUST decide it by the key's type map alone, whatever the mapping holds.
+
+**Reason:** every kind lands on its own type until the owner maps it elsewhere, so a mapping that granted its own types would hand a key the plugin's whole namespace whatever its type map says.
+
+**Tests:** `compliance/connector-reach.test.ts › writes a kind's own type only as its type map allows, whatever the mapping`.
+
+### `plugins/reach-cascade`
+
+When a plugin's connector key moves an item to the bin, restores it from the bin or purges it, the server MUST carry with it no item the key could not itself write through that door, and no item the cascade reaches only through one, leaving each where it is.
+
+**Reason:** a cascade follows edges the owner made too, such as their child of the connector's item or their comment on it. The owner's items do not go with the connector's, whichever door it uses and whatever type they are. The server decides it on the items as they stand in the write that moves them.
+
+**Tests:** `compliance/connector-reach.test.ts › leaves the owner's child, comment and attachment on its item where they are through its trash, restore and purge, and carries its own`.
+
+### `plugins/reach-target-other-source`
+
+While a plugin's connector key holds no write on a type in its type map, when the key reads or writes an item of that type whose `source` is not its own, through any door, the server MUST answer as it answers a key whose type map does not reach that type.
+
+**Reason:** a mapping onto a type that also holds the owner's items never opens those items to the connector. Each door answers as it does for a type the key cannot reach, so the connector learns nothing of the owner's items.
+
+**Tests:** `compliance/connector-reach.test.ts › answers an owner's item of the target type as one the key cannot reach on every door, where the same call on its own item succeeds`.
+
+### `plugins/reach-create-own-source`
+
+If a plugin's connector key creates an item of an enabled kind's `target_type` that its type map does not grant write on, naming as `source` one it claims rather than its own, then the server MUST answer `403 type_not_permitted`.
+
+**Reason:** a claimed source holds other writers' items; the mapping's reach is for the connector's own.
+
+**Tests:** `compliance/connector-reach.test.ts › answers an owner's item of the target type as one the key cannot reach on every door, where the same call on its own item succeeds`.
+
+### `plugins/reach-read-own`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items/{id}` or `POST /items/lookup` for an item of that type whose `source` is its own, the server MUST answer it as it would were that type granted read in its type map.
+
+**Reason:** a connector reads its own items back to update them. A listing, a search, the event stream and an export answer the type as the key's type map reaches it.
+
+**Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`.
+
+### `plugins/reach-disabled`
+
+When a saved mapping turns a kind off or moves it to another `target_type`, the server MUST answer every later write of the plugin's connector key to the former target type as `plugins/reach-target-own-source` does not hold for it.
+
+**Tests:** `compliance/connector-reach.test.ts › refuses the target type once the kind is off or moved, and takes it again once it is back`.
+
+### `plugins/reach-committed`
+
+When a plugin's connector key writes an item, the server MUST decide the key's reach on the mapping as it stands in the write that commits the item.
+
+**Reason:** a mapping saved while a write waits on the writer decides that write.
+
+**Tests:** `compliance/connector-reach.test.ts › decides a write held on the writer by the mapping saved while it waited`.
+
+### `plugins/reach-not-in-map`
+
+When the server answers a plugin's connector key, the server MUST answer its `type_permissions` as stored, with no entry for a mapping's target type.
+
+**Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`.
+
+## Rewriting existing items
+
+### `plugins/rewrite-count`
+
+When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/mapping/rewrite` with `dry_run` `true`, the server MUST answer `200` with `dry_run` `true`, the mapping's `version` and `kinds` holding, for each kind the request names or, with none named, each enabled kind, its `target_type` and the `count` of items outside the bin of that type whose `source` is the connector's source, and store nothing.
+
+**Reason:** the owner sees how many items a rewrite would touch before asking for it.
+
+**Tests:** `compliance/connector-mapping.test.ts › counts exactly the items under the connector's source on a kind's target type, and changes no item on a save or a rewrite`.
+
+### `plugins/rewrite-request`
+
+When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/mapping/rewrite` without `dry_run` `true`, the server MUST store a new rewrite request under a `number` higher than any it gave a rewrite request before, holding the mapping's `version`, the kinds counted as `plugins/rewrite-count` counts them and the time it was asked, and answer `200` with the counts, `dry_run` `false` and the `number`.
+
+**Reason:** the connector rewrites its items; the server never transforms one. A number is never given again, so a connector that finishes an older request never clears a newer one.
+
+**Tests:** `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`.
+
+### `plugins/rewrite-pending`
+
+While the connector has not cleared a rewrite request, the server MUST answer it in `rewrites` in `GET /plugins/{name}/connector/mapping`, with its `number`, `version`, `kinds` and `requested_at`, ordered by `number`.
+
+**Reason:** the owner may ask again before the connector runs; each request stands until the connector carries it out.
+
+**Tests:** `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`.
+
+### `plugins/rewrite-unknown-kind`
+
+If `POST /plugins/{name}/connector/mapping/rewrite` names in `kinds` a kind the plugin's `connector` does not name, or sends `dry_run` that is not a boolean or `kinds` that is not a list of text, then the server MUST answer `400 validation_error` with `details.errors` naming each `path`.
+
+**Tests:** `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`.
+
+### `plugins/rewrite-permission`
+
+If a caller without `connectors.manage` sends `POST /plugins/{name}/connector/mapping/rewrite`, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage`.
+
+**Tests:** `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`.
+
+### `plugins/rewrite-done`
+
+When the plugin's connector key, or local authority, sends `POST /plugins/{name}/connector/mapping/rewrite/done` with the `number` of a rewrite request the mapping holds, the server MUST clear that request alone and answer `200` with `rewrites` holding the requests still waiting; with a `number` no request holds, the same answer.
+
+**Tests:** `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`.
+
+### `plugins/rewrite-done-shape`
+
+If `POST /plugins/{name}/connector/mapping/rewrite/done` sends a body that does not hold `number` as a whole number from 1, or holds another member, then the server MUST answer `400 validation_error` with `details.errors` naming each `path`, and clear nothing.
+
+**Tests:** `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`.
+
+### `plugins/rewrite-done-key`
+
+If a caller other than the plugin's connector key or local authority sends `POST /plugins/{name}/connector/mapping/rewrite/done`, then the server MUST answer `403 forbidden` and keep the request.
+
+**Tests:** `compliance/connector-mapping.test.ts › stores each rewrite request under its own number, which the connector clears one at a time, and refuses another key clearing one`.

@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { cleanup, trackType } from "../../utils/setup.js";
 import { tempFolder } from "../../utils/temp-folder.js";
-import { cliContext, type CliContext } from "./harness.js";
+import { MarfaClient } from "../../client/api.js";
+import { Cli, cliContext, type CliContext, requireBinary } from "./harness.js";
 
 /**
  * An owner installs a plugin from the terminal: from a bundle file, from a
@@ -181,6 +182,91 @@ describe("plugins from the terminal", () => {
     expect(
       (await c.cli.json<{ id: string }>(["types", "get", fileType])).id,
     ).toBe(fileType);
+  });
+
+  it("sets a connector's mapping from a YAML file at the version read, shows it, refuses a stale version and counts a rewrite", async () => {
+    const name = `${root}-mapped`;
+    const source = `clim${root.replaceAll(/[^a-z0-9]/g, "").slice(-10)}`;
+    const folder = tempFolder("marfa-plugin-mapping-");
+    const bundle = join(folder, `${name}.plugin.json`);
+    writeFileSync(
+      bundle,
+      JSON.stringify({
+        ...bundleOf(name, `${source}.issue`, "1.0.0"),
+        connector: {
+          source,
+          kinds: [{ name: "issue", type: `${source}.issue`, direction: "in" }],
+        },
+      }),
+    );
+    const minted = await new MarfaClient({
+      baseUrl: c.apiUrl,
+      controlSocket: process.env.MARFA_CONTROL_SOCKET,
+    }).createKey({
+      label: "plugins mapping",
+      source: `${source}-owner`,
+      permissions: ["schema.write", "connectors.manage"],
+      type_permissions: { [`${source}.*`]: "write" },
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    const owner = new Cli(requireBinary(), c.apiUrl, minted.data.key);
+    try {
+      await owner.json(["plugins", "install", bundle]);
+      const shown = await owner.json<{
+        version: number;
+        kinds: Record<string, { tier: string; target_type: string }>;
+      }>(["plugins", "mapping", "show", name]);
+      expect(shown.version).toBe(0);
+      expect(shown.kinds.issue?.tier).toBe("feed");
+
+      const yaml = join(folder, "mapping.yaml");
+      writeFileSync(yaml, "kinds:\n  issue:\n    tier: library\n");
+      const set = await owner.json<{
+        version: number;
+        kinds: Record<string, { tier: string; target_type: string }>;
+      }>(["plugins", "mapping", "set", name, yaml]);
+      expect(set.version).toBe(1);
+      expect(set.kinds.issue).toMatchObject({
+        tier: "library",
+        target_type: `${source}.issue`,
+      });
+
+      const stale = join(folder, "stale.json");
+      writeFileSync(
+        stale,
+        JSON.stringify({ version: 0, kinds: { issue: { tier: "feed" } } }),
+      );
+      const refused = await owner.refused([
+        "plugins",
+        "mapping",
+        "set",
+        name,
+        stale,
+      ]);
+      expect(refused.envelope.error.server?.code).toBe(
+        "connector_mapping_stale",
+      );
+      const kept = await owner.json<{ version: number }>([
+        "plugins",
+        "mapping",
+        "show",
+        name,
+      ]);
+      expect(kept.version).toBe(1);
+
+      const counted = await owner.json<{
+        dry_run: boolean;
+        kinds: Record<string, { count: number }>;
+      }>(["plugins", "mapping", "rewrite", name, "--dry-run"]);
+      expect(counted.dry_run).toBe(true);
+      expect(counted.kinds.issue?.count).toBe(0);
+    } finally {
+      await owner.run(["plugins", "remove", name]);
+      await new MarfaClient({
+        baseUrl: c.apiUrl,
+        controlSocket: process.env.MARFA_CONTROL_SOCKET,
+      }).revokeKey(minted.data.id);
+    }
   });
 
   it("installs a plugin by name from a release's index, checking its SHA-256, and sends no credential", async () => {

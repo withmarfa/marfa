@@ -1099,6 +1099,11 @@ impl Catalog {
         Ok(fields)
     }
 
+    /// The type's one `status` field as it resolves, if its chain resolves and declares one.
+    pub fn status_field(&self, type_id: &str) -> Option<StatusField> {
+        StatusField::of(type_id, &self.resolved(type_id).ok()?)
+    }
+
     /// A type whose chain cannot be resolved has none.
     pub fn status_fields(&self) -> Vec<StatusField> {
         let mut fields: Vec<StatusField> = self

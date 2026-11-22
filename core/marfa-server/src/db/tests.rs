@@ -2679,7 +2679,7 @@ async fn a_database_at_schema_version_6_upgrades_through_7_giving_each_plugin_co
         )
         .unwrap();
 
-    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+    db_open(&options(&place.file, &MIGRATIONS[..7]), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -2721,4 +2721,84 @@ async fn a_database_at_schema_version_6_upgrades_through_7_giving_each_plugin_co
         )
         .unwrap();
     assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn a_database_at_schema_version_7_upgrades_to_hold_mappings_that_go_with_their_plugin() {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..7]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    let fingerprint = "0".repeat(64);
+    Connection::open(&place.file)
+        .unwrap()
+        .execute(
+            "INSERT INTO plugins (name, version, title, description, mark, maker, marfa, \
+             manifest, edge_types, installed_at, updated_at, fingerprint) \
+             VALUES ('tracker', '1.0.0', 'T', 'T.', 'lucide:bug', 'M', '0.0.1', \
+             '{\"connector\":{\"source\":\"trk\",\"kinds\":[]}}', '[]', 'a', 'a', ?1)",
+            [&fingerprint],
+        )
+        .unwrap();
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    assert_eq!(version_of(&place.file), super::migrate::latest(MIGRATIONS));
+    let conn = Connection::open(&place.file).unwrap();
+    conn.pragma_update(None, "foreign_keys", true).unwrap();
+    let generation = |conn: &Connection| -> i64 {
+        conn.query_row(
+            "SELECT coalesce((SELECT value FROM read_only_generation), 0)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    let before = generation(&conn);
+    conn.execute(
+        "INSERT INTO connector_mappings (plugin, version, kinds, updated_at) \
+         VALUES ('tracker', 1, '{}', 'a')",
+        [],
+    )
+    .unwrap();
+    assert_eq!(generation(&conn), before + 1);
+    let orphan = conn.execute(
+        "INSERT INTO connector_mappings (plugin, version, kinds, updated_at) \
+         VALUES ('absent', 1, '{}', 'a')",
+        [],
+    );
+    assert!(orphan.is_err(), "a mapping took a plugin no row holds");
+    conn.execute("DELETE FROM plugins WHERE name = 'tracker'", [])
+        .unwrap();
+    let left: i64 = conn
+        .query_row("SELECT count(*) FROM connector_mappings", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(left, 0);
+    conn.execute(
+        "INSERT INTO plugins (name, version, title, description, mark, maker, marfa, \
+         manifest, edge_types, installed_at, updated_at, fingerprint) \
+         VALUES ('tracker', '1.0.0', 'T', 'T.', 'lucide:bug', 'M', '0.0.1', '{}', '[]', 'a', 'a', ?1)",
+        [&fingerprint],
+    )
+    .unwrap();
+    let ask = |conn: &Connection| -> i64 {
+        conn.query_row(
+            "INSERT INTO connector_rewrites (plugin, version, kinds, requested_at) \
+             VALUES ('tracker', 0, '[]', 'a') RETURNING number",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    };
+    let first = ask(&conn);
+    conn.execute("DELETE FROM connector_rewrites", []).unwrap();
+    assert!(ask(&conn) > first, "a rewrite number was given again");
 }

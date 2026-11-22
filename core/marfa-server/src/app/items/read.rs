@@ -141,7 +141,7 @@ impl<'a, 'c> Reader<'a, 'c> {
     fn row_in(&self, id: &str, states: Option<&States>, door: &Door) -> Result<Item> {
         self.caller.require_reach()?;
         let row = rows::by_id(self.tx, id)?
-            .filter(|row| self.caller.may_read_type(&row.type_id))
+            .filter(|row| self.caller.may_read_item(&row.type_id, &row.source))
             .ok_or_else(not_found)?;
         let reached = match states {
             None => row.state != "trashed",
@@ -1008,7 +1008,12 @@ pub async fn lookup(
             Selector::Keys(keys) => Some(keys),
             Selector::Ids(_) => None,
         };
-        judge_type(read, &type_id)?;
+        if read.caller.maps_onto(&type_id) {
+            marfa_rules::query::refuse_unknown_type(&read.catalog.rules, Some(&type_id))
+                .map_err(crate::app::items::write::ruled)?;
+        } else {
+            judge_type(read, &type_id)?;
+        }
         check_links(&read.catalog, &type_id, keys)?;
         let readable = read.caller.may_read_type(&type_id);
         let found = read.found_by(&type_id, &selector)?;
@@ -1017,7 +1022,7 @@ pub async fn lookup(
         let mut seen = HashSet::new();
         for row in found {
             if super::is_hidden(&row.type_id)
-                || !read.caller.may_read_type(&row.type_id)
+                || !read.caller.may_read_item(&row.type_id, &row.source)
                 || !seen.insert(row.id.clone())
             {
                 continue;

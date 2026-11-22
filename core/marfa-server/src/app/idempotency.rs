@@ -42,6 +42,9 @@ pub enum Need {
     Type {
         name: String,
         write: bool,
+        /// The source the write's item is under, where the write named one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        under: Option<String>,
     },
     Extension {
         namespace: String,
@@ -57,6 +60,9 @@ pub enum Need {
     },
     CascadeTo {
         name: String,
+        /// The source of the to item, where the write named one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        under: Option<String>,
     },
     EdgeSource {
         id: String,
@@ -300,32 +306,48 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
             Need::Reach => caller.require_reach()?,
             Need::Purge => caller.require(Permission::ItemsPurge)?,
             Need::ItemRef { id } => {
-                let readable =
-                    items::type_of(tx, &id)?.is_some_and(|type_id| caller.may_read_type(&type_id));
+                let readable = items::type_and_source_of(tx, &id)?
+                    .is_some_and(|(type_id, source)| caller.may_read_item(&type_id, &source));
                 if !readable {
                     return Err(may_not_read());
                 }
             }
             Need::Item { id, type_id, write } => {
-                let current = items::type_of(tx, &id)?;
-                let types = std::iter::once(&type_id).chain(current.iter());
-                if !types.clone().all(|held| caller.may_read_type(held)) {
+                let current = items::type_and_source_of(tx, &id)?;
+                let source = current.as_ref().map(|(_, source)| source.as_str());
+                let types = std::iter::once(&type_id).chain(current.iter().map(|(held, _)| held));
+                let reads = |held: &str| match source {
+                    Some(source) => caller.may_read_item(held, source),
+                    None => caller.may_read_type(held),
+                };
+                if !types.clone().all(|held| reads(held)) {
                     return Err(may_not_read());
                 }
                 if write {
                     for held in types {
-                        caller.require_type(held, Level::Write)?;
+                        match source {
+                            Some(source) => caller.require_item_type(held, source, Level::Write)?,
+                            None => caller.require_type(held, Level::Write)?,
+                        }
                     }
                 }
             }
             Need::EdgeSource { id, type_id } => {
-                let current = edges::from_type(tx, &id)?;
-                let types = std::iter::once(&type_id).chain(current.iter());
-                if !types.clone().all(|held| caller.may_read_type(held)) {
+                let current = edges::from_type_and_source(tx, &id)?;
+                let source = current.as_ref().map(|(_, source)| source.as_str());
+                let types = std::iter::once(&type_id).chain(current.iter().map(|(held, _)| held));
+                let reads = |held: &str| match source {
+                    Some(source) => caller.may_read_item(held, source),
+                    None => caller.may_read_type(held),
+                };
+                if !types.clone().all(|held| reads(held)) {
                     return Err(edge_gone());
                 }
                 for held in types {
-                    caller.require_type(held, Level::Write)?;
+                    match source {
+                        Some(source) => caller.require_item_type(held, source, Level::Write)?,
+                        None => caller.require_type(held, Level::Write)?,
+                    }
                 }
             }
             Need::BlockingEnd { id, type_id } => {
@@ -335,9 +357,12 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
                     return Err(edge_gone());
                 }
             }
-            Need::Type { name, write } => {
+            Need::Type { name, write, under } => {
                 let level = if write { Level::Write } else { Level::Read };
-                caller.require_type(&name, level)?;
+                match under {
+                    Some(source) => caller.require_item_type(&name, &source, level)?,
+                    None => caller.require_type(&name, level)?,
+                }
             }
             Need::Extension { namespace, write } => {
                 let level = if write { Level::Write } else { Level::Read };
@@ -349,7 +374,10 @@ fn authorize(tx: &Transaction<'_>, caller: &Caller, mut needs: Vec<Need>) -> Res
                     return Err(edge_gone());
                 }
             }
-            Need::CascadeTo { name } => caller.require_cascade_to(&name)?,
+            Need::CascadeTo { name, under } => match under {
+                Some(source) => caller.require_cascade_onto(&name, &source)?,
+                None => caller.require_cascade_to(&name)?,
+            },
             Need::Source { name, disclosed } => {
                 if caller.writes_under(&name) {
                     continue;

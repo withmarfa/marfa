@@ -133,6 +133,27 @@ fn edge_type_names(value: &Value) -> Option<Vec<String>> {
     Some(names)
 }
 
+pub fn find(tx: &Transaction<'_>, name: &str) -> Result<Option<Installed>> {
+    row(tx, name)
+}
+
+/// The one installed plugin whose bundle names `source` as its connector's, if exactly one does.
+pub fn holding_source(tx: &Transaction<'_>, source: &str) -> Result<Option<Installed>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT name, version, manifest, edge_types, fingerprint, installed_at, installed_by, \
+         updated_at FROM plugins WHERE json_extract(manifest, '$.connector.source') = ?1 LIMIT 2",
+    )?;
+    let found = statement.query_map([source], stored)?;
+    let mut held = Vec::new();
+    for read in found {
+        held.push(read_row(read?)?);
+    }
+    Ok(match held.len() {
+        1 => held.pop(),
+        _ => None,
+    })
+}
+
 fn rows(tx: &Transaction<'_>) -> Result<Vec<Installed>> {
     let mut statement = tx.prepare(
         "SELECT name, version, manifest, edge_types, fingerprint, installed_at, installed_by, \
@@ -426,6 +447,7 @@ pub async fn install(
             edge_types::install(unit, &catalog, &bundle_objects(&bundle, "edge_types"))?;
             let before = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             types::write::write_install(unit, &cache, &before, plan, &origin)?;
+            super::mapping::require_defaults(unit, &cache, &bundle)?;
             let manifest = Value::Object(bundle.clone()).to_string();
             let mut brought = held.as_ref().map(|held| held.edge_types.clone()).unwrap_or_default();
             for id in bundle_ids(&bundle, "edge_types") {

@@ -862,6 +862,13 @@ fn select<W: RowSink>(
         })
         .collect::<Result<_>>()?;
     count("app_vendor_count", &mut instance, bound)?;
+    let mut mappings = Vec::new();
+    if caller.holds(Permission::ConnectorsManage) {
+        for line in super::mapping::archive_lines(read.tx)? {
+            mappings.push((print(&line)?, needing(Some(Permission::ConnectorsManage))));
+        }
+    }
+    count("connector_mapping_count", &mut instance, mappings)?;
     let mut settings = Vec::new();
     if caller.holds(Permission::ConfigManage) {
         for (key, text) in stored::rows(read.tx)? {

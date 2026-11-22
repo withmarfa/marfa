@@ -78,6 +78,9 @@ pub const OPERATIONS: &[Operation] = &[
     reached("getConnectorHost", "hosts get"),
     reached("deleteConnectorHost", "hosts remove"),
     reached("createConnectorHostLink", "hosts link"),
+    reached("getConnectorMapping", "plugins mapping show"),
+    reached("saveConnectorMapping", "plugins mapping set"),
+    reached("rewriteConnectorItems", "plugins mapping rewrite"),
     reached("listTypes", "types list"),
     reached("registerType", "types register"),
     reached("normalizeType", "types normalize"),
@@ -211,6 +214,10 @@ pub const NO_COMMAND: &[(&str, &str)] = &[
     (
         "getConnectorSettings",
         "only a plugin connector's own key reads its settings opened, which the connector holds",
+    ),
+    (
+        "finishConnectorRewrite",
+        "a plugin's connector sends it under its own key once it has rewritten its items; the owner asks for a rewrite with `plugins mapping rewrite`",
     ),
 ];
 

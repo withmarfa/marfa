@@ -334,7 +334,11 @@ pub async fn move_type(
             .write(caller, "items.bulk_action", move |unit| {
                 claim.note(Need::Reach);
                 for name in named {
-                    claim.note(Need::Type { name, write: true });
+                    claim.note(Need::Type {
+                        name,
+                        write: true,
+                        under: None,
+                    });
                 }
                 idempotency::complete(unit, &claim, 200, body.as_bytes())?;
                 Ok(body)
@@ -418,6 +422,7 @@ fn queue(
             claim.note(Need::Type {
                 name: name.clone(),
                 write: true,
+                under: None,
             });
         }
     }

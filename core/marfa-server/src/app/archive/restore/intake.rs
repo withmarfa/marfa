@@ -153,6 +153,14 @@ pub struct Registrations {
     pub states: Vec<(String, Map<String, Value>)>,
     pub vendors: Vec<crate::app::vendors::Binding>,
     pub connector_settings: Vec<crate::app::connector_settings::Archived>,
+    pub mappings: Vec<crate::app::mapping::Archived>,
+}
+
+impl Registrations {
+    /// Each plugin whose mapping the archive carries.
+    pub fn mapped(&self) -> Vec<String> {
+        self.mappings.iter().map(|held| held.plugin.clone()).collect()
+    }
 }
 
 /// A body read to its end and checked, ready for the restore's write.
@@ -273,7 +281,7 @@ struct Rows {
 }
 
 /// Each kind of `instance.ndjson.gz` line, with the manifest field that counts it.
-const KINDS: [(&str, &str); 11] = [
+const KINDS: [(&str, &str); 12] = [
     ("type", "type_count"),
     ("edge_type", "edge_type_count"),
     ("type_icon", "type_icon_count"),
@@ -285,13 +293,14 @@ const KINDS: [(&str, &str); 11] = [
     ("plugin", "plugin_count"),
     ("app_vendor", "app_vendor_count"),
     ("connector_setting", "connector_setting_count"),
+    ("connector_mapping", "connector_mapping_count"),
 ];
 
 /// The kinds a version 1 archive's manifest does not count, which it holds none of.
 const SINCE_VERSION_2: [&str; 2] = ["plugin", "app_vendor"];
 
 /// The kinds a version 1 or 2 archive's manifest does not count, which it holds none of.
-const SINCE_VERSION_3: [&str; 1] = ["connector_setting"];
+const SINCE_VERSION_3: [&str; 2] = ["connector_setting", "connector_mapping"];
 
 /// The key beside a line's kind that says who registered it.
 const PROVENANCE: &str = "provenance";
@@ -717,6 +726,23 @@ impl Rows {
                 registrations
                     .states
                     .push((source.to_string(), state.clone()));
+            }
+            "connector_mapping" => {
+                let archived = crate::app::mapping::archived(body, row).map_err(|why| {
+                    invalid(format!(
+                        "Line {row} of {INSTANCE} holds a connector mapping that {why}."
+                    ))
+                    .with_detail("entry", INSTANCE)
+                    .with_detail("line", row)
+                })?;
+                if registrations
+                    .mappings
+                    .iter()
+                    .any(|held| held.plugin == archived.plugin)
+                {
+                    return Err(registered_twice("connector_mapping", &archived.plugin));
+                }
+                registrations.mappings.push(archived);
             }
             "app_vendor" => {
                 let binding =

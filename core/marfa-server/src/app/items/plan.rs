@@ -39,12 +39,91 @@ pub(super) fn invalid_transition(from: &str, to: &str) -> Refusal {
     )
 }
 
+/// The graph a trash, a restore and a purge walk. A plugin's connector key's walk carries no item
+/// the key could not write itself through the same door, nor anything it reaches only through one.
+struct Carried<'g, 'a, 'c> {
+    gate: &'g Gate<'a, 'c>,
+}
+
+impl Carried<'_, '_, '_> {
+    fn kept(&self, links: Vec<Link>, carried: impl Fn(&Link) -> Option<&str>) -> Result<Vec<Link>> {
+        let mut kept = Vec::with_capacity(links.len());
+        for link in links {
+            match carried(&link) {
+                Some(id) if !self.gate.carries(id)? => {}
+                _ => kept.push(link),
+            }
+        }
+        Ok(kept)
+    }
+}
+
+impl Graph for Carried<'_, '_, '_> {
+    type Error = Refusal;
+
+    fn outbound(&self, id: &str) -> Result<Vec<Link>> {
+        let store = self.gate.store();
+        self.kept(store.outbound(id)?, |link| {
+            (store.on_delete(&link.edge_type) == OnDelete::Cascade).then_some(link.to.as_str())
+        })
+    }
+
+    fn inbound(&self, id: &str) -> Result<Vec<Link>> {
+        let store = self.gate.store();
+        self.kept(store.inbound(id)?, |link| {
+            (store.on_delete(&link.edge_type) == OnDelete::WithHosts).then_some(link.from.as_str())
+        })
+    }
+
+    fn triple(
+        &self,
+        from: &str,
+        to: &str,
+        edge_type: &str,
+        except: Option<&str>,
+    ) -> Result<Option<String>> {
+        self.gate.store().triple(from, to, edge_type, except)
+    }
+
+    fn in_bin(&self, id: &str) -> Result<bool> {
+        self.gate.store().in_bin(id)
+    }
+
+    fn holds(&self, id: &str) -> Result<bool> {
+        self.gate.store().holds(id)
+    }
+
+    fn on_delete(&self, edge_type: &str) -> OnDelete {
+        self.gate.store().on_delete(edge_type)
+    }
+}
+
 impl<'c> Gate<'_, 'c> {
     fn store(&self) -> Store<'_, 'c> {
         Store {
             tx: self.tx,
             catalog: self.catalog,
         }
+    }
+
+    fn carried(&self) -> Carried<'_, '_, 'c> {
+        Carried { gate: self }
+    }
+
+    /// Whether a walk may carry the item `id`: for a plugin's connector key, only one it could
+    /// write itself, decided on the state this write commits.
+    fn carries(&self, id: &str) -> Result<bool> {
+        if !self.caller.is_plugin_connector() {
+            return Ok(true);
+        }
+        Ok(rows::by_id(self.tx, id)?.is_none_or(|row| {
+            !is_system(&row.type_id)
+                && self.caller.may_read_item(&row.type_id, &row.source)
+                && self
+                    .caller
+                    .require_item_type(&row.type_id, &row.source, Level::Write)
+                    .is_ok()
+        }))
     }
 
     pub fn note(&self, need: Need) {
@@ -56,26 +135,35 @@ impl<'c> Gate<'_, 'c> {
     /// No caller may write a `system.*` type through an item door: only the server's own writes
     /// reach those.
     pub fn type_gate(&self, type_id: &str) -> Result<()> {
-        self.type_map_gate(type_id)?;
+        self.type_gate_under(type_id, None)
+    }
+
+    /// The gate for an item of `type_id` under `source`, where the write knows it.
+    pub fn type_gate_under(&self, type_id: &str, source: Option<&str>) -> Result<()> {
+        self.type_map_gate(type_id, source)?;
         if is_system(type_id) && !self.server_own {
             return Err(reserved(type_id));
         }
         Ok(())
     }
 
-    fn type_map_gate(&self, type_id: &str) -> Result<()> {
+    fn type_map_gate(&self, type_id: &str, source: Option<&str>) -> Result<()> {
         self.note(Need::Reach);
         self.caller.require_reach()?;
         self.note(Need::Type {
             name: type_id.to_string(),
             write: true,
+            under: source.map(str::to_string),
         });
-        self.caller.require_type(type_id, Level::Write)
+        match source {
+            Some(source) => self.caller.require_item_type(type_id, source, Level::Write),
+            None => self.caller.require_type(type_id, Level::Write),
+        }
     }
 
     pub fn row_gate(&self, row: &Item) -> Result<()> {
         self.note_write(row);
-        self.type_gate(&row.type_id)
+        self.type_gate_under(&row.type_id, Some(&row.source))
     }
 
     fn note_write(&self, row: &Item) {
@@ -90,7 +178,7 @@ impl<'c> Gate<'_, 'c> {
         self.note(Need::Reach);
         self.caller.require_reach()?;
         rows::by_id(self.tx, id)?
-            .filter(|row| self.caller.may_read_type(&row.type_id))
+            .filter(|row| self.caller.may_read_item(&row.type_id, &row.source))
             .ok_or_else(not_found)
     }
 
@@ -131,7 +219,7 @@ impl<'c> Gate<'_, 'c> {
         self.caller.require(Permission::ItemsPurge)?;
         let row = self.readable_row(&asked.id)?;
         self.note_write(&row);
-        self.type_map_gate(&row.type_id)?;
+        self.type_map_gate(&row.type_id, Some(&row.source))?;
         let binned = row.state == "trashed" || (self.server_own && row.state == "revoked");
         if !binned && is_system(&row.type_id) {
             return Err(reserved(&row.type_id));
@@ -323,7 +411,7 @@ fn binned(gate: &Gate<'_, '_>, asked: &[Asked]) -> Result<Plan> {
         .map(|row| gate.binnable(row))
         .collect::<Result<Vec<Item>>>()?;
     let ids: Vec<String> = named.iter().map(|row| row.id.clone()).collect();
-    let closure = graph::closure(&gate.store(), &ids)?;
+    let closure = graph::closure(&gate.carried(), &ids)?;
     let moved = out_of_bin(gate.tx, &closure)?;
     let first_named = || ids.first().cloned().unwrap_or_default();
     require_free(gate, &moved, |link| {
@@ -421,7 +509,7 @@ fn purge_walk(gate: &Gate<'_, '_>, named: &[Item], cap: usize) -> Result<Vec<Pur
                 edges.push((edge, source));
             }
         }
-        for link in gate.store().inbound(&item.id)? {
+        for link in gate.carried().inbound(&item.id)? {
             if with_hosts(gate, &link.edge_type)
                 && !going.contains(&link.from)
                 && let Some(part) = rows::by_id(gate.tx, &link.from)?
@@ -600,7 +688,7 @@ pub(super) struct Returning {
 /// A part comes back through its host instead.
 fn beneath_marked(gate: &Gate<'_, '_>, row: &Item, mark: &Mark) -> Result<Vec<Item>> {
     let mut found = Vec::new();
-    for id in graph::cascade_reach(&gate.store(), &row.id)? {
+    for id in graph::cascade_reach(&gate.carried(), &row.id)? {
         if let Some(below) = rows::by_id(gate.tx, &id)?
             && below.state == "trashed"
             && below
@@ -623,10 +711,26 @@ pub(super) fn returning(gate: &Gate<'_, '_>, row: &Item) -> Result<Vec<Returning
     };
     let taken = match &row.mark {
         Some(mark) => beneath_marked(gate, row, mark)?,
-        None => rows::marked_with(gate.tx, &row.id)?
-            .into_iter()
-            .filter(|item| item.mark.as_ref().is_some_and(|mark| !mark.hosts))
-            .collect(),
+        None => {
+            let reached: Option<HashSet<String>> = if gate.caller.is_plugin_connector() {
+                Some(
+                    graph::cascade_reach(&gate.carried(), &row.id)?
+                        .into_iter()
+                        .collect(),
+                )
+            } else {
+                None
+            };
+            rows::marked_with(gate.tx, &row.id)?
+                .into_iter()
+                .filter(|item| item.mark.as_ref().is_some_and(|mark| !mark.hosts))
+                .filter(|item| {
+                    reached
+                        .as_ref()
+                        .is_none_or(|reached| reached.contains(&item.id))
+                })
+                .collect()
+        }
     };
     let mut seen: HashSet<String> = HashSet::from([row.id.clone()]);
     let mut back = Vec::new();
@@ -638,7 +742,7 @@ pub(super) fn returning(gate: &Gate<'_, '_>, row: &Item) -> Result<Vec<Returning
     let mut host = row.clone();
     let mut next = 0;
     loop {
-        for link in gate.store().inbound(&host.id)? {
+        for link in gate.carried().inbound(&host.id)? {
             if !with_hosts(gate, &link.edge_type) || seen.contains(&link.from) {
                 continue;
             }
@@ -682,7 +786,7 @@ pub(super) fn late_part(gate: &Gate<'_, '_>, source: &Item, host: &Item) -> Resu
             return Ok(Vec::new());
         }
     }
-    let closure = graph::closure(&store, std::slice::from_ref(&source.id))?;
+    let closure = graph::closure(&gate.carried(), std::slice::from_ref(&source.id))?;
     let moved = out_of_bin(gate.tx, &closure)?;
     require_free(gate, &moved, |_| source.id.clone())?;
     Ok(moved

@@ -91,6 +91,10 @@ Fixture paths are under `src/suites/`.
 | `PUT /plugins/{name}/connector`            | covered | `compliance/connector-hosts.test.ts`                                 | Assigns to a host or none, revoking the former host's key.                                                                                                   |
 | `GET /plugins/{name}/connector/settings`   | covered | `compliance/connector-settings.test.ts`                              | Each declared setting with its default; a secret never shown.                                                                                                |
 | `PATCH /plugins/{name}/connector/settings` | covered | `compliance/connector-settings.test.ts`                              | Checked against each setting's kind; `null` clears; a secret sealed; audited without values.                                                                 |
+| `GET /plugins/{name}/connector/mapping`               | covered | `compliance/connector-mapping.test.ts` | The default, the connector's own key, `plugin_connector_not_found`.                                                    |
+| `PUT /plugins/{name}/connector/mapping`               | covered | `compliance/connector-mapping.test.ts` | Judged against the types, `connector_mapping_stale`, `connectors.manage`.                                              |
+| `POST /plugins/{name}/connector/mapping/rewrite`      | covered | `compliance/connector-mapping.test.ts` | The count, a numbered request beside another at one version.                                                           |
+| `POST /plugins/{name}/connector/mapping/rewrite/done` | covered | `compliance/connector-mapping.test.ts` | The connector's own key, one numbered request of several, a body naming no number.                                     |
 
 ## Connector hosts
 

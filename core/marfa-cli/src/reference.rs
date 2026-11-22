@@ -65,6 +65,10 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         "Set a plugin connector's settings and secrets",
         &["plugins settings", "plugins secret"],
     ),
+    (
+        "Map what a connector brings, and rewrite its items",
+        &["plugins mapping set", "plugins mapping rewrite"],
+    ),
     ("See what a key can read", &["overview"]),
     ("Read the instance's name and enforcement", &["config get"]),
     (

@@ -89,6 +89,8 @@ pub struct Key {
     pub stored_types: Option<super::access::Map>,
     pub levers: OwnLevers,
     pub standing: Standing,
+    /// Read with the key where it is a plugin's connector key, from the mapping as it stands.
+    pub mapped: Option<super::access::Mapped>,
     pub created_at: String,
     pub expires_at: Option<String>,
     pub last_used_at: Option<String>,
@@ -188,6 +190,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
         stored_types: None,
         levers: OwnLevers::from_row(row.get("enforcement_override")?),
         standing: Standing::default(),
+        mapped: None,
         created_at: row.get::<_, Stamp>("created_at")?.text(),
         expires_at: row.get::<_, Option<Stamp>>("expires_at")?.map(Stamp::text),
         last_used_at: row
@@ -649,6 +652,7 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
                 stored_types: None,
                 levers: request.levers.flatten().into(),
                 standing: Standing::default(),
+                mapped: None,
                 created_at: unit.at.clone(),
                 expires_at,
                 last_used_at: None,
@@ -870,6 +874,7 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Presented> {
         .read(move |tx| match unrevoked_where(tx, "hash", &hash)? {
             Some(mut key) => {
                 bind_app_key(tx, &mut key)?;
+                key.mapped = super::mapping::reach(tx, &key.source)?;
                 Ok(Some(key))
             }
             None => Ok(None),

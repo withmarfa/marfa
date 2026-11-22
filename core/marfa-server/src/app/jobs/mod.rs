@@ -302,6 +302,7 @@ pub async fn queue(
             claim.note(Need::Type {
                 name: name.clone(),
                 write: true,
+                under: None,
             });
         }
     };

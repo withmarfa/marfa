@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, Uri};
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::answer::{Answer, json_answer};
@@ -10,6 +10,7 @@ use super::body::JsonBody;
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::mapping;
 use crate::app::plugins::{self, Outcome};
 
 pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
@@ -62,5 +63,63 @@ pub async fn remove(
     Ok(json_answer(
         StatusCode::OK,
         &plugins::remove(&app, &caller, name).await?,
+    ))
+}
+
+pub async fn mapping(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+) -> Answer {
+    query::only(&uri, &[])?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &mapping::read(&app, &caller, name).await?,
+    ))
+}
+
+pub async fn save_mapping(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
+    let body = Value::Object(body.open_object().await?);
+    Ok(json_answer(
+        StatusCode::OK,
+        &mapping::save(&app, &caller, name, body).await?,
+    ))
+}
+
+pub async fn rewrite(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
+    let body = Value::Object(body.open_object().await?);
+    Ok(json_answer(
+        StatusCode::OK,
+        &mapping::rewrite(&app, &caller, name, body).await?,
+    ))
+}
+
+pub async fn rewrite_done(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
+    let body = Value::Object(body.open_object().await?);
+    Ok(json_answer(
+        StatusCode::OK,
+        &mapping::rewrite_done(&app, &caller, name, body).await?,
     ))
 }

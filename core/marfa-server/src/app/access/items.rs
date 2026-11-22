@@ -103,7 +103,7 @@ impl Caller {
     pub fn require_reach(&self) -> Result<()> {
         match self {
             Caller::Key(key) | Caller::App { key, .. }
-                if !key.grants.map(Axis::Type).grants_any() =>
+                if !key.grants.map(Axis::Type).grants_any() && !self.mapping_reaches_any() =>
             {
                 Err(Refusal::new(
                     Code::TypeNotPermitted,
@@ -152,10 +152,6 @@ impl Caller {
             Caller::Server => "server",
             Caller::Key(key) | Caller::App { key, .. } => &key.source,
         }
-    }
-
-    pub fn default_tier(&self) -> Option<&str> {
-        self.key().map(|key| key.default_tier.as_str())
     }
 
     /// The server's own work answers to no lever: a job that could not see a row could never clear it.

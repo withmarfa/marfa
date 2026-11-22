@@ -31,6 +31,7 @@ pub mod items;
 pub mod jobs;
 pub mod keys;
 pub mod limiter;
+pub mod mapping;
 pub mod mcp;
 pub mod metrics;
 pub mod oauth;

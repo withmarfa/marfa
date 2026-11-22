@@ -320,6 +320,7 @@ fn file_body(words: &[String]) -> &'static str {
         ["types", "register"] | ["types", "normalize"] | ["edge-types", "register"] => {
             r#"{"id":"user.x"}"#
         }
+        ["plugins", "mapping", "set"] => r#"{"version":0,"kinds":{}}"#,
         ["plugins", "install"] => {
             r#"{"format":1,"name":"x","title":"X","description":"X.","mark":"lucide:ticket","maker":"X","marfa":"0.0.1","version":"1.0.0","types":[],"edge_types":[]}"#
         }

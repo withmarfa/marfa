@@ -497,6 +497,7 @@ async fn the_layout_is_pinned_to_its_version() {
             "app_vendor_count",
             "blob_count",
             "connector_agreement_count",
+            "connector_mapping_count",
             "connector_setting_count",
             "connector_state_count",
             "created_at",

@@ -1219,7 +1219,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         if let Some(id) = put.id.as_deref()
             && let Some(row) = rows::by_id(tx, id)?
         {
-            if !self.caller().may_read_type(&row.type_id) {
+            if !self.caller().may_read_item(&row.type_id, &row.source) {
                 return Err(Refusal::new(
                     Code::IdReused,
                     format!("Item with id={id} already exists"),
@@ -1238,14 +1238,15 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     fn put_gates(&self, put: &Put) -> Result<String> {
-        self.gate().type_gate(&put.type_id)?;
+        let named = put.source.as_deref().unwrap_or(self.caller().own_source());
+        self.gate().type_gate_under(&put.type_id, Some(named))?;
         let source = self.source_of(put.source.as_deref())?;
         self.refuse_unlisted_source(&put.type_id, &source)?;
         Ok(source)
     }
 
     fn on_natural_key(&self, row: Item, put: Put, source: &str) -> Result<Done> {
-        if !self.caller().may_read_type(&row.type_id) {
+        if !self.caller().may_read_item(&row.type_id, &row.source) {
             return Err(Refusal::new(
                 Code::TypeNotPermitted,
                 "The natural key resolves an item of a type this credential may not reach",
@@ -1328,7 +1329,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let tier = put
             .tier
             .as_deref()
-            .or(self.caller().default_tier())
+            .or(self.caller().tier_for(&put.type_id))
             .unwrap_or("library");
         let writer = self.writer();
         let key = title_key(rules, &put.type_id, &properties);
@@ -1639,7 +1640,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         }
         let named = writing.version.unwrap_or(0);
         let ancestor = rows::snapshot_at(self.unit.tx(), row.seq, named)?
-            .filter(|snapshot| self.caller().may_read_type(&snapshot.type_id));
+            .filter(|snapshot| self.caller().may_read_item(&snapshot.type_id, &row.source));
         let Some(ancestor) = ancestor else {
             return Err(no_ancestor(row, named)?);
         };
@@ -2210,7 +2211,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let Some(row) = by_key.or(by_id) else {
             return self.new_entry(put, &source);
         };
-        if !self.caller().may_read_type(&row.type_id) {
+        if !self.caller().may_read_item(&row.type_id, &row.source) {
             return Err(if named_by_id {
                 Refusal::new(
                     Code::IdReused,
@@ -2254,7 +2255,10 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     ) -> Result<Entered> {
         if let Some(row) = by_key {
             return Ok(Entered::Skipped {
-                id: self.caller().may_read_type(&row.type_id).then_some(row.id),
+                id: self
+                    .caller()
+                    .may_read_item(&row.type_id, &row.source)
+                    .then_some(row.id),
                 reason: "duplicate_source",
             });
         }

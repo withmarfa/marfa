@@ -1654,6 +1654,14 @@ When `marfa plugins install` is given a path to a file that holds one JSON objec
 
 **Tests:** `cli/plugins.test.ts › installs a plugin from a bundle file and from a source folder, and lists, reads and removes it`.
 
+### `cli/plugins-mapping-set`
+
+When `marfa plugins mapping set` is given a file that holds, as JSON or as YAML, an object with `kinds`, the CLI MUST send `PUT /plugins/{name}/connector/mapping` with those `kinds` and the file's `version`, or, where the file names none, the `version` `GET /plugins/{name}/connector/mapping` answers just before.
+
+**Reason:** an owner edits the mapping `marfa plugins mapping show` printed, and a mapping saved since is refused (`plugins/mapping-stale`) rather than overwritten.
+
+**Tests:** `cli/plugins.test.ts › sets a connector's mapping from a YAML file at the version read, shows it, refuses a stale version and counts a rewrite`.
+
 ### `cli/plugins-install-folder`
 
 When `marfa plugins install` is given a source folder, the CLI MUST send to `POST /plugins` the bytes of the bundle `marfa plugins bundle` writes from it, at the version `--version` names or `0.0.0` without it, and print their SHA-256 on standard error.

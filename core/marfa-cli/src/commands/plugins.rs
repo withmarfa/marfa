@@ -44,6 +44,11 @@ pub enum PluginsCommand {
     Settings(SettingsArgs),
     /// Set a secret setting of a plugin's connector from standard input, or from a prompt that does not echo at a terminal, or remove it with `--clear`. The value is never an argument and never printed. Requires `connectors.manage`.
     Secret(SecretArgs),
+    /// A plugin connector's mapping: for each kind it brings, whether it comes in, the type and tier it lands as, its status words and its fields.
+    Mapping {
+        #[command(subcommand)]
+        command: MappingCommand,
+    },
     /// Judge a plugin's source folder as installing it would, with no server: `common.*` types are taken, and the roots kept for Marfa, apps and the owner are refused.
     Check {
         /// The source folder, holding `plugin.json`, `types/` and `edge-types/`.
@@ -64,6 +69,33 @@ pub enum PluginsCommand {
     Index {
         /// The folder of `*.plugin.json` bundles; the index is written beside them.
         folder: PathBuf,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum MappingCommand {
+    /// Show the mapping. A kind no mapping was saved for shows its default, at version 0. Works with `connectors.manage` or the connector's own key.
+    Show {
+        /// The plugin's name.
+        name: String,
+    },
+    /// Replace the mapping with the `kinds` a JSON or YAML file holds, such as one `marfa plugins mapping show` printed and you edited. Sends the file's `version`, or the version read now if it names none, so a mapping saved since is refused rather than overwritten. A kind or member left out takes its default. Needs `connectors.manage`.
+    Set {
+        /// The plugin's name.
+        name: String,
+        /// The file, JSON or YAML.
+        file: PathBuf,
+    },
+    /// Count the connector's items on each kind's target type and ask the connector to rewrite them to the mapping on its next run, as a numbered request it clears when done. Marfa changes no item itself. Needs `connectors.manage`.
+    Rewrite {
+        /// The plugin's name.
+        name: String,
+        /// Only count the items.
+        #[arg(long)]
+        dry_run: bool,
+        /// A kind to rewrite; repeat for more. Without it, every kind that comes in.
+        #[arg(long = "kind", value_name = "KIND")]
+        kinds: Vec<String>,
     },
 }
 
@@ -143,6 +175,23 @@ pub fn update_settings_request(name: &str, body: Value) -> Request {
 
 pub fn assign_request(name: &str, host: Option<&str>) -> Request {
     Request::put(&["plugins", name, "connector"]).json(serde_json::json!({ "host": host }))
+}
+
+pub fn mapping_request(name: &str) -> Request {
+    Request::get(&["plugins", name, "connector", "mapping"])
+}
+
+pub fn save_mapping_request(name: &str, version: i64, kinds: Value) -> Request {
+    Request::put(&["plugins", name, "connector", "mapping"])
+        .json(serde_json::json!({ "version": version, "kinds": kinds }))
+}
+
+pub fn rewrite_request(name: &str, dry_run: bool, kinds: &[String]) -> Request {
+    let mut body = serde_json::json!({ "dry_run": dry_run });
+    if !kinds.is_empty() {
+        body["kinds"] = serde_json::json!(kinds);
+    }
+    Request::post(&["plugins", name, "connector", "mapping", "rewrite"]).json(body)
 }
 
 impl PluginsCommand {
@@ -248,6 +297,7 @@ pub fn run(
                 format!("{done} {} for {}", args.setting, args.name)
             });
         }
+        PluginsCommand::Mapping { command } => return mapping(command, remote, out),
         _ => return run_offline(command, out),
     };
     let remote = remote()?;
@@ -388,6 +438,143 @@ fn assigned_words(answer: &Value) -> String {
         Some(host) => format!("{name}'s connector runs on host {host}"),
         None => format!("{name}'s connector runs on no host"),
     }
+}
+
+fn mapping(
+    command: &MappingCommand,
+    remote: impl FnOnce() -> Result<Remote, CliError>,
+    out: &Printer,
+) -> Result<(), CliError> {
+    match command {
+        MappingCommand::Show { name } => out.value(&remote()?.json(&mapping_request(name))?),
+        MappingCommand::Set { name, file } => {
+            let (version, kinds) = mapping_file(file)?;
+            let remote = remote()?;
+            let version = match version {
+                Some(version) => version,
+                None => remote.json(&mapping_request(name))?["version"]
+                    .as_i64()
+                    .ok_or_else(|| CliError::Invalid("the mapping read names no version".into()))?,
+            };
+            let answer = remote.json(&save_mapping_request(name, version, kinds))?;
+            out.report(&answer, |answer| {
+                format!(
+                    "saved the mapping of {name} at version {}",
+                    answer["version"].as_i64().unwrap_or_default()
+                )
+            })
+        }
+        MappingCommand::Rewrite {
+            name,
+            dry_run,
+            kinds,
+        } => {
+            let answer = remote()?.json(&rewrite_request(name, *dry_run, kinds))?;
+            out.report(&answer, |answer| rewrite_words(name, answer))
+        }
+    }
+}
+
+fn rewrite_words(name: &str, answer: &Value) -> String {
+    let counted: Vec<String> = answer["kinds"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(kind, held)| {
+            format!(
+                "{kind}: {} on {}",
+                held["count"].as_i64().unwrap_or_default(),
+                held["target_type"].as_str().unwrap_or_default()
+            )
+        })
+        .collect();
+    let counted = if counted.is_empty() {
+        "no kind".to_string()
+    } else {
+        counted.join(", ")
+    };
+    if answer["dry_run"].as_bool() == Some(true) {
+        format!("a rewrite of {name} would touch {counted}")
+    } else {
+        format!(
+            "asked {name}'s connector to rewrite {counted}, as request {}",
+            answer["number"].as_i64().unwrap_or_default()
+        )
+    }
+}
+
+/// The `kinds` of a mapping file, and its `version` where it names one.
+fn mapping_file(path: &Path) -> Result<(Option<i64>, Value), CliError> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| CliError::Invalid(format!("cannot read {}: {error}", path.display())))?;
+    let held = match serde_json::from_str::<Value>(&text) {
+        Ok(value) => value,
+        Err(_) => yaml_value(&text).map_err(|error| {
+            CliError::Invalid(format!(
+                "{} is neither JSON nor YAML: {error}",
+                path.display()
+            ))
+        })?,
+    };
+    let Value::Object(held) = held else {
+        return Err(CliError::Invalid(format!(
+            "{} does not hold an object with kinds",
+            path.display()
+        )));
+    };
+    let kinds = held
+        .get("kinds")
+        .cloned()
+        .ok_or_else(|| CliError::Invalid(format!("{} holds no kinds", path.display())))?;
+    let version = match held.get("version") {
+        None | Some(Value::Null) => None,
+        Some(version) => Some(version.as_i64().ok_or_else(|| {
+            CliError::Invalid(format!(
+                "{} names a version that is not a whole number",
+                path.display()
+            ))
+        })?),
+    };
+    Ok((version, kinds))
+}
+
+fn yaml_value(text: &str) -> Result<Value, String> {
+    let mut documents =
+        yaml_rust2::YamlLoader::load_from_str(text).map_err(|error| error.to_string())?;
+    if documents.len() != 1 {
+        return Err("it must hold one document".into());
+    }
+    json_of(documents.remove(0))
+}
+
+fn json_of(yaml: yaml_rust2::Yaml) -> Result<Value, String> {
+    use yaml_rust2::Yaml;
+    Ok(match yaml {
+        Yaml::Null => Value::Null,
+        Yaml::Boolean(held) => Value::Bool(held),
+        Yaml::Integer(held) => Value::from(held),
+        Yaml::Real(text) => text
+            .parse::<f64>()
+            .ok()
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number)
+            .ok_or_else(|| format!("{text} is not a number JSON holds"))?,
+        Yaml::String(text) => Value::String(text),
+        Yaml::Array(items) => {
+            Value::Array(items.into_iter().map(json_of).collect::<Result<_, _>>()?)
+        }
+        Yaml::Hash(entries) => {
+            let mut object = serde_json::Map::new();
+            for (key, value) in entries {
+                let Yaml::String(key) = key else {
+                    return Err("every key must be text".into());
+                };
+                object.insert(key, json_of(value)?);
+            }
+            Value::Object(object)
+        }
+        Yaml::Alias(_) | Yaml::BadValue => return Err("it holds a value JSON cannot".into()),
+    })
 }
 
 fn installed_words(answer: &Value) -> String {

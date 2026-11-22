@@ -26,6 +26,7 @@ use super::keys::{self, Key};
 use super::oauth;
 use super::refusal::{Code, Refusal, Result};
 use super::sources;
+pub use connectors::Mapped;
 pub use items::printable;
 pub use jobs::{Setting, standing_holder};
 pub use levers::{Holding, Levers, OwnLevers, Standing, report_unread};
@@ -319,23 +320,36 @@ impl Caller {
         .with_detail("settings", settings.to_vec()))
     }
 
-    /// A restore records a plugin's connector or stores its settings only for a caller that
-    /// may install or set them.
-    pub fn require_connector_restore(&self, plugins: &[String], settings: &[String]) -> Result<()> {
-        if (plugins.is_empty() && settings.is_empty()) || self.holds(Permission::ConnectorsManage) {
+    /// A restore records a plugin's connector, stores its settings or restores its mapping only
+    /// for a caller that may install, set or save them.
+    pub fn require_connector_restore(
+        &self,
+        plugins: &[String],
+        settings: &[String],
+        mappings: &[String],
+    ) -> Result<()> {
+        if (plugins.is_empty() && settings.is_empty() && mappings.is_empty())
+            || self.holds(Permission::ConnectorsManage)
+        {
             return Ok(());
         }
-        let named: Vec<&str> = plugins.iter().chain(settings).map(String::as_str).collect();
+        let named: Vec<String> = plugins
+            .iter()
+            .chain(settings)
+            .cloned()
+            .chain(mappings.iter().map(|plugin| format!("{plugin} mapping")))
+            .collect();
         Err(Refusal::new(
             Code::Forbidden,
             format!(
-                "Restoring this archive would install a plugin's connector or store its settings, which requires the connectors.manage permission: {}.",
+                "Restoring this archive would install a plugin's connector, store its settings or restore its mapping, which requires the connectors.manage permission: {}.",
                 named.join(", ")
             ),
         )
         .with_detail("required_scope", Permission::ConnectorsManage.word())
         .with_detail("plugins", plugins.to_vec())
-        .with_detail("connector_settings", settings.to_vec()))
+        .with_detail("connector_settings", settings.to_vec())
+        .with_detail("connector_mappings", mappings.to_vec()))
     }
 
     /// A key has no sign-in to renew, so it is refused rather than challenged.
@@ -643,6 +657,7 @@ impl Caller {
 
 fn standing_key(tx: &Transaction<'_>, mut key: Key) -> Result<Key> {
     bind_app_key(tx, &mut key)?;
+    key.mapped = super::mapping::reach(tx, &key.source)?;
     key.standing = match &key.levers {
         OwnLevers::Unread(text) => {
             report_unread(&key.id, text);
@@ -692,6 +707,7 @@ mod tests {
             stored_types: None,
             levers: OwnLevers::Unset,
             standing: Standing::default(),
+            mapped: None,
             created_at: String::new(),
             expires_at: None,
             last_used_at: None,

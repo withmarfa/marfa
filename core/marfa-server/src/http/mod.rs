@@ -133,6 +133,18 @@ fn schema_doors() -> Routes {
             "/plugins/{name}",
             get(plugins::read).delete(plugins::remove),
         )
+        .route(
+            "/plugins/{name}/connector/mapping",
+            get(plugins::mapping).put(plugins::save_mapping),
+        )
+        .route(
+            "/plugins/{name}/connector/mapping/rewrite",
+            post(plugins::rewrite),
+        )
+        .route(
+            "/plugins/{name}/connector/mapping/rewrite/done",
+            post(plugins::rewrite_done),
+        )
         .route("/types", get(types::list).post(types::register))
         .route("/types/normalize", post(types::normalize))
         .route(
