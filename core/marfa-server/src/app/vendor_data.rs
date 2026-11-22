@@ -68,9 +68,9 @@ fn item_total(tx: &Transaction<'_>, types: &[String]) -> Result<usize> {
     Ok(usize::try_from(total).unwrap_or(usize::MAX))
 }
 
-/// Removes up to `limit` items of the vendor in every state, and its types once none is left,
-/// refusing before it takes anything when something outside the vendor names one of its types.
-/// With `whole`, more than `limit` items refuses instead.
+/// Removes up to [`MOST_REMOVED`] items of the vendor in every state, and its types once none is
+/// left, refusing before it takes anything when something outside the vendor names one of its
+/// types. With `whole`, more than [`MOST_REMOVED`] items refuses instead.
 fn remove_vendor(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
