@@ -118,7 +118,12 @@ jobs:
       # The vendor check runs here because a change to any product file can
       # breach it, and this job runs for every change, a draft's too.
       - run: pnpm format:check
-      - run: pnpm vitest run ci/ci-required.test.ts ci/no-vendor-in-product.test.ts
+      # A migration a release has shipped is never edited, so the check reads
+      # the newest tag's files. The checkout is one commit deep, and the tags
+      # are fetched the same way: the tag's files come with it.
+      - name: Fetch the release tags
+        run: git fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*'
+      - run: pnpm vitest run ci/ci-required.test.ts ci/no-vendor-in-product.test.ts ci/released-migrations.test.ts
       - working-directory: conformance
         run: pnpm exec vitest run --project generators src/utils/spec-citations.test.ts
 
@@ -227,8 +232,9 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # The version check asks cargo how it reads the manifests, so it runs
-      # in its own job and this one needs no Rust.
-      - run: pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts
+      # in its own job and this one needs no Rust. The release check needs the
+      # tags, which Quick checks fetches.
+      - run: pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts --exclude ci/released-migrations.test.ts
 
   core-checks:
     needs: changes

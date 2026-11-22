@@ -1435,16 +1435,21 @@ describe("each job reads its own answer", () => {
     const format = steps.findIndex((step) => step.run === "pnpm format:check");
     expect(format).toBeGreaterThan(0);
     expect(steps[format]?.if).toBeUndefined();
+    // The release check reads the newest tag, so the tags are fetched first.
     expect(steps[format + 1]).toEqual({
-      run: "pnpm vitest run ci/ci-required.test.ts ci/no-vendor-in-product.test.ts",
+      name: "Fetch the release tags",
+      run: "git fetch --depth=1 origin 'refs/tags/v*:refs/tags/v*'",
     });
     expect(steps[format + 2]).toEqual({
+      run: "pnpm vitest run ci/ci-required.test.ts ci/no-vendor-in-product.test.ts ci/released-migrations.test.ts",
+    });
+    expect(steps[format + 3]).toEqual({
       "working-directory": "conformance",
       run: "pnpm exec vitest run --project generators src/utils/spec-citations.test.ts",
     });
     // The build, typecheck and lint are jobs of their own, so that each one
     // reports as soon as it can: see the next test.
-    expect(steps.slice(format + 3)).toEqual([]);
+    expect(steps.slice(format + 4)).toEqual([]);
     // The tests wait until the pull request is ready: they are the job
     // `Workspace tests`, which `ci/workspace-tests.test.ts` pins.
     // A draft passes here with the rest skipped; `Draft CI` keeps it from

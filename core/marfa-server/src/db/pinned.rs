@@ -2,7 +2,7 @@
 
 use sha2::{Digest, Sha256};
 
-use super::migrate::MIGRATIONS;
+use super::migrate::{MIGRATIONS, Migration};
 use super::schema;
 
 struct Pin {
@@ -77,18 +77,16 @@ const PINS: &[Pin] = &[
     },
 ];
 
-const BEFORE_0_1: &str = "Before Marfa 0.1, no release promises that its databases keep opening: \
-    if the change is meant, write the new digests in PINS in the same pull request and say so in \
-    its description.";
+const MIGRATION_CHANGED: &str = "A migration that a published release contains is never edited, \
+    and CI refuses an edit to one by comparing it with the newest release tag \
+    (`ci/released-migrations.test.ts`): put it back as it was, and make the change a new numbered \
+    migration in MIGRATIONS with an entry of its own in PINS. A new digest is written only for a \
+    migration that no release contains yet.";
 
-const FROM_0_1_MIGRATION: &str = "From Marfa 0.1, a release's databases must keep opening: put \
-    the migration back as it was, and make the change a new numbered migration in MIGRATIONS with \
-    an entry of its own in PINS.";
-
-const FROM_0_1_MADE: &str = "From Marfa 0.1, a release's databases must keep opening, and a new \
-    migration cannot help, because the start compares a file with its own version, made by this \
-    build, before any later migration runs: keep what this build makes from the pinned SQL as it \
-    was.";
+const MADE_CHANGED: &str = "No migration's SQL changed, so no new migration can help: the start \
+    compares a file with its own version, made by this build, before any later migration runs. \
+    Keep what this build makes from the pinned SQL as it was. A new digest is written only while \
+    no release has written a database at this version.";
 
 fn sha256(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -113,14 +111,14 @@ fn every_schema_version_makes_the_database_pinned_for_it() {
         assert!(
             pin.file == file,
             "the migration for schema version {version} changed, and is now {pinned}. \
-             {BEFORE_0_1} {FROM_0_1_MIGRATION}"
+             {MIGRATION_CHANGED}"
         );
         assert!(
             pin.holds == holds,
             "a database made through schema version {version} no longer holds what is pinned, \
              though no migration's SQL changed: SQLite, or how this build makes a database from \
              its migrations, now makes the same SQL differently, and the start may refuse a \
-             database made before. It is now {pinned}. {BEFORE_0_1} {FROM_0_1_MADE}"
+             database made before. It is now {pinned}. {MADE_CHANGED}"
         );
     }
     assert_eq!(
@@ -128,4 +126,65 @@ fn every_schema_version_makes_the_database_pinned_for_it() {
         MIGRATIONS.len(),
         "PINS holds a version MIGRATIONS lacks"
     );
+}
+
+/// Whether running the SQL twice on a file that already has its changes would fail.
+fn cannot_run_twice(sql: &str) -> bool {
+    let sql = sql
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("--"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_uppercase();
+    if sql.contains("ADD COLUMN") {
+        return true;
+    }
+    [
+        "CREATE TABLE ",
+        "CREATE UNIQUE INDEX ",
+        "CREATE INDEX ",
+        "CREATE VIRTUAL TABLE ",
+    ]
+    .iter()
+    .any(|start| {
+        sql.match_indices(start)
+            .any(|(at, _)| !sql[at + start.len()..].starts_with("IF NOT EXISTS"))
+    })
+}
+
+#[test]
+fn a_migration_that_cannot_run_twice_says_when_it_is_done() {
+    let missing: Vec<u32> = MIGRATIONS
+        .iter()
+        .filter(|m| cannot_run_twice(m.sql) && m.done.is_none())
+        .map(|m| m.version)
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "migrations {missing:?} add a column or make a table or index without IF NOT EXISTS, \
+         so `done` must name a query that finds their changes in an unfinished file"
+    );
+}
+
+#[test]
+fn a_migration_without_done_is_caught_when_it_cannot_run_twice() {
+    let added = Migration {
+        version: 99,
+        sql: "ALTER TABLE a ADD COLUMN b TEXT;",
+        done: None,
+    };
+    let made = Migration {
+        version: 98,
+        sql: "-- note\nCREATE INDEX a_b ON a (b);",
+        done: None,
+    };
+    let safe = Migration {
+        version: 97,
+        sql: "CREATE TABLE IF NOT EXISTS a (b TEXT);\n-- ADD COLUMN in a comment\n\
+              DROP INDEX IF EXISTS c;",
+        done: None,
+    };
+    assert!(cannot_run_twice(added.sql) && added.done.is_none());
+    assert!(cannot_run_twice(made.sql) && made.done.is_none());
+    assert!(!cannot_run_twice(safe.sql));
 }
