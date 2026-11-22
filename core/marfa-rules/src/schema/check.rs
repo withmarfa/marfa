@@ -279,14 +279,15 @@ pub fn check_type_files(
     files: &[TypeFile],
     shipped: &Registry,
 ) -> Result<FolderVerdict, RuleError> {
-    check_files(files, shipped, Door::Register)
+    Ok(check_files(files, shipped, Door::Register)?.0)
 }
 
-/// Judges a plugin's `types/` folder as installing it would, against `registry`.
+/// Judges a plugin's `types/` folder as installing it would, against `registry`. Also returns
+/// `registry` with each type the folder registers, as the server holds them once installed.
 pub fn check_plugin_type_files(
     files: &[TypeFile],
     registry: &Registry,
-) -> Result<FolderVerdict, RuleError> {
+) -> Result<(FolderVerdict, Registry), RuleError> {
     check_files(files, registry, Door::Install)
 }
 
@@ -294,7 +295,7 @@ fn check_files(
     files: &[TypeFile],
     shipped: &Registry,
     door: Door,
-) -> Result<FolderVerdict, RuleError> {
+) -> Result<(FolderVerdict, Registry), RuleError> {
     let mut candidates: Vec<&TypeFile> = files
         .iter()
         .filter(|file| is_type_file(&file.name))
@@ -449,7 +450,7 @@ fn check_files(
             context: None,
         });
     }
-    Ok(FolderVerdict { files: verdicts })
+    Ok((FolderVerdict { files: verdicts }, working))
 }
 
 fn unjudged_guidance(sibling: Option<&str>) -> Option<String> {
