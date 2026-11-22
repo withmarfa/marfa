@@ -22,7 +22,7 @@ pub fn definition() -> Definition {
             "properties": {
                 "type": {
                     "description": "One type id, or 1 to 20 distinct ids, such as `core.note`.",
-                    "oneOf": [
+                    "anyOf": [
                         { "type": "string", "minLength": 1 },
                         {
                             "type": "array",
@@ -45,6 +45,8 @@ pub fn definition() -> Definition {
                     "description": "Without arguments, each type you can read, with `parent` when it has one. With several type ids, those types in the order asked." },
                 "unknown": { "type": "array", "items": { "type": "string" },
                     "description": "Ids from a type array that are not types. Absent when every id is a type." },
+                "unreadable": { "type": "array", "items": { "type": "string" },
+                    "description": "Ids from a type array whose stored definition cannot be read now. Absent when every type reads." },
                 "total": { "type": "integer" },
                 "edge_types": { "type": "array", "items": { "type": "object" } },
                 "tags": { "type": "array", "items": { "type": "object" } },
@@ -202,12 +204,22 @@ async fn asked_types(app: &Arc<App>, asked: &Value) -> Outcome {
     };
     let mut found = Vec::new();
     let mut unknown = Vec::new();
+    let mut unreadable = Vec::new();
+    let mut first_fault = None;
     for id in ids {
         match types::get(app, id.clone()).await {
             Ok(schema) => found.push(compact(&schema)),
             Err(refusal) if refusal.code == Code::TypeNotFound => unknown.push(id),
-            Err(refusal) => return Err(refusal.into()),
+            Err(refusal) => {
+                unreadable.push(id);
+                first_fault.get_or_insert(refusal);
+            }
         }
+    }
+    if found.is_empty()
+        && let Some(refusal) = first_fault
+    {
+        return Err(refusal.into());
     }
     if found.is_empty() {
         let message = match unknown.as_slice() {
@@ -220,6 +232,9 @@ async fn asked_types(app: &Arc<App>, asked: &Value) -> Outcome {
     out.insert("types".into(), Value::Array(found));
     if !unknown.is_empty() {
         out.insert("unknown".into(), json!(unknown));
+    }
+    if !unreadable.is_empty() {
+        out.insert("unreadable".into(), json!(unreadable));
     }
     Ok(Value::Object(out))
 }

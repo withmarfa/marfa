@@ -314,13 +314,33 @@ When `marfa_overview` is called with `type` set to a string, the server MUST ans
 
 ### `mcp/overview-several-types`
 
-When `marfa_overview` is called with `type` set to an array of 1 to 20 distinct type ids and at least one names a type, the server MUST answer `types` in the order asked and `unknown` as the ids that are not types, in that order, omitting `unknown` when every id is a type.
+When `marfa_overview` is called with `type` set to an array of 1 to 20 distinct type ids and at least one names a type, the server MUST answer `types` holding those types in the order asked.
 
 **Tests:** `compliance/mcp-type-guidance.test.ts › returns one type for a string and the asked types, in order, for an array`.
 
+### `mcp/overview-types-unknown`
+
+When `marfa_overview` is called with `type` set to an array and at least one id names a type, the server MUST answer `unknown` as the ids that are not types, in the order asked, and omit `unknown` when every id is a type.
+
+**Tests:** `compliance/mcp-type-guidance.test.ts › returns one type for a string and the asked types, in order, for an array`.
+
+### `mcp/overview-types-unreadable`
+
+When `marfa_overview` is called with `type` set to an array, at least one asked type reads and another asked type's stored definition does not read, the server MUST answer the types that read in `types` and the others' ids in `unreadable`.
+
+**Reason:** one damaged type would otherwise hide every other type the agent asked for.
+
+**Tests:** `compliance/mcp-type-guidance.test.ts › answers the types that read and lists a type whose definition does not read as unreadable`.
+
 ### `mcp/overview-types-none`
 
-If `marfa_overview` is called with `type` set to an array of type ids of which none is a type, then the server MUST answer `type_not_found`, and when the array holds one id the message is the message that same id sent as a string receives.
+If `marfa_overview` is called with `type` set to an array of type ids of which none is a type, then the server MUST answer `type_not_found`.
+
+**Tests:** `compliance/mcp-type-guidance.test.ts › answers type_not_found when no asked id is a type, matching one id sent as a string`.
+
+### `mcp/overview-types-none-message`
+
+If `marfa_overview` is called with `type` set to an array holding one id that is not a type, then the server MUST answer the message that the same id sent as a string receives.
 
 **Tests:** `compliance/mcp-type-guidance.test.ts › answers type_not_found when no asked id is a type, matching one id sent as a string`.
 
@@ -356,7 +376,13 @@ When `marfa_save_type` is called with `guidance` set to text, on register or on 
 
 ### `mcp/save-type-guidance-clear`
 
-When `marfa_save_type` changes a type, the server MUST remove its guidance when `guidance` is an empty string and leave the stored guidance when the call omits `guidance`.
+When `marfa_save_type` changes a type with `guidance` set to an empty string, the server MUST remove the type's guidance.
+
+**Tests:** `compliance/mcp-type-guidance.test.ts › stores guidance on register and on change, removes it for an empty string, and leaves it when the call omits it`.
+
+### `mcp/save-type-guidance-kept`
+
+When `marfa_save_type` changes a type and the call omits `guidance`, the server MUST keep the type's stored guidance.
 
 **Tests:** `compliance/mcp-type-guidance.test.ts › stores guidance on register and on change, removes it for an empty string, and leaves it when the call omits it`.
 
@@ -371,6 +397,12 @@ If `marfa_save_type` is called with `guidance` longer than 1,000 characters, the
 If `marfa_save_type` sends `guidance` that adds, changes or removes guidance and the credential lacks `schema.write`, then the server MUST refuse the call as the type door refuses that change.
 
 **Tests:** `compliance/mcp-type-guidance.test.ts › refuses guidance from a key without schema.write, and the same key registers the type without it`.
+
+### `mcp/save-type-guidance-app-made`
+
+If `marfa_save_type` is called by a credential that may not write guidance under `types/guidance-app-made` or `types/guidance-unknown-maker`, with `guidance` that would add, change or remove a type's guidance, then the server MUST answer a tool error carrying `forbidden` and keep the type as it was, on register and on change.
+
+**Tests:** `compliance/mcp-type-guidance.test.ts › refuses guidance from a key an app made, on register and on change, and keeps the type`.
 
 ## Calling a tool
 

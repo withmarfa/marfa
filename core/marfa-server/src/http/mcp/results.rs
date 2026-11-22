@@ -209,8 +209,8 @@ pub fn check(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
     } else {
         path
     };
-    if let Some(options) = schema.get("oneOf").and_then(Value::as_array) {
-        return one_of(options, value, path, at);
+    if let Some(options) = schema.get("anyOf").and_then(Value::as_array) {
+        return any_of(options, value, path, at);
     }
     if let Some(kind) = schema.get("type").and_then(Value::as_str) {
         let fits = match kind {
@@ -320,31 +320,22 @@ pub fn check(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn one_of(options: &[Value], value: &Value, path: &str, at: &str) -> Result<(), String> {
-    let mut matched = 0;
-    let mut same_type: Vec<String> = Vec::new();
-    let mut other: Vec<String> = Vec::new();
+/// A refusal names the form whose JSON kind the value has, or says none of the forms fits.
+fn any_of(options: &[Value], value: &Value, path: &str, at: &str) -> Result<(), String> {
+    let mut same_kind = None;
     for option in options {
         match check(option, value, path) {
-            Ok(()) => matched += 1,
+            Ok(()) => return Ok(()),
             Err(message) => {
                 let declared = option.get("type").and_then(Value::as_str);
-                if declared.is_none() || declared == Some(json_kind(value)) {
-                    same_type.push(message);
-                } else {
-                    other.push(message);
+                if same_kind.is_none() && (declared.is_none() || declared == Some(json_kind(value)))
+                {
+                    same_kind = Some(message);
                 }
             }
         }
     }
-    if matched == 1 {
-        return Ok(());
-    }
-    same_type
-        .into_iter()
-        .chain(other)
-        .next()
-        .map_or_else(|| Err(format!("{at} matches no accepted form.")), Err)
+    Err(same_kind.unwrap_or_else(|| format!("{at} is not one of the accepted forms.")))
 }
 
 fn json_kind(value: &Value) -> &'static str {
@@ -412,7 +403,7 @@ mod tests {
             "type": "object",
             "properties": {
                 "type": {
-                    "oneOf": [
+                    "anyOf": [
                         { "type": "string", "minLength": 1 },
                         {
                             "type": "array",
@@ -433,6 +424,7 @@ mod tests {
             json!({ "type": (0..21).map(|n| format!("user.t{n}")).collect::<Vec<_>>() }),
             json!({ "type": ["core.note", "core.note"] }),
             json!({ "type": ["core.note", 1] }),
+            json!({ "type": 5 }),
         ] {
             let error = check(&schema, &value, "").unwrap_err();
             assert!(error.contains("type"), "{error}");

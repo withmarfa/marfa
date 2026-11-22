@@ -14,6 +14,17 @@ import {
   toolResult,
   type McpConnection,
 } from "../../utils/mcp.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
+import {
+  connect,
+  issuerOrigin,
+  registerApp,
+  signIn,
+} from "../../utils/signed-in.js";
 
 /**
  * `marfa_overview` with `type`, and `marfa_save_type` taking guidance
@@ -365,6 +376,162 @@ describe("marfa_save_type guidance", () => {
       expect(read).not.toHaveProperty("guidance");
     } finally {
       await limited.close();
+    }
+  });
+});
+
+/**
+ * A server of its own: the damaged definition is arranged with the
+ * `unreadable:type-definition` fault, and an app is signed in.
+ */
+describe("marfa_overview and marfa_save_type on a server of their own", () => {
+  let server: FreshServer | undefined;
+  let owner: McpConnection | undefined;
+
+  async function ownerKey(): Promise<string> {
+    const local = new MarfaClient({
+      baseUrl: server!.apiUrl,
+      controlSocket: server!.controlSocket,
+    });
+    const minted = await local.createKey({
+      label: "mcp type guidance owner",
+      source: `mcp-type-guidance-owner-${unique()}`,
+      permissions: ["schema.write"],
+      type_permissions: { "*": "write" },
+      edge_permissions: { "*": "write" },
+      metadata_permissions: { "*": "write" },
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    return minted.data.key!;
+  }
+
+  beforeAll(async () => {
+    server = await bootFreshServer("mcp-type-guidance");
+    owner = await connectMcp(
+      server.apiUrl,
+      await ownerKey(),
+      "2026-07-28",
+      "/mcp/schema",
+    );
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await owner?.close();
+    await server?.stop();
+  }, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  it("answers the types that read and lists a type whose definition does not read as unreadable", async () => {
+    const damaged = `user.damaged${unique()}`;
+    toolResult(
+      await callTool(owner!, "marfa_save_type", {
+        action: "register",
+        id: damaged,
+        fields: FIELDS,
+      }),
+    );
+    const asked = { type: ["core.note", damaged, "core.task"] };
+    // The control: every asked type reads until the fault is set.
+    const whole = toolResult(await callTool(owner!, "marfa_overview", asked));
+    expect((whole.types as Compact[]).map((entry) => entry.id)).toEqual([
+      "core.note",
+      damaged,
+      "core.task",
+    ]);
+    expect(whole).not.toHaveProperty("unreadable");
+
+    await server!.setFault(`unreadable:type-definition=${damaged}`);
+    try {
+      const alone = await callTool(owner!, "marfa_overview", {
+        type: damaged,
+      });
+      expect(toolError(alone).code).toBe("type_chain_unresolvable");
+
+      const listed = toolResult(
+        await callTool(owner!, "marfa_overview", asked),
+      );
+      expect((listed.types as Compact[]).map((entry) => entry.id)).toEqual([
+        "core.note",
+        "core.task",
+      ]);
+      expect(listed.unreadable).toEqual([damaged]);
+      expect(listed).not.toHaveProperty("unknown");
+    } finally {
+      await server!.clearFault();
+    }
+  });
+
+  it("refuses guidance from a key an app made, on register and on change, and keeps the type", async () => {
+    const root = `minted${unique()}`;
+    toolResult(
+      await callTool(owner!, "marfa_save_type", {
+        action: "register",
+        id: `${root}.seed`,
+        fields: FIELDS,
+      }),
+    );
+    const scope = `${root}.*:write metadata.types:write schema.write keys.mint keys.manage`;
+    const issuer = await issuerOrigin(server!);
+    const app = await registerApp(server!, scope);
+    const tokens = await connect(
+      server!,
+      issuer,
+      await signIn(server!, issuer),
+      app,
+      scope,
+    );
+    const appClient = new MarfaClient({
+      baseUrl: server!.apiUrl,
+      apiKey: tokens.access_token,
+    });
+    const minted = await appClient.createKey({
+      label: "minted by an app",
+      source: `mcp-type-guidance-minted-${unique()}`,
+      permissions: ["schema.write"],
+      type_permissions: { [`${root}.*`]: "write" },
+      metadata_permissions: { types: "write" },
+      owner_key: true,
+    } as never);
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    const made = await connectMcp(
+      server!.apiUrl,
+      minted.data.key!,
+      "2026-07-28",
+      "/mcp/schema",
+    );
+    try {
+      const guided = `${root}.guided`;
+      const registered = await callTool(made, "marfa_save_type", {
+        action: "register",
+        id: guided,
+        guidance: "Use it.",
+        fields: FIELDS,
+      });
+      expect(toolError(registered).code).toBe("forbidden");
+      const absent = await callTool(owner!, "marfa_overview", {
+        type: guided,
+      });
+      expect(toolError(absent).code).toBe("type_not_found");
+
+      // The control: the same key registers the type without guidance.
+      toolResult(
+        await callTool(made, "marfa_save_type", {
+          action: "register",
+          id: guided,
+          fields: FIELDS,
+        }),
+      );
+      const changed = await callTool(made, "marfa_save_type", {
+        action: "change",
+        id: guided,
+        guidance: "Use it.",
+      });
+      expect(toolError(changed).code).toBe("forbidden");
+      const read = typeOf(
+        toolResult(await callTool(owner!, "marfa_overview", { type: guided })),
+      );
+      expect(read).not.toHaveProperty("guidance");
+    } finally {
+      await made.close();
     }
   });
 });
