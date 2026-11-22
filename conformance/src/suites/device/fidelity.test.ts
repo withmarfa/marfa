@@ -2393,6 +2393,9 @@ describe("the scripted answers match the server's", () => {
         // there is a shape the server never sends, and a device walking a
         // parent chain meets it on the first type it reads.
         shape: ["row.parent", "row.label", "row.fields"],
+        // Guidance is the deployment's text for agents, as a description is,
+        // and the device core never reads it.
+        absent: ["row.guidance"],
       },
     );
     // A folder writes a file's body and name to the properties these name
@@ -2424,6 +2427,7 @@ describe("the scripted answers match the server's", () => {
             "row.fields",
             "row.merge_policy",
             "row.description",
+            "row.guidance",
             "row.version",
             "row.required",
           ],
