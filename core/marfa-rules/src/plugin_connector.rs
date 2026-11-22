@@ -17,7 +17,7 @@ pub const NAME_CAP: usize = 64;
 /// What a source may not start with, ignoring case: the server keeps these for itself.
 pub const RESERVED_SOURCE_PREFIXES: [&str; 3] = ["oauth:", "restored:", "connector-host:"];
 
-const SECTION_KEYS: [&str; 8] = [
+const SECTION_KEYS: [&str; 9] = [
     "source",
     "source_name",
     "source_mark",
@@ -26,6 +26,7 @@ const SECTION_KEYS: [&str; 8] = [
     "settings",
     "sign_in",
     "runs",
+    "code",
 ];
 const KIND_KEYS: [&str; 4] = ["name", "type", "direction", "default_mapping"];
 const DIRECTIONS: [&str; 3] = ["in", "out", "both"];
@@ -45,6 +46,11 @@ const SIGN_IN_KINDS: [&str; 1] = ["oauth2"];
 const PROVIDERS: [&str; 1] = ["google"];
 const RUNS_KEYS: [&str; 1] = ["on"];
 const RUNS_ON: [&str; 1] = ["host"];
+const CODE_KEYS: [&str; 3] = ["url", "sha256", "size"];
+/// The longest address a connector's code is fetched from.
+pub const CODE_URL_CAP: usize = 2048;
+/// The largest connector code file, in bytes.
+pub const CODE_SIZE_CAP: u64 = 256 * 1024 * 1024;
 
 fn fault(path: impl Into<String>, code: &'static str, message: impl Into<String>) -> Problem {
     Problem {
@@ -442,6 +448,64 @@ impl Judge {
             Some(_) => self.wrong(at, "runs must be an object"),
         }
     }
+
+    fn code(&mut self, section: &Obj) {
+        let at = "connector.code";
+        let Some(held) = section.get("code") else {
+            return;
+        };
+        let Some(code) = held.as_object() else {
+            self.wrong(at.into(), "code must be an object");
+            return;
+        };
+        self.unknown_keys(code, at, &CODE_KEYS);
+        match code.get("url") {
+            None => self.missing(format!("{at}.url")),
+            Some(Value::String(url)) if is_code_url(url) => {}
+            Some(_) => self.wrong(
+                format!("{at}.url"),
+                format!(
+                    "url must be an absolute https address with a host and no user name or password, at most {CODE_URL_CAP} characters"
+                ),
+            ),
+        }
+        match code.get("sha256") {
+            None => self.missing(format!("{at}.sha256")),
+            Some(Value::String(digest)) if is_sha256(digest) => {}
+            Some(_) => self.wrong(
+                format!("{at}.sha256"),
+                "sha256 must be 64 lowercase hexadecimal characters",
+            ),
+        }
+        match code.get("size") {
+            None => self.missing(format!("{at}.size")),
+            Some(size)
+                if size
+                    .as_u64()
+                    .is_some_and(|size| (1..=CODE_SIZE_CAP).contains(&size)) => {}
+            Some(_) => self.wrong(
+                format!("{at}.size"),
+                format!("size must be a whole number of bytes from 1 to {CODE_SIZE_CAP}"),
+            ),
+        }
+    }
+}
+
+fn is_code_url(text: &str) -> bool {
+    text.chars().count() <= CODE_URL_CAP
+        && url::Url::parse(text).is_ok_and(|url| {
+            url.scheme() == "https"
+                && url.host().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+        })
+}
+
+fn is_sha256(text: &str) -> bool {
+    text.len() == 64
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn shipped_edge(id: &str) -> Option<&'static Obj> {
@@ -495,6 +559,7 @@ pub fn connector_faults(
     let declared = judge.settings(section);
     judge.sign_in(section, &declared);
     judge.runs(section);
+    judge.code(section);
     judge.faults
 }
 
@@ -740,6 +805,82 @@ mod tests {
             .into_iter()
             .map(|problem| problem.path)
             .collect()
+    }
+
+    #[test]
+    fn code_is_an_https_address_a_lowercase_digest_and_a_bounded_size() {
+        let mut held = base();
+        let digest = "0123456789abcdef".repeat(4);
+        held["code"] = json!({
+            "url": "https://example.com/v1/rss.connector.mjs",
+            "sha256": digest,
+            "size": CODE_SIZE_CAP,
+        });
+        assert!(paths(held.clone()).is_empty());
+        for (code, path) in [
+            (
+                json!({ "url": "http://example.com/a.mjs", "sha256": digest, "size": 1 }),
+                "url",
+            ),
+            (
+                json!({ "url": "HTTPS://example.com/a.mjs", "sha256": digest, "size": 1 }),
+                "",
+            ),
+            (
+                json!({ "url": "https://", "sha256": digest, "size": 1 }),
+                "url",
+            ),
+            (
+                json!({ "url": "https://u@example.com/a.mjs", "sha256": digest, "size": 1 }),
+                "url",
+            ),
+            (
+                json!({ "url": format!("https://example.com/{}", "a".repeat(CODE_URL_CAP)), "sha256": digest, "size": 1 }),
+                "url",
+            ),
+            (
+                json!({ "url": "https://example.com/a.mjs", "sha256": digest.to_uppercase(), "size": 1 }),
+                "sha256",
+            ),
+            (
+                json!({ "url": "https://example.com/a.mjs", "sha256": &digest[1..], "size": 1 }),
+                "sha256",
+            ),
+            (
+                json!({ "url": "https://example.com/a.mjs", "sha256": digest, "size": 0 }),
+                "size",
+            ),
+            (
+                json!({ "url": "https://example.com/a.mjs", "sha256": digest, "size": -1 }),
+                "size",
+            ),
+            (
+                json!({ "url": "https://example.com/a.mjs", "sha256": digest, "size": 2.5 }),
+                "size",
+            ),
+            (
+                json!({ "url": "https://example.com/a.mjs", "sha256": digest, "size": CODE_SIZE_CAP + 1 }),
+                "size",
+            ),
+            (
+                json!({ "url": "https://example.com/a.mjs", "sha256": digest }),
+                "size",
+            ),
+            (
+                json!({ "url": "https://example.com/a.mjs", "sha256": digest, "size": 1, "mirror": "x" }),
+                "mirror",
+            ),
+        ] {
+            held["code"] = code.clone();
+            let expected: Vec<String> = if path.is_empty() {
+                Vec::new()
+            } else {
+                vec![format!("connector.code.{path}")]
+            };
+            assert_eq!(paths(held.clone()), expected, "{code}");
+        }
+        held["code"] = json!("https://example.com/a.mjs");
+        assert_eq!(paths(held), ["connector.code"]);
     }
 
     #[test]

@@ -304,6 +304,53 @@ describe("a plugin's source folder from the terminal", () => {
     );
   });
 
+  it("refuses a connector code that is not https, or a sha256 that is not 64 hex characters, as installing does", async () => {
+    const coded = (code: unknown) =>
+      source(
+        { "common.issue.json": definition("common.issue") },
+        {
+          connector: {
+            source: "codecheck",
+            source_name: "Codecheck",
+            kinds: [{ name: "issue", type: "common.issue", direction: "in" }],
+            runs: { on: "host" },
+            code,
+          },
+        },
+      );
+    const code = {
+      url: "https://example.com/releases/v1.0.0/issues.connector.mjs",
+      sha256: "b".repeat(64),
+      size: 4096,
+    };
+    // The witness: a well-formed code passes.
+    const passed = await marfa(
+      ["--json", "plugins", "check", coded(code)],
+      NO_KEYCHAIN,
+    );
+    expect(passed.code, passed.stdout).toBe(0);
+    const refused = await marfa(
+      [
+        "--json",
+        "plugins",
+        "check",
+        coded({
+          url: "http://example.com/issues.connector.mjs",
+          sha256: "b".repeat(40),
+          size: 0,
+        }),
+      ],
+      NO_KEYCHAIN,
+    );
+    expect(refused.code, refused.stdout).toBe(1);
+    const verdict = JSON.parse(refused.stdout) as Verdict;
+    expect(verdict.problems.map((problem) => problem.path).sort()).toEqual(
+      ["sha256", "size", "url"].map(
+        (field) => `plugin.json: connector.code.${field}`,
+      ),
+    );
+  });
+
   it("builds a source folder into a bundle stamped with its version, and writes an index naming its SHA-256", async () => {
     const folder = source({
       "common.ticket.json": definition("common.ticket"),

@@ -236,6 +236,38 @@ If a bundle's `connector.sign_in` names in `client_id_setting`, `client_secret_s
 
 **Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a connector section with an unknown key, no kinds, a kind type outside the bundle, a choice with no choices, a secret with a default or a sign-in naming an undeclared setting, naming each path and installing nothing`.
 
+### `plugins/connector-code-url`
+
+If a bundle's `connector.code` gives a `url` that is not an absolute address with the scheme `https` and a host, that holds a user name or a password, or that is longer than 2048 characters, then the server MUST answer `400 validation_error` with `details.errors` naming `connector.code.url`.
+
+**Reason:** a connector host fetches the connector's code from this address. `https` keeps the code from being changed on the way, and a bundle anyone can read carries no credential.
+
+**Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a connector code that is not https, a sha256 that is not 64 lowercase hex characters or a size out of range, naming each path and installing nothing`, `device/plugins-check.test.ts › refuses a connector code that is not https, or a sha256 that is not 64 hex characters, as installing does`.
+
+### `plugins/connector-code-sha256`
+
+If a bundle's `connector.code` gives a `sha256` that is not 64 characters, each a digit or a lowercase letter from `a` to `f`, then the server MUST answer `400 validation_error` with `details.errors` naming `connector.code.sha256`.
+
+**Reason:** a connector host runs the code it fetched only when its SHA-256 matches this one, and the bundle's `fingerprint` (`plugins/install-fingerprint`) covers it.
+
+**Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a connector code that is not https, a sha256 that is not 64 lowercase hex characters or a size out of range, naming each path and installing nothing`, `device/plugins-check.test.ts › refuses a connector code that is not https, or a sha256 that is not 64 hex characters, as installing does`.
+
+### `plugins/connector-code-size`
+
+If a bundle's `connector.code` gives a `size` that is not an integer from 1 to 268435456, then the server MUST answer `400 validation_error` with `details.errors` naming `connector.code.size`.
+
+**Reason:** a connector host stops a fetch that passes the size, so a wrong address cannot fill its disk.
+
+**Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a connector code that is not https, a sha256 that is not 64 lowercase hex characters or a size out of range, naming each path and installing nothing`, `device/plugins-check.test.ts › refuses a connector code that is not https, or a sha256 that is not 64 hex characters, as installing does`.
+
+### `plugins/connector-code-update`
+
+When `POST /plugins` sends a later version of an installed plugin whose connector keeps its `source` and gives another `connector.code`, or none, the server MUST answer `200` with `outcome` `updated`.
+
+**Reason:** each version of a plugin carries its own code, so its address and digest change with the version, unlike its source (`plugins/connector-source-same`).
+
+**Tests:** `compliance/plugin-connectors.test.ts › answers a connector's code unchanged to its host, and takes a newer version that changes or drops it`.
+
 ### `plugins/connector-default-mapping`
 
 If a kind in a bundle's `connector.kinds` gives a `default_mapping` that holds a member other than `tier`, `status_overrides` and `fields`, or that `PUT /plugins/{name}/connector/mapping` would refuse as the kind's entry with its own type as `target_type`, then the server MUST answer `400 validation_error` with `details.errors` naming each fault as a `path` under `connector.kinds.<index>.default_mapping`.
@@ -254,7 +286,7 @@ If `POST /plugins` refuses a bundle for its connector section, then the server M
 
 When `POST /plugins` installs a bundle with a `connector` object, the server MUST answer the object as the bundle gives it as `connector` from `POST /plugins`, `GET /plugins` and `GET /plugins/{name}`.
 
-**Tests:** `compliance/plugin-connectors.test.ts › installs a bundle with a well-formed connector, keeps the section as sent and records the connector with no host`.
+**Tests:** `compliance/plugin-connectors.test.ts › installs a bundle with a well-formed connector, keeps the section as sent and records the connector with no host`, `› answers a connector's code unchanged to its host, and takes a newer version that changes or drops it`.
 
 ### `plugins/connector-recorded`
 
@@ -618,7 +650,7 @@ When a host's key sends `GET /connector-hosts/self`, the server MUST answer `200
 
 **Reason:** a host skips starting a connector the owner paused, and starts one the owner asked to run now.
 
-**Tests:** `compliance/connector-hosts.test.ts › answers a host only the connectors assigned to it, and records when it was last seen`, `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`.
+**Tests:** `compliance/connector-hosts.test.ts › answers a host only the connectors assigned to it, and records when it was last seen`, `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`, `compliance/plugin-connectors.test.ts › answers a connector's code unchanged to its host, and takes a newer version that changes or drops it`.
 
 ### `plugins/host-mint`
 

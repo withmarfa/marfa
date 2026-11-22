@@ -289,6 +289,151 @@ describe("the connector section", () => {
     expect(taken.status, JSON.stringify(taken.error)).toBe(201);
   });
 
+  it("refuses 400 validation_error a connector code that is not https, a sha256 that is not 64 lowercase hex characters or a size out of range, naming each path and installing nothing", async () => {
+    const part = fresh();
+    const root = `code${part}`;
+    const type = `${root}.entry`;
+    const source = `code-${part}`;
+    const name = `code-${part}`;
+    const code = {
+      url: "https://example.com/releases/v1.0.0/entries.connector.mjs",
+      sha256: "a".repeat(64),
+      size: 524288,
+    };
+    const { sha256: _sha256, ...digestless } = code;
+    const cases: [string, unknown, string][] = [
+      [
+        "an http address",
+        { ...code, url: "http://example.com/entries.connector.mjs" },
+        "connector.code.url",
+      ],
+      [
+        "a relative address",
+        { ...code, url: "entries.mjs" },
+        "connector.code.url",
+      ],
+      [
+        "an address with credentials",
+        { ...code, url: "https://user:secret@example.com/entries.mjs" },
+        "connector.code.url",
+      ],
+      [
+        "a short digest",
+        { ...code, sha256: "a".repeat(63) },
+        "connector.code.sha256",
+      ],
+      [
+        "an uppercase digest",
+        { ...code, sha256: "A".repeat(64) },
+        "connector.code.sha256",
+      ],
+      [
+        "a digest that is not hex",
+        { ...code, sha256: "g".repeat(64) },
+        "connector.code.sha256",
+      ],
+      ["no digest", digestless, "connector.code.sha256"],
+      ["a size of zero", { ...code, size: 0 }, "connector.code.size"],
+      [
+        "a size that is not whole",
+        { ...code, size: 1.5 },
+        "connector.code.size",
+      ],
+      [
+        "a size past the bound",
+        { ...code, size: 268435457 },
+        "connector.code.size",
+      ],
+      ["a size as text", { ...code, size: "524288" }, "connector.code.size"],
+      [
+        "an unknown key",
+        { ...code, mirror: code.url },
+        "connector.code.mirror",
+      ],
+      ["not an object", code.url, "connector.code"],
+    ];
+    for (const [label, held, path] of cases) {
+      const refused = await owner.installPlugin(
+        connectorBundle(name, root, source, {
+          connector: connectorSection(type, source, { code: held }),
+        }),
+      );
+      expect(refused.status, label).toBe(400);
+      expect(refused.error?.error.code, label).toBe("validation_error");
+      expect(errorPaths(refused), label).toContain(path);
+      expect((await owner.getPlugin(name)).status, label).toBe(404);
+      expect((await owner.getType(type)).status, label).toBe(404);
+    }
+    // The witness: the same bundle with a well-formed code, at the bound, installs.
+    const bounded = { ...code, size: 268435456 };
+    const connector = connectorSection(type, source, { code: bounded });
+    const taken = await owner.installPlugin(
+      connectorBundle(name, root, source, { connector }),
+    );
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+    expect(taken.data.connector).toEqual(connector);
+  });
+
+  it("answers a connector's code unchanged to its host, and takes a newer version that changes or drops it", async () => {
+    const part = fresh();
+    const root = `hostcode${part}`;
+    const type = `${root}.entry`;
+    const source = `hostcode-${part}`;
+    const name = `hostcode-${part}`;
+    const code = {
+      url: "https://example.com/releases/v1.0.0/entries.connector.mjs",
+      sha256:
+        "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      size: 1048576,
+    };
+    const connector = connectorSection(type, source, { code });
+    const installed = await owner.installPlugin(
+      connectorBundle(name, root, source, { connector }),
+    );
+    expect(installed.status, JSON.stringify(installed.error)).toBe(201);
+    await expectMatchesSchema("POST", "/plugins", 201, installed.data);
+    expect((await owner.getPlugin(name)).data.connector).toEqual(connector);
+    const host = await linkedHost(origin, owner, `code ${part}`);
+    const assigned = await owner.assignConnector(name, host.id);
+    expect(assigned.status, JSON.stringify(assigned.error)).toBe(200);
+    const self = await host.client.connectorHostSelf();
+    expect(self.status).toBe(200);
+    await expectMatchesSchema("GET", "/connector-hosts/self", 200, self.data);
+    expect(self.data.connectors).toHaveLength(1);
+    expect(self.data.connectors[0].connector).toEqual(connector);
+    expect(self.data.connectors[0].connector.code).toEqual(code);
+
+    // A newer version may move its code, unlike its source.
+    const moved = {
+      url: "https://example.com/releases/v1.1.0/entries.connector.mjs",
+      sha256:
+        "60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752",
+      size: 2097152,
+    };
+    const newer = await owner.installPlugin(
+      connectorBundle(name, root, source, {
+        version: "1.1.0",
+        connector: connectorSection(type, source, { code: moved }),
+      }),
+    );
+    expect(newer.status, JSON.stringify(newer.error)).toBe(200);
+    expect(newer.data.outcome).toBe("updated");
+    const after = await host.client.connectorHostSelf();
+    expect(after.data.connectors[0].version).toBe("1.1.0");
+    expect(after.data.connectors[0].connector.code).toEqual(moved);
+
+    const dropped = await owner.installPlugin(
+      connectorBundle(name, root, source, {
+        version: "1.2.0",
+        connector: connectorSection(type, source),
+      }),
+    );
+    expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
+    expect(dropped.data.outcome).toBe("updated");
+    const last = await host.client.connectorHostSelf();
+    expect(last.data.connectors[0].connector).not.toHaveProperty("code");
+  });
+
   it("refuses 400 validation_error a secret setting of a kind other than text, naming its secret, and installs the same setting as text", async () => {
     const part = fresh();
     const root = `secretkind${part}`;
