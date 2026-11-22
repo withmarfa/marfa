@@ -10503,7 +10503,7 @@ export interface components {
              * @example 01a1fa41-9d8e-7f10-b2c3-4d5e6f708192
              */
             item_id?: string;
-            /** @description A draft of the kind's mapping, checked as a save checks it; a member you leave out takes its default, except when `target_type` is not the kind's own type: `fields` left out are the fields both types declare, each `{ "from": <field> }`, and `status_overrides` left out are none. Leave it out to preview the mapping in force. */
+            /** @description A draft of the kind's mapping, checked as a save checks it. A member you leave out takes the default a save gives it, as `ConnectorMappingKind` says, including when `target_type` is another type. Leave it out to preview the mapping in force. */
             mapping?: components["schemas"]["ConnectorMappingKind"];
         };
         /** @description The connector's answer to a mapping preview: `result` or `error`, not both. */
