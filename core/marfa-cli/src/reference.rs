@@ -61,6 +61,10 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         "Choose which machine runs a plugin's connector",
         &["plugins assign"],
     ),
+    (
+        "Set a plugin connector's settings and secrets",
+        &["plugins settings", "plugins secret"],
+    ),
     ("See what a key can read", &["overview"]),
     ("Read the instance's name and enforcement", &["config get"]),
     (

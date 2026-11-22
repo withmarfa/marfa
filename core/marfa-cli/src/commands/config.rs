@@ -121,7 +121,7 @@ pub fn check_address_request(body: serde_json::Value) -> Request {
 
 /// Standard input, or a prompt with no echo at a terminal, for a value that
 /// no command line may carry.
-fn secret_value(name: &str) -> Result<String, CliError> {
+pub(crate) fn secret_value(name: &str) -> Result<String, CliError> {
     if std::io::stdin().is_terminal() {
         return Ok(rpassword::prompt_password(format!("Value for {name}: "))?);
     }

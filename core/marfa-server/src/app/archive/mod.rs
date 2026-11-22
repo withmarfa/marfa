@@ -891,10 +891,7 @@ fn select<W: RowSink>(
     let mut connector_settings = Vec::new();
     if caller.holds(Permission::ConnectorsManage) {
         for line in super::connector_settings::archive_lines(read.tx)? {
-            connector_settings.push((
-                print(&line)?,
-                needing(Some(Permission::ConnectorsManage)),
-            ));
+            connector_settings.push((print(&line)?, needing(Some(Permission::ConnectorsManage))));
         }
     }
     count("connector_setting_count", &mut instance, connector_settings)?;

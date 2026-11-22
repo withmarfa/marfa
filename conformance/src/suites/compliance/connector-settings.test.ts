@@ -51,6 +51,7 @@ const OWNER_PERMISSIONS = [
   "keys.manage",
   "keys.mint",
   "backups.manage",
+  "audit.read",
 ];
 
 const SETTINGS = [
@@ -806,7 +807,8 @@ describe("a connector's secret", () => {
     const restored = await local.restoreArchive(archive.data);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(
-      (restored.data as unknown as Record<string, unknown>).connector_secrets_to_set,
+      (restored.data as unknown as Record<string, unknown>)
+        .connector_secrets_to_set,
     ).toContainEqual({ plugin: name, name: "token" });
     const there = (await ownerKey(destination, OWNER_PERMISSIONS)).client;
     const read = await there.getConnectorSettings(name);

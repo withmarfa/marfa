@@ -508,8 +508,7 @@ impl Setting {
         let fits = match self.kind {
             Kind::Text => value.as_str().is_some_and(|text| {
                 let count = text.chars().count();
-                (1..=VALUE_CAP).contains(&count)
-                    && !(self.secret && text.trim() != text)
+                (1..=VALUE_CAP).contains(&count) && !(self.secret && text.trim() != text)
             }),
             Kind::Number => value.is_number(),
             Kind::Boolean => value.is_boolean(),
@@ -535,7 +534,8 @@ impl Setting {
     pub fn keeps(&self, earlier: &Setting, value: Option<&Value>) -> bool {
         self.kind == earlier.kind
             && self.secret == earlier.secret
-            && (self.kind != Kind::Choice || value.is_some_and(|value| self.refuses(value).is_none()))
+            && (self.kind != Kind::Choice
+                || value.is_some_and(|value| self.refuses(value).is_none()))
     }
 }
 
@@ -721,7 +721,11 @@ mod tests {
         assert!(token.secret && token.required && !feed.secret);
         for (setting, good, bad) in [
             (feed, json!(" padded is fine "), json!("")),
-            (feed, json!("x".repeat(VALUE_CAP)), json!("x".repeat(VALUE_CAP + 1))),
+            (
+                feed,
+                json!("x".repeat(VALUE_CAP)),
+                json!("x".repeat(VALUE_CAP + 1)),
+            ),
             (every, json!(-1.5), json!("1")),
             (on, json!(false), json!(0)),
             (order, json!("b"), json!("c")),

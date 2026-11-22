@@ -40,6 +40,10 @@ pub enum PluginsCommand {
     },
     /// Assign a plugin's connector to a connector host, or to none. Moving it revokes the key its former host minted for it. Requires `connectors.manage`.
     Assign(AssignArgs),
+    /// A plugin connector's settings, each with its value or default, or set some with `--set`. A secret is listed as set or not, never shown, and set with `marfa plugins secret`. Requires `connectors.manage`.
+    Settings(SettingsArgs),
+    /// Set a secret setting of a plugin's connector from standard input, or from a prompt that does not echo at a terminal, or remove it with `--clear`. The value is never an argument and never printed. Requires `connectors.manage`.
+    Secret(SecretArgs),
     /// Judge a plugin's source folder as installing it would, with no server: `common.*` types are taken, and the roots kept for Marfa, apps and the owner are refused.
     Check {
         /// The source folder, holding `plugin.json`, `types/` and `edge-types/`.
@@ -89,6 +93,29 @@ pub struct AssignArgs {
     pub none: bool,
 }
 
+#[derive(Debug, Args)]
+pub struct SettingsArgs {
+    /// The plugin's name.
+    pub name: String,
+    /// A setting to set, as `name=value`; repeat it for more. The value is sent as the setting's kind: a number, `true` or `false`, or text.
+    #[arg(long = "set", value_name = "NAME=VALUE")]
+    pub set: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SecretArgs {
+    /// The plugin's name.
+    pub name: String,
+    /// The secret setting's name.
+    pub setting: String,
+    /// Remove the value set, reading nothing.
+    #[arg(long)]
+    pub clear: bool,
+    /// A value given here is refused: a shell history and a process list keep it.
+    #[arg(hide = true)]
+    pub value: Option<String>,
+}
+
 pub fn list_request() -> Request {
     Request::get(&["plugins"])
 }
@@ -104,6 +131,14 @@ pub fn install_request(bundle: String) -> Request {
 
 pub fn remove_request(name: &str) -> Request {
     Request::delete(&["plugins", name])
+}
+
+pub fn settings_request(name: &str) -> Request {
+    Request::get(&["plugins", name, "connector", "settings"])
+}
+
+pub fn update_settings_request(name: &str, body: Value) -> Request {
+    Request::patch(&["plugins", name, "connector", "settings"]).json(body)
 }
 
 pub fn assign_request(name: &str, host: Option<&str>) -> Request {
@@ -178,6 +213,41 @@ pub fn run(
             let answer = remote.json(&assign_request(&args.name, host.as_deref()))?;
             return out.report(&answer, assigned_words);
         }
+        PluginsCommand::Settings(args) if args.set.is_empty() => settings_request(&args.name),
+        PluginsCommand::Settings(args) => {
+            let remote = remote()?;
+            let listing = remote.json(&settings_request(&args.name))?;
+            let body = settings_body(&args.name, &args.set, &listing)?;
+            let answer = remote.json(&update_settings_request(&args.name, body))?;
+            let set: Vec<&str> = args
+                .set
+                .iter()
+                .filter_map(|pair| pair.split_once('=').map(|(name, _)| name))
+                .collect();
+            return out.report(&answer, |_| {
+                format!("set {} for {}", set.join(", "), args.name)
+            });
+        }
+        PluginsCommand::Secret(args) => {
+            if args.value.is_some() {
+                return Err(CliError::Usage(format!(
+                    "{} takes no value as an argument, which a process list and a shell history keep; \
+                     send it on standard input or run the command with no value to be asked",
+                    args.setting
+                )));
+            }
+            let value = if args.clear {
+                Value::Null
+            } else {
+                Value::String(super::config::secret_value(&args.setting)?)
+            };
+            let body = Value::Object(serde_json::Map::from_iter([(args.setting.clone(), value)]));
+            let answer = remote()?.json(&update_settings_request(&args.name, body))?;
+            let done = if args.clear { "removed" } else { "set" };
+            return out.report(&answer, |_| {
+                format!("{done} {} for {}", args.setting, args.name)
+            });
+        }
         _ => return run_offline(command, out),
     };
     let remote = remote()?;
@@ -185,6 +255,7 @@ pub fn run(
     match &command {
         PluginsCommand::Install(args) => installed(&remote, args, answer, out),
         PluginsCommand::Remove { .. } => out.report(&answer, removed_words),
+        PluginsCommand::Settings(_) => out.report(&answer, settings_words),
         _ => out.value(&answer),
     }
 }
@@ -231,6 +302,84 @@ fn installed(
         Some(also) => format!("{}; {also}", installed_words(answer)),
         None => installed_words(answer),
     })
+}
+
+/// Each `name=value` as the kind the listing gives its setting. A secret named here is refused
+/// before anything is sent, and its value is never repeated.
+fn settings_body(plugin: &str, pairs: &[String], listing: &Value) -> Result<Value, CliError> {
+    let mut body = serde_json::Map::new();
+    for pair in pairs {
+        let Some((name, text)) = pair.split_once('=') else {
+            return Err(CliError::Usage(format!(
+                "--set takes `name=value`, and {pair:?} has no `=`"
+            )));
+        };
+        let setting = listing["settings"]
+            .as_array()
+            .and_then(|settings| settings.iter().find(|setting| setting["name"] == name))
+            .ok_or_else(|| {
+                CliError::Usage(format!(
+                    "{plugin}'s connector has no setting {name}; `marfa plugins settings {plugin}` lists them"
+                ))
+            })?;
+        if setting["secret"].as_bool() == Some(true) {
+            return Err(CliError::Usage(format!(
+                "{name} is a secret, so --set does not take it: a process list and a shell history keep \
+                 an argument. Use `marfa plugins secret {plugin} {name}`"
+            )));
+        }
+        let wrong = |wanted: &str| {
+            CliError::Usage(format!("{name} takes {wanted}, and {text:?} is not that"))
+        };
+        let value = match setting["kind"].as_str() {
+            Some("number") => serde_json::from_str::<Value>(text)
+                .ok()
+                .filter(Value::is_number)
+                .ok_or_else(|| wrong("a number"))?,
+            Some("boolean") => match text {
+                "true" => Value::Bool(true),
+                "false" => Value::Bool(false),
+                _ => return Err(wrong("`true` or `false`")),
+            },
+            _ => Value::String(text.to_string()),
+        };
+        body.insert(name.to_string(), value);
+    }
+    Ok(Value::Object(body))
+}
+
+fn settings_words(answer: &Value) -> String {
+    let mut lines = Vec::new();
+    for setting in answer["settings"].as_array().into_iter().flatten() {
+        let name = setting["name"].as_str().unwrap_or_default();
+        let required = if setting["required"].as_bool() == Some(true) {
+            ", required"
+        } else {
+            ""
+        };
+        let said = if setting["secret"].as_bool() == Some(true) {
+            match (setting["set"].as_bool(), setting["unreadable"].as_bool()) {
+                (_, Some(true)) => "secret, unreadable here: set it again".to_string(),
+                (Some(true), _) => "secret, set".to_string(),
+                _ => "secret, not set".to_string(),
+            }
+        } else if setting["set"].as_bool() == Some(true) {
+            setting["value"].to_string()
+        } else if setting["value"].is_null() {
+            "not set".to_string()
+        } else {
+            format!("{} (default)", setting["value"])
+        };
+        lines.push(format!("{name}: {said}{required}"));
+    }
+    if let Some(missing) = answer["missing"]
+        .as_array()
+        .filter(|missing| !missing.is_empty())
+    {
+        let names: Vec<&str> = missing.iter().filter_map(Value::as_str).collect();
+        lines.push(format!("missing: {}", names.join(", ")));
+    }
+    lines.join("\n")
 }
 
 fn assigned_words(answer: &Value) -> String {

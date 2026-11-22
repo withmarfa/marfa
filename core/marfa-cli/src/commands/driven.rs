@@ -337,6 +337,8 @@ fn given(words: &[String]) -> Vec<(String, Option<String>)> {
             "<HOST>".into(),
             Some("0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b".into()),
         )],
+        // A secret is otherwise read from standard input.
+        ["plugins", "secret"] => vec![("--clear".into(), None)],
         _ => Vec::new(),
     }
 }

@@ -82,9 +82,8 @@ fn install_of(record: &Record) -> Result<String> {
 }
 
 fn rows(tx: &Transaction<'_>, plugin: &str) -> Result<HashMap<String, String>> {
-    let mut statement = tx.prepare_cached(
-        "SELECT name, value FROM plugin_connector_settings WHERE plugin = ?1",
-    )?;
+    let mut statement =
+        tx.prepare_cached("SELECT name, value FROM plugin_connector_settings WHERE plugin = ?1")?;
     let rows = statement.query_map([plugin], |row| Ok((row.get(0)?, row.get(1)?)))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
@@ -141,10 +140,7 @@ impl Held {
     fn missing(&self, sealer: &Sealer) -> Result<Vec<String>> {
         let mut missing = Vec::new();
         for setting in &self.declared {
-            let readable = matches!(
-                self.now(setting, sealer)?,
-                Now::Plain(_) | Now::Opened(_)
-            );
+            let readable = matches!(self.now(setting, sealer)?, Now::Plain(_) | Now::Opened(_));
             if setting.required && !readable && setting.default.is_none() {
                 missing.push(setting.name.clone());
             }
@@ -239,7 +235,8 @@ fn clear(tx: &Transaction<'_>, plugin: &str, name: &str) -> Result<()> {
 }
 
 fn refused(errors: Vec<Value>) -> Refusal {
-    Refusal::validation("Some settings were refused; nothing was stored.").with_detail("errors", errors)
+    Refusal::validation("Some settings were refused; nothing was stored.")
+        .with_detail("errors", errors)
 }
 
 /// The managing permission, judged before the body is read.
@@ -345,17 +342,20 @@ pub(crate) fn follow_update(
     let earlier = declared_of(before)?;
     let later = declared_of(after)?;
     for (name, text) in rows(tx, plugin)? {
-        let kept = later.iter().find(|setting| setting.name == name).is_some_and(|setting| {
-            earlier
-                .iter()
-                .find(|old| old.name == name)
-                .is_some_and(|old| {
-                    let value = (!old.secret)
-                        .then(|| serde_json::from_str::<Value>(&text).ok())
-                        .flatten();
-                    setting.keeps(old, value.as_ref())
-                })
-        });
+        let kept = later
+            .iter()
+            .find(|setting| setting.name == name)
+            .is_some_and(|setting| {
+                earlier
+                    .iter()
+                    .find(|old| old.name == name)
+                    .is_some_and(|old| {
+                        let value = (!old.secret)
+                            .then(|| serde_json::from_str::<Value>(&text).ok())
+                            .flatten();
+                        setting.keeps(old, value.as_ref())
+                    })
+            });
         if !kept {
             clear(tx, plugin, &name)?;
         }

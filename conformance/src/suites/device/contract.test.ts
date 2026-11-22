@@ -1115,6 +1115,8 @@ const invocations: Record<string, () => string[]> = {
   "plugins get": () => ["fixture"],
   "plugins remove": () => ["fixture"],
   "plugins assign": () => ["fixture", "--none"],
+  "plugins settings": () => ["fixture"],
+  "plugins secret": () => ["fixture", "token", "--clear"],
   "hosts add": () => ["Studio"],
   "hosts list": () => [],
   "hosts get": () => [HOST_ID],

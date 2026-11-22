@@ -2659,7 +2659,7 @@ async fn a_database_at_schema_version_5_upgrades_through_6_keeping_its_keys_and_
 
 #[tokio::test]
 async fn a_database_at_schema_version_6_upgrades_through_7_giving_each_plugin_connector_an_install()
- {
+{
     let place = folder();
     db_open(&options(&place.file, &MIGRATIONS[..6]), Arc::default())
         .map_err(|f| f.message)
@@ -2698,7 +2698,10 @@ async fn a_database_at_schema_version_6_upgrades_through_7_giving_each_plugin_co
         .collect::<rusqlite::Result<_>>()
         .unwrap();
     assert_eq!(ids.len(), 2);
-    assert!(ids.iter().all(|id| id.as_ref().is_some_and(|id| id.len() == 32)));
+    assert!(
+        ids.iter()
+            .all(|id| id.as_ref().is_some_and(|id| id.len() == 32))
+    );
     assert_ne!(ids[0], ids[1]);
     conn.execute(
         "INSERT INTO plugin_connector_settings (plugin, name, value, updated_at) \
@@ -2706,12 +2709,16 @@ async fn a_database_at_schema_version_6_upgrades_through_7_giving_each_plugin_co
         [],
     )
     .unwrap();
-    conn.execute_batch("PRAGMA foreign_keys = ON; DELETE FROM plugin_connectors WHERE plugin = 'rss';")
-        .unwrap();
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; DELETE FROM plugin_connectors WHERE plugin = 'rss';",
+    )
+    .unwrap();
     let left: i64 = conn
-        .query_row("SELECT count(*) FROM plugin_connector_settings", [], |row| {
-            row.get(0)
-        })
+        .query_row(
+            "SELECT count(*) FROM plugin_connector_settings",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!(left, 0);
 }
