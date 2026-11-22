@@ -273,7 +273,10 @@ describe("a host's key", () => {
     const { name, type } = await plugin("gated");
     const host = await linkedHost(server, owner, `gated ${fresh()}`);
     expect((await owner.assignConnector(name, host.id)).status).toBe(200);
-    const doors: [string, () => Promise<{ status: number }>][] = [
+    const doors: [
+      string,
+      () => Promise<{ status: number; error?: { error: { code: string } } }>,
+    ][] = [
       ["plugins", () => host.client.listPlugins()],
       ["plugin", () => host.client.getPlugin(name)],
       [

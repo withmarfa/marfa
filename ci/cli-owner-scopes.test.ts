@@ -24,6 +24,11 @@ describe("the CLI owner sign-in scopes", () => {
             !["openid", "profile", "email", "offline_access"].includes(scope),
         )
         .sort(),
-    ).toEqual(permissionNames().sort());
+    ).toEqual(
+      permissionNames()
+        // Given only to a connector host's own key, never asked for as a scope.
+        .filter((name) => name !== "connectors.host")
+        .sort(),
+    );
   });
 });

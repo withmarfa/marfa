@@ -46,7 +46,10 @@ afterAll(async () => {
 
 function bundleFile(name: string): string {
   const root = name.replaceAll("-", "");
-  const file = join(tempFolder("marfa-connector-bundle-"), `${name}.plugin.json`);
+  const file = join(
+    tempFolder("marfa-connector-bundle-"),
+    `${name}.plugin.json`,
+  );
   writeFileSync(file, JSON.stringify(connectorBundle(name, root, name)));
   return file;
 }
@@ -68,7 +71,9 @@ describe("connector hosts from the terminal", () => {
     expect(link, added.stdout).toBeDefined();
     const json = await cli.run(["--json", "hosts", "list"]);
     expect(json.code, json.stderr).toBe(0);
-    const hosts = JSON.parse(json.stdout) as { data: { id: string; name: string }[] };
+    const hosts = JSON.parse(json.stdout) as {
+      data: { id: string; name: string }[];
+    };
     const id = hosts.data.find((host) => host.name === name)?.id;
     expect(id).toBeDefined();
     // By name, as by ID.
@@ -130,9 +135,9 @@ describe("connector hosts from the terminal", () => {
     const host = `Assigning ${fresh()}`;
     expect((await cli.run(["hosts", "add", host])).code).toBe(0);
     const name = `moving-${fresh()}`;
-    expect(
-      (await cli.run(["plugins", "install", bundleFile(name)])).code,
-    ).toBe(0);
+    expect((await cli.run(["plugins", "install", bundleFile(name)])).code).toBe(
+      0,
+    );
     const onto = await cli.run(["plugins", "assign", name, "--host", host]);
     expect(onto.code, onto.stderr).toBe(0);
     expect(onto.stdout).toContain(`${name}'s connector runs on host`);
