@@ -118,6 +118,9 @@ pub enum CliError {
         sign_in_end(status)
     )]
     SignInEnded { plugin: String, status: String },
+    /// The mapping preview `plugins mapping preview --wait` waits on failed or ended unanswered.
+    #[error("the mapping preview of {plugin} ended: {reason}")]
+    PreviewEnded { plugin: String, reason: String },
     #[error("{0}")]
     Invalid(String),
     /// A plugin source folder's definition file named other than its id.
@@ -398,6 +401,7 @@ own_codes! {
     CliError::CredentialEnded => "unauthorized",
     CliError::DeviceCodeEnded => "device_code_ended",
     CliError::SignInEnded { .. } => "sign_in_ended",
+    CliError::PreviewEnded { .. } => "preview_ended",
     CliError::Invalid(_) => "invalid",
     CliError::FileNameMismatch(_) => "file_name_mismatch",
     CliError::CloudLinkFailed(_) => "cloud_link_failed",
@@ -515,6 +519,7 @@ impl CliError {
             | CliError::DocsUnreachable { .. }
             | CliError::PluginsUnreachable { .. } => Exit::Environment,
             CliError::Invalid(_)
+            | CliError::PreviewEnded { .. }
             | CliError::FileNameMismatch(_)
             | CliError::CloudLinkFailed(_)
             | CliError::ArchiveLacksBlobs(_)
@@ -986,6 +991,7 @@ mod tests {
             "device_code_ended",
             "cloud_link_failed",
             "sign_in_ended",
+            "preview_ended",
             "docs_page_not_found",
             "docs_section_not_found",
             "docs_unreachable",
@@ -1039,6 +1045,10 @@ mod tests {
             CliError::SignInEnded {
                 plugin: String::new(),
                 status: String::new(),
+            },
+            CliError::PreviewEnded {
+                plugin: String::new(),
+                reason: String::new(),
             },
             CliError::Invalid(String::new()),
             CliError::FileNameMismatch(String::new()),

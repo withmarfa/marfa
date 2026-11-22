@@ -44,6 +44,26 @@ pub enum PluginsCommand {
     Settings(SettingsArgs),
     /// Set a secret setting of a plugin's connector from standard input, or from a prompt that does not echo at a terminal, or remove it with `--clear`. The value is never an argument and never printed. Requires `connectors.manage`.
     Secret(SecretArgs),
+    /// Pause a plugin's connector: it stops itself and its host does not start it, and a run asked for is dropped. Marfa still takes its writes, so a run under way finishes. Requires `connectors.manage`.
+    Pause {
+        /// The plugin's name.
+        name: String,
+    },
+    /// Resume a plugin's paused connector. Requires `connectors.manage`.
+    Resume {
+        /// The plugin's name.
+        name: String,
+    },
+    /// Ask a plugin's connector to run now. It reads the request and runs, and a run it reports as started since clears it. A paused connector is refused. Requires `connectors.manage`.
+    Run {
+        /// The plugin's name.
+        name: String,
+    },
+    /// What the owner wants of a plugin's connector: its host and registration, whether it is paused, a run asked for, its mapping's version, and the rewrites and previews waiting on it. Works with `connectors.manage` or the connector's own key.
+    Status {
+        /// The plugin's name.
+        name: String,
+    },
     /// A plugin connector's mapping: for each kind it brings, whether it comes in, the type and tier it lands as, its status words and its fields.
     Mapping {
         #[command(subcommand)]
@@ -100,6 +120,26 @@ pub enum MappingCommand {
         #[arg(long = "kind", value_name = "KIND")]
         kinds: Vec<String>,
     },
+    /// Ask the connector to render how one kind would land, on one of its items, and print the preview. The connector answers on its next look; a preview is kept for 10 minutes. With `--wait`, stay until the connector answers or the preview expires. Needs `connectors.manage`.
+    Preview(PreviewArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct PreviewArgs {
+    /// The plugin's name.
+    pub name: String,
+    /// The kind to preview.
+    #[arg(long)]
+    pub kind: String,
+    /// The ID of an item the connector brought to render it from. Without it, the connector chooses a recent one.
+    #[arg(long = "item", value_name = "ID")]
+    pub item: Option<String>,
+    /// A JSON or YAML file holding a draft of the kind's mapping to render with, checked as a save checks it. Without it, the mapping in force.
+    #[arg(long, value_name = "DRAFT")]
+    pub file: Option<PathBuf>,
+    /// Stay until the connector answers, printing the fields it rendered, or until the preview fails or expires.
+    #[arg(long)]
+    pub wait: bool,
 }
 
 #[derive(Debug, Args)]
@@ -213,6 +253,23 @@ pub fn save_mapping_request(name: &str, version: i64, kinds: Value) -> Request {
         .json(serde_json::json!({ "version": version, "kinds": kinds }))
 }
 
+pub fn control_request(name: &str) -> Request {
+    Request::get(&["plugins", name, "connector"])
+}
+
+/// `act` is `pause`, `resume` or `run`.
+pub fn act_request(name: &str, act: &str) -> Request {
+    Request::post(&["plugins", name, "connector", act])
+}
+
+pub fn preview_request(name: &str, body: Value) -> Request {
+    Request::post(&["plugins", name, "connector", "previews"]).json(body)
+}
+
+pub fn read_preview_request(name: &str, id: &str) -> Request {
+    Request::get(&["plugins", name, "connector", "previews", id])
+}
+
 pub fn rewrite_request(name: &str, dry_run: bool, kinds: &[String]) -> Request {
     let mut body = serde_json::json!({ "dry_run": dry_run });
     if !kinds.is_empty() {
@@ -324,6 +381,10 @@ pub fn run(
                 format!("{done} {} for {}", args.setting, args.name)
             });
         }
+        PluginsCommand::Pause { name } => act_request(name, "pause"),
+        PluginsCommand::Resume { name } => act_request(name, "resume"),
+        PluginsCommand::Run { name } => act_request(name, "run"),
+        PluginsCommand::Status { name } => control_request(name),
         PluginsCommand::Mapping { command } => return mapping(command, remote, out),
         PluginsCommand::SignIn(args) => return sign_in(&remote()?, args, out),
         _ => return run_offline(command, out),
@@ -334,6 +395,10 @@ pub fn run(
         PluginsCommand::Install(args) => installed(&remote, args, answer, out),
         PluginsCommand::Remove { .. } => out.report(&answer, removed_words),
         PluginsCommand::Settings(_) => out.report(&answer, settings_words),
+        PluginsCommand::Pause { name }
+        | PluginsCommand::Resume { name }
+        | PluginsCommand::Run { name }
+        | PluginsCommand::Status { name } => out.report(&answer, |answer| control_words(name, answer)),
         _ => out.value(&answer),
     }
 }
@@ -548,6 +613,120 @@ fn mapping(
             let answer = remote()?.json(&rewrite_request(name, *dry_run, kinds))?;
             out.report(&answer, |answer| rewrite_words(name, answer))
         }
+        MappingCommand::Preview(args) => preview(args, remote, out),
+    }
+}
+
+fn control_words(name: &str, answer: &Value) -> String {
+    let state = if answer["paused"].as_bool() == Some(true) {
+        "paused".to_string()
+    } else if let Some(asked) = answer["run_requested_at"].as_str() {
+        format!("asked to run at {asked}")
+    } else {
+        "running as scheduled".to_string()
+    };
+    let host = answer["host"].as_str().unwrap_or("no host");
+    format!(
+        "{name}'s connector: {state}; host {host}; mapping version {}; {} rewrites and {} previews waiting",
+        answer["mapping_version"].as_i64().unwrap_or_default(),
+        answer["rewrites"].as_i64().unwrap_or_default(),
+        answer["previews"].as_i64().unwrap_or_default(),
+    )
+}
+
+/// How often `--wait` reads whether the connector answered.
+const PREVIEW_STEP: Duration = Duration::from_secs(1);
+/// The longest `--wait` stays: a preview's 10 minutes on the server, and a little more.
+const PREVIEW_WAIT: Duration = Duration::from_secs(10 * 60 + 30);
+
+fn preview(
+    args: &PreviewArgs,
+    remote: impl FnOnce() -> Result<Remote, CliError>,
+    out: &Printer,
+) -> Result<(), CliError> {
+    let mut body = serde_json::json!({ "kind": args.kind });
+    if let Some(item) = &args.item {
+        body["item_id"] = Value::String(item.clone());
+    }
+    if let Some(file) = &args.file {
+        body["mapping"] = draft_file(file)?;
+    }
+    let remote = remote()?;
+    let made = remote.json(&preview_request(&args.name, body))?;
+    if !args.wait {
+        return out.report(&made, |made| {
+            format!(
+                "asked {}'s connector for a preview of {}, as {}",
+                args.name,
+                args.kind,
+                made["id"].as_str().unwrap_or_default()
+            )
+        });
+    }
+    let id = made["id"]
+        .as_str()
+        .ok_or_else(|| CliError::Invalid("the server answered a preview with no id".into()))?
+        .to_string();
+    let started = std::time::Instant::now();
+    loop {
+        std::thread::sleep(PREVIEW_STEP);
+        let read = match remote.json(&read_preview_request(&args.name, &id)) {
+            Ok(read) => read,
+            Err(CliError::Refused { code, .. }) if code == "connector_preview_not_found" => {
+                return Err(CliError::PreviewEnded {
+                    plugin: args.name.clone(),
+                    reason: "it expired before the connector answered".into(),
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        match read["status"].as_str() {
+            Some("ready") => return out.report(&read, |read| read["result"].to_string()),
+            Some("failed") => {
+                return Err(CliError::PreviewEnded {
+                    plugin: args.name.clone(),
+                    reason: format!(
+                        "the connector could not render it: {}",
+                        read["error"].as_str().unwrap_or_default()
+                    ),
+                });
+            }
+            Some(_) if started.elapsed() < PREVIEW_WAIT => {}
+            Some(_) => {
+                return Err(CliError::PreviewEnded {
+                    plugin: args.name.clone(),
+                    reason: "the connector did not answer in time".into(),
+                });
+            }
+            None => {
+                return Err(CliError::Invalid(
+                    "the server answered a preview with no status".into(),
+                ));
+            }
+        }
+    }
+}
+
+/// A draft of one kind's mapping, from a JSON or YAML file holding one object.
+fn draft_file(path: &Path) -> Result<Value, CliError> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| CliError::Invalid(format!("cannot read {}: {error}", path.display())))?;
+    let held = match serde_json::from_str::<Value>(&text) {
+        Ok(value) => value,
+        Err(_) => yaml_value(&text).map_err(|error| {
+            CliError::Invalid(format!(
+                "{} is neither JSON nor YAML: {error}",
+                path.display()
+            ))
+        })?,
+    };
+    if held.is_object() {
+        Ok(held)
+    } else {
+        Err(CliError::Invalid(format!(
+            "{} does not hold an object: a kind's mapping",
+            path.display()
+        )))
     }
 }
 

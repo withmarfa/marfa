@@ -1776,6 +1776,34 @@ When `marfa plugins remove` removes a plugin with a connector, the CLI MUST prin
 
 **Tests:** `cli/connector-hosts.test.ts › assigns a connector to a host and to none, and says what removing its plugin stops and keeps`.
 
+## Pausing, running and previewing a connector
+
+### `cli/plugins-control`
+
+When `marfa plugins pause`, `marfa plugins resume`, `marfa plugins run` or `marfa plugins status` is given a plugin, the CLI MUST send `POST /plugins/{name}/connector/pause`, `POST /plugins/{name}/connector/resume`, `POST /plugins/{name}/connector/run` or `GET /plugins/{name}/connector`, and print the connector's state the server answers.
+
+**Tests:** `cli/connector-control.test.ts › pauses, resumes and runs a connector now, and shows what the owner chose`.
+
+### `cli/plugins-preview-draft`
+
+When `marfa plugins mapping preview` is given `--file`, the CLI MUST send the object the file holds, as JSON or as YAML, as the `mapping` of `POST /plugins/{name}/connector/previews`.
+
+**Tests:** `cli/connector-control.test.ts › asks for a mapping preview with a draft from a YAML file, and with --wait prints the connector's answer or refuses its failure`.
+
+### `cli/plugins-preview-wait`
+
+When `marfa plugins mapping preview` is given `--wait`, the CLI MUST read `GET /plugins/{name}/connector/previews/{id}` for the preview it asked for until the preview's `status` is no longer `pending` or the server answers `404 connector_preview_not_found`.
+
+**Reason:** the server keeps a preview for 10 minutes, so the wait ends when the connector answers or the preview expires.
+
+**Tests:** `cli/connector-control.test.ts › asks for a mapping preview with a draft from a YAML file, and with --wait prints the connector's answer or refuses its failure`.
+
+### `cli/plugins-preview-ended`
+
+If the preview `marfa plugins mapping preview --wait` waits on is answered `failed`, or the server answers `404 connector_preview_not_found` for it, then the CLI MUST exit 1 with `preview_ended`.
+
+**Tests:** `cli/connector-control.test.ts › asks for a mapping preview with a draft from a YAML file, and with --wait prints the connector's answer or refuses its failure`.
+
 ## A connector's settings
 
 ### `cli/plugins-settings-list`

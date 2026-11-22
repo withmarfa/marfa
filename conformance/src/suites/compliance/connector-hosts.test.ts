@@ -427,6 +427,8 @@ describe("a host's key", () => {
           connector: installed.data.connector,
           registration_id: null,
           key_minted: false,
+          paused: false,
+          run_requested_at: null,
         },
       ],
     });

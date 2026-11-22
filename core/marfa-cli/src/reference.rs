@@ -66,8 +66,16 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         &["plugins settings", "plugins secret"],
     ),
     (
-        "Map what a connector brings, and rewrite its items",
-        &["plugins mapping set", "plugins mapping rewrite"],
+        "Map what a connector brings, preview it, and rewrite its items",
+        &[
+            "plugins mapping set",
+            "plugins mapping preview",
+            "plugins mapping rewrite",
+        ],
+    ),
+    (
+        "Pause a connector, resume it, or run it now",
+        &["plugins pause", "plugins resume", "plugins run"],
     ),
     (
         "Sign a plugin's connector in to its service",

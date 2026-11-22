@@ -8305,6 +8305,7 @@ A refusal the CLI reports carries one `code`, a lowercase snake case word. The f
 | `key_command`            | A profile's key command gave no key.                                                                                          |
 | `device_code_ended`      | The device code `login` waits on is no longer valid, and a new `login` replaces it.                                           |
 | `sign_in_ended`          | The connector sign-in `plugins sign-in --wait` waits on failed, expired or was replaced by a later start, so it set no token. |
+| `preview_ended`          | The mapping preview `plugins mapping preview --wait` waits on failed, or ended before the connector answered.                 |
 | `blobs_missing`          | An archive lacks blobs its manifest names.                                                                                    |
 | `docs_page_not_found`    | The docs site has no page at the path.                                                                                        |
 | `docs_section_not_found` | The docs page has no heading of that name.                                                                                    |
