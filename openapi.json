@@ -80853,6 +80853,8 @@
         "saveConnectorMapping",
         "rewriteConnectorItems",
         "finishConnectorRewrite",
+        "startPluginConnectorSignIn",
+        "getPluginConnectorSignIn",
         "pausePluginConnector",
         "resumePluginConnector",
         "runPluginConnector",
@@ -80860,25 +80862,6 @@
         "listMappingPreviews",
         "getMappingPreview",
         "answerMappingPreview"
-      ]
-    },
-    {
-      "name": "Plugins",
-      "description": "Install a plugin's types and edge types from its bundle, list the installed plugins, and remove one.",
-      "x-operation-order": [
-        "installPlugin",
-        "getPlugin",
-        "listPlugins",
-        "removePlugin",
-        "replacePluginConnectorHost",
-        "getPluginConnectorSettings",
-        "updatePluginConnectorSettings",
-        "getConnectorMapping",
-        "saveConnectorMapping",
-        "rewriteConnectorItems",
-        "finishConnectorRewrite",
-        "startPluginConnectorSignIn",
-        "getPluginConnectorSignIn"
       ]
     },
     {
