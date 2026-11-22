@@ -79,6 +79,33 @@ pub fn naming_type(tx: &Transaction<'_>, type_id: &str) -> Result<Vec<Naming>> {
         .collect())
 }
 
+/// The subscriptions one of `makers` holds whose type filter is exactly one of `types`.
+pub fn held_naming(
+    tx: &Transaction<'_>,
+    makers: &[Maker],
+    types: &[String],
+) -> Result<Vec<Subscription>> {
+    Ok(store::list(tx, None)?
+        .into_iter()
+        .filter(|subscription| {
+            makers.contains(&subscription.maker)
+                && subscription
+                    .type_filter
+                    .as_ref()
+                    .is_some_and(|filter| types.contains(filter))
+        })
+        .collect())
+}
+
+/// Deletes `subscriptions` in the caller's write, as their maker deleting them would.
+pub fn forget(unit: &Unit<'_, '_>, subscriptions: &[Subscription]) -> Result<()> {
+    for subscription in subscriptions {
+        store::delete(unit.tx(), subscription)?;
+        unit.audit_also("webhook.delete", "webhook", &subscription.id, None)?;
+    }
+    Ok(())
+}
+
 /// A type move's rewrite of a subscription's filter, once no item of the type it named remains.
 pub fn retarget(unit: &Unit<'_, '_>, rules: &Rules, id: &str, to: &str) -> Result<()> {
     let tx = unit.tx();

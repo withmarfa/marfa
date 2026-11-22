@@ -12,7 +12,7 @@ use crate::app::access::{Caller, Permission};
 use crate::app::catalog::Catalog;
 use crate::app::clock::Stamp;
 use crate::app::keys::{self, Key};
-use crate::app::oauth::grants;
+use crate::app::oauth::grants::{self, Ending};
 use crate::app::oauth::store::Consent;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::unit::Unit;
@@ -151,12 +151,15 @@ fn no_such_sign_in() -> Refusal {
     Refusal::new(Code::SignInNotFound, "No live sign-in has this ID.")
 }
 
-fn to_end(tx: &Transaction<'_>, id: &str, with_keys: bool, at: &str) -> Result<Named> {
+fn to_end(tx: &Transaction<'_>, id: &str, ending: Ending, at: &str) -> Result<Named> {
     match Named::read(tx, id, at)? {
         Named::Nothing => Err(no_such_sign_in()),
         named @ Named::App(_) => Ok(named),
-        _ if with_keys => Err(Refusal::validation(
+        _ if ending.revoke_keys => Err(Refusal::validation(
             "revoke_keys applies only to an app; this ID names a browser or a key.",
+        )),
+        _ if ending.remove_data => Err(Refusal::validation(
+            "remove_data applies only to an app; this ID names a browser or a key.",
         )),
         named => Ok(named),
     }
@@ -217,11 +220,14 @@ pub(crate) fn end_in(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
     id: &str,
-    with_keys: bool,
+    ending: Ending,
     visit: &Visit,
 ) -> Result<usize> {
     unit.caller.require(Permission::SignInsManage)?;
-    match to_end(unit.tx(), id, with_keys, &unit.at)? {
+    if ending.remove_data {
+        unit.caller.require(Permission::ItemsPurge)?;
+    }
+    match to_end(unit.tx(), id, ending, &unit.at)? {
         Named::Browser(session) => session::ended(
             unit.tx(),
             &unit.at,
@@ -232,7 +238,7 @@ pub(crate) fn end_in(
             false,
         )
         .map(|()| 0),
-        Named::App(consent) => grants::withdraw(unit, cache, &consent, with_keys),
+        Named::App(consent) => grants::withdraw(unit, cache, &consent, ending),
         Named::Key(key) => keys::end_for_owner(unit, &key.id).map(|()| 0),
         Named::Nothing => Err(no_such_sign_in()),
     }
@@ -242,7 +248,7 @@ pub async fn end(
     app: &Arc<App>,
     caller: &Caller,
     id: String,
-    with_keys: bool,
+    ending: Ending,
     visit: Visit,
 ) -> Result<()> {
     let asking = caller.clone();
@@ -254,7 +260,7 @@ pub async fn end(
             asking
                 .current(tx, &at)?
                 .require(Permission::SignInsManage)?;
-            Ok(match to_end(tx, &looked_for, with_keys, &at)? {
+            Ok(match to_end(tx, &looked_for, ending, &at)? {
                 Named::Key(_) => keys::REVOKED,
                 Named::App(_) => grants::REVOKED,
                 _ => ENDED,
@@ -263,9 +269,13 @@ pub async fn end(
         .await?;
     let cache = app.catalog_handle();
     app.write(caller, action, move |unit| {
-        end_in(unit, &cache, &id, with_keys, &visit).map(drop)
+        end_in(unit, &cache, &id, ending, &visit).map(drop)
     })
-    .await
+    .await?;
+    if ending.remove_data {
+        app.publish_catalog().await;
+    }
+    Ok(())
 }
 
 fn to_rename(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Named> {

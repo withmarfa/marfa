@@ -4,6 +4,9 @@ use marfa_rules::schema::{
     icon_issue, labelled, parent_chain_fault, read_back_free, resolve, validate_replacing_type,
     validate_restored_type, validate_type, with_set_stored,
 };
+use std::collections::HashSet;
+
+use arc_swap::ArcSwap;
 use rusqlite::{Transaction, params};
 use serde_json::{Value, json};
 
@@ -18,6 +21,7 @@ use crate::app::items;
 use crate::app::oauth::scope::Registries;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::tables;
+use crate::app::unit::Unit;
 
 pub(super) fn not_found(id: &str) -> Refusal {
     Refusal::new(Code::TypeNotFound, format!("Type \"{id}\" not found"))
@@ -469,6 +473,125 @@ pub async fn delete(app: &App, caller: &Caller, id: String, force: bool) -> Resu
     .await?;
     app.publish_catalog().await;
     Ok(())
+}
+
+/// Every registered type under the `app.<vendor>` namespace `vendor`.
+pub(crate) fn ids_under_vendor(tx: &Transaction<'_>, vendor: &str) -> Result<Vec<String>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT id FROM types WHERE substr(id, 1, length(?1) + 1) = ?1 || '.' ORDER BY id",
+    )?;
+    let found = statement.query_map([vendor], |row| row.get::<_, String>(0))?;
+    let mut ids = Vec::new();
+    for id in found {
+        let id = id?;
+        if crate::app::vendors::vendor_of(&id) == Some(vendor) {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+/// Refuses deleting `ids` together, as [`delete`] without `force` refuses one, for whatever
+/// outside them would still name one; `dropping` are webhooks the caller drops in the same write.
+pub(crate) fn require_set_free(
+    tx: &Transaction<'_>,
+    catalog: &Catalog,
+    caller: &Caller,
+    ids: &[String],
+    dropping: &[String],
+) -> Result<()> {
+    for id in ids {
+        platform_locked(catalog, id, "delete")?;
+        let outside: Vec<String> = subtypes_of(tx, id)?
+            .into_iter()
+            .filter(|subtype| !ids.contains(subtype))
+            .collect();
+        if !outside.is_empty() {
+            let quoted: Vec<String> = outside.iter().map(|subtype| format!("\"{subtype}\"")).collect();
+            return Err(Refusal::new(
+                Code::TypeHasSubtypes,
+                format!(
+                    "Type \"{id}\" cannot be deleted while {} inherit from it. Delete them first, or give each a different parent with PUT /types/{{id}}.",
+                    quoted.join(", ")
+                ),
+            )
+            .with_detail("subtype_ids", outside));
+        }
+        let settings: Vec<Value> = super::moving::naming(tx, caller, id)?
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|named| {
+                !(named["kind"] == "webhook"
+                    && named["id"].as_str().is_some_and(|hook| dropping.iter().any(|drop| drop == hook)))
+            })
+            .cloned()
+            .collect();
+        let columns: Vec<String> = tables::constraining_columns(tx, catalog, caller, id)?
+            .into_iter()
+            .filter(|column| !ids.iter().any(|owner| column.starts_with(&format!("{owner}."))))
+            .collect();
+        if !settings.is_empty() || !columns.is_empty() {
+            return Err(Refusal::new(
+                Code::TypeInUse,
+                format!(
+                    "A folder, view, webhook or table column names type \"{id}\". Change it to name another type, or delete it, first."
+                ),
+            )
+            .with_detail("item_count", items::count_of_type(tx, id)?)
+            .with_detail("settings", settings)
+            .with_detail("columns", columns));
+        }
+    }
+    Ok(())
+}
+
+/// Deletes `ids`, which hold no items, children first, in the caller's write; refuses as
+/// [`require_set_free`] does. Answers how many it deleted.
+pub(crate) fn delete_set(
+    unit: &Unit<'_, '_>,
+    cache: &ArcSwap<Catalog>,
+    ids: &[String],
+    dropping: &[String],
+) -> Result<usize> {
+    if ids.is_empty() {
+        return Ok(0);
+    }
+    let catalog = catalog::current(cache, unit.tx(), Snapshot::Pending)?;
+    require_set_free(unit.tx(), &catalog, &unit.caller, ids, dropping)?;
+    let mut left: Vec<String> = ids.to_vec();
+    let mut ordered = Vec::with_capacity(ids.len());
+    while !left.is_empty() {
+        let parents: HashSet<String> = left
+            .iter()
+            .filter_map(|id| catalog.types.parent_of(id))
+            .map(str::to_string)
+            .collect();
+        let (leaves, rest): (Vec<String>, Vec<String>) =
+            left.into_iter().partition(|id| !parents.contains(id));
+        if leaves.is_empty() {
+            return Err(Refusal::internal("the types to delete parent each other"));
+        }
+        ordered.extend(leaves);
+        left = rest;
+    }
+    for id in &ordered {
+        if items::count_of_type(unit.tx(), id)? > 0 {
+            return Err(Refusal::internal("a type to delete still holds items"));
+        }
+        unit.tx().execute("DELETE FROM types WHERE id = ?1", [id])?;
+    }
+    catalog::raise(unit.tx())?;
+    instance::raise_reach(unit.tx())?;
+    let after = catalog::current(cache, unit.tx(), Snapshot::Pending)?;
+    items::rekey_changed(unit.tx(), &catalog.rules, &after.rules, &ordered)?;
+    tables::rekey_types(unit.tx(), &catalog, &after, &ordered, &unit.at)?;
+    items::relink_changed(unit.tx(), &catalog, &after, &ordered)?;
+    items::reindex_changed(unit.tx(), &catalog.rules, &after.rules)?;
+    for id in &ordered {
+        unit.audit_also("type.delete", "type", id, None)?;
+    }
+    Ok(ordered.len())
 }
 
 pub(super) fn subtypes_of(tx: &Transaction<'_>, id: &str) -> Result<Vec<String>> {

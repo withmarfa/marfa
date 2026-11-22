@@ -886,6 +886,47 @@ pub(super) fn count_of_type(tx: &Transaction<'_>, type_id: &str) -> Result<i64> 
     )?)
 }
 
+/// How many items of each of `types` stand in each state.
+pub(super) fn counts_of_types(
+    tx: &Transaction<'_>,
+    types: &[String],
+) -> Result<Vec<(String, String, i64)>> {
+    let mut statement = tx.prepare_cached(
+        "SELECT type, state, COUNT(*) FROM items \
+         WHERE type IN (SELECT value FROM json_each(?1)) GROUP BY type, state ORDER BY type, state",
+    )?;
+    let found = statement.query_map([serde_json::json!(types).to_string()], |row| {
+        Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+    })?;
+    Ok(found.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Items of `types` in every state, oldest first, after `after`.
+pub(super) fn of_types(
+    tx: &Transaction<'_>,
+    types: &[String],
+    after: Option<&Position>,
+    limit: i64,
+) -> Result<Vec<Item>> {
+    let bound = if after.is_some() {
+        "(created_at, id) > (?2, ?3)"
+    } else {
+        "?2 IS NULL AND ?3 IS NULL"
+    };
+    let sql = format!(
+        "{ITEM} WHERE type IN (SELECT value FROM json_each(?1)) AND {bound}
+         ORDER BY created_at, id LIMIT ?4"
+    );
+    let (at, id) = after.map_or((None, None), |(at, id)| (Some(at), Some(id)));
+    Ok(tx
+        .prepare_cached(&sql)?
+        .query_map(
+            params![serde_json::json!(types).to_string(), at, id, limit],
+            item_of,
+        )?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
 pub(super) fn held_names(
     tx: &Transaction<'_>,
     types: &[String],

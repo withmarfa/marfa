@@ -2288,7 +2288,7 @@ export interface paths {
         post?: never;
         /**
          * Revoke an app grant
-         * @description Revokes the app's tokens and consent. Requires `grants.manage`.
+         * @description Revokes the app's tokens and consent. Its keys stay unless `revoke_keys` is `true`, and its data stays unless `remove_data` is `true`. Requires `grants.manage`.
          */
         delete: operations["revokeAppGrant"];
         options?: never;
@@ -2335,6 +2335,30 @@ export interface paths {
         put: operations["giveAppVendor"];
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/app-vendors/{vendor}/data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List an app's data
+         * @description Returns the types registered under an `app.<vendor>` namespace, with their items counted by state, and a page of its items in every state, the trash included. Requires the owner's browser session or `grants.manage`.
+         */
+        get: operations["listAppVendorData"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete an app's data
+         * @description Deletes for good up to 1,000 items of an `app.<vendor>` namespace in every state, and its types in the call that leaves none. Only a backup taken before brings them back. Requires `items.purge` and the owner's browser session or `grants.manage`.
+         */
+        delete: operations["deleteAppVendorData"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2520,7 +2544,7 @@ export interface paths {
         post?: never;
         /**
          * End a sign-in
-         * @description Ends a sign-in at once: it can't refresh or make another request, even when it is your own. An app's keys stay unless `revoke_keys` is `true`. Requires `sign_ins.manage`.
+         * @description Ends a sign-in at once: it can't refresh or make another request, even when it is your own. An app's keys stay unless `revoke_keys` is `true`, and its data unless `remove_data` is `true`. Requires `sign_ins.manage`.
          */
         delete: operations["endSignIn"];
         options?: never;
@@ -7535,6 +7559,9 @@ export interface components {
          *           "scopes": [
          *             "core.note:read"
          *           ],
+         *           "vendors": [
+         *             "app.reader"
+         *           ],
          *           "status": "active",
          *           "granted_at": "2026-10-03T09:30:00.000Z",
          *           "last_used_at": null
@@ -7559,6 +7586,9 @@ export interface components {
          *       "origins": [],
          *       "scopes": [
          *         "core.note:read"
+         *       ],
+         *       "vendors": [
+         *         "app.reader"
          *       ],
          *       "status": "active",
          *       "granted_at": "2026-10-03T09:30:00.000Z",
@@ -7587,6 +7617,13 @@ export interface components {
             origins: string[];
             /** @description The access the owner approved for the app. */
             scopes: string[];
+            /**
+             * @description Each `app.<vendor>` namespace the app holds. `GET /app-vendors/{vendor}/data` lists what it keeps there.
+             * @example [
+             *       "app.reader"
+             *     ]
+             */
+            vendors: string[];
             /** @description The grant's status. */
             status: string;
             /**
@@ -9577,6 +9614,11 @@ export interface components {
              */
             client_id: string | null;
             /**
+             * @description The name the app that holds the namespace registered, or `null` while the owner holds it or the app registered none.
+             * @example Reader
+             */
+            client_name: string | null;
+            /**
              * Format: date-time
              * @description When the namespace was first held, or when it was given to the app that holds it.
              * @example 2026-11-21T09:30:00.000Z
@@ -10460,6 +10502,120 @@ export interface components {
             title?: string;
             /** @description The ID of the item the connector rendered, or `null` if it rendered from its service. Present only if the connector sent it. */
             source_item?: string | null;
+        };
+        /** @description An error response. */
+        InstanceChangedOrTypeHasSubtypesOrTypeInUseRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "instance_changed" | "type_has_subtypes" | "type_in_use";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        BulkCapExceededOrValidationErrorRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "bulk_cap_exceeded" | "validation_error";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description A type registered under an `app.<vendor>` namespace, with how many items of it stand in each state. */
+        AppVendorDataType: {
+            /**
+             * @description The type's identifier.
+             * @example app.acme.setting
+             */
+            type: string;
+            /** @description How many of its items are active. */
+            active: number;
+            /** @description How many of its items are archived. */
+            archived: number;
+            /** @description How many of its items are in the trash. */
+            trashed: number;
+        };
+        /** @description An item of a type under an `app.<vendor>` namespace, in any state. */
+        AppVendorDataItem: {
+            /**
+             * @description Unique identifier for the item.
+             * @example 019980d6-7612-7000-8000-000000000002
+             */
+            id: string;
+            /**
+             * @description The item's type.
+             * @example app.acme.setting
+             */
+            type: string;
+            /** @description The item's version. */
+            version: number;
+            /** @description The item's title, or a name Marfa gives an item without one. */
+            name: string;
+            /** @description The source that wrote the item. */
+            source: string;
+            /**
+             * @description The item's state: `active`, `archived`, or `trashed` while it is in the trash.
+             * @enum {string}
+             */
+            state: "active" | "archived" | "trashed";
+            /**
+             * Format: date-time
+             * @description When the item was created, in UTC.
+             * @example 2026-11-21T09:30:00.000Z
+             */
+            created_at: string;
+        };
+        /** @description What an app keeps under one `app.<vendor>` namespace: its types with counts, and a page of its items in every state. */
+        AppVendorDataPage: {
+            /**
+             * @description The namespace, as `app.<vendor>`.
+             * @example app.acme
+             */
+            vendor: string;
+            /**
+             * @description The OAuth client ID of the app that holds the namespace, or `null` while the owner holds it.
+             * @example 01a10127-d974-7c54-8cc4-5c5581d45c4c
+             */
+            client_id: string | null;
+            /** @description Every type registered under the namespace, by identifier, each in every page. */
+            types: components["schemas"]["AppVendorDataType"][];
+            /** @description A page of the namespace's items, oldest first. */
+            data: components["schemas"]["AppVendorDataItem"][];
+            /**
+             * @description Send as `cursor` for the next page, or `null` on the last page.
+             * @example null
+             */
+            next_cursor: string | null;
+        };
+        /** @description What one removal of an `app.<vendor>` namespace's data deleted, and how many of its items are left. */
+        AppVendorDataRemoval: {
+            /**
+             * @description The namespace, as `app.<vendor>`.
+             * @example app.acme
+             */
+            vendor: string;
+            /** @description How many items this call deleted, at most 1,000. */
+            removed_items: number;
+            /** @description How many types this call deleted: every type under the namespace, in the call that leaves no item. */
+            removed_types: number;
+            /** @description How many items of the namespace are left. Call again until it is `0`. */
+            remaining_items: number;
         };
     };
     responses: never;
@@ -38695,6 +38851,9 @@ export interface operations {
                      *           "scopes": [
                      *             "core.note:read"
                      *           ],
+                     *           "vendors": [
+                     *             "app.reader"
+                     *           ],
                      *           "status": "active",
                      *           "granted_at": "2026-10-03T09:30:00.000Z",
                      *           "last_used_at": null
@@ -38811,6 +38970,8 @@ export interface operations {
             query?: {
                 /** @description Also revoke every key the app minted, and every key those keys minted, but an owner's key (`owner_key`). Omitting it, or `false`, leaves them working. */
                 revoke_keys?: boolean;
+                /** @description For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`. Omitting it, or `false`, keeps them. */
+                remove_data?: boolean;
             };
             header?: never;
             path: {
@@ -38837,7 +38998,10 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take, or `revoke_keys` is neither `true` nor `false`, or is named more than once. Nothing is revoked. */
+            /**
+             * @description - `validation_error`: the query has a parameter this endpoint doesn't take, or `revoke_keys` or `remove_data` is neither `true` nor `false`, or is named more than once. Nothing is revoked.
+             *     - `bulk_cap_exceeded`: with `remove_data`, the app holds more than 1,000 items. Nothing is revoked; delete them first with `DELETE /app-vendors/{vendor}/data`.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -38846,7 +39010,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["BulkCapExceededOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
@@ -38861,7 +39025,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the credential lacks `grants.manage`. */
+            /** @description - `forbidden`: the credential lacks `grants.manage`, or `items.purge` with `remove_data`, and `details.required_scope` names it, or with `remove_data` it is an app's sign-in or a key an app made and the grant is another app's. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -38883,6 +39047,21 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GrantNotFoundRefusal"];
+                };
+            };
+            /**
+             * @description - `type_in_use`: with `remove_data`, a folder, view, webhook or table column outside the app's namespaces names one of its types. Nothing is revoked.
+             *     - `type_has_subtypes`: with `remove_data`, a type outside the app's namespaces inherits from one of its types. Nothing is revoked.
+             */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TypeHasSubtypesOrTypeInUseRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -39175,6 +39354,7 @@ export interface operations {
                      *         {
                      *           "vendor": "app.acme",
                      *           "client_id": "01a10127-d974-7c54-8cc4-5b1e0f3c2a10",
+                     *           "client_name": "Reader",
                      *           "claimed_at": "2026-11-20T09:30:00.000Z"
                      *         }
                      *       ],
@@ -39321,6 +39501,7 @@ export interface operations {
                      * @example {
                      *       "vendor": "app.acme",
                      *       "client_id": "01a10127-d974-7c54-8cc4-5b1e0f3c2a10",
+                     *       "client_name": "Reader",
                      *       "claimed_at": "2026-11-20T09:30:00.000Z"
                      *     }
                      */
@@ -39424,6 +39605,324 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    listAppVendorData: {
+        parameters: {
+            query?: {
+                /** @description The maximum number of results to return. */
+                limit?: number;
+                /** @description The `next_cursor` from the previous page. Leave it out to get the first page. */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The namespace, as `app.<vendor>`. */
+                vendor: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the namespace's types and a page of its items. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "vendor": "app.acme",
+                     *       "client_id": "01a10127-d974-7c54-8cc4-5c5581d45c4c",
+                     *       "types": [
+                     *         {
+                     *           "type": "app.acme.setting",
+                     *           "active": 1,
+                     *           "archived": 0,
+                     *           "trashed": 1
+                     *         }
+                     *       ],
+                     *       "data": [
+                     *         {
+                     *           "id": "019980d6-7612-7000-8000-000000000002",
+                     *           "type": "app.acme.setting",
+                     *           "version": 3,
+                     *           "name": "Preferences",
+                     *           "source": "oauth:01a10127-d974-7c54-8cc4-5c5581d45c4c",
+                     *           "state": "active",
+                     *           "created_at": "2026-11-21T09:30:00.000Z"
+                     *         }
+                     *       ],
+                     *       "next_cursor": null
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AppVendorDataPage"];
+                };
+            };
+            /** @description - `validation_error`: the vendor is not an `app.<vendor>` namespace, `limit` is not a whole number from 1 to 200, `cursor` is not one this listing gave, or the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: the credential lacks `grants.manage`, and `details.required_scope` names it, or it is an app's sign-in or a key an app made and another app or the owner holds the namespace. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description - `not_found`: no app or owner holds the namespace, and `details.vendor` names it. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotFoundRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+        };
+    };
+    deleteAppVendorData: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path: {
+                /** @description The namespace, as `app.<vendor>`. */
+                vendor: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns what the call deleted and how many items are left. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "vendor": "app.acme",
+                     *       "removed_items": 2,
+                     *       "removed_types": 1,
+                     *       "remaining_items": 0
+                     *     }
+                     */
+                    "application/json": components["schemas"]["AppVendorDataRemoval"];
+                };
+            };
+            /** @description - `validation_error`: the vendor is not an `app.<vendor>` namespace, or the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: the credential lacks `grants.manage` or `items.purge`, and `details.required_scope` names it, or it is an app's sign-in or a key an app made and another app or the owner holds the namespace. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /** @description - `not_found`: no app or owner holds the namespace, and `details.vendor` names it. */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NotFoundRefusal"];
+                };
+            };
+            /**
+             * @description - `instance_changed`: `X-Marfa-Instance-Id` names another instance.
+             *     - `type_in_use`: a folder, view, webhook or table column outside the namespace names one of its types; `details.settings` and `details.columns` name them.
+             *     - `type_has_subtypes`: a type outside the namespace inherits from one of its types.
+             *
+             *     Nothing is deleted.
+             */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceChangedOrTypeHasSubtypesOrTypeInUseRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -41099,6 +41598,8 @@ export interface operations {
             query?: {
                 /** @description For an app, also revoke every key it minted but an owner's key (`owner_key`), as its `minted_by` entries show. Only an app takes it. */
                 revoke_keys?: boolean;
+                /** @description For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`. Omitting it, or `false`, keeps them. */
+                remove_data?: boolean;
             };
             header?: {
                 /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
@@ -41128,7 +41629,10 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description - `validation_error`: `revoke_keys` is neither `true` nor `false`, or is named more than once, or it is `true` and the ID names a browser or a key. Nothing ends. */
+            /**
+             * @description - `validation_error`: `revoke_keys` or `remove_data` is neither `true` nor `false`, or is named more than once, or it is `true` and the ID names a browser or a key. Nothing ends.
+             *     - `bulk_cap_exceeded`: with `remove_data`, the app holds more than 1,000 items. Nothing ends; delete them first with `DELETE /app-vendors/{vendor}/data`.
+             */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -41137,7 +41641,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                    "application/json": components["schemas"]["BulkCapExceededOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
@@ -41152,7 +41656,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the credential lacks `sign_ins.manage`. `details.required_scope` names it. */
+            /** @description - `forbidden`: the credential lacks `sign_ins.manage`, or `items.purge` with `remove_data`, and `details.required_scope` names it, or with `remove_data` it is an app's sign-in or a key an app made and the ID names another app. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -41176,7 +41680,13 @@ export interface operations {
                     "application/json": components["schemas"]["SignInNotFoundRefusal"];
                 };
             };
-            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            /**
+             * @description - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Rebuild the working copy from the instance at this address.
+             *     - `type_in_use`: with `remove_data`, a folder, view, webhook or table column outside the app's namespaces names one of its types.
+             *     - `type_has_subtypes`: with `remove_data`, a type outside them inherits from one.
+             *
+             *     Nothing ends.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -41185,7 +41695,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InstanceChangedRefusal"];
+                    "application/json": components["schemas"]["InstanceChangedOrTypeHasSubtypesOrTypeInUseRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
