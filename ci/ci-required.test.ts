@@ -240,6 +240,28 @@ describe("what a change runs", () => {
       ],
     ],
     [
+      "a Markdown file beside a definition, which the writer refuses",
+      ["core/marfa-rules/types/note.md"],
+      [
+        ...PACKAGES,
+        "types-freshness",
+        "clients-freshness",
+        "core",
+        ...RUST_LINUX,
+      ],
+    ],
+    [
+      "a file in a folder the writer does not read, which it refuses",
+      ["core/marfa-rules/types/extra/notes.txt"],
+      [
+        ...PACKAGES,
+        "types-freshness",
+        "clients-freshness",
+        "core",
+        ...RUST_LINUX,
+      ],
+    ],
+    [
       "the shapes' digest, which the rules crate's tests hold to the definitions",
       ["core/marfa-rules/types/shipped-shapes.sha256"],
       ["quick-checks", "types-freshness", "core", ...RUST_LINUX],
