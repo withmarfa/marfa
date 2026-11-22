@@ -2312,6 +2312,20 @@ When a person runs `marfa cloud status`, the CLI MUST print the link's state, an
 
 **Tests:** `cli/cloud.test.ts › reads the link in every state, prints it plainly naming the service as alpha, and under --json prints the server's answer unchanged`.
 
+### `cli/cloud-status-connector-failed`
+
+When a person runs `marfa cloud status` without `--json` while the link is linked and its connector is `failed`, the CLI MUST print the connector's `reason` in words, with what the owner can do about it.
+
+**Tests:** `cli/cloud.test.ts › says why the connector cannot run, and what to do while another program holds the tunnel's port`.
+
+### `cli/cloud-status-port-taken`
+
+When a person runs `marfa cloud status` without `--json` while another program holds the port of the link's tunnel listener, the CLI MUST say so and say to free the port or to unlink and link again.
+
+**Reason:** while the link is linking the connector does not run, so only `linking.port_taken` says the port is taken.
+
+**Tests:** `cli/cloud.test.ts › says why the connector cannot run, and what to do while another program holds the tunnel's port`.
+
 ### `cli/cloud-status-json`
 
 When a person runs `marfa cloud status --json`, the CLI MUST print the answer of `GET /cloud/link` unchanged.

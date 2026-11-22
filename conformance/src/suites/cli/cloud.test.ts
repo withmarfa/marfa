@@ -1,5 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { controlRequest } from "../../utils/control-request.js";
@@ -64,10 +65,16 @@ interface Rig {
   signIn(): Promise<string>;
 }
 
-async function rig(label: string): Promise<Rig> {
+async function rig(
+  label: string,
+  settings: Record<string, string> = {},
+): Promise<Rig> {
   const cloud = await fakeCloud();
   clouds.push(cloud);
-  const server = await bootFreshServer(label, { MARFA_CLOUD_URL: cloud.url });
+  const server = await bootFreshServer(label, {
+    MARFA_CLOUD_URL: cloud.url,
+    ...settings,
+  });
   cleanups.push(() => server.stop());
 
   const bin = tempFolder("cl-open-");
@@ -235,6 +242,71 @@ describe("cloud status", () => {
       expect(refused.stdout).toContain(
         "The link to Marfa Cloud (alpha) failed",
       );
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "says why the connector cannot run, and what to do while another program holds the tunnel's port",
+    async () => {
+      const r = await rig("cli-cloud-status-connector", {
+        MARFA_CLOUDFLARED: join(tempFolder("cl-none-"), "cloudflared"),
+      });
+      const started = await r.start({ sign_in_address: "keep" });
+      const free = await r.key.run(["cloud", "status"]);
+      expect(free.stdout).toContain(started.linking.user_code);
+      expect(free.stdout).not.toContain("Another program holds the port");
+
+      const port = r.cloud.latest().originPort;
+      const other = createServer((_, response) => response.end("other"));
+      await r.server.restart(async () => {
+        await new Promise<void>((resolve, reject) => {
+          other.once("error", reject);
+          other.listen(port, "127.0.0.1", resolve);
+        });
+      });
+      // The server comes back at another address.
+      const key = r.key.at(r.server.apiUrl);
+      try {
+        await r.until(
+          "the port to read as taken",
+          (s) => s.state === "linking" && s.linking.port_taken === true,
+        );
+        const linking = await key.run(["cloud", "status"]);
+        expect(linking.code, linking.stderr).toBe(0);
+        expect(linking.stdout).toContain(
+          "Another program holds the port on 127.0.0.1 that Marfa Cloud reaches this instance at. Free that port, or run `marfa cloud unlink` and link again for another port.",
+        );
+
+        r.cloud.approve();
+        await r.until(
+          "the connector to fail for the taken port",
+          (s) =>
+            s.state === "linked" &&
+            s.connector.state === "failed" &&
+            s.connector.reason === "port_taken",
+        );
+        const taken = await key.run(["cloud", "status"]);
+        expect(taken.code, taken.stderr).toBe(0);
+        expect(taken.stdout).toMatch(
+          /Connector: failed since \S+: another program holds the port on 127\.0\.0\.1 that Marfa Cloud reaches this instance at\. Free that port, or run `marfa cloud unlink` and link again for another port\./,
+        );
+      } finally {
+        await new Promise((resolve) => other.close(resolve));
+      }
+
+      await r.until(
+        "the connector to fail for want of a program",
+        (s) =>
+          s.state === "linked" &&
+          s.connector.state === "failed" &&
+          s.connector.reason === "missing",
+      );
+      const missing = await key.run(["cloud", "status"]);
+      expect(missing.stdout).toMatch(
+        /Connector: failed since \S+: no connector program can be run/,
+      );
+      expect(missing.stdout).not.toContain("Free that port");
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
