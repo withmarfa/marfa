@@ -1534,11 +1534,12 @@ fn removed_said(dir: &Path, folder: &str, unsent: usize) -> String {
         return removed;
     }
     let folder = printable(folder);
+    let word = crate::hint::shell_word(&dir.to_string());
     format!(
         "{removed}\n{unsent} write(s) could not be sent, because another Marfa instance answers at \
          the folder's server, and the changes stay in the files in {dir}; to send them there, move \
-         the directory aside, run `marfa folders add {dir} --folder {folder}` with a key for that \
-         instance and `marfa folders push {dir}`, then copy the files you changed back in from the \
+         the directory aside, run `marfa folders add {word} --folder {folder}` with a key for that \
+         instance and `marfa folders push {word}`, then copy the files you changed back in from the \
          moved directory and push again"
     )
 }
