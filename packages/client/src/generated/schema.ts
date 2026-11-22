@@ -980,6 +980,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/plugins/{name}/connector/sign-in": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get a connector's sign-in
+         * @description Returns the status of the latest sign-in started for a plugin's connector, so you can tell when the owner's browser finished it.
+         */
+        get: operations["getPluginConnectorSignIn"];
+        put?: never;
+        /**
+         * Start a connector's sign-in
+         * @description Starts a sign-in to the provider a plugin's connector declares, and returns the address to open in the owner's browser. The provider sends the browser back to Marfa, which seals the refresh token into the connector's token setting.
+         */
+        post: operations["startPluginConnectorSignIn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connector-hosts": {
         parameters: {
             query?: never;
@@ -9824,6 +9848,91 @@ export interface components {
             plugin: string;
             /** @description The secret setting's name. */
             name: string;
+        };
+        /** @description An error response. */
+        ConnectorSignInNotDeclaredOrConnectorSignInSettingsMissingOrInstanceChangedRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "connector_sign_in_not_declared" | "connector_sign_in_settings_missing" | "instance_changed";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description An error response. */
+        ConnectorSignInNotDeclaredOrInstanceChangedRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "connector_sign_in_not_declared" | "instance_changed";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** @description A sign-in started for a plugin's connector. */
+        PluginConnectorSignInStart: {
+            /** @description The sign-in's ID, which `GET /plugins/{name}/connector/sign-in` returns while this sign-in is the latest, so you can tell it from one a later start replaced it with. */
+            id: string;
+            /**
+             * Format: uri
+             * @description The provider's address to open in the owner's browser. Its query carries the client ID, the address the provider sends the browser back to, the scopes, a state and a PKCE challenge.
+             */
+            url: string;
+            /**
+             * Format: date-time
+             * @description When the sign-in ends if the owner's browser hasn't come back, in UTC: ten minutes after the start.
+             * @example 2026-11-22T09:40:00.000Z
+             */
+            expires_at: string;
+        };
+        /** @description The latest sign-in started for a plugin's connector. */
+        PluginConnectorSignInStatus: {
+            /** @description The plugin's name. */
+            plugin: string;
+            /**
+             * @description Where the latest sign-in stands: `none` if none was started, `pending` while it waits for the owner's browser, `signed_in` once Marfa stored the refresh token, `failed` once it ended any other way, and `expired` once ten minutes passed.
+             * @enum {string}
+             */
+            status: "none" | "pending" | "signed_in" | "failed" | "expired";
+            /**
+             * @description Why the latest sign-in failed, as one word Marfa sets, or `null` unless `status` is `failed`. A token error from RFC 6749 section 5.2 (`invalid_request`, `invalid_client`, `invalid_grant`, `unauthorized_client`, `unsupported_grant_type`, `invalid_scope`) or an authorization error from section 4.1.2.1 (such as `access_denied`) is the provider's own word; `invalid_client` means the client ID or secret is wrong. Marfa's own words are `provider_error` for another error from the provider, `no_code` if the provider sent the browser back without a code, `changed_since_start` if the connector's sign-in, its client settings or the plugin changed after the start, `timeout` and `unreachable` for a provider that didn't answer, `status_` and the status for a refusal with no token error, `no_refresh_token`, and `unreadable_answer`. Never text the provider wrote.
+             * @example invalid_client
+             */
+            reason: string | null;
+            /** @description The latest sign-in's ID, as its start returned it, or `null` if none was started. */
+            id: string | null;
+            /**
+             * Format: date-time
+             * @description When the latest sign-in started, in UTC, or `null` if none was started.
+             * @example 2026-11-22T09:30:00.000Z
+             */
+            started_at: string | null;
+            /**
+             * Format: date-time
+             * @description When the latest sign-in ends if the owner's browser doesn't come back, in UTC, or `null` if none was started.
+             * @example 2026-11-22T09:40:00.000Z
+             */
+            expires_at: string | null;
+            /**
+             * Format: date-time
+             * @description When the owner's browser came back and ended the latest sign-in, in UTC, or `null` while it is pending, once it expired, or if none was started.
+             * @example 2026-11-22T09:31:12.000Z
+             */
+            ended_at: string | null;
         };
         /** @description The settings of a plugin's connector. */
         PluginConnectorSettings: {
@@ -22177,6 +22286,370 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `request_too_large`: the request body is larger than this instance accepts. */
+            413: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTooLargeRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    getPluginConnectorSignIn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The plugin's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the status of the latest sign-in. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "plugin": "google-drive",
+                     *       "status": "signed_in",
+                     *       "reason": null,
+                     *       "id": "019a8b4e-7c2d-7f3a-9b1e-4d5c6a7b8c9d",
+                     *       "started_at": "2026-11-22T09:30:00.000Z",
+                     *       "expires_at": "2026-11-22T09:40:00.000Z",
+                     *       "ended_at": "2026-11-22T09:31:12.000Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PluginConnectorSignInStatus"];
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: you lack `connectors.manage`. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /**
+             * @description - `plugin_not_found`: no plugin of this name is installed.
+             *     - `connector_not_found`: the plugin has no connector.
+             */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginConnectorNotFoundRefusal"];
+                };
+            };
+            /**
+             * @description - `connector_sign_in_not_declared`: the plugin's connector declares no `sign_in`.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Rebuild the working copy from the instance at this address.
+             */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorSignInNotDeclaredOrInstanceChangedRefusal"];
+                };
+            };
+            /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
+            412: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ContractMismatchRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    startPluginConnectorSignIn: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description The ID of the instance you expect, as `GET /` returns it. If another instance answers at this address, Marfa returns `409 instance_changed` and doesn't write. Leave it out to send the request to whichever instance answers. */
+                "X-Marfa-Instance-Id"?: string;
+            };
+            path: {
+                /** @description The plugin's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "return_to": "/done"
+                 *     }
+                 */
+                "application/json": {
+                    /** @description A path, or an address on this instance's sign-in address, to send the browser to once the sign-in finishes, with `signed_in` added to its query. An app's own OAuth access token can also name one of the redirect URIs its client registered, exactly as registered, such as a native app's private-use scheme. Leave it out to show a page instead. */
+                    return_to?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Returns the address to open in the owner's browser and when the sign-in ends. */
+            201: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "id": "019a8b4e-7c2d-7f3a-9b1e-4d5c6a7b8c9d",
+                     *       "url": "https://accounts.google.com/o/oauth2/v2/auth?client_id=example.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fmarfa.example.com%2Fconnect%2Foauth%2Fcallback&response_type=code&scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fdrive.readonly&state=8kq2nXbL0wQf3vTzR1yHcA9mJ5sE7uPd4gN6iKoWlMv&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&access_type=offline&prompt=consent",
+                     *       "expires_at": "2026-11-22T09:40:00.000Z"
+                     *     }
+                     */
+                    "application/json": components["schemas"]["PluginConnectorSignInStart"];
+                };
+            };
+            /** @description - `validation_error`: the body isn't a JSON object, names a field other than `return_to`, or gives a `return_to` that isn't a path, an address on this instance's sign-in address, or a redirect URI the calling app registered; `details.errors` names `return_to`. The query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description - `forbidden`: you lack `connectors.manage`. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /**
+             * @description - `plugin_not_found`: no plugin of this name is installed.
+             *     - `connector_not_found`: the plugin has no connector.
+             */
+            404: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PluginConnectorNotFoundRefusal"];
+                };
+            };
+            /** @description `request_timeout`: the request body didn't arrive whole within 180 seconds. Nothing changed, and Marfa closed the connection. Send the request again. A body larger than about 21 MiB can't arrive in that time over a 1 Mbit/s link, so send it in smaller requests. */
+            408: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequestTimeoutRefusal"];
+                };
+            };
+            /**
+             * @description - `connector_sign_in_not_declared`: the plugin's connector declares no `sign_in`.
+             *     - `connector_sign_in_settings_missing`: the client ID or client secret setting holds no value Marfa can read; `details.settings` names each.
+             *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written.
+             */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectorSignInNotDeclaredOrConnectorSignInSettingsMissingOrInstanceChangedRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */

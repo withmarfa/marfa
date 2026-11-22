@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use super::{Lie, ReleaseFeed, Resolved, Volume};
+use super::{Lie, ReleaseFeed, Resolved, SignInProvider, Volume};
 use crate::db::Pulse;
 
 #[derive(Debug)]
@@ -67,6 +67,14 @@ impl Faults {
 
     pub fn release_feed(&self) -> ReleaseFeed {
         ReleaseFeed::Public
+    }
+
+    pub fn sign_in_provider(&self) -> SignInProvider {
+        SignInProvider::Public
+    }
+
+    pub fn sign_in_deadline(&self) -> Option<Duration> {
+        None
     }
 
     pub fn store_check_deadline(&self) -> Option<Duration> {

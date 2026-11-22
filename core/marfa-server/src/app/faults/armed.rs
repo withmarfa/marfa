@@ -9,8 +9,8 @@ use tokio::sync::watch;
 use super::super::blobs::Hash;
 use super::super::{attention, housekeeping};
 use super::{
-    ARCHIVE_LINE_LANE, DEVICE_OWNER_INSTANCE_LANE, Lie, ReleaseFeed, Resolved, TYPE_DEFINITION,
-    Volume,
+    ARCHIVE_LINE_LANE, DEVICE_OWNER_INSTANCE_LANE, Lie, ReleaseFeed, Resolved, SignInProvider,
+    TYPE_DEFINITION, Volume,
 };
 use crate::db::Pulse;
 
@@ -27,6 +27,8 @@ const UNFOLD_DEADLINE: &str = "unfold-deadline";
 const FREE_UNKNOWN: u64 = u64::MAX;
 const STORE_CHECK_DEADLINE: &str = "store-check-deadline";
 const RELEASE_FEED: &str = "release-feed";
+const SIGN_IN_PROVIDER: &str = "sign-in-provider";
+const SIGN_IN_DEADLINE: &str = "sign-in-deadline";
 const LOSE_BLOB: &str = "lose:blob";
 const UNREADABLE_BLOB: &str = "damage:blob-unreadable";
 const DAMAGE_BLOB: &str = "damage:blob";
@@ -345,7 +347,7 @@ fn judge_hide(rest: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>
 }
 
 fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), String> {
-    if name == STORE_CHECK_DEADLINE {
+    if name == STORE_CHECK_DEADLINE || name == SIGN_IN_DEADLINE {
         return milliseconds(arg).map(|ms| (None, Some(ms)));
     }
     let (kind, rest) = name.split_once(':').unwrap_or((name, ""));
@@ -452,6 +454,25 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             }
         }
         "hide" => judge_hide(rest, arg),
+        SIGN_IN_PROVIDER if rest.is_empty() => {
+            let origin = arg
+                .and_then(|text| url::Url::parse(text).ok())
+                .is_some_and(|url| {
+                    matches!(url.scheme(), "http" | "https")
+                        && url.host().is_some()
+                        && url.username().is_empty()
+                        && url.password().is_none()
+                        && url.path() == "/"
+                        && url.query().is_none()
+                });
+            if origin {
+                Ok((None, None))
+            } else {
+                Err(format!(
+                    "{SIGN_IN_PROVIDER} takes the http or https origin that stands in for a sign-in provider"
+                ))
+            }
+        }
         RELEASE_FEED if rest.is_empty() => {
             let plain = arg
                 .and_then(|text| url::Url::parse(text).ok())
@@ -473,7 +494,8 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             "a fault is named hold:<point>, fail:<point>, refuse:<point>, release:<point>, \
              deadline:<job>, unfold-deadline, free:<volume>, size:<volume>, resolve:<host>, limit:<lane>, \
              unreadable:<stored>, lose:blob, damage:blob, damage:blob-unreadable, \
-             store-check-deadline, hide:event, hide:webhook-position or release-feed"
+             store-check-deadline, hide:event, hide:webhook-position, release-feed, sign-in-provider \
+             or sign-in-deadline"
                 .to_string(),
         ),
     }
@@ -778,6 +800,22 @@ impl Faults {
             .find(|fault| fault.name == RELEASE_FEED)
             .and_then(|fault| fault.arg.clone())
             .map_or(ReleaseFeed::Nowhere, ReleaseFeed::At)
+    }
+
+    pub fn sign_in_provider(&self) -> SignInProvider {
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == SIGN_IN_PROVIDER)
+            .and_then(|fault| fault.arg.clone())
+            .map_or(SignInProvider::Nowhere, SignInProvider::At)
+    }
+
+    pub fn sign_in_deadline(&self) -> Option<Duration> {
+        self.armed()
+            .iter()
+            .find(|fault| fault.name == SIGN_IN_DEADLINE)
+            .and_then(|fault| fault.number)
+            .map(Duration::from_millis)
     }
 
     pub fn unfold_deadline(&self) -> Option<u64> {

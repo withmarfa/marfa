@@ -236,6 +236,82 @@ fn refused(errors: Vec<Value>) -> Refusal {
         .with_detail("errors", errors)
 }
 
+/// A plugin's connector as its sign-in reads it: its install, its `sign_in` and its settings.
+pub(crate) struct ForSignIn {
+    pub install: String,
+    pub sign_in: Option<plugin_connector::SignIn>,
+    held: Held,
+}
+
+pub(crate) fn for_sign_in(tx: &Transaction<'_>, plugin: &str) -> Result<ForSignIn> {
+    let held = held(tx, plugin)?;
+    let installed = plugins::installed(tx, plugin)?.ok_or_else(|| plugin_not_found(plugin))?;
+    let sign_in = installed
+        .manifest
+        .get("connector")
+        .and_then(Value::as_object)
+        .and_then(plugin_connector::sign_in)
+        .ok_or_else(|| {
+            Refusal::internal(&format!(
+                "the stored sign-in of plugin {plugin}'s connector does not read"
+            ))
+        })?;
+    Ok(ForSignIn {
+        install: held.install.clone(),
+        sign_in,
+        held,
+    })
+}
+
+impl ForSignIn {
+    /// The text set for `name`, where the server can read it.
+    pub(crate) fn text(&self, name: &str, sealer: &Sealer) -> Result<Option<String>> {
+        let Some(setting) = self.held.declared.iter().find(|held| held.name == name) else {
+            return Ok(None);
+        };
+        let value = match self.held.now(setting, sealer)? {
+            Now::Plain(value) => value,
+            Now::Opened(secret) => serde_json::from_str(secret.expose()).map_err(|_| {
+                Refusal::internal(&format!(
+                    "an opened secret of plugin {} does not read",
+                    self.held.plugin
+                ))
+            })?,
+            Now::Unset | Now::Unreadable => return Ok(None),
+        };
+        Ok(value.as_str().map(str::to_string))
+    }
+
+    /// Seals `text` into the secret setting `name`, where the setting takes it.
+    pub(crate) fn store_secret(
+        &self,
+        tx: &Transaction<'_>,
+        name: &str,
+        text: &str,
+        sealer: &Sealer,
+        at: &str,
+    ) -> Result<bool> {
+        let value = Value::String(text.to_string());
+        let takes = self
+            .held
+            .declared
+            .iter()
+            .find(|setting| setting.name == name)
+            .is_some_and(|setting| setting.secret && setting.refuses(&value).is_none());
+        if !takes {
+            return Ok(false);
+        }
+        let sealed = sealer
+            .seal(
+                &sealed_as(&self.install, name),
+                &Secret::new(value.to_string()),
+            )
+            .ok_or_else(|| Refusal::internal("a connector's secret could not be sealed"))?;
+        store(tx, &self.held.plugin, name, &sealed, at)?;
+        Ok(true)
+    }
+}
+
 /// The managing permission, judged before the body is read.
 pub fn require_manager(caller: &Caller) -> Result<()> {
     caller.require(Permission::ConnectorsManage)

@@ -30,6 +30,7 @@ const REGISTER_ADDRESS: &str = "client-register-address";
 const DEVICE_CODE_ADDRESS: &str = "device-code-address";
 const PASSKEY_ADDRESS: &str = "passkey-challenge-address";
 const CONNECTOR_LINK_ADDRESS: &str = "connector-link-address";
+const CONNECTOR_SIGN_IN_ADDRESS: &str = "connector-sign-in-address";
 const ALL: &str = "all";
 const NO_ADDRESS: &str = "unknown";
 const PASSWORD_FAMILIES: [&str; 6] = [
@@ -194,6 +195,15 @@ pub fn passkey_challenge_lanes(address: Option<IpAddr>) -> [Lane; 1] {
 pub fn connector_link_lanes(address: Option<IpAddr>) -> [Lane; 1] {
     [Lane::new(
         CONNECTOR_LINK_ADDRESS,
+        bucket(address),
+        10,
+        15 * MINUTE_MS,
+    )]
+}
+
+pub fn connector_sign_in_lanes(address: Option<IpAddr>) -> [Lane; 1] {
+    [Lane::new(
+        CONNECTOR_SIGN_IN_ADDRESS,
         bucket(address),
         10,
         15 * MINUTE_MS,

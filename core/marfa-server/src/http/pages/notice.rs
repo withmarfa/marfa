@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 
 use super::{Needs, Page, document, render_body};
 use crate::app::auth::return_to::through_sign_in;
+use crate::app::connector_sign_in::Failure;
 use crate::app::refusal::Result;
 
 #[derive(Debug, Clone)]
@@ -64,6 +65,44 @@ impl Notice {
             StatusCode::OK,
             "Device not connected",
             "You didn't approve access, so your device was not connected.",
+        )
+    }
+
+    pub fn connector_signed_in(instance_name: &str) -> Notice {
+        Notice::new(
+            instance_name,
+            StatusCode::OK,
+            "You're signed in",
+            "Marfa keeps this sign-in for the connector. You can close this page and return to your app.",
+        )
+    }
+
+    /// `why` is `None` where the state names no sign-in, which tells a stranger nothing.
+    pub fn connector_sign_in_unfinished(instance_name: &str, why: Option<&Failure>) -> Notice {
+        let message = match why {
+            None => "This sign-in was canceled, has ended, or was already used. Go back to your app and sign in again.".to_string(),
+            Some(failure) => format!(
+                "{} Go back to your app and sign in again.",
+                sign_in_failure(failure)
+            ),
+        };
+        Notice::new(
+            instance_name,
+            StatusCode::BAD_REQUEST,
+            "Sign-in didn't finish",
+            &message,
+        )
+    }
+
+    pub fn connector_sign_in_failed(instance_name: &str, why: &Failure) -> Notice {
+        Notice::new(
+            instance_name,
+            StatusCode::BAD_GATEWAY,
+            "Sign-in didn't finish",
+            &format!(
+                "{} Go back to your app and sign in again.",
+                sign_in_failure(why)
+            ),
         )
     }
 
@@ -225,4 +264,38 @@ pub fn auth_error(view: &AuthError) -> Result<Page> {
         heading,
         message,
     ))
+}
+
+/// One sentence for each outcome word, written by Marfa and never by the provider.
+fn sign_in_failure(failure: &Failure) -> &'static str {
+    match failure {
+        Failure::TokenError("invalid_client")
+        | Failure::BrowserError("unauthorized_client")
+        | Failure::TokenError("unauthorized_client") => {
+            "The service refused this connector's client ID or secret. Check them in the plugin's settings."
+        }
+        Failure::TokenError("invalid_grant") => {
+            "The service refused the sign-in, which may have been used already or taken too long."
+        }
+        Failure::TokenError("invalid_scope") | Failure::BrowserError("invalid_scope") => {
+            "The service refused the access this connector asks for."
+        }
+        Failure::TokenError(_)
+        | Failure::BrowserError("invalid_request" | "unsupported_response_type") => {
+            "The service refused the request Marfa sent."
+        }
+        Failure::BrowserError("access_denied") => "The sign-in was declined at the service.",
+        Failure::BrowserError(_) | Failure::ProviderError => {
+            "The service reported a problem with the sign-in."
+        }
+        Failure::NoCode => "The service sent the browser back without finishing the sign-in.",
+        Failure::ChangedSinceStart => {
+            "The connector's sign-in or its client settings changed after the sign-in started."
+        }
+        Failure::Timeout => "The service didn't answer in time.",
+        Failure::Unreachable => "Marfa couldn't reach the service.",
+        Failure::Status(_) => "The service answered with an error.",
+        Failure::NoRefreshToken => "The service didn't send a token Marfa can keep.",
+        Failure::UnreadableAnswer => "The service sent an answer Marfa couldn't read.",
+    }
 }

@@ -2802,3 +2802,52 @@ async fn a_database_at_schema_version_7_upgrades_to_hold_mappings_that_go_with_t
     conn.execute("DELETE FROM connector_rewrites", []).unwrap();
     assert!(ask(&conn) > first, "a rewrite number was given again");
 }
+
+#[tokio::test]
+async fn a_database_at_schema_version_8_upgrades_through_9_and_a_sign_in_goes_with_its_connector() {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..8]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch(
+            "INSERT INTO plugins (name, version, title, description, mark, maker, marfa, manifest, \
+             edge_types, installed_at, updated_at, fingerprint) VALUES ('rss', '1.0.0', 'RSS', \
+             'Feeds.', 'lucide:rss', 'Marfa', '0.0.1', '{\"connector\":{\"source\":\"rss\"}}', \
+             '[]', 'a', 'a', '0000000000000000000000000000000000000000000000000000000000000000'); \
+             INSERT INTO plugin_connectors (plugin, source, created_at, updated_at, id) VALUES \
+             ('rss', 'rss', 'a', 'a', 'install');",
+        )
+        .unwrap();
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    let conn = Connection::open(&place.file).unwrap();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 9);
+    conn.execute(
+        "INSERT INTO connector_sign_ins (plugin, id, install, state_hash, verifier, redirect_uri, \
+         started_at, expires_at) VALUES ('rss', 'one', 'install', 'hash', 'sealed', 'r', 'a', 'b')",
+        [],
+    )
+    .unwrap();
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; DELETE FROM plugin_connectors WHERE plugin = 'rss';",
+    )
+    .unwrap();
+    let left: i64 = conn
+        .query_row("SELECT count(*) FROM connector_sign_ins", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(left, 0);
+}

@@ -71,24 +71,26 @@ fn escaped(text: &str) -> String {
 pub const HOME: &str = "/";
 
 pub fn kept(value: &str, origin: &str) -> String {
+    judged(value, origin).unwrap_or_else(|| HOME.to_string())
+}
+
+/// Where a browser goes for `value`, or `None` where it names nowhere it may go.
+pub fn judged(value: &str, origin: &str) -> Option<String> {
     let trimmed = value.trim_matches(|c: char| c <= ' ');
     let text: String = trimmed
         .chars()
         .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
         .collect();
     if text.is_empty() || text.chars().any(char::is_control) {
-        return HOME.to_string();
+        return None;
     }
     let path_end = text.find(['?', '#']).unwrap_or(text.len());
     let (path, tail) = text.split_at(path_end);
     let slashed = format!("{}{tail}", path.replace('\\', "/"));
     let local = if has_scheme(&slashed) {
-        match after_origin(&slashed, origin) {
-            Some(rest) => rest.to_string(),
-            None => return HOME.to_string(),
-        }
+        after_origin(&slashed, origin)?.to_string()
     } else if slashed.starts_with("//") {
-        return HOME.to_string();
+        return None;
     } else {
         slashed
     };
@@ -101,9 +103,9 @@ pub fn kept(value: &str, origin: &str) -> String {
     };
     let resolved = without_dots(&rooted);
     if hides_a_host(&resolved) {
-        return HOME.to_string();
+        return None;
     }
-    escaped(&format!("{resolved}{tail}"))
+    Some(escaped(&format!("{resolved}{tail}")))
 }
 
 /// `text` as one value in a query string.

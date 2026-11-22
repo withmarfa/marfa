@@ -18,6 +18,7 @@ mod config;
 mod connections;
 mod connector_hosts;
 mod connector_settings;
+mod connector_sign_in;
 mod connectors;
 mod control;
 mod cors;
@@ -178,6 +179,10 @@ fn connector_host_doors() -> Routes {
         .route(
             "/plugins/{name}/connector/settings",
             get(connector_settings::list).patch(connector_settings::set),
+        )
+        .route(
+            "/plugins/{name}/connector/sign-in",
+            post(connector_sign_in::start).get(connector_sign_in::status),
         )
         .route("/connector-hosts/self", get(connector_hosts::own))
         .route(
@@ -499,6 +504,14 @@ pub fn public(app: Arc<App>) -> Router {
     public_on(app, listener)
 }
 
+/// Where a provider sends the owner's browser back from a connector's sign-in; the state is the credential.
+fn sign_in_return_doors() -> Routes {
+    Doors::new()
+        .route("/connect/oauth/callback", get(connector_sign_in::callback))
+        .asking(Asks::Nothing)
+        .unjudged()
+}
+
 /// A sender's address is its credential and the sender holds no copy of the instance.
 fn sender_doors() -> Routes {
     Doors::new()
@@ -514,6 +527,7 @@ fn public_doors(app: Arc<App>) -> Routes {
         .merge(oauth::doors().unjudged())
         .merge(mcp::doors())
         .merge(sender_doors())
+        .merge(sign_in_return_doors())
 }
 
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
