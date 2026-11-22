@@ -2349,14 +2349,14 @@ export interface paths {
         };
         /**
          * List an app's data
-         * @description Returns each type under an `app.<vendor>` namespace that is registered or that an item holds, with its items counted by state, and a page of its items in every state, the trash included. Requires the owner's browser session or `grants.manage`, and, for a key or an app's sign-in, read on every type under the namespace.
+         * @description Returns each type under an `app.<vendor>` namespace, registered or held by an item, with its items counted by state, and a page of those items in every state. Requires the browser session or `grants.manage`; a key also needs read on those types.
          */
         get: operations["listAppVendorData"];
         put?: never;
         post?: never;
         /**
          * Delete an app's data
-         * @description Deletes for good up to 1,000 items whose type is under an `app.<vendor>` namespace, in every state, and the types registered under it in the call that leaves none. Only a backup taken before brings them back. Requires `items.purge` and the owner's browser session or `grants.manage`. A key or an app's sign-in also needs write on every type under the namespace, and `schema.write` while types are registered under it.
+         * @description Deletes for good up to 1,000 items under an `app.<vendor>` namespace, in every state, and its registered types once none is left. Needs `items.purge` and the browser session or `grants.manage`; a key also needs write on its types and `schema.write`.
          */
         delete: operations["deleteAppVendorData"];
         options?: never;
@@ -38970,7 +38970,7 @@ export interface operations {
             query?: {
                 /** @description Also revoke every key the app minted, and every key those keys minted, but an owner's key (`owner_key`). Omitting it, or `false`, leaves them working. */
                 revoke_keys?: boolean;
-                /** @description For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`, and, for a key or an app's sign-in, write on every type under those namespaces and `schema.write` while types are registered there. Omitting it, or `false`, keeps them. */
+                /** @description For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`; a key also needs write on those types and `schema.write`. Omitting it, or `false`, keeps them. */
                 remove_data?: boolean;
             };
             header?: never;
@@ -39026,8 +39026,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: the credential lacks `grants.manage`, or with `remove_data` `items.purge`, or `schema.write` while types are registered under the app's namespaces, and `details.required_scope` names it, or with `remove_data` it is an app's sign-in or a key an app made and the grant is another app's.
-             *     - `type_not_permitted`: with `remove_data`, the credential is a key or an app's sign-in whose type map doesn't grant write on every type under one of the app's namespaces. `details.grant` names `<vendor>.*`.
+             * @description - `forbidden`: the credential lacks `grants.manage`, or with `remove_data` `items.purge` or `schema.write` (`details.required_scope`), or with `remove_data` it is an app's sign-in or a key an app made and the grant is another app's.
+             *     - `type_not_permitted`: a key or an app's sign-in lacks write on a type under the app's namespaces with `remove_data`. `details.grant` names `<vendor>.*`.
              */
             403: {
                 headers: {
@@ -39742,7 +39742,7 @@ export interface operations {
             };
             /**
              * @description - `forbidden`: the credential lacks `grants.manage`, and `details.required_scope` names it, or it is an app's sign-in or a key an app made and another app or the owner holds the namespace.
-             *     - `type_not_permitted`: the credential is a key or an app's sign-in whose type map doesn't grant read on every type under the namespace. `details.grant` names `<vendor>.*`.
+             *     - `type_not_permitted`: a key or an app's sign-in lacks read on a type under the namespace. `details.grant` names `<vendor>.*`.
              */
             403: {
                 headers: {
@@ -39878,8 +39878,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: the credential lacks `grants.manage` or `items.purge`, or `schema.write` while types are registered under the namespace, and `details.required_scope` names it, or it is an app's sign-in or a key an app made and another app or the owner holds the namespace.
-             *     - `type_not_permitted`: the credential is a key or an app's sign-in whose type map doesn't grant write on every type under the namespace. `details.grant` names `<vendor>.*`.
+             * @description - `forbidden`: the credential lacks `grants.manage`, `items.purge`, or `schema.write` while types are registered there (`details.required_scope`), or it is an app's sign-in or a key an app made and another app or the owner holds the namespace.
+             *     - `type_not_permitted`: a key or an app's sign-in lacks write on a type under the namespace. `details.grant` names `<vendor>.*`.
              */
             403: {
                 headers: {
@@ -41607,7 +41607,7 @@ export interface operations {
             query?: {
                 /** @description For an app, also revoke every key it minted but an owner's key (`owner_key`), as its `minted_by` entries show. Only an app takes it. */
                 revoke_keys?: boolean;
-                /** @description For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`, and, for a key or an app's sign-in, write on every type under those namespaces and `schema.write` while types are registered there. Omitting it, or `false`, keeps them. */
+                /** @description For an app, also delete for good the items and types of every `app.<vendor>` namespace it holds, in the same write. Needs `items.purge`; a key also needs write on those types and `schema.write`. Omitting it, or `false`, keeps them. */
                 remove_data?: boolean;
             };
             header?: {
@@ -41666,8 +41666,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `forbidden`: the credential lacks `sign_ins.manage`, or with `remove_data` `items.purge`, or `schema.write` while types are registered under the app's namespaces, and `details.required_scope` names it, or with `remove_data` it is an app's sign-in or a key an app made and the ID names another app.
-             *     - `type_not_permitted`: with `remove_data`, the credential is a key or an app's sign-in whose type map doesn't grant write on every type under one of the app's namespaces. `details.grant` names `<vendor>.*`.
+             * @description - `forbidden`: the credential lacks `sign_ins.manage`, or with `remove_data` `items.purge` or `schema.write` (`details.required_scope`), or with `remove_data` it is an app's sign-in or a key an app made and the ID names another app.
+             *     - `type_not_permitted`: a key or an app's sign-in lacks write on a type under the app's namespaces with `remove_data`. `details.grant` names `<vendor>.*`.
              */
             403: {
                 headers: {
