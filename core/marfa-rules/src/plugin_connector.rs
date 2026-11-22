@@ -258,6 +258,9 @@ impl Judge {
             self.text(setting, &at, "label", LABEL_CAP);
             let kind = self.word(setting, &at, "kind", &SETTING_KINDS);
             let secret = self.flag(setting, &at, "secret", false);
+            if secret && kind.is_some_and(|kind| kind != "text") {
+                self.wrong(format!("{at}.secret"), "A secret setting is text");
+            }
             self.flag(setting, &at, "required", true);
             let choices = self.choices(setting, &at, kind);
             if let Some(default) = setting.get("default") {
@@ -733,6 +736,24 @@ mod tests {
             let said = setting.refuses(&bad).unwrap();
             assert!(said.starts_with(&setting.name), "{said}");
             assert!(!said.contains("hush"), "{said}");
+        }
+    }
+
+    #[test]
+    fn a_secret_setting_is_text() {
+        for kind in ["number", "boolean", "choice", "text"] {
+            let mut held = base();
+            let mut one = json!({ "name": "s", "label": "S", "kind": kind, "secret": true, "required": false });
+            if kind == "choice" {
+                one["choices"] = json!(["a"]);
+            }
+            held["settings"] = json!([one]);
+            let expected: &[&str] = if kind == "text" {
+                &[]
+            } else {
+                &["connector.settings.0.secret"]
+            };
+            assert_eq!(paths(held), expected, "{kind}");
         }
     }
 

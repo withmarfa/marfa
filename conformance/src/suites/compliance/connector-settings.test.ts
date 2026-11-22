@@ -5,9 +5,12 @@ import { DatabaseSync } from "node:sqlite";
 import { gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import { v7 as uuidv7 } from "uuid";
 import {
   archiveLines,
+  editLineFile,
   emptyManifest,
+  itemsArchive,
   lineFile,
   ndjson,
   tar,
@@ -17,9 +20,11 @@ import {
   approvedAppToken,
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
+  serverOutput,
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { clientsFor } from "../../utils/own-blob-server.js";
 import {
   connectorBundle,
   connectorKey,
@@ -29,6 +34,12 @@ import {
   ownerKey,
   type LinkedHost,
 } from "../../utils/plugin-connector.js";
+import {
+  connect,
+  issuerOrigin,
+  registerApp,
+  signIn,
+} from "../../utils/signed-in.js";
 import { tempFolder } from "../../utils/temp-folder.js";
 
 /**
@@ -986,5 +997,212 @@ describe("a sealed secret moved by hand", () => {
     expect(
       entry(await manager.getConnectorSettings(earlier), "token"),
     ).toMatchObject({ set: false, unreadable: true });
+  });
+});
+
+describe("a plugin connector that does not read", () => {
+  let unread: FreshServer;
+
+  afterAll(async () => {
+    await unread?.stop();
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  it("lists every other entry when the record or settings of one plugin's connector do not read, the unreadable secret of a connector that reads among them", async () => {
+    // No backup destination, so the attention list always names one.
+    unread = await bootFreshServer("connector-settings-unread", {
+      MARFA_OBJECT_STORE_BUCKET: "",
+    });
+    const made = await ownerKey(unread, OWNER_PERMISSIONS);
+    const reads = `reads-${fresh()}`;
+    const noInstall = `no-install-${fresh()}`;
+    const noSettings = `no-settings-${fresh()}`;
+    for (const name of [reads, noInstall, noSettings]) {
+      await installed(made.client, name);
+      const set = await made.client.setConnectorSettings(name, {
+        token: `token-${randomUUID()}`,
+      });
+      expect(set.status, JSON.stringify(set.error)).toBe(200);
+    }
+    const references = async () =>
+      (await attentionOf(unread)).map((concern) => concern.reference);
+    expect(await references()).toContain("no_backup_destination");
+
+    await unread.restart(() => {
+      const db = new DatabaseSync(unread.sqlitePath);
+      try {
+        db.prepare(
+          "UPDATE plugin_connector_settings SET value = 'sealed elsewhere' WHERE plugin = ? AND name = 'token'",
+        ).run(reads);
+        db.prepare(
+          "UPDATE plugin_connectors SET id = NULL WHERE plugin = ?",
+        ).run(noInstall);
+        db.prepare(
+          "UPDATE plugins SET manifest = json_set(manifest, '$.connector.settings', 'none') WHERE name = ?",
+        ).run(noSettings);
+      } finally {
+        db.close();
+      }
+    });
+    const listed = await attentionOf(unread);
+    expect(listed.filter((concern) => concern.kind === "unavailable")).toEqual(
+      [],
+    );
+    const after = listed.map((concern) => concern.reference);
+    expect(after).toContain("no_backup_destination");
+    expect(after).toContain(`${reads}/token`);
+    const warned = serverOutput(unread.stateDir)
+      .split("\n")
+      .filter((line) => line.includes("settings were not read"))
+      .join("\n");
+    for (const name of [noInstall, noSettings]) {
+      expect(after).not.toContain(`${name}/token`);
+      expect(warned).toContain(name);
+    }
+    expect(warned).not.toContain(reads);
+  });
+});
+
+describe("a restore of a plugin's connector and connectors.manage", () => {
+  const RESTORE_ONLY = "backups.manage";
+  const RESTORE_AND_CONNECTORS = "backups.manage connectors.manage";
+
+  /** An app token on the origin whose owner has just signed in. */
+  async function restoringApp(scope: string): Promise<MarfaClient> {
+    const issuer = await issuerOrigin(origin);
+    const app = await registerApp(origin, scope);
+    const cookie = await signIn(origin, issuer);
+    const tokens = await connect(origin, issuer, cookie, app, scope);
+    return new MarfaClient({
+      baseUrl: origin.apiUrl,
+      apiKey: tokens.access_token!,
+    });
+  }
+
+  /**
+   * An archive of one new note and the plugin's own instance lines as the
+   * origin exports them, with the plugin then removed from the origin.
+   */
+  async function pluginArchive(
+    name: string,
+  ): Promise<{ archive: Uint8Array; id: string }> {
+    const exported = await owner.exportArchive({
+      state: "any",
+      files: "false",
+    });
+    expect(exported.status).toBe(200);
+    const lines = archiveLines<{
+      plugin?: { name: string };
+      connector_setting?: { plugin: string };
+    }>(exported.data, "instance").filter(
+      (line) =>
+        line.plugin?.name === name || line.connector_setting?.plugin === name,
+    );
+    const id = uuidv7();
+    const archive = editLineFile(
+      itemsArchive(
+        [
+          {
+            id,
+            type: "core.note",
+            source: "connector-settings-restore",
+            source_id: `restore-${randomUUID()}`,
+            properties: { title: "restored beside a plugin" },
+          },
+        ],
+        [],
+        [],
+        (manifest) => ({
+          ...manifest,
+          version: 3,
+          plugin_count: 0,
+          app_vendor_count: 0,
+          connector_setting_count: 0,
+        }),
+      ),
+      "instance",
+      () => ndjson(lines),
+    );
+    expect((await owner.removePlugin(name)).status).toBe(200);
+    return { archive, id };
+  }
+
+  function expectConnectorsRefused(answer: {
+    status: number;
+    error?: { error: { code: string; details?: unknown } };
+  }): Record<string, unknown> {
+    expect(answer.status, JSON.stringify(answer.error)).toBe(403);
+    expect(answer.error?.error.code).toBe("forbidden");
+    const details = answer.error?.error.details as Record<string, unknown>;
+    expect(details.required_scope).toBe("connectors.manage");
+    return details;
+  }
+
+  async function expectNothingWritten(name: string, id: string): Promise<void> {
+    expect((await owner.getPlugin(name)).status).toBe(404);
+    expect((await clientsFor(origin).working.getItem(id)).status).toBe(404);
+  }
+
+  it("refuses an app without connectors.manage an archive that would restore a plugin with a connector, writing nothing, which an app holding it restores", async () => {
+    const name = `restored-${fresh()}`;
+    await installed(owner, name);
+    const held = await pluginArchive(name);
+
+    const refused = await (
+      await restoringApp(RESTORE_ONLY)
+    ).restoreArchive(held.archive);
+    const details = expectConnectorsRefused(refused);
+    expect(details.plugins).toEqual([name]);
+    expect(details.connector_settings).toEqual([]);
+    await expectNothingWritten(name, held.id);
+
+    const restored = await (
+      await restoringApp(RESTORE_AND_CONNECTORS)
+    ).restoreArchive(held.archive);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect((await owner.getPlugin(name)).status).toBe(200);
+    expect((await clientsFor(origin).working.getItem(held.id)).status).toBe(
+      200,
+    );
+  });
+
+  it("refuses an app without connectors.manage an archive that would store a connector's settings and a secret to set again, writing nothing, which an app holding it restores", async () => {
+    const name = `restored-set-${fresh()}`;
+    await installed(owner, name);
+    const set = await owner.setConnectorSettings(name, {
+      feed_url: "https://restored.example.test/",
+      token: `token-${randomUUID()}`,
+    });
+    expect(set.status, JSON.stringify(set.error)).toBe(200);
+    const held = await pluginArchive(name);
+
+    const refused = await (
+      await restoringApp(RESTORE_ONLY)
+    ).restoreArchive(held.archive);
+    const details = expectConnectorsRefused(refused);
+    expect(details.plugins).toEqual([name]);
+    expect(details.connector_settings).toEqual([
+      `${name}/feed_url`,
+      `${name}/token`,
+    ]);
+    await expectNothingWritten(name, held.id);
+
+    const restored = await (
+      await restoringApp(RESTORE_AND_CONNECTORS)
+    ).restoreArchive(held.archive);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(
+      (restored.data as unknown as Record<string, unknown>)
+        .connector_secrets_to_set,
+    ).toEqual([{ plugin: name, name: "token" }]);
+    const read = await owner.getConnectorSettings(name);
+    expect(read.status, JSON.stringify(read.error)).toBe(200);
+    expect(entry(read, "feed_url")).toMatchObject({
+      value: "https://restored.example.test/",
+      set: true,
+    });
+    expect(entry(read, "token")).toMatchObject({
+      set: false,
+      unreadable: true,
+    });
   });
 });

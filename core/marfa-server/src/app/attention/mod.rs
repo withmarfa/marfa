@@ -258,14 +258,20 @@ async fn healthy(app: &Arc<App>) -> Result<Vec<Concern>> {
         );
     }
     found.extend(secrets_to_set(&app.settings.live()));
-    found.extend(connector_secrets_to_set(app).await?);
+    found.extend(connector_secrets_to_set(app).await);
     Ok(found)
 }
 
-/// Each secret setting of a plugin's connector that this server's key cannot open.
-async fn connector_secrets_to_set(app: &Arc<App>) -> Result<Vec<Concern>> {
-    Ok(crate::app::connector_settings::unreadable(app)
-        .await?
+/// A failed read lists none, so it never hides the other concerns.
+async fn connector_secrets_to_set(app: &Arc<App>) -> Vec<Concern> {
+    let unreadable = match crate::app::connector_settings::unreadable(app).await {
+        Ok(unreadable) => unreadable,
+        Err(refused) => {
+            tracing::warn!(error = %refused, "The plugin connectors' settings were not read");
+            return Vec::new();
+        }
+    };
+    unreadable
         .into_iter()
         .map(|(plugin, name)| Concern {
             kind: "setting",
@@ -280,7 +286,7 @@ async fn connector_secrets_to_set(app: &Arc<App>) -> Result<Vec<Concern>> {
                  /plugins/{plugin}/connector/settings`, the connector reads it as unset."
             ),
         })
-        .collect())
+        .collect()
 }
 
 /// Each secret setting stored that this server's key cannot open.

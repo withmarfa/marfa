@@ -121,7 +121,9 @@ stays because that thing is what it checks.
   log beside it for a connector's secret, because the contract is about the
   bytes at rest, and copies a sealed secret to another setting's row, another
   plugin's and an earlier install's while the server is stopped, because only
-  a database edited by hand moves a sealed value.
+  a database edited by hand moves a sealed value. It also damages one plugin
+  connector's record and another's stored manifest while the server is
+  stopped, because no operation stores either unreadable.
 - `compliance/type-conflicts.test.ts` writes a stored type definition. Only a
   build that ships a field on a type, below which a registered type declares the
   field in another shape, holds a conflict: every door and a restore refuse one,

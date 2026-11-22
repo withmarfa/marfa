@@ -416,6 +416,42 @@ pub fn archived(body: &Value) -> std::result::Result<Archived, &'static str> {
     })
 }
 
+/// The plugins with a connector and the `plugin/setting` names a restore would store.
+pub(crate) fn restoring(
+    tx: &Transaction<'_>,
+    archived: &[Archived],
+    plugins: &[plugins::Archived],
+) -> Result<(Vec<String>, Vec<String>)> {
+    let recording = plugins::connectors_restoring(tx, plugins)?;
+    let mut settings = Vec::new();
+    for line in archived {
+        let declared = recording
+            .iter()
+            .find(|(plugin, _)| *plugin == line.plugin)
+            .and_then(|(_, section)| plugin_connector::settings(section))
+            .unwrap_or_default();
+        if declared
+            .iter()
+            .find(|setting| setting.name == line.name)
+            .is_some_and(|setting| stores(setting, line))
+        {
+            settings.push(format!("{}/{}", line.plugin, line.name));
+        }
+    }
+    let plugins = recording
+        .into_iter()
+        .map(|(plugin, _)| plugin.to_string())
+        .collect();
+    Ok((plugins, settings))
+}
+
+fn stores(setting: &Setting, line: &Archived) -> bool {
+    match &line.value {
+        None => setting.secret,
+        Some(value) => !setting.secret && setting.refuses(value).is_none(),
+    }
+}
+
 /// Only for plugins this restore recorded anew; answers the secrets to set again.
 pub(crate) fn restore(
     tx: &Transaction<'_>,
@@ -443,35 +479,50 @@ pub(crate) fn restore(
         else {
             continue;
         };
-        match (&line.value, setting.secret) {
-            (None, true) => {
+        if !stores(setting, line) {
+            continue;
+        }
+        match &line.value {
+            None => {
                 store(tx, &line.plugin, &line.name, SET_AGAIN, at)?;
                 to_set.push(json!({ "plugin": line.plugin, "name": line.name }));
             }
-            (Some(value), false) if setting.refuses(value).is_none() => {
-                store(tx, &line.plugin, &line.name, &value.to_string(), at)?;
-            }
-            _ => {}
+            Some(value) => store(tx, &line.plugin, &line.name, &value.to_string(), at)?,
         }
     }
     Ok(to_set)
 }
 
-/// Each plugin and secret setting of its connector whose stored value the server cannot open.
+/// Secrets the server cannot open; a connector that does not read is skipped and logged.
 pub(crate) async fn unreadable(app: &Arc<App>) -> Result<Vec<(String, String)>> {
     let sealer = app.settings.shared_sealer();
     app.db
         .read(move |tx| {
             let mut found = Vec::new();
             for record in connector_hosts::records(tx)? {
-                let held = held_of(tx, &record)?;
-                for setting in held.declared.iter().filter(|setting| setting.secret) {
-                    if matches!(held.now(setting, &sealer)?, Now::Unreadable) {
-                        found.push((held.plugin.clone(), setting.name.clone()));
+                match unreadable_of(tx, &record, &sealer) {
+                    Ok(names) => {
+                        found.extend(names.into_iter().map(|name| (record.plugin.clone(), name)))
                     }
+                    Err(refused) => tracing::warn!(
+                        plugin = record.plugin,
+                        error = %refused,
+                        "A plugin connector's settings were not read"
+                    ),
                 }
             }
             Ok(found)
         })
         .await
+}
+
+fn unreadable_of(tx: &Transaction<'_>, record: &Record, sealer: &Sealer) -> Result<Vec<String>> {
+    let held = held_of(tx, record)?;
+    let mut found = Vec::new();
+    for setting in held.declared.iter().filter(|setting| setting.secret) {
+        if matches!(held.now(setting, sealer)?, Now::Unreadable) {
+            found.push(setting.name.clone());
+        }
+    }
+    Ok(found)
 }

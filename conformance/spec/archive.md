@@ -1160,6 +1160,14 @@ When `POST /restore` keeps the install record of a plugin with a connector that 
 
 **Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`.
 
+### `archive/restore-connector-settings-permission`
+
+If an app's access token that `keys-and-oauth/step-up-recent` admits to `POST /restore` or `POST /backups/{instance_id}/{name}/restore`, and that does not hold `connectors.manage`, sends that restore for an archive that would store a value or a secret to set again for a setting of a plugin's connector, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage` and `details.connector_settings` naming each such setting as the plugin's name, `/`, and the setting's name.
+
+**Reason:** setting a connector's settings needs `connectors.manage` (`plugins/settings-permission`), and a restore is not a way around it. The refusal writes nothing (`plugins/restore-connector-permission-unwritten`).
+
+**Tests:** `compliance/connector-settings.test.ts › refuses an app without connectors.manage an archive that would store a connector's settings and a secret to set again, writing nothing, which an app holding it restores`.
+
 ### `archive/archive-version-additions`
 
 When a restore reads an archive that lacks a field or a line kind added to the archive's version after the first build that wrote that version, the server MUST restore the archive without it.

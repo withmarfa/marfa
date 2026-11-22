@@ -650,6 +650,22 @@ pub fn judge_restored(
     Ok(())
 }
 
+/// Each archived plugin with a connector that a restore would record, with its connector section.
+pub(crate) fn connectors_restoring<'a>(
+    tx: &Transaction<'_>,
+    archived: &'a [Archived],
+) -> Result<Vec<(&'a str, &'a Obj)>> {
+    let mut found = Vec::new();
+    for line in archived {
+        if let Some(section) = connector_of(&line.line.manifest)
+            && row(tx, &line.name)?.is_none()
+        {
+            found.push((line.name.as_str(), section));
+        }
+    }
+    Ok(found)
+}
+
 /// The name of each plugin it recorded, and how many it found recorded already.
 pub fn restore(
     tx: &Transaction<'_>,

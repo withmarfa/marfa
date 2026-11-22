@@ -200,6 +200,14 @@ If a setting of a bundle's connector gives a `default` that is not of its `kind`
 
 **Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a connector section with an unknown key, no kinds, a kind type outside the bundle, a choice with no choices, a secret with a default or a sign-in naming an undeclared setting, naming each path and installing nothing`, `› refuses a source a key could not hold, two kinds or settings of one name, and a default that does not fit its kind`.
 
+### `plugins/connector-setting-secret-text`
+
+If a setting of a bundle's connector whose `secret` is `true` has a `kind` other than `text`, then the server MUST answer `400 validation_error` with `details.errors` naming the setting's `secret`.
+
+**Reason:** a secret is a credential the owner pastes in, which the command line reads as text from standard input (`cli/plugins-secret-stdin`), so a secret of another kind could never be set.
+
+**Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a secret setting of a kind other than text, naming its secret, and installs the same setting as text`.
+
 ### `plugins/connector-setting-choices`
 
 If a setting of a bundle's connector of `kind` `choice` gives no `choices`, or a setting of another `kind` gives `choices`, then the server MUST answer `400 validation_error` with `details.errors` naming the setting's `choices`.
@@ -401,6 +409,20 @@ When `POST /restore` restores a plugin with a connector that the instance does n
 If `POST /restore` would restore a plugin with a connector whose source another installed plugin's connector or a live key on the instance holds, then the server MUST answer `409 connector_source_held` with `details.source` and restore nothing.
 
 **Tests:** `compliance/plugin-connectors.test.ts › restores a plugin with a connector with its record and no host or key`.
+
+### `plugins/restore-connector-permission`
+
+If an app's access token that `keys-and-oauth/step-up-recent` admits to `POST /restore` or `POST /backups/{instance_id}/{name}/restore`, and that does not hold `connectors.manage`, sends that restore for an archive that would keep the install record of a plugin with a connector the instance has no record of, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage` and `details.plugins` naming each such plugin.
+
+**Reason:** installing a plugin with a connector needs `connectors.manage` (`plugins/install-connector-permission`), and a restore is not a way around it.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses an app without connectors.manage an archive that would restore a plugin with a connector, writing nothing, which an app holding it restores`.
+
+### `plugins/restore-connector-permission-unwritten`
+
+When the server refuses a restore under `plugins/restore-connector-permission` or `archive/restore-connector-settings-permission`, the server MUST write none of the archive's items, files, plugins and settings.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses an app without connectors.manage an archive that would restore a plugin with a connector, writing nothing, which an app holding it restores`, `› refuses an app without connectors.manage an archive that would store a connector's settings and a secret to set again, writing nothing, which an app holding it restores`.
 
 ## Connector hosts
 
@@ -766,7 +788,15 @@ If the server cannot open the value stored for a secret setting of a plugin's co
 
 While a secret setting of a plugin's connector holds a stored value the server cannot open, when `GET /attention` completes its checks, the server MUST include one entry of kind `setting` whose `reference` is the plugin's name, `/`, and the setting's name.
 
-**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`.
+**Tests:** `compliance/connector-settings.test.ts › carries the settings in an archive, names each secret without its value, and after a restore onto another machine lists the secret unreadable, on the attention list and unset to the connector`, `› lists every other entry when the record or settings of one plugin's connector do not read, the unreadable secret of a connector that reads among them`.
+
+### `plugins/attention-connector-unread`
+
+If the server cannot read the record or the declared settings of one plugin's connector when `GET /attention` runs its checks, then the server MUST leave that connector's settings out of the entries and include every other entry its checks find.
+
+**Reason:** one record that a hand edit or a fault left unreadable does not hide what else needs the owner.
+
+**Tests:** `compliance/connector-settings.test.ts › lists every other entry when the record or settings of one plugin's connector do not read, the unreadable secret of a connector that reads among them`.
 
 ## Removing a host
 
