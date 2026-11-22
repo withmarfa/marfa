@@ -911,8 +911,7 @@ fn database_failed(refused: &Refusal) -> bool {
             .is_some_and(|fault| fault.kind == Kind::Database)
 }
 
-/// A failed commit may have landed, so the log can deliver an entry sent here too. `current` is
-/// whether the check that failed is still the newest, decided as each entry is marked.
+/// A failed commit may have landed, so the log can deliver an entry sent here too.
 fn send_from_memory(app: &Arc<App>, concerns: &[Concern], current: impl Fn() -> bool) {
     for concern in concerns {
         if let Some(pending) = app

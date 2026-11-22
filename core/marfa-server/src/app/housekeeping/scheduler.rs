@@ -204,14 +204,12 @@ async fn while_restoring(app: &Arc<App>) {
     }
 }
 
-/// When a job's next unclaimed run may start, counted from now.
 fn next_unclaimed_ms(app: &App, job: &Job) -> i64 {
     let interval = i64::try_from(job.interval.ms(job.name, app)).unwrap_or(i64::MAX);
     app.clock.now_ms().saturating_add(interval)
 }
 
-/// Runs a job once with no claim, leaving no trace in the schedule. A `hold` stays with the
-/// body, so a run given up on at its deadline keeps the job held until the body itself ends.
+/// Keeps a timed-out body's hold until that body ends.
 async fn run_unclaimed(app: &Arc<App>, job: &'static Job, hold: Option<UnclaimedRun>) {
     let run = Run {
         job: job.name,

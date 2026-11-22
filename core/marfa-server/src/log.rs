@@ -187,8 +187,7 @@ pub fn unhandled(request_id: &str, method: &str, path: &str, route: Option<&str>
     tracing::error!(request_id, method, path, route, error, "Unhandled error");
 }
 
-/// What this thread logs while it lives, as the server writes it. A current-thread runtime
-/// test sees the logs of its tasks too.
+/// A current-thread runtime's tasks share this thread's log capture.
 #[cfg(test)]
 pub(crate) struct Capture {
     buffer: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,

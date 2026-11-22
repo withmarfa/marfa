@@ -34,9 +34,7 @@ impl Memory {
         self.marks.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Marks an entry as on its way to the sender, unless it already is or was sent, or `current`
-    /// says a newer check has taken over. `current` is read under the lock a commit's snapshot of
-    /// the marks takes, so a commit either sees this mark or this call sees the commit's check.
+    /// Checks freshness under the commit snapshot's lock before marking.
     pub fn begin(
         self: &Arc<Memory>,
         kind: &str,
