@@ -1246,9 +1246,11 @@ When a caller holding `connectors.manage` sends `PUT /plugins/{name}/connector/m
 
 ### `plugins/mapping-save-defaults`
 
-When `PUT /plugins/{name}/connector/mapping` leaves out a kind, or a member of a kind's entry, the server MUST store that kind or member as its default (`plugins/mapping-default`) gives it.
+When `PUT /plugins/{name}/connector/mapping` leaves out a kind, or a member of a kind's entry, the server MUST store that kind or member as its default (`plugins/mapping-default`) gives it, except that, in an entry whose `target_type` is not the kind's own type, `fields` left out are `{ "from": <field> }` for each field that `target_type` declares and the kind's own type also declares, and `status_overrides` left out are `{}`.
 
-**Tests:** `compliance/connector-mapping.test.ts › saves a mapping that fills a required field with a fixed value, and fills a kind it leaves out with its default`, `› stores the fields both types declare for a target type a saved kind names without fields, and its own defaults once it lands back`.
+**Reason:** a kind's default `fields` and `status_overrides` are made for its own type, and on another target they would name fields and status words that type may not declare.
+
+**Tests:** `compliance/connector-mapping.test.ts › saves a mapping that fills a required field with a fixed value, and fills a kind it leaves out with its default`, `› stores the fields both types declare for a target type a saved kind names without fields, and its own defaults once it lands back`, `› stores no status overrides for a target type a saved kind names without them, and its own defaults once it lands back`.
 
 ### `plugins/mapping-stale`
 
@@ -1486,11 +1488,11 @@ When a saved mapping turns a kind off or moves it to another `target_type`, the 
 
 ### `plugins/reach-committed`
 
-When a plugin's connector key writes an item, the server MUST decide the key's reach on the mapping as it stands in the write that commits the item.
+When a plugin's connector key writes an item, or writes or clears an agreement through `POST /connectors/{id}/agreements`, the server MUST decide the key's reach on the mapping as it stands in the write that commits it.
 
 **Reason:** a mapping saved while a write waits on the writer decides that write.
 
-**Tests:** `compliance/connector-reach.test.ts › decides a write held on the writer by the mapping saved while it waited`.
+**Tests:** `compliance/connector-reach.test.ts › decides a write held on the writer by the mapping saved while it waited`, `› decides an agreement held on the writer by the mapping saved while it waited`.
 
 ### `plugins/reach-not-in-map`
 
@@ -1706,9 +1708,9 @@ If `POST /plugins/{name}/connector/previews` holds a `mapping` that `PUT /plugin
 
 ### `plugins/preview-draft-kept`
 
-When `POST /plugins/{name}/connector/previews` holds a `mapping` the server takes, the server MUST store and answer it as the entry of `kind` that a save would store, each member it leaves out taken from the kind's default (`plugins/mapping-default`).
+When `POST /plugins/{name}/connector/previews` holds a `mapping` the server takes, the server MUST store and answer it as the entry of `kind` that a save would store (`plugins/mapping-save-defaults`).
 
-**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`, `› stores a draft naming another target type without fields or status overrides as a save would store it`.
 
 ### `plugins/preview-cap`
 

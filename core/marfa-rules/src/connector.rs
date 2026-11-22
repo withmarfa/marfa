@@ -311,8 +311,9 @@ fn field_of(value: &Value) -> Option<Field> {
     }
 }
 
-/// A kind's entry as a save names it, over its default. Fields it leaves out are those both
-/// types declare, for the target it names.
+/// A saved entry over its default. On a new target, the default's `fields` and
+/// `status_overrides` were made for the kind's own type: left out, they are the fields both
+/// types declare and no overrides.
 fn read_named(
     value: &Value,
     default: Entry,
@@ -321,10 +322,14 @@ fn read_named(
     at: &str,
     problems: &mut Vec<Problem>,
 ) -> Option<Entry> {
-    let own_target = default.target_type.clone();
     let mut entry = read_entry(value, default, at, &ENTRY_MEMBERS, problems)?;
-    if value.get("fields").is_none() && entry.target_type != own_target {
-        entry.fields = identity(&kind.own_type, &entry.target_type, catalog);
+    if entry.target_type != kind.own_type {
+        if value.get("fields").is_none() {
+            entry.fields = identity(&kind.own_type, &entry.target_type, catalog);
+        }
+        if value.get("status_overrides").is_none() {
+            entry.status_overrides.clear();
+        }
     }
     Some(entry)
 }
@@ -664,5 +669,37 @@ mod tests {
         .unwrap();
         assert_eq!(stored(&kinds_json(&kinds)), Some(kinds));
         assert_eq!(stored(&json!({ "issue": { "tier": "x" } })), None);
+    }
+
+    #[test]
+    fn a_kind_saved_on_a_new_target_drops_its_own_status_overrides_unless_it_names_them() {
+        let connector = connector_of(
+            json!({ "connector": { "source": "trk", "kinds": [
+                { "name": "issue", "type": "trk.issue", "direction": "in",
+                  "default_mapping": { "status_overrides": { "open": "todo" } } },
+            ] } })
+            .as_object()
+            .unwrap(),
+        )
+        .unwrap();
+        let catalog = Catalog::empty();
+        let issue = |entry: Value| {
+            read_body(
+                &json!({ "version": 0, "kinds": { "issue": entry } }),
+                &connector,
+                &catalog,
+            )
+            .unwrap()
+            .1["issue"]
+                .status_overrides
+                .clone()
+        };
+        let open = BTreeMap::from([("open".to_string(), "todo".to_string())]);
+        assert_eq!(issue(json!({ "tier": "library" })), open);
+        assert!(issue(json!({ "target_type": "core.task" })).is_empty());
+        assert_eq!(
+            issue(json!({ "target_type": "core.task", "status_overrides": { "open": "todo" } })),
+            open
+        );
     }
 }

@@ -15931,7 +15931,7 @@
           }
         },
         "additionalProperties": false,
-        "description": "What one kind of the connector brings. An answer holds every member; a member a save leaves out takes its default."
+        "description": "What one kind of the connector brings. An answer holds every member; a member a save leaves out takes its default, except when `target_type` is not the kind's own type: `fields` left out are the fields both types declare, each `{ \"from\": <field> }`, and `status_overrides` left out are none."
       },
       "ConnectorMapping": {
         "type": "object",
@@ -16472,7 +16472,7 @@
                 "$ref": "#/components/schemas/ConnectorMappingKind"
               }
             ],
-            "description": "A draft of the kind's mapping, checked as a save checks it; a member you leave out takes its default. Leave it out to preview the mapping in force."
+            "description": "A draft of the kind's mapping, checked as a save checks it; a member you leave out takes its default, except when `target_type` is not the kind's own type: `fields` left out are the fields both types declare, each `{ \"from\": <field> }`, and `status_overrides` left out are none. Leave it out to preview the mapping in force."
           }
         },
         "required": [
@@ -60280,7 +60280,7 @@
                       "items": {
                         "type": "string"
                       },
-                      "description": "The IDs Marfa skipped, in the order named, `set` first. An ID is skipped if no stored item has it or its type is one you can't read. A trashed item counts as stored."
+                      "description": "The IDs Marfa skipped, in the order named, `set` first. An ID is skipped if no stored item has it or it names an item you can't read. A trashed item counts as stored."
                     }
                   },
                   "required": [
