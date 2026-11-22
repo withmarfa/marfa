@@ -60,9 +60,9 @@ pub enum FoldersCommand {
     /// `.marfa` goes, and its files stay as plain files. Empty administrative directories
     /// remain. Refused while writes wait, except for a first sync still
     /// waiting to be confirmed, which this cancels, and except where another
-    /// Marfa instance answered at the folder's server, which none of them can
-    /// reach: their changes stay in the files, and the command says how many
-    /// writes were not sent and how to send them to that instance. Follows no symbolic
+    /// Marfa instance answers at the folder's server, which none of them can
+    /// reach: the command then names each file holding a change that instance
+    /// does not have, and how to send the changes there. Follows no symbolic
     /// link, and takes a path through one only where it is the path
     /// `folders list` shows. Where that path is gone, passes through a link,
     /// or holds state the registry does not show to be the directory's own, the
@@ -405,9 +405,15 @@ pub fn run(
                     folder,
                     unsent,
                 } => output::report(
-                    &serde_json::json!({ "dir": dir, "removed": true, "unsent": unsent }),
+                    &serde_json::json!({
+                        "dir": dir,
+                        "removed": true,
+                        "folder": folder,
+                        "unsent": unsent.writes,
+                        "files": unsent.files,
+                    }),
                     json,
-                    || removed_said(&dir, &folder, unsent),
+                    || removed_said(&dir, &folder, &unsent),
                 ),
                 Removal::Unlisted { dir, reason } => output::report(
                     &serde_json::json!({ "dir": dir, "removed": false, "reason": reason }),
@@ -1524,24 +1530,60 @@ struct FolderStatus<'a> {
     watch_stopped: Option<&'a str>,
 }
 
-/// What `folders remove` says of a folder whose state went, and where writes
-/// waited that another instance at its server could not take, how to send
-/// their changes to that instance.
-fn removed_said(dir: &Path, folder: &str, unsent: usize) -> String {
-    let dir = dir.display();
-    let removed = format!("{dir} no longer follows a folder; its files stay");
-    if unsent == 0 {
+/// What `folders remove` says of a folder whose state went, and where
+/// another instance at its server never received changes the folder held,
+/// each file that holds one and how to send them to that instance.
+fn removed_said(dir: &Path, folder: &str, unsent: &marfa_core::folder::UnsentChanges) -> String {
+    use marfa_core::folder::UnsentChange;
+    let shown = dir.display();
+    let folder = printable(folder);
+    let removed = format!("{shown} no longer follows the folder {folder}; its files stay");
+    if unsent.writes == 0 && unsent.files.is_empty() {
         return removed;
     }
-    let folder = printable(folder);
-    let word = crate::hint::shell_word(&dir.to_string());
-    format!(
-        "{removed}\n{unsent} write(s) could not be sent, because another Marfa instance answers at \
-         the folder's server, and the changes stay in the files in {dir}; to send them there, move \
-         the directory aside, run `marfa folders add {word} --folder {folder}` with a key for that \
-         instance and `marfa folders push {word}`, then copy the files you changed back in from the \
-         moved directory and push again"
-    )
+    let cause = "another Marfa instance answers at the folder's server";
+    let mut said = vec![removed];
+    said.push(match (unsent.writes, unsent.files.is_empty()) {
+        (0, _) => format!("{cause}, and these files hold changes it does not have:"),
+        (writes, false) => format!(
+            "{writes} write(s) could not be sent, because {cause}, and these files hold changes it does not have:"
+        ),
+        (writes, true) => {
+            format!("{writes} write(s) could not be sent, because {cause}; no file holds their changes")
+        }
+    });
+    for file in &unsent.files {
+        let path = file.path.as_deref().map(printable);
+        let line = match (file.change, path, file.from.as_deref()) {
+            (UnsentChange::Moved, Some(path), Some(from)) => {
+                format!("  moved    {path}, from {}", printable(from))
+            }
+            (UnsentChange::Deleted, None, _) => format!(
+                "  deleted  the item {}, whose path was not recorded",
+                printable(file.item.as_deref().unwrap_or_default())
+            ),
+            (change, path, _) => {
+                let word = match change {
+                    UnsentChange::Changed => "changed",
+                    UnsentChange::New => "new",
+                    UnsentChange::Moved => "moved",
+                    UnsentChange::Deleted => "deleted",
+                };
+                format!("  {word:<8} {}", path.unwrap_or_default())
+            }
+        };
+        said.push(line);
+    }
+    let word = crate::hint::shell_word(&shown.to_string());
+    said.push(format!(
+        "The changes to changed, new and moved files stay in the files in {shown}, but a deletion or a \
+         move is in no file. To send them to that instance, move the directory aside, run `marfa \
+         folders add {word} --folder {folder}` with a key for that instance and `marfa folders push \
+         {word}`; then, in the new directory, delete each deleted file again and move each moved \
+         file again from where it was, copy only the changed, new and moved files back in from the \
+         moved directory, and push again"
+    ));
+    said.join("\n")
 }
 
 /// A copy the instance change expired is said by its cause; every other

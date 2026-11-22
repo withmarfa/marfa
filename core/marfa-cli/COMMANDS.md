@@ -4497,7 +4497,7 @@ marfa folders inventory [OPTIONS]
 
 ### marfa folders remove
 
-Make a directory stop following its folder: its own state under `.marfa` goes, and its files stay as plain files. Empty administrative directories remain. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels, and except where another Marfa instance answered at the folder's server, which none of them can reach: their changes stay in the files, and the command says how many writes were not sent and how to send them to that instance. Follows no symbolic link, and takes a path through one only where it is the path `folders list` shows. Where that path is gone, passes through a link, or holds state the registry does not show to be the directory's own, the directory is only taken off the list and nothing is deleted.
+Make a directory stop following its folder: its own state under `.marfa` goes, and its files stay as plain files. Empty administrative directories remain. Refused while writes wait, except for a first sync still waiting to be confirmed, which this cancels, and except where another Marfa instance answers at the folder's server, which none of them can reach: the command then names each file holding a change that instance does not have, and how to send the changes there. Follows no symbolic link, and takes a path through one only where it is the path `folders list` shows. Where that path is gone, passes through a link, or holds state the registry does not show to be the directory's own, the directory is only taken off the list and nothing is deleted.
 
 ```text
 marfa folders remove [OPTIONS] <DIR>
