@@ -11,7 +11,7 @@ use marfa_server::app::auth::Visit;
 use marfa_server::app::auth::sign_ins;
 use marfa_server::app::keys;
 use marfa_server::app::oauth::authorize::sign_in_then;
-use marfa_server::app::oauth::grants::{self, Narrowing};
+use marfa_server::app::oauth::grants::{self, Ending, Narrowing};
 use marfa_server::app::oauth::scope::ScopeSet;
 use marfa_server::app::oauth::signed_link;
 use marfa_server::app::refusal::Code;
@@ -3754,7 +3754,7 @@ async fn a_key_without_sign_ins_manage_cannot_end_or_rename_a_sign_in_inside_the
             &instance.app,
             &caller,
             id.to_string(),
-            false,
+            Ending::default(),
             Visit::default(),
         )
         .await;
