@@ -686,6 +686,26 @@ it(
         return asked.status === 409 ? undefined : asked;
       });
       expect(ran.status, JSON.stringify(ran.body)).toBe(200);
+      // A duplicate queued by that run would arrive before a fault raised
+      // after it, so a fault of a third route settles the count.
+      await own.setFault("fail:audit=config.update");
+      try {
+        const configured = await controlRequest(own.controlSocket, "/config", {
+          method: "PATCH",
+          body: { allow_private_addresses: true },
+        });
+        expect(configured.status).toBe(500);
+      } finally {
+        await own.clearFault("fail:audit");
+      }
+      const settled = "database:PATCH /config";
+      await hook.waitFor(
+        (received) =>
+          received.path.endsWith("/good") &&
+          (bodyOf(received).attention as { reference?: string } | undefined)
+            ?.reference === settled &&
+          "event_id" in bodyOf(received),
+      );
       expect(hook.received.filter(toDisk)).toHaveLength(1);
     } finally {
       await hook.close();
