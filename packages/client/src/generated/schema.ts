@@ -9885,7 +9885,10 @@ export interface components {
         };
         /** @description A sign-in started for a plugin's connector. */
         PluginConnectorSignInStart: {
-            /** @description The sign-in's ID, which `GET /plugins/{name}/connector/sign-in` returns while this sign-in is the latest, so you can tell it from one a later start replaced it with. */
+            /**
+             * @description The sign-in's ID, which `GET /plugins/{name}/connector/sign-in` returns while this sign-in is the latest, so you can tell it from one a later start replaced it with.
+             * @example 019a8b4e-7c2d-7f3a-9b1e-4d5c6a7b8c9d
+             */
             id: string;
             /**
              * Format: uri
@@ -9909,11 +9912,14 @@ export interface components {
              */
             status: "none" | "pending" | "signed_in" | "failed" | "expired";
             /**
-             * @description Why the latest sign-in failed, as one word Marfa sets, or `null` unless `status` is `failed`. A token error from RFC 6749 section 5.2 (`invalid_request`, `invalid_client`, `invalid_grant`, `unauthorized_client`, `unsupported_grant_type`, `invalid_scope`) or an authorization error from section 4.1.2.1 (such as `access_denied`) is the provider's own word; `invalid_client` means the client ID or secret is wrong. Marfa's own words are `provider_error` for another error from the provider, `no_code` if the provider sent the browser back without a code, `changed_since_start` if the connector's sign-in, its client settings or the plugin changed after the start, `timeout` and `unreachable` for a provider that didn't answer, `status_` and the status for a refusal with no token error, `no_refresh_token`, and `unreadable_answer`. Never text the provider wrote.
+             * @description Why the latest sign-in failed, or `null` unless `status` is `failed`: an RFC 6749 error such as `invalid_client` (a wrong client ID or secret) or `access_denied`, or a word of Marfa's such as `timeout` or `status_503`. Never the provider's text.
              * @example invalid_client
              */
             reason: string | null;
-            /** @description The latest sign-in's ID, as its start returned it, or `null` if none was started. */
+            /**
+             * @description The latest sign-in's ID, as its start returned it, or `null` if none was started.
+             * @example 019a8b4e-7c2d-7f3a-9b1e-4d5c6a7b8c9d
+             */
             id: string | null;
             /**
              * Format: date-time
