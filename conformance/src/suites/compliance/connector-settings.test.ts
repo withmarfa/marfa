@@ -54,6 +54,13 @@ const OWNER_PERMISSIONS = [
   "audit.read",
 ];
 
+/** The origin keeps its backups in a folder, so no object store may be set. */
+const DISK = {
+  MARFA_OBJECT_STORE_BUCKET: "",
+  MARFA_OBJECT_STORE_SECRET_ACCESS_KEY: "",
+  MARFA_BACKUP_INTERVAL_SECONDS: "0",
+};
+
 const SETTINGS = [
   { name: "feed_url", label: "Feed", kind: "text", required: true },
   {
@@ -90,7 +97,7 @@ const SETTINGS = [
 
 beforeAll(async () => {
   [origin, destination] = await Promise.all([
-    bootFreshServer("connector-settings"),
+    bootFreshServer("connector-settings", DISK),
     bootFreshServer("connector-settings-destination"),
   ]);
   owner = (await ownerKey(origin, OWNER_PERMISSIONS)).client;
