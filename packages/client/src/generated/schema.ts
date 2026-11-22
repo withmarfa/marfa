@@ -1985,7 +1985,7 @@ export interface paths {
         };
         /**
          * List connector agreements
-         * @description Returns the agreements of the connector's source, the one written longest ago first. Items whose type you can't read are left out, so a page can be short with more to follow.
+         * @description Returns the agreements of the connector's source, the one written longest ago first. Items you can't read are left out, so a page can be short with more to follow.
          */
         get: operations["listConnectorAgreements"];
         put?: never;
@@ -2011,7 +2011,7 @@ export interface paths {
         put?: never;
         /**
          * Look up connector agreements
-         * @description Looks up the agreements of the named items and returns those that exist, each item once, in the order you first named it. An item whose type you can't read is left out.
+         * @description Looks up the agreements of the named items and returns those that exist, each item once, in the order you first named it. An item you can't read is left out.
          */
         post: operations["lookupConnectorAgreements"];
         delete?: never;
