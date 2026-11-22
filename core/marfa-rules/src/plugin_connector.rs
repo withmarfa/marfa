@@ -812,9 +812,9 @@ mod tests {
         let mut held = base();
         let digest = "0123456789abcdef".repeat(4);
         held["code"] = json!({
-            "url": "https://example.com/v1/rss.connector.mjs",
+            "url": format!("https://example.com/{}", "a".repeat(2048 - 20)),
             "sha256": digest,
-            "size": CODE_SIZE_CAP,
+            "size": 268_435_456,
         });
         assert!(paths(held.clone()).is_empty());
         for (code, path) in [
@@ -835,7 +835,7 @@ mod tests {
                 "url",
             ),
             (
-                json!({ "url": format!("https://example.com/{}", "a".repeat(CODE_URL_CAP)), "sha256": digest, "size": 1 }),
+                json!({ "url": format!("https://example.com/{}", "a".repeat(2049 - 20)), "sha256": digest, "size": 1 }),
                 "url",
             ),
             (
@@ -859,7 +859,7 @@ mod tests {
                 "size",
             ),
             (
-                json!({ "url": "https://example.com/a.mjs", "sha256": digest, "size": CODE_SIZE_CAP + 1 }),
+                json!({ "url": "https://example.com/a.mjs", "sha256": digest, "size": 268_435_457 }),
                 "size",
             ),
             (

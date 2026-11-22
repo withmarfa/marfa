@@ -301,6 +301,9 @@ describe("the connector section", () => {
       size: 524288,
     };
     const { sha256: _sha256, ...digestless } = code;
+    // An https address of exactly `length` characters.
+    const long = (length: number) =>
+      `https://example.com/${"a".repeat(length - "https://example.com/".length)}`;
     const cases: [string, unknown, string][] = [
       [
         "an http address",
@@ -310,6 +313,11 @@ describe("the connector section", () => {
       [
         "a relative address",
         { ...code, url: "entries.mjs" },
+        "connector.code.url",
+      ],
+      [
+        "an address of 2049 characters",
+        { ...code, url: long(2049) },
         "connector.code.url",
       ],
       [
@@ -364,8 +372,8 @@ describe("the connector section", () => {
       expect((await owner.getPlugin(name)).status, label).toBe(404);
       expect((await owner.getType(type)).status, label).toBe(404);
     }
-    // The witness: the same bundle with a well-formed code, at the bound, installs.
-    const bounded = { ...code, size: 268435456 };
+    // The witness: the same bundle with a well-formed code, at both bounds, installs.
+    const bounded = { ...code, url: long(2048), size: 268435456 };
     const connector = connectorSection(type, source, { code: bounded });
     const taken = await owner.installPlugin(
       connectorBundle(name, root, source, { connector }),
