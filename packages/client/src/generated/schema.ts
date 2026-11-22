@@ -9712,8 +9712,27 @@ export interface components {
              */
             on: "host";
         };
+        /** @description Where a connector's code is: the address of its code file, the file's SHA-256 and its size. */
+        PluginConnectorCode: {
+            /**
+             * Format: uri
+             * @description The `https` address of the connector's code file, with no user name or password.
+             * @example https://example.com/releases/v0.0.14/rss.connector.mjs
+             */
+            url: string;
+            /**
+             * @description The SHA-256 of the code file, in lowercase hexadecimal. A connector host runs the file only when its digest matches.
+             * @example 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+             */
+            sha256: string;
+            /**
+             * @description The size of the code file, in bytes. A connector host stops a fetch that passes it.
+             * @example 524288
+             */
+            size: number;
+        };
         /**
-         * @description A plugin's connector: the source it writes under, the kinds it brings, the settings it reads, its sign-in and where it runs.
+         * @description A plugin's connector: the source it writes under, the kinds it brings, the settings it reads, its sign-in, where it runs and where its code is.
          * @example {
          *       "source": "rss",
          *       "source_name": "RSS",
@@ -9735,6 +9754,11 @@ export interface components {
          *       ],
          *       "runs": {
          *         "on": "host"
+         *       },
+         *       "code": {
+         *         "url": "https://example.com/releases/v0.0.14/rss.connector.mjs",
+         *         "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+         *         "size": 524288
          *       }
          *     }
          */
@@ -9769,6 +9793,8 @@ export interface components {
             sign_in?: components["schemas"]["PluginConnectorSignIn"];
             /** @description Where the connector runs. */
             runs: components["schemas"]["PluginConnectorRuns"];
+            /** @description Where the connector's code is, so a connector host can fetch and check it. A later version of the plugin may change it. Present only when the bundle gives it. */
+            code?: components["schemas"]["PluginConnectorCode"];
         };
         /**
          * @description A connector host is one machine that runs connectors, linked to the instance once.
