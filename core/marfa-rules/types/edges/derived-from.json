@@ -1,7 +1,7 @@
 {
   "id": "derived-from",
-  "label": "Derived from",
-  "reverse_label": "Basis for",
+  "label": "Derived From",
+  "reverse_label": "Basis For",
   "description": "Runs from the derived item to its source. When saving an item, derived-from names that source.",
   "cardinality": "many-to-many",
   "from_type_constraints": ["*"],

@@ -158,9 +158,9 @@ describe("an item's name and preview on a device", () => {
         : [];
     };
     expect(await named()).toEqual([
-      ["Comment on Fix login bug", "LGTM Ship it"],
+      ["Comment On Fix login bug", "LGTM Ship it"],
       // A reply is named after its comment, which is named after its body.
-      ["Comment on LGTM", "Agreed"],
+      ["Comment On LGTM", "Agreed"],
       // A host the copy does not hold names nothing.
       ["Seen it", null],
     ]);
@@ -183,7 +183,7 @@ describe("an item's name and preview on a device", () => {
     const renamed = await own.device.catchUp();
     expect(renamed.ok, JSON.stringify(renamed)).toBe(true);
     expect((await named())[0]).toEqual([
-      "Comment on Fix the login page",
+      "Comment On Fix the login page",
       "LGTM Ship it",
     ]);
     own.events.set(

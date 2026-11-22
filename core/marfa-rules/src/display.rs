@@ -959,8 +959,8 @@ mod tests {
         assert!(failed.is_empty(), "{}", failed.join("\n"));
         let long = "x".repeat(300);
         let properties = serde_json::json!({ "body": "Note", "title": "T" });
-        let shown = part_display(properties.as_object().unwrap(), None, "Comment on", &long);
-        assert_eq!(part_name("Comment on", &long), shown.name);
+        let shown = part_display(properties.as_object().unwrap(), None, "Comment On", &long);
+        assert_eq!(part_name("Comment On", &long), shown.name);
         assert_eq!(shown.name.unwrap().chars().count(), NAME_POINTS);
     }
 

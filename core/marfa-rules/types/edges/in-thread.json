@@ -1,6 +1,6 @@
 {
   "id": "in-thread",
-  "label": "In thread",
+  "label": "In Thread",
   "reverse_label": "Messages",
   "description": "Runs from the message to its thread. When saving a message, in-thread names the thread. A message has one thread.",
   "cardinality": "many-to-one",

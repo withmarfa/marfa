@@ -1,6 +1,6 @@
 {
   "id": "in-collection",
-  "label": "In collection",
+  "label": "In Collection",
   "reverse_label": "Contents",
   "description": "Runs from the member to its container, such as a collection, a series or an album. When saving a member, in-collection names the container. A container does not nest inside another.",
   "cardinality": "many-to-many",

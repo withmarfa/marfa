@@ -554,8 +554,8 @@ function shipped(
 /** The shipped edge types as `GET /edge-types` lists them, which
  *  `fidelity.test.ts` holds to the real listing. */
 export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
-  shipped("about", "About", "Subject of"),
-  shipped("attached-to", "Attached to", "Attachments", {
+  shipped("about", "About", "Subject Of"),
+  shipped("attached-to", "Attached To", "Attachments", {
     reverse_name: "has-attachment",
     cascade_on_delete: "with-hosts",
     property_schema: {
@@ -566,15 +566,15 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
       },
     },
   }),
-  shipped("comments-on", "Comment on", "Comments", {
+  shipped("comments-on", "Comment On", "Comments", {
     cardinality: "many-to-one",
     cascade_on_delete: "with-hosts",
   }),
-  shipped("derived-from", "Derived from", "Basis for"),
-  shipped("excerpt-of", "Excerpt from", "Excerpts", {
+  shipped("derived-from", "Derived From", "Basis For"),
+  shipped("excerpt-of", "Excerpt From", "Excerpts", {
     cardinality: "many-to-one",
   }),
-  shipped("in-collection", "In collection", "Contents", {
+  shipped("in-collection", "In Collection", "Contents", {
     to_type_constraints: ["role:container"],
     flat: true,
     property_schema: {
@@ -584,7 +584,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
       },
     },
   }),
-  shipped("in-folder", "In folder", "Folder contents", {
+  shipped("in-folder", "In Folder", "Folder Contents", {
     written_from: "none",
     to_type_constraints: ["system.folder"],
     property_schema: {
@@ -599,7 +599,7 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
       },
     },
   }),
-  shipped("in-thread", "In thread", "Messages", {
+  shipped("in-thread", "In Thread", "Messages", {
     cardinality: "many-to-one",
     property_schema: {
       position: {
@@ -615,8 +615,8 @@ export const SCRIPTED_EDGE_TYPES: ReadonlyArray<WireEdgeType> = [
     written_from: "to",
     acyclic: true,
   }),
-  shipped("references", "References", "Referenced by"),
-  shipped("supersedes", "Supersedes", "Superseded by", {
+  shipped("references", "References", "Referenced By"),
+  shipped("supersedes", "Supersedes", "Superseded By", {
     cardinality: "one-to-one",
     acyclic: true,
   }),

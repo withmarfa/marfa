@@ -61,7 +61,7 @@ The release profile needs debug assertions because the core's tests use fault po
 `Core::item_displays(items)` answers each item's name and preview text, in order, from its type, its properties and the catalog the copy holds, without asking the server. An app passes the rows it already holds, so the listings and their packed layout carry neither.
 
 - The name follows the server's rule in `conformance/spec/types.md`, so a name taken from a body has its Markdown removed, and is none where the server would say `Untitled`.
-- A part with no title of its own, passed with its ID, is named after its host, such as "Comment on Fix login bug" (`device/item-name-part`); its preview then keeps every line of its body.
+- A part with no title of its own, passed with its ID, is named after its host, such as "Comment On Fix login bug" (`device/item-name-part`); its preview then keeps every line of its body.
 - The preview is the type's body field with its Markdown removed, at most 240 code points (`device/item-preview-field` and the statements after it).
 
 Both bindings expose it as `item_displays` (`itemDisplays` in Node). `conformance/fixtures/item-display.json` holds the cases that the core's unit tests, the server's tests and both halves of the contract are held to.

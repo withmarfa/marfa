@@ -78,7 +78,7 @@ fn names_a_comment_after_its_issue_and_previews_its_whole_body() {
     assert_eq!(
         shown(&core, "comment"),
         ItemDisplay {
-            name: Some("Comment on Fix login bug".into()),
+            name: Some("Comment On Fix login bug".into()),
             preview: Some("LGTM Ship it".into()),
         }
     );
@@ -110,7 +110,7 @@ fn follows_a_rename_of_the_host() {
     put(&core, &renamed);
     assert_eq!(
         name(&core, "comment").as_deref(),
-        Some("Comment on Fix the login page")
+        Some("Comment On Fix the login page")
     );
 }
 
@@ -147,7 +147,7 @@ fn names_a_part_by_its_body_when_no_host_is_held_out_of_the_bin() {
     );
     assert_eq!(
         name(&core, "comment").as_deref(),
-        Some("Comment on Fix login bug")
+        Some("Comment On Fix login bug")
     );
 }
 
@@ -180,7 +180,7 @@ fn names_a_highlight_after_its_source_and_never_by_its_passage() {
     assert_eq!(
         shown(&core, "highlight"),
         ItemDisplay {
-            name: Some("Excerpt from Thinking, Fast and Slow".into()),
+            name: Some("Excerpt From Thinking, Fast and Slow".into()),
             preview: Some("A passage worth keeping".into()),
         }
     );
@@ -198,7 +198,7 @@ fn names_a_reply_after_its_comments_own_name() {
         &row("reply", "core.note", "active", json!({ "body": "Agreed" })),
     );
     edge(&core, "e3", "reply", "comment", "comments-on", AT);
-    assert_eq!(name(&core, "reply").as_deref(), Some("Comment on LGTM"));
+    assert_eq!(name(&core, "reply").as_deref(), Some("Comment On LGTM"));
 }
 
 #[test]
@@ -267,7 +267,7 @@ fn keeps_a_parts_own_title_and_takes_the_oldest_held_host() {
         "attached-to",
         "2026-01-02T00:00:00Z",
     );
-    assert_eq!(name(&core, "file").as_deref(), Some("Attached to Second"));
+    assert_eq!(name(&core, "file").as_deref(), Some("Attached To Second"));
 }
 
 #[test]
@@ -287,7 +287,7 @@ fn bounds_a_part_name_as_every_name_is_bounded() {
     assert_eq!(got.chars().count(), 120);
     assert_eq!(
         got,
-        format!("Comment on {}…", "x".repeat(120 - "Comment on ".len() - 1))
+        format!("Comment On {}…", "x".repeat(120 - "Comment On ".len() - 1))
     );
 }
 

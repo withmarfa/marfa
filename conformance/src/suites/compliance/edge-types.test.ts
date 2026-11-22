@@ -1175,17 +1175,17 @@ describe("custom edge-type registration", () => {
         .map((t) => [t.id, [t.label, t.reverse_label]]),
     );
     expect(names).toEqual({
-      about: ["About", "Subject of"],
-      "attached-to": ["Attached to", "Attachments"],
-      "comments-on": ["Comment on", "Comments"],
-      "derived-from": ["Derived from", "Basis for"],
-      "excerpt-of": ["Excerpt from", "Excerpts"],
-      "in-collection": ["In collection", "Contents"],
-      "in-folder": ["In folder", "Folder contents"],
-      "in-thread": ["In thread", "Messages"],
+      about: ["About", "Subject Of"],
+      "attached-to": ["Attached To", "Attachments"],
+      "comments-on": ["Comment On", "Comments"],
+      "derived-from": ["Derived From", "Basis For"],
+      "excerpt-of": ["Excerpt From", "Excerpts"],
+      "in-collection": ["In Collection", "Contents"],
+      "in-folder": ["In Folder", "Folder Contents"],
+      "in-thread": ["In Thread", "Messages"],
       "parent-of": ["Children", "Parent"],
-      references: ["References", "Referenced by"],
-      supersedes: ["Supersedes", "Superseded by"],
+      references: ["References", "Referenced By"],
+      supersedes: ["Supersedes", "Superseded By"],
     });
   });
 
