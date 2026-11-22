@@ -2603,7 +2603,7 @@ async fn a_database_at_schema_version_4_names_each_keys_maker_from_its_records_t
 }
 
 #[tokio::test]
-async fn a_database_at_schema_version_5_upgrades_through_6_keeping_its_keys_and_plugins_with_no_host()
+async fn a_database_at_schema_version_5_upgrades_to_the_newest_keeping_its_keys_and_plugins_with_no_host()
  {
     let place = folder();
     db_open(&options(&place.file, &MIGRATIONS[..5]), Arc::default())
@@ -2636,7 +2636,7 @@ async fn a_database_at_schema_version_5_upgrades_through_6_keeping_its_keys_and_
     let version: u32 = conn
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 6);
+    assert_eq!(version, MIGRATIONS.len() as u32);
     let key: (String, Option<String>) = conn
         .query_row(
             "SELECT source, made_by_host FROM api_keys WHERE id = 'rss-key'",
