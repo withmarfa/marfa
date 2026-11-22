@@ -50,6 +50,16 @@ fn makers_of(tx: &Transaction<'_>, holder: &Holder) -> Result<Vec<Maker>> {
     Ok(makers)
 }
 
+fn over_cap(vendors: &str, total: usize) -> Refusal {
+    Refusal::new(
+        Code::BulkCapExceeded,
+        format!(
+            "{vendors} holds {total} items, more than one write removes. Remove them first with `marfa apps vendors data delete <vendor>`, which takes them in pages."
+        ),
+    )
+    .with_detail("cap", MOST_REMOVED)
+}
+
 fn item_total(tx: &Transaction<'_>, types: &[String]) -> Result<usize> {
     let total: i64 = items::counts_of_types(tx, types)?
         .iter()
@@ -76,14 +86,7 @@ fn remove_vendor(
     types::write::require_set_free(tx, &catalog, &unit.caller, &types, &dropped)?;
     let total = item_total(tx, &types)?;
     if whole && total > MOST_REMOVED {
-        return Err(Refusal::new(
-            Code::BulkCapExceeded,
-            format!(
-                "{vendor} holds {total} items, more than one write removes. Remove them first with `marfa apps vendors data delete {vendor}`, which takes them in pages."
-            ),
-        )
-        .with_detail("cap", MOST_REMOVED)
-        .with_detail("vendor", vendor));
+        return Err(over_cap(vendor, total));
     }
     let taken = items::write::purge_of_types(unit, cache, &types, MOST_REMOVED)?;
     let remaining = item_total(tx, &types)?;
@@ -128,10 +131,21 @@ pub(crate) fn remove_of_client(
 ) -> Result<Removal> {
     unit.caller.require(Permission::ItemsPurge)?;
     let holder = Holder::App(client_id.to_string());
+    let held = vendors::of_client(unit.tx(), client_id)?;
+    let mut total = 0;
+    for vendor in &held {
+        unit.caller.require_vendor_reach(vendor, &holder)?;
+        total += item_total(
+            unit.tx(),
+            &types::write::ids_under_vendor(unit.tx(), vendor)?,
+        )?;
+    }
+    if total > MOST_REMOVED {
+        return Err(over_cap(&held.join(", "), total));
+    }
     let mut removal = Removal::default();
-    for vendor in vendors::of_client(unit.tx(), client_id)? {
-        unit.caller.require_vendor_reach(&vendor, &holder)?;
-        removal.add(remove_vendor(unit, cache, &vendor, &holder, true)?);
+    for vendor in &held {
+        removal.add(remove_vendor(unit, cache, vendor, &holder, true)?);
     }
     Ok(removal)
 }

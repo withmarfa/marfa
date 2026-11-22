@@ -346,7 +346,7 @@ describe("listing an app's hidden data", () => {
       page.data as Array<{ vendor: string; client_name: string | null }>
     ).find((one) => one.vendor === vendor);
     expect(binding).toBeDefined();
-    expect(binding!.client_name).not.toBeUndefined();
+    expect(binding!.client_name).toBe("signed-in fixture");
   });
 
   it("answers 404 not_found for a vendor nobody holds and 400 for a name that is no vendor", async () => {
@@ -911,6 +911,26 @@ describe("an app's hidden data over MCP", () => {
       expect(ended.ended).toBe(true);
       expect(await grantListed(signed.app)).toBe(false);
       expect((await dataOf(owner, vendor)).data).toEqual([]);
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("gives no confirmation in a marfa_app_data preview to a credential without items.purge", async () => {
+    const { vendor, items } = await appWithData();
+    const noPurge = await mint(["grants.manage"]);
+    const mcp = await connectMcp(
+      server.apiUrl,
+      noPurge,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      const preview = toolResult(
+        await callTool(mcp, "marfa_app_data", { vendor }),
+      );
+      expect(preview.items).toBe(items.length);
+      expect(preview.confirm).toBeUndefined();
     } finally {
       await mcp.close();
     }

@@ -82,7 +82,7 @@ When a credential calls `/mcp/schema`, the server MUST list to it the tools `/mc
 
 ### `mcp/tools-for-admin`
 
-When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps` and `marfa_narrow_app` while it holds `grants.manage`, `marfa_end_sign_in` while it holds `sign_ins.manage` or `grants.manage`, `marfa_backups`, `marfa_take_backup` and `marfa_adopt_backup_folder` while it holds `backups.manage`, `marfa_maintain` and `marfa_update_server` while it holds `instance.maintain`, `marfa_connectors`, `marfa_make_endpoint`, `marfa_delete_connector` and `marfa_retire_endpoint` while it holds `connectors.manage`, `marfa_files` and `marfa_remove_file_copy` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
+When a credential calls `/mcp/admin`, the server MUST list to it the tools `/mcp` lists it, with `marfa_health` while it holds `instance.read` or `connectors.manage`, `marfa_audit` while it holds `audit.read`, `marfa_keys`, `marfa_manage_key` and `marfa_revoke_key` while it holds `keys.mint` or `keys.manage`, `marfa_webhooks` and `marfa_manage_webhook` while it holds `webhooks.manage`, `marfa_settings` and `marfa_change_settings` while it holds `config.manage`, `marfa_trash` and `marfa_purge` while it holds `items.purge`, `marfa_apps`, `marfa_narrow_app` and `marfa_app_data` while it holds `grants.manage`, `marfa_end_sign_in` while it holds `sign_ins.manage` or `grants.manage`, `marfa_backups`, `marfa_take_backup` and `marfa_adopt_backup_folder` while it holds `backups.manage`, `marfa_maintain` and `marfa_update_server` while it holds `instance.maintain`, `marfa_connectors`, `marfa_make_endpoint`, `marfa_delete_connector` and `marfa_retire_endpoint` while it holds `connectors.manage`, `marfa_files` and `marfa_remove_file_copy` while it holds `blobs.manage`, and `marfa_sign_ins` and `marfa_rename_sign_in` while it holds `sign_ins.manage`.
 
 **Reason:** a credential that holds a permission can do the owner task it opens through the API, so an agent holding it does the same from MCP, except for the tasks `mcp/tools-withheld` names.
 
@@ -260,7 +260,7 @@ When the server lists `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_read_r
 
 ### `mcp/hints-destructive`
 
-When the server lists `marfa_delete`, `marfa_update`, `marfa_write_rows`, `marfa_save_type`, `marfa_save_view`, `marfa_bulk_save`, `marfa_move_items`, `marfa_manage_key`, `marfa_revoke_key`, `marfa_manage_webhook`, `marfa_purge`, `marfa_narrow_app`, `marfa_end_sign_in`, `marfa_maintain`, `marfa_update_server`, `marfa_delete_connector`, `marfa_retire_endpoint`, `marfa_remove_file_copy` or `marfa_adopt_backup_folder`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `true` and `idempotentHint` `false`.
+When the server lists `marfa_delete`, `marfa_update`, `marfa_write_rows`, `marfa_save_type`, `marfa_save_view`, `marfa_bulk_save`, `marfa_move_items`, `marfa_manage_key`, `marfa_revoke_key`, `marfa_manage_webhook`, `marfa_purge`, `marfa_narrow_app`, `marfa_app_data`, `marfa_end_sign_in`, `marfa_maintain`, `marfa_update_server`, `marfa_delete_connector`, `marfa_retire_endpoint`, `marfa_remove_file_copy` or `marfa_adopt_backup_folder`, the server MUST annotate it with `readOnlyHint` `false`, `destructiveHint` `true` and `idempotentHint` `false`.
 
 **Reason:** each can remove, end, replace or overwrite what exists, so a client asks the person first.
 
@@ -1368,9 +1368,39 @@ If the sources a credential sees do not fit one `marfa_sources` answer, then the
 
 **Tests:** `compliance/mcp-shortened.test.ts › names how many sources it left out when the list outgrows one answer, and none when it does not`.
 
+## An app's own data
+
+`marfa_app_data` lists what an app keeps under one of its `app.<vendor>` namespaces, as `GET /app-vendors/{vendor}/data` does, and deletes it, as `DELETE /app-vendors/{vendor}/data` does, in two calls: a preview with a `confirm` token, and a call that sends the same `vendor` with that token.
+
+### `mcp/app-data-preview`
+
+When `marfa_app_data` is called without `confirm`, the server MUST answer the `vendor`, the `client_id` of the app that holds it or `null`, its `types` with their items counted by state and the number of its `items`, and delete nothing.
+
+**Tests:** `compliance/app-data.test.ts › previews a vendor's data with marfa_app_data, deletes nothing on a stale confirmation, and deletes it on a fresh one`.
+
+### `mcp/app-data-confirm-needs-purge`
+
+When a credential without `items.purge` calls `marfa_app_data` without `confirm`, the server MUST answer the preview without a `confirm` token.
+
+**Tests:** `compliance/app-data.test.ts › gives no confirmation in a marfa_app_data preview to a credential without items.purge`.
+
+### `mcp/app-data-confirmed`
+
+When `marfa_app_data` is called with the `confirm` token its preview gave, by the same credential, within five minutes, while the vendor's types and items stand as the preview read them, the server MUST delete them as `DELETE /app-vendors/{vendor}/data` does and answer `removed_items` and `remaining_items`.
+
+**Tests:** `compliance/app-data.test.ts › previews a vendor's data with marfa_app_data, deletes nothing on a stale confirmation, and deletes it on a fresh one`.
+
+### `mcp/app-data-changed`
+
+If an item of the vendor was written, changed or removed, or a type was registered or deleted under it, since a `marfa_app_data` preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and delete nothing.
+
+**Reason:** a confirmation shown for a few items must not delete more written in between.
+
+**Tests:** `compliance/app-data.test.ts › previews a vendor's data with marfa_app_data, deletes nothing on a stale confirmation, and deletes it on a fresh one`.
+
 ## Ending a sign-in, an app or a passkey
 
-`marfa_end_sign_in` ends a browser sign-in or an app, as `DELETE /owner/sign-ins/{id}` does, or removes a passkey, as `DELETE /owner/passkeys/{id}` does, in two calls: a preview with a `confirm` token, and a call that sends the same `kind`, `id` and `revoke_keys` with that token.
+`marfa_end_sign_in` ends a browser sign-in or an app, as `DELETE /owner/sign-ins/{id}` does, or removes a passkey, as `DELETE /owner/passkeys/{id}` does, in two calls: a preview with a `confirm` token, and a call that sends the same `kind`, `id`, `revoke_keys` and `remove_data` with that token.
 
 ### `mcp/end-sign-in-destructive`
 
@@ -1485,6 +1515,34 @@ Where a `marfa_end_sign_in` preview of ending an app set `revoke_keys` to `true`
 **Reason:** the keys are what the person agreed to revoke. Without `revoke_keys` the app's keys stay, so the confirmation does not cover them.
 
 **Tests:** `compliance/mcp-sign-in-acts.test.ts › refuses a confirmation that revokes keys once the app made, changed or lost a key since the preview`.
+
+### `mcp/end-sign-in-preview-data`
+
+Where a `marfa_end_sign_in` preview of ending an app sets `remove_data` to `true`, the server MUST answer under `data` each vendor the app holds, with its `vendor`, its `types` with their items counted by state, and the number of its `items`.
+
+**Reason:** the person agrees to the data that is removed for good with the app, and sees that it is there before agreeing.
+
+**Tests:** `compliance/app-data.test.ts › previews ending an app with remove_data naming its data, ends nothing on a stale confirmation, and ends it with its data on a fresh one`.
+
+### `mcp/end-sign-in-data-changed`
+
+Where a `marfa_end_sign_in` preview of ending an app set `remove_data` to `true`, if an item of a vendor the app holds was written, changed or removed, or a type was registered or deleted under one, since the preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and end nothing.
+
+**Reason:** a confirmation shown for a few items must not remove more written in between.
+
+**Tests:** `compliance/app-data.test.ts › previews ending an app with remove_data naming its data, ends nothing on a stale confirmation, and ends it with its data on a fresh one`.
+
+### `mcp/end-sign-in-data-bound`
+
+If a confirmation from a `marfa_end_sign_in` preview that did not set `remove_data` is sent with `remove_data` set to `true`, then the server MUST refuse the call with the tool error code `confirmation_stale` and end nothing.
+
+**Tests:** `compliance/app-data.test.ts › previews ending an app with remove_data naming its data, ends nothing on a stale confirmation, and ends it with its data on a fresh one`.
+
+### `mcp/end-sign-in-data-purge`
+
+If a credential without `items.purge` calls `marfa_end_sign_in` with `remove_data` set to `true` for an app, then the server MUST answer the tool error code `forbidden`.
+
+**Tests:** `compliance/app-data.test.ts › refuses remove_data in marfa_end_sign_in to a credential without items.purge`.
 
 ### `mcp/end-sign-in-chains-unbound`
 

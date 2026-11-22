@@ -2136,6 +2136,36 @@ If a batch of `marfa --socket PATH items bin empty --confirm PURGE` lists a dele
 
 **Tests:** `cli/item-summaries.test.ts › stops an uncertain bin emptying and exposes its outcome through the real socket CLI`.
 
+## An app's data
+
+### `cli/app-data-delete-pages`
+
+When a caller runs `marfa apps vendors data delete VENDOR --confirm PURGE`, the CLI MUST send `DELETE /app-vendors/{vendor}/data` again until the server answers `remaining_items` as `0`.
+
+**Reason:** the server deletes at most 1,000 items a request, so a person whose app kept more would otherwise run the command again and again.
+
+**Tests:** `cli/app-data.test.ts › lists an app's data and deletes it in pages until none is left, and refuses the delete without --confirm PURGE`.
+
+### `cli/app-data-delete-progress`
+
+When a caller runs `marfa apps vendors data delete VENDOR --confirm PURGE` without `--json`, the CLI MUST print how many items have been deleted so far and how many are left after each request that leaves items, and the totals of items and types at the end.
+
+**Tests:** `cli/app-data.test.ts › lists an app's data and deletes it in pages until none is left, and refuses the delete without --confirm PURGE`.
+
+### `cli/app-data-delete-confirm`
+
+If a caller runs `marfa apps vendors data delete VENDOR` without `--confirm PURGE`, then the CLI MUST exit with a code other than `0` and send no delete.
+
+**Reason:** the data purges, and only a backup taken before brings it back, so the command asks for the word out loud, as `marfa items bin empty` does.
+
+**Tests:** `cli/app-data.test.ts › lists an app's data and deletes it in pages until none is left, and refuses the delete without --confirm PURGE`.
+
+### `cli/remove-data-confirm`
+
+If a caller runs `marfa apps revoke ID --remove-data` or `marfa sign-ins end ID --remove-data` without `--confirm PURGE`, then the CLI MUST exit with a code other than `0` and end nothing.
+
+**Tests:** `cli/app-data.test.ts › ends an app with its data with apps revoke --remove-data, and keeps it without`.
+
 ## Item summaries
 
 ### `cli/owner-summaries-cli`
