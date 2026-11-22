@@ -219,7 +219,10 @@ fn partly_deleted(vendor: &str, items: u64, error: CliError) -> CliError {
     if items == 0 {
         return error;
     }
-    let answered = matches!(error, CliError::Refused { .. } | CliError::Invalid(_));
+    let answered = matches!(
+        error,
+        CliError::Refused { status, .. } if status < 500 && status != 429
+    ) || matches!(error, CliError::Invalid(_));
     let again = if answered {
         ""
     } else {
@@ -426,12 +429,17 @@ mod tests {
             assert!(said.starts_with("1000 items of app.acme were deleted, then: "));
             assert!(said.ends_with('.') && !said.contains("carry on"), "{said}");
         }
-        let lost = CliError::Io(std::io::Error::other("connection reset"));
-        assert!(
-            partly_deleted("app.acme", 1_000, lost)
-                .to_string()
-                .ends_with("Run this again to carry on.")
-        );
+        for lost in [
+            CliError::Io(std::io::Error::other("connection reset")),
+            refused(429),
+            refused(503),
+        ] {
+            assert!(
+                partly_deleted("app.acme", 1_000, lost)
+                    .to_string()
+                    .ends_with("Run this again to carry on.")
+            );
+        }
         assert_eq!(
             partly_deleted("app.acme", 0, refused(403)).to_string(),
             refused(403).to_string()
