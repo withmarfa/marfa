@@ -56,6 +56,13 @@ pub fn bears_token(headers: &HeaderMap) -> bool {
     matches!(presented(headers), Presented::Token(_))
 }
 
+pub fn bearer(headers: &HeaderMap) -> Option<&str> {
+    match presented(headers) {
+        Presented::Token(token) => Some(token),
+        Presented::Nothing | Presented::Unreadable => None,
+    }
+}
+
 /// A request that changes state on a cookie alone must have come from this
 /// instance's own pages. A refused request has not used the session.
 fn check_browser_request(parts: &Parts, address: &Address) -> Result<()> {

@@ -887,6 +887,24 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Presented> {
     })
 }
 
+/// Whether a token is a live connector host's own key, read without counting a use.
+pub async fn is_host_key(app: &Arc<App>, token: &str) -> Result<bool> {
+    if !secret::looks_like_a_key(token) {
+        return Ok(false);
+    }
+    let hash = secret::hash(&app.settings.start.key_salt, token)?;
+    let at = app.clock.stamp();
+    app.db
+        .read(move |tx| {
+            Ok(unrevoked_where(tx, "hash", &hash)?.is_some_and(|key| {
+                key.lives_at(&at)
+                    && key.made_by.host().is_some()
+                    && key.grants.permissions.contains(&Permission::ConnectorsHost)
+            }))
+        })
+        .await
+}
+
 pub fn check_id(id: &str) -> Result<()> {
     marfa_rules::validation::id("id", id)
         .map_err(|_| Refusal::validation("id is not a valid key ID."))

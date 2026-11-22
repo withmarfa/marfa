@@ -16,7 +16,8 @@ afterAll(async () => {
 
 /**
  * The OAuth doors precede authentication, a health check is read by
- * whatever watches the instance, and claim carries its own machine proof.
+ * whatever watches the instance, claim carries its own machine proof, and a
+ * connector host's one-time link is its own credential.
  */
 const OPEN_DOORS = new Set([
   "POST /oauth/register",
@@ -27,6 +28,7 @@ const OPEN_DOORS = new Set([
   "GET /",
   "GET /health",
   "POST /owner",
+  "POST /connector-hosts/redeem",
 ]);
 
 /**

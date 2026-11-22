@@ -436,7 +436,11 @@ describe("a request the door would refuse before it reads the body", () => {
     const way = plainTextWay();
 
     const wrong: string[] = [];
-    const doors = (await jsonDoors()).filter((door) => door !== "POST /owner");
+    // Claim and a host's link redemption take no credential.
+    const doors = (await jsonDoors()).filter(
+      (door) =>
+        door !== "POST /owner" && door !== "POST /connector-hosts/redeem",
+    );
     expect(doors.length).toBeGreaterThan(30);
     for (const door of doors) {
       const options = door.startsWith("PUT /types/")
