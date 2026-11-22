@@ -305,6 +305,22 @@ impl Preview {
     }
 }
 
+impl Preview {
+    /// The kind's target type in the draft or the mapping in force; `None` for a dropped kind.
+    fn target(&self, tx: &Transaction<'_>, held: &Held) -> Result<Option<String>> {
+        let unread =
+            || Refusal::unread(&format!("the mapping of preview {} does not read", self.id));
+        if let Some(draft) = &self.mapping {
+            return serde_json::from_str::<Value>(draft)
+                .ok()
+                .and_then(|draft| Some(draft.get("target_type")?.as_str()?.to_string()))
+                .map(Some)
+                .ok_or_else(unread);
+        }
+        mapping::target_of(tx, &held.name, &held.connector, &self.kind)
+    }
+}
+
 /// The plugin's preview `id`, while it has not expired.
 fn live_preview(tx: &Transaction<'_>, plugin: &str, id: &str, at: &str) -> Result<Preview> {
     tx.prepare_cached(&format!(
@@ -514,8 +530,54 @@ pub async fn read_preview(app: &App, caller: &Caller, name: String, id: String) 
     .await
 }
 
-/// The connector's answer: a `result` object to store as given, or an `error` message.
-fn answer_of(body: &Value) -> Result<(Option<String>, Option<String>)> {
+const RESULT_MEMBERS: [&str; 4] = ["type", "properties", "title", "source_item"];
+
+/// What is wrong with a rendered `result` for a kind landing on `target`.
+fn result_faults(result: &Map<String, Value>, target: Option<&str>) -> Vec<Problem> {
+    let mut problems: Vec<Problem> = result
+        .keys()
+        .filter(|member| !RESULT_MEMBERS.contains(&member.as_str()))
+        .map(|member| {
+            problem(
+                &format!("result.{member}"),
+                "Is not a member of a rendered result.",
+            )
+        })
+        .collect();
+    match target {
+        Some(target) if result.get("type").and_then(Value::as_str) == Some(target) => {}
+        Some(target) => problems.push(problem(
+            "result.type",
+            &format!("Must be the kind's target type, {target}."),
+        )),
+        None => problems.push(problem(
+            "result.type",
+            "The connector no longer has the kind, so nothing can be rendered for it.",
+        )),
+    }
+    if !result.get("properties").is_some_and(Value::is_object) {
+        problems.push(problem(
+            "result.properties",
+            "Must be an object of the rendered fields.",
+        ));
+    }
+    if result.get("title").is_some_and(|title| !title.is_string()) {
+        problems.push(problem("result.title", "Must be text."));
+    }
+    if result
+        .get("source_item")
+        .is_some_and(|item| !item.is_string() && !item.is_null())
+    {
+        problems.push(problem(
+            "result.source_item",
+            "Must be the id of the item rendered, or null.",
+        ));
+    }
+    problems
+}
+
+/// The connector's answer: a `result` for a kind landing on `target`, or an `error` message.
+fn answer_of(body: &Value, target: Option<&str>) -> Result<(Option<String>, Option<String>)> {
     let what = "The answer cannot be kept";
     let Some(held) = body.as_object() else {
         return Err(invalid(
@@ -530,7 +592,8 @@ fn answer_of(body: &Value) -> Result<(Option<String>, Option<String>)> {
         .collect();
     let result = match held.get("result") {
         None => None,
-        Some(result @ Value::Object(_)) => {
+        Some(result @ Value::Object(members)) => {
+            problems.extend(result_faults(members, target));
             let text = result.to_string();
             if text.len() > RESULT_CAP {
                 problems.push(problem(
@@ -581,7 +644,8 @@ pub async fn answer_preview(
     app.write(caller, PREVIEW_ANSWERED, move |unit| {
         let held = held(unit.tx(), &unit.caller, &name, Door::Connector)?;
         let mut preview = live_preview(unit.tx(), &held.name, &id, &unit.at)?;
-        let (result, error) = answer_of(&body)?;
+        let target = preview.target(unit.tx(), &held)?;
+        let (result, error) = answer_of(&body, target.as_deref())?;
         if preview.status != "pending" {
             return Err(Refusal::new(
                 Code::ConnectorPreviewAnswered,

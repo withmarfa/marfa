@@ -1107,7 +1107,7 @@ export interface paths {
         put?: never;
         /**
          * Answer a mapping preview
-         * @description Keeps the connector's answer to a pending preview as it sends it: the rendered fields as `result`, or `error`. Marfa never renders a field itself. Only the connector's own key, or local authority, can do this.
+         * @description Keeps the connector's answer to a pending preview as it sends it: the rendered item as `result`, or `error`. Marfa never renders a field itself. Only the connector's own key, or local authority, can do this.
          */
         post: operations["answerMappingPreview"];
         delete?: never;
@@ -9709,6 +9709,13 @@ export interface components {
             source_mark?: string;
             /** @description The kinds of record the connector brings. */
             kinds: components["schemas"]["PluginConnectorKind"][];
+            /**
+             * @description The IDs of the edge types the connector writes, each one of the bundle's own `edge_types` or one Marfa ships whose ends aren't `system` types. Its key may write each.
+             * @example [
+             *       "attached-to"
+             *     ]
+             */
+            edge_types?: string[];
             /** @description The settings the connector reads as it runs. */
             settings?: components["schemas"]["PluginConnectorSetting"][];
             /** @description How the connector signs in to its service. Present only for a connector that signs in. */
@@ -10384,10 +10391,8 @@ export interface components {
              * @enum {string}
              */
             status: "pending" | "ready" | "failed";
-            /** @description The fields the connector rendered, as it sent them, once `status` is `ready`. */
-            result: {
-                [key: string]: unknown;
-            } | null;
+            /** @description The item the connector rendered, as it sent it, once `status` is `ready`. */
+            result: components["schemas"]["ConnectorPreviewResult"] | null;
             /** @description Why the connector could not render the preview, once `status` is `failed`. */
             error: string | null;
             /**
@@ -10430,12 +10435,26 @@ export interface components {
         };
         /** @description The connector's answer to a mapping preview: `result` or `error`, not both. */
         ConnectorPreviewAnswer: {
-            /** @description The fields the connector rendered, at most 65,536 bytes written as JSON. Send this or `error`. */
-            result?: {
-                [key: string]: unknown;
-            };
+            /** @description The item the connector rendered, at most 65,536 bytes written as JSON. Send this or `error`. */
+            result?: components["schemas"]["ConnectorPreviewResult"];
             /** @description Why the connector could not render the preview. Send this or `result`. */
             error?: string;
+        };
+        /** @description A mapping preview the connector rendered: the item as it would land under the mapping. */
+        ConnectorPreviewResult: {
+            /**
+             * @description The type the item would land as: the `target_type` of the preview's `mapping`, or of its kind in the mapping in force.
+             * @example common.ticket.task
+             */
+            type: string;
+            /** @description The fields the item would land with, by the target type's field names. */
+            properties: {
+                [key: string]: unknown;
+            };
+            /** @description The title the item would show. Present only if the connector sent one. */
+            title?: string;
+            /** @description The ID of the item the connector rendered, or `null` if it rendered from its service. Present only if the connector sent it. */
+            source_item?: string | null;
         };
     };
     responses: never;
@@ -21921,7 +21940,7 @@ export interface operations {
                     "application/json": components["schemas"]["PluginConnectorSettings"];
                 };
             };
-            /** @description - `validation_error`: the body isn't an object, names a setting the connector doesn't declare, or gives a value that doesn't fit its setting: text of 1 to 4096 characters, a secret's with no white space at either end, a number, `true` or `false`, or one of its `choices`. `details.errors` names each setting, never a secret's value, and nothing is stored. */
+            /** @description - `validation_error`: the body isn't an object, names a setting the connector doesn't declare, or gives a value that doesn't fit its setting: text of 1 to 65,536 characters, a secret's with no white space at either end, a number, `true` or `false`, or one of its `choices`. `details.errors` names each setting, never a secret's value, and nothing is stored. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -24107,8 +24126,13 @@ export interface operations {
                      *       "mapping": null,
                      *       "status": "ready",
                      *       "result": {
+                     *         "type": "rss.entry",
                      *         "title": "A post",
-                     *         "url": "https://example.com/a-post"
+                     *         "properties": {
+                     *           "title": "A post",
+                     *           "url": "https://example.com/a-post"
+                     *         },
+                     *         "source_item": "01a1fa41-9d8e-7f10-b2c3-4d5e6f708192"
                      *       },
                      *       "error": null,
                      *       "created_at": "2026-10-03T09:30:00.000Z",
@@ -24270,8 +24294,13 @@ export interface operations {
                 /**
                  * @example {
                  *       "result": {
+                 *         "type": "rss.entry",
                  *         "title": "A post",
-                 *         "url": "https://example.com/a-post"
+                 *         "properties": {
+                 *           "title": "A post",
+                 *           "url": "https://example.com/a-post"
+                 *         },
+                 *         "source_item": "01a1fa41-9d8e-7f10-b2c3-4d5e6f708192"
                  *       }
                  *     }
                  */
@@ -24295,8 +24324,13 @@ export interface operations {
                      *       "mapping": null,
                      *       "status": "ready",
                      *       "result": {
+                     *         "type": "rss.entry",
                      *         "title": "A post",
-                     *         "url": "https://example.com/a-post"
+                     *         "properties": {
+                     *           "title": "A post",
+                     *           "url": "https://example.com/a-post"
+                     *         },
+                     *         "source_item": "01a1fa41-9d8e-7f10-b2c3-4d5e6f708192"
                      *       },
                      *       "error": null,
                      *       "created_at": "2026-10-03T09:30:00.000Z",
@@ -24307,7 +24341,7 @@ export interface operations {
                     "application/json": components["schemas"]["ConnectorPreview"];
                 };
             };
-            /** @description `validation_error`: the body holds neither or both of `result` and `error`, a `result` that is not an object or is over 65,536 bytes, an `error` that is not 1 to 500 characters, or another member. `details.errors` names each. */
+            /** @description `validation_error`: the body holds neither or both of `result` and `error`, a `result` that is over 65,536 bytes or isn't an item of the kind's target type with `properties`, an optional `title` and an optional `source_item`, an `error` that is not 1 to 500 characters, or another member. `details.errors` names each. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

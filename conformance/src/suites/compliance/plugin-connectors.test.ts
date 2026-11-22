@@ -329,6 +329,58 @@ describe("the connector section", () => {
     expect(taken.status, JSON.stringify(taken.error)).toBe(201);
   });
 
+  it("refuses 400 validation_error an edge type the connector names that is unknown, named twice, reserved or on a system type, naming each path, and installs the bundle without them", async () => {
+    const part = fresh();
+    const root = `edgenames${part}`;
+    const name = `edge-names-${part}`;
+    const own = `${root}.cites`;
+    const naming = (edgeTypes: unknown) =>
+      connectorBundle(name, root, name, {
+        edge_types: [
+          {
+            id: own,
+            cardinality: "many-to-many",
+            from_type_constraints: [`${root}.entry`],
+            to_type_constraints: ["*"],
+          },
+        ],
+        connector: connectorSection(`${root}.entry`, name, {
+          edge_types: edgeTypes,
+        }),
+      });
+    const refused = await owner.installPlugin(
+      naming([
+        own,
+        `${root}.unknown`,
+        "attached-to",
+        own,
+        "in-folder",
+        "system.placed-in",
+        "core.links-to",
+        42,
+      ]),
+    );
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(errorPaths(refused)).toEqual(
+      [1, 3, 4, 5, 6, 7].map((at) => `connector.edge_types.${at}`),
+    );
+    expect((await owner.getPlugin(name)).status).toBe(404);
+    const notList = await owner.installPlugin(naming("attached-to"));
+    expect(notList.status).toBe(400);
+    expect(errorPaths(notList)).toEqual(["connector.edge_types"]);
+    expect((await owner.getPlugin(name)).status).toBe(404);
+
+    // The witness: its own edge type and a shipped one install, kept as sent.
+    const taken = await owner.installPlugin(naming([own, "attached-to"]));
+    expect(taken.status, JSON.stringify(taken.error)).toBe(201);
+    expect(
+      (taken.data as { connector: { edge_types: string[] } }).connector
+        .edge_types,
+    ).toEqual([own, "attached-to"]);
+    await expectMatchesSchema("POST", "/plugins", 201, taken.data);
+  });
+
   it("refuses a source a key could not hold, two kinds or settings of one name, and a default that does not fit its kind", async () => {
     const part = fresh();
     const root = `limits${part}`;

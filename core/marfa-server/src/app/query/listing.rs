@@ -3,7 +3,7 @@ use rusqlite::Transaction;
 use rusqlite::types::Value;
 use serde_json::{Map, Value as Json, json};
 
-use super::compile::{Ask, Sql, judge, selection};
+use super::compile::{Ask, Sql, judge, judge_mapped, selection};
 use super::cursor::Position;
 use super::order::{Order, Sort};
 use super::reach::Reach;
@@ -22,6 +22,8 @@ pub struct Listing {
     pub limit: i64,
     pub cursor: Option<String>,
     pub include: Many,
+    /// Whether a connector key also lists its own items on the types its mapping lands a kind on.
+    pub mapped: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -108,15 +110,23 @@ pub(super) fn answered(
 pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String> {
     let secret = app.cursor_secret.clone();
     let (page, add) = reading(app, caller, move |read| {
-        let reach = Reach::of(read)?;
         let Listing {
             ask,
             sort,
             limit,
             cursor,
             include,
+            mapped,
         } = &listing;
-        judge(read, ask)?;
+        let reach = if *mapped {
+            let reach = Reach::of_own(read)?;
+            judge_mapped(read, ask)?;
+            reach
+        } else {
+            let reach = Reach::of(read)?;
+            judge(read, ask)?;
+            reach
+        };
         let order = Order::listing(sort, ask);
         let scope = json!([
             "items",

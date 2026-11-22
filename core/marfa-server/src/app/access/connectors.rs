@@ -147,6 +147,19 @@ impl Caller {
         self.require_cascade_to(type_id)
     }
 
+    /// The caller as a door that reads by the type map alone answers it.
+    pub fn by_type_map(&self) -> Caller {
+        match self {
+            Caller::Key(key) => {
+                let mut key = key.clone();
+                key.mapped = None;
+                key.by_type_map = true;
+                Caller::Key(key)
+            }
+            other => other.clone(),
+        }
+    }
+
     /// A plugin's connector key: what its trash, restore and purge carry is what it could write itself.
     pub fn is_plugin_connector(&self) -> bool {
         matches!(self, Caller::Key(key) if key.mapped.is_some())

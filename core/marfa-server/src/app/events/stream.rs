@@ -219,6 +219,7 @@ fn read_page(
         rules: &read.catalog.rules,
         read_only: &read.read_only,
         filter,
+        own: !filter.copy,
     };
     let mut scanned = 0;
     let mut bytes = 0;

@@ -174,6 +174,18 @@ pub(crate) fn standing(tx: &Transaction<'_>, plugin: &str) -> Result<(i64, i64)>
     Ok((version.unwrap_or(0), rewrites))
 }
 
+/// The `target_type` of `kind` in the mapping in force, or `None` for a kind the connector lacks.
+pub(crate) fn target_of(
+    tx: &Transaction<'_>,
+    plugin: &str,
+    connector: &Connector,
+    kind: &str,
+) -> Result<Option<String>> {
+    let held = saved(tx, plugin)?;
+    let kinds = connector::in_force(held.as_ref().map(|held| &held.kinds), connector, None);
+    Ok(kinds.get(kind).map(|entry| entry.target_type.clone()))
+}
+
 static REPORTED: Mutex<BTreeSet<(String, &'static str)>> = Mutex::new(BTreeSet::new());
 
 /// Logs once per plugin that its connector or mapping does not read, so its key reaches nothing

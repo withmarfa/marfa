@@ -187,6 +187,85 @@ describe("custom edge-type registration", () => {
     expect(orphan.data.edge.edge_type).toBe(etId);
   });
 
+  it("lists an edge whose type a forced delete removed to a key whose edge map reads every edge type but one, on every edge door, as GET /edges/{id} reads it", async () => {
+    const etId = `mock.orphaned.${ctx.runId}`;
+    expect(
+      (
+        await client.registerEdgeType({
+          id: etId,
+          label: "Orphaned edge type",
+          cardinality: "many-to-many",
+        })
+      ).status,
+    ).toBe(201);
+    trackEdgeType(ctx, etId);
+    const a = await client.createItem(createNote({ source: ctx.source }));
+    const b = await client.createItem(createNote({ source: ctx.source }));
+    expect(a.ok && b.ok).toBe(true);
+    trackItem(ctx, a.data.item.id);
+    trackItem(ctx, b.data.item.id);
+    const edgeOf = async (edgeType: string) => {
+      const made = await client.createEdge({
+        from_id: a.data.item.id,
+        to_id: b.data.item.id,
+        edge_type: edgeType,
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      trackEdge(ctx, made.data.edge.id);
+      return made.data.edge.id;
+    };
+    const orphan = await edgeOf(etId);
+    const unread = await edgeOf("references");
+    const forced = await client.deleteEdgeType(etId, true);
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+
+    // Every edge type the catalog still holds but `references`, and the
+    // namespace the deleted one was in.
+    const edgeMap: Record<string, string> = { "mock.*": "read" };
+    for (const { id } of (await client.listEdgeTypes()).data.data) {
+      if (id !== "references" && !id.startsWith("mock.")) edgeMap[id] = "read";
+    }
+    expect(Object.keys(edgeMap).length).toBeGreaterThan(2);
+    const minted = await client.createKey({
+      label: "edge-types-orphan-reader",
+      source: `${ctx.source}-orphan-reader`,
+      permissions: [],
+      type_permissions: { "*": "read" },
+      edge_permissions: edgeMap,
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    trackKey(ctx, minted.data.id);
+    const reader = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+
+    // GET /edges/{id} reads the orphan and not the edge type the map leaves out.
+    expect((await reader.getEdge(orphan)).status).toBe(200);
+    expect((await reader.getEdge(unread)).status).toBe(404);
+
+    const listed: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await reader.listEdges({ limit: 500, cursor });
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      listed.push(...page.data.data.map((edge) => edge.id));
+      cursor = page.data.next_cursor ?? undefined;
+    } while (cursor);
+    const outbound = await reader.listItemEdges(a.data.item.id);
+    expect(outbound.status, JSON.stringify(outbound.error)).toBe(200);
+    const inbound = await reader.listItemBackrefs(b.data.item.id);
+    expect(inbound.status, JSON.stringify(inbound.error)).toBe(200);
+    for (const [door, ids] of [
+      ["GET /edges", listed],
+      ["GET /items/{id}/edges", outbound.data.data.map((edge) => edge.id)],
+      ["GET /items/{id}/backrefs", inbound.data.data.map((edge) => edge.id)],
+    ] as const) {
+      expect(ids, door).toContain(orphan);
+      expect(ids, door).not.toContain(unread);
+    }
+  });
+
   it("deletes an edge type no edge names, without force", async () => {
     // The witness. The refusal above is the edges and not the door
     // having closed: a registration nothing uses goes on the first ask.

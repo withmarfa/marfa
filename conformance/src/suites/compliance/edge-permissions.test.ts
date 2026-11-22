@@ -572,13 +572,9 @@ describe("the edge listing answers only what the credential may read", () => {
     expect((await narrowClient.getEdge(edge.data.edge.id)).status).toBe(404);
   });
 
-  it("pages to the end of the listing though whole pages are dropped", async () => {
-    // What "shorter than the limit" turns into at a page boundary: a
-    // page of nothing, with a cursor still to follow. The cursor is the
-    // store's reading of the whole listing rather than of what survived
-    // the gate, which is what makes the walk
-    // terminate — and a client that stopped on an empty page would
-    // truncate its copy silently and never learn it had.
+  it("fills each page of the listing with the edges it may read, though most are dropped, and pages to the end", async () => {
+    // A page cut before the gate would come back short or empty with a
+    // cursor still to follow; the gate runs first, so every page is full.
     const edgeType = `mock.disclosure.paged.${ctx.runId}`;
     const registered = await client.registerEdgeType({
       label: "Test edge type",
@@ -590,13 +586,15 @@ describe("the edge listing answers only what the credential may read", () => {
 
     const target = await scopedItem(client, "paged-target");
     const readable: string[] = [];
-    // Readable at both ends and four hidden edges between them, so a walk
-    // at two a page meets at least one page with nothing on it.
+    // Four hidden edges between readable ones, so a page cut before the
+    // gate would hold nothing.
     for (const [index, kind] of [
       "note",
       "bookmark",
       "bookmark",
       "bookmark",
+      "bookmark",
+      "note",
       "bookmark",
       "note",
     ].entries()) {
@@ -633,7 +631,7 @@ describe("the edge listing answers only what the credential may read", () => {
     });
 
     const seen: string[] = [];
-    let emptyPages = 0;
+    const sizes: number[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < 12; page++) {
       const answer = await narrowClient.listEdges({
@@ -643,8 +641,7 @@ describe("the edge listing answers only what the credential may read", () => {
       });
       expect(answer.ok, JSON.stringify(answer.error)).toBe(true);
       seen.push(...answer.data.data.map((e) => e.id));
-      if (answer.data.data.length === 0 && answer.data.next_cursor !== null)
-        emptyPages++;
+      sizes.push(answer.data.data.length);
       if (answer.data.next_cursor === null) {
         cursor = undefined;
         break;
@@ -659,10 +656,7 @@ describe("the edge listing answers only what the credential may read", () => {
       cursor,
       "the walk ran out of pages before the listing ran out of edges",
     ).toBeUndefined();
-    expect(
-      emptyPages,
-      "no page came back empty, so this case is not about the thing it claims",
-    ).toBeGreaterThan(0);
+    expect(sizes, "a page came back short of the limit").toEqual([2, 1]);
     expect(seen.sort()).toEqual([...readable].sort());
   });
 });
@@ -929,26 +923,23 @@ describe("the doors under an item answer only what the credential may read", () 
         .sort(),
     ).toEqual([hiddenSourceEdge, visibleBackref].sort());
   });
-  it("pages a per-item door to the end though whole pages are dropped", async () => {
-    // The two per-item doors publish the same paging rule the edge
-    // listing does — short pages, an empty page with a cursor to follow,
-    // and a cursor that still reaches the end — so one of them asserts
-    // it. The backref door, because it is the one whose edges are dropped
-    // by the source's type rather than by their own kind, so a page can
-    // empty without the filter naming anything.
+  it("fills each page of a per-item door with the edges it may read, though most are dropped, and pages to the end", async () => {
+    // The two per-item doors page as the edge listing does, so one of them
+    // asserts it: the backref door, whose edges are dropped by the type of
+    // their from item rather than by their own kind.
     const edgeType = await kind("paged");
     const target = await scopedItem(client, "paged-target");
     const readable: string[] = [];
-    // Six inbound edges, mostly from items the narrow credential cannot
-    // read, so a walk two at a time meets a page with nothing on it.
-    // The readable edges sit at the ends and four unreadable ones run
-    // between them, so a page of two lands entirely inside that run
-    // whichever direction the door walks.
+    // Inbound edges mostly from items the narrow credential cannot read,
+    // with four unreadable ones in a run, so a page of two cut before the
+    // gate would land inside it whichever direction the door walks.
     for (const kindOfSource of [
       "note",
       "hidden",
       "hidden",
       "hidden",
+      "hidden",
+      "note",
       "hidden",
       "note",
     ] as const) {
@@ -970,7 +961,7 @@ describe("the doors under an item answer only what the credential may read", () 
     });
 
     const seen: string[] = [];
-    let emptyPages = 0;
+    const sizes: number[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < 12; page++) {
       const answer = await narrowClient.listItemBackrefs(target, {
@@ -980,8 +971,7 @@ describe("the doors under an item answer only what the credential may read", () 
       });
       expect(answer.ok, JSON.stringify(answer.error)).toBe(true);
       seen.push(...answer.data.data.map((e) => e.id));
-      if (answer.data.data.length === 0 && answer.data.next_cursor !== null)
-        emptyPages++;
+      sizes.push(answer.data.data.length);
       if (answer.data.next_cursor === null) {
         cursor = undefined;
         break;
@@ -996,10 +986,7 @@ describe("the doors under an item answer only what the credential may read", () 
       cursor,
       "the walk ran out of pages before the door ran out of edges",
     ).toBeUndefined();
-    expect(
-      emptyPages,
-      "no page came back empty, so this case is not about the thing it claims",
-    ).toBeGreaterThan(0);
+    expect(sizes, "a page came back short of the limit").toEqual([2, 1]);
     expect(seen.sort()).toEqual([...readable].sort());
   });
 

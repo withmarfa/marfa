@@ -259,7 +259,7 @@ pub async fn run(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>)
                 Some(text(&arguments, "direction").unwrap_or_else(|| "desc".to_string())),
             );
             let params = Params::from_pairs(pairs, &ITEMS_QUERY)?;
-            let page = parsed(&items_from(app, caller, &params).await?)?;
+            let page = parsed(&items_from(app, caller, &params, false).await?)?;
             entries_of(&page, false)
         }
     };

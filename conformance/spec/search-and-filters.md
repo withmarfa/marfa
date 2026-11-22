@@ -1954,7 +1954,7 @@ The server MUST answer `GET /grants` in the envelope of a list.
 
 When the items of a page fill it exactly and it holds the last item, the server MUST answer `next_cursor` `null` on every operation that takes a cursor.
 
-**Reason:** a walk then never ends on an empty page it was sent to. A page can still be short or empty with a cursor to follow, so a walk stops on `null` and never on a short page (`edges/read-list-short`).
+**Reason:** a walk then never ends on an empty page it was sent to. A page can still be short or empty with a cursor to follow, so a walk stops on `null` and never on a short page (`connectors/list-agreements-short-page`).
 
 **Tests:** `compliance/full-last-page.test.ts › %s answers null when the items fill the page exactly`, `› covers every door that takes a cursor`.
 

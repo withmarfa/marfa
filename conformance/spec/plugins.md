@@ -186,6 +186,22 @@ If a kind in a bundle's `connector.kinds` names as its `type` an identifier that
 
 **Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error a connector section with an unknown key, no kinds, a kind type outside the bundle, a choice with no choices, a secret with a default or a sign-in naming an undeclared setting, naming each path and installing nothing`.
 
+### `plugins/connector-edge-types`
+
+If a bundle's `connector.edge_types` is not an array, or holds an entry that is not an edge type identifier, names an edge type a second time, names one under `core`, `system`, `marfa`, `app` or `user`, names one whose `from_type_constraints` or `to_type_constraints` holds a `system` type, or names one that is neither the `id` of one of the bundle's `edge_types` nor an edge type Marfa ships, then the server MUST answer `400 validation_error` with `details.errors` naming `connector.edge_types`, or `connector.edge_types.<index>` for each such entry.
+
+**Reason:** the connector's key writes each edge type the list names (`plugins/host-mint-holds`), so the list holds only edge types a connector may write: its plugin's own, or ones Marfa ships whose ends are not the server's own types, such as `in-folder`.
+
+**Tests:** `compliance/plugin-connectors.test.ts › refuses 400 validation_error an edge type the connector names that is unknown, named twice, reserved or on a system type, naming each path, and installs the bundle without them`, `device/plugins-check.test.ts › refuses a connector edge type that is unknown, named twice or on a system type, as installing does`.
+
+### `plugins/connector-edge-types-dropped`
+
+When `POST /plugins` sends a later version of an installed plugin whose connector keeps its `source` and names fewer `edge_types` than the version installed, the server MUST answer `200` with `outcome` `updated`.
+
+**Reason:** a connector's `edge_types` is held as its kinds and settings are: a newer version may drop one. The key its host minted keeps what it holds until its host mints again (`plugins/host-mint-holds`).
+
+**Tests:** `compliance/connector-reach.test.ts › mints a connector key holding write on the edge types its connector names, own and shipped, which writes both from its own item and no other`.
+
 ### `plugins/connector-names-unique`
 
 If two kinds of a bundle's connector share a `name`, or two of its settings share a `name`, then the server MUST answer `400 validation_error` with `details.errors` naming the second.
@@ -612,11 +628,11 @@ When a host's key sends `POST /connector-hosts/self/connectors/{plugin}/key` for
 
 ### `plugins/host-mint-holds`
 
-When the server mints a connector's key for its host, the server MUST give the key the connector's `source` as its own source, no permission, write on the type of each of the connector's kinds and no other entry in any map, no claimed source, and `default_tier` `feed`.
+When the server mints a connector's key for its host, the server MUST give the key the connector's `source` as its own source, no permission, write in its type map on the type of each of the connector's kinds, write in its edge map on each edge type the connector's `edge_types` names, no other entry in any map, no claimed source, and `default_tier` `feed`.
 
-**Reason:** the key holds what a connector's own key held when it registered itself, and its types are already installed by the plugin.
+**Reason:** the key holds what its connector writes, and its types and edge types are already installed by the plugin. A key holds the maps it was minted with until its host mints again, through a newer version of the plugin as before one.
 
-**Tests:** `compliance/connector-hosts.test.ts › mints a connector key with the manifest's source and write on its kinds' types, which registers itself and writes its types`.
+**Tests:** `compliance/connector-hosts.test.ts › mints a connector key with the manifest's source and write on its kinds' types, which registers itself and writes its types`, `compliance/connector-reach.test.ts › mints a connector key holding write on the edge types its connector names, own and shipped, which writes both from its own item and no other`.
 
 ### `plugins/host-mint-revokes`
 
@@ -716,9 +732,11 @@ If `PATCH /plugins/{name}/connector/settings` names a setting the plugin's conne
 
 ### `plugins/settings-kind`
 
-If `PATCH /plugins/{name}/connector/settings` gives a setting a value other than `null` that does not fit its `kind`, being for `text` other than text of 1 to 4096 characters, for `number` other than a number, for `boolean` other than `true` or `false`, and for `choice` other than one of its `choices`, then the server MUST answer `400 validation_error` with `details.errors` holding an entry whose `path` is the setting's name.
+If `PATCH /plugins/{name}/connector/settings` gives a setting a value other than `null` that does not fit its `kind`, being for `text` other than text of 1 to 65536 characters, for `number` other than a number, for `boolean` other than `true` or `false`, and for `choice` other than one of its `choices`, then the server MUST answer `400 validation_error` with `details.errors` holding an entry whose `path` is the setting's name.
 
-**Tests:** `compliance/connector-settings.test.ts › refuses 400 validation_error an unknown setting, a value of another kind, a choice outside its choices and a padded secret, naming each setting and storing nothing`.
+**Reason:** a connector keeps a list, such as many feed addresses or repositories, in one text setting.
+
+**Tests:** `compliance/connector-settings.test.ts › refuses 400 validation_error an unknown setting, a value of another kind, a choice outside its choices and a padded secret, naming each setting and storing nothing`, `› takes a text value of 65536 characters, carries it through an export and a restore, and refuses one of 65537`.
 
 ### `plugins/settings-secret-padded`
 
@@ -1378,7 +1396,7 @@ If the stored `connector` object of the plugin whose connector holds a plugin's 
 
 **Reason:** the mapping only widens what a connector's key writes, and the cascade rule (`plugins/reach-cascade`) only narrows it. A stored value that does not read widens nothing and lifts no protection, so the key writes no more than its type map allows, and its trash, restore and purge still leave the owner's items where they are.
 
-**Tests:** `compliance/connector-reach.test.ts › keeps the key a plugin connector key when its stored connector does not read: its trash leaves the owner's child, and it writes no target type`, `› keeps the key a plugin connector key when its stored mapping does not read: its trash leaves the owner's child, and it writes no target type`.
+**Tests:** `compliance/connector-reach.test.ts › keeps the key a plugin connector key when its stored connector does not read: its trash leaves the owner's child, and it writes no target type`, `› keeps the key a plugin connector key when its stored mapping does not read: its trash leaves the owner's child, and it writes no target type`, `› lists, streams and settles nothing of the mapped type when its stored mapping does not read`, `› lists, streams and settles nothing of the mapped type when its stored connector does not read`.
 
 ### `plugins/reach-target-other-source`
 
@@ -1386,7 +1404,7 @@ While a plugin's connector key holds no write on a type in its type map, when th
 
 **Reason:** a mapping onto a type that also holds the owner's items never opens those items to the connector. Each door answers as it does for a type the key cannot reach, so the connector learns nothing of the owner's items.
 
-**Tests:** `compliance/connector-reach.test.ts › answers an owner's item of the target type as one the key cannot reach on every door, where the same call on its own item succeeds`.
+**Tests:** `compliance/connector-reach.test.ts › answers an owner's item of the target type as one the key cannot reach on every door, where the same call on its own item succeeds`, `› mints a connector key holding write on the edge types its connector names, own and shipped, which writes both from its own item and no other`.
 
 ### `plugins/reach-create-own-source`
 
@@ -1398,11 +1416,59 @@ If a plugin's connector key creates an item of an enabled kind's `target_type` t
 
 ### `plugins/reach-read-own`
 
-While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items/{id}` or `POST /items/lookup` for an item of that type whose `source` is its own, the server MUST answer it as it would were that type granted read in its type map.
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items/{id}`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs`, `GET /items/{id}/versions`, `GET /items/{id}/extensions`, `GET /items/{id}/extensions/{namespace}`, `GET /items/{id}/tables`, `GET /items/{id}/tables/{table}/rows`, `GET /items/{id}/tables/{table}/rows/{row}`, `GET /items/{id}/tables/{table}/totals`, `GET /items/{id}/tables/{table}/batches` or `POST /items/lookup` for an item of that type whose `source` is its own, the server MUST find the item as it would were that type granted read in its type map.
 
-**Reason:** a connector reads its own items back to update them. A listing, a search, the event stream and an export answer the type as the key's type map reaches it.
+**Reason:** a connector reads its own items back to update them, with the edges it reads from them (`plugins/reach-edges-own`), and their versions, extensions and table rows, which it writes as it writes the item. It also lists them (`plugins/reach-list-own`), follows their events (`plugins/reach-events-own`) and settles their tombstones (`plugins/reach-tombstones-own`). Every other door, among them search, the summaries, an export, a view's items, a folder, the MCP tools that only read (`plugins/reach-mcp-reads`) and the copy stream a working copy follows, answers the type as the key's type map reaches it.
 
-**Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`.
+**Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`, `› reads an edge from its own item of the mapped type on every edge door, and never one from the owner's item into its own`, `› reads the versions, extensions and table rows of its own item of the mapped type, and answers the owner's item of that type as one it cannot read`.
+
+### `plugins/reach-list-own`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items`, the server MUST answer it as it would were that type granted read in its type map, whatever items that type holds, with no item of that type whose `source` is not its own in any page.
+
+**Reason:** a connector finds its rows by listing them, with any filter a listing takes, among them a relation to another item. The owner's items of the type stay out of every page and every cursor, as `plugins/reach-target-other-source` keeps them out of every other door. A listing of the type or of a type above it answers an empty page while the type holds none of the key's items, so it says nothing of the owner's. The MCP tool `marfa_find` lists as the key's type map reaches (`plugins/reach-mcp-reads`).
+
+**Tests:** `compliance/connector-reach.test.ts › lists its own items of the mapped type page by page and none of the owner's, which the owner lists beside them, and lists, streams and settles none once the kind is off`, `› lists the mapped type and its parent as an empty page while it holds no items, and while it holds only the owner's`.
+
+### `plugins/reach-mcp-reads`
+
+When a plugin's connector key calls an MCP tool whose `readOnlyHint` annotation is `true`, the server MUST decide every item the tool reads by the key's type map alone, whatever the key's mapping holds.
+
+**Reason:** a tool that only reads is a door for a person or an agent to look through, not the connector's own sync, so it answers as every door does that `plugins/reach-read-own` and `plugins/reach-list-own` do not name. A tool that writes keeps the mapping, as `plugins/reach-target-own-source` says of every door that writes an item.
+
+**Tests:** `compliance/connector-reach.test.ts › finds none of its own items of the mapped type through marfa_find, which GET /items lists`, `› reads no field of its own item of the mapped type through marfa_get, which answers it as an item it cannot read`.
+
+### `plugins/reach-edges-own`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key reads an edge whose from item is of that type and has the key's own `source`, and whose edge type its edge map grants read on, the server MUST answer the edge as it would were that type granted read in its type map, on `GET /edges`, `GET /edges/{id}`, `GET /items/{id}/edges` and `GET /items/{id}/backrefs`, and in the `edges` and `backrefs` blocks that an item read, an item listing, `POST /items/lookup` and the answer to a write carry.
+
+**Reason:** a connector finds the links it wrote from its own items to settle them, as the event stream already carries them (`plugins/reach-events-own`). An edge is a statement its from item makes (`edges/to-named`), so the from item alone opens it.
+
+**Tests:** `compliance/connector-reach.test.ts › reads an edge from its own item of the mapped type on every edge door, and never one from the owner's item into its own`, `› fills each page of the edge listing and of an item's edges with the edges from its own items, between many from the owner's, and pages to the end`, `› reads no edge from its own item of an edge type its edge map does not read`.
+
+### `plugins/reach-edges-other-source`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, the server MUST NOT answer the key an edge whose from item is of that type and has a `source` other than its own, whatever its to item, on any door that `plugins/reach-edges-own` names.
+
+**Reason:** an owner's link into the connector's item is the owner's statement, and the key reads none of the owner's items of the type.
+
+**Tests:** `compliance/connector-reach.test.ts › reads an edge from its own item of the mapped type on every edge door, and never one from the owner's item into its own`, `› fills each page of the edge listing and of an item's edges with the edges from its own items, between many from the owner's, and pages to the end`.
+
+### `plugins/reach-events-own`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key holds open `GET /events` without `copy=true`, the server MUST send it each event of an item of that type whose `source` is its own, and of an edge from such an item, as it would were that type granted read in its type map, and no event of another item of that type.
+
+**Reason:** a connector carries a change the owner made to its own items back to its service.
+
+**Tests:** `compliance/connector-reach.test.ts › streams the events of its own items of the mapped type and never the owner's, settled by a later event`, `› lists its own items of the mapped type page by page and none of the owner's, which the owner lists beside them, and lists, streams and settles none once the kind is off`.
+
+### `plugins/reach-tombstones-own`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant write on, when the key sends `POST /items/tombstones` naming that type and its own source as `source`, the server MUST answer it as it would were that type granted write in its type map.
+
+**Reason:** a tombstone of a natural key names the source it was written under, so the key settles only its own. A link's tombstone names no source, so the key settles none by `links` on that type (`items/tombstone-settle-grant`).
+
+**Tests:** `compliance/connector-reach.test.ts › settles the tombstones of its own purged items of the mapped type by source and natural key, and none by link or under another source`, `› lists its own items of the mapped type page by page and none of the owner's, which the owner lists beside them, and lists, streams and settles none once the kind is off`.
 
 ### `plugins/reach-disabled`
 
@@ -1688,9 +1754,9 @@ If a caller that neither holds `connectors.manage` nor is the plugin's connector
 
 ### `plugins/preview-answer`
 
-When the plugin's connector key, or local authority, sends `POST /plugins/{name}/connector/previews/{id}` with `result`, an object, or `error`, text of 1 to 500 characters, for a pending preview, the server MUST store it as given, set `status` to `ready` or `failed` and `answered_at` to the time of the answer, and answer `200` with the preview.
+When the plugin's connector key, or local authority, sends `POST /plugins/{name}/connector/previews/{id}` with `result`, of the form `plugins/preview-result-form` gives, or `error`, text of 1 to 500 characters, for a pending preview, the server MUST store it as given, set `status` to `ready` or `failed` and `answered_at` to the time of the answer, and answer `200` with the preview.
 
-**Reason:** the connector renders the preview with the mapping and its own items, and the server keeps its answer without reading it.
+**Reason:** the connector renders the preview with the mapping and its own items, and the server keeps its answer as given.
 
 **Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
 
@@ -1705,6 +1771,14 @@ If `POST /plugins/{name}/connector/previews/{id}` names a preview whose `status`
 If `POST /plugins/{name}/connector/previews/{id}` sends a body holding neither or both of `result` and `error`, a `result` that is not an object, an `error` that is not text of 1 to 500 characters, or another member, then the server MUST answer `400 validation_error` with `details.errors` naming each `path`, and change nothing.
 
 **Tests:** `compliance/connector-control.test.ts › refuses an answer of the wrong shape, an oversized result and an answer from another key, and changes nothing`.
+
+### `plugins/preview-result-form`
+
+If the `result` that `POST /plugins/{name}/connector/previews/{id}` sends holds a member other than `type`, `properties`, `title` and `source_item`, gives as `type` other than the `target_type` of the preview's `mapping`, or of its kind in the mapping in force where its `mapping` is `null`, gives as `properties` other than an object, gives a `title` that is not text, or gives a `source_item` that is neither text nor `null`, then the server MUST answer `400 validation_error` with `details.errors` naming the path of each, such as `result.type`, and change nothing.
+
+**Reason:** an app and a connector agree on one form: the item as it would land, its target type and its fields in `properties`, with the title it would show and the `id` of the item it was rendered from, or `null` where the connector rendered it from its service. The server checks the form and never renders a field itself.
+
+**Tests:** `compliance/connector-control.test.ts › refuses a result that is not an item of the kind's target type, naming each path, and keeps one that is`.
 
 ### `plugins/preview-result-size`
 

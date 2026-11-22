@@ -54,6 +54,8 @@ pub struct Judge<'a> {
     pub rules: &'a Rules,
     pub read_only: &'a ReadOnly,
     pub filter: &'a Filter,
+    /// Whether a connector key reads its mapped types for its own items.
+    pub own: bool,
 }
 
 impl Judge<'_> {
@@ -84,8 +86,15 @@ impl Judge<'_> {
             }
             Kind::Item
         };
-        (self.caller.may_read_type(entry.type_id) && (self.filter.copy || self.listed(entry)))
-            .then_some(kind)
+        (self.reads(entry) && (self.filter.copy || self.listed(entry))).then_some(kind)
+    }
+
+    fn reads(&self, entry: &Head<'_>) -> bool {
+        if self.own {
+            self.caller.may_read_item(entry.type_id, entry.source)
+        } else {
+            self.caller.may_read_type(entry.type_id)
+        }
     }
 
     fn selects(&self, entry: &Head<'_>) -> bool {
@@ -153,7 +162,12 @@ impl Judge<'_> {
     fn edge(&self, entry: &Head<'_>, body: &Map<String, Value>) -> Option<bool> {
         let edge_type = body.get("edge")?.get("edge_type")?.as_str()?;
         body.get("from_type")?.as_str()?;
-        Some(self.caller.may_read_edge(edge_type, entry.type_id))
+        Some(if self.own {
+            self.caller
+                .may_read_edge_from(edge_type, entry.type_id, entry.source)
+        } else {
+            self.caller.may_read_edge(edge_type, entry.type_id)
+        })
     }
 
     fn item(&self, entry: &Head<'_>, body: &mut Map<String, Value>) -> Result<Option<bool>> {

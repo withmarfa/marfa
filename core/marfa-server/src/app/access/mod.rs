@@ -261,9 +261,12 @@ impl Caller {
         match self {
             Caller::Local(_) => Ok(Caller::Local(config::standing(tx, None)?)),
             Caller::Server => Ok(Caller::Server),
-            Caller::Key(key) => match keys::live_by_id(tx, &key.id, at)? {
-                Some(key) => Ok(Caller::Key(Box::new(standing_key(tx, key)?))),
-                None => Err(match keys::expired_at(tx, &key.id, at)? {
+            Caller::Key(held) => match keys::live_by_id(tx, &held.id, at)? {
+                Some(mut key) => {
+                    key.by_type_map = held.by_type_map;
+                    Ok(Caller::Key(Box::new(standing_key(tx, key)?)))
+                }
+                None => Err(match keys::expired_at(tx, &held.id, at)? {
                     Some(end) => expired(&end),
                     None => unauthorized(),
                 }),
@@ -657,7 +660,11 @@ impl Caller {
 
 fn standing_key(tx: &Transaction<'_>, mut key: Key) -> Result<Key> {
     bind_app_key(tx, &mut key)?;
-    key.mapped = super::mapping::reach(tx, &key.source)?;
+    key.mapped = if key.by_type_map {
+        None
+    } else {
+        super::mapping::reach(tx, &key.source)?
+    };
     key.standing = match &key.levers {
         OwnLevers::Unread(text) => {
             report_unread(&key.id, text);
@@ -708,6 +715,7 @@ mod tests {
             levers: OwnLevers::Unset,
             standing: Standing::default(),
             mapped: None,
+            by_type_map: false,
             created_at: String::new(),
             expires_at: None,
             last_used_at: None,

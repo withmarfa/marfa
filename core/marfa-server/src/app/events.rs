@@ -14,14 +14,14 @@ use serde_json::json;
 use super::App;
 use super::access::Caller;
 use super::items::reading;
-use super::query::judge_type;
+use super::query::judge_type_within;
 use super::refusal::{Refusal, Result};
 
 pub use expiry::{UNREAD, expire};
 pub use frame::{Filter, Head, Judge, Judged, Kind};
 pub use stream::{Hangup, Opening, PING, Viewer, Viewers, open};
 
-/// Judge each entry's syntax and access before proceeding to the next.
+/// Judge each entry's syntax and access in turn, counting a connector key's mapped types as read.
 pub async fn judge_types(app: &App, caller: &Caller, entries: Vec<String>) -> Result<()> {
     reading(app, caller, move |read| {
         entries.iter().try_for_each(|entry| {
@@ -33,7 +33,7 @@ pub async fn judge_types(app: &App, caller: &Caller, entries: Vec<String>) -> Re
                         json!([{ "path": "type", "message": error.message }]),
                     )
             })?;
-            judge_type(read, entry)
+            judge_type_within(read, entry, &|type_id| read.caller.maps_onto(type_id))
         })
     })
     .await

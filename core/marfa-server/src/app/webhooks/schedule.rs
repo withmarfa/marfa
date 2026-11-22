@@ -218,6 +218,7 @@ fn queue(
             rules: &context.catalog.rules,
             read_only: context.read_only,
             filter: &UNFILTERED,
+            own: false,
         };
         let Some(kind) = judge.wants(&head) else {
             continue;

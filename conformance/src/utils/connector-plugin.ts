@@ -38,7 +38,7 @@ export async function mint(
   permissions: string[],
   types: Record<string, string>,
   extra: Record<string, unknown> = {},
-): Promise<{ id: string; client: MarfaClient }> {
+): Promise<{ id: string; key: string; client: MarfaClient }> {
   const minted = await local(server).createKey({
     label: source,
     source,
@@ -51,6 +51,7 @@ export async function mint(
   expect(minted.status, JSON.stringify(minted.error)).toBe(201);
   return {
     id: minted.data.id,
+    key: minted.data.key!,
     client: new MarfaClient({
       baseUrl: server.apiUrl,
       apiKey: minted.data.key,
@@ -124,8 +125,17 @@ export function ticketType(id: string): Record<string, unknown> {
   };
 }
 
-/** Registers the owner's ticket type and installs the plugin, both as `owner`. */
-export async function installed(owner: MarfaClient): Promise<ConnectorPlugin> {
+/**
+ * Registers the owner's ticket type and installs the plugin, both as `owner`,
+ * with `shape` given the bundle to change before it is sent.
+ */
+export async function installed(
+  owner: MarfaClient,
+  shape: (
+    bundle: Record<string, any>,
+    plugin: ConnectorPlugin,
+  ) => void = () => {},
+): Promise<ConnectorPlugin> {
   const part = fresh();
   const plugin: ConnectorPlugin = {
     name: `tracker-${part}`,
@@ -138,21 +148,29 @@ export async function installed(owner: MarfaClient): Promise<ConnectorPlugin> {
     ticketType(plugin.ticket) as never,
   );
   expect(registered.status, JSON.stringify(registered.error)).toBe(201);
-  const made = await owner.installPlugin(connectorBundle(plugin));
+  const bundle = connectorBundle(plugin);
+  shape(bundle, plugin);
+  const made = await owner.installPlugin(bundle);
   expect(made.status, JSON.stringify(made.error)).toBe(201);
   return plugin;
 }
 
+export interface MintedKey {
+  id: string;
+  key: string;
+  client: MarfaClient;
+  host: MarfaClient;
+}
+
 /**
  * The plugin's connector key, minted by a connector host the plugin is
- * assigned to and returned with that host's client, then set by local authority to purge, to write the plugin's
- * types and every edge type and metadata, with `changes` over that.
+ * assigned to and returned with that host's client, holding what the mint
+ * gave it.
  */
-export async function connectorKey(
+export async function hostMinted(
   server: FreshServer,
-  plugin: ConnectorPlugin,
-  changes: Record<string, unknown> = {},
-): Promise<{ id: string; client: MarfaClient; host: MarfaClient }> {
+  plugin: Pick<ConnectorPlugin, "name">,
+): Promise<MintedKey> {
   const owner = local(server);
   const host = await owner.createConnectorHost(`host-${fresh()}`);
   expect(host.status, JSON.stringify(host.error)).toBe(201);
@@ -166,7 +184,29 @@ export async function connectorKey(
   });
   const minted = await hostClient.mintConnectorKey(plugin.name);
   expect(minted.status, JSON.stringify(minted.error)).toBe(201);
-  const set = await owner.updateKey(minted.data.key_id, {
+  return {
+    id: minted.data.key_id,
+    key: minted.data.key,
+    client: new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: minted.data.key,
+    }),
+    host: hostClient,
+  };
+}
+
+/**
+ * The plugin's connector key as `hostMinted` gives it, then set by local
+ * authority to purge, to write the plugin's types and every edge type and
+ * metadata, with `changes` over that.
+ */
+export async function connectorKey(
+  server: FreshServer,
+  plugin: ConnectorPlugin,
+  changes: Record<string, unknown> = {},
+): Promise<MintedKey> {
+  const minted = await hostMinted(server, plugin);
+  const set = await local(server).updateKey(minted.id, {
     permissions: ["items.purge"],
     type_permissions: { [`${plugin.source}.*`]: "write" },
     edge_permissions: { "*": "write" },
@@ -174,14 +214,7 @@ export async function connectorKey(
     ...changes,
   });
   expect(set.status, JSON.stringify(set.error)).toBe(200);
-  return {
-    id: minted.data.key_id,
-    client: new MarfaClient({
-      baseUrl: server.apiUrl,
-      apiKey: minted.data.key,
-    }),
-    host: hostClient,
-  };
+  return minted;
 }
 
 /** The mapping that lands `issue` on the owner's ticket type. */

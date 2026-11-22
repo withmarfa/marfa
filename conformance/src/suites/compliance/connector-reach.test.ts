@@ -3,8 +3,10 @@ import type { MarfaClient } from "../../client/api.js";
 import type { ApiResponse } from "../../client/types.js";
 import {
   type ConnectorPlugin,
+  type MintedKey,
   connectorKey,
   fresh,
+  hostMinted,
   installed,
   local,
   mint,
@@ -16,6 +18,13 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
+import {
+  callTool,
+  connectMcp,
+  toolError,
+  toolResult,
+} from "../../utils/mcp.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 
 /**
  * What a plugin connector's key may write once its mapping lands a kind on a
@@ -53,7 +62,7 @@ afterAll(async () => {
 
 interface Mapped {
   plugin: ConnectorPlugin;
-  key: { id: string; client: MarfaClient };
+  key: MintedKey;
 }
 
 /** A plugin whose `issue` kind lands on the owner's ticket type, and its key. */
@@ -594,5 +603,862 @@ describe("a mapping that changes", () => {
     );
     expect(off.status, JSON.stringify(off.error)).toBe(200);
     expect((await owner.getItem(mine.id)).data.item.read_only).toBe(false);
+  });
+});
+
+describe("the edge types a connector writes", () => {
+  it("mints a connector key holding write on the edge types its connector names, own and shipped, which writes both from its own item and no other", async () => {
+    let sent: Record<string, any> = {};
+    let cites = "";
+    const plugin = await installed(owner, (bundle, named) => {
+      cites = `${named.source}.cites`;
+      bundle.edge_types = [
+        {
+          id: cites,
+          cardinality: "many-to-many",
+          from_type_constraints: ["*"],
+          to_type_constraints: ["*"],
+        },
+      ];
+      bundle.connector.edge_types = [cites, "attached-to"];
+      sent = bundle;
+    });
+    const minted = await hostMinted(server, plugin);
+    const own = minted.client;
+    const held = async (id: string) =>
+      (await owner.listKeys()).data.data.find((entry) => entry.id === id);
+    expect((await held(minted.id))?.edge_permissions).toEqual({
+      [cites]: "write",
+      "attached-to": "write",
+    });
+    expect((await held(minted.id))?.type_permissions).toEqual({
+      [plugin.issue]: "write",
+      [plugin.comment]: "write",
+    });
+
+    const issue = async (title: string) => {
+      const made = await own.createItem({
+        type: plugin.issue,
+        properties: { title },
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      return made.data.item.id;
+    };
+    const [one, two] = [await issue("one"), await issue("two")];
+    for (const edge_type of [cites, "attached-to"]) {
+      const linked = await own.createEdge({
+        from_id: one,
+        to_id: two,
+        edge_type,
+      });
+      expect(
+        linked.status,
+        `${edge_type}: ${JSON.stringify(linked.error)}`,
+      ).toBe(201);
+    }
+    const unnamed = await own.createEdge({
+      from_id: one,
+      to_id: two,
+      edge_type: "parent-of",
+    });
+    expect(unnamed.status).toBe(403);
+    expect(unnamed.error?.error.code).toBe("edge_type_not_permitted");
+
+    // From its own item on the mapped type, and never to or from the owner's.
+    const saved = await owner.saveConnectorMapping(
+      plugin.name,
+      onTickets(plugin, 0),
+    );
+    expect(saved.status, JSON.stringify(saved.error)).toBe(200);
+    const mine = await ticket(own, plugin);
+    const fromMine = await own.createEdge({
+      from_id: mine.id,
+      to_id: one,
+      edge_type: cites,
+    });
+    expect(fromMine.status, JSON.stringify(fromMine.error)).toBe(201);
+    const theirs = await ticket(owner, plugin);
+    // The witness: a key that reaches the owner's ticket links to it.
+    const byOwner = await owner.createEdge({
+      from_id: one,
+      to_id: theirs.id,
+      edge_type: "attached-to",
+    });
+    expect(byOwner.status, JSON.stringify(byOwner.error)).toBe(201);
+    refusedAsUnreached(
+      await own.createEdge({
+        from_id: two,
+        to_id: theirs.id,
+        edge_type: cites,
+      }),
+      "edge to the owner's item",
+    );
+    refusedAsUnreached(
+      await own.createEdge({
+        from_id: theirs.id,
+        to_id: one,
+        edge_type: cites,
+      }),
+      "edge from the owner's item",
+    );
+
+    // A newer version may name fewer; the key keeps what it holds until its host mints again.
+    const newer = structuredClone(sent);
+    newer.version = "1.1.0";
+    newer.connector.edge_types = [cites];
+    const updated = await owner.installPlugin(newer);
+    expect(updated.status, JSON.stringify(updated.error)).toBe(200);
+    expect((updated.data as { outcome?: string }).outcome).toBe("updated");
+    expect((await held(minted.id))?.edge_permissions).toEqual({
+      [cites]: "write",
+      "attached-to": "write",
+    });
+    const again = await minted.host.mintConnectorKey(plugin.name);
+    expect(again.status, JSON.stringify(again.error)).toBe(201);
+    expect((await held(again.data.key_id))?.edge_permissions).toEqual({
+      [cites]: "write",
+    });
+  });
+});
+
+/**
+ * Leaves the plugin's stored connector or mapping unreadable with `statement`,
+ * after which the key lists, streams and settles nothing of the target type.
+ */
+async function readsNothing(statement: string) {
+  const { plugin, key } = await mapped();
+  const own = key.client;
+  await ticket(own, plugin);
+  const stream = `type=${encodeURIComponent(plugin.ticket)}`;
+  // The witness: while the connector and mapping read, the key lists and streams the target type.
+  expect((await own.listItems({ type: plugin.ticket })).status).toBe(200);
+  expect(await streamOpened(key.key, stream)).toBe(200);
+  const changed = withInstanceDatabase(server.sqlitePath, (db) =>
+    db.prepare(statement).run(plugin.name),
+  );
+  expect(Number(changed.changes)).toBe(1);
+  const listed = await own.listItems({ type: plugin.ticket });
+  expect(listed.status).toBe(403);
+  expect(listed.error?.error.code).toBe("type_not_permitted");
+  expect(await streamOpened(key.key, stream)).toBe(403);
+  const settled = await own.settleTombstones({
+    type: plugin.ticket,
+    source: plugin.source,
+    source_ids: ["anything"],
+    settled_at: new Date().toISOString(),
+  });
+  expect(settled.status).toBe(403);
+  expect(settled.error?.error.code).toBe("type_not_permitted");
+}
+
+/** The status of `GET /events` opened as `key`, its body left unread. */
+async function streamOpened(key: string, query: string): Promise<number> {
+  const answer = await fetch(`${server.apiUrl}/events?${query}`, {
+    headers: { Authorization: `Bearer ${key}`, Accept: "text/event-stream" },
+  });
+  await answer.body?.cancel();
+  return answer.status;
+}
+
+describe("what the connector reads of its own items on the target type", () => {
+  it("lists its own items of the mapped type page by page and none of the owner's, which the owner lists beside them, and lists, streams and settles none once the kind is off", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const mine: string[] = [];
+    const theirs: string[] = [];
+    for (let at = 0; at < 5; at += 1) {
+      mine.push((await ticket(own, plugin, { source_id: `m-${fresh()}` })).id);
+      if (at < 4) theirs.push((await ticket(owner, plugin)).id);
+    }
+
+    const walked: string[] = [];
+    const pages: number[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await own.listItems({
+        type: plugin.ticket,
+        limit: 2,
+        ...(cursor !== undefined && { cursor }),
+      });
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      pages.push(page.data.data.length);
+      walked.push(...page.data.data.map((item) => item.id));
+      cursor = page.data.next_cursor ?? undefined;
+    } while (cursor !== undefined);
+    expect(walked.sort()).toEqual([...mine].sort());
+    expect(pages.slice(0, -1).every((count) => count === 2)).toBe(true);
+    // The witness: the owner lists both the connector's tickets and their own.
+    const all = await owner.listItems({ type: plugin.ticket, limit: 100 });
+    expect(all.data.data.map((item) => item.id).sort()).toEqual(
+      [...mine, ...theirs].sort(),
+    );
+    const parent = await own.listItems({ type: "core.task", limit: 100 });
+    expect(parent.status, JSON.stringify(parent.error)).toBe(200);
+    expect(parent.data.data.map((item) => item.id)).not.toContain(theirs[0]);
+    expect(parent.data.data.map((item) => item.id)).toContain(mine[0]);
+
+    // The edge-filtered form, as a connector finds the rows linked to one of its own.
+    const issue = await own.createItem({
+      type: plugin.issue,
+      properties: { title: "the target" },
+    });
+    expect(issue.status).toBe(201);
+    for (const [by, from] of [
+      [own, mine[0]!],
+      [owner, theirs[0]!],
+    ] as const) {
+      const linked = await by.createEdge({
+        from_id: from,
+        to_id: issue.data.item.id,
+        edge_type: "references",
+      });
+      expect(linked.status, JSON.stringify(linked.error)).toBe(201);
+    }
+    const filter = `edge[references] eq ${JSON.stringify(issue.data.item.id)}`;
+    const ownLinked = await own.listItems({ type: plugin.ticket, filter });
+    expect(ownLinked.status, JSON.stringify(ownLinked.error)).toBe(200);
+    expect(ownLinked.data.data.map((item) => item.id)).toEqual([mine[0]]);
+    const allLinked = await owner.listItems({ type: plugin.ticket, filter });
+    expect(allLinked.data.data.map((item) => item.id).sort()).toEqual(
+      [mine[0], theirs[0]].sort(),
+    );
+
+    const stream = `type=${encodeURIComponent(plugin.ticket)}`;
+    expect(await streamOpened(key.key, stream)).toBe(200);
+    const off = await owner.saveConnectorMapping(
+      plugin.name,
+      onTickets(plugin, 1, { enabled: false }),
+    );
+    expect(off.status, JSON.stringify(off.error)).toBe(200);
+    const listed = await own.listItems({ type: plugin.ticket });
+    expect(listed.status).toBe(403);
+    expect(listed.error?.error.code).toBe("type_not_permitted");
+    expect(await streamOpened(key.key, stream)).toBe(403);
+    const settled = await own.settleTombstones({
+      type: plugin.ticket,
+      source: plugin.source,
+      source_ids: ["anything"],
+      settled_at: new Date().toISOString(),
+    });
+    expect(settled.status).toBe(403);
+    expect(settled.error?.error.code).toBe("type_not_permitted");
+  });
+
+  it("streams the events of its own items of the mapped type and never the owner's, settled by a later event", async ({
+    signal,
+  }) => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const issue = await own.createItem({
+      type: plugin.issue,
+      properties: { title: "an end" },
+    });
+    expect(issue.status).toBe(201);
+    const ownerKey = (
+      await mint(server, `reach-stream-${fresh()}`, [], { "*": "read" })
+    ).key;
+    const query: [string, string][] = [
+      ["type", plugin.ticket],
+      ["edges", "all"],
+    ];
+    const itemOf = (event: { data: unknown }) =>
+      (event.data as { item?: { id?: string } })?.item?.id ??
+      (event.data as { edge?: { from_id?: string } })?.edge?.from_id;
+
+    await withStreamAtCursor(
+      server.apiUrl,
+      key.key,
+      { query, signal },
+      async (connector) => {
+        expect(connector.response.status).toBe(200);
+        await withStreamAtCursor(
+          server.apiUrl,
+          ownerKey,
+          { query, signal },
+          async (watching) => {
+            const theirs = await ticket(owner, plugin);
+            const mine = await ticket(own, plugin);
+            const changed = await owner.updateItem(mine.id, {
+              version: mine.version,
+              properties: { title: "changed in Marfa" },
+            });
+            expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+            for (const from of [theirs.id, mine.id]) {
+              const linked = await owner.createEdge({
+                from_id: from,
+                to_id: issue.data.item.id,
+                edge_type: "references",
+              });
+              expect(linked.status, JSON.stringify(linked.error)).toBe(201);
+            }
+            const sentinel = await ticket(own, plugin);
+
+            // The witness: the owner's stream carries the owner's ticket.
+            const seen = await collectUntil(
+              watching,
+              (events) => events.some((event) => itemOf(event) === sentinel.id),
+              "the sentinel on the owner's stream",
+              signal,
+            );
+            expect(
+              seen.events.filter((event) => itemOf(event) === theirs.id).length,
+            ).toBe(2);
+
+            const { events } = await collectUntil(
+              connector,
+              (got) => got.some((event) => itemOf(event) === sentinel.id),
+              "the sentinel on the connector's stream",
+              signal,
+            );
+            const about = (id: string) =>
+              events
+                .filter((event) => itemOf(event) === id)
+                .map((event) => event.event);
+            expect(about(mine.id)).toEqual([
+              "item.created",
+              "item.updated",
+              "edge.created",
+            ]);
+            expect(about(theirs.id)).toEqual([]);
+          },
+        );
+      },
+    );
+  });
+
+  it("settles the tombstones of its own purged items of the mapped type by source and natural key, and none by link or under another source", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const mine = await ticket(own, plugin, { source_id: `m-${fresh()}` });
+    const theirs = await ticket(owner, plugin, { source_id: `o-${fresh()}` });
+    for (const [by, id] of [
+      [own, mine.id],
+      [owner, theirs.id],
+    ] as const) {
+      expect((await by.deleteItem(id)).status).toBe(200);
+      expect((await by.purgeItem(id)).status).toBe(200);
+    }
+    const later = new Date(Date.now() + 3_600_000).toISOString();
+
+    const settled = await own.settleTombstones({
+      type: plugin.ticket,
+      source: plugin.source,
+      source_ids: [mine.source_id!],
+      settled_at: later,
+    });
+    expect(settled.status, JSON.stringify(settled.error)).toBe(200);
+    expect(settled.data.data).toEqual([
+      expect.objectContaining({ key: mine.source_id, settled_at: later }),
+    ]);
+
+    const another = await own.settleTombstones({
+      type: plugin.ticket,
+      source: ownerSource,
+      source_ids: [theirs.source_id!],
+      settled_at: later,
+    });
+    expect(another.status).toBe(403);
+    expect(another.error?.error.code).toBe("type_not_permitted");
+    // The witness: the owner settles the tombstone the connector was refused.
+    const byOwner = await owner.settleTombstones({
+      type: plugin.ticket,
+      source: ownerSource,
+      source_ids: [theirs.source_id!],
+      settled_at: later,
+    });
+    expect(byOwner.data.data).toHaveLength(1);
+
+    // A link's tombstone names no source, so the connector settles none by link.
+    const linked = `user.linkticket${fresh()}`;
+    const registered = await owner.registerType({
+      id: linked,
+      parent: "core.task",
+      fields: { address: { type: "string" } },
+      link_field: "address",
+    } as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const moved = await owner.saveConnectorMapping(plugin.name, {
+      version: 1,
+      kinds: {
+        issue: { target_type: linked, fields: { title: { from: "title" } } },
+      },
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    const address = `https://tracker.example.test/${fresh()}`;
+    const made = await own.createItem({
+      type: linked,
+      source_id: `l-${fresh()}`,
+      properties: { title: "linked", address },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    expect((await own.deleteItem(made.data.item.id)).status).toBe(200);
+    expect((await own.purgeItem(made.data.item.id)).status).toBe(200);
+    const byLink = await own.settleTombstones({
+      type: linked,
+      links: [address],
+      settled_at: later,
+    });
+    expect(byLink.status).toBe(403);
+    expect(byLink.error?.error.code).toBe("type_not_permitted");
+    const bySource = await own.settleTombstones({
+      type: linked,
+      source: plugin.source,
+      source_ids: [made.data.item.source_id!],
+      settled_at: later,
+    });
+    expect(bySource.status, JSON.stringify(bySource.error)).toBe(200);
+    expect(bySource.data.data).toHaveLength(1);
+    const ownerByLink = await owner.settleTombstones({
+      type: linked,
+      links: [address],
+      settled_at: later,
+    });
+    expect(ownerByLink.data.data).toHaveLength(1);
+  });
+
+  it("lists, streams and settles nothing of the mapped type when its stored mapping does not read", async () => {
+    await readsNothing(
+      `UPDATE connector_mappings SET kinds = '{"issue":{"tier":"archive"}}' WHERE plugin = ?`,
+    );
+  });
+
+  it("lists, streams and settles nothing of the mapped type when its stored connector does not read", async () => {
+    await readsNothing(
+      "UPDATE plugins SET manifest = json_set(manifest, '$.connector.kinds', 'unreadable') WHERE name = ?",
+    );
+  });
+});
+
+describe("a mapped type that holds none of the connector's items", () => {
+  it("lists the mapped type and its parent as an empty page while it holds no items, and while it holds only the owner's", async () => {
+    const part = fresh();
+    const group = `user.group${part}`;
+    const target = `user.groupticket${part}`;
+    for (const registered of [
+      await owner.registerType({
+        id: group,
+        parent: "core.task",
+        fields: {},
+      } as never),
+      await owner.registerType({
+        id: target,
+        parent: group,
+        fields: { reporter: { type: "string" } },
+      } as never),
+    ]) {
+      expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    }
+    const plugin = await installed(owner);
+    const key = await connectorKey(server, plugin);
+    const saved = await owner.saveConnectorMapping(plugin.name, {
+      version: 0,
+      kinds: {
+        issue: { target_type: target, fields: { title: { from: "title" } } },
+      },
+    });
+    expect(saved.status, JSON.stringify(saved.error)).toBe(200);
+    const listedBy = async (by: MarfaClient, type: string) => {
+      const page = await by.listItems({ type, limit: 100 });
+      expect(page.status, `${type}: ${JSON.stringify(page.error)}`).toBe(200);
+      return page.data.data.map((item) => item.id);
+    };
+
+    for (const type of [target, group]) {
+      expect(await listedBy(key.client, type)).toEqual([]);
+    }
+    const theirs = await owner.createItem({
+      type: target,
+      properties: { title: "the owner's", reporter: "o" },
+    });
+    expect(theirs.status, JSON.stringify(theirs.error)).toBe(201);
+    for (const type of [target, group]) {
+      // The witness: the owner lists its item under both types.
+      expect(await listedBy(owner, type)).toEqual([theirs.data.item.id]);
+      expect(await listedBy(key.client, type)).toEqual([]);
+    }
+    const mine = await key.client.createItem({
+      type: target,
+      source_id: `m-${part}`,
+      properties: { title: "the connector's" },
+    });
+    expect(mine.status, JSON.stringify(mine.error)).toBe(201);
+    for (const type of [target, group]) {
+      expect(await listedBy(key.client, type)).toEqual([mine.data.item.id]);
+    }
+  });
+});
+
+/** The ids of the edges in `blocks` of `edge_type`, or none for a block left out. */
+function blockIds(
+  blocks: Record<string, { data: { id: string }[] }> | undefined,
+  edgeType: string,
+): string[] {
+  return (blocks?.[edgeType]?.data ?? []).map((edge) => edge.id);
+}
+
+/** Every edge `walk` pages through, two at a time, with the size of each page. */
+async function pagedEdges(
+  walk: (
+    cursor: string | undefined,
+  ) => Promise<
+    ApiResponse<{ data: { id: string }[]; next_cursor?: string | null }>
+  >,
+): Promise<{ ids: string[]; sizes: number[] }> {
+  const ids: string[] = [];
+  const sizes: number[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await walk(cursor);
+    expect(page.status, JSON.stringify(page.error)).toBe(200);
+    sizes.push(page.data.data.length);
+    ids.push(...page.data.data.map((edge) => edge.id));
+    cursor = page.data.next_cursor ?? undefined;
+  } while (cursor !== undefined);
+  return { ids, sizes };
+}
+
+describe("the edges the connector reads from its own items on the target type", () => {
+  it("reads an edge from its own item of the mapped type on every edge door, and never one from the owner's item into its own", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const mine = await ticket(own, plugin, { source_id: `a-${fresh()}` });
+    const other = await ticket(own, plugin, { source_id: `b-${fresh()}` });
+    const theirs = await ticket(owner, plugin);
+    const link = async (by: MarfaClient, from: string, to: string) => {
+      const made = await by.createEdge({
+        from_id: from,
+        to_id: to,
+        edge_type: "references",
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      return made.data.edge.id;
+    };
+    const ownEdge = await link(own, mine.id, other.id);
+    const intoMine = await link(owner, theirs.id, mine.id);
+
+    // `include=edges` on a listing, an item read and a lookup.
+    const listed = await own.listItems({
+      type: plugin.ticket,
+      include: "edges",
+      limit: 100,
+    });
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    const listedMine = listed.data.data.find((item) => item.id === mine.id);
+    expect(blockIds(listedMine?.edges as never, "references")).toEqual([
+      ownEdge,
+    ]);
+    const read = await own.getItemWithBackrefs(mine.id);
+    expect(read.status, JSON.stringify(read.error)).toBe(200);
+    expect(blockIds(read.data.item.edges as never, "references")).toEqual([
+      ownEdge,
+    ]);
+    expect(blockIds(read.data.backrefs as never, "references")).toEqual([]);
+    const otherRead = await own.getItemWithBackrefs(other.id);
+    expect(blockIds(otherRead.data.backrefs as never, "references")).toEqual([
+      ownEdge,
+    ]);
+    const looked = await own.lookupItems({
+      type: plugin.ticket,
+      ids: [mine.id],
+      include: ["edges"],
+    });
+    expect(looked.status, JSON.stringify(looked.error)).toBe(200);
+    expect(blockIds(looked.data.data[0]?.edges as never, "references")).toEqual(
+      [ownEdge],
+    );
+
+    // The per-item doors and the edge listing.
+    const out = await own.listItemEdges(mine.id, { edge_type: "references" });
+    expect(out.status, JSON.stringify(out.error)).toBe(200);
+    expect(out.data.data.map((edge) => edge.id)).toEqual([ownEdge]);
+    const back = await own.listItemBackrefs(mine.id, {
+      edge_type: "references",
+    });
+    expect(back.status, JSON.stringify(back.error)).toBe(200);
+    expect(back.data.data).toEqual([]);
+    const otherBack = await own.listItemBackrefs(other.id, {
+      edge_type: "references",
+    });
+    expect(otherBack.data.data.map((edge) => edge.id)).toEqual([ownEdge]);
+    const all = await pagedEdges((cursor) =>
+      own.listEdges({
+        edge_type: "references",
+        limit: 2,
+        ...(cursor !== undefined && { cursor }),
+      }),
+    );
+    expect(all.ids).toContain(ownEdge);
+    expect(all.ids).not.toContain(intoMine);
+    expect((await own.getEdge(ownEdge)).status).toBe(200);
+    expect((await own.getEdge(intoMine)).status).toBe(404);
+
+    // The witness: the owner reads the edge from its item into the connector's.
+    const ownerBack = await owner.listItemBackrefs(mine.id, {
+      edge_type: "references",
+    });
+    expect(ownerBack.data.data.map((edge) => edge.id)).toEqual([intoMine]);
+    const ownerRead = await owner.getItemWithBackrefs(mine.id);
+    expect(blockIds(ownerRead.data.backrefs as never, "references")).toEqual([
+      intoMine,
+    ]);
+    expect((await owner.getEdge(intoMine)).status).toBe(200);
+  });
+
+  it("fills each page of the edge listing and of an item's edges with the edges from its own items, between many from the owner's, and pages to the end", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const hub = await ticket(own, plugin, { source_id: `h-${fresh()}` });
+    const edgeType = `mock.reach.paged.p${fresh()}`;
+    const registered = await owner.registerEdgeType({
+      label: "Paged",
+      id: edgeType,
+      cardinality: "many-to-many",
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const mine: string[] = [];
+    const theirs: string[] = [];
+    for (let at = 0; at < 5; at += 1) {
+      const from = await ticket(own, plugin, { source_id: `p-${fresh()}` });
+      const made = await own.createEdge({
+        from_id: from.id,
+        to_id: hub.id,
+        edge_type: edgeType,
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      mine.push(made.data.edge.id);
+      for (let more = 0; more < 3; more += 1) {
+        const by = await ticket(owner, plugin);
+        const hidden = await owner.createEdge({
+          from_id: by.id,
+          to_id: hub.id,
+          edge_type: edgeType,
+        });
+        expect(hidden.status, JSON.stringify(hidden.error)).toBe(201);
+        theirs.push(hidden.data.edge.id);
+      }
+    }
+    const walks = {
+      edges: (cursor: string | undefined) =>
+        own.listEdges({
+          edge_type: edgeType,
+          limit: 2,
+          ...(cursor !== undefined && { cursor }),
+        }),
+      backrefs: (cursor: string | undefined) =>
+        own.listItemBackrefs(hub.id, {
+          edge_type: edgeType,
+          limit: 2,
+          ...(cursor !== undefined && { cursor }),
+        }),
+    };
+    for (const [door, walk] of Object.entries(walks)) {
+      const { ids, sizes } = await pagedEdges(walk);
+      expect([...ids].sort(), door).toEqual([...mine].sort());
+      expect(sizes, door).toEqual([2, 2, 1]);
+    }
+    // The witness: the owner pages through every edge.
+    const everything = await pagedEdges((cursor) =>
+      owner.listEdges({
+        edge_type: edgeType,
+        limit: 50,
+        ...(cursor !== undefined && { cursor }),
+      }),
+    );
+    expect([...everything.ids].sort()).toEqual([...mine, ...theirs].sort());
+  });
+
+  it("reads no edge from its own item of an edge type its edge map does not read", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const mine = await ticket(own, plugin, { source_id: `a-${fresh()}` });
+    const other = await ticket(own, plugin, { source_id: `b-${fresh()}` });
+    const made = await owner.createEdge({
+      from_id: mine.id,
+      to_id: other.id,
+      edge_type: "references",
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const edge = made.data.edge.id;
+    // The witness: while its edge map reads the type, the key reads the edge.
+    const seen = await own.listItemEdges(mine.id, { edge_type: "references" });
+    expect(seen.data.data.map((held) => held.id)).toEqual([edge]);
+    const narrowed = await local(server).updateKey(key.id, {
+      edge_permissions: { "attached-to": "read" },
+    });
+    expect(narrowed.status, JSON.stringify(narrowed.error)).toBe(200);
+
+    const out = await own.listItemEdges(mine.id, { edge_type: "references" });
+    expect(out.status, JSON.stringify(out.error)).toBe(200);
+    expect(out.data.data).toEqual([]);
+    const listed = await own.listEdges({ edge_type: "references" });
+    expect(listed.data.data.map((held) => held.id)).not.toContain(edge);
+    const read = await own.getItem(mine.id);
+    expect(read.status, JSON.stringify(read.error)).toBe(200);
+    expect(blockIds(read.data.item.edges as never, "references")).toEqual([]);
+    expect((await own.getEdge(edge)).status).toBe(404);
+  });
+});
+
+describe("what the connector reads of its own item's history, extensions and tables", () => {
+  it("reads the versions, extensions and table rows of its own item of the mapped type, and answers the owner's item of that type as one it cannot read", async () => {
+    const namespace = `reachext.${fresh()}`;
+    const { plugin, key } = await mapped({
+      extension_permissions: { [namespace]: "read" },
+    });
+    const own = key.client;
+    const mine = await ticket(own, plugin, { source_id: `h-${fresh()}` });
+    const theirs = await ticket(owner, plugin, { source_id: `o-${fresh()}` });
+    const extender = (
+      await mint(
+        server,
+        `reach-ext-${fresh()}`,
+        [],
+        { "*": "write" },
+        {
+          extension_permissions: { [namespace]: "write" },
+        },
+      )
+    ).client;
+    for (const [by, item] of [
+      [own, mine],
+      [owner, theirs],
+    ] as const) {
+      const patched = await by.updateItem(item.id, {
+        version: item.version,
+        properties: { title: "a second version" },
+      });
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+      const rows = await by.writeRows(item.id, "log", {
+        operations: [{ op: "put", values: { line: "opened" } }],
+      });
+      expect(rows.status, JSON.stringify(rows.error)).toBe(200);
+      const extended = await extender.setItemExtension(item.id, namespace, {
+        synced: true,
+      });
+      expect(extended.status, JSON.stringify(extended.error)).toBe(200);
+    }
+
+    const doors: [string, (id: string) => Promise<ApiResponse<any>>][] = [
+      ["versions", (id) => own.getVersions(id)],
+      ["extensions", (id) => own.listItemExtensions(id)],
+      ["extension", (id) => own.getItemExtension(id, namespace)],
+      ["tables", (id) => own.listTables(id)],
+      ["rows", (id) => own.listRows(id, "log")],
+      ["totals", (id) => own.rowTotals(id, "log")],
+      ["batches", (id) => own.listBatches(id, "log")],
+    ];
+    const answered = new Map<string, any>();
+    for (const [door, call] of doors) {
+      const answer = await call(mine.id);
+      expect(answer.status, `${door}: ${JSON.stringify(answer.error)}`).toBe(
+        200,
+      );
+      answered.set(door, answer.data);
+    }
+    // A key whose type map reads the type reads the same history of it.
+    const history = (await owner.getVersions(mine.id)).data.data;
+    expect(history.length).toBeGreaterThan(0);
+    expect(answered.get("versions").data).toEqual(history);
+    expect(
+      (answered.get("extensions").data as { namespace: string }[]).map(
+        (entry) => entry.namespace,
+      ),
+    ).toContain(namespace);
+    expect(answered.get("extension").document).toEqual({ synced: true });
+    expect(
+      (answered.get("tables").data as { name: string }[]).map(
+        (table) => table.name,
+      ),
+    ).toContain("log");
+    const rows = answered.get("rows").data as { id: string; values: unknown }[];
+    expect(rows.map((row) => row.values)).toEqual([{ line: "opened" }]);
+    expect(answered.get("batches").data).toHaveLength(1);
+    const row = await own.getRow(mine.id, "log", rows[0]!.id);
+    expect(row.status, JSON.stringify(row.error)).toBe(200);
+    expect(row.data.values).toEqual({ line: "opened" });
+
+    // The witness: the owner reads the same doors on its own item.
+    const ownerVersions = await owner.getVersions(theirs.id);
+    expect(ownerVersions.data.data.length).toBeGreaterThan(0);
+    const ownerRows = await owner.listRows(theirs.id, "log");
+    expect(ownerRows.data.data).toHaveLength(1);
+    const unreached = await own.getItem(theirs.id);
+    expect(unreached.status).toBe(404);
+    const refusal = (answer: ApiResponse<unknown>) => ({
+      status: answer.status,
+      code: answer.error?.error.code,
+    });
+    for (const [door, call] of doors) {
+      expect(refusal(await call(theirs.id)), door).toEqual(refusal(unreached));
+    }
+    expect(
+      refusal(await own.getRow(theirs.id, "log", ownerRows.data.data[0]!.id)),
+    ).toEqual(refusal(unreached));
+  });
+});
+
+describe("the MCP tools", () => {
+  it("finds none of its own items of the mapped type through marfa_find, which GET /items lists", async () => {
+    const { plugin, key } = await mapped();
+    const mine = await ticket(key.client, plugin, {
+      source_id: `m-${fresh()}`,
+    });
+    // The witness: the listing door lists the connector's own item.
+    const listed = await key.client.listItems({ type: plugin.ticket });
+    expect(listed.data.data.map((item) => item.id)).toEqual([mine.id]);
+    const mcp = await connectMcp(server.apiUrl, key.key);
+    try {
+      const found = await callTool(mcp, "marfa_find", { type: plugin.ticket });
+      expect(JSON.stringify(found)).not.toContain(mine.id);
+      expect(toolError(found).code).toBe("type_not_permitted");
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("reads no field of its own item of the mapped type through marfa_get, which answers it as an item it cannot read", async () => {
+    const { plugin, key } = await mapped();
+    const mine = await ticket(key.client, plugin, {
+      source_id: `f-${fresh()}`,
+      properties: { title: "a field to read", reporter: "someone" },
+    });
+    const absent = `${mine.id.slice(0, -1)}${mine.id.endsWith("0") ? "1" : "0"}`;
+    // The witnesses: GET /items/{id} reads the connector's own item, and a
+    // key whose type map reads the type reads the field over MCP.
+    const read = await key.client.getItem(mine.id);
+    expect(read.status, JSON.stringify(read.error)).toBe(200);
+    const reader = await mint(server, `reach-reader-${fresh()}`, [], {
+      [plugin.ticket]: "read",
+    });
+    const readerMcp = await connectMcp(server.apiUrl, reader.key);
+    try {
+      const part = await callTool(readerMcp, "marfa_get", {
+        ids: [mine.id],
+        field: "title",
+      });
+      expect(toolResult(part).text).toBe("a field to read");
+    } finally {
+      await readerMcp.close();
+    }
+
+    const mcp = await connectMcp(server.apiUrl, key.key);
+    try {
+      const part = await callTool(mcp, "marfa_get", {
+        ids: [mine.id],
+        field: "title",
+      });
+      expect(JSON.stringify(part)).not.toContain("a field to read");
+      const missing = await callTool(mcp, "marfa_get", {
+        ids: [absent],
+        field: "title",
+      });
+      const unread = (answer: typeof part, id: string) =>
+        JSON.stringify(toolError(answer)).replaceAll(id, "<id>");
+      expect(unread(part, mine.id)).toBe(unread(missing, absent));
+      const whole = await callTool(mcp, "marfa_get", { ids: [mine.id] });
+      expect(toolResult(whole).not_found).toEqual([mine.id]);
+    } finally {
+      await mcp.close();
+    }
   });
 });

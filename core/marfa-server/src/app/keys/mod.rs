@@ -91,6 +91,8 @@ pub struct Key {
     pub standing: Standing,
     /// Read with the key where it is a plugin's connector key, from the mapping as it stands.
     pub mapped: Option<super::access::Mapped>,
+    /// Set by a door that reads by the type map alone, so the key read again keeps no mapping.
+    pub by_type_map: bool,
     pub created_at: String,
     pub expires_at: Option<String>,
     pub last_used_at: Option<String>,
@@ -191,6 +193,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Key> {
         levers: OwnLevers::from_row(row.get("enforcement_override")?),
         standing: Standing::default(),
         mapped: None,
+        by_type_map: false,
         created_at: row.get::<_, Stamp>("created_at")?.text(),
         expires_at: row.get::<_, Option<Stamp>>("expires_at")?.map(Stamp::text),
         last_used_at: row
@@ -534,6 +537,7 @@ pub(crate) fn given(
         expires_at: None,
         last_used_at: None,
         mapped: None,
+        by_type_map: false,
     }
 }
 
@@ -654,6 +658,7 @@ pub async fn mint(app: &App, caller: &Caller, request: Mint) -> Result<(Key, Str
                 levers: request.levers.flatten().into(),
                 standing: Standing::default(),
                 mapped: None,
+                by_type_map: false,
                 created_at: unit.at.clone(),
                 expires_at,
                 last_used_at: None,

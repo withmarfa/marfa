@@ -1,7 +1,7 @@
 //! A plugin: the source folder it is written in, the bundle that installs it, the index a
 //! release lists, and what a newer version of an installed plugin may change.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use serde_json::{Map, Value, json};
 
@@ -286,25 +286,27 @@ pub fn bundle_faults(bundle: &Obj) -> Vec<Problem> {
             ));
         }
     }
-    if let Some(Value::Object(connector)) = bundle.get(CONNECTOR) {
-        faults.extend(connector_faults(connector, Some(&seen)));
-    }
     let edge_types = list_of_objects(bundle, "edge_types", &mut faults);
-    let mut seen = BTreeSet::new();
+    let mut own_edges: BTreeMap<&str, &Obj> = BTreeMap::new();
     for (at, definition) in edge_types.iter().enumerate() {
         match definition.get("id").and_then(Value::as_str) {
-            Some(id) if !seen.insert(id) => faults.push(fault(
+            Some(id) if own_edges.contains_key(id) => faults.push(fault(
                 format!("edge_types.{at}.id"),
                 "validation_error",
                 format!("The bundle names edge type {id} more than once"),
             )),
-            Some(_) => {}
+            Some(id) => {
+                own_edges.insert(id, definition);
+            }
             None => faults.push(fault(
                 format!("edge_types.{at}.id"),
                 "missing_required_field",
                 "Each edge type names its id",
             )),
         }
+    }
+    if let Some(Value::Object(connector)) = bundle.get(CONNECTOR) {
+        faults.extend(connector_faults(connector, Some(&seen), Some(&own_edges)));
     }
     faults
 }
@@ -425,7 +427,16 @@ fn read_source(files: &[SourceFile]) -> Source {
     }
 }
 
-fn manifest_faults(manifest: &Obj) -> Vec<Problem> {
+/// Each edge type the folder holds that reads, by its id.
+fn own_edges(edge_types: &[(String, Result<Obj, Problem>)]) -> BTreeMap<&str, &Obj> {
+    edge_types
+        .iter()
+        .filter_map(|(_, read)| read.as_ref().ok())
+        .filter_map(|definition| Some((definition.get("id")?.as_str()?, definition)))
+        .collect()
+}
+
+fn manifest_faults(manifest: &Obj, edges: &BTreeMap<&str, &Obj>) -> Vec<Problem> {
     let mut faults: Vec<Problem> = manifest
         .keys()
         .filter(|key| !IDENTITY.contains(&key.as_str()) && key.as_str() != CONNECTOR)
@@ -440,7 +451,7 @@ fn manifest_faults(manifest: &Obj) -> Vec<Problem> {
         .collect();
     faults.extend(identity_faults(manifest));
     if let Some(Value::Object(connector)) = manifest.get(CONNECTOR) {
-        faults.extend(connector_faults(connector, None));
+        faults.extend(connector_faults(connector, None, Some(edges)));
     }
     for held in &mut faults {
         held.path = format!("{MANIFEST}: {}", held.path);
@@ -537,7 +548,7 @@ pub fn judge_edge_type(
 pub fn check_source(files: &[SourceFile], registry: &Registry) -> Result<SourceVerdict, RuleError> {
     let source = read_source(files);
     let mut problems = match &source.manifest {
-        Ok(manifest) => manifest_faults(manifest),
+        Ok(manifest) => manifest_faults(manifest, &own_edges(&source.edge_types)),
         Err(refused) => vec![refused.clone()],
     };
     let (types, accepted) = check_plugin_type_files(&source.types, registry)?;
@@ -594,7 +605,7 @@ fn default_mapping_faults(connector: &Obj, accepted: &Registry) -> Vec<Problem> 
             }
         }
     }
-    let shaped: Vec<String> = connector_faults(connector, None)
+    let shaped: Vec<String> = connector_faults(connector, None, None)
         .into_iter()
         .map(|held| held.path)
         .collect();
@@ -620,7 +631,7 @@ pub fn build_bundle(files: &[SourceFile], version: &str) -> Result<Obj, Vec<Prob
     }
     let manifest = match source.manifest {
         Ok(manifest) => {
-            problems.extend(manifest_faults(&manifest));
+            problems.extend(manifest_faults(&manifest, &own_edges(&source.edge_types)));
             manifest
         }
         Err(refused) => {

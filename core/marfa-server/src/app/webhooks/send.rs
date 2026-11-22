@@ -88,6 +88,7 @@ fn prepare(
         rules: &catalog.rules,
         read_only,
         filter: &UNFILTERED,
+        own: false,
     };
     let Some(kind) = judge.wants(&head) else {
         return Ok(Prepared::Cancel(super::CANCEL_UNREAD));

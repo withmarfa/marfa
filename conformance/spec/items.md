@@ -2736,9 +2736,9 @@ When the server answers `POST /items/tombstones`, the server MUST answer under `
 
 ### `items/tombstone-settle-grant`
 
-If a key that may not write the `type` sends `POST /items/tombstones`, then the server MUST answer `403 type_not_permitted`.
+If a key that may not write the `type` sends `POST /items/tombstones`, other than as `plugins/reach-tombstones-own` lets it, then the server MUST answer `403 type_not_permitted`.
 
-**Tests:** `compliance/links.test.ts › refuses to move a tombstone to a key that may only read the type`.
+**Tests:** `compliance/links.test.ts › refuses to move a tombstone to a key that may only read the type`, `compliance/connector-reach.test.ts › settles the tombstones of its own purged items of the mapped type by source and natural key, and none by link or under another source`.
 
 ### `items/tombstone-settle-source`
 

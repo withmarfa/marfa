@@ -1940,7 +1940,7 @@ While an edge's type is not registered, the server MUST return the edge from `GE
 
 **Reason:** a forced delete keeps the edges (`edges/types-delete-force-keeps`), and an edge nothing can describe is still an edge a person made. An edge restored under an edge type that is not registered is read the same way (`archive/restore-edges-unregistered`).
 
-**Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
+**Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`, `compliance/edge-types.test.ts › lists an edge whose type a forced delete removed to a key whose edge map reads every edge type but one, on every edge door, as GET /edges/{id} reads it`.
 
 ### `edges/types-delete-unused`
 
@@ -2174,17 +2174,17 @@ If a source filter leaves out an edge, then the server MUST NOT count the edge a
 
 **Tests:** `compliance/edge-source-filter.test.ts › fills each page of every listing with the edges the filter shows, and pages to the end`, `› fills a hydrated block to its cap with the edges the filter shows, and continues it at the listing`, `› fills the block an item listing carries to its cap, whatever the source of the to items, and continues it at the listing`.
 
-### `edges/read-list-short`
+### `edges/read-withheld-page`
 
-When `GET /edges` leaves out of a page an edge whose from item's type or whose edge type the credential may not read, the server MUST take `next_cursor` from the whole listing, so that a page can be shorter than `limit`, or empty with a `next_cursor` still to follow.
+If the credential may not read the from item or the edge type of an edge, then the server MUST NOT count the edge against the `limit` of a page of `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs`, or against the cap of an `edges` or `backrefs` block that an item read, an item listing, `POST /items/bulk-get`, `POST /items/lookup` or the answer to a write carries.
 
-**Reason:** a caller stops on `next_cursor` `null` and not on an empty page.
+**Reason:** a caller stops on a `next_cursor` of `null` and not on a short page, so one cut before the edges it may not read are left out would hand back a fraction of its size, or none, and a cursor that counted edges the credential cannot see.
 
-**Tests:** `compliance/edge-permissions.test.ts › pages to the end of the listing though whole pages are dropped`.
+**Tests:** `compliance/edge-permissions.test.ts › fills each page of the listing with the edges it may read, though most are dropped, and pages to the end`, `› fills each page of a per-item door with the edges it may read, though most are dropped, and pages to the end`, `compliance/connector-reach.test.ts › fills each page of the edge listing and of an item's edges with the edges from its own items, between many from the owner's, and pages to the end`.
 
 ### `edges/read-from-trashed`
 
-When the from item of an edge is in the bin, the server MUST judge the edge's readability by the type of that item as it does for an item that is not.
+When the from item of an edge is in the bin, the server MUST judge the edge's readability by the type of that item, and for a plugin's connector key by its `source` too, as it does for an item that is not.
 
 **Reason:** a from item read away is a from item with no type to refuse, so trashing it would turn a refusal into a disclosure.
 
@@ -2194,7 +2194,7 @@ When the from item of an edge is in the bin, the server MUST judge the edge's re
 
 When `GET /items/{id}/edges` or `GET /items/{id}/backrefs` meets an edge whose from item's type or whose edge type the credential may not read, the server MUST leave the edge out of the page.
 
-**Tests:** `compliance/edge-permissions.test.ts › leaves an edge of an unreadable kind out of GET /items/{id}/edges`, `› leaves an edge with an unreadable from item out of GET /items/{id}/backrefs`, `› pages a per-item door to the end though whole pages are dropped`.
+**Tests:** `compliance/edge-permissions.test.ts › leaves an edge of an unreadable kind out of GET /items/{id}/edges`, `› leaves an edge with an unreadable from item out of GET /items/{id}/backrefs`, `› fills each page of a per-item door with the edges it may read, though most are dropped, and pages to the end`.
 
 ### `edges/read-hydrated-withheld`
 
