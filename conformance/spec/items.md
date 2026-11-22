@@ -658,7 +658,7 @@ If a write names a well-formed type identifier that nothing registered, and the 
 
 ### `items/create-type-not-permitted`
 
-If a key writes an item of a type its type map does not grant write on, then the server MUST answer `403 type_not_permitted`.
+If a key writes an item of a type its type map does not grant write on, other than as `plugins/reach-target-own-source` allows, then the server MUST answer `403 type_not_permitted`.
 
 **Tests:** `compliance/error-codes.test.ts › rejects creation of out-of-scope type`.
 

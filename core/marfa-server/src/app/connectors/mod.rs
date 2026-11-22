@@ -640,9 +640,10 @@ fn agreement_json(agreement: &store::Agreement) -> Value {
     })
 }
 
-/// The type of a stored row, when the caller reads it.
-fn readable_type(tx: &Transaction<'_>, caller: &Caller, item_id: &str) -> Result<Option<String>> {
-    Ok(items::type_of(tx, item_id)?.filter(|type_id| caller.may_read_type(type_id)))
+/// Whether the caller reads the stored row, through its type map or its mapping.
+fn readable(tx: &Transaction<'_>, caller: &Caller, item_id: &str) -> Result<bool> {
+    Ok(items::type_and_source_of(tx, item_id)?
+        .is_some_and(|(type_id, source)| caller.may_read_item(&type_id, &source)))
 }
 
 pub async fn write_agreements(
@@ -662,7 +663,7 @@ pub async fn write_agreements(
         let (mut written, mut cleared) = (0, 0);
         let (mut skipped_set, mut skipped_clear) = (Vec::new(), Vec::new());
         for row in &request.set {
-            if readable_type(tx, &unit.caller, &row.item_id)?.is_none() {
+            if !readable(tx, &unit.caller, &row.item_id)? {
                 skipped_set.push(row.item_id.clone());
                 continue;
             }
@@ -677,7 +678,7 @@ pub async fn write_agreements(
             written += 1;
         }
         for item_id in &request.clear {
-            if readable_type(tx, &unit.caller, item_id)?.is_none() {
+            if !readable(tx, &unit.caller, item_id)? {
                 skipped_clear.push(item_id.clone());
                 continue;
             }
@@ -706,7 +707,7 @@ pub async fn lookup_agreements(
             .iter()
             .filter(|id| named.insert(id.as_str()))
         {
-            if readable_type(tx, caller, item_id)?.is_none() {
+            if !readable(tx, caller, item_id)? {
                 continue;
             }
             if let Some(agreement) = store::agreement_of(tx, &registration.source, item_id)? {
@@ -743,7 +744,7 @@ pub async fn list_agreements(
         };
         let mut data = Vec::new();
         for agreement in &page {
-            if readable_type(tx, caller, &agreement.item_id)?.is_some() {
+            if readable(tx, caller, &agreement.item_id)? {
                 data.push(agreement_json(agreement));
             }
         }

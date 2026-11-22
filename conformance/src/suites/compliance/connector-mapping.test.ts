@@ -302,6 +302,68 @@ describe("saving a mapping", () => {
     expect(versions).toContainEqual({ version: 2 });
   });
 
+  it("stores the fields both types declare for a target type a saved kind names without fields, and its own defaults once it lands back", async () => {
+    const plugin = await installed(owner);
+    const target = `user.bug${fresh()}`;
+    const registered = await owner.registerType({
+      id: target,
+      parent: "core.task",
+      fields: { number: { type: "integer" }, triage: { type: "string" } },
+    } as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const before = await owner.getConnectorMapping(plugin.name);
+    // The witness: the kind's own default holds a field the target does not declare.
+    expect(before.data.kinds.issue.fields.opened_by).toEqual({
+      from: "opened_by",
+    });
+    const moved = await saved(plugin, {
+      version: 0,
+      kinds: { issue: { target_type: target } },
+    });
+    const fields = moved.kinds.issue.fields;
+    expect(fields.number).toEqual({ from: "number" });
+    expect(fields.title).toEqual({ from: "title" });
+    expect(Object.keys(fields)).not.toContain("opened_by");
+    expect(Object.keys(fields)).not.toContain("triage");
+    expect((await owner.getConnectorMapping(plugin.name)).data).toEqual(moved);
+
+    const back = await saved(plugin, {
+      version: 1,
+      kinds: { issue: { target_type: plugin.issue } },
+    });
+    expect(back.kinds.issue).toEqual(before.data.kinds.issue);
+  });
+
+  it("stores no status overrides for a target type a saved kind names without them, and its own defaults once it lands back", async () => {
+    const plugin = await installed(owner, (bundle) => {
+      bundle.connector.kinds[0].default_mapping = {
+        status_overrides: { in_progress: "completed" },
+      };
+    });
+    const before = await owner.getConnectorMapping(plugin.name);
+    // The witness: the kind's own default holds an override the target would take.
+    expect(before.data.kinds.issue.status_overrides).toEqual({
+      in_progress: "completed",
+    });
+    const moved = await saved(plugin, onTickets(plugin, 0));
+    expect(moved.kinds.issue.status_overrides).toEqual({});
+    expect((await owner.getConnectorMapping(plugin.name)).data).toEqual(moved);
+
+    const kept = await saved(
+      plugin,
+      onTickets(plugin, 1, { status_overrides: { in_progress: "completed" } }),
+    );
+    expect(kept.kinds.issue.status_overrides).toEqual({
+      in_progress: "completed",
+    });
+
+    const back = await saved(plugin, {
+      version: 2,
+      kinds: { issue: { target_type: plugin.issue } },
+    });
+    expect(back.kinds.issue).toEqual(before.data.kinds.issue);
+  });
+
   it("refuses a mapping that leaves a required field of the target type unfilled, naming the field", async () => {
     const plugin = await installed(owner);
     const refused = await owner.saveConnectorMapping(

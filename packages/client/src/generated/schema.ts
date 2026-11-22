@@ -1985,7 +1985,7 @@ export interface paths {
         };
         /**
          * List connector agreements
-         * @description Returns the agreements of the connector's source, the one written longest ago first. Items whose type you can't read are left out, so a page can be short with more to follow.
+         * @description Returns the agreements of the connector's source, the one written longest ago first. Items you can't read are left out, so a page can be short with more to follow.
          */
         get: operations["listConnectorAgreements"];
         put?: never;
@@ -2011,7 +2011,7 @@ export interface paths {
         put?: never;
         /**
          * Look up connector agreements
-         * @description Looks up the agreements of the named items and returns those that exist, each item once, in the order you first named it. An item whose type you can't read is left out.
+         * @description Looks up the agreements of the named items and returns those that exist, each item once, in the order you first named it. An item you can't read is left out.
          */
         post: operations["lookupConnectorAgreements"];
         delete?: never;
@@ -10254,7 +10254,7 @@ export interface components {
             /** @description Jinja text the connector renders. Fills only a field of type `string`. */
             template: string;
         };
-        /** @description What one kind of the connector brings. An answer holds every member; a member a save leaves out takes its default. */
+        /** @description What one kind of the connector brings. An answer holds every member; a member a save leaves out takes its default, except when `target_type` is not the kind's own type: `fields` left out are the fields both types declare, each `{ "from": <field> }`, and `status_overrides` left out are none. */
         ConnectorMappingKind: {
             /** @description Whether the kind comes in. */
             enabled?: boolean;
@@ -10503,7 +10503,7 @@ export interface components {
              * @example 01a1fa41-9d8e-7f10-b2c3-4d5e6f708192
              */
             item_id?: string;
-            /** @description A draft of the kind's mapping, checked as a save checks it; a member you leave out takes its default. Leave it out to preview the mapping in force. */
+            /** @description A draft of the kind's mapping, checked as a save checks it; a member you leave out takes its default, except when `target_type` is not the kind's own type: `fields` left out are the fields both types declare, each `{ "from": <field> }`, and `status_overrides` left out are none. Leave it out to preview the mapping in force. */
             mapping?: components["schemas"]["ConnectorMappingKind"];
         };
         /** @description The connector's answer to a mapping preview: `result` or `error`, not both. */
@@ -35769,7 +35769,7 @@ export interface operations {
                         written: number;
                         /** @description How many agreements Marfa removed. */
                         cleared: number;
-                        /** @description The IDs Marfa skipped, in the order named, `set` first. An ID is skipped if no stored item has it or its type is one you can't read. A trashed item counts as stored. */
+                        /** @description The IDs Marfa skipped, in the order named, `set` first. An ID is skipped if no stored item has it or it names an item you can't read. A trashed item counts as stored. */
                         skipped: string[];
                     };
                 };

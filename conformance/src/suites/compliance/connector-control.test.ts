@@ -552,6 +552,46 @@ describe("mapping previews", () => {
     expect((await control(plugin.name)).previews).toBe(0);
   });
 
+  it("stores a draft naming another target type without fields or status overrides as a save would store it", async () => {
+    const plugin = await installed(owner, (bundle) => {
+      bundle.connector.kinds[0].default_mapping = {
+        status_overrides: { in_progress: "completed" },
+      };
+    });
+    const target = `user.bug${fresh()}`;
+    const registered = await owner.registerType({
+      id: target,
+      parent: "core.task",
+      fields: { number: { type: "integer" }, triage: { type: "string" } },
+    } as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    // The witness: the kind's own default holds a field and an override the target would not take.
+    const before = (await owner.getConnectorMapping(plugin.name)).data;
+    expect(before.kinds.issue.fields.opened_by).toEqual({ from: "opened_by" });
+    expect(before.kinds.issue.status_overrides).toEqual({
+      in_progress: "completed",
+    });
+
+    const draft = await previewed(plugin.name, {
+      kind: "issue",
+      mapping: { target_type: target },
+    });
+    expect(draft.mapping?.target_type).toBe(target);
+    expect(draft.mapping?.status_overrides).toEqual({});
+    expect(draft.mapping?.fields.number).toEqual({ from: "number" });
+    expect(Object.keys(draft.mapping?.fields ?? {})).not.toContain("opened_by");
+    expect(
+      (await owner.getMappingPreview(plugin.name, draft.id)).data.mapping,
+    ).toEqual(draft.mapping);
+
+    const save = await owner.saveConnectorMapping(plugin.name, {
+      version: 0,
+      kinds: { issue: { target_type: target } },
+    });
+    expect(save.status, JSON.stringify(save.error)).toBe(200);
+    expect(draft.mapping).toEqual(save.data.kinds.issue);
+  });
+
   it("refuses a preview of an unknown kind, of an item outside the connector's source, and of a draft a save would refuse, naming each path", async () => {
     const plugin = await installed(owner);
     const { client: own } = await connectorKey(server, plugin);

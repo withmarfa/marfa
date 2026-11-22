@@ -132,13 +132,8 @@ impl<'c> Gate<'_, 'c> {
         }
     }
 
-    /// No caller may write a `system.*` type through an item door: only the server's own writes
-    /// reach those.
-    pub fn type_gate(&self, type_id: &str) -> Result<()> {
-        self.type_gate_under(type_id, None)
-    }
-
-    /// The gate for an item of `type_id` under `source`, where the write knows it.
+    /// The gate for an item of `type_id` under `source`, where the write knows it. No caller may
+    /// write a `system.*` type through an item door: only the server's own writes reach those.
     pub fn type_gate_under(&self, type_id: &str, source: Option<&str>) -> Result<()> {
         self.type_map_gate(type_id, source)?;
         if is_system(type_id) && !self.server_own {

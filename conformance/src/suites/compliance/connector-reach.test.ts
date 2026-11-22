@@ -1397,6 +1397,292 @@ describe("what the connector reads of its own item's history, extensions and tab
   });
 });
 
+describe("the agreements on its own items of the target type", () => {
+  async function holding(own: MarfaClient): Promise<{
+    id: string;
+    process: string;
+  }> {
+    const registered = await own.registerConnector({
+      name: `agreements ${fresh()}`,
+    });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const process = `run-${fresh()}`;
+    const held = await own.takeConnectorHold(registered.data.id, process);
+    expect(held.status, JSON.stringify(held.error)).toBe(200);
+    return { id: registered.data.id, process };
+  }
+
+  it("writes, reads, lists and clears the agreements of its own items of the mapped type, and skips the owner's", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const { id, process } = await holding(own);
+    const mine = await ticket(own, plugin);
+    const owners = await ticket(owner, plugin);
+    const issue = await own.createItem({
+      type: plugin.issue,
+      properties: { title: "its own type" },
+    });
+    expect(issue.status).toBe(201);
+    const ownType = issue.data.item.id;
+
+    const written = await own.writeConnectorAgreements(id, {
+      process,
+      set: [mine.id, owners.id, ownType].map((item_id) => ({
+        item_id,
+        waiting: false,
+        record: { at: item_id },
+      })),
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    expect(written.data).toEqual({
+      written: 2,
+      cleared: 0,
+      skipped: [owners.id],
+    });
+    const looked = await own.lookupConnectorAgreements(id, [
+      mine.id,
+      owners.id,
+      ownType,
+    ]);
+    expect(looked.status, JSON.stringify(looked.error)).toBe(200);
+    expect(looked.data.data.map((row) => row.item_id).sort()).toEqual(
+      [mine.id, ownType].sort(),
+    );
+    expect(
+      looked.data.data.find((row) => row.item_id === mine.id)?.record,
+    ).toEqual({ at: mine.id });
+    const listed = await own.listConnectorAgreements(id);
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    expect(listed.data.data.map((row) => row.item_id).sort()).toEqual(
+      [mine.id, ownType].sort(),
+    );
+
+    const cleared = await own.writeConnectorAgreements(id, {
+      process,
+      clear: [mine.id, owners.id],
+    });
+    expect(cleared.status, JSON.stringify(cleared.error)).toBe(200);
+    expect(cleared.data).toEqual({
+      written: 0,
+      cleared: 1,
+      skipped: [owners.id],
+    });
+    expect(
+      (await own.lookupConnectorAgreements(id, [mine.id])).data.data,
+    ).toEqual([]);
+  });
+
+  it("skips its own items of the mapped type once the kind is off, keeps their agreements, and answers them again once it is back", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const { id, process } = await holding(own);
+    const mine = await ticket(own, plugin);
+    const set = (record: string) =>
+      own.writeConnectorAgreements(id, {
+        process,
+        set: [{ item_id: mine.id, waiting: true, record: { record } }],
+      });
+    // The witness: while the kind is on, the agreement is written.
+    const first = await set("on");
+    expect(first.data, JSON.stringify(first.error)).toMatchObject({
+      written: 1,
+      skipped: [],
+    });
+    const off = await owner.saveConnectorMapping(
+      plugin.name,
+      onTickets(plugin, 1, { enabled: false }),
+    );
+    expect(off.status, JSON.stringify(off.error)).toBe(200);
+    const skipped = await set("off");
+    expect(skipped.data, JSON.stringify(skipped.error)).toEqual({
+      written: 0,
+      cleared: 0,
+      skipped: [mine.id],
+    });
+    expect((await own.listConnectorAgreements(id)).data.data).toEqual([]);
+    expect(
+      (await own.lookupConnectorAgreements(id, [mine.id])).data.data,
+    ).toEqual([]);
+    const back = await owner.saveConnectorMapping(
+      plugin.name,
+      onTickets(plugin, 2),
+    );
+    expect(back.status, JSON.stringify(back.error)).toBe(200);
+    const kept = await own.lookupConnectorAgreements(id, [mine.id]);
+    expect(kept.data.data.map((row) => row.record)).toEqual([{ record: "on" }]);
+  });
+
+  it("decides an agreement held on the writer by the mapping saved while it waited", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const { id, process } = await holding(own);
+    const mine = await ticket(own, plugin);
+    const held = async (version: number, enabled: boolean) => {
+      await server.setFault("hold:connector-write");
+      const pending = own.writeConnectorAgreements(id, {
+        process,
+        set: [{ item_id: mine.id, waiting: false, record: { version } }],
+      });
+      await server.waitForHold("hold:connector-write");
+      const saved = await owner.saveConnectorMapping(
+        plugin.name,
+        onTickets(plugin, version, { enabled }),
+      );
+      expect(saved.status, JSON.stringify(saved.error)).toBe(200);
+      await server.clearFault("hold:connector-write");
+      return pending;
+    };
+    // The witness: a save that keeps the kind on lets the held write through.
+    const kept = await held(1, true);
+    expect(kept.data, JSON.stringify(kept.error)).toMatchObject({
+      written: 1,
+    });
+    const turnedOff = await held(2, false);
+    expect(turnedOff.data, JSON.stringify(turnedOff.error)).toMatchObject({
+      written: 0,
+      skipped: [mine.id],
+    });
+  });
+});
+
+describe("moving its own item between its own type and the target type", () => {
+  it("retypes its own item into the mapped target type and back, refusing a move that falls short of the type it enters", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const made = await own.createItem({
+      type: plugin.issue,
+      properties: { title: "moves", number: 7 },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const item = made.data.item;
+    const short = await own.updateItem(item.id, {
+      version: item.version,
+      type: plugin.ticket,
+      retype: true,
+    });
+    expect(short.status, JSON.stringify(short.data)).toBe(400);
+    expect(short.error?.error.code).toBe("invalid_properties");
+    const into = await own.updateItem(item.id, {
+      version: item.version,
+      type: plugin.ticket,
+      retype: true,
+      properties: { reporter: "tracker" },
+    });
+    expect(into.status, JSON.stringify(into.error)).toBe(200);
+    expect(into.data.item.type).toBe(plugin.ticket);
+    expect(into.data.item.source).toBe(plugin.source);
+    const read = await own.getItem(item.id);
+    expect(read.status, JSON.stringify(read.error)).toBe(200);
+    expect(read.data.item.type).toBe(plugin.ticket);
+
+    const back = await own.updateItem(item.id, {
+      version: into.data.item.version,
+      type: plugin.issue,
+      retype: true,
+    });
+    expect(back.status, JSON.stringify(back.error)).toBe(200);
+    expect(back.data.item.type).toBe(plugin.issue);
+
+    const bulk = await own.bulkItems({
+      retype: true,
+      items: [
+        {
+          id: item.id,
+          type: plugin.ticket,
+          properties: { reporter: "tracker" },
+        },
+      ],
+    });
+    expect(bulk.status, JSON.stringify(bulk.error)).toBe(200);
+    expect(bulk.data.results[0]?.outcome, JSON.stringify(bulk.data)).toBe(
+      "updated",
+    );
+    expect((await own.getItem(item.id)).data.item.type).toBe(plugin.ticket);
+  });
+
+  it("refuses to move the owner's item of its own type into the target type, an item into a type outside its reach, and its own item once the kind is off", async () => {
+    const { plugin, key } = await mapped();
+    const own = key.client;
+    const owners = await owner.createItem({
+      type: plugin.issue,
+      properties: { title: "the owner's" },
+    });
+    expect(owners.status, JSON.stringify(owners.error)).toBe(201);
+    const theirs = owners.data.item;
+    // The witness: the key's type map writes the owner's item of its own type.
+    const edited = await own.updateItem(theirs.id, {
+      version: theirs.version,
+      properties: { title: "edited by the connector" },
+    });
+    expect(edited.status, JSON.stringify(edited.error)).toBe(200);
+    const moved = await own.updateItem(theirs.id, {
+      version: edited.data.item.version,
+      type: plugin.ticket,
+      retype: true,
+      properties: { reporter: "x" },
+    });
+    expect(moved.status, JSON.stringify(moved.data)).toBe(403);
+    expect(moved.error?.error.code).toBe("type_not_permitted");
+    const bulk = await own.bulkItems({
+      atomic: false,
+      retype: true,
+      items: [
+        {
+          id: theirs.id,
+          type: plugin.ticket,
+          properties: { reporter: "x" },
+        },
+      ],
+    });
+    expect(bulk.data.results[0]?.outcome, JSON.stringify(bulk.data)).toBe(
+      "errored",
+    );
+    expect(bulk.data.results[0]?.error?.code).toBe("type_not_permitted");
+    const still = await owner.getItem(theirs.id);
+    expect(still.data.item.type).toBe(plugin.issue);
+
+    const ownersTicket = await ticket(owner, plugin);
+    refusedAsUnreached(
+      await own.updateItem(ownersTicket.id, {
+        version: ownersTicket.version,
+        type: plugin.issue,
+        retype: true,
+      }),
+      "retype the owner's ticket",
+    );
+    expect((await owner.getItem(ownersTicket.id)).data.item.type).toBe(
+      plugin.ticket,
+    );
+
+    const mine = await own.createItem({
+      type: plugin.issue,
+      properties: { title: "mine" },
+    });
+    expect(mine.status).toBe(201);
+    const outside = await own.updateItem(mine.data.item.id, {
+      version: mine.data.item.version,
+      type: "core.note",
+      retype: true,
+    });
+    expect(outside.status, JSON.stringify(outside.data)).toBe(403);
+    expect(outside.error?.error.code).toBe("type_not_permitted");
+
+    const off = await owner.saveConnectorMapping(
+      plugin.name,
+      onTickets(plugin, 1, { enabled: false }),
+    );
+    expect(off.status, JSON.stringify(off.error)).toBe(200);
+    const whileOff = await own.updateItem(mine.data.item.id, {
+      version: mine.data.item.version,
+      type: plugin.ticket,
+      retype: true,
+      properties: { reporter: "x" },
+    });
+    expect(whileOff.status, JSON.stringify(whileOff.data)).toBe(403);
+    expect(whileOff.error?.error.code).toBe("type_not_permitted");
+  });
+});
+
 describe("the MCP tools", () => {
   it("finds none of its own items of the mapped type through marfa_find, which GET /items lists", async () => {
     const { plugin, key } = await mapped();

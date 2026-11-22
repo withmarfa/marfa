@@ -1278,9 +1278,11 @@ When a caller holding `connectors.manage` sends `PUT /plugins/{name}/connector/m
 
 ### `plugins/mapping-save-defaults`
 
-When `PUT /plugins/{name}/connector/mapping` leaves out a kind, or a member of a kind's entry, the server MUST store that kind or member as its default (`plugins/mapping-default`) gives it.
+When `PUT /plugins/{name}/connector/mapping` leaves out a kind, or a member of a kind's entry, the server MUST store that kind or member as its default (`plugins/mapping-default`) gives it, except that, in an entry whose `target_type` is not the kind's own type, `fields` left out are `{ "from": <field> }` for each field that `target_type` declares and the kind's own type also declares, and `status_overrides` left out are `{}`.
 
-**Tests:** `compliance/connector-mapping.test.ts › saves a mapping that fills a required field with a fixed value, and fills a kind it leaves out with its default`.
+**Reason:** a kind's default `fields` and `status_overrides` are made for its own type, and on another target they would name fields and status words that type may not declare.
+
+**Tests:** `compliance/connector-mapping.test.ts › saves a mapping that fills a required field with a fixed value, and fills a kind it leaves out with its default`, `› stores the fields both types declare for a target type a saved kind names without fields, and its own defaults once it lands back`, `› stores no status overrides for a target type a saved kind names without them, and its own defaults once it lands back`.
 
 ### `plugins/mapping-stale`
 
@@ -1404,7 +1406,7 @@ While a plugin's connector key's mapping holds an enabled kind whose `target_typ
 
 **Reason:** a connector mapped onto a type the owner chose writes there only what it brought. The reach is read from the mapping each time, never copied into the key's type map, so the two cannot disagree.
 
-**Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`, `› leaves the owner's child, comment and attachment on its item where they are through its trash, restore and purge, and carries its own`.
+**Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`, `› leaves the owner's child, comment and attachment on its item where they are through its trash, restore and purge, and carries its own`, `› retypes its own item into the mapped target type and back, refusing a move that falls short of the type it enters`.
 
 ### `plugins/reach-own-types`
 
@@ -1436,7 +1438,7 @@ While a plugin's connector key holds no write on a type in its type map, when th
 
 **Reason:** a mapping onto a type that also holds the owner's items never opens those items to the connector. Each door answers as it does for a type the key cannot reach, so the connector learns nothing of the owner's items.
 
-**Tests:** `compliance/connector-reach.test.ts › answers an owner's item of the target type as one the key cannot reach on every door, where the same call on its own item succeeds`, `› mints a connector key holding write on the edge types its connector names, own and shipped, which writes both from its own item and no other`.
+**Tests:** `compliance/connector-reach.test.ts › answers an owner's item of the target type as one the key cannot reach on every door, where the same call on its own item succeeds`, `› mints a connector key holding write on the edge types its connector names, own and shipped, which writes both from its own item and no other`, `› refuses to move the owner's item of its own type into the target type, an item into a type outside its reach, and its own item once the kind is off`, `› writes, reads, lists and clears the agreements of its own items of the mapped type, and skips the owner's`.
 
 ### `plugins/reach-create-own-source`
 
@@ -1450,7 +1452,7 @@ If a plugin's connector key creates an item of an enabled kind's `target_type` t
 
 While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items/{id}`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs`, `GET /items/{id}/versions`, `GET /items/{id}/extensions`, `GET /items/{id}/extensions/{namespace}`, `GET /items/{id}/tables`, `GET /items/{id}/tables/{table}/rows`, `GET /items/{id}/tables/{table}/rows/{row}`, `GET /items/{id}/tables/{table}/totals`, `GET /items/{id}/tables/{table}/batches` or `POST /items/lookup` for an item of that type whose `source` is its own, the server MUST find the item as it would were that type granted read in its type map.
 
-**Reason:** a connector reads its own items back to update them, with the edges it reads from them (`plugins/reach-edges-own`), and their versions, extensions and table rows, which it writes as it writes the item. It also lists them (`plugins/reach-list-own`), follows their events (`plugins/reach-events-own`) and settles their tombstones (`plugins/reach-tombstones-own`). Every other door, among them search, the summaries, an export, a view's items, a folder, the MCP tools that only read (`plugins/reach-mcp-reads`) and the copy stream a working copy follows, answers the type as the key's type map reaches it.
+**Reason:** a connector reads its own items back to update them, with the edges it reads from them (`plugins/reach-edges-own`), and their versions, extensions and table rows, which it writes as it writes the item. It also lists them (`plugins/reach-list-own`), follows their events (`plugins/reach-events-own`), keeps their agreements (`plugins/reach-agreements-own`) and settles their tombstones (`plugins/reach-tombstones-own`). Every other door, among them search, the summaries, an export, a view's items, a folder, the MCP tools that only read (`plugins/reach-mcp-reads`) and the copy stream a working copy follows, answers the type as the key's type map reaches it.
 
 **Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`, `› reads an edge from its own item of the mapped type on every edge door, and never one from the owner's item into its own`, `› reads the versions, extensions and table rows of its own item of the mapped type, and answers the owner's item of that type as one it cannot read`.
 
@@ -1502,19 +1504,27 @@ While a plugin's connector key's mapping holds an enabled kind whose `target_typ
 
 **Tests:** `compliance/connector-reach.test.ts › settles the tombstones of its own purged items of the mapped type by source and natural key, and none by link or under another source`, `› lists its own items of the mapped type page by page and none of the owner's, which the owner lists beside them, and lists, streams and settles none once the kind is off`.
 
+### `plugins/reach-agreements-own`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `POST /connectors/{id}/agreements`, `POST /connectors/{id}/agreements/lookup` or `GET /connectors/{id}/agreements` and an id it names or an agreement it reads is for an item of that type whose `source` is its own, the server MUST answer that item as it would were that type granted read in its type map.
+
+**Reason:** a connector keeps an agreement for every item it syncs, its rows on a mapped type among them. The owner's items of the type, and another source's, stay skipped and left out, as `plugins/reach-target-other-source` keeps them out of every door. The mapping is read in the write that commits the agreements (`plugins/reach-committed`).
+
+**Tests:** `compliance/connector-reach.test.ts › writes, reads, lists and clears the agreements of its own items of the mapped type, and skips the owner's`, `› skips its own items of the mapped type once the kind is off, keeps their agreements, and answers them again once it is back`, `› decides an agreement held on the writer by the mapping saved while it waited`.
+
 ### `plugins/reach-disabled`
 
 When a saved mapping turns a kind off or moves it to another `target_type`, the server MUST answer every later write of the plugin's connector key to the former target type as `plugins/reach-target-own-source` does not hold for it.
 
-**Tests:** `compliance/connector-reach.test.ts › refuses the target type once the kind is off or moved, and takes it again once it is back`.
+**Tests:** `compliance/connector-reach.test.ts › refuses the target type once the kind is off or moved, and takes it again once it is back`, `› refuses to move the owner's item of its own type into the target type, an item into a type outside its reach, and its own item once the kind is off`.
 
 ### `plugins/reach-committed`
 
-When a plugin's connector key writes an item, the server MUST decide the key's reach on the mapping as it stands in the write that commits the item.
+When a plugin's connector key writes an item, or writes or clears an agreement through `POST /connectors/{id}/agreements`, the server MUST decide the key's reach on the mapping as it stands in the write that commits it.
 
 **Reason:** a mapping saved while a write waits on the writer decides that write.
 
-**Tests:** `compliance/connector-reach.test.ts › decides a write held on the writer by the mapping saved while it waited`.
+**Tests:** `compliance/connector-reach.test.ts › decides a write held on the writer by the mapping saved while it waited`, `› decides an agreement held on the writer by the mapping saved while it waited`.
 
 ### `plugins/reach-not-in-map`
 
@@ -1730,9 +1740,9 @@ If `POST /plugins/{name}/connector/previews` holds a `mapping` that `PUT /plugin
 
 ### `plugins/preview-draft-kept`
 
-When `POST /plugins/{name}/connector/previews` holds a `mapping` the server takes, the server MUST store and answer it as the entry of `kind` that a save would store, each member it leaves out taken from the kind's default (`plugins/mapping-default`).
+When `POST /plugins/{name}/connector/previews` holds a `mapping` the server takes, the server MUST store and answer it as the entry of `kind` that a save would store (`plugins/mapping-save-defaults`).
 
-**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`, `› stores a draft naming another target type without fields or status overrides as a save would store it`.
 
 ### `plugins/preview-cap`
 
