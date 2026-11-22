@@ -12,7 +12,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { rm } from "node:fs/promises";
-import { request } from "node:http";
+import { createServer, request } from "node:http";
+import { connect, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { serverProgram } from "../../../scripts/marfa-server.js";
@@ -46,6 +47,10 @@ import { waitFor } from "../../utils/wait.js";
  * **On a server of each test's own.** A link moves what the server believes
  * of its callers' addresses and starts a process, so every test boots a
  * server, a fake Cloud and a fake connector of its own.
+ *
+ * **The tunnel listener.** The fake connector carries no traffic, so a
+ * fixture sends what it would carry itself, to 127.0.0.1 at the port the
+ * start sent the fake Cloud.
  *
  * **Past the target interface.** The fixtures read the server's log and the
  * file the tunnel token is in, which no door shows; the contract is about
@@ -819,12 +824,18 @@ describe("when Marfa Cloud limits the request for a tunnel token", () => {
 
 type Headers = Record<string, string | string[]>;
 
-/** A write with the headers given, as the audit log recorded its caller. */
+/** Where the connector reaches the server: 127.0.0.1 at the port the start sent Marfa Cloud. */
+function tunnelOf(linked: Linked): string {
+  return `http://127.0.0.1:${String(linked.cloud.latest().originPort)}`;
+}
+
+/** A write with the headers given, sent to `via`, as the audit log recorded its caller. */
 async function seenAs(
   server: FreshServer,
   headers: Headers,
+  via: string = server.apiUrl,
 ): Promise<string | null> {
-  const url = new URL(server.apiUrl);
+  const url = new URL(via);
   const body = JSON.stringify({
     type: "core.note",
     properties: { body: randomUUID() },
@@ -877,20 +888,53 @@ async function seenAs(
 const PEER = "127.0.0.1";
 const TUNNEL = { "CF-Connecting-IP": "203.0.113.9" };
 
-/** Waits until a request through the tunnel is read as the address it carries. */
-function believed(server: FreshServer): Promise<true> {
+/** Waits until a request to the tunnel listener is read as the address it carries. */
+function believed(server: FreshServer, tunnel: string): Promise<true> {
   return waitFor(
     "the tunnel's header to be believed",
     async () =>
-      (await seenAs(server, TUNNEL)) === "203.0.113.9" ? true : undefined,
+      (await seenAs(server, TUNNEL, tunnel)) === "203.0.113.9"
+        ? true
+        : undefined,
     10_000,
     100,
   );
 }
 
+/** Whether a connection to `url` is refused, as it is where nothing listens. */
+function refusesConnections(url: string): Promise<boolean> {
+  const { hostname, port } = new URL(url);
+  return new Promise((resolve, reject) => {
+    const socket = connect({ host: hostname, port: Number(port) });
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "ECONNREFUSED") resolve(true);
+      else reject(error);
+    });
+  });
+}
+
+function closedAt(url: string): Promise<true> {
+  return waitFor(
+    `nothing to listen at ${url}`,
+    async () => ((await refusesConnections(url)) ? true : undefined),
+    10_000,
+    100,
+  );
+}
+
+async function healthAt(url: string): Promise<number> {
+  const answer = await fetch(`${url}/health`);
+  await answer.body?.cancel();
+  return answer.status;
+}
+
 describe("the caller's address through the tunnel", () => {
   it(
-    "believes CF-Connecting-IP from loopback only while a link is linked",
+    "reads CF-Connecting-IP on the tunnel listener alone, and never on the public listener, linked or not",
     async () => {
       const fake = fakeCloudflared();
       fake.plan([{ ready: true }]);
@@ -900,14 +944,19 @@ describe("the caller's address through the tunnel", () => {
       // Not linked: the header is any caller's to write.
       expect(await seenAs(linked.server, TUNNEL)).toBe(PEER);
       await linked.link();
-      // The witness: linked, the same request is read as the caller it names.
-      await believed(linked.server);
-      expect(await seenAs(linked.server, {})).toBe(PEER);
+      const tunnel = tunnelOf(linked);
+      // The witness: on the tunnel listener, the same request is read as the caller it names.
+      await believed(linked.server, tunnel);
+      // Linked, the public listener still reads its peer, whoever sent the header.
+      expect(await seenAs(linked.server, TUNNEL)).toBe(PEER);
+      expect(await seenAs(linked.server, {}, tunnel)).toBe(PEER);
       // The connector writes one address, so a list did not come from it.
       expect(
-        await seenAs(linked.server, {
-          "CF-Connecting-IP": "203.0.113.9, 198.51.100.1",
-        }),
+        await seenAs(
+          linked.server,
+          { "CF-Connecting-IP": "203.0.113.9, 198.51.100.1" },
+          tunnel,
+        ),
       ).toBe(PEER);
       const unlinked = await linked.call("DELETE", "/cloud/link");
       expect(unlinked.status, JSON.stringify(unlinked.body)).toBe(200);
@@ -917,7 +966,7 @@ describe("the caller's address through the tunnel", () => {
   );
 
   it(
-    "keeps the trusted proxy settings an owner gave over the link's",
+    "keeps the trusted proxy settings an owner gave to the public listener, and the tunnel listener to its own",
     async () => {
       const fake = fakeCloudflared();
       fake.plan([{ ready: true }]);
@@ -930,8 +979,12 @@ describe("the caller's address through the tunnel", () => {
       expect(await seenAs(linked.server, named)).toBe("203.0.113.5");
       await linked.link();
       await linked.connector("connected");
+      const tunnel = tunnelOf(linked);
       expect(await seenAs(linked.server, named)).toBe("203.0.113.5");
       expect(await seenAs(linked.server, TUNNEL)).toBe(PEER);
+      // The witness: the tunnel listener believes its own header, and not the owner's.
+      await believed(linked.server, tunnel);
+      expect(await seenAs(linked.server, named, tunnel)).toBe(PEER);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -950,8 +1003,10 @@ describe("the caller's address through the tunnel", () => {
       // Not linked: nothing believes a header from loopback.
       expect(await seenAs(linked.server, TUNNEL)).toBe(PEER);
       await linked.link();
-      // The witness: linked, the tunnel's header is believed from loopback.
-      await believed(linked.server);
+      const tunnel = tunnelOf(linked);
+      // The witness: linked, the tunnel listener believes its header from loopback.
+      await believed(linked.server, tunnel);
+      expect(await seenAs(linked.server, TUNNEL)).toBe(PEER);
       // The configured header is still not believed from a peer outside its ranges.
       expect(await seenAs(linked.server, named)).toBe(PEER);
       expect(await seenAs(linked.server, {})).toBe(PEER);
@@ -963,15 +1018,19 @@ describe("the caller's address through the tunnel", () => {
     "keeps reading the tunnel's header until the connector has stopped when the link ends",
     async () => {
       const fake = fakeCloudflared();
+      // Not installed until its plan can name the tunnel listener, which the link chooses.
+      fake.uninstall();
       const linked = await boot("connector-address-ending", {
         MARFA_CLOUDFLARED: fake.path,
       });
+      await linked.link();
+      await linked.connector("failed");
       // The connector's last request, sent as it is asked to stop.
       fake.plan([
         {
           ready: true,
           onTerminate: {
-            url: `${linked.server.apiUrl}/items`,
+            url: `${tunnelOf(linked)}/items`,
             headers: {
               ...TUNNEL,
               Authorization: `Bearer ${linked.server.workingKey}`,
@@ -984,7 +1043,7 @@ describe("the caller's address through the tunnel", () => {
           },
         },
       ]);
-      await linked.link();
+      fake.install();
       const [start] = await fake.waitForStarts(1);
       await linked.connector("connected");
       const unlinked = await linked.call("DELETE", "/cloud/link");
@@ -1013,8 +1072,10 @@ describe("the caller's address through the tunnel", () => {
         MARFA_RATE_LIMIT_ENABLED: "true",
       });
       const origin = await issuerOrigin(linked.server);
+      await linked.link();
+      const tunnel = tunnelOf(linked);
       const signIn = (username: string, password: string, address?: string) =>
-        fetch(`${linked.server.apiUrl}/auth/sign-in`, {
+        fetch(`${tunnel}/auth/sign-in`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -1023,8 +1084,7 @@ describe("the caller's address through the tunnel", () => {
           },
           body: JSON.stringify({ username, password }),
         });
-      await linked.link();
-      await believed(linked.server);
+      await believed(linked.server, tunnel);
       // The stranger guesses until the limit refuses them.
       let refused = false;
       for (let n = 0; n < 80 && !refused; n++) {
@@ -1054,6 +1114,307 @@ describe("the caller's address through the tunnel", () => {
         );
         expect(owner.status, String(address)).toBe(200);
         await owner.body?.cancel();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "counts wrong passwords sent to the public listener against their peer, never against the address a CF-Connecting-IP header names",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const linked = await boot("connector-address-forged", {
+        MARFA_CLOUDFLARED: fake.path,
+        MARFA_RATE_LIMIT_ENABLED: "true",
+      });
+      const origin = await issuerOrigin(linked.server);
+      await linked.link();
+      const tunnel = tunnelOf(linked);
+      await believed(linked.server, tunnel);
+      const signIn = (
+        via: string,
+        username: string,
+        password: string,
+        address?: string,
+      ) =>
+        fetch(`${via}/auth/sign-in`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            origin,
+            ...(address === undefined ? {} : { "CF-Connecting-IP": address }),
+          },
+          body: JSON.stringify({ username, password }),
+        });
+      const named = "198.51.100.60";
+      let refused = false;
+      for (let n = 0; n < 80 && !refused; n++) {
+        const answer = await signIn(
+          linked.server.apiUrl,
+          `guesser-${String(n)}`,
+          "wrong",
+          named,
+        );
+        refused = answer.status === 429;
+        await answer.body?.cancel();
+      }
+      expect(refused).toBe(true);
+      // The witness: the guesses counted against the public listener's peer.
+      const peer = await signIn(
+        linked.server.apiUrl,
+        TEST_OWNER.username,
+        TEST_OWNER.password,
+      );
+      expect(peer.status).toBe(429);
+      await peer.body?.cancel();
+      // The address the header named was never charged with them.
+      const caller = await signIn(
+        tunnel,
+        TEST_OWNER.username,
+        TEST_OWNER.password,
+        named,
+      );
+      expect(caller.status).toBe(200);
+      await caller.body?.cancel();
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+interface Answered {
+  status: number;
+  socket: Socket;
+}
+
+/** Opens a connection to `url`, asks `GET /health` on it, and keeps it open once answered. */
+function ask(url: string): Promise<Answered> {
+  const { hostname, port } = new URL(url);
+  return new Promise((resolve, reject) => {
+    const socket = connect({ host: hostname, port: Number(port) });
+    let received = Buffer.alloc(0);
+    const onData = (chunk: Buffer): void => {
+      received = Buffer.concat([received, chunk]);
+      const split = received.indexOf("\r\n\r\n");
+      if (split < 0) return;
+      const head = received.subarray(0, split).toString("latin1");
+      const length = Number(/content-length: (\d+)/i.exec(head)?.[1] ?? 0);
+      if (received.length - split - 4 < length) return;
+      socket.off("data", onData);
+      resolve({
+        status: Number(/^HTTP\/1\.1 (\d{3})/.exec(head)?.[1]),
+        socket,
+      });
+    };
+    socket.on("data", onData);
+    socket.on("error", reject);
+    socket.once("connect", () =>
+      socket.write("GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n"),
+    );
+  });
+}
+
+/** Holds `count` connections to `url` the server has answered, once it can. */
+function holding(url: string, count: number): Promise<Socket[]> {
+  return waitFor(
+    `${String(count)} connections held at ${url}`,
+    async () => {
+      const held: Answered[] = [];
+      for (let made = 0; made < count; made++) {
+        const answered = await ask(url).catch(() => undefined);
+        if (answered === undefined || answered.status !== 200) {
+          answered?.socket.destroy();
+          for (const earlier of held) earlier.socket.destroy();
+          return undefined;
+        }
+        held.push(answered);
+      }
+      return held.map((answered) => answered.socket);
+    },
+    30_000,
+    300,
+  );
+}
+
+describe("the tunnel listener", () => {
+  it(
+    "listens on 127.0.0.1 at a port of its own while linked, and serves an event stream through it",
+    async ({ signal }) => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const linked = await boot("connector-listener", {
+        MARFA_CLOUDFLARED: fake.path,
+      });
+      await linked.link();
+      await linked.connector("connected");
+      const tunnel = tunnelOf(linked);
+      expect(new URL(tunnel).port).not.toBe(
+        new URL(linked.server.apiUrl).port,
+      );
+      expect(await healthAt(tunnel)).toBe(200);
+      await withStreamAtCursor(
+        tunnel,
+        linked.server.workingKey,
+        { signal },
+        async (held) => {
+          const note = await fetch(`${tunnel}/items`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${linked.server.workingKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              type: "core.note",
+              properties: { title: `through the tunnel ${randomUUID()}` },
+            }),
+          });
+          expect(note.status).toBe(201);
+          const id = ((await note.json()) as { item: { id: string } }).item.id;
+          await collectUntil(
+            held,
+            (events) =>
+              events.some(
+                (event) =>
+                  event.event === "item.created" &&
+                  (event.data as { item?: { id?: string } }).item?.id === id,
+              ),
+            "the note written through the tunnel listener",
+            signal,
+          );
+        },
+      );
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "stops listening once the connector has stopped, when the link is unlinked and when Marfa Cloud ends it",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const linked = await boot("connector-listener-closed", {
+        MARFA_CLOUDFLARED: fake.path,
+      });
+      await linked.link();
+      const [first] = await fake.waitForStarts(1);
+      await linked.connector("connected");
+      const unlinkedAt = tunnelOf(linked);
+      expect(await healthAt(unlinkedAt)).toBe(200);
+      const unlinked = await linked.call("DELETE", "/cloud/link");
+      expect(unlinked.status, JSON.stringify(unlinked.body)).toBe(200);
+      await gone(first!.pid);
+      await closedAt(unlinkedAt);
+      // The public listener serves on.
+      expect(await healthAt(linked.server.apiUrl)).toBe(200);
+
+      await linked.link();
+      const [, second] = await fake.waitForStarts(2);
+      await linked.connector("connected");
+      const endedAt = tunnelOf(linked);
+      expect(await healthAt(endedAt)).toBe(200);
+      linked.cloud.forget();
+      await linked.server.advanceClock(16 * 60 * 1000);
+      await linked.until("the link to be ended", (s) => s.state === "not_linked");
+      await gone(second!.pid);
+      await closedAt(endedAt);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "listens at the port the link started with when the server starts again",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const linked = await boot("connector-listener-restart", {
+        MARFA_CLOUDFLARED: fake.path,
+      });
+      await linked.link();
+      await linked.connector("connected");
+      const tunnel = tunnelOf(linked);
+      await linked.server.restart();
+      await fake.waitForStarts(2);
+      await linked.connector("connected");
+      expect(await healthAt(tunnel)).toBe(200);
+      await believed(linked.server, tunnel);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "reports the connector as failed with reason port_taken while another program holds the tunnel listener's port, and runs it once the port is free",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const linked = await boot("connector-listener-taken", {
+        MARFA_CLOUDFLARED: fake.path,
+      });
+      await linked.link();
+      await linked.connector("connected");
+      const port = linked.cloud.latest().originPort;
+      const other = createServer((_, response) => response.end("other"));
+      await linked.server.restart(async () => {
+        await new Promise<void>((resolve, reject) => {
+          other.once("error", reject);
+          other.listen(port, "127.0.0.1", resolve);
+        });
+      });
+      try {
+        const failed = await linked.until(
+          "the connector to be failed with port_taken",
+          (s) =>
+            s.state === "linked" &&
+            s.connector.state === "failed" &&
+            s.connector.reason === "port_taken",
+        );
+        expect(failed.connector.since).toEqual(expect.any(String));
+        // Not run: it would carry the instance's traffic to the other program.
+        expect(fake.starts()).toHaveLength(1);
+      } finally {
+        await new Promise((resolve) => other.close(resolve));
+      }
+      await fake.waitForStarts(2);
+      await linked.connector("connected");
+      expect(await healthAt(tunnelOf(linked))).toBe(200);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "holds the tunnel listener's connections in the public listener's cap, and counts a loopback peer by its address on the public listener alone",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const cloud = await fakeCloud();
+      clouds.push(cloud);
+      const server = await bootFreshServer("connector-listener-caps", {
+        MARFA_CLOUD_URL: cloud.url,
+        MARFA_CLOUDFLARED: fake.path,
+        MARFA_MAX_CONNECTIONS: "4",
+        MARFA_MAX_CONNECTIONS_PER_ADDRESS: "1",
+      });
+      cleanups.push(() => server.stop());
+      // The private socket, so no connection of the fixture's own holds a place.
+      const call: Linked["call"] = (method, path, body) =>
+        controlRequest(server.controlSocket, path, { method, body });
+      const linked: Linked = { cloud, call, ...around(cloud, call) };
+      await linked.link();
+      await linked.connector("connected");
+      const tunnel = tunnelOf(linked);
+      const held: Socket[] = [];
+      try {
+        held.push(...(await holding(server.apiUrl, 1)));
+        // On the public listener, loopback is one caller address with its share.
+        const over = await ask(server.apiUrl);
+        over.socket.destroy();
+        expect(over.status).toBe(503);
+        // On the tunnel listener, loopback carries many callers, so it counts in the cap alone.
+        held.push(...(await holding(tunnel, 3)));
+        const full = await ask(tunnel);
+        full.socket.destroy();
+        expect(full.status).toBe(503);
+      } finally {
+        for (const socket of held) socket.destroy();
       }
     },
     FRESH_SERVER_TIMEOUT_MS,
