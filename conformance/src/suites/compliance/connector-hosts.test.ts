@@ -312,6 +312,19 @@ describe("a host's key", () => {
       ["hosts", () => host.client.listConnectorHosts()],
       ["host", () => host.client.getConnectorHost(host.id)],
       ["assign", () => host.client.assignConnector(name, null)],
+      ["read cloud link", () => host.client.rawRequest("/cloud/link")],
+      [
+        "start cloud link",
+        () =>
+          host.client.rawRequest("/cloud/link", {
+            method: "POST",
+            body: { sign_in_address: "keep" },
+          }),
+      ],
+      [
+        "end cloud link",
+        () => host.client.rawRequest("/cloud/link", { method: "DELETE" }),
+      ],
     ];
     for (const [label, door] of doors) {
       const refused = await door();
