@@ -29,7 +29,6 @@ import {
   expectDatabaseUnchanged,
   listened,
   refusalText,
-  stopServerAtCleanup,
 } from "../../utils/refused-boot.js";
 import { parseEnvFile, TEST_OWNER } from "../../utils/target.js";
 import {
@@ -504,7 +503,6 @@ describe("a completed claim after credential rows disappear", () => {
             db.exec("DELETE FROM sign_ins; DELETE FROM owner");
         });
         const restarted = await bootUnclaimedServer({ state: server.stateDir });
-        stopServerAtCleanup(server.stateDir);
         const status = await controlRequest(
           restarted.controlSocket,
           "/_control/setup/status",
@@ -786,7 +784,6 @@ describe("starting on a database that holds some of the server's tables and no r
     await stopServer({ state: server.stateDir });
     withInstanceDatabase(server.sqlitePath, change);
     const started = await bootUnclaimedServer({ state: server.stateDir });
-    stopServerAtCleanup(server.stateDir);
     server.apiUrl = started.url;
     server.controlSocket = started.controlSocket;
   }

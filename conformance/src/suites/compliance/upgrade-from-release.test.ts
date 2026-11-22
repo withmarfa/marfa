@@ -1,5 +1,11 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
+import {
+  mkdirSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
@@ -527,12 +533,13 @@ describe("refusing to start on a database an earlier release wrote", () => {
         expect(copiesBeside(state)).toEqual([COPY]);
       });
 
-      // A directory where the server writes the copy before it renames it.
-      const inTheWay = `${COPY}.partial`;
+      // A directory, holding a file, at the path the copy must take.
+      const inTheWay = COPY;
       const refused = await bootRefused("upgrade-copy-unwritable", {
         prepare: (sqlitePath, state) => {
           loadDump(sqlitePath);
           mkdirSync(join(state, inTheWay));
+          writeFileSync(join(state, inTheWay, "kept"), "");
         },
         extraEnv: { MARFA_KEY_SALT: KEY_SALT },
       });
@@ -604,7 +611,6 @@ describe("refusing to start on a database an earlier release wrote", () => {
           expectRefusedWhole(refused);
           expectDatabaseUnchanged(refused);
           expect(refused.code).toBe(78);
-          expect(copiesBeside(refused.stateDir)).toEqual([COPY]);
           withInstanceDatabase(refused.sqlitePath, (db) => {
             expect(userVersion(db)).toBe(OLD_SCHEMA);
             // The row is the one the check can see, and the file still has it.

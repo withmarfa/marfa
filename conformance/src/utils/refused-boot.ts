@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { expect } from "vitest";
 import type { RefusedBoot } from "./fresh-server.js";
-import { onCleanup } from "./temp-folder.js";
+import { groupOf, signalGroup } from "./server-process.js";
+import { isRunning, onCleanup } from "./temp-folder.js";
 
 /** The text a refused boot logged as its reason, from the log's own line. */
 export function refusalText(refused: RefusedBoot): string {
@@ -50,27 +50,23 @@ export function expectDatabaseUnchanged(refused: RefusedBoot): void {
 /**
  * Stops the server started on `state` with `bootUnclaimedServer` if the run is
  * interrupted before the fixture stopped it. The server leads its own process
- * group, which its pid file names.
+ * group, which its pid file names; a pid file the fixture already removed, or
+ * one naming a process that has ended, stops nothing.
  */
 export function stopServerAtCleanup(state: string): void {
   onCleanup(() => {
-    let pid: number;
+    let group: number;
     try {
-      pid = Number(readFileSync(`${state}/server.pid`, "utf8").trim());
+      group = groupOf(state);
     } catch {
       return;
     }
-    if (!Number.isInteger(pid) || pid <= 0) return;
-    try {
-      process.kill(-pid, "SIGTERM");
-      const deadline = Date.now() + 5_000;
-      while (Date.now() < deadline) {
-        process.kill(pid, 0);
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
-      }
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      // Already gone.
+    if (!isRunning(group)) return;
+    signalGroup(group, "SIGTERM");
+    const deadline = Date.now() + 5_000;
+    while (isRunning(group) && Date.now() < deadline) {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
     }
+    if (isRunning(group)) signalGroup(group, "SIGKILL");
   });
 }
