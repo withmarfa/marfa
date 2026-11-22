@@ -1092,13 +1092,13 @@ If a confirmed folder that has unanswered or blocked queued writes is removed wh
 
 When a device removes a folder under `folder-setup/remove-instance-changed`, a device MUST answer the folder's ID, how many writes were not sent, and each file holding a change the server never received, by its path and whether it is changed, new, moved from another path, which it names, or deleted.
 
-**Reason:** a deletion or a move is in no file, and the removal deletes the queue that held them, so this answer is the only record of what to do again; copying back only the files it names keeps another computer's edits to the others.
+**Reason:** a deletion or a move is in no file, and the removal deletes the queue that held them, so this answer is the only record of what to do again; copying back only the files it names keeps another computer's edits to the others. The answer names only what the folder could not send: a change it sent after the backup the other instance was restored from was made is in no queue, so a file that differs from that instance's copy but is not named may be missing from the backup, and the person checks it.
 
 **Tests:** `device/folders.test.ts › removes a folder whose server answers as another instance while writes wait, and answers the folder's ID, how many writes were not sent and each file holding a change by kind`.
 
 ### `folder-setup/remove-instance-changed-said`
 
-When `folders remove` removes a folder under `folder-setup/remove-instance-changed`, the CLI MUST report how many writes were not sent, each file `folder-setup/remove-instance-changed-files` names with its kind, that the changes to changed, new and moved files stay in the files in the directory, and the `folders add` command that names the directory and the folder's ID.
+When `folders remove` removes a folder under `folder-setup/remove-instance-changed`, the CLI MUST report how many writes were not sent, each file `folder-setup/remove-instance-changed-files` names with its kind, that the changes to changed, new and moved files stay in the files in the directory, the `folders add` command that names the directory and the folder's ID, that a file which differs from the moved directory but is not named may hold a change the other instance lacks, and that the directory is pushed until `folders status` shows nothing waiting.
 
 **Tests:** `device/folders.test.ts › says, removing a folder whose server answers as another instance, how many writes were not sent, each file holding a change by kind, and the folders add command with the directory and folder ID`, `cli/folder-instance-changed.test.ts › sends a directory's unsent changes to the instance a backup was restored into, with marfa commands alone and no item twice`.
 

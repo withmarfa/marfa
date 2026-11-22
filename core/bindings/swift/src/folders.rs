@@ -328,7 +328,7 @@ pub struct FolderRemoval {
     /// Writes that waited unsent, because another Marfa instance answers at
     /// the folder's server.
     pub unsent: u64,
-    /// The files that hold changes that instance does not have.
+    /// The files that hold changes the folder could not send.
     pub files: Vec<UnsentFile>,
 }
 
@@ -695,8 +695,8 @@ guarded! {
         /// its files stay. Refused while writes wait, except for a first sync
         /// still waiting to be confirmed, which this cancels, and except where
         /// another Marfa instance answers at the folder's server, which none of
-        /// them can reach; the answer then names each file holding a change that
-        /// instance does not have. Follows no symbolic
+        /// them can reach; the answer then names each file holding a change the
+        /// folder could not send. Follows no symbolic
         /// link, and takes a path through one only where it is the path the
         /// registry lists. Where that path is
         /// gone, passes through a link, or holds state the registry does not

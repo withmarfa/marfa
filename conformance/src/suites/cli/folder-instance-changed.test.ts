@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   cpSync,
   existsSync,
@@ -74,11 +74,16 @@ describe("a directory whose server is now another instance", () => {
     writeFileSync(join(dir, "Plan.md"), note("Plan", "first"));
     writeFileSync(join(dir, "Unchanged.md"), note("Unchanged", "as it was"));
     writeFileSync(join(dir, "Dropped.md"), note("Dropped", "not wanted"));
+    writeFileSync(join(dir, "Late.md"), note("Late", "in the backup"));
     expect((await first.run(["folders", "push", dir])).code).toBe(0);
     const backup = await (await everythingClient(origin!)).exportArchive();
     expect(backup.status).toBe(200);
     const archive = join(root, "backup.tar");
     writeFileSync(archive, backup.data);
+    // Sent after the backup was made, so the new instance lacks it, and no
+    // queue holds it.
+    writeFileSync(join(dir, "Late.md"), note("Late", "sent after the backup"));
+    expect((await first.run(["folders", "push", dir])).code).toBe(0);
 
     // The server is lost before it hears of these changes.
     const port = new URL(origin!.apiUrl).port;
@@ -135,6 +140,13 @@ describe("a directory whose server is now another instance", () => {
       expect(lines, removed.stdout).toContain(line);
     }
     expect(removed.stdout).not.toContain("Unchanged.md");
+    expect(removed.stdout).not.toContain("Late.md");
+    expect(removed.stdout).toContain(
+      "A file that differs but is not named above may hold a change this folder sent that the new instance lacks",
+    );
+    expect(removed.stdout).toContain(
+      `until \`marfa folders status ${dir}\` shows nothing waiting`,
+    );
     expect(removed.stdout).toContain(
       `The changes to changed, new and moved files stay in the files in ${dir}`,
     );
@@ -152,16 +164,36 @@ describe("a directory whose server is now another instance", () => {
     // was down, which is why the removal names it.
     expect(existsSync(join(dir, "Dropped.md"))).toBe(true);
     rmSync(join(dir, "Dropped.md"));
-    for (const name of ["Packing list.md", "Plan.md", "New idea.md"]) {
+    const named = ["Packing list.md", "Plan.md", "New idea.md"];
+    for (const name of named) {
       cpSync(join(aside, name), join(dir, name));
     }
+    // Step 4: a file that differs but is not named was sent after the backup.
+    const differs = readdirSync(aside)
+      .filter((name) => name !== ".marfa" && !named.includes(name))
+      .filter(
+        (name) =>
+          !existsSync(join(dir, name)) ||
+          readFileSync(join(dir, name), "utf8") !==
+            readFileSync(join(aside, name), "utf8"),
+      );
+    expect(differs).toEqual(["Late.md"]);
+    cpSync(join(aside, "Late.md"), join(dir, "Late.md"));
+    // Step 5. The witness: one push leaves the deletion waiting out the
+    // folder's grace for a rename.
     const sent = await cli.run(["folders", "push", dir]);
     expect(sent.code, sent.stderr).toBe(0);
-    // A missing file's item is deleted once the folder's 5-second grace for a
-    // rename has passed.
-    await new Promise((done) => setTimeout(done, 7_000));
-    const settled = await cli.run(["folders", "push", dir]);
-    expect(settled.code, settled.stderr).toBe(0);
+    const waiting = await cli.run(["folders", "status", dir]);
+    expect(waiting.stdout).toContain("Dropped.md: waiting");
+    await vi.waitFor(
+      async () => {
+        const pushed = await cli.run(["folders", "push", dir]);
+        expect(pushed.code, pushed.stderr).toBe(0);
+        const status = await cli.run(["folders", "status", dir]);
+        expect(status.stdout).not.toContain("waiting");
+      },
+      { timeout: 30_000, interval: 1_000 },
+    );
 
     const items = await cli.json<Listed>([
       "items",
@@ -172,19 +204,32 @@ describe("a directory whose server is now another instance", () => {
       "100",
     ]);
     const titles = items.data.map((item) => item.properties.title).sort();
-    expect(titles).toEqual(["New idea", "Packing list", "Plan", "Unchanged"]);
+    expect(titles).toEqual([
+      "Late",
+      "New idea",
+      "Packing list",
+      "Plan",
+      "Unchanged",
+    ]);
     const body = (title: string): string | undefined =>
       items.data.find((item) => item.properties.title === title)?.properties
         .body;
     expect(body("Packing list")).toContain("boots");
     expect(body("Plan")).toContain("and second");
     expect(body("New idea")).toContain("brand new");
+    expect(body("Late")).toContain("sent after the backup");
     expect(
       readdirSync(dir)
         .filter((name) => name !== ".marfa")
         .sort(),
-    ).toEqual(["New idea.md", "Packing list.md", "Plan.md", "Unchanged.md"]);
+    ).toEqual([
+      "Late.md",
+      "New idea.md",
+      "Packing list.md",
+      "Plan.md",
+      "Unchanged.md",
+    ]);
     const status = await cli.run(["folders", "status", dir]);
-    expect(status.stdout).toContain("4 file(s) in step");
+    expect(status.stdout).toContain("5 file(s) in step");
   });
 });

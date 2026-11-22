@@ -41,7 +41,7 @@ pub struct AddedFolder {
 }
 /// What `remove` did: the folder's state went, or only its registry entry,
 /// for `reason`. Where another instance answers at the folder's server,
-/// `unsent` writes waited, and `files` hold changes that instance lacks.
+/// `unsent` writes waited, and `files` hold changes the folder could not send.
 #[napi(object)]
 pub struct FolderRemoval {
     pub dir: String,
