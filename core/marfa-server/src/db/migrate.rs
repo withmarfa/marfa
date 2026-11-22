@@ -67,6 +67,11 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("migrations/0008_connector_mappings.sql"),
         done: None,
     },
+    Migration {
+        version: 9,
+        sql: include_str!("migrations/0009_cloud_link.sql"),
+        done: None,
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

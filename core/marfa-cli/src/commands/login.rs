@@ -237,7 +237,7 @@ fn register_and_ask(
     Ok((client_id, code))
 }
 
-fn open_browser(page: &str) {
+pub(crate) fn open_browser(page: &str) {
     let opener = if cfg!(target_os = "macos") {
         "open"
     } else {

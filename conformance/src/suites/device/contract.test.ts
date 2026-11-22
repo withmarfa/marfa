@@ -1261,6 +1261,9 @@ const invocations: Record<string, () => string[]> = {
   "sign-ins rename": () => [ID, "n"],
   "sign-ins end": () => [ID],
   "setup claim": () => ["--stdin"],
+  "cloud link": () => ["--keep-sign-in-address"],
+  "cloud unlink": () => [],
+  "cloud status": () => [],
 };
 
 /** The refusal's code, or what stderr said when it is not a refusal. */
@@ -1516,6 +1519,13 @@ describe("every command holds the server to the contract", () => {
       "/",
       Object.assign(answers.root(builtFor), { contract: root }),
     );
+    // A link that has failed ends `cloud link`'s wait; the generic answer
+    // below is no state, so that wait would never end.
+    started.answer("GET", "/cloud/link", {
+      kind: "json",
+      status: 200,
+      body: { state: "failed", failure: { reason: "refused" } },
+    });
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE"]) {
       started.answer(method, /^\/.+/, { kind: "json", status: 200, body: {} });
     }

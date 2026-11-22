@@ -14,7 +14,8 @@ use super::oauth;
 use super::refusal::{Code, Refusal, Result};
 use super::sign_in_check;
 use super::sources;
-use super::{App, instance, stored};
+use super::unit::Unit;
+use super::{App, cloud, instance, stored};
 use crate::settings::registry::{
     ADDRESSES, ALLOW_PRIVATE_ADDRESSES, BACKUP_PATH, ENTRIES, Entry, OBJECT_STORE_BUCKET,
     OBJECT_STORE_ENDPOINT, OBJECT_STORE_PATH_STYLE, OBJECT_STORE_PREFIX, OBJECT_STORE_REGION,
@@ -83,6 +84,38 @@ pub struct Request {
     settings: Vec<(&'static Entry, Ask<String>)>,
     name: Option<Ask<String>>,
     enforcement: Option<Ask<Levers>>,
+    /// A put-back of the sign-in address, which no body names.
+    put_back: Option<PutBack>,
+}
+
+/// Puts the sign-in address back as a link ends, choosing on the stored rows.
+#[derive(Debug)]
+struct PutBack {
+    /// The sign-in address in force before the link moved it; none is the default.
+    previous: Option<addresses::Address>,
+    /// The default sign-in address.
+    own: addresses::Address,
+    /// The link's address, which the write removes from `addresses`.
+    drops: addresses::Address,
+}
+
+impl PutBack {
+    /// The previous address if `addresses` still allows it, else the first address left in it,
+    /// an `https` one first.
+    fn target(&self, listed: Vec<addresses::Address>) -> Option<addresses::Address> {
+        let left: Vec<_> = listed
+            .into_iter()
+            .filter(|address| *address != self.drops)
+            .collect();
+        let wanted = self.previous.as_ref().unwrap_or(&self.own);
+        if left.is_empty() || left.contains(wanted) {
+            return self.previous.clone();
+        }
+        left.iter()
+            .find(|address| address.is_https())
+            .or_else(|| left.first())
+            .cloned()
+    }
 }
 
 fn invalid(errors: Vec<(String, String)>) -> Refusal {
@@ -168,6 +201,7 @@ impl Request {
             settings: Vec::new(),
             name: None,
             enforcement: None,
+            put_back: None,
         };
         let null_in_put = |path: &str| {
             (
@@ -253,6 +287,38 @@ impl Request {
         }
     }
 
+    /// Moves the sign-in address to `to`.
+    pub fn sign_in_move(
+        to: &addresses::Address,
+        confirmed: bool,
+        sealer: &Sealer,
+    ) -> Result<Request> {
+        let mut body = Map::new();
+        body.insert(SIGN_IN_ADDRESS.entry.key.into(), to.origin().into());
+        body.insert(CONFIRMATION.into(), confirmed.into());
+        Request::from_body(Mode::Patch, &body, &fields(), sealer)
+    }
+
+    /// Removes `drops` from `addresses` and puts the sign-in address back: to `previous` (none
+    /// is the default, `own`) while `addresses` allows it, otherwise to an address left in it.
+    pub fn sign_in_put_back(
+        previous: Option<addresses::Address>,
+        own: addresses::Address,
+        drops: addresses::Address,
+        confirmed: bool,
+        sealer: &Sealer,
+    ) -> Result<Request> {
+        let mut body = Map::new();
+        body.insert(CONFIRMATION.into(), confirmed.into());
+        let mut request = Request::from_body(Mode::Patch, &body, &fields(), sealer)?;
+        request.put_back = Some(PutBack {
+            previous,
+            own,
+            drops,
+        });
+        Ok(request)
+    }
+
     /// Refuses a body that names another instance than this one.
     pub fn check_identity(&self, app: &App) -> Result<()> {
         match &self.instance_id {
@@ -314,7 +380,16 @@ fn pairs(rows: &Rows) -> Vec<(String, String)> {
 }
 
 impl Plan {
-    fn of(request: &Request, before: Rows) -> Plan {
+    /// Refuses a change that rewrites a stored `addresses` row that does not read.
+    fn of(request: &Request, before: Rows) -> Result<Plan> {
+        let stored_list = |text: &str| {
+            addresses::parse_list(text).map_err(|_| {
+                invalid(vec![(
+                    ADDRESSES.entry.key.to_string(),
+                    "no longer reads, so it must be set whole".to_string(),
+                )])
+            })
+        };
         let mut ops: BTreeMap<String, Option<String>> = BTreeMap::new();
         let mut touched: Vec<&'static str> = Vec::new();
         if request.mode == Mode::Put {
@@ -325,7 +400,31 @@ impl Plan {
             }
             ops.insert(ENFORCEMENT_ROW.to_string(), None);
         }
-        for (entry, ask) in &request.settings {
+        let put_back = match &request.put_back {
+            Some(put_back) => {
+                let listed = match before.get(ADDRESSES.entry.key) {
+                    Some(text) => stored_list(text)?,
+                    None => Vec::new(),
+                };
+                Some(match put_back.target(listed) {
+                    Some(address) => Ask::Set(
+                        SIGN_IN_ADDRESS
+                            .entry
+                            .row_text(address.origin())
+                            .map_err(|rule| Refusal::internal(&format!("a put-back {rule}")))?,
+                    ),
+                    None => Ask::Clear,
+                })
+            }
+            None => None,
+        };
+        let settings: Vec<(&Entry, &Ask<String>)> = request
+            .settings
+            .iter()
+            .map(|(entry, ask)| (*entry, ask))
+            .chain(put_back.as_ref().map(|ask| (SIGN_IN_ADDRESS.entry, ask)))
+            .collect();
+        for (entry, ask) in &settings {
             let text = match ask {
                 Ask::Set(text) => Some(text.clone()),
                 Ask::Clear => None,
@@ -336,18 +435,17 @@ impl Plan {
             }
         }
         // A sign-in address is always one of the addresses.
-        if let Some((_, Ask::Set(sign_in))) = request
-            .settings
+        if let Some((_, Ask::Set(sign_in))) = settings
             .iter()
             .find(|(entry, _)| entry.key == SIGN_IN_ADDRESS.entry.key)
             && !request.names(ADDRESSES.entry.key)
         {
             let mut list = match request.mode {
                 Mode::Put => Vec::new(),
-                Mode::Patch => before
-                    .get(ADDRESSES.entry.key)
-                    .and_then(|text| addresses::parse_list(text).ok())
-                    .unwrap_or_default(),
+                Mode::Patch => match before.get(ADDRESSES.entry.key) {
+                    Some(text) => stored_list(text)?,
+                    None => Vec::new(),
+                },
             };
             if let Ok(address) = addresses::Address::parse(sign_in)
                 && !list.contains(&address)
@@ -358,6 +456,27 @@ impl Plan {
             ops.insert(
                 ADDRESSES.entry.key.to_string(),
                 Some(Value::from(origins).to_string()),
+            );
+            if !touched.contains(&ADDRESSES.entry.key) {
+                touched.push(ADDRESSES.entry.key);
+            }
+        }
+        if let Some(dropped) = request.put_back.as_ref().map(|put_back| &put_back.drops) {
+            let text = match ops.get(ADDRESSES.entry.key) {
+                Some(text) => text.clone(),
+                None => before.get(ADDRESSES.entry.key).cloned(),
+            };
+            let list: Vec<_> = match text {
+                Some(text) => stored_list(&text)?,
+                None => Vec::new(),
+            }
+            .into_iter()
+            .filter(|address| address != dropped)
+            .collect();
+            let origins: Vec<_> = list.iter().map(addresses::Address::origin).collect();
+            ops.insert(
+                ADDRESSES.entry.key.to_string(),
+                (!origins.is_empty()).then(|| Value::from(origins).to_string()),
             );
             if !touched.contains(&ADDRESSES.entry.key) {
                 touched.push(ADDRESSES.entry.key);
@@ -401,7 +520,7 @@ impl Plan {
             ops.insert(secret.to_string(), None);
             after.remove(secret);
         }
-        Plan {
+        Ok(Plan {
             ops: ops.into_iter().collect(),
             name,
             touched,
@@ -410,7 +529,7 @@ impl Plan {
             drops_secret,
             before,
             after,
-        }
+        })
     }
 
     /// A row that does not read reads as empty, so a change to it must name it.
@@ -474,9 +593,29 @@ impl Plan {
         let mut fields = request.field_names();
         if self.drops_secret {
             fields.push(OBJECT_STORE_SECRET_ACCESS_KEY.entry.key);
-            fields.sort_unstable();
         }
+        if request.put_back.is_some() {
+            for key in [SIGN_IN_ADDRESS.entry.key, ADDRESSES.entry.key] {
+                if !fields.contains(&key) {
+                    fields.push(key);
+                }
+            }
+        }
+        fields.sort_unstable();
         fields
+    }
+
+    fn sign_in_change(&self, app: &App, moved: &Moved) -> SignInChange {
+        let before = Arc::new(app.settings.candidate(&pairs(&self.before)));
+        SignInChange {
+            before: app.addresses_in(before.clone()).sign_in(),
+            after: moved.sign_in.clone(),
+            stored_before: self
+                .before
+                .contains_key(SIGN_IN_ADDRESS.entry.key)
+                .then(|| before.get(SIGN_IN_ADDRESS))
+                .flatten(),
+        }
     }
 
     /// What the change does to the addresses, and whether it needs a person to
@@ -637,11 +776,31 @@ fn confirmation_needed(moved: &Moved) -> Refusal {
     .with_detail("consequences", moved.consequences_json())
 }
 
+/// Who stands behind a change of the configuration.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Authority {
+    /// The caller, who must hold what the change needs and confirm a move of the sign-in address.
+    Caller,
+    /// The server, carrying out a move a caller who could make it confirmed earlier.
+    Confirmed,
+    /// The server, putting back the sign-in address that a link's address replaced.
+    Restored,
+}
+
+/// What a write did to the sign-in address, for a part that keeps track of it.
+pub struct SignInChange {
+    pub before: addresses::Address,
+    pub after: addresses::Address,
+    /// The sign-in address stored before the write, if one was; never a default.
+    pub stored_before: Option<addresses::Address>,
+}
+
 /// Refuses as the write would, then checks the backup folder and the new sign-in address.
 async fn check_sign_in(
     app: &Arc<App>,
     caller: &Caller,
     request: Request,
+    authority: Authority,
 ) -> Result<(Request, Option<addresses::Address>)> {
     if request.skip_check && !caller.is_local() {
         return Err(Refusal::new(
@@ -653,7 +812,7 @@ async fn check_sign_in(
     let (request, step_up, moved) = app
         .db
         .read(move |tx| {
-            let plan = Plan::of(&request, rows_of(stored::rows(tx)?));
+            let plan = Plan::of(&request, rows_of(stored::rows(tx)?))?;
             let step_up = plan.needs_step_up(&reading);
             let moved = plan
                 .judge(&reading)
@@ -662,10 +821,22 @@ async fn check_sign_in(
         })
         .await?;
     let at = app.clock.stamp();
-    if step_up {
+    if authority == Authority::Caller && step_up {
         caller.require_step_up(Permission::ConfigManage, &at)?;
     }
     let moved = moved?;
+    if authority == Authority::Restored {
+        return Ok((request, None));
+    }
+    if authority == Authority::Confirmed {
+        if !moved.sign_in_moves {
+            return Ok((request, None));
+        }
+        sign_in_check::check(app, &moved.sign_in)
+            .await
+            .map_err(sign_in_check::Failed::refusal)?;
+        return Ok((request, Some(moved.sign_in)));
+    }
     if moved.sign_in_moves {
         caller.require_step_up(Permission::ConfigManage, &at)?;
     }
@@ -686,38 +857,60 @@ async fn check_sign_in(
 }
 
 pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result<Value> {
+    let (answer, ()) = update_with(app, caller, request, Authority::Caller, |_, _| Ok(())).await?;
+    Ok(answer)
+}
+
+/// Writes the change as `update` does, with `also` in the same write.
+pub async fn update_with<T, F>(
+    app: &Arc<App>,
+    caller: &Caller,
+    request: Request,
+    authority: Authority,
+    also: F,
+) -> Result<(Value, T)>
+where
+    T: Send + 'static,
+    F: FnOnce(&Unit<'_, '_>, &SignInChange) -> Result<T> + Send + 'static,
+{
     request.check_identity(app)?;
-    let (request, answered) = check_sign_in(app, caller, request).await?;
+    let (request, answered) = check_sign_in(app, caller, request, authority).await?;
     let writing = app.clone();
     let working = app.clone();
     let caller = caller.clone();
     stored::committing(app, async move {
         working
             .write(&caller, "config.update", move |unit| {
+                let asked = authority == Authority::Caller;
                 unit.caller.require(Permission::ConfigManage)?;
                 let tx = unit.tx();
                 let before = rows_of(stored::rows(tx)?);
-                let plan = Plan::of(&request, before);
-                if plan.needs_step_up(&writing) {
+                let plan = Plan::of(&request, before)?;
+                if asked && plan.needs_step_up(&writing) {
                     unit.caller
                         .require_step_up(Permission::ConfigManage, &unit.at)?;
                 }
                 plan.judge(&writing)?;
                 let moved = plan.addresses_at(&writing, tx)?;
-                if moved.sign_in_moves {
+                if asked && moved.sign_in_moves {
                     unit.caller
                         .require_step_up(Permission::ConfigManage, &unit.at)?;
                 }
-                if moved.confirm && !request.confirmed {
+                if asked && moved.confirm && !request.confirmed {
                     return Err(confirmation_needed(&moved));
                 }
-                if moved.confirm && !request.skip_check && answered.as_ref() != Some(&moved.sign_in)
-                {
+                let checked = match authority {
+                    Authority::Caller => moved.confirm && !request.skip_check,
+                    Authority::Confirmed => moved.sign_in_moves,
+                    Authority::Restored => false,
+                };
+                if checked && answered.as_ref() != Some(&moved.sign_in) {
                     return Err(Refusal::new(
                         Code::Conflict,
                         "The configuration changed while the new sign-in address was checked. Try again.",
                     ));
                 }
+                let change = plan.sign_in_change(&writing, &moved);
                 stored::write_rows(tx, &plan.ops)?;
                 if moved.sign_in_moves {
                     session::end_every(tx, &unit.at, &unit.caller)?;
@@ -727,6 +920,8 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                     instance::set_name(tx, name.as_deref())?;
                 }
                 unit.audit_set("config", Some(json!({ "fields": plan.audited(&request) })))?;
+                let kept = also(unit, &change)?;
+                cloud::after_config(unit, &writing, &change)?;
                 let staged = stored::stage(tx, &writing)?;
                 let name = instance::stored_name(tx)?;
                 let mut answer = document(&writing, &plan.after, name);
@@ -736,11 +931,37 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                         "next_steps": consequences::next_steps(&moved.sign_in),
                     });
                 }
-                Ok((answer, Some(staged)))
+                Ok(((answer, kept), Some(staged)))
             })
             .await
     })
     .await
+}
+
+/// Where a put-back would move the sign-in address on the stored rows, or none if
+/// `addresses` does not read.
+pub fn put_back_target(
+    tx: &Transaction<'_>,
+    previous: Option<addresses::Address>,
+    own: addresses::Address,
+    drops: addresses::Address,
+) -> Result<Option<addresses::Address>> {
+    let listed = match stored::rows(tx)?
+        .into_iter()
+        .find(|(key, _)| key == ADDRESSES.entry.key)
+    {
+        Some((_, text)) => match addresses::parse_list(&text) {
+            Ok(listed) => listed,
+            Err(_) => return Ok(None),
+        },
+        None => Vec::new(),
+    };
+    let put_back = PutBack {
+        previous,
+        own,
+        drops,
+    };
+    Ok(Some(put_back.target(listed).unwrap_or(put_back.own)))
 }
 
 /// What a start did with the sign-in address `MARFA_CLAIM_ADDRESS` declares.
@@ -778,14 +999,16 @@ pub async fn adopt_sign_in_address(
                 if instance::is_claimed(tx)? {
                     return Ok((Adopted::Owned, None));
                 }
-                let plan = Plan::of(&request, before);
+                let plan = Plan::of(&request, before)?;
                 plan.judge(&writing)?;
                 let moved = plan.addresses_at(&writing, tx)?;
+                let change = plan.sign_in_change(&writing, &moved);
                 stored::write_rows(tx, &plan.ops)?;
                 if moved.sign_in_moves {
                     session::end_every(tx, &unit.at, &unit.caller)?;
                 }
                 unit.audit_set("config", Some(json!({ "fields": request.field_names() })))?;
+                cloud::after_config(unit, &writing, &change)?;
                 Ok((Adopted::Stored, Some(stored::stage(tx, &writing)?)))
             })
             .await
@@ -800,7 +1023,7 @@ pub async fn check(app: &Arc<App>, caller: &Caller, request: Request) -> Result<
         .db
         .read(move |tx| {
             let before = rows_of(stored::rows(tx)?);
-            let plan = Plan::of(&request, before);
+            let plan = Plan::of(&request, before)?;
             plan.judge(&checking)?;
             plan.addresses_at(&checking, tx)
         })
@@ -918,4 +1141,87 @@ fn origins(list: &[addresses::Address]) -> Value {
             .map(addresses::Address::origin)
             .collect::<Vec<_>>(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unreadable_addresses() -> Rows {
+        let mut rows = Rows::new();
+        rows.insert(ADDRESSES.entry.key.into(), "not a list".into());
+        rows.insert(
+            SIGN_IN_ADDRESS.entry.key.into(),
+            "\"https://a.example\"".into(),
+        );
+        rows
+    }
+
+    #[test]
+    fn a_stored_addresses_row_that_does_not_read_is_never_rewritten_as_empty() {
+        let sealer = Sealer::for_tests();
+        let dropped = addresses::Address::parse("https://b.example").unwrap();
+        let to = addresses::Address::parse("https://a.example").unwrap();
+        let own = addresses::Address::parse("http://localhost:8080").unwrap();
+        for request in [
+            Request::sign_in_put_back(Some(to.clone()), own, dropped, true, &sealer).unwrap(),
+            Request::sign_in_move(&to, true, &sealer).unwrap(),
+        ] {
+            let refused = Plan::of(&request, unreadable_addresses())
+                .err()
+                .expect("the plan rewrote the unreadable addresses row");
+            assert_eq!(refused.code, Code::ValidationError);
+        }
+    }
+
+    #[test]
+    fn a_put_back_goes_where_addresses_allows() {
+        let at = |text: &str| addresses::Address::parse(text).unwrap();
+        let (cloud, own) = (at("https://river.example"), at("http://localhost:8080"));
+        let put_back = |previous: Option<&str>| PutBack {
+            previous: previous.map(at),
+            own: own.clone(),
+            drops: cloud.clone(),
+        };
+        let list = |texts: &[&str]| texts.iter().map(|text| at(text)).collect::<Vec<_>>();
+        let cases = [
+            (
+                Some("http://o.example"),
+                list(&["https://river.example"]),
+                Some("http://o.example"),
+            ),
+            (
+                Some("http://o.example"),
+                list(&["http://o.example", "https://river.example"]),
+                Some("http://o.example"),
+            ),
+            (
+                Some("http://o.example"),
+                list(&[
+                    "http://a.example",
+                    "https://b.example",
+                    "https://river.example",
+                ]),
+                Some("https://b.example"),
+            ),
+            (
+                None,
+                list(&["https://river.example", "http://a.example"]),
+                Some("http://a.example"),
+            ),
+            (
+                None,
+                list(&["http://localhost:8080", "https://river.example"]),
+                None,
+            ),
+            (None, Vec::new(), None),
+        ];
+        for (previous, listed, wanted) in cases {
+            assert_eq!(
+                put_back(previous).target(listed.clone()),
+                wanted.map(at),
+                "previous {previous:?}, addresses {listed:?}"
+            );
+        }
+    }
 }

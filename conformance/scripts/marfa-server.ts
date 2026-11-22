@@ -584,6 +584,10 @@ async function startServer(args: BootOptions): Promise<Started> {
     MARFA_ENRICHMENT_ENABLED: process.env.MARFA_ENRICHMENT_ENABLED || "false",
     MARFA_ENRICHMENT_OCR_ENABLED:
       process.env.MARFA_ENRICHMENT_OCR_ENABLED || "false",
+    // A probe that starts a link would otherwise start a real one on Marfa
+    // Cloud. Nothing listens on the discard port, so a start answers
+    // `cloud_unavailable`; a fixture about linking names its fake.
+    MARFA_CLOUD_URL: process.env.MARFA_CLOUD_URL || "http://127.0.0.1:9",
     // The orphan sweep purges what an earlier run reported once this much
     // time has passed: zero, so a fixture can drive the report and the
     // purge as two runs through the housekeeping door. The sweep's own

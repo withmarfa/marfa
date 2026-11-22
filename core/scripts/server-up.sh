@@ -82,6 +82,8 @@ export MARFA_DATABASE_PATH="${state}/marfa.db"
 export MARFA_BLOB_PATH="${state}/blobs"
 export MARFA_PORT="${port}"
 export MARFA_LISTEN_HOST="127.0.0.1"
+# Nothing listens on the discard port, so a link started here reaches no real Marfa Cloud.
+export MARFA_CLOUD_URL="${MARFA_CLOUD_URL:-http://127.0.0.1:9}"
 
 # A kept data directory can exceed the Unix socket path limit, especially
 # under macOS temporary roots. The private listener gets its own short path.

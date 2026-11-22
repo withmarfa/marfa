@@ -6,6 +6,7 @@ scripts="$(cd "$(dirname "$0")" && pwd)"
 work="$(mktemp -d "/tmp/marfa-server-keys.XXXXXX")"
 export MARFA_SERVER_KEEP="${work}/server"
 export MARFA_SERVER_ENV="${work}/server.env"
+unset MARFA_CLOUD_URL
 : >"${MARFA_SERVER_ENV}"
 trap '"${scripts}/server-down.sh" "${MARFA_SERVER_ENV}" >/dev/null 2>&1 || true; rm -rf "${work}"' EXIT
 
@@ -54,6 +55,11 @@ PY
   curl -fsS --unix-socket "${MARFA_TEST_SOCKET}" http://localhost/_control/setup/status |
     python3 -c 'import json,sys; assert json.load(sys.stdin)["claimed"]'
   check_owner
+  # Nothing here may reach the real Marfa Cloud, so the script names its own.
+  curl -fsS --unix-socket "${MARFA_TEST_SOCKET}" http://localhost/config/settings |
+    python3 -c 'import json,sys
+listed = {each["name"]: each["set"] for each in json.load(sys.stdin)["start_only"]}
+assert listed["MARFA_CLOUD_URL"], "the server was booted with no MARFA_CLOUD_URL"'
 }
 
 up

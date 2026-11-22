@@ -13,6 +13,7 @@ use crate::control_socket;
 use crate::listener::{self, Declaration, Trust};
 
 const MIN_AUTH_SECRET: usize = 32;
+const DEFAULT_CLOUD_URL: &str = "https://cloud.marfa.so";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DatabasePath {
@@ -117,8 +118,21 @@ fn uri_decoded(part: &str) -> Vec<u8> {
     decoded
 }
 
+#[allow(clippy::expect_used, reason = "a constant that reads")]
+fn default_cloud_url() -> Address {
+    Address::parse(DEFAULT_CLOUD_URL).expect("the default Cloud address reads")
+}
+
+/// A program run by the path it is given, with no search of `PATH`.
+fn absolute_path(text: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(text);
+    path.is_absolute()
+        .then_some(path)
+        .ok_or_else(|| "must be an absolute path".to_string())
+}
+
 /// Judged as a stored sign-in address is, and only where it can carry the owner's password.
-fn claim_address(text: &str) -> Result<Address, String> {
+fn https_or_loopback(text: &str) -> Result<Address, String> {
     let address = Address::parse(text)?;
     if !carries_sessions(&address) {
         return Err("must start with https://, or name localhost, 127.0.0.1 or [::1]".into());
@@ -149,6 +163,9 @@ pub struct Fixed {
     /// Stored at start only while the instance has no owner.
     pub claim_address: Option<Address>,
     pub owner_recovery: bool,
+    pub cloud_url: Address,
+    /// The tunnel connector the server runs while linked, where the owner named one.
+    pub connector: Option<PathBuf>,
 }
 
 pub struct Start {
@@ -295,7 +312,11 @@ impl Fixed {
         let trust = reader.trust();
         let control_only = reader.flag("MARFA_CONTROL_ONLY");
         let test_hooks = reader.flag("MARFA_TEST_HOOKS");
-        let claim_address = reader.take("MARFA_CLAIM_ADDRESS", claim_address);
+        let claim_address = reader.take("MARFA_CLAIM_ADDRESS", https_or_loopback);
+        let cloud_url = reader
+            .take("MARFA_CLOUD_URL", https_or_loopback)
+            .unwrap_or_else(default_cloud_url);
+        let connector = reader.take("MARFA_CLOUDFLARED", absolute_path);
         let owner_recovery = reader.flag("MARFA_OWNER_RECOVERY");
         #[cfg(feature = "test-hooks")]
         let clock_offset_ms = reader
@@ -354,6 +375,8 @@ impl Fixed {
                 .map(PathBuf::from),
             claim_address,
             owner_recovery,
+            cloud_url,
+            connector,
         };
         (!failed).then_some((fixed, given))
     }

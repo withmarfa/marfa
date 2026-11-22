@@ -116,6 +116,9 @@ pub enum CliError {
     /// A plugin source folder's definition file named other than its id.
     #[error("{0}")]
     FileNameMismatch(String),
+    /// A Marfa Cloud link that ended without being made.
+    #[error("{0}")]
+    CloudLinkFailed(String),
     /// An export written whole but for the files it names and does not carry.
     #[error(
         "the archive lacks {} blob(s), which its files.ndjson.gz marks not_carried or lost: {}; it holds everything else it names",
@@ -343,7 +346,7 @@ impl Exit {
                 "there is no credential, a profile's key command gave none, the credential was refused, or the sign-in ended; run `marfa login` to start one"
             }
             Exit::Interrupted => {
-                "you ended a long-lived command (`folders watch`, `events`, `device changes`) with Ctrl-C, or ended one that was still stopping with a second Ctrl-C"
+                "you ended a long-lived command (`folders watch`, `events`, `device changes`, `cloud link`) with Ctrl-C, or ended one that was still stopping with a second Ctrl-C"
             }
         }
     }
@@ -389,6 +392,7 @@ own_codes! {
     CliError::DeviceCodeEnded => "device_code_ended",
     CliError::Invalid(_) => "invalid",
     CliError::FileNameMismatch(_) => "file_name_mismatch",
+    CliError::CloudLinkFailed(_) => "cloud_link_failed",
     CliError::ArchiveLacksBlobs(_)
     | CliError::ArchiveKeptApart { .. }
     | CliError::RestoreLacksBlobs(_) => "blobs_missing",
@@ -504,6 +508,7 @@ impl CliError {
             | CliError::PluginsUnreachable { .. } => Exit::Environment,
             CliError::Invalid(_)
             | CliError::FileNameMismatch(_)
+            | CliError::CloudLinkFailed(_)
             | CliError::ArchiveLacksBlobs(_)
             | CliError::ArchiveKeptApart { .. }
             | CliError::RestoreLacksBlobs(_)
@@ -963,6 +968,7 @@ mod tests {
             "no_credential",
             "key_command",
             "device_code_ended",
+            "cloud_link_failed",
             "docs_page_not_found",
             "docs_section_not_found",
             "docs_unreachable",
@@ -1015,6 +1021,7 @@ mod tests {
             CliError::DeviceCodeEnded,
             CliError::Invalid(String::new()),
             CliError::FileNameMismatch(String::new()),
+            CliError::CloudLinkFailed(String::new()),
             CliError::ContractMismatch {
                 origin: String::new(),
                 served: None,

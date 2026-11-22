@@ -76,7 +76,7 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
   ],
   [
     ".env.example",
-    "tells an operator the two stored settings and that no variable sets them",
+    "tells an operator the two stored settings and that no variable sets them, and the variable that names the connector's path",
   ],
   [
     "openapi.json",
@@ -113,6 +113,18 @@ const ALLOWED: readonly (readonly [path: string, reason: string])[] = [
   [
     "core/marfa-server/src/app/updates/tests.rs",
     "tests that an update installs the connector, and installs an older release without one",
+  ],
+  [
+    "core/marfa-server/src/app/cloud/connector.rs",
+    "finds the connector beside the server's own program and runs it while the instance is linked to Marfa Cloud",
+  ],
+  [
+    "core/marfa-server/src/settings/start.rs",
+    "reads MARFA_CLOUDFLARED, the path of the connector",
+  ],
+  [
+    "core/marfa-server/src/settings/start_only.rs",
+    "lists MARFA_CLOUDFLARED among the variables only a start reads",
   ],
   [
     "scripts/release/cloudflared-pins.sh",

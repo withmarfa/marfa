@@ -35,10 +35,10 @@ use std::process::ExitCode;
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    apps, attention, audit, backups, blobs, config, connectors, docs, edge_types, edges, events,
-    export, extensions, hosts, housekeeping, items, keys, login, logout, metrics, operations,
-    overview, owner, plugins, profile, restore, rows, search, sign_ins, sources, status, tables,
-    tags, types, update, views, webhooks, whoami,
+    apps, attention, audit, backups, blobs, cloud, config, connectors, docs, edge_types, edges,
+    events, export, extensions, hosts, housekeeping, items, keys, login, logout, metrics,
+    operations, overview, owner, plugins, profile, restore, rows, search, sign_ins, sources,
+    status, tables, tags, types, update, views, webhooks, whoami,
 };
 use crate::device::DeviceArgs;
 use crate::error::{CliError, DOCS_HINT, Exit, long_help_footer};
@@ -191,6 +191,12 @@ enum Command {
     SignIns {
         #[command(subcommand)]
         command: sign_ins::SignInsCommand,
+    },
+    /// Marfa Cloud: link this instance to it, read the link and unlink.
+    /// Requires `config.manage`.
+    Cloud {
+        #[command(subcommand)]
+        command: cloud::CloudCommand,
     },
     /// Items: create, read, change, tag, link, attach, and the bulk operations.
     Items {
@@ -713,6 +719,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Profile { command } => profile::run(command, &remote()?, &out),
         Command::Apps { command } => apps::run(command, &remote()?, &out),
         Command::SignIns { command } => sign_ins::run(command, &remote()?, &out),
+        Command::Cloud { command } => cloud::run(command, &remote()?, &out),
         Command::Setup { command } => {
             let setup_remote = match &cli.socket {
                 Some(path) => Remote::local(path)?,

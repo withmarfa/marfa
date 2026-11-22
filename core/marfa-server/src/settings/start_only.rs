@@ -81,6 +81,14 @@ pub const DECLARED: &[Declared] = &[
         "MARFA_OWNER_RECOVERY",
         "Prints a one-time owner recovery code at each start of an instance with an owner.",
     ),
+    plain(
+        "MARFA_CLOUD_URL",
+        "Where Marfa Cloud is; the server sends to it only for a link the owner starts.",
+    ),
+    plain(
+        "MARFA_CLOUDFLARED",
+        "The tunnel connector the server runs while the instance is linked to Marfa Cloud, as an absolute path. Without it, the server runs the connector beside its own executable.",
+    ),
     secret("MARFA_KEY_SALT", "Secret that keys are stored under."),
     secret("MARFA_AUTH_SECRET", "Secret that sign-in is signed with."),
     hook("MARFA_TEST_HOOKS", "Turns the test hooks on."),

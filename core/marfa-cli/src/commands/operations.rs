@@ -190,6 +190,9 @@ pub const OPERATIONS: &[Operation] = &[
     reached("renameSignIn", "sign-ins rename"),
     reached("endSignIn", "sign-ins end"),
     reached("createOwner", "setup claim"),
+    reached("startCloudLink", "cloud link"),
+    reached("getCloudLink", "cloud status"),
+    reached("unlinkCloud", "cloud unlink"),
 ];
 
 /// Published operations no command sends, each with why.

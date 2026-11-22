@@ -493,6 +493,7 @@ mod tests {
             total: 2,
             per_address: 2,
             trust: Trust::Nothing,
+            tunnel: crate::listener::Tunnel::default(),
         };
         let server = tokio::spawn(serve(
             Memory(incoming),
@@ -532,6 +533,7 @@ mod tests {
             total: 10,
             per_address: 1,
             trust: Trust::Nothing,
+            tunnel: crate::listener::Tunnel::default(),
         };
         let server = tokio::spawn(serve(
             Memory(incoming),

@@ -570,6 +570,14 @@ The server MUST NOT carry a webhook subscription in an archive.
 
 **Tests:** `compliance/export.test.ts › holds nothing in an archive but its manifest, line files and blobs, and carries no webhook`, `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`.
 
+### `archive/archive-no-cloud-link`
+
+The server MUST NOT carry a link to Marfa Cloud, or any of its secrets, in an archive.
+
+**Reason:** a link belongs to the instance that made it, and a backup is an archive, so an instance restored elsewhere would otherwise take over the first one's name. The owner links the restored instance again.
+
+**Tests:** `compliance/cloud-link.test.ts › puts no secret of a link in an answer, an event, the audit log or an archive`.
+
 ### `archive/archive-no-inbound`
 
 The server MUST NOT carry an inbound endpoint, an inbound address or an inbound delivery in an archive.

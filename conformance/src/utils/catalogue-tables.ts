@@ -71,7 +71,7 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "blobs.manage":
     "Managing blob bytes and copies across the instance, without granting item content access.",
   "config.manage":
-    "Reading and replacing the instance configuration at `/config`: the enforcement levers, the cleanup-job retention overrides and the stored settings, such as the addresses, the object store, the backup destination, the heartbeat and the PostHog settings. A secret setting can be set or removed but is never read back. A `PUT` keeps unnamed secrets, except `object_store_secret_access_key` when its bucket or endpoint changes. Changing `backup_path` or an `object_store_` setting other than the access key ID and the secret needs a recent sign-in, as `allow_private_addresses` does.",
+    "Reading and replacing the instance configuration at `/config`: the enforcement levers, the cleanup-job retention overrides and the stored settings, such as the addresses, the object store, the backup destination, the heartbeat and the PostHog settings. A secret setting can be set or removed but is never read back. A `PUT` keeps unnamed secrets, except `object_store_secret_access_key` when its bucket or endpoint changes. Changing `backup_path` or an `object_store_` setting other than the access key ID and the secret needs a recent sign-in, as `allow_private_addresses` does. Reading, starting and ending the instance's link to Marfa Cloud at `/cloud/link`.",
   "connectors.host":
     "Reading the connector host's own record and minting the key of each connector assigned to it, at `GET /connector-hosts/self` and `POST /connector-hosts/self/connectors/{plugin}/key`.",
   "connectors.manage":
@@ -171,6 +171,10 @@ const EVENT_TEXT: Readonly<
       "edges/move-announced",
       "events/edge-bulk-announced",
     ],
+  },
+  "cloud_link.changed": {
+    when: "A link to Marfa Cloud starts, links, fails or ends, or the sign-in address it moves changes state.",
+    statements: ["cloud/event", "cloud/event-reader"],
   },
   "attention.raised": {
     when: "A check of what needs the owner's attention first finds an entry, or the server first meets a fault.",

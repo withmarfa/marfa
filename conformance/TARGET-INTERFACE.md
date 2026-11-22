@@ -118,6 +118,14 @@ stays because that thing is what it checks.
 - `compliance/device-grant.test.ts`, "is held by the server as something other
   than the code it issued", searches the database file and the log beside it for
   the issued device code, because the contract is about the bytes at rest.
+- `compliance/cloud-link.test.ts`, "reports a link whose secrets no longer
+  open as failed and unreadable", removes `marfa.settings.key` while the server
+  is stopped, because only a lost or broken disk loses the key the link's
+  secrets are sealed with.
+- `compliance/cloud-connector.test.ts` reads the server's log, and the file the
+  tunnel token is in, because the contract is about what the connector's output
+  and its arguments, environment and files hold, and copies the server's program
+  into a folder of its own to show where the server looks for the connector.
 - `compliance/secret-settings.test.ts` searches the database file and the log
   beside it for a secret setting's value, because the contract is about the
   bytes at rest, and removes or damages `marfa.settings.key` while the server is
