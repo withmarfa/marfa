@@ -36,6 +36,19 @@ describe("the workspace tests", () => {
     expect(tests?.name).toBe("Workspace tests");
   });
 
+  it("leave out the tests that need what this job lacks: cargo, and the release tags", () => {
+    const run = tests?.steps.find((step) =>
+      /\bpnpm test\b/.test(step.run ?? ""),
+    )?.run;
+    for (const file of [
+      "ci/version-fields.test.ts",
+      "ci/ci-required.test.ts",
+      "ci/released-migrations.test.ts",
+    ]) {
+      expect(run).toContain(`--exclude ${file}`);
+    }
+  });
+
   it("run when the workspace changed and the pull request is not a draft, or when the classifier did not answer", () => {
     expect(tests?.needs).toBe("changes");
     expect(tests?.if).toBe(
