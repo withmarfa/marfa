@@ -368,24 +368,22 @@ pub async fn report_run(app: &App, caller: &Caller, id: String, run: Run) -> Res
         let registration = find(unit.tx(), &id)?;
         unit.caller
             .require_own_connector_key(&registration.key_id)?;
-        let (started_at, finished_at) = run.checked()?;
+        let times = run.checked()?;
         let report = store::Run {
             seq: 0,
             id: uuid::Uuid::now_v7().to_string(),
             connector_id: id,
             outcome: if run.succeeded { "succeeded" } else { "failed" }.to_string(),
-            started_at,
-            finished_at,
+            started_at: times.started_at,
+            finished_at: times.finished_at,
             summary: run.summary,
             error: run.error,
             reported_at: unit.at.clone(),
         };
         store::insert_run(unit.tx(), RUNS_KEPT, &report)?;
-        super::connector_control::run_reported(
-            unit.tx(),
-            &registration.source,
-            &report.started_at,
-        )?;
+        if let Some(acted_on) = &times.run_requested_at {
+            super::connector_control::run_reported(unit.tx(), &registration.source, acted_on)?;
+        }
         Ok(run_json(&report))
     })
     .await

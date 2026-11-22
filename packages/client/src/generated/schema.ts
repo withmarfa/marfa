@@ -34087,6 +34087,12 @@ export interface operations {
                     summary?: string;
                     /** @description The error the run hit. Leave it out for none. */
                     error?: string;
+                    /**
+                     * Format: date-time
+                     * @description The `run_requested_at` you acted on, as your plugin's connector door gave it. Marfa clears the run request only when this names it. Leave it out if the run answers no request.
+                     * @example 2026-10-03T09:30:00.000Z
+                     */
+                    run_requested_at?: string | null;
                 };
             };
         };

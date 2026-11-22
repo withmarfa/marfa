@@ -245,40 +245,83 @@ describe("pausing and running a connector", () => {
     expect(noPause.error?.error.code).toBe("plugin_connector_not_found");
   });
 
-  it("clears a run request when the connector reports a run that started at or after it, and not for one that started before", async () => {
+  it("clears a run request only when the connector's run report names it", async () => {
     const plugin = await installed(owner);
     const { client: own } = await connectorKey(server, plugin);
     const registered = await own.registerConnector({ name: "Tracker" });
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
 
     const asked = (await acted(plugin.name, "run")).run_requested_at as string;
-    const before = new Date(Date.parse(asked) - 1_000).toISOString();
-    const earlier = await own.reportConnectorRun({
-      outcome: "succeeded",
-      started_at: before,
-      finished_at: asked,
-    } as never);
-    expect(earlier.status, JSON.stringify(earlier.error)).toBe(201);
+    expect((await control(plugin.name, own)).run_requested_at).toBe(asked);
+    const after = new Date(Date.parse(asked) + 1_000).toISOString();
+    const report = (named: Record<string, unknown>) =>
+      own.reportConnectorRun({
+        outcome: "succeeded",
+        started_at: after,
+        finished_at: after,
+        ...named,
+      } as never);
+
+    const unnamed = await report({});
+    expect(unnamed.status, JSON.stringify(unnamed.error)).toBe(201);
     expect((await control(plugin.name)).run_requested_at).toBe(asked);
 
-    const at = await own.reportConnectorRun({
-      outcome: "succeeded",
-      started_at: asked,
-      finished_at: asked,
-    } as never);
-    expect(at.status, JSON.stringify(at.error)).toBe(201);
-    expect((await control(plugin.name)).run_requested_at).toBeNull();
+    const older = new Date(Date.parse(asked) - 1_000).toISOString();
+    const stale = await report({ run_requested_at: older });
+    expect(stale.status, JSON.stringify(stale.error)).toBe(201);
+    expect((await control(plugin.name)).run_requested_at).toBe(asked);
 
-    const next = (await acted(plugin.name, "run")).run_requested_at as string;
-    const after = new Date(Date.parse(next) + 1_000).toISOString();
-    const failed = await own.reportConnectorRun({
-      outcome: "failed",
-      started_at: after,
-      finished_at: after,
-      error: "the vendor was down",
-    } as never);
-    expect(failed.status, JSON.stringify(failed.error)).toBe(201);
+    const none = await report({ run_requested_at: null });
+    expect(none.status, JSON.stringify(none.error)).toBe(201);
+    expect((await control(plugin.name)).run_requested_at).toBe(asked);
+
+    const named = await report({ run_requested_at: asked });
+    expect(named.status, JSON.stringify(named.error)).toBe(201);
     expect((await control(plugin.name)).run_requested_at).toBeNull();
+  });
+
+  it("keeps a run request made after the connector started the run it reports", async () => {
+    const plugin = await installed(owner);
+    const { client: own } = await connectorKey(server, plugin);
+    const registered = await own.registerConnector({ name: "Tracker" });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+
+    const first = (await acted(plugin.name, "run")).run_requested_at as string;
+    const acting = (await control(plugin.name, own)).run_requested_at;
+    expect(acting).toBe(first);
+    await server.advanceClock(1_000);
+    const second = (await acted(plugin.name, "run")).run_requested_at as string;
+    expect(Date.parse(second)).toBeGreaterThan(Date.parse(first));
+
+    const reported = await own.reportConnectorRun({
+      outcome: "succeeded",
+      started_at: first,
+      finished_at: second,
+      run_requested_at: acting,
+    } as never);
+    expect(reported.status, JSON.stringify(reported.error)).toBe(201);
+    expect((await control(plugin.name)).run_requested_at).toBe(second);
+  });
+
+  it("refuses a run report whose run_requested_at is not a timestamp, and clears nothing", async () => {
+    const plugin = await installed(owner);
+    const { client: own } = await connectorKey(server, plugin);
+    const registered = await own.registerConnector({ name: "Tracker" });
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    const asked = (await acted(plugin.name, "run")).run_requested_at as string;
+
+    for (const wrong of ["yesterday", 17, {}]) {
+      const refused = await own.reportConnectorRun({
+        outcome: "succeeded",
+        started_at: asked,
+        finished_at: asked,
+        run_requested_at: wrong,
+      } as never);
+      expect(refused.status).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.field).toBe("run_requested_at");
+    }
+    expect((await control(plugin.name)).run_requested_at).toBe(asked);
   });
 
   it("takes the connector key's writes while the connector is paused", async () => {
@@ -568,7 +611,7 @@ describe("mapping previews", () => {
     expect((await control(plugin.name)).previews).toBe(1);
   });
 
-  it("refuses a twenty-first pending preview 409 connector_previews_full, and takes one once the connector answers another", async () => {
+  it("refuses a new preview 409 connector_previews_full while twenty pending previews are live, and stores nothing", async () => {
     const plugin = await installed(owner);
     const { client: own } = await connectorKey(server, plugin);
     const made: string[] = [];
@@ -582,15 +625,58 @@ describe("mapping previews", () => {
     expect(full.error?.error.code).toBe("connector_previews_full");
     expect(full.error?.error.details?.limit).toBe(20);
     expect(
-      (await own.listMappingPreviews(plugin.name, "pending")).data.data,
-    ).toHaveLength(20);
+      (await own.listMappingPreviews(plugin.name)).data.data.map(
+        (held) => held.id,
+      ),
+    ).toEqual(made);
+  });
 
-    const answered = await own.answerMappingPreview(plugin.name, made[0]!, {
+  it("removes the oldest answered preview to make a new one once twenty are live, and lists no more than twenty", async () => {
+    const plugin = await installed(owner);
+    const { client: own } = await connectorKey(server, plugin);
+    const made: string[] = [];
+    for (let at = 0; at < 20; at += 1) {
+      made.push((await previewed(plugin.name, { kind: "comment" })).id);
+    }
+    const ready = await own.answerMappingPreview(plugin.name, made[5]!, {
+      result: { title: "rendered" },
+    });
+    expect(ready.status, JSON.stringify(ready.error)).toBe(200);
+    const failed = await own.answerMappingPreview(plugin.name, made[10]!, {
       error: "No comment to render.",
     });
-    expect(answered.status, JSON.stringify(answered.error)).toBe(200);
-    await previewed(plugin.name, { kind: "comment" });
+    expect(failed.status, JSON.stringify(failed.error)).toBe(200);
+
+    const one = (await previewed(plugin.name, { kind: "comment" })).id;
+    const gone = await owner.getMappingPreview(plugin.name, made[5]!);
+    expect(gone.status).toBe(404);
+    expect(gone.error?.error.code).toBe("connector_preview_not_found");
+    expect((await owner.getMappingPreview(plugin.name, made[10]!)).status).toBe(
+      200,
+    );
+    let listed = (await own.listMappingPreviews(plugin.name)).data.data;
+    expect(listed.map((held) => held.id)).toEqual([
+      ...made.filter((_, at) => at !== 5),
+      one,
+    ]);
+
+    const two = (await previewed(plugin.name, { kind: "comment" })).id;
+    listed = (await own.listMappingPreviews(plugin.name)).data.data;
+    expect(listed.map((held) => held.id)).toEqual([
+      ...made.filter((_, at) => at !== 5 && at !== 10),
+      one,
+      two,
+    ]);
     expect((await control(plugin.name)).previews).toBe(20);
+
+    const full = await owner.requestMappingPreview(plugin.name, {
+      kind: "comment",
+    });
+    expect(full.status).toBe(409);
+    expect(full.error?.error.code).toBe("connector_previews_full");
+    expect((await own.listMappingPreviews(plugin.name)).data.data).toHaveLength(
+      20,
+    );
   });
 
   it("refuses an answer of the wrong shape, an oversized result and an answer from another key, and changes nothing", async () => {

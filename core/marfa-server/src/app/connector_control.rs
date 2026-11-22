@@ -17,7 +17,8 @@ use super::plugins;
 use super::refusal::{Code, Refusal, Result};
 
 pub const PREVIEW_LIFE_MS: i64 = 10 * 60 * 1000;
-pub const PENDING_CAP: i64 = 20;
+/// The most previews a plugin holds, whatever their status.
+pub const PREVIEW_CAP: i64 = 20;
 /// The longest `result` a connector may answer, in bytes written as JSON.
 pub const RESULT_CAP: usize = 65_536;
 pub const ERROR_CAP: usize = 500;
@@ -224,15 +225,15 @@ pub async fn run(app: &App, caller: &Caller, name: String) -> Result<Value> {
     .await
 }
 
-/// `started_at` is the connector's clock, not the server's.
-pub(crate) fn run_reported(tx: &Transaction<'_>, source: &str, started_at: &str) -> Result<()> {
+/// Clears the plugin's run request when the run names that same instant.
+pub(crate) fn run_reported(tx: &Transaction<'_>, source: &str, acted_on: &str) -> Result<()> {
     let Some(plugin) = connector_hosts::plugin_holding(tx, source)? else {
         return Ok(());
     };
     let (_, Some(asked)) = chosen(tx, &plugin)? else {
         return Ok(());
     };
-    if Stamp::read(started_at)? >= Stamp::read(&asked)? {
+    if Stamp::read(acted_on)? == Stamp::read(&asked)? {
         tx.execute(
             "UPDATE plugin_connectors SET run_requested_at = NULL WHERE plugin = ?1",
             [&plugin],
@@ -403,23 +404,18 @@ pub async fn request_preview(
     app.write(caller, PREVIEW_REQUESTED, move |unit| {
         let held = held(unit.tx(), &unit.caller, &name, Door::Owner)?;
         let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
-        let asked = asked(unit.tx(), &body, &held.connector, &catalog.rules, |target| {
-            unit.caller.require_type(target, Level::Write).is_ok()
-        })?;
+        let asked = asked(
+            unit.tx(),
+            &body,
+            &held.connector,
+            &catalog.rules,
+            |target| unit.caller.require_type(target, Level::Write).is_ok(),
+        )?;
         unit.tx().execute(
             "DELETE FROM connector_previews WHERE plugin = ?1 AND expires_at <= ?2",
             params![held.name, unit.at],
         )?;
-        if pending_count(unit.tx(), &held.name, &unit.at)? >= PENDING_CAP {
-            return Err(Refusal::new(
-                Code::ConnectorPreviewsFull,
-                format!(
-                    "Plugin {} already has {PENDING_CAP} mapping previews waiting on its connector.",
-                    held.name
-                ),
-            )
-            .with_detail("limit", PENDING_CAP));
-        }
+        make_room(unit.tx(), &held.name)?;
         let preview = Preview {
             id: uuid::Uuid::now_v7().to_string(),
             kind: asked.kind,
@@ -448,6 +444,32 @@ pub async fn request_preview(
         preview.to_json()
     })
     .await
+}
+
+/// Removes the plugin's oldest answered preview when it holds `PREVIEW_CAP`, or refuses when all
+/// of them wait on the connector. Expired previews are already gone.
+fn make_room(tx: &Transaction<'_>, plugin: &str) -> Result<()> {
+    let held: i64 = tx
+        .prepare_cached("SELECT count(*) FROM connector_previews WHERE plugin = ?1")?
+        .query_row([plugin], |row| row.get(0))?;
+    if held < PREVIEW_CAP {
+        return Ok(());
+    }
+    let removed = tx.execute(
+        "DELETE FROM connector_previews WHERE rowid = (SELECT rowid FROM connector_previews \
+         WHERE plugin = ?1 AND status IN ('ready', 'failed') ORDER BY created_at, rowid LIMIT 1)",
+        [plugin],
+    )?;
+    if removed == 0 {
+        return Err(Refusal::new(
+            Code::ConnectorPreviewsFull,
+            format!(
+                "Plugin {plugin} already has {PREVIEW_CAP} mapping previews waiting on its connector."
+            ),
+        )
+        .with_detail("limit", PREVIEW_CAP));
+    }
+    Ok(())
 }
 
 /// Refuses a status a listing does not take.

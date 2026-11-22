@@ -1528,7 +1528,7 @@ When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/
 
 When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/run` for a connector that is not paused, the server MUST store the time of the request as `run_requested_at`, replacing any earlier one, and answer `200` as `plugins/control-read` gives it.
 
-**Reason:** the connector runs once for every request it has not reported a run after, however many times the owner asked.
+**Reason:** the connector runs once for the request it reads, however many times the owner asked before it read it, and names that request when it reports the run (`plugins/run-cleared`).
 
 **Tests:** `compliance/connector-control.test.ts › stores a pause, a resume and a run request, answering each on the connector's door and to its host`.
 
@@ -1550,19 +1550,19 @@ If a caller without `connectors.manage` sends `POST /plugins/{name}/connector/pa
 
 ### `plugins/run-cleared`
 
-When the plugin's connector key reports a run with `POST /connectors/{id}/runs` whose `started_at` is at or after the connector's `run_requested_at`, the server MUST set `run_requested_at` to `null` in the same write.
+When the plugin's connector key reports a run with `POST /connectors/{id}/runs` whose `run_requested_at` names the same instant as the connector's stored `run_requested_at`, the server MUST set `run_requested_at` to `null` in the same write.
 
-**Reason:** `started_at` is the connector's own clock, as its report gives it, so a connector whose clock runs behind the server's may run once more before a report clears the request.
+**Reason:** the connector names the request it acted on, as `GET /plugins/{name}/connector` or `GET /connector-hosts/self` gave it, so only the server's own clock decides which request a run answers.
 
-**Tests:** `compliance/connector-control.test.ts › clears a run request when the connector reports a run that started at or after it, and not for one that started before`.
+**Tests:** `compliance/connector-control.test.ts › clears a run request only when the connector's run report names it`.
 
 ### `plugins/run-kept`
 
-If the plugin's connector key reports a run with `POST /connectors/{id}/runs` whose `started_at` is before the connector's `run_requested_at`, then the server MUST keep `run_requested_at`.
+If the plugin's connector key reports a run with `POST /connectors/{id}/runs` that names no `run_requested_at`, names `null`, or names an instant other than the connector's stored `run_requested_at`, then the server MUST keep the stored `run_requested_at`.
 
-**Reason:** a run already under way when the owner asked did not see the request.
+**Reason:** a run that names no request, or an earlier one, did not act on the request the owner made last, such as one made after the run started.
 
-**Tests:** `compliance/connector-control.test.ts › clears a run request when the connector reports a run that started at or after it, and not for one that started before`.
+**Tests:** `compliance/connector-control.test.ts › clears a run request only when the connector's run report names it`, `› keeps a run request made after the connector started the run it reports`.
 
 ### `plugins/pause-writes-land`
 
@@ -1638,11 +1638,19 @@ When `POST /plugins/{name}/connector/previews` holds a `mapping` the server take
 
 ### `plugins/preview-cap`
 
-If `POST /plugins/{name}/connector/previews` would leave more than 20 pending previews for the plugin, then the server MUST answer `409 connector_previews_full` with `details.limit` `20`, and store nothing.
+If `POST /plugins/{name}/connector/previews` finds 20 previews of the plugin whose `expires_at` has not passed, all of them `pending`, then the server MUST answer `409 connector_previews_full` with `details.limit` `20`, and store nothing.
 
-**Reason:** a preview waits on the connector, which may be stopped, so the queue of a stopped connector stays small.
+**Reason:** every preview whose `expires_at` has not passed counts, whatever its `status`, so a plugin holds at most 20. A preview waits on the connector, which may be stopped, so the queue of a stopped connector stays small.
 
-**Tests:** `compliance/connector-control.test.ts › refuses a twenty-first pending preview 409 connector_previews_full, and takes one once the connector answers another`.
+**Tests:** `compliance/connector-control.test.ts › refuses a new preview 409 connector_previews_full while twenty pending previews are live, and stores nothing`, `› removes the oldest answered preview to make a new one once twenty are live, and lists no more than twenty`.
+
+### `plugins/preview-make-room`
+
+When `POST /plugins/{name}/connector/previews` finds 20 previews of the plugin whose `expires_at` has not passed, one or more of them `ready` or `failed`, the server MUST remove the oldest of those `ready` or `failed` previews in the write that stores the new one.
+
+**Reason:** an answer the app has already had the chance to read gives way to a new request, and a request the connector has not answered does not.
+
+**Tests:** `compliance/connector-control.test.ts › removes the oldest answered preview to make a new one once twenty are live, and lists no more than twenty`.
 
 ### `plugins/preview-permission`
 
@@ -1656,9 +1664,9 @@ If a caller without `connectors.manage` sends `POST /plugins/{name}/connector/pr
 
 When a caller holding `connectors.manage`, or the plugin's connector key, sends `GET /plugins/{name}/connector/previews`, the server MUST answer `200` with `data` listing, oldest first, each preview of the plugin whose `expires_at` has not passed and, where the query names a `status`, whose `status` it names, and `next_cursor` `null`.
 
-**Reason:** the connector lists the pending previews each time it looks for work.
+**Reason:** the connector lists the pending previews each time it looks for work. A plugin holds at most 20 previews (`plugins/preview-cap`), each `result` at most 65,536 bytes (`plugins/preview-result-size`), so the listing is never paged.
 
-**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`.
+**Tests:** `compliance/connector-control.test.ts › stores a preview pending, lists it to the connector's key and not to another plugin's key, and keeps the connector's answer as given`, `› removes the oldest answered preview to make a new one once twenty are live, and lists no more than twenty`.
 
 ### `plugins/preview-list-status`
 
