@@ -6547,6 +6547,112 @@ describe("a folder whose server answers as another instance", () => {
     expect(existsSync(join(harness.dir, ".marfa", "core.sqlite"))).toBe(true);
   });
 
+  /** The files a removal answered, by kind, path and where one moved from. */
+  function removedFiles(
+    removed: Awaited<ReturnType<FolderHarness["folder"]["remove"]>>,
+  ): Array<{ change: string; path?: string | null; from?: string }> {
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    if (!removed.ok) throw new Error("not removed");
+    const answer = removed.value as {
+      files: Array<{
+        change: string;
+        path?: string | null;
+        from?: string | null;
+      }>;
+    };
+    return answer.files.map(({ change, path, from }) => ({
+      change,
+      path,
+      ...(from ? { from } : {}),
+    }));
+  }
+
+  /** Stops the folder: its server now answers as another instance. */
+  async function stopByAnotherInstance(folder: FolderHarness): Promise<void> {
+    folder.server.answer("GET", "/", answers.root(Number(BUILT_FOR), other));
+    const pushed = await folder.folder.push();
+    expect(pushed.ok, JSON.stringify(pushed)).toBe(false);
+    if (pushed.ok) throw new Error("pushed");
+    expect(pushed.refusal.raw).toContain("instance_changed");
+  }
+
+  it("names no move its server took, removing a folder whose server answers as another instance, though a later edit to the moved file waits", async () => {
+    harness = await folderHarness("folder-remove-instance-move-taken");
+    scriptFolderWrites(harness);
+    for (const title of ["Old name", "First", "Pending"]) {
+      put(harness, `${title}.md`, `---\ntitle: ${title}\n---\nas sent\n`);
+    }
+    expect((await harness.folder.push()).ok).toBe(true);
+    renameSync(
+      join(harness.dir, "Old name.md"),
+      join(harness.dir, "New name.md"),
+    );
+    renameSync(join(harness.dir, "First.md"), join(harness.dir, "Second.md"));
+    const moved = await harness.folder.push();
+    expect(moved.ok && moved.value.scan.renamed, JSON.stringify(moved)).toBe(2);
+    put(harness, "Pending.md", "---\ntitle: Pending\n---\nedited, not sent\n");
+    put(harness, "Second.md", "---\ntitle: First\n---\nedited, not sent\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    await stopByAnotherInstance(harness);
+
+    expect(removedFiles(await harness.folder.remove())).toEqual([
+      { change: "changed", path: "Pending.md" },
+      { change: "changed", path: "Second.md" },
+    ]);
+  });
+
+  it("names a file moved again after its server took its first move, removing a folder whose server answers as another instance, as moved from where the server last held it", async () => {
+    harness = await folderHarness("folder-remove-instance-moved-again");
+    scriptFolderWrites(harness);
+    put(harness, "Third.md", "---\ntitle: Third\n---\nas sent\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    renameSync(
+      join(harness.dir, "Third.md"),
+      join(harness.dir, "Third moved.md"),
+    );
+    const moved = await harness.folder.push();
+    expect(moved.ok && moved.value.scan.renamed, JSON.stringify(moved)).toBe(1);
+    put(
+      harness,
+      "Third moved.md",
+      "---\ntitle: Third\n---\nedited, not sent\n",
+    );
+    expect((await harness.folder.scan()).ok).toBe(true);
+    renameSync(
+      join(harness.dir, "Third moved.md"),
+      join(harness.dir, "Third moved again.md"),
+    );
+    const again = await harness.folder.scan();
+    expect(again.ok && again.value.renamed, JSON.stringify(again)).toBe(1);
+    await stopByAnotherInstance(harness);
+
+    expect(removedFiles(await harness.folder.remove())).toEqual([
+      { change: "moved", path: "Third moved again.md", from: "Third moved.md" },
+    ]);
+  });
+
+  it("names, removing a folder whose server answers as another instance, a file made while no write reached the server as new wherever it moved, and none made and deleted", async () => {
+    harness = await folderHarness("folder-remove-instance-unsent-new");
+    scriptFolderWrites(harness);
+    put(harness, "Sent.md", "---\ntitle: Sent\n---\nas sent\n");
+    expect((await harness.folder.push()).ok).toBe(true);
+    put(harness, "Ghost.md", "---\ntitle: Ghost\n---\nnever sent\n");
+    put(harness, "Fresh.md", "---\ntitle: Fresh\n---\nnever sent\n");
+    expect((await harness.folder.scan()).ok).toBe(true);
+    rmSync(join(harness.dir, "Ghost.md"));
+    renameSync(join(harness.dir, "Fresh.md"), join(harness.dir, "Fresher.md"));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    // A missing file's item goes once the folder's grace for a rename passes.
+    await new Promise((resolve) => setTimeout(resolve, 6_000));
+    expect((await harness.folder.scan()).ok).toBe(true);
+    await stopByAnotherInstance(harness);
+
+    expect(
+      removedFiles(await harness.folder.remove()),
+      "Sent.md, unchanged since it was sent, is the witness that not every file is named",
+    ).toEqual([{ change: "new", path: "Fresher.md" }]);
+  });
+
   it("removes a folder whose writes wait where its server cannot be asked, after another instance answered there", async () => {
     harness = await folderHarness("folder-remove-instance-unasked");
     scriptFolderWrites(harness);
