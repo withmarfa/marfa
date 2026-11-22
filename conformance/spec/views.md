@@ -60,7 +60,7 @@ If a field a view's `sort` or `group` names is outside `views/field`, a `sort` h
 
 If a view's `group.bucket` is not `day`, `week`, `month`, `year` or `presence`, or is a date bucket on a `group.by` other than `created_at`, `updated_at`, `occurred_at` or `properties.<name>`, or is `presence` on a `group.by` other than `tags`, `properties.<name>`, `edge[<type>]` or `backref[<type>]`, then the server MUST answer `400 validation_error` naming `group.bucket` in `details.errors[0].path`.
 
-**Reason:** the other fields always hold a value, as `search-and-filters/filter-system-presence` says, and `status_group` already has a null group for an item with no status.
+**Reason:** a presence group holds the items that `<group.by> exists` selects (`device/view-group-presence`). The filter has no `exists` term for `title`, the system fields always hold a value (`search-and-filters/filter-system-presence`), and `status_group` already has a null group for an item with no status.
 
 **Tests:** `compliance/views.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› takes a sort and a group on a date, an edge and a property, and refuses none of them`.
 
