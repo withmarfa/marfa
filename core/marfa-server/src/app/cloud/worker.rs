@@ -31,7 +31,7 @@ const TELL_MOST_WAIT_MS: i64 = 60 * 60 * 1000;
 const CHECK_EVERY_MS: i64 = 15 * 60 * 1000;
 const CHECK_FIRST_WAIT_MS: i64 = 5_000;
 const UNLINKED_BY_SERVICE: &str = "unlinked_by_service";
-/// How many put-backs of the sign-in address fail before a link Marfa Cloud ended is ended without.
+/// How many put-backs fail before the next refused one ends a link Marfa Cloud ended without it.
 const PUT_BACK_TRIES: u32 = 3;
 
 /// When a task is next due, and the wait after a failure that doubles each time.
@@ -108,8 +108,8 @@ struct Plan {
     link: Option<Asking>,
     moving: Option<(String, Due)>,
     checking: Option<(String, Due)>,
-    /// The put-backs that failed as a link Marfa Cloud ended was ended, and the last refusal.
-    put_back_failed: Option<(String, u32, Code)>,
+    /// The put-backs that failed as a link Marfa Cloud ended was ended.
+    put_back_failed: Option<(String, u32)>,
     unlinks: HashMap<String, Due>,
 }
 
@@ -255,16 +255,11 @@ async fn follow(app: &Arc<App>, plan: &mut Plan, link: &Link) -> Option<i64> {
                 _ => Due::now(now_ms),
             };
             if checking.at_ms <= now_ms {
-                let failed = match &plan.put_back_failed {
-                    Some((link_id, tries, code)) if *link_id == link.link_id => {
-                        Some((*tries, *code))
-                    }
-                    _ => None,
+                let tries = match &plan.put_back_failed {
+                    Some((link_id, tries)) if *link_id == link.link_id => *tries,
+                    _ => 0,
                 };
-                let stranded = failed
-                    .filter(|(tries, _)| *tries >= PUT_BACK_TRIES)
-                    .map(|(_, code)| code);
-                checking = match check(app, link, stranded).await {
+                checking = match check(app, link, tries >= PUT_BACK_TRIES).await {
                     Ok(Checked::Linked) => {
                         plan.put_back_failed = None;
                         Due::after(now_ms, CHECK_EVERY_MS)
@@ -276,9 +271,7 @@ async fn follow(app: &Arc<App>, plan: &mut Plan, link: &Link) -> Option<i64> {
                     Ok(Checked::Failed) => checking.failed(now_ms, CHECK_FIRST_WAIT_MS),
                     Err(refusal) => {
                         if !transient(&refusal) {
-                            let tries = failed.map_or(0, |(tries, _)| tries);
-                            plan.put_back_failed =
-                                Some((link.link_id.clone(), tries + 1, refusal.code));
+                            plan.put_back_failed = Some((link.link_id.clone(), tries + 1));
                         }
                         retried(checking, now_ms, "end", &refusal)
                     }
@@ -347,14 +340,14 @@ enum Checked {
 }
 
 /// Asks Marfa Cloud whether a linked link still stands, and ends it here if it does not.
-async fn check(app: &Arc<App>, link: &Link, stranded: Option<Code>) -> Result<Checked> {
+async fn check(app: &Arc<App>, link: &Link, stranding: bool) -> Result<Checked> {
     let Some(credential) = open(link.link_credential.as_ref(), LINK_CREDENTIAL, app) else {
         return Ok(Checked::Failed);
     };
     match client::send(app, Method::Get, "/link", Some(&credential)).await {
         Ok(answer) if answer.status == 200 => Ok(Checked::Linked),
         Ok(answer) if unauthorized(&answer) => {
-            end_by_service(app, link, stranded).await?;
+            end_by_service(app, link, stranding).await?;
             Ok(Checked::Ended)
         }
         Ok(_) | Err(_) => Ok(Checked::Failed),
@@ -368,13 +361,13 @@ enum Ending {
     Leaves,
     /// It is at the link's address, and the same write puts it back.
     PutsBack,
-    /// Putting it back failed with this code, so it stays wherever the write finds it.
+    /// Putting it back failed with this code once too often, so it stays.
     Stranded(Code),
 }
 
 /// Ends a link Marfa Cloud ended, putting back the sign-in address its name replaced. With
-/// `stranded`, the put-back failed too often, so the link ends and the address stays.
-async fn end_by_service(app: &Arc<App>, link: &Link, stranded: Option<Code>) -> Result<()> {
+/// `stranding`, the put-back failed too often, so a put-back refused again ends the link without.
+async fn end_by_service(app: &Arc<App>, link: &Link, stranding: bool) -> Result<()> {
     let reading = app.clone();
     let sign_in = app.db.read(move |tx| sign_in_in(&reading, tx)).await?;
     let link_id = link.link_id.clone();
@@ -414,22 +407,35 @@ async fn end_by_service(app: &Arc<App>, link: &Link, stranded: Option<Code>) -> 
         })
     };
     let cloud = status::cloud_address(link).filter(|cloud| *cloud == sign_in);
-    let (Some(cloud), None) = (cloud, stranded) else {
-        let reading = app.clone();
-        let how = stranded.map_or(Ending::Leaves, Ending::Stranded);
-        if let Some(code) = stranded {
-            tracing::warn!(
-                code = code.wire(),
-                "Marfa Cloud ended the link, and the sign-in address could not be put back"
-            );
-        }
-        return app
-            .write(&Caller::Server, "cloud.unlink", move |unit| {
-                let sign_in = sign_in_in(&reading, unit.tx())?;
-                end(unit, &sign_in, how)
-            })
-            .await;
+    let how = match cloud {
+        None => Ending::Leaves,
+        Some(cloud) => match put_back_and_end(app, link, cloud, end.clone()).await {
+            Ok(()) => return Ok(()),
+            Err(refusal) if !stranding || transient(&refusal) => return Err(refusal),
+            Err(refusal) => {
+                tracing::warn!(
+                    code = refusal.code.wire(),
+                    "Marfa Cloud ended the link, and the sign-in address could not be put back"
+                );
+                Ending::Stranded(refusal.code)
+            }
+        },
     };
+    let reading = app.clone();
+    app.write(&Caller::Server, "cloud.unlink", move |unit| {
+        let sign_in = sign_in_in(&reading, unit.tx())?;
+        end(unit, &sign_in, how)
+    })
+    .await
+}
+
+/// Moves the sign-in address back from `cloud` in the write that ends the link.
+async fn put_back_and_end(
+    app: &Arc<App>,
+    link: &Link,
+    cloud: Address,
+    end: impl FnOnce(&Unit<'_, '_>, &Address, Ending) -> Result<()> + Send + 'static,
+) -> Result<()> {
     let request = put_back(app, link, cloud, true)?;
     let link_id = link.link_id.clone();
     config::update_with(

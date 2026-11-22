@@ -17,6 +17,10 @@ import {
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import {
+  storeSettingRow,
+  withInstanceDatabase,
+} from "../../utils/instance-database.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { everythingClient } from "../../utils/own-blob-server.js";
 import { signIn } from "../../utils/signed-in.js";
@@ -1532,18 +1536,75 @@ describe("a link ended on Marfa Cloud", () => {
   );
 
   it(
-    "ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says how to move it",
+    "puts back the sign-in address on an end by Marfa Cloud once a write that failed three times works again",
+    async () => {
+      const { linkable, before } = await movedLink("cloud-ended-retried");
+      await linkable.server.setFault("fail:commit=config.update@always");
+      linkable.cloud.forget();
+      await linkable.server.advanceClock(61 * 60_000);
+      // The witness: the put-back was tried and its write failed three times.
+      await waitFor(
+        "three failed put-backs",
+        async () =>
+          ((await linkable.server.faults()).find(
+            (each) => each.name === "fail:commit",
+          )?.fired ?? 0) >= 3 || undefined,
+        30_000,
+        100,
+      );
+      await linkable.server.clearFault("fail:commit");
+      const ended = await linkable.until(
+        "the link to be ended",
+        (s) => s.state === "not_linked",
+      );
+      expect(ended.ended).toMatchObject({ reason: "unlinked_by_service" });
+      expect(ended).not.toHaveProperty("sign_in_address");
+      expect(await signInAddress(linkable)).toBe(before);
+      const unlinked = (await audited(linkable, "cloud.unlink"))[0]?.details;
+      expect(unlinked).toMatchObject({ reason: "unlinked_by_service" });
+      expect(unlinked).not.toHaveProperty("sign_in_address");
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says why",
     async () => {
       const { linkable, linked } = await movedLink("cloud-ended-stranded");
-      const own = `http://localhost:${new URL(linkable.server.apiUrl).port}`;
-      await linkable.server.setFault("fail:commit=config.update@always");
+      storeSettingRow(linkable.server.sqlitePath, "addresses", "elsewhere");
       const ended = await endedByCloud(linkable);
-      // The witness: the put-back was tried and its write failed each time.
-      const fault = (await linkable.server.faults()).find(
-        (each) => each.name === "fail:commit",
-      );
-      expect(fault?.fired ?? 0).toBeGreaterThanOrEqual(3);
       expect(ended.ended).toMatchObject({ reason: "unlinked_by_service" });
+      expect(ended.sign_in_address).toMatchObject({
+        state: "not_put_back",
+        address: linked.address,
+        failure: { reason: "validation_error" },
+      });
+      // `addresses` does not read, so there is no address to move it to.
+      expect(ended.sign_in_address).not.toHaveProperty("next_step");
+      await expectMatchesSchema("GET", "/cloud/link", 200, ended);
+      expect(await signInAddress(linkable)).toBe(linked.address);
+      expect(
+        (await audited(linkable, "cloud.unlink"))[0]?.details,
+      ).toMatchObject({
+        reason: "unlinked_by_service",
+        sign_in_address: "not_put_back",
+        put_back_failure: "validation_error",
+      });
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "says how to move a sign-in address an end by Marfa Cloud did not put back where the address the link moved does not read",
+    async () => {
+      const { linkable, linked } = await movedLink("cloud-ended-unread");
+      const own = `http://localhost:${new URL(linkable.server.apiUrl).port}`;
+      withInstanceDatabase(linkable.server.sqlitePath, (db) => {
+        db.prepare("UPDATE cloud_link SET previous_sign_in_address = ?").run(
+          "not an address",
+        );
+      });
+      const ended = await endedByCloud(linkable);
       expect(ended.sign_in_address).toMatchObject({
         state: "not_put_back",
         address: linked.address,
@@ -1558,15 +1619,6 @@ describe("a link ended on Marfa Cloud", () => {
         command: `marfa config set sign_in_address ${own} --confirm-address-change`,
       });
       await expectMatchesSchema("GET", "/cloud/link", 200, ended);
-      expect(await signInAddress(linkable)).toBe(linked.address);
-      expect(
-        (await audited(linkable, "cloud.unlink"))[0]?.details,
-      ).toMatchObject({
-        reason: "unlinked_by_service",
-        sign_in_address: "not_put_back",
-        put_back_failure: "internal_error",
-      });
-      await linkable.server.clearFault("fail:commit");
       const moved = await linkable.call(
         "socket",
         ended.sign_in_address.next_step.request.method,

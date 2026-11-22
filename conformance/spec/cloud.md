@@ -386,29 +386,37 @@ When the server ends a link that Marfa Cloud ended while the sign-in address is 
 
 ### `cloud/ended-not-put-back`
 
-If the write that moves the sign-in address back fails three times as the server ends a link that Marfa Cloud ended, then the server MUST end the link and leave the sign-in address as it is.
+If the write that moves the sign-in address back fails three times as the server ends a link that Marfa Cloud ended, and fails again on the next try for a reason other than `conflict` or `write_contention`, then the server MUST end the link and leave the sign-in address as it is.
 
-**Reason:** a link Marfa Cloud ended does not come back, so a server that kept it until the sign-in address moved would hold a dead link and try again forever.
+**Reason:** a link Marfa Cloud ended does not come back, so a server that kept it until the sign-in address moved would hold a dead link and try again forever. A write that fails for a while, such as on a full disk, puts the sign-in address back once it works again.
 
-**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says how to move it`.
+**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says why`, `› puts back the sign-in address on an end by Marfa Cloud once a write that failed three times works again`.
 
 ### `cloud/not-put-back-status`
 
-While the last link has ended and the sign-in address is still its `address`, the server MUST answer `GET /cloud/link` with `sign_in_address.state` `not_put_back` and a `sign_in_address.next_step` that moves the sign-in address to the address `cloud/put-back-target` names.
+While the last link has ended and the sign-in address is still its `address`, the server MUST answer `GET /cloud/link` with `sign_in_address.state` `not_put_back`.
 
-**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says how to move it`.
+**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says why`.
+
+### `cloud/not-put-back-next-step`
+
+While the last link has ended, the sign-in address is still its `address` and `addresses` reads, the server MUST answer, in `sign_in_address.next_step` of `GET /cloud/link`, the request that moves the sign-in address to the address `cloud/put-back-target` names.
+
+**Reason:** the stored address in force before the move may not read, and the owner still needs a way back.
+
+**Tests:** `compliance/cloud-link.test.ts › says how to move a sign-in address an end by Marfa Cloud did not put back where the address the link moved does not read`.
 
 ### `cloud/not-put-back-failure`
 
 While the sign-in address is still the `address` of a link the server ended as `cloud/ended-not-put-back` says, the server MUST answer `GET /cloud/link` with the error code of the failed write in `sign_in_address.failure.reason`.
 
-**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says how to move it`.
+**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says why`.
 
 ### `cloud/not-put-back-audited`
 
 When the server ends a link as `cloud/ended-not-put-back` says while the sign-in address is the link's `address`, the server MUST record `details.sign_in_address` `not_put_back` and the error code of the failed write in `details.put_back_failure` in the audit entry of the unlink.
 
-**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says how to move it`.
+**Tests:** `compliance/cloud-link.test.ts › ends a link Marfa Cloud ended though the sign-in address cannot be put back, keeps the sign-in address, and says why`.
 
 ### `cloud/ended-audited`
 
