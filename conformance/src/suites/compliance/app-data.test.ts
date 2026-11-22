@@ -31,7 +31,7 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
 let server: FreshServer;
 let origin: string;
 let cookie: string;
-/** An owner's key holding grants.manage and items.purge, and no content. */
+/** An owner's key holding grants.manage, items.purge and schema.write, with write on `app.*`. */
 let owner: string;
 
 const REGISTERS = "content:write metadata.types:write";
@@ -41,7 +41,10 @@ beforeAll(async () => {
   server = await bootFreshServer("app-data");
   origin = await issuerOrigin(server);
   cookie = await signIn(server, origin);
-  owner = await mint(["grants.manage", "items.purge", "sign_ins.manage"]);
+  owner = await mint(
+    ["grants.manage", "items.purge", "sign_ins.manage", "schema.write"],
+    { "app.*": "write" },
+  );
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -365,7 +368,7 @@ describe("listing an app's hidden data", () => {
 
   it("refuses a credential without grants.manage with 403 naming it, and a removal without items.purge with 403 naming that", async () => {
     const { vendor, items } = await appWithData();
-    const noGrants = await mint(["items.purge"]);
+    const noGrants = await mint(["items.purge"], { "app.*": "write" });
     const listing = refused(
       await answer(noGrants, `/app-vendors/${vendor}/data`),
       403,
@@ -375,7 +378,7 @@ describe("listing an app's hidden data", () => {
       refused(await removeData(noGrants, vendor), 403).details?.required_scope,
     ).toBe("grants.manage");
 
-    const noPurge = await mint(["grants.manage"]);
+    const noPurge = await mint(["grants.manage"], { "app.*": "write" });
     // The witness: grants.manage alone lists the data.
     expect(ids(await dataOf(noPurge, vendor))).toEqual(items);
     const removal = refused(await removeData(noPurge, vendor), 403);
@@ -384,7 +387,9 @@ describe("listing an app's hidden data", () => {
   });
 
   it("lets an app's sign-in list and remove only the data of its own vendors", async () => {
-    const own = await appWithData(`${REGISTERS} grants.manage items.purge`);
+    const own = await appWithData(
+      `${REGISTERS} grants.manage items.purge schema.write`,
+    );
     const other = await appWithData();
     expect(ids(await dataOf(own.signed.token, own.vendor))).toEqual(own.items);
     const listing = refused(
@@ -713,7 +718,9 @@ describe("removing an app's data when it is disconnected", () => {
   it("refuses remove_data to a credential without items.purge with 403 naming it, and ends nothing", async () => {
     const { vendor, signed, items } = await appWithData();
     const grant = await grantOf(signed.app);
-    const noPurge = await mint(["grants.manage", "sign_ins.manage"]);
+    const noPurge = await mint(["grants.manage", "sign_ins.manage"], {
+      "app.*": "write",
+    });
     const error = refused(
       await answer(noPurge, `/grants/${grant.id}?remove_data=true`, {
         method: "DELETE",
@@ -918,7 +925,7 @@ describe("an app's hidden data over MCP", () => {
 
   it("gives no confirmation in a marfa_app_data preview to a credential without items.purge", async () => {
     const { vendor, items } = await appWithData();
-    const noPurge = await mint(["grants.manage"]);
+    const noPurge = await mint(["grants.manage"], { "app.*": "write" });
     const mcp = await connectMcp(
       server.apiUrl,
       noPurge,
@@ -939,7 +946,7 @@ describe("an app's hidden data over MCP", () => {
   it("refuses remove_data in marfa_end_sign_in to a credential without items.purge", async () => {
     const { vendor, signed, items } = await appWithData();
     const grant = await grantOf(signed.app);
-    const noPurge = await mint(["grants.manage"]);
+    const noPurge = await mint(["grants.manage"], { "app.*": "write" });
     const mcp = await connectMcp(
       server.apiUrl,
       noPurge,
@@ -959,5 +966,347 @@ describe("an app's hidden data over MCP", () => {
     }
     expect(await grantListed(signed.app)).toBe(true);
     expect(ids(await dataOf(owner, vendor))).toEqual(items);
+  });
+});
+
+/** An app holding a vendor whose own table item has a column naming another of its types. */
+async function appWithOwnTable(): Promise<{
+  vendor: string;
+  contact: string;
+  sheet: string;
+}> {
+  const vendor = freshVendor();
+  const signed = await signedIn(REGISTERS);
+  const contact = `${vendor}.contact`;
+  const sheet = `${vendor}.sheet`;
+  await registerType(signed.token, contact);
+  ok(
+    await answer(signed.token, "/types", {
+      method: "POST",
+      body: {
+        id: sheet,
+        version: 1,
+        parent: "core.table",
+        fields: { owner: { type: "string" } },
+      },
+    }),
+    201,
+  );
+  ok(
+    await answer(signed.token, "/items", {
+      method: "POST",
+      body: {
+        type: sheet,
+        properties: {
+          title: "people",
+          columns: { who: { type: "item", type_constraints: [contact] } },
+        },
+      },
+    }),
+    201,
+  );
+  await createItem(signed.token, contact, "someone");
+  return { vendor, contact, sheet };
+}
+
+function browserDelete(vendor: string, headers: Record<string, string>) {
+  return fetch(`${server.apiUrl}/app-vendors/${vendor}/data`, {
+    method: "DELETE",
+    headers: { cookie, ...headers },
+  });
+}
+
+describe("what a vendor's removal judges", () => {
+  it("removes a vendor whose own table item has a column naming one of its types, for the local command, a key and the browser session", async () => {
+    const byLocal = await appWithOwnTable();
+    const local = await controlRequest(
+      server.controlSocket,
+      `/app-vendors/${byLocal.vendor}/data`,
+      { method: "DELETE" },
+    );
+    expect(local.status, JSON.stringify(local.body)).toBe(200);
+    expect(local.body.removed_items).toBe(2);
+    expect(await typeExists(byLocal.sheet)).toBe(false);
+
+    const byKey = await appWithOwnTable();
+    const taken = await removed(owner, byKey.vendor);
+    expect(taken.removed_items).toBe(2);
+    expect(taken.removed_types).toBe(2);
+
+    const byBrowser = await appWithOwnTable();
+    const answered = await browserDelete(byBrowser.vendor, { origin });
+    expect(answered.status, await answered.clone().text()).toBe(200);
+    expect(((await answered.json()) as Removed).removed_types).toBe(2);
+    expect(await typeExists(byBrowser.contact)).toBe(false);
+  });
+
+  it("refuses with 409 type_in_use while a table item outside the vendor has a column naming one of its types", async () => {
+    const { vendor, contact } = await appWithOwnTable();
+    const person = await mint(["items.purge"], {
+      "core.table": "write",
+      "app.*": "read",
+    });
+    const outside = ok(
+      await answer(person, "/items", {
+        method: "POST",
+        body: {
+          type: "core.table",
+          properties: {
+            title: "outside",
+            columns: { who: { type: "item", type_constraints: [contact] } },
+          },
+        },
+      }),
+      201,
+    ).item as { id: string };
+    const error = refused(await removeData(owner, vendor), 409);
+    expect(error.code).toBe("type_in_use");
+    // The owner's key may not read core.table, so the column is named by its type.
+    expect(error.details?.columns).toEqual(["core.table.table.who"]);
+    expect(await typeExists(contact)).toBe(true);
+    expect((await dataOf(owner, vendor)).data.length).toBe(2);
+
+    // The witness: with the outside table gone, the same removal goes through.
+    ok(await answer(person, `/items/${outside.id}`, { method: "DELETE" }));
+    ok(
+      await answer(person, `/items/${outside.id}/purge`, {
+        method: "POST",
+      }),
+    );
+    expect((await removed(owner, vendor)).removed_types).toBe(2);
+  });
+
+  it("lists and removes the items of a type deleted with force=true under the vendor", async () => {
+    const { vendor, items } = await appWithData();
+    const gone = `${vendor}.cache`;
+    ok(
+      await answer(owner, `/types/${gone}?force=true`, {
+        method: "DELETE",
+      }),
+    );
+    expect(await typeExists(gone)).toBe(false);
+    const listed = await dataOf(owner, vendor);
+    expect(ids(listed)).toEqual(items);
+    expect(listed.types).toContainEqual(
+      expect.objectContaining({ type: gone, archived: 1 }),
+    );
+
+    const taken = await removed(owner, vendor);
+    expect(taken.removed_items).toBe(items.length);
+    expect(taken.remaining_items).toBe(0);
+    expect((await dataOf(owner, vendor)).data).toEqual([]);
+  });
+});
+
+describe("a vendor's data and the caller's type map", () => {
+  it("refuses a key whose map does not reach the vendor's types its list, its removal and remove_data, and changes nothing", async () => {
+    const { vendor, signed, items, types } = await appWithData();
+    const blind = await mint(["grants.manage", "items.purge", "schema.write"]);
+    const listing = refused(
+      await answer(blind, `/app-vendors/${vendor}/data`),
+      403,
+    );
+    expect(listing.code).toBe("type_not_permitted");
+    expect(JSON.stringify(listing)).not.toContain(`${vendor}.setting`);
+    expect(refused(await removeData(blind, vendor), 403).code).toBe(
+      "type_not_permitted",
+    );
+    const grant = await grantOf(signed.app);
+    expect(
+      refused(
+        await answer(blind, `/grants/${grant.id}?remove_data=true`, {
+          method: "DELETE",
+        }),
+        403,
+      ).code,
+    ).toBe("type_not_permitted");
+    expect(await grantListed(signed.app)).toBe(true);
+    expect(ids(await dataOf(owner, vendor))).toEqual(items);
+    for (const type of types) expect(await typeExists(type)).toBe(true);
+
+    // The witness: the same key with read on the vendor's types lists them.
+    const reader = await mint(["grants.manage"], { [`${vendor}.*`]: "read" });
+    expect(ids(await dataOf(reader, vendor))).toEqual(items);
+  });
+
+  it("refuses a removal that would delete types to a key without schema.write before it removes anything", async () => {
+    const { vendor, items, types } = await appWithData();
+    const noSchema = await mint(["grants.manage", "items.purge"], {
+      [`${vendor}.*`]: "write",
+    });
+    const error = refused(await removeData(noSchema, vendor), 403);
+    expect(error.details?.required_scope).toBe("schema.write");
+    expect(ids(await dataOf(owner, vendor))).toEqual(items);
+    for (const type of types) expect(await typeExists(type)).toBe(true);
+
+    // The witness: with schema.write the same map removes it.
+    const withSchema = await mint(
+      ["grants.manage", "items.purge", "schema.write"],
+      { [`${vendor}.*`]: "write" },
+    );
+    expect((await removed(withSchema, vendor)).removed_types).toBe(
+      types.length,
+    );
+  });
+});
+
+describe("an app's hidden data over MCP and the caller's type map", () => {
+  it("refuses marfa_app_data and remove_data in marfa_end_sign_in to a key whose map does not reach the vendor's types", async () => {
+    const { vendor, signed, items } = await appWithData();
+    const grant = await grantOf(signed.app);
+    const blind = await mint([
+      "grants.manage",
+      "items.purge",
+      "schema.write",
+      "sign_ins.manage",
+    ]);
+    const mcp = await connectMcp(
+      server.apiUrl,
+      blind,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      const listing = toolError(
+        await callTool(mcp, "marfa_app_data", { vendor }),
+      );
+      expect(listing.code).toBe("type_not_permitted");
+      const ending = toolError(
+        await callTool(mcp, "marfa_end_sign_in", {
+          id: grant.id,
+          remove_data: true,
+        }),
+      );
+      expect(ending.code).toBe("type_not_permitted");
+      // The witness: the same key previews ending the app without its data.
+      const kept = toolResult(
+        await callTool(mcp, "marfa_end_sign_in", { id: grant.id }),
+      );
+      expect(typeof kept.confirm).toBe("string");
+    } finally {
+      await mcp.close();
+    }
+    expect(await grantListed(signed.app)).toBe(true);
+    expect(ids(await dataOf(owner, vendor))).toEqual(items);
+  });
+});
+
+describe("an app's hidden data from the owner's browser", () => {
+  it("lists and deletes a vendor's data for the owner's browser session, and refuses a delete without this instance's origin", async () => {
+    const { vendor, items, types } = await appWithData();
+    const listedByCookie = await fetch(
+      `${server.apiUrl}/app-vendors/${vendor}/data`,
+      { headers: { cookie } },
+    );
+    const page = (await listedByCookie.json()) as Listed;
+    expect(listedByCookie.status, JSON.stringify(page)).toBe(200);
+    expect(ids(page)).toEqual(items);
+
+    for (const headers of [{}, { origin: "http://elsewhere.invalid" }]) {
+      const refusedDelete = await browserDelete(vendor, headers);
+      expect(refusedDelete.status, await refusedDelete.text()).toBe(403);
+    }
+    const otherInstance = await browserDelete(vendor, {
+      origin,
+      "x-marfa-instance-id": "01900000-0000-7000-8000-000000000000",
+    });
+    const changed = (await otherInstance.json()) as {
+      error: { code: string };
+    };
+    expect(otherInstance.status, JSON.stringify(changed)).toBe(409);
+    expect(changed.error.code).toBe("instance_changed");
+    expect(ids(await dataOf(owner, vendor))).toEqual(items);
+
+    const deleted = await browserDelete(vendor, { origin });
+    expect(deleted.status, await deleted.clone().text()).toBe(200);
+    expect((await deleted.json()) as Removed).toEqual({
+      vendor,
+      removed_items: items.length,
+      removed_types: types.length,
+      remaining_items: 0,
+    });
+  });
+});
+
+describe("an app's hidden data over MCP above one removal", () => {
+  it("refuses a marfa_app_data confirmation once an item was added under a vendor holding more than 1,000 items", async () => {
+    const vendor = freshVendor();
+    const signed = await signedIn(REGISTERS);
+    await registerType(signed.token, `${vendor}.setting`);
+    await manyItems(signed.token, `${vendor}.setting`, BIG);
+    const mcp = await connectMcp(
+      server.apiUrl,
+      owner,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      const preview = toolResult(
+        await callTool(mcp, "marfa_app_data", { vendor }),
+      );
+      expect(preview.items).toBe(BIG);
+      await createItem(signed.token, `${vendor}.setting`, "the newest");
+      const stale = toolError(
+        await callTool(mcp, "marfa_app_data", {
+          vendor,
+          confirm: preview.confirm as string,
+        }),
+      );
+      expect(stale.code).toBe("confirmation_stale");
+      expect(
+        (
+          ok(
+            await answer(owner, `/app-vendors/${vendor}/data?limit=1`),
+          ) as unknown as Listed
+        ).types[0]!.active,
+      ).toBe(BIG + 1);
+
+      // The witness: a fresh preview's confirmation removes the first page.
+      const again = toolResult(
+        await callTool(mcp, "marfa_app_data", { vendor }),
+      );
+      const done = toolResult(
+        await callTool(mcp, "marfa_app_data", {
+          vendor,
+          confirm: again.confirm as string,
+        }),
+      );
+      expect(done.removed_items).toBe(1_000);
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("refuses a marfa_end_sign_in preview with remove_data while the app holds more than 1,000 items, naming marfa_app_data", async () => {
+    const vendor = freshVendor();
+    const signed = await signedIn(REGISTERS);
+    await registerType(signed.token, `${vendor}.setting`);
+    await manyItems(signed.token, `${vendor}.setting`, BIG);
+    const grant = await grantOf(signed.app);
+    const mcp = await connectMcp(
+      server.apiUrl,
+      owner,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      // The witness: without remove_data the same preview gives a confirmation.
+      const kept = toolResult(
+        await callTool(mcp, "marfa_end_sign_in", { id: grant.id }),
+      );
+      expect(typeof kept.confirm).toBe("string");
+      const error = toolError(
+        await callTool(mcp, "marfa_end_sign_in", {
+          id: grant.id,
+          remove_data: true,
+        }),
+      );
+      expect(error.code).toBe("bulk_cap_exceeded");
+      expect(error.use_tool).toBe("marfa_app_data");
+      expect(error.confirm).toBeUndefined();
+    } finally {
+      await mcp.close();
+    }
+    expect(await grantListed(signed.app)).toBe(true);
   });
 });
