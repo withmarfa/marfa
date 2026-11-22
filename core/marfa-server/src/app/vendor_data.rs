@@ -94,41 +94,56 @@ fn item_total(tx: &Transaction<'_>, types: &[String]) -> Result<usize> {
     Ok(usize::try_from(total).unwrap_or(usize::MAX))
 }
 
-/// Removes up to [`MOST_REMOVED`] of the vendor's items, and its types once none is left.
-fn remove_vendor(
+/// Removes up to [`MOST_REMOVED`] items of the holder's vendors, and all their types once none
+/// is left, judging the types as one set so a column under one vendor naming another's is free.
+fn remove_sets(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
-    vendor: &str,
     holder: &Holder,
-    set: &Set,
+    sets: &[(String, Set)],
 ) -> Result<Removal> {
     let tx = unit.tx();
     let catalog = catalog::current(cache, tx, Snapshot::Pending)?;
-    let dropping = webhooks::held_naming(tx, &makers_of(tx, holder)?, &set.registered)?;
+    let registered: Vec<String> = sets
+        .iter()
+        .flat_map(|(_, set)| set.registered.iter().cloned())
+        .collect();
+    let dropping = webhooks::held_naming(tx, &makers_of(tx, holder)?, &registered)?;
     let dropped: Vec<String> = dropping.iter().map(|hook| hook.id.clone()).collect();
-    types::write::require_set_free(tx, &catalog, &unit.caller, &set.registered, &dropped)?;
-    let taken = items::write::purge_of_types(unit, cache, &set.all, MOST_REMOVED)?;
-    let remaining = item_total(tx, &set.all)?;
-    let mut removal = Removal {
-        items: taken,
-        types: 0,
-        remaining,
-    };
-    if remaining == 0 {
-        webhooks::forget(unit, &dropping)?;
-        removal.types = types::write::delete_set(unit, cache, &set.registered, &dropped)?;
+    types::write::require_set_free(tx, &catalog, &unit.caller, &registered, &dropped)?;
+    let mut taken = Vec::with_capacity(sets.len());
+    let mut budget = MOST_REMOVED;
+    for (_, set) in sets {
+        let items = items::write::purge_of_types(unit, cache, &set.all, budget)?;
+        budget = budget.saturating_sub(items);
+        taken.push(Removal {
+            items,
+            types: 0,
+            remaining: item_total(tx, &set.all)?,
+        });
     }
-    unit.audit_also(
-        REMOVED,
-        "app_vendor",
-        vendor,
-        Some(json!({
-            "removed_items": removal.items,
-            "removed_types": removal.types,
-            "remaining_items": removal.remaining,
-        })),
-    )?;
-    Ok(removal)
+    if taken.iter().all(|removal| removal.remaining == 0) {
+        webhooks::forget(unit, &dropping)?;
+        types::write::delete_set(unit, cache, &registered, &dropped)?;
+        for (removal, (_, set)) in taken.iter_mut().zip(sets) {
+            removal.types = set.registered.len();
+        }
+    }
+    let mut total = Removal::default();
+    for (removal, (vendor, _)) in taken.iter().zip(sets) {
+        unit.audit_also(
+            REMOVED,
+            "app_vendor",
+            vendor,
+            Some(json!({
+                "removed_items": removal.items,
+                "removed_types": removal.types,
+                "remaining_items": removal.remaining,
+            })),
+        )?;
+        total.add(*removal);
+    }
+    Ok(total)
 }
 
 /// One page of the vendor's removal in the caller's write, judged at the vendor's own door.
@@ -139,7 +154,7 @@ pub(crate) fn remove_in(
 ) -> Result<Removal> {
     let holder = unit.caller.require_vendor_data(unit.tx(), vendor, true)?;
     let set = reached_set(unit.tx(), &unit.caller, vendor, true)?;
-    remove_vendor(unit, cache, vendor, &holder, &set)
+    remove_sets(unit, cache, &holder, &[(vendor.to_string(), set)])
 }
 
 /// Each vendor the app holds with its set, refused as removing them with the app would be.
@@ -174,11 +189,7 @@ pub(crate) fn remove_of_client(
         let names: Vec<&str> = sets.iter().map(|(vendor, _)| vendor.as_str()).collect();
         return Err(over_cap(&names.join(", "), total, PAGED_CLI));
     }
-    let mut removal = Removal::default();
-    for (vendor, set) in &sets {
-        removal.add(remove_vendor(unit, cache, vendor, &holder, set)?);
-    }
-    Ok(removal)
+    remove_sets(unit, cache, &holder, &sets)
 }
 
 fn counts_json(types: &[String], counts: &[(String, String, i64)]) -> Vec<Value> {
@@ -249,6 +260,22 @@ pub(crate) fn held(tx: &Transaction<'_>, caller: &Caller, vendor: &str) -> Resul
     let holder = caller.require_vendor_data(tx, vendor, false)?;
     let set = reached_set(tx, caller, vendor, false)?;
     held_of_set(tx, vendor, &holder, &set)
+}
+
+/// How many items the vendor holds now, or `None` once the caller may no longer list them.
+pub(crate) fn remaining_for(
+    tx: &Transaction<'_>,
+    caller: &Caller,
+    vendor: &str,
+) -> Result<Option<usize>> {
+    let reached = caller
+        .require_vendor_data(tx, vendor, false)
+        .and_then(|_| reached_set(tx, caller, vendor, false));
+    match reached {
+        Ok(set) => item_total(tx, &set.all).map(Some),
+        Err(refused) if refused.code == Code::InternalError => Err(refused),
+        Err(_) => Ok(None),
+    }
 }
 
 /// What every vendor the app holds keeps, refused as ending it with its data would be.
