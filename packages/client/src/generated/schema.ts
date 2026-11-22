@@ -1059,7 +1059,7 @@ export interface paths {
         put?: never;
         /**
          * Create a mapping preview
-         * @description Asks the plugin's connector to render how one kind would land, on one of its items, and returns the preview pending. Read it with `GET /plugins/{name}/connector/previews/{id}` until the connector answers. A plugin holds at most 20 previews, so Marfa removes the oldest answered one to make room.
+         * @description Asks the plugin's connector to render one kind on one of its items, and returns the preview pending until the connector answers. A plugin holds at most 20 previews, so Marfa removes the oldest answered one to make room.
          */
         post: operations["createMappingPreview"];
         delete?: never;
