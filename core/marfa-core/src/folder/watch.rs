@@ -197,8 +197,10 @@ pub fn instance_changed_said(server: &str) -> String {
          this folder or its key, so the watch stopped this folder; to follow the folder there, \
          run `marfa folders remove` on the directory, which keeps its files, then move the \
          directory aside, add it again with `marfa folders add` and `--folder` with the \
-         folder's ID and a key for that instance, push it, and copy the files you changed \
-         back in from the moved directory and push again"
+         folder's ID and a key for that instance, and push it; then redo there the changes \
+         `marfa folders remove` names, deleting and moving again the files it names as \
+         deleted or moved and copying the others back in from the moved directory, and push \
+         again"
     )
 }
 

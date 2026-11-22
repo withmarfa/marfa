@@ -30,6 +30,7 @@ mod scan;
 mod scoped;
 mod selective;
 mod unmatched;
+mod unsent;
 pub use beneath::BeneathReport;
 pub(crate) use first::waiting;
 pub use first::{FirstSync, Synced};
@@ -62,6 +63,7 @@ pub use storage::user_home;
 pub use sync::{Removal, SendReport, SyncReport};
 pub use taking_back::TakeBack;
 pub use unmatched::{Unmatched, UnmatchedRemoved};
+pub use unsent::{UnsentChange, UnsentChanges, UnsentFile};
 pub use watch::{
     RETRY_MOST, WatchEnd, WatchError, WatchEvent, WatchPass, credential_refused_said,
     instance_changed_said, is_instance_changed,
@@ -775,31 +777,37 @@ impl Folder {
     }
 
     /// Leaves the folder's files; refused while writes wait, unless the first
-    /// sync still waits to be confirmed or the copy was expired because
-    /// another instance answered at its server, which no write from it can
-    /// reach. Answers how many writes waited unsent; their changes stay in the
-    /// files.
-    pub fn remove(self) -> Result<usize> {
+    /// sync still waits to be confirmed, or another instance answered at its
+    /// server, which no write from it can reach, and its server does not now
+    /// answer as the copy's own instance. Answers the writes that waited
+    /// unsent there, and the files that hold changes the server never received.
+    pub fn remove(self) -> Result<UnsentChanges> {
         // A first sync still waiting has sent nothing, so its queue holds
         // only what the scan read from files that stay.
-        let (waiting, another_instance) = if self.awaiting_confirmation()? {
-            (0, false)
+        let waiting = if self.awaiting_confirmation()? {
+            Vec::new()
         } else {
-            let conn = self.core.conn()?;
-            let waiting = crate::store::queued_writes(&conn)?
-                .iter()
+            crate::store::queued_writes(&*self.core.conn()?)?
+                .into_iter()
                 .filter(|write| {
                     matches!(write.verdict, None | Some(crate::model::Verdict::Blocked))
                 })
-                .count();
-            (waiting, crate::store::another_instance_answered(&conn)?)
+                .collect()
         };
-        if waiting > 0 && !another_instance {
+        let unsent = if self.another_instance_answers()? {
+            UnsentChanges {
+                writes: waiting.len(),
+                files: self.unsent_files(&waiting)?,
+            }
+        } else if waiting.is_empty() {
+            UnsentChanges::default()
+        } else {
             return Err(CoreError::Invalid(format!(
-                "{} has {waiting} write(s) not yet sent; push it first, or they are lost with the folder",
-                self.root.display()
+                "{} has {} write(s) not yet sent; push it first, or they are lost with the folder",
+                self.root.display(),
+                waiting.len()
             )));
-        }
+        };
         if let Some(registry) = Registry::located() {
             registry.unregister(&self.root, elsewhere::listed_store(&self.core).as_deref())?;
         }
@@ -818,7 +826,38 @@ impl Folder {
                 root.join(STATE_DIR).display()
             ))
         })?;
-        Ok(waiting)
+        Ok(unsent)
+    }
+
+    /// Whether the copy's origin answers as another instance: asked of its
+    /// root, and where the root cannot be asked, as the copy last recorded.
+    fn another_instance_answers(&self) -> Result<bool> {
+        let (recorded, origin) = {
+            let conn = self.core.conn()?;
+            (
+                crate::store::another_instance_answered(&conn)?,
+                crate::store::meta_get(&conn, crate::store::META_SERVER_ORIGIN)?,
+            )
+        };
+        let Some(http) = recorded
+            .then_some(origin)
+            .flatten()
+            .and_then(|origin| crate::http::Http::new(&origin, "").ok())
+        else {
+            return Ok(recorded);
+        };
+        Ok(
+            match crate::catch_up::refuse_another_instance(&self.core, &http) {
+                // Its own instance answered, which clears the record.
+                Ok(_) => false,
+                Err(CoreError::CopyExpired { reason, .. })
+                    if reason == crate::http::INSTANCE_CHANGED =>
+                {
+                    true
+                }
+                Err(_) => crate::store::another_instance_answered(&*self.core.conn()?)?,
+            },
+        )
     }
 
     pub fn folder_id(&self) -> &str {

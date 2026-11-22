@@ -408,6 +408,33 @@ pub fn moved_from(conn: &Connection) -> Result<HashMap<String, MovedFrom>, CoreE
         .collect())
 }
 
+/// One `meta` row per item whose file a scan moved or deleted while writes
+/// to it waited, naming the path it had before the first of them: the path
+/// the server last held it at, which no file says once it has gone.
+const LEFT_AT: &str = "folder_left_at:";
+
+/// Notes that the file of `item_id` leaves `path`, before the writes that
+/// send its move or delete are queued. A row stands only while writes to its
+/// item wait, so rows whose writes have all been answered go first.
+pub fn note_left(conn: &Connection, item_id: &str, path: &str) -> Result<(), CoreError> {
+    for (item, _) in under(conn, LEFT_AT)? {
+        if crate::store::waiting_writes_for_item(conn, &item)?.is_empty() {
+            crate::store::meta_delete(conn, &format!("{LEFT_AT}{item}"))?;
+        }
+    }
+    let key = format!("{LEFT_AT}{item_id}");
+    if crate::store::meta_get(conn, &key)?.is_none() {
+        crate::store::meta_set(conn, &key, path)?;
+    }
+    Ok(())
+}
+
+/// The path each item's file had before a scan moved or deleted it while
+/// writes to it waited (`note_left`), by item.
+pub fn left_at(conn: &Connection) -> Result<HashMap<String, String>, CoreError> {
+    Ok(under(conn, LEFT_AT)?.into_iter().collect())
+}
+
 /// One `meta` row per old buffer held at the path a pull moved a file from:
 /// the bytes it was held at and why. It stands until those bytes change or
 /// the file goes.
@@ -1339,6 +1366,43 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::{BOUND_COLUMNS, bindings, prune_unheld, set_unheld, unheld};
+
+    #[test]
+    fn keeps_where_a_file_left_only_while_writes_to_its_item_wait() {
+        let core = crate::Core::open_in_memory(None).unwrap();
+        let conn = core.conn().unwrap();
+        let wait = |item: &str| {
+            crate::store::enqueue(
+                &conn,
+                &crate::store::NewWrite {
+                    kind: crate::model::WriteKind::UpdateItem,
+                    item_id: Some(item),
+                    to_id: None,
+                    edge_id: None,
+                    namespace: None,
+                    tag: None,
+                    blob: None,
+                    base_version: Some(1),
+                    payload: "{}",
+                    depends_on: &[],
+                },
+            )
+            .unwrap()
+        };
+        let left = |item: &str| super::left_at(&conn).unwrap().get(item).cloned();
+        wait("a");
+        super::note_left(&conn, "a", "first.md").unwrap();
+        super::note_left(&conn, "a", "second.md").unwrap();
+        assert_eq!(left("a").as_deref(), Some("first.md"));
+        // The witness: a row whose item still has a write waiting stays.
+        super::note_left(&conn, "b", "other.md").unwrap();
+        assert_eq!(left("a").as_deref(), Some("first.md"));
+        conn.execute("UPDATE queue SET verdict = 'accepted'", [])
+            .unwrap();
+        super::note_left(&conn, "b", "other.md").unwrap();
+        assert_eq!(left("a"), None);
+        assert_eq!(left("b").as_deref(), Some("other.md"));
+    }
 
     #[test]
     fn keeps_an_unheld_answer_until_its_file_changes_is_bound_or_goes() {

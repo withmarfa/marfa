@@ -986,7 +986,10 @@ fn expire_if_built_elsewhere(
     };
     let interrupted = store::meta_get(&conn, store::META_HYDRATE_RESUME)?.is_some();
     let tx = conn.transaction()?;
-    crate::reach::expire(&tx)?;
+    match reason {
+        HydrateRestart::InstanceChanged => crate::reach::expire_for_another_instance(&tx)?,
+        _ => crate::reach::expire(&tx)?,
+    }
     tx.commit()?;
     Ok(interrupted.then_some(reason))
 }

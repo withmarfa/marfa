@@ -1313,7 +1313,7 @@ pub(crate) mod tests {
         assert!(root.join(STATE_DIR).join("core.sqlite").exists());
         assert!(matches!(
             Folder::remove_at(&root).unwrap(),
-            crate::folder::Removal::Deleted { dir, unsent: 0, .. } if dir == root
+            crate::folder::Removal::Deleted { dir, unsent, .. } if dir == root && unsent == crate::folder::UnsentChanges::default()
         ));
         assert!(!root.join(STATE_DIR).join("core.sqlite").exists());
 
@@ -1876,7 +1876,7 @@ pub(crate) mod tests {
         intact(&second);
         assert!(matches!(
             Folder::remove_at(&second).unwrap(),
-            crate::folder::Removal::Deleted { dir, unsent: 0, .. } if dir == second
+            crate::folder::Removal::Deleted { dir, unsent, .. } if dir == second && unsent == crate::folder::UnsentChanges::default()
         ));
         assert!(!second.join(STATE_DIR).join("core.sqlite").exists());
     }

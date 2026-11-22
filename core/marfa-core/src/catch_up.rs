@@ -1422,6 +1422,10 @@ fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
     }
     let held = store::meta_get(&tx, store::META_INSTANCE_ID)?;
     if held.as_deref() == Some(served) {
+        if core.handle() == Handle::Writer && store::another_instance_answered(&tx)? {
+            store::meta_delete(&tx, store::META_ANOTHER_INSTANCE)?;
+            tx.commit()?;
+        }
         return Ok(());
     }
     if core.handle() == Handle::Writer {

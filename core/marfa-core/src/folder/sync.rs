@@ -354,13 +354,12 @@ impl Folder {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Removal {
     /// The folder's own state at this directory went; its files stay.
-    /// `unsent` writes waited that no server could take, because another
-    /// instance answered at the folder's server; their changes stay in the
-    /// files.
+    /// `unsent` is what waited that no server could take, because another
+    /// instance answers at the folder's server.
     Deleted {
         dir: PathBuf,
         folder: String,
-        unsent: usize,
+        unsent: super::UnsentChanges,
     },
     /// Only the registry entry for this directory went, and nothing was
     /// deleted, for the reason given.

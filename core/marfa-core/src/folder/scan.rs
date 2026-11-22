@@ -1461,6 +1461,7 @@ impl Folder {
                     bound: Some(bound),
                 }) => {
                     self.unbind_if_still(&bound)?;
+                    state::note_left(&*self.core.conn()?, &item_id, &bound.path)?;
                     state::clear_moved_from(&*self.core.conn()?, &item_id)?;
                     // A file item's bytes are no document, whatever its name now.
                     let document = (carries_frontmatter(&file.path)
@@ -2434,6 +2435,7 @@ impl Folder {
         let mut writes = bound.writes.clone();
         if bound.path != file.key {
             self.unbind_if_still(&bound)?;
+            state::note_left(&*self.core.conn()?, &bound.item_id, &bound.path)?;
             // The name alone says the title; the unread line is the pull's
             // to rewrite.
             let shown = bound
@@ -3219,6 +3221,9 @@ impl Folder {
             self.end_placement(item_id, path)?;
         }
         let conn = self.core.conn()?;
+        if matches!(missing, Missing::Deleted) {
+            state::note_left(&conn, item_id, path)?;
+        }
         state::journal_clear(&conn, path)?;
         state::unbind(&conn, path)?;
         Ok(missing)
