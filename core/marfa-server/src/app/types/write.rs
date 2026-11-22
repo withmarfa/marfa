@@ -149,6 +149,8 @@ pub async fn register(app: &App, caller: &Caller, body: Obj) -> Result<Value> {
 pub struct Merge {
     pub label: Option<String>,
     pub description: Option<String>,
+    /// `Some("")` removes guidance. `None` leaves it as stored.
+    pub guidance: Option<String>,
     pub fields: Obj,
     pub tables: Obj,
 }
@@ -233,6 +235,9 @@ fn merged(catalog: &Catalog, id: &str, stored: &Obj, merge: Merge) -> Result<Obj
     }
     if let Some(description) = merge.description {
         definition.insert("description".into(), description.into());
+    }
+    if let Some(guidance) = merge.guidance {
+        definition.insert("guidance".into(), guidance.into());
     }
     Ok(definition)
 }

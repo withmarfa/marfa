@@ -24,7 +24,7 @@ pub fn definition() -> Definition {
     Definition {
         name: NAME,
         title: "Save a new item",
-        description: "Use to save something new: a note, task, record or other item, or a file from a web address or the chat. To change an existing item, use marfa_update instead.",
+        description: "Use to save something new: a note, task, record or other item, or a file from a web address or the chat. Read the type with marfa_overview first, several at once if you are choosing, and pick the type whose guidance fits. To change an existing item, use marfa_update instead.",
         input: json!({
             "type": "object",
             "properties": {
