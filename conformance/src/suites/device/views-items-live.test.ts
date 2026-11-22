@@ -143,6 +143,32 @@ beforeAll(async () => {
       properties: { title: "A list of words", body: "", words },
     });
   }
+  for (const marks of [
+    [15],
+    [5],
+    [1, 5],
+    ["5"],
+    [true],
+    [1],
+    [[5]],
+    [{ n: 5 }],
+    [],
+    [null],
+    [5.5],
+    [false],
+    5,
+    15,
+    5.5,
+    true,
+    "15",
+    "true",
+  ]) {
+    await made({
+      type: "core.note",
+      tags: [mark],
+      properties: { title: "A list of marks", body: "", marks },
+    });
+  }
   const archived = ids[1]!;
   expect((await client.transitionItem(archived, "archived")).ok).toBe(true);
 
@@ -266,6 +292,15 @@ beforeAll(async () => {
   add("no member equal", { query: words('neq "kitchen"') }, 4);
   add("a member holding text", { query: words('contains "kit"') }, 5);
   add("a member beginning with text", { query: words('starts_with "kit"') }, 5);
+  const marks = (condition: string) => ({
+    filter: `${filter} AND properties.marks ${condition}`,
+  });
+  add("a member equal to a number", { query: marks("eq 5") }, 3);
+  add("a member equal to a boolean", { query: marks("eq true") }, 4);
+  add("no member equal to a number", { query: marks("neq 5") }, 15);
+  add("no member equal to a boolean", { query: marks("neq 1") }, 14);
+  add("contains a number", { query: marks("contains 5") }, 6);
+  add("contains a boolean", { query: marks("contains true") }, 4);
 
   for (const item of cases) {
     const saved = await client.createView({
