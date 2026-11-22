@@ -1189,6 +1189,55 @@ describe("custom edge-type registration", () => {
     });
   });
 
+  function titleCaseLabel(label: string): boolean {
+    const words = label.split(" ");
+    return (
+      words.length > 0 &&
+      words.every((word) => {
+        const first = word.codePointAt(0);
+        if (first === undefined) {
+          return false;
+        }
+        const character = String.fromCodePoint(first);
+        return (
+          character !== character.toLowerCase() &&
+          character === character.toUpperCase()
+        );
+      })
+    );
+  }
+
+  it("lists every shipped edge type label and reverse label in title case", async () => {
+    // The witness: the same check rejects a sentence-case heading.
+    expect(titleCaseLabel("In collection")).toBe(false);
+    expect(titleCaseLabel("Subject of")).toBe(false);
+    expect(titleCaseLabel("Folder contents")).toBe(false);
+    expect(titleCaseLabel("In Collection")).toBe(true);
+    expect(titleCaseLabel("Subject Of")).toBe(true);
+    expect(titleCaseLabel("Folder Contents")).toBe(true);
+    expect(titleCaseLabel("About")).toBe(true);
+
+    const r = await client.listEdgeTypes();
+    expect(r.ok).toBe(true);
+    const shipped = r.data.data.filter(
+      (edgeType) => !edgeType.id.includes("."),
+    );
+    expect(shipped).not.toHaveLength(0);
+    const offenders = shipped.flatMap((edgeType) => {
+      const bad: string[] = [];
+      if (!titleCaseLabel(edgeType.label)) {
+        bad.push(`${edgeType.id} label ${JSON.stringify(edgeType.label)}`);
+      }
+      if (!titleCaseLabel(edgeType.reverse_label)) {
+        bad.push(
+          `${edgeType.id} reverse label ${JSON.stringify(edgeType.reverse_label)}`,
+        );
+      }
+      return bad;
+    });
+    expect(offenders).toEqual([]);
+  });
+
   it("lists the reverse label a registration names, and the label where it names none", async () => {
     const named = `mock.labelled.${ctx.runId}`;
     const alone = `mock.labelled-alone.${ctx.runId}`;
