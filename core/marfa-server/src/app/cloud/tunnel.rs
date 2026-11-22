@@ -52,7 +52,6 @@ impl Tunnel {
         self.open.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The port the listener is open at.
     pub fn port(&self) -> Option<u16> {
         self.held()
             .as_ref()

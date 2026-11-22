@@ -13625,7 +13625,7 @@
                   "refused",
                   "token"
                 ],
-                "description": "Why a `failed` connector can't run: `missing` (no connector file the server can run), `port_taken` (another program holds the port on 127.0.0.1 where Marfa listens for the connector), `refused` (Marfa Cloud refuses its tunnel token and has no newer one) or `token` (the server can't read or write the token file)."
+                "description": "Why a `failed` connector can't run: `missing` (no connector file to run), `port_taken` (another program holds its port on 127.0.0.1), `refused` (Marfa Cloud refuses its token and has no newer one) or `token` (the token file can't be written)."
               },
               "since": {
                 "type": "string",

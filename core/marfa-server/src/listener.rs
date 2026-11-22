@@ -52,7 +52,7 @@ impl Declaration {
         }
     }
 
-    /// The listener only the tunnel connector, on this machine, reaches.
+    /// The listener on 127.0.0.1 that Marfa Cloud's connector is sent to.
     pub fn tunnel() -> Declaration {
         Declaration {
             name: "tunnel",
