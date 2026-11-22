@@ -2872,7 +2872,7 @@ async fn a_schema_10_database_upgrades_through_11_and_a_preview_goes_with_its_co
         )
         .unwrap();
 
-    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+    db_open(&options(&place.file, &MIGRATIONS[..11]), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -2909,4 +2909,49 @@ async fn a_schema_10_database_upgrades_through_11_and_a_preview_goes_with_its_co
         })
         .unwrap();
     assert_eq!(left, 0);
+}
+
+#[tokio::test]
+async fn a_schema_11_database_upgrades_through_12_keeping_its_link_with_no_origin_port() {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..11]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    Connection::open(&place.file)
+        .unwrap()
+        .execute(
+            "INSERT INTO cloud_link (id, link_id, state, user_code, approval_url, expires_at, \
+             interval_ms, started_at, sign_in_move) VALUES (1, 'link', 'linked', 'ABCD-1234', \
+             'https://cloud.example/link', 'a', 5000, 'a', 'keep')",
+            [],
+        )
+        .unwrap();
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    assert_eq!(version_of(&place.file), 12);
+    let conn = Connection::open(&place.file).unwrap();
+    let (link_id, origin_port): (String, Option<i64>) = conn
+        .query_row(
+            "SELECT link_id, origin_port FROM cloud_link WHERE id = 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!((link_id.as_str(), origin_port), ("link", None));
+    for port in [0, 65536] {
+        assert!(
+            conn.execute("UPDATE cloud_link SET origin_port = ?1", [port])
+                .is_err(),
+            "origin_port took {port}"
+        );
+    }
+    conn.execute("UPDATE cloud_link SET origin_port = 65535", [])
+        .unwrap();
 }

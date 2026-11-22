@@ -81,7 +81,7 @@ use crate::app::refusal::{Code, Refusal};
 use crate::listener::Declaration;
 use admission::Admission;
 use answer::{panicked, refusal_answer};
-pub use connections::Caps;
+pub use connections::{Caps, Entrance, Gate};
 pub use listening::serve;
 use observe::{Observed, Unmatched, observe as observe_request, remember_route};
 

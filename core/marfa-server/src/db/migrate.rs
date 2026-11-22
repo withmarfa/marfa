@@ -85,6 +85,14 @@ pub const MIGRATIONS: &[Migration] = &[
              WHERE name = 'paused')",
         ),
     },
+    Migration {
+        version: 12,
+        sql: include_str!("migrations/0012_cloud_link_origin_port.sql"),
+        done: Some(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('cloud_link') \
+             WHERE name = 'origin_port')",
+        ),
+    },
 ];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \

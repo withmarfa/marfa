@@ -391,6 +391,38 @@ fn failure_sentence(failure: &Value) -> String {
     }
 }
 
+const PORT_TAKEN: &str = "another program holds the port on 127.0.0.1 that Marfa Cloud reaches this instance at. Free that port, or run `marfa cloud unlink` and link again for another port";
+
+/// Why a connector in state `failed` cannot run, and what to do about it.
+fn connector_failure(reason: &str) -> String {
+    match reason {
+        "missing" => "no connector program can be run. It belongs beside the server's own program, or at the path the server's connector setting names; once it is in place, the server runs it on its next try".to_string(),
+        "origin_unknown" => "the link keeps no port on 127.0.0.1 for the connector to reach, so the server does not run it. Run `marfa cloud unlink` and link again".to_string(),
+        "port_taken" => PORT_TAKEN.to_string(),
+        "refused" => format!("{SERVICE} refuses the connector's tunnel token. The server asks it for a new one on its own; if this lasts, unlink and link again"),
+        "token" => "the server cannot read the tunnel token or write the file it gives the connector".to_string(),
+        "" => "no reason was given".to_string(),
+        other => other.to_string(),
+    }
+}
+
+fn connector_line(connector: &Value) -> String {
+    let state = text(connector, "state");
+    let since = text(connector, "since");
+    let mut line = if since.is_empty() {
+        format!("  Connector: {state}")
+    } else {
+        format!("  Connector: {state} since {since}")
+    };
+    if state == "failed" {
+        line.push_str(&format!(
+            ": {}.",
+            connector_failure(text(connector, "reason"))
+        ));
+    }
+    line
+}
+
 pub fn status_text(link: &Value) -> String {
     let mut lines = Vec::new();
     match state(link) {
@@ -414,6 +446,15 @@ pub fn status_text(link: &Value) -> String {
             {
                 lines.push(format!("The code expires at {expires}."));
             }
+            if link
+                .pointer("/linking/port_taken")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                let mut said = PORT_TAKEN.to_string();
+                said[..1].make_ascii_uppercase();
+                lines.push(format!("{said}."));
+            }
             return lines.join("\n");
         }
         "linked" => {
@@ -421,12 +462,7 @@ pub fn status_text(link: &Value) -> String {
             lines.push(format!("  Address:   {}", text(link, "address")));
             lines.push(format!("  Linked at: {}", text(link, "linked_at")));
             if let Some(connector) = link.get("connector") {
-                let since = text(connector, "since");
-                lines.push(if since.is_empty() {
-                    format!("  Connector: {}", text(connector, "state"))
-                } else {
-                    format!("  Connector: {} since {since}", text(connector, "state"))
-                });
+                lines.push(connector_line(connector));
             }
         }
         "failed" => {
@@ -927,6 +963,34 @@ mod tests {
         );
         let made = said(linked("moved"));
         assert!(made.contains("Connector: stopped since"), "{made}");
+        let mut taken = linking("kept");
+        taken["linking"]["port_taken"] = json!(true);
+        let taken = said(taken);
+        assert!(taken.contains("Another program holds the port"), "{taken}");
+        assert!(!pending.contains("Another program holds"), "{pending}");
+        for (reason, words) in [
+            ("missing", "no connector program can be run"),
+            (
+                "origin_unknown",
+                "keeps no port on 127.0.0.1 for the connector to reach, so the server does not run it. Run `marfa cloud unlink` and link again",
+            ),
+            (
+                "port_taken",
+                "Free that port, or run `marfa cloud unlink` and link again",
+            ),
+            ("refused", "refuses the connector's tunnel token"),
+            ("token", "cannot read the tunnel token"),
+        ] {
+            let mut failed = linked("kept");
+            failed["connector"] =
+                json!({"state": "failed", "since": "2026-01-01T00:00:00Z", "reason": reason});
+            let failed = said(failed);
+            assert!(
+                failed.contains("Connector: failed since 2026-01-01T00:00:00Z: ")
+                    && failed.contains(words),
+                "{failed}"
+            );
+        }
         assert!(
             made.contains("moved to Marfa Cloud, now https://home.example"),
             "{made}"

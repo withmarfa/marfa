@@ -290,7 +290,7 @@ describe("what the server sends", () => {
 
 describe("starting a link", () => {
   it(
-    "answers a start with the code and the address to approve it at, and sends the instance's id, name and public port",
+    "answers a start with the code and the address to approve it at, and sends the instance's id, name and the port of a listener of its own on 127.0.0.1",
     async () => {
       const linkable = await boot("cloud-start");
       const named = await linkable.call("key", "PATCH", "/config", {
@@ -311,11 +311,21 @@ describe("starting a link", () => {
       ).json()) as {
         instance_id: string;
       };
-      expect(linkable.cloud.requests[0]?.body).toEqual({
+      const sent = linkable.cloud.requests[0]?.body;
+      expect(sent).toEqual({
         instance_id: root.instance_id,
         instance_name: "Cloud fixture",
-        origin_port: Number(new URL(linkable.server.apiUrl).port),
+        origin_port: expect.any(Number),
       });
+      expect(sent.origin_port).not.toBe(
+        Number(new URL(linkable.server.apiUrl).port),
+      );
+      // While linking, the server listens there for the connector.
+      const tunnel = await fetch(
+        `http://127.0.0.1:${String(sent.origin_port)}/health`,
+      );
+      await tunnel.body?.cancel();
+      expect(tunnel.status).toBe(200);
       await expectMatchesSchema(
         "GET",
         "/cloud/link",
@@ -413,7 +423,7 @@ describe("starting a link", () => {
   );
 
   it(
-    "refuses a start where the public listener is not reached at 127.0.0.1, which Marfa Cloud's connector sends to",
+    "starts a link where the public listener is not reached at 127.0.0.1, and listens for the connector there",
     async () => {
       const bare = await bootBare({
         MARFA_LISTEN_HOST: "::1",
@@ -423,17 +433,21 @@ describe("starting a link", () => {
         "the public listener's port",
         async () => /listening on port (\d+)/.exec(bare.output())?.[1],
       );
-      // The witness: the public listener answers, on ::1.
       const health = await fetch(`http://[::1]:${port}/health`);
       await health.body?.cancel();
       expect(health.status).toBe(200);
-      const refused = await controlRequest(bare.socket, "/cloud/link", {
+      const started = await controlRequest(bare.socket, "/cloud/link", {
         method: "POST",
         body: { sign_in_address: "keep" },
       });
-      expect(refused.status, JSON.stringify(refused.body)).toBe(409);
-      expect((refused.body as any).error.code).toBe("no_public_listener");
-      expect(bare.cloud.requests).toEqual([]);
+      expect(started.status, JSON.stringify(started.body)).toBe(201);
+      const sent = bare.cloud.requests[0]?.body;
+      expect(sent.origin_port).not.toBe(Number(port));
+      const tunnel = await fetch(
+        `http://127.0.0.1:${String(sent.origin_port)}/health`,
+      );
+      await tunnel.body?.cancel();
+      expect(tunnel.status).toBe(200);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -1036,7 +1050,7 @@ describe("the sign-in address", () => {
   it(
     "takes a confirmed move as done where the sign-in address is already the Cloud address, and writes and records nothing for it",
     async () => {
-      const { linkable, linked } = await movedLink("cloud-move-already");
+      const { linkable } = await movedLink("cloud-move-already");
       // The witness: a move from another address is recorded.
       const moves = await audited(linkable, "cloud.sign_in_address_move");
       expect(moves).toHaveLength(1);
@@ -1046,6 +1060,11 @@ describe("the sign-in address", () => {
         "/cloud/link?confirm_sign_in_address_change=true",
       );
       expect(unlinked.status, JSON.stringify(unlinked.body)).toBe(200);
+      // A Cloud address that answers as this instance with no link in place.
+      const cloudAddress = await gate(linkable.server.apiUrl);
+      cleanups.push(() => cloudAddress.close());
+      cloudAddress.open();
+      const linked = { address: cloudAddress.address };
       const set = await linkable.call("socket", "PATCH", "/config", {
         sign_in_address: linked.address,
         confirm_sign_in_address_change: true,

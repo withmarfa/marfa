@@ -230,6 +230,10 @@ enum Ended {
     Missing,
     /// The server has no tunnel token to give it.
     Token,
+    /// Another program holds the port the tunnel listener is kept at.
+    PortTaken,
+    /// The link keeps no tunnel listener port, so nothing says where its traffic may go.
+    OriginUnknown,
     Exited {
         connected: bool,
     },
@@ -243,9 +247,11 @@ async fn serve(app: &Arc<App>, watching: &mut Watching, link_id: &str) {
     let mut asking = false;
     while !watching.gone(link_id) {
         let ended = match tunnel_token(app, link_id).await {
-            Some(token) => {
+            Ok((token, port)) => {
                 let tried = if std::mem::take(&mut asking) {
                     Ended::Refused
+                } else if !app.cloud.tunnel.open(app, port, None) {
+                    Ended::PortTaken
                 } else {
                     attempt(app, watching, link_id, &token).await
                 };
@@ -268,12 +274,19 @@ async fn serve(app: &Arc<App>, watching: &mut Watching, link_id: &str) {
                     other => other,
                 }
             }
-            None => Ended::Token,
+            Err(ended) => ended,
         };
         match ended {
             Ended::Unwanted => break,
             Ended::Missing => report(app, Condition::Failed, Some("missing")).await,
             Ended::Token => report(app, Condition::Failed, Some("token")).await,
+            Ended::PortTaken => report(app, Condition::Failed, Some("port_taken")).await,
+            Ended::OriginUnknown => {
+                // Only a new link, with a link id of its own, can say where traffic may go.
+                report(app, Condition::Failed, Some("origin_unknown")).await;
+                watching.until_gone(link_id).await;
+                break;
+            }
             Ended::Refused => report(app, Condition::Failed, Some("refused")).await,
             Ended::Exited { connected } => {
                 if connected {
@@ -319,15 +332,23 @@ async fn report(app: &Arc<App>, condition: Condition, reason: Option<&'static st
     }
 }
 
-/// The tunnel token of the link, if it is `link_id` and linked.
-async fn tunnel_token(app: &Arc<App>, link_id: &str) -> Option<Secret> {
-    let link = app.db.read(store::read).await.ok()??;
-    if link.link_id != link_id || link.state != State::Linked {
-        return None;
-    }
-    app.settings
-        .sealer()
-        .open(TUNNEL_TOKEN, link.tunnel_token.as_ref()?)
+/// The tunnel token of the link and its tunnel listener's port, if it is `link_id` and linked.
+async fn tunnel_token(app: &Arc<App>, link_id: &str) -> Result<(Secret, u16), Ended> {
+    let link = app
+        .db
+        .read(store::read)
+        .await
+        .ok()
+        .flatten()
+        .filter(|link| link.link_id == link_id && link.state == State::Linked)
+        .ok_or(Ended::Token)?;
+    let port = link.origin_port.ok_or(Ended::OriginUnknown)?;
+    let token = link
+        .tunnel_token
+        .as_ref()
+        .and_then(|sealed| app.settings.sealer().open(TUNNEL_TOKEN, sealed))
+        .ok_or(Ended::Token)?;
+    Ok((token, port))
 }
 
 enum Renewed {

@@ -138,17 +138,8 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         .extensions()
         .get::<ConnectInfo<Peer>>()
         .and_then(|ConnectInfo(Peer(address))| *address);
-    let caller_address = peer.map(|peer| {
-        caller_address(
-            peer,
-            observed
-                .app
-                .cloud
-                .tunnel()
-                .trust(&observed.listener.trust, peer),
-            request.headers(),
-        )
-    });
+    let caller_address =
+        peer.map(|peer| caller_address(peer, &observed.listener.trust, request.headers()));
     let transport = observed.listener.transport;
     request.extensions_mut().insert(RequestContext {
         transport,

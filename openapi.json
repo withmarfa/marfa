@@ -13577,6 +13577,13 @@
                 "format": "date-time",
                 "description": "When the link stops waiting for approval, in UTC, timed on this instance's clock from when it started the link.",
                 "example": "2026-11-21T09:45:00.000Z"
+              },
+              "port_taken": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ],
+                "description": "`true` while another program holds the link's port on 127.0.0.1, where Marfa Cloud's connector reaches this instance. Present only then. Free the port, or unlink and link again for another."
               }
             }
           },
@@ -13621,10 +13628,12 @@
                 "type": "string",
                 "enum": [
                   "missing",
+                  "origin_unknown",
+                  "port_taken",
                   "refused",
                   "token"
                 ],
-                "description": "Why a `failed` connector can't run: `missing` (no connector file the server can run), `refused` (Marfa Cloud refuses its tunnel token and has no newer one) or `token` (the server can't read or write the token file)."
+                "description": "Why a `failed` connector can't run: `missing` (no connector file), `origin_unknown` (the link keeps no port for it; link again), `port_taken` (another program holds its port), `refused` (Marfa Cloud refuses its token) or `token` (no token file)."
               },
               "since": {
                 "type": "string",
@@ -75354,7 +75363,7 @@
             }
           },
           "409": {
-            "description": "- `cloud_link_exists`: a link is linking or linked.\n- `conflict`: the instance changed during the start. Send it again.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance.\n- `no_public_listener`: this server has no public listener on 127.0.0.1.\n- `sign_in_address_change_unconfirmed`: the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists the effects.",
+            "description": "- `cloud_link_exists`: a link is linking or linked.\n- `conflict`: the instance changed during the start. Send it again.\n- `instance_changed`: `X-Marfa-Instance-Id` names another instance.\n- `no_public_listener`: this server runs with only its control socket.\n- `sign_in_address_change_unconfirmed`: the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists the effects.",
             "content": {
               "application/json": {
                 "schema": {

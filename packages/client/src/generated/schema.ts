@@ -9100,6 +9100,11 @@ export interface components {
                  * @example 2026-11-21T09:45:00.000Z
                  */
                 expires_at: string;
+                /**
+                 * @description `true` while another program holds the link's port on 127.0.0.1, where Marfa Cloud's connector reaches this instance. Present only then. Free the port, or unlink and link again for another.
+                 * @enum {boolean}
+                 */
+                port_taken?: true;
             };
             /**
              * @description The name Marfa Cloud gave this instance. Present while `state` is `linked`.
@@ -9126,10 +9131,10 @@ export interface components {
                  */
                 state: "stopped" | "starting" | "connected" | "reconnecting" | "failed";
                 /**
-                 * @description Why a `failed` connector can't run: `missing` (no connector file the server can run), `refused` (Marfa Cloud refuses its tunnel token and has no newer one) or `token` (the server can't read or write the token file).
+                 * @description Why a `failed` connector can't run: `missing` (no connector file), `origin_unknown` (the link keeps no port for it; link again), `port_taken` (another program holds its port), `refused` (Marfa Cloud refuses its token) or `token` (no token file).
                  * @enum {string}
                  */
-                reason?: "missing" | "refused" | "token";
+                reason?: "missing" | "origin_unknown" | "port_taken" | "refused" | "token";
                 /**
                  * Format: date-time
                  * @description Since when the connector has been in this state, in UTC.
@@ -44294,7 +44299,7 @@ export interface operations {
              * @description - `cloud_link_exists`: a link is linking or linked.
              *     - `conflict`: the instance changed during the start. Send it again.
              *     - `instance_changed`: `X-Marfa-Instance-Id` names another instance.
-             *     - `no_public_listener`: this server has no public listener on 127.0.0.1.
+             *     - `no_public_listener`: this server runs with only its control socket.
              *     - `sign_in_address_change_unconfirmed`: the body lacks `confirm_sign_in_address_change: true`. `details.consequences` lists the effects.
              */
             409: {

@@ -4,9 +4,9 @@ mod client;
 pub mod connector;
 mod status;
 mod store;
+pub mod tunnel;
 mod worker;
 
-use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -24,7 +24,6 @@ use super::events::Event;
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use super::{App, instance, stored};
-use crate::listener::Tunnel;
 use crate::settings::sealed::{Sealer, Secret};
 use status::Seen;
 pub use status::Standing;
@@ -49,7 +48,7 @@ pub struct Cloud {
     stopping: AtomicBool,
     running: watch::Sender<bool>,
     connector: connector::Connector,
-    tunnel: Tunnel,
+    tunnel: tunnel::Tunnel,
     /// Orders the reads that tell the connector and the listeners what the link is.
     sync: Mutex<()>,
 }
@@ -62,18 +61,13 @@ impl Cloud {
             stopping: AtomicBool::new(false),
             running: watch::Sender::new(false),
             connector: connector::Connector::new(started),
-            tunnel: Tunnel::default(),
+            tunnel: tunnel::Tunnel::default(),
             sync: Mutex::new(()),
         }
     }
 
     fn wake(&self) {
         self.wake.notify_one();
-    }
-
-    /// Whether the instance is linked, which decides whom its listeners believe.
-    pub fn tunnel(&self) -> &Tunnel {
-        &self.tunnel
     }
 
     pub fn stop(&self) {
@@ -91,6 +85,7 @@ impl Cloud {
         let idle = tokio::time::timeout(budget, async {
             let _ = running.wait_for(|running| !*running).await;
             self.connector.idle().await;
+            self.tunnel.settle().await;
         });
         if idle.await.is_err() {
             tracing::warn!(
@@ -107,27 +102,46 @@ pub fn follow(app: &Arc<App>) {
 
 /// Tells the connector and the listeners what the link is now, which only a read of it says.
 async fn resync(app: &Arc<App>) -> Result<()> {
+    resync_with(app, None).await
+}
+
+/// As `resync`, opening the tunnel listener on `fresh` where it is bound at the link's port.
+async fn resync_with(app: &Arc<App>, fresh: Option<tokio::net::TcpListener>) -> Result<()> {
     let _sync = app.cloud.sync.lock().await;
     let reading = app.clone();
-    let linked = app
+    let wanted = app
         .db
         .read(move |tx| {
             Ok(store::read(tx)?
                 .filter(|link| {
-                    link.state == State::Linked && secrets_open(reading.settings.sealer(), link)
+                    matches!(link.state, State::Linking | State::Linked)
+                        && secrets_open(reading.settings.sealer(), link)
                 })
-                .map(|link| link.link_id))
+                .map(|link| {
+                    let linked = link.state == State::Linked;
+                    (link.origin_port, linked.then_some(link.link_id))
+                }))
         })
         .await?;
-    if linked.is_some() {
-        app.cloud.tunnel.set(true);
-        app.cloud.connector.want(linked);
-    } else {
-        // The connector's last requests are still its callers', so they are read as such until it ends.
+    let port = wanted.as_ref().and_then(|(port, _)| *port);
+    let linked = wanted.and_then(|(_, linked)| linked);
+    let moved = app
+        .cloud
+        .tunnel
+        .port()
+        .is_some_and(|open| Some(open) != port);
+    if linked.is_none() || moved {
+        // The connector's last requests are still its callers', so its listener stays until it ends.
         app.cloud.connector.want(None);
         app.cloud.connector.quiet().await;
-        app.cloud.tunnel.set(false);
     }
+    match port {
+        Some(port) => {
+            app.cloud.tunnel.open(app, port, fresh);
+        }
+        None => app.cloud.tunnel.close(),
+    }
+    app.cloud.connector.want(linked);
     Ok(())
 }
 
@@ -142,16 +156,6 @@ impl SignIn {
         match self {
             SignIn::Move => "move",
             SignIn::Keep => "keep",
-        }
-    }
-}
-
-/// Whether a listener bound to `ip` takes connections to 127.0.0.1, where Marfa Cloud's connector sends.
-fn reachable_on_loopback(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(v4) => v4.is_loopback() || v4.is_unspecified(),
-        IpAddr::V6(v6) => {
-            v6.is_unspecified() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback())
         }
     }
 }
@@ -180,6 +184,7 @@ fn seen<'a>(app: &'a App, link: Option<&'a Link>, sign_in: &'a Address, untold: 
         sign_in,
         now_ms: app.clock.now_ms(),
         connector: &app.cloud.connector,
+        tunnel: &app.cloud.tunnel,
         untold,
         put_back: None,
     }
@@ -377,20 +382,20 @@ pub async fn start(
     confirmed: bool,
 ) -> Result<Value> {
     let _door = app.cloud.door.lock().await;
-    let Some(bound) = app.bound() else {
+    if app.bound().is_none() {
         return Err(Refusal::new(
             Code::NoPublicListener,
-            "This server runs with no public listener, which Marfa Cloud would reach it through.",
-        ));
-    };
-    if !reachable_on_loopback(bound.ip()) {
-        return Err(Refusal::new(
-            Code::NoPublicListener,
-            "Marfa Cloud reaches this server at 127.0.0.1, where its public listener is not bound. \
-             Set MARFA_LISTEN_HOST to 127.0.0.1 or 0.0.0.0.",
+            "This server runs with only its control socket, so it serves nothing Marfa Cloud could reach. \
+             Start it without MARFA_CONTROL_ONLY.",
         ));
     }
-    let port = bound.port();
+    let fresh = tunnel::bind(0)
+        .and_then(|listener| Ok((listener.local_addr()?.port(), listener)))
+        .map_err(|error| {
+            tracing::warn!(error = %error, "No port on 127.0.0.1 was free for the tunnel listener");
+            Refusal::internal("no port on 127.0.0.1 was free for the tunnel listener")
+        });
+    let (port, fresh) = fresh?;
     let reading = app.clone();
     let judged = caller.clone();
     let (name, decided) = app
@@ -442,6 +447,7 @@ pub async fn start(
                 approval_url: started.approval_url,
                 expires_at: started.expires_at,
                 interval_ms: started.interval_ms,
+                origin_port: Some(port),
                 started_at: now,
                 poll_secret: Some(poll_secret),
                 sign_in_move: decided,
@@ -468,6 +474,12 @@ pub async fn start(
             Ok(status)
         })
         .await?;
+    if let Err(refusal) = resync_with(app, Some(fresh)).await {
+        tracing::warn!(
+            code = refusal.code.wire(),
+            "The tunnel listener was not opened as the link started"
+        );
+    }
     app.cloud.wake();
     Ok(answer)
 }
@@ -554,7 +566,16 @@ fn end_link(
     })
 }
 
+/// Ends the link in a task of the server's own, which a request cut as the tunnel listener closes
+/// does not end before Marfa Cloud is told.
 pub async fn unlink(app: &Arc<App>, caller: &Caller, confirmed: bool) -> Result<Value> {
+    let (app, caller) = (app.clone(), caller.clone());
+    tokio::spawn(async move { unlink_owned(&app, &caller, confirmed).await })
+        .await
+        .unwrap_or_else(|_| Err(Refusal::internal("the unlink ended before it answered")))
+}
+
+async fn unlink_owned(app: &Arc<App>, caller: &Caller, confirmed: bool) -> Result<Value> {
     let _door = app.cloud.door.lock().await;
     let mut tries = 0;
     let ended = loop {
@@ -668,27 +689,4 @@ pub fn after_config(unit: &Unit<'_, '_>, app: &App, change: &SignInChange) -> Re
         announce(unit, &after)?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr};
-
-    use super::*;
-
-    #[test]
-    fn a_listener_is_reachable_on_loopback_only_where_127_0_0_1_reaches_it() {
-        let reached: [(IpAddr, bool); 7] = [
-            (Ipv4Addr::LOCALHOST.into(), true),
-            (Ipv4Addr::new(127, 0, 0, 2).into(), true),
-            (Ipv4Addr::UNSPECIFIED.into(), true),
-            (Ipv6Addr::UNSPECIFIED.into(), true),
-            (Ipv4Addr::new(192, 168, 1, 20).into(), false),
-            (Ipv6Addr::LOCALHOST.into(), false),
-            (Ipv4Addr::new(10, 0, 0, 1).to_ipv6_mapped().into(), false),
-        ];
-        for (ip, reachable) in reached {
-            assert_eq!(reachable_on_loopback(ip), reachable, "{ip}");
-        }
-    }
 }
