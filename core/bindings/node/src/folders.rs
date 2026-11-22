@@ -39,6 +39,32 @@ pub struct AddedFolder {
     pub folder: String,
     pub storage: Option<StorageCause>,
 }
+/// What `remove` did: the folder's state went, or only its registry entry,
+/// for `reason`. Where another instance answers at the folder's server,
+/// `unsent` writes waited, and `files` hold changes that instance lacks.
+#[napi(object)]
+pub struct FolderRemoval {
+    pub dir: String,
+    pub removed: bool,
+    pub reason: Option<String>,
+    pub folder: Option<String>,
+    pub unsent: i64,
+    pub files: Vec<UnsentFile>,
+}
+#[napi(string_enum = "snake_case")]
+pub enum UnsentChange {
+    Changed,
+    New,
+    Moved,
+    Deleted,
+}
+#[napi(object)]
+pub struct UnsentFile {
+    pub change: UnsentChange,
+    pub path: Option<String>,
+    pub from: Option<String>,
+    pub item: Option<String>,
+}
 #[napi(string_enum = "snake_case")]
 pub enum FileState {
     InStep,
@@ -326,7 +352,7 @@ impl Folders {
         })
     }
 
-    #[napi(ts_return_type = "Promise<void>")]
+    #[napi(ts_return_type = "Promise<FolderRemoval>")]
     pub fn remove(&self, dir: String) -> AsyncTask<RemoveFolder> {
         AsyncTask::new(RemoveFolder { dir, failed: None })
     }
@@ -691,18 +717,58 @@ pub struct RemoveFolder {
 }
 #[napi]
 impl Task for RemoveFolder {
-    type Output = ();
-    type JsValue = ();
+    type Output = FolderRemoval;
+    type JsValue = FolderRemoval;
     fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
         Err(rejected(env, self.failed.take(), error, &self.dir))
     }
     fn compute(&mut self) -> Result<Self::Output> {
         marfa_core::Folder::remove_at_asking(&self.dir)
-            .map(|_| ())
+            .map(folder_removal)
             .map_err(|error| record(&mut self.failed, error))
     }
     fn resolve(&mut self, _: Env, report: Self::Output) -> Result<Self::JsValue> {
         Ok(report)
+    }
+}
+
+fn folder_removal(removal: marfa_core::Removal) -> FolderRemoval {
+    use marfa_core::folder::UnsentChange as Change;
+    match removal {
+        marfa_core::Removal::Deleted {
+            dir,
+            folder,
+            unsent,
+        } => FolderRemoval {
+            dir: dir.display().to_string(),
+            removed: true,
+            reason: None,
+            folder: Some(folder),
+            unsent: i64::try_from(unsent.writes).unwrap_or(i64::MAX),
+            files: unsent
+                .files
+                .into_iter()
+                .map(|file| UnsentFile {
+                    change: match file.change {
+                        Change::Changed => UnsentChange::Changed,
+                        Change::New => UnsentChange::New,
+                        Change::Moved => UnsentChange::Moved,
+                        Change::Deleted => UnsentChange::Deleted,
+                    },
+                    path: file.path,
+                    from: file.from,
+                    item: file.item,
+                })
+                .collect(),
+        },
+        marfa_core::Removal::Unlisted { dir, reason } => FolderRemoval {
+            dir: dir.display().to_string(),
+            removed: false,
+            reason: Some(reason),
+            folder: None,
+            unsent: 0,
+            files: Vec::new(),
+        },
     }
 }
 

@@ -313,6 +313,93 @@ pub struct ConfirmedFolder {
     pub refused: Vec<UnsureFile>,
 }
 
+/// What `Folders.remove` did.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct FolderRemoval {
+    /// The directory, resolved as far as it exists.
+    pub dir: String,
+    /// The folder's state went; where false, only its registry entry did.
+    pub removed: bool,
+    /// Why nothing was deleted, where `removed` is false.
+    pub reason: Option<String>,
+    /// The id of the `system.folder` it followed, where its state went: what
+    /// `Folders.add` takes to follow that folder again.
+    pub folder: Option<String>,
+    /// Writes that waited unsent, because another Marfa instance answers at
+    /// the folder's server.
+    pub unsent: u64,
+    /// The files that hold changes that instance does not have.
+    pub files: Vec<UnsentFile>,
+}
+
+/// How a file differs from what the folder's server last received.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum UnsentChange {
+    /// Its changes stay in the file.
+    Changed,
+    /// A file the server never received; it stays in the directory.
+    New,
+    /// Moved from `from`, which no file records.
+    Moved,
+    /// Gone from the directory, which no file records.
+    Deleted,
+}
+
+/// A file whose change the folder's server never received.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct UnsentFile {
+    pub change: UnsentChange,
+    /// Its path in the directory; `None` for a deleted file whose path the
+    /// copy holds no record of.
+    pub path: Option<String>,
+    /// Where a moved file was before it moved.
+    pub from: Option<String>,
+    /// Its item, where it has one.
+    pub item: Option<String>,
+}
+
+impl From<marfa_core::Removal> for FolderRemoval {
+    fn from(removal: marfa_core::Removal) -> Self {
+        use marfa_core::folder::UnsentChange as Change;
+        match removal {
+            marfa_core::Removal::Deleted {
+                dir,
+                folder,
+                unsent,
+            } => FolderRemoval {
+                dir: dir.display().to_string(),
+                removed: true,
+                reason: None,
+                folder: Some(folder),
+                unsent: unsent.writes as u64,
+                files: unsent
+                    .files
+                    .into_iter()
+                    .map(|file| UnsentFile {
+                        change: match file.change {
+                            Change::Changed => UnsentChange::Changed,
+                            Change::New => UnsentChange::New,
+                            Change::Moved => UnsentChange::Moved,
+                            Change::Deleted => UnsentChange::Deleted,
+                        },
+                        path: file.path,
+                        from: file.from,
+                        item: file.item,
+                    })
+                    .collect(),
+            },
+            marfa_core::Removal::Unlisted { dir, reason } => FolderRemoval {
+                dir: dir.display().to_string(),
+                removed: false,
+                reason: Some(reason),
+                folder: None,
+                unsent: 0,
+                files: Vec::new(),
+            },
+        }
+    }
+}
+
 /// What cancelling a paused removal did.
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
 pub struct RestoredRemoval {
@@ -607,17 +694,19 @@ guarded! {
         /// Takes the folder off this machine: its state under `.marfa` goes and
         /// its files stay. Refused while writes wait, except for a first sync
         /// still waiting to be confirmed, which this cancels, and except where
-        /// another Marfa instance answered at the folder's server, which none of
-        /// them can reach; their changes stay in the files. Follows no symbolic
+        /// another Marfa instance answers at the folder's server, which none of
+        /// them can reach; the answer then names each file holding a change that
+        /// instance does not have. Follows no symbolic
         /// link, and takes a path through one only where it is the path the
         /// registry lists. Where that path is
         /// gone, passes through a link, or holds state the registry does not
         /// show to be the folder's own, the folder is only taken off the
         /// registry. Asks a watch that holds the folder to let it go, as `add`
         /// does; that watch then ends with `Removed` or `Unlisted`.
-        pub fn remove(&self, dir: String) -> Result<(), MarfaError> {
-            marfa_core::Folder::remove_at_asking(&dir).map_err(asked(&dir))?;
-            Ok(())
+        pub fn remove(&self, dir: String) -> Result<FolderRemoval, MarfaError> {
+            marfa_core::Folder::remove_at_asking(&dir)
+                .map(FolderRemoval::from)
+                .map_err(asked(&dir))
         }
 
         /// Keeps the folder in step on a thread of its own, as the command
@@ -1321,7 +1410,7 @@ mod tests {
             }),
             ("remove", {
                 let (folders, path) = (folders.clone(), path.clone());
-                Box::new(move || folders.remove(path.clone()))
+                Box::new(move || folders.remove(path.clone()).map(drop))
             }),
         ];
         for (name, call) in calls {
