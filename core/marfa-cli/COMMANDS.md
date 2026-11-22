@@ -2829,7 +2829,7 @@ marfa views create [OPTIONS]
 | `--title <TITLE>` | The view's name. |
 | `--query <JSON>` | Which items the view lists, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
 | `--sort <JSON>` | The keys the view sorts by, as a JSON array of `{"by", "direction"}` objects, first key first. |
-| `--group <JSON>` | How the view groups its items, as a JSON object: `by`, and optionally `bucket`, `order` and `hidden`. `null` removes the grouping, on a change. |
+| `--group <JSON>` | How the view groups its items, as a JSON object: `by` (a field, `source`, `status_group`, `edge[<type>]` or `backref[<type>]`), and optionally `bucket` (`day`, `week`, `month`, `year`, or `presence` for whether a value is set), `order` and `hidden`. `null` removes the grouping, on a change. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa views update
@@ -2852,7 +2852,7 @@ marfa views update [OPTIONS] --version <VERSION> <ID>
 | `--title <TITLE>` | The view's name. |
 | `--query <JSON>` | Which items the view lists, as a JSON object: `types`, `tier`, `state`, `filter` and `beneath`. |
 | `--sort <JSON>` | The keys the view sorts by, as a JSON array of `{"by", "direction"}` objects, first key first. |
-| `--group <JSON>` | How the view groups its items, as a JSON object: `by`, and optionally `bucket`, `order` and `hidden`. `null` removes the grouping, on a change. |
+| `--group <JSON>` | How the view groups its items, as a JSON object: `by` (a field, `source`, `status_group`, `edge[<type>]` or `backref[<type>]`), and optionally `bucket` (`day`, `week`, `month`, `year`, or `presence` for whether a value is set), `order` and `hidden`. `null` removes the grouping, on a change. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa views delete

@@ -32,7 +32,7 @@ pub fn definition() -> Definition {
                 "sort": { "type": "array", "items": { "type": "object" },
                     "description": "The keys the view sorts by, first key first, each {\"by\": \"properties.due\", \"direction\": \"asc\"}." },
                 "group": { "type": ["object", "null"],
-                    "description": "How the view groups items, such as {\"by\": \"properties.status\"}; null removes the grouping." },
+                    "description": "How the view groups items, such as {\"by\": \"properties.status\"}; by can also be status_group (the four status groups across types) or source, and {\"by\": \"properties.due\", \"bucket\": \"presence\"} groups by whether a value is set; null removes the grouping." },
             },
             "additionalProperties": false,
         }),

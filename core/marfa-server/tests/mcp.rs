@@ -1700,6 +1700,81 @@ async fn a_view_is_saved_and_changed_from_the_version_read() {
 }
 
 #[tokio::test]
+async fn a_view_saved_through_the_tool_takes_the_new_groupings_and_refuses_the_closed_ones() {
+    let instance = Instance::start(&[]).await;
+    let token = instance
+        .key(json!({ "type_permissions": { "system.view": "write", "core.note": "read" } }))
+        .await;
+    for group in [
+        json!({ "by": "properties.starts_at", "bucket": "presence", "hidden": [true] }),
+        json!({ "by": "status_group", "order": ["completed", null], "hidden": ["canceled"] }),
+        json!({ "by": "source" }),
+    ] {
+        let saved = instance
+            .tool_at(
+                SCHEMA,
+                &token,
+                "marfa_save_view",
+                json!({ "title": "Grouped", "group": group }),
+            )
+            .await;
+        assert!(!saved.failed, "{group}: {}", saved.value);
+        assert_eq!(saved.payload()["group"], group, "{}", saved.value);
+    }
+    let made = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_save_view",
+            json!({ "title": "Whole", "group": { "by": "tags" } }),
+        )
+        .await;
+    let (id, version) = (
+        made.payload()["id"].as_str().unwrap().to_string(),
+        made.payload()["version"].clone(),
+    );
+    for (group, path) in [
+        (
+            json!({ "by": "created_at", "bucket": "presence" }),
+            "group.bucket",
+        ),
+        (
+            json!({ "by": "status_group", "hidden": ["done"] }),
+            "group.hidden.0",
+        ),
+        (
+            json!({ "by": "properties.starts_at", "bucket": "presence", "order": ["true"] }),
+            "group.order.0",
+        ),
+    ] {
+        let refused = instance
+            .tool_at(
+                SCHEMA,
+                &token,
+                "marfa_save_view",
+                json!({ "id": id, "version": version, "group": group }),
+            )
+            .await;
+        assert!(refused.failed, "{group}: {}", refused.value);
+        assert!(
+            refused.value.to_string().contains(path),
+            "{}",
+            refused.value
+        );
+    }
+    let unchanged = instance
+        .tool_at(
+            SCHEMA,
+            &token,
+            "marfa_save_view",
+            json!({ "id": id, "version": version, "title": "Still whole" }),
+        )
+        .await;
+    assert!(!unchanged.failed, "{}", unchanged.value);
+    assert_eq!(unchanged.payload()["group"], json!({ "by": "tags" }));
+}
+
+#[tokio::test]
 async fn sources_are_listed_and_named_through_the_tools() {
     let instance = Instance::start(&[]).await;
     let token = instance

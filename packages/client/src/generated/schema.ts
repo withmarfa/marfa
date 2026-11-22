@@ -3667,18 +3667,18 @@ export interface components {
         /** @description How a view groups its items. */
         ViewGroup: {
             /**
-             * @description The field to group by: a field other than `last_activity_at`, which only a sort takes, or `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins.
+             * @description The field to group by: `source`, `status_group`, `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins, or any other field except `last_activity_at`, which only a sort takes.
              * @example properties.status
              */
             by: string;
             /**
-             * @description For a date field, the span each group covers. Absent groups by the value.
+             * @description For a date field, the span each group covers. For `tags`, a property or an edge type, `presence` groups by whether the item has a value, with the keys `false` and `true`. Absent groups by the value.
              * @enum {string}
              */
-            bucket?: "day" | "week" | "month" | "year";
-            /** @description The values whose groups come first, in this order. Other groups follow. */
+            bucket?: "day" | "week" | "month" | "year" | "presence";
+            /** @description The values whose groups come first, in this order. Other groups follow. With `status_group`, the four status group names or `null`. With `presence`, `true` or `false`. */
             order?: (string | number | boolean | null)[];
-            /** @description The values whose groups the view leaves out. */
+            /** @description The values whose groups the view leaves out. With `status_group`, the four status group names or `null`. With `presence`, `true` or `false`. */
             hidden?: (string | number | boolean | null)[];
         };
         /** @description An instance: its identity, build, contract version, features and request size. */

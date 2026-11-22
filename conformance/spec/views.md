@@ -24,7 +24,7 @@ The server MUST take as a view's `sort` a list of at most 10 keys of `by` and `d
 
 ### `views/field`
 
-The server MUST take as a sort `by` and a `group.by` an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier` or `tags`) or `properties.<name>`, as a sort `by` also `last_activity_at`, and as a `group.by` also `edge[<type>]` or `backref[<type>]` for a registered edge type.
+The server MUST take as a sort `by` and a `group.by` an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier` or `tags`) or `properties.<name>`, as a sort `by` also `last_activity_at`, and as a `group.by` also `source`, `status_group`, or `edge[<type>]` or `backref[<type>]` for a registered edge type.
 
 **Tests:** `compliance/views.test.ts › takes a sort and a group on a date, an edge and a property, and refuses none of them`, `› refuses a malformed setting %j with %s naming %s, on a create and on a change`.
 
@@ -52,9 +52,25 @@ If a view setting is malformed, other than by a key it does not declare or a par
 
 ### `views/setting-invalid`
 
-If a field a view's `sort` or `group` names is outside `views/field`, a `sort` holds more than 10 keys or a `direction` other than `asc` or `desc`, a `group.bucket` is not `day`, `week`, `month` or `year` or is set on a `group.by` other than `created_at`, `updated_at`, `occurred_at` or `properties.<name>`, or the `query` names a malformed or hidden type identifier (`items/hidden-types`), a `filter` the listing grammar refuses, a `beneath` that is not an item id, a `tier` other than `library`, `feed` or `all`, or a `state` other than `active` or `archived`, then the server MUST answer `400 validation_error`.
+If a field a view's `sort` or `group` names is outside `views/field`, a `sort` holds more than 10 keys or a `direction` other than `asc` or `desc`, or the `query` names a malformed or hidden type identifier (`items/hidden-types`), a `filter` the listing grammar refuses, a `beneath` that is not an item id, a `tier` other than `library`, `feed` or `all`, or a `state` other than `active` or `archived`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/views.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`.
+
+### `views/group-bucket-invalid`
+
+If a view's `group.bucket` is not `day`, `week`, `month`, `year` or `presence`, or is a date bucket on a `group.by` other than `created_at`, `updated_at`, `occurred_at` or `properties.<name>`, or is `presence` on a `group.by` other than `tags`, `properties.<name>`, `edge[<type>]` or `backref[<type>]`, then the server MUST answer `400 validation_error` naming `group.bucket` in `details.errors[0].path`.
+
+**Reason:** the other fields always hold a value, as `search-and-filters/filter-system-presence` says, and `status_group` already has a null group for an item with no status.
+
+**Tests:** `compliance/views.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› takes a sort and a group on a date, an edge and a property, and refuses none of them`.
+
+### `views/group-closed-values`
+
+If a view groups by `status_group` or with the `presence` bucket and its `group.order` or `group.hidden` holds a value that is not a key of that grouping (`device/view-group-status`, `device/view-group-presence`), where `null` is a key of `status_group` and not of `presence`, then the server MUST answer `400 validation_error` naming that value's path, such as `group.hidden.0`, in `details.errors[0].path`.
+
+**Reason:** a value outside a closed set names no group, so it is refused rather than silently ordering or hiding nothing, as `search-and-filters/status-group-refused` refuses a status group outside the four.
+
+**Tests:** `compliance/views.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› takes a sort and a group on a date, an edge and a property, and refuses none of them`.
 
 ### `views/title-length`
 
@@ -280,7 +296,7 @@ Where a view has no sort, the server MUST list items that share an `occurred_at`
 
 Where a view holds a `group`, the server MUST answer `GET /views/{id}/items` with the items it lists for that view with no `group`, in the same order, on a page that holds no groups.
 
-**Reason:** the server stores a `group` for each client to apply to the items it reads. `device/view-group-value`, `device/view-group-tags`, `device/view-group-order`, `device/view-group-hidden`, `device/view-group-edge`, `device/view-date-bucket` and `device/view-date-missing` state what its parts mean, and an app with no working copy gives them the same meaning.
+**Reason:** the server stores a `group` for each client to apply to the items it reads. `device/view-group-value`, `device/view-group-tags`, `device/view-group-order`, `device/view-group-hidden`, `device/view-group-edge`, `device/view-group-presence`, `device/view-group-status`, `device/view-group-status-order`, `device/view-group-source`, `device/view-group-unknown`, `device/view-group-unknown-items`, `device/view-date-bucket` and `device/view-date-missing` state what its parts mean, and an app with no working copy gives them the same meaning.
 
 **Tests:** `compliance/views-items.test.ts › lists the same flat page with a group that would hide and reorder items as without one`.
 

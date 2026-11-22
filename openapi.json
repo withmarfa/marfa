@@ -1304,7 +1304,7 @@
         "properties": {
           "by": {
             "type": "string",
-            "description": "The field to group by: a field other than `last_activity_at`, which only a sort takes, or `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins.",
+            "description": "The field to group by: `source`, `status_group`, `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins, or any other field except `last_activity_at`, which only a sort takes.",
             "example": "properties.status"
           },
           "bucket": {
@@ -1313,9 +1313,10 @@
               "day",
               "week",
               "month",
-              "year"
+              "year",
+              "presence"
             ],
-            "description": "For a date field, the span each group covers. Absent groups by the value."
+            "description": "For a date field, the span each group covers. For `tags`, a property or an edge type, `presence` groups by whether the item has a value, with the keys `false` and `true`. Absent groups by the value."
           },
           "order": {
             "type": "array",
@@ -1337,7 +1338,7 @@
               "description": "A value of the field the view groups by."
             },
             "maxItems": 1000,
-            "description": "The values whose groups come first, in this order. Other groups follow."
+            "description": "The values whose groups come first, in this order. Other groups follow. With `status_group`, the four status group names or `null`. With `presence`, `true` or `false`."
           },
           "hidden": {
             "type": "array",
@@ -1359,7 +1360,7 @@
               "description": "A value of the field the view groups by."
             },
             "maxItems": 1000,
-            "description": "The values whose groups the view leaves out."
+            "description": "The values whose groups the view leaves out. With `status_group`, the four status group names or `null`. With `presence`, `true` or `false`."
           }
         },
         "required": [
