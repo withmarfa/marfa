@@ -560,10 +560,10 @@ fn owner_password_checks_the_credential_first_and_sends_both_passwords_once() {
 }
 
 /// The document the server publishes, read as the commands are held to it.
-struct Document(Value);
+pub(super) struct Document(Value);
 
 impl Document {
-    fn read() -> Document {
+    pub(super) fn read() -> Document {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../openapi.json");
         Document(
             serde_json::from_str(
@@ -678,7 +678,7 @@ impl Document {
     /// A value outside an enum is the command's only where the command named
     /// the value (`values_named`): a flag that takes any text leaves the
     /// refusal to the server.
-    fn held(&self, request: &Received, values_named: bool) -> Result<String, String> {
+    pub(super) fn held(&self, request: &Received, values_named: bool) -> Result<String, String> {
         let method = request.method();
         let (path, query) = request
             .path()
@@ -757,6 +757,10 @@ const MISSED: &[&str] = &[
     "narrowAppGrant",
     // `setup claim`: secret input is driven by the child-process fixture above.
     "createOwner",
+    // `cloud link` and `cloud unlink` read the link first, so the walk stops
+    // at that read; `cloud.rs` holds both requests to the document.
+    "startCloudLink",
+    "unlinkCloud",
 ];
 
 /// The witness for the walk's claim that nothing it sends is off the document:

@@ -34,7 +34,7 @@ Every command accepts these.
 | 3 | The environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a working copy another program was writing to, a docs site that cannot be read, a new build installed under `folders watch --exit-on-new-build`, a sign-in code that is no longer valid); try again. |
 | 4 | The working copy or the queue refused under the device rules, a folder's server answers as another Marfa instance, the keychain cannot be used (locked, missing, unreadable, or none on this system), or the core stopped on a fault of its own. |
 | 5 | There is no credential, a profile's key command gave none, the credential was refused, or the sign-in ended; run `marfa login` to start one. |
-| 130 | You ended a long-lived command (`folders watch`, `events`, `device changes`) with Ctrl-C, or ended one that was still stopping with a second Ctrl-C. |
+| 130 | You ended a long-lived command (`folders watch`, `events`, `device changes`, `cloud link`) with Ctrl-C, or ended one that was still stopping with a second Ctrl-C. |
 
 `marfa device drain` prints its complete report on stdout and sets the exit code from it: 0 when the pass completed (refused writes included), 3 when writes went undelivered or the pass could not run, and 5 when a credential stopped the pass. These exits print no additional refusal on stderr. The report counts refused verdicts separately, in plain text.
 
@@ -48,7 +48,7 @@ With --json a refusal is the last line of stderr, one JSON object, after any pla
 {"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...,"request_id":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}
 ```
 
-where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `sync_paused`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `instance_changed`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `file_name_mismatch`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `plugins_unreachable`, `conflict`, `too_large`.
+where error.code is one of: `not_found`, `unauthorized`, `forbidden`, `validation`, `unknown_type`, `rate_limited`, `server`, `io`, `network`, `unnamed_answer`, `decoding`, `store`, `store_busy`, `storage_full`, `signed_out`, `no_keychain`, `redirect`, `no_server`, `no_cursor`, `hydration_incomplete`, `no_catalog`, `reading_handle`, `wrong_schema`, `store_damaged`, `unsent_differs`, `copy_expired`, `stream_incomplete`, `wrong_server`, `bytes_absent`, `no_room`, `contract_mismatch`, `server_too_old`, `canceled`, `first_sync_waiting`, `sync_paused`, `renewal_refused`, `invalid`, `not_answerable`, `fault`, `watch`, `instance_changed`, `usage`, `install`, `no_store`, `no_credential`, `key_command`, `device_code_ended`, `file_name_mismatch`, `cloud_link_failed`, `blobs_missing`, `docs_page_not_found`, `docs_section_not_found`, `docs_unreachable`, `plugins_unreachable`, `conflict`, `too_large`.
 
 ## Telemetry
 
@@ -88,6 +88,7 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | Rename a sign-in | `marfa sign-ins rename` |
 | End one sign-in | `marfa sign-ins end` |
 | End every sign-in of a kind at once | `marfa sign-ins end-all` |
+| Link the instance to Marfa Cloud, read the link and unlink | `marfa cloud link`, `marfa cloud status`, `marfa cloud unlink` |
 | List, narrow and revoke a connected app | `marfa apps list`, `marfa apps narrow`, `marfa apps revoke` |
 | List the app vendors, and give one to another app | `marfa apps vendors list`, `marfa apps vendors move` |
 | Manage the owner's passkeys | `marfa owner passkeys list`, `marfa owner passkeys add`, `marfa owner passkeys rename`, `marfa owner passkeys delete` |
@@ -512,6 +513,69 @@ marfa sign-ins end-all [OPTIONS]
 | --- | --- |
 | `--kind <KIND>` | The kinds to end. Repeat it for several; the default is browser. One of `browser`, `app`, `key`. |
 | `--keep <ID>` | A sign-in to leave as it is. Repeat it for several. |
+
+## cloud
+
+Marfa Cloud: link this instance to it, read the link and unlink. Requires `config.manage`.
+
+### marfa cloud
+
+```text
+marfa cloud [OPTIONS] <COMMAND>
+```
+
+### marfa cloud link
+
+Link this instance to Marfa Cloud: print a code and an approval page, wait for the owner to approve the link there, then show the link. Needs `config.manage`.
+
+Marfa Cloud is in alpha, and the command says so before it starts.
+
+Check that the code on the approval page matches the one printed here, and approve only if it does. The page is opened in a browser only when this command runs on the instance's own machine and reaches it through its local socket; with a key or an app sign-in it is printed and never opened, so nothing the server sends can lead a browser to approve another instance.
+
+The command waits until the link is approved, refused or has expired, as the server decides; it has no time limit of its own. Ctrl-C leaves the link pending: run `marfa cloud link` again to wait on it, or `marfa cloud unlink` to cancel it. A link that is already pending is waited on as it was started, and a link that is already made is refused.
+
+The instance's sign-in address moves to Marfa Cloud by default. A key cannot move it: the link is made, the address stays, and the command that moves it from an app sign-in or the local socket is printed. When the move needs confirming, the consequences are printed and asked about at a terminal; without one, pass --confirm-address-change to accept them, or --keep-sign-in-address to leave the address alone.
+
+Exit 0: linked, or the sign-in address move waits as printed. Exit 1: the server refused, or the link was refused, expired or ended. Exit 3: the server could not be reached for a minute. Exit 5: the credential was refused. Exit 130: ended with Ctrl-C.
+
+Under --json two records come out on standard output, one per line: the pending link as soon as it exists, then the link as the wait ended. The code, the approval page and the instruction to check the code are printed on standard error.
+
+```text
+marfa cloud link [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--keep-sign-in-address` | Leave the sign-in address where it is instead of moving it to Marfa Cloud. |
+| `--confirm-address-change` | Accept moving the sign-in address, which signs everyone out and can strand passkeys and apps, without being asked. |
+
+### marfa cloud unlink
+
+End the link, or cancel one that is still pending. Needs `config.manage`.
+
+Where the link moved the sign-in address, unlinking puts it back, which signs everyone out. That needs an app sign-in from the last fifteen minutes or the local socket, never a key, and it needs confirming: the consequences are printed and asked about at a terminal; without one, pass --confirm-address-change.
+
+Marfa Cloud is told when the instance is unlinked. If it cannot be reached the command says so, and the instance keeps trying.
+
+Exit 0: nothing is linked any more. Exit 1: the server refused, ending nothing. Exit 5: the credential was refused.
+
+```text
+marfa cloud unlink [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--confirm-address-change` | Accept putting the sign-in address back, which signs everyone out and can strand passkeys and apps, without being asked. |
+
+### marfa cloud status
+
+The link to Marfa Cloud: whether it is waiting for approval, made, failed or absent, with its name, address, the connector and where the sign-in address stands. Needs `config.manage`.
+
+Exit 0 whenever the link could be read, whatever its state. Exit 1: the server refused. Exit 5: the credential was refused.
+
+```text
+marfa cloud status [OPTIONS]
+```
 
 ## items
 

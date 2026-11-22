@@ -183,7 +183,7 @@ export async function fakeCloud(
   };
 
   const control: Record<string, (body: any) => void> = {
-    approve: (body) => decide("approved", body),
+    approve: (body) => decide("approved", body ?? undefined),
     ready: () => {
       latest().ready = true;
     },
