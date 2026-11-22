@@ -2876,15 +2876,15 @@ If a key or an app's sign-in whose type map does not give write on every type un
 
 **Reason:** a purge needs write on the item's type (`items/purge-type-write`), and removing a vendor's data is a purge of its items.
 
-**Tests:** `compliance/app-data.test.ts › refuses a key whose map does not reach the vendor's types its list, its removal and remove_data, and changes nothing`.
+**Tests:** `compliance/app-data.test.ts › refuses a key whose map does not reach the vendor's types its list, its removal and remove_data, and changes nothing`, `› refuses a key whose map reads but cannot write the vendor's types its removal and remove_data, and changes nothing`.
 
 ### `keys-and-oauth/app-data-remove-schema-write`
 
-If a key or an app's sign-in without `schema.write` sends `DELETE /app-vendors/{vendor}/data` while a type is registered under the vendor, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` before it removes any item.
+If a key or an app's sign-in without `schema.write` sends `DELETE /app-vendors/{vendor}/data` while a type is registered under the vendor, or ends the app that holds the vendor with `remove_data` set to `true`, then the server MUST answer `403 forbidden` with `details.required_scope` `schema.write` before it removes any item.
 
 **Reason:** the removal deletes the vendor's types in the call that empties it, and deleting a type needs `schema.write`. Refusing the first call, not the last, means a credential never removes the items and then finds it cannot finish.
 
-**Tests:** `compliance/app-data.test.ts › refuses a removal that would delete types to a key without schema.write before it removes anything`.
+**Tests:** `compliance/app-data.test.ts › refuses a removal that would delete types to a key without schema.write before it removes anything`, `› refuses remove_data at DELETE /grants/{id} to a key without schema.write, and ends nothing`.
 
 ### `keys-and-oauth/app-data-unknown-maker`
 
@@ -2973,6 +2973,14 @@ When an app is ended at `DELETE /grants/{id}` or `DELETE /owner/sign-ins/{id}` w
 **Reason:** an owner who disconnects an app for good often wants what it kept gone too, and one write means the app is never ended with its data half removed. The data purges, so only a backup or an export taken before brings it back.
 
 **Tests:** `compliance/app-data.test.ts › removes the app's data in the write that ends its grant with remove_data, and leaves another app's and the owner's vendors`, `› ends the app's keys and removes its data with remove_data and revoke_keys together`, `› ends an app with its data at DELETE /owner/sign-ins/{id} with remove_data, and refuses remove_data for a sign-in that is no app`, `cli/app-data.test.ts › ends an app with its data with apps revoke --remove-data, and keeps it without`.
+
+### `keys-and-oauth/remove-data-own-columns`
+
+When a table column that names a type under one vendor an app holds belongs to a type under another vendor it holds, or to an item of one, the server MUST NOT refuse ending the app with `remove_data` set to `true` for that column.
+
+**Reason:** the column goes with the app's data in the same write, so it names nothing that remains.
+
+**Tests:** `compliance/app-data.test.ts › ends an app with remove_data while a table column under one of its vendors names a type under another`.
 
 ### `keys-and-oauth/remove-data-keeps-others`
 

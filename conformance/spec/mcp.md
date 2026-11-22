@@ -1380,9 +1380,9 @@ When `marfa_app_data` is called without `confirm`, the server MUST answer the `v
 
 ### `mcp/app-data-confirm-needs-purge`
 
-When a credential without `items.purge` calls `marfa_app_data` without `confirm`, the server MUST answer the preview without a `confirm` token.
+When a credential without `items.purge`, without write on every type under the vendor, or without `schema.write` while a type is registered under it calls `marfa_app_data` without `confirm`, the server MUST answer the preview without a `confirm` token.
 
-**Tests:** `compliance/app-data.test.ts › gives no confirmation in a marfa_app_data preview to a credential without items.purge`.
+**Tests:** `compliance/app-data.test.ts › gives no confirmation in a marfa_app_data preview to a credential without items.purge`, `› gives no confirmation in a marfa_app_data preview to a key that reads but cannot write the vendor's types, or lacks schema.write, and refuses the first remove_data in marfa_end_sign_in`.
 
 ### `mcp/app-data-confirmed`
 
@@ -1390,9 +1390,17 @@ When `marfa_app_data` is called with the `confirm` token its preview gave, by th
 
 **Tests:** `compliance/app-data.test.ts › previews a vendor's data with marfa_app_data, deletes nothing on a stale confirmation, and deletes it on a fresh one`.
 
+### `mcp/app-data-repeated`
+
+When a `marfa_app_data` call carries a `confirm` token that an earlier call by the same credential used for the same vendor, within five minutes of the preview, the server MUST answer `already_done` as `true`, the `removed_items` that earlier call answered, and `remaining_items` as the vendor's items stand now where the credential's type map gives read on every type under the vendor, and no `remaining_items` otherwise.
+
+**Reason:** the earlier call's removal committed, so a repeat reports it and never a refusal; a count of what is left is shown only to a credential that may list it.
+
+**Tests:** `compliance/app-data.test.ts › answers a repeated confirmation with what it removed, and no remaining_items once a type the key cannot read is registered under the vendor`.
+
 ### `mcp/app-data-changed`
 
-If an item the confirming call would delete changed, or an item was added under the vendor or removed from it, since a `marfa_app_data` preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and delete nothing.
+If an item the confirming call would delete changed, a type was registered or deleted under the vendor, or the number of the vendor's items of any type in any state changed, since a `marfa_app_data` preview, then the server MUST refuse the call that confirms it with the tool error code `confirmation_stale` and delete nothing.
 
 **Reason:** a confirmation shown for a few items must not delete more written in between.
 
@@ -1400,9 +1408,9 @@ If an item the confirming call would delete changed, or an item was added under 
 
 ### `mcp/app-data-type-map`
 
-If a credential whose type map does not reach every type under a vendor calls `marfa_app_data` for it, or `marfa_end_sign_in` with `remove_data` set to `true` for the app that holds it, then the server MUST answer the tool error code `type_not_permitted` and delete and end nothing.
+If a credential whose type map does not give read on every type under a vendor calls `marfa_app_data` for it, or one whose type map does not give write on every type under the vendors an app holds calls `marfa_end_sign_in` with `remove_data` set to `true` for that app, then the server MUST answer the tool error code `type_not_permitted` and delete and end nothing.
 
-**Tests:** `compliance/app-data.test.ts › refuses marfa_app_data and remove_data in marfa_end_sign_in to a key whose map does not reach the vendor's types`.
+**Tests:** `compliance/app-data.test.ts › refuses marfa_app_data and remove_data in marfa_end_sign_in to a key whose map does not reach the vendor's types`, `› gives no confirmation in a marfa_app_data preview to a key that reads but cannot write the vendor's types, or lacks schema.write, and refuses the first remove_data in marfa_end_sign_in`.
 
 ## Ending a sign-in, an app or a passkey
 
