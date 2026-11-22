@@ -73,6 +73,7 @@ codes! {
     ConnectorHostNotFound = "connector_host_not_found", 404;
     ConnectorLinkNotFound = "connector_link_not_found", 404;
     ConnectorNotFound = "connector_not_found", 404;
+    ConnectorPreviewNotFound = "connector_preview_not_found", 404;
     DeliveryNotFound = "delivery_not_found", 404;
     EdgeNotFound = "edge_not_found", 404;
     EdgeTypeNotFound = "edge_type_not_found", 404;
@@ -97,6 +98,9 @@ codes! {
     Conflict = "conflict", 409;
     ConnectorHeld = "connector_held", 409;
     ConnectorMappingStale = "connector_mapping_stale", 409;
+    ConnectorPaused = "connector_paused", 409;
+    ConnectorPreviewAnswered = "connector_preview_answered", 409;
+    ConnectorPreviewsFull = "connector_previews_full", 409;
     ConnectorSignInNotDeclared = "connector_sign_in_not_declared", 409;
     ConnectorSignInSettingsMissing = "connector_sign_in_settings_missing", 409;
     ConnectorSourceHeld = "connector_source_held", 409;

@@ -381,6 +381,11 @@ pub async fn report_run(app: &App, caller: &Caller, id: String, run: Run) -> Res
             reported_at: unit.at.clone(),
         };
         store::insert_run(unit.tx(), RUNS_KEPT, &report)?;
+        super::connector_control::run_reported(
+            unit.tx(),
+            &registration.source,
+            &report.started_at,
+        )?;
         Ok(run_json(&report))
     })
     .await

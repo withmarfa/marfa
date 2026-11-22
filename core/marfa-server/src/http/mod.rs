@@ -175,7 +175,21 @@ fn connector_host_doors() -> Routes {
             get(connector_hosts::read).delete(connector_hosts::remove),
         )
         .route("/connector-hosts/{id}/link", post(connector_hosts::link))
-        .route("/plugins/{name}/connector", put(connector_hosts::assign))
+        .route(
+            "/plugins/{name}/connector",
+            get(plugins::control).put(connector_hosts::assign),
+        )
+        .route("/plugins/{name}/connector/pause", post(plugins::pause))
+        .route("/plugins/{name}/connector/resume", post(plugins::resume))
+        .route("/plugins/{name}/connector/run", post(plugins::run))
+        .route(
+            "/plugins/{name}/connector/previews",
+            post(plugins::request_preview).get(plugins::previews),
+        )
+        .route(
+            "/plugins/{name}/connector/previews/{id}",
+            get(plugins::preview).post(plugins::answer_preview),
+        )
         .route(
             "/plugins/{name}/connector/settings",
             get(connector_settings::list).patch(connector_settings::set),

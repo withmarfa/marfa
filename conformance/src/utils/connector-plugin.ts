@@ -145,14 +145,14 @@ export async function installed(owner: MarfaClient): Promise<ConnectorPlugin> {
 
 /**
  * The plugin's connector key, minted by a connector host the plugin is
- * assigned to, then set by local authority to purge, to write the plugin's
+ * assigned to and returned with that host's client, then set by local authority to purge, to write the plugin's
  * types and every edge type and metadata, with `changes` over that.
  */
 export async function connectorKey(
   server: FreshServer,
   plugin: ConnectorPlugin,
   changes: Record<string, unknown> = {},
-): Promise<{ id: string; client: MarfaClient }> {
+): Promise<{ id: string; client: MarfaClient; host: MarfaClient }> {
   const owner = local(server);
   const host = await owner.createConnectorHost(`host-${fresh()}`);
   expect(host.status, JSON.stringify(host.error)).toBe(201);
@@ -160,10 +160,11 @@ export async function connectorKey(
   expect(redeemed.status, JSON.stringify(redeemed.error)).toBe(201);
   const assigned = await owner.assignConnector(plugin.name, host.data.host.id);
   expect(assigned.status, JSON.stringify(assigned.error)).toBe(200);
-  const minted = await new MarfaClient({
+  const hostClient = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: redeemed.data.key,
-  }).mintConnectorKey(plugin.name);
+  });
+  const minted = await hostClient.mintConnectorKey(plugin.name);
   expect(minted.status, JSON.stringify(minted.error)).toBe(201);
   const set = await owner.updateKey(minted.data.key_id, {
     permissions: ["items.purge"],
@@ -179,6 +180,7 @@ export async function connectorKey(
       baseUrl: server.apiUrl,
       apiKey: minted.data.key,
     }),
+    host: hostClient,
   };
 }
 

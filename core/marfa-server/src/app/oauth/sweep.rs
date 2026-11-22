@@ -325,6 +325,7 @@ pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
         ("oauth_access_tokens", "id", 0),
         ("oauth_refresh_tokens", "id", 0),
         ("setup_proof", "digest", 0),
+        ("connector_previews", "id", 0),
     ] {
         if !done {
             break;

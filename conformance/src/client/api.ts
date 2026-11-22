@@ -788,6 +788,64 @@ export class MarfaClient {
     );
   }
 
+  /** `GET /plugins/{name}/connector`: what the owner wants of the connector. */
+  async getConnectorControl(
+    name: string,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(`/plugins/${name}/connector`);
+  }
+
+  /** `POST /plugins/{name}/connector/{act}`: pause, resume or run now. */
+  async controlConnector(
+    name: string,
+    act: "pause" | "resume" | "run",
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(
+      `/plugins/${name}/connector/${act}`,
+      { method: "POST" },
+    );
+  }
+
+  async requestMappingPreview(
+    name: string,
+    body: unknown,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(
+      `/plugins/${name}/connector/previews`,
+      { method: "POST", body: body as object },
+    );
+  }
+
+  async listMappingPreviews(
+    name: string,
+    status?: string,
+  ): Promise<ApiResponse<PaginatedResult<Record<string, any>>>> {
+    const query = status === undefined ? "" : `?status=${status}`;
+    return this.request<PaginatedResult<Record<string, any>>>(
+      `/plugins/${name}/connector/previews${query}`,
+    );
+  }
+
+  async getMappingPreview(
+    name: string,
+    id: string,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(
+      `/plugins/${name}/connector/previews/${id}`,
+    );
+  }
+
+  async answerMappingPreview(
+    name: string,
+    id: string,
+    body: unknown,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(
+      `/plugins/${name}/connector/previews/${id}`,
+      { method: "POST", body: body as object },
+    );
+  }
+
   async registerType(schema: TypeSchema): Promise<ApiResponse<TypeSchema>> {
     return this.request<TypeSchema>("/types", {
       method: "POST",

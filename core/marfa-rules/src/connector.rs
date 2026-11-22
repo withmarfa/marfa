@@ -443,6 +443,30 @@ pub fn judge(
     problems
 }
 
+/// A draft of one kind's entry as a save would store it, each member it leaves out taken from the
+/// kind's default, and judged as a save judges the kind, its faults named under `at`.
+pub fn read_draft(
+    value: &Value,
+    kind: &Kind,
+    catalog: &Catalog,
+    at: &str,
+    may_write: impl Fn(&str) -> bool,
+) -> Result<Entry, Vec<Problem>> {
+    let mut problems = Vec::new();
+    let base = default_entry(kind, Some(catalog));
+    let Some(entry) = read_entry(value, base, at, &ENTRY_MEMBERS, &mut problems) else {
+        return Err(problems);
+    };
+    if entry.enabled {
+        judge_entry(&kind.own_type, &entry, at, catalog, &may_write, &mut problems);
+    }
+    if problems.is_empty() {
+        Ok(entry)
+    } else {
+        Err(problems)
+    }
+}
+
 /// One enabled kind's entry, its faults named under `at`.
 pub(crate) fn judge_entry(
     own_type: &str,

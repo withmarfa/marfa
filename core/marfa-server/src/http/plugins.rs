@@ -10,6 +10,7 @@ use super::body::JsonBody;
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::connector_control;
 use crate::app::mapping;
 use crate::app::plugins::{self, Outcome};
 
@@ -121,5 +122,118 @@ pub async fn rewrite_done(
     Ok(json_answer(
         StatusCode::OK,
         &mapping::rewrite_done(&app, &caller, name, body).await?,
+    ))
+}
+
+pub async fn control(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+) -> Answer {
+    query::only(&uri, &[])?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &connector_control::read(&app, &caller, name).await?,
+    ))
+}
+
+pub async fn pause(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+) -> Answer {
+    query::only(&uri, &[])?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &connector_control::pause(&app, &caller, name, true).await?,
+    ))
+}
+
+pub async fn resume(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+) -> Answer {
+    query::only(&uri, &[])?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &connector_control::pause(&app, &caller, name, false).await?,
+    ))
+}
+
+pub async fn run(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+) -> Answer {
+    query::only(&uri, &[])?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &connector_control::run(&app, &caller, name).await?,
+    ))
+}
+
+pub async fn request_preview(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
+    let body = Value::Object(body.open_object().await?);
+    Ok(json_answer(
+        StatusCode::CREATED,
+        &connector_control::request_preview(&app, &caller, name, body).await?,
+    ))
+}
+
+pub async fn previews(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(name): Path<String>,
+    uri: Uri,
+) -> Answer {
+    query::only(&uri, &["status"])?;
+    let status = query::pairs(&uri)?
+        .into_iter()
+        .find(|(key, _)| key == "status")
+        .map(|(_, value)| value);
+    let status = connector_control::checked_status(status)?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &connector_control::list_previews(&app, &caller, name, status).await?,
+    ))
+}
+
+pub async fn preview(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path((name, id)): Path<(String, String)>,
+    uri: Uri,
+) -> Answer {
+    query::only(&uri, &[])?;
+    Ok(json_answer(
+        StatusCode::OK,
+        &connector_control::read_preview(&app, &caller, name, id).await?,
+    ))
+}
+
+pub async fn answer_preview(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path((name, id)): Path<(String, String)>,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
+    let body = Value::Object(body.open_object().await?);
+    Ok(json_answer(
+        StatusCode::OK,
+        &connector_control::answer_preview(&app, &caller, name, id, body).await?,
     ))
 }

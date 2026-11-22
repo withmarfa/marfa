@@ -506,6 +506,14 @@ When the credential requesting `GET /export?format=archive` holds `connectors.ma
 
 **Tests:** `compliance/connector-mapping.test.ts › keeps the mapping through an export and a restore, restores a version 2 archive, and refuses a mapping line to a key without connectors.manage`.
 
+### `archive/connector-control-not-carried`
+
+The server MUST NOT carry in an archive whether a plugin's connector is paused, its `run_requested_at` or its mapping previews.
+
+**Reason:** they are the connector's working state, which a restored connector starts afresh.
+
+**Tests:** `compliance/connector-control.test.ts › carries no pause, run request or preview in an archive, and a restore leaves the connector running with none`.
+
 ### `archive/restore-connector-mapping`
 
 When `POST /restore` reads a `connector_mapping` line naming a plugin that the archive or the instance holds, the server MUST store the mapping only where the instance holds no saved mapping for that plugin, counting it in `connector_mappings_added`, and count one it keeps in `connector_mappings_skipped`.
