@@ -128,41 +128,74 @@ fn every_schema_version_makes_the_database_pinned_for_it() {
     );
 }
 
-/// Whether running the SQL twice on a file that already has its changes would fail.
-fn cannot_run_twice(sql: &str) -> bool {
-    let sql = sql
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("--"))
-        .collect::<Vec<_>>()
-        .join("\n")
-        .to_uppercase();
-    if sql.contains("ADD COLUMN") {
-        return true;
+/// The SQL without its comments, on one line, in capitals.
+fn plain(sql: &str) -> String {
+    let mut out = String::new();
+    let mut rest = sql;
+    while let Some(at) = rest.find(['-', '/']) {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        if tail.starts_with("--") {
+            rest = tail.find('\n').map_or("", |end| &tail[end..]);
+        } else if tail.starts_with("/*") {
+            rest = tail.find("*/").map_or("", |end| &tail[end + 2..]);
+        } else {
+            out.push_str(&tail[..1]);
+            rest = &tail[1..];
+        }
+        out.push(' ');
     }
-    [
-        "CREATE TABLE ",
-        "CREATE UNIQUE INDEX ",
-        "CREATE INDEX ",
-        "CREATE VIRTUAL TABLE ",
-    ]
-    .iter()
-    .any(|start| {
-        sql.match_indices(start)
-            .any(|(at, _)| !sql[at + start.len()..].starts_with("IF NOT EXISTS"))
-    })
+    out.push_str(rest);
+    out.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_uppercase()
+}
+
+/// Whether the SQL holds a statement that fails on a file that already has its changes.
+fn cannot_run_twice(sql: &str) -> bool {
+    let sql = plain(sql);
+    let unguarded = |starts: &[&str], guard: &str| {
+        starts.iter().any(|start| {
+            sql.match_indices(start)
+                .any(|(at, _)| !sql[at + start.len()..].starts_with(guard))
+        })
+    };
+    ["ADD COLUMN", "DROP COLUMN", "RENAME"]
+        .iter()
+        .any(|part| sql.contains(part))
+        || unguarded(
+            &[
+                "CREATE TABLE ",
+                "CREATE INDEX ",
+                "CREATE UNIQUE INDEX ",
+                "CREATE TRIGGER ",
+                "CREATE VIEW ",
+            ],
+            "IF NOT EXISTS",
+        )
+        || unguarded(
+            &["DROP TABLE ", "DROP INDEX ", "DROP TRIGGER ", "DROP VIEW "],
+            "IF EXISTS",
+        )
+}
+
+/// The versions whose SQL cannot run twice and that name no `done` query.
+fn missing_done(migrations: &[Migration]) -> Vec<u32> {
+    migrations
+        .iter()
+        .filter(|m| cannot_run_twice(m.sql) && m.done.is_none())
+        .map(|m| m.version)
+        .collect()
 }
 
 #[test]
 fn a_migration_that_cannot_run_twice_says_when_it_is_done() {
-    let missing: Vec<u32> = MIGRATIONS
-        .iter()
-        .filter(|m| cannot_run_twice(m.sql) && m.done.is_none())
-        .map(|m| m.version)
-        .collect();
+    let missing = missing_done(MIGRATIONS);
     assert!(
         missing.is_empty(),
-        "migrations {missing:?} add a column or make a table or index without IF NOT EXISTS, \
-         so `done` must name a query that finds their changes in an unfinished file"
+        "migrations {missing:?} hold a statement that fails on a file that already has its \
+         changes, so `done` must name a query that finds those changes in an unfinished file"
     );
 }
 
@@ -175,16 +208,28 @@ fn a_migration_without_done_is_caught_when_it_cannot_run_twice() {
     };
     let made = Migration {
         version: 98,
-        sql: "-- note\nCREATE INDEX a_b ON a (b);",
+        sql: "-- note\nCREATE INDEX a_b ON a (b); /* x */",
         done: None,
     };
     let safe = Migration {
         version: 97,
         sql: "CREATE TABLE IF NOT EXISTS a (b TEXT);\n-- ADD COLUMN in a comment\n\
+              /* RENAME\n   DROP COLUMN */\nCREATE  INDEX\n  IF NOT EXISTS c ON a (b);\n\
               DROP INDEX IF EXISTS c;",
         done: None,
     };
-    assert!(cannot_run_twice(added.sql) && added.done.is_none());
-    assert!(cannot_run_twice(made.sql) && made.done.is_none());
-    assert!(!cannot_run_twice(safe.sql));
+    let renamed = Migration {
+        version: 96,
+        sql: "ALTER TABLE a RENAME TO b;",
+        done: None,
+    };
+    let dropped = Migration {
+        version: 95,
+        sql: "DROP TRIGGER t;",
+        done: None,
+    };
+    assert_eq!(
+        missing_done(&[added, made, safe, renamed, dropped]),
+        [99, 98, 96, 95]
+    );
 }
