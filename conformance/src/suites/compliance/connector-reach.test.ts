@@ -18,7 +18,12 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
-import { callTool, connectMcp, toolError } from "../../utils/mcp.js";
+import {
+  callTool,
+  connectMcp,
+  toolError,
+  toolResult,
+} from "../../utils/mcp.js";
 import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 
 /**
@@ -1308,6 +1313,52 @@ describe("the MCP tools", () => {
       const found = await callTool(mcp, "marfa_find", { type: plugin.ticket });
       expect(JSON.stringify(found)).not.toContain(mine.id);
       expect(toolError(found).code).toBe("type_not_permitted");
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("reads no field of its own item of the mapped type through marfa_get, which answers it as an item it cannot read", async () => {
+    const { plugin, key } = await mapped();
+    const mine = await ticket(key.client, plugin, {
+      source_id: `f-${fresh()}`,
+      properties: { title: "a field to read", reporter: "someone" },
+    });
+    const absent = `${mine.id.slice(0, -1)}${mine.id.endsWith("0") ? "1" : "0"}`;
+    // The witnesses: GET /items/{id} reads the connector's own item, and a
+    // key whose type map reads the type reads the field over MCP.
+    const read = await key.client.getItem(mine.id);
+    expect(read.status, JSON.stringify(read.error)).toBe(200);
+    const reader = await mint(server, `reach-reader-${fresh()}`, [], {
+      [plugin.ticket]: "read",
+    });
+    const readerMcp = await connectMcp(server.apiUrl, reader.key);
+    try {
+      const part = await callTool(readerMcp, "marfa_get", {
+        ids: [mine.id],
+        field: "title",
+      });
+      expect(toolResult(part).text).toBe("a field to read");
+    } finally {
+      await readerMcp.close();
+    }
+
+    const mcp = await connectMcp(server.apiUrl, key.key);
+    try {
+      const part = await callTool(mcp, "marfa_get", {
+        ids: [mine.id],
+        field: "title",
+      });
+      expect(JSON.stringify(part)).not.toContain("a field to read");
+      const missing = await callTool(mcp, "marfa_get", {
+        ids: [absent],
+        field: "title",
+      });
+      const unread = (answer: typeof part, id: string) =>
+        JSON.stringify(toolError(answer)).replaceAll(id, "<id>");
+      expect(unread(part, mine.id)).toBe(unread(missing, absent));
+      const whole = await callTool(mcp, "marfa_get", { ids: [mine.id] });
+      expect(toolResult(whole).not_found).toEqual([mine.id]);
     } finally {
       await mcp.close();
     }

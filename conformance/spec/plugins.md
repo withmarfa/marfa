@@ -1418,7 +1418,7 @@ If a plugin's connector key creates an item of an enabled kind's `target_type` t
 
 While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items/{id}`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs` or `POST /items/lookup` for an item of that type whose `source` is its own, the server MUST find the item as it would were that type granted read in its type map.
 
-**Reason:** a connector reads its own items back to update them, with the edges it reads from them (`plugins/reach-edges-own`). It also lists them (`plugins/reach-list-own`), follows their events (`plugins/reach-events-own`) and settles their tombstones (`plugins/reach-tombstones-own`). Every other door, among them search, the summaries, an export, a view's items, a folder, the MCP tools and the copy stream a working copy follows, answers the type as the key's type map reaches it.
+**Reason:** a connector reads its own items back to update them, with the edges it reads from them (`plugins/reach-edges-own`). It also lists them (`plugins/reach-list-own`), follows their events (`plugins/reach-events-own`) and settles their tombstones (`plugins/reach-tombstones-own`). Every other door, among them search, the summaries, an export, a view's items, a folder, the MCP tools that only read (`plugins/reach-mcp-reads`) and the copy stream a working copy follows, answers the type as the key's type map reaches it.
 
 **Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`, `› reads an edge from its own item of the mapped type on every edge door, and never one from the owner's item into its own`.
 
@@ -1426,9 +1426,17 @@ While a plugin's connector key's mapping holds an enabled kind whose `target_typ
 
 While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items`, the server MUST answer it as it would were that type granted read in its type map, whatever items that type holds, with no item of that type whose `source` is not its own in any page.
 
-**Reason:** a connector finds its rows by listing them, with any filter a listing takes, among them a relation to another item. The owner's items of the type stay out of every page and every cursor, as `plugins/reach-target-other-source` keeps them out of every other door. A listing of the type or of a type above it answers an empty page while the type holds none of the key's items, so it says nothing of the owner's. The MCP tool `marfa_find` lists as the key's type map reaches.
+**Reason:** a connector finds its rows by listing them, with any filter a listing takes, among them a relation to another item. The owner's items of the type stay out of every page and every cursor, as `plugins/reach-target-other-source` keeps them out of every other door. A listing of the type or of a type above it answers an empty page while the type holds none of the key's items, so it says nothing of the owner's. The MCP tool `marfa_find` lists as the key's type map reaches (`plugins/reach-mcp-reads`).
 
-**Tests:** `compliance/connector-reach.test.ts › lists its own items of the mapped type page by page and none of the owner's, which the owner lists beside them, and lists, streams and settles none once the kind is off`, `› lists the mapped type and its parent as an empty page while it holds no items, and while it holds only the owner's`, `› finds none of its own items of the mapped type through marfa_find, which GET /items lists`.
+**Tests:** `compliance/connector-reach.test.ts › lists its own items of the mapped type page by page and none of the owner's, which the owner lists beside them, and lists, streams and settles none once the kind is off`, `› lists the mapped type and its parent as an empty page while it holds no items, and while it holds only the owner's`.
+
+### `plugins/reach-mcp-reads`
+
+When a plugin's connector key calls an MCP tool whose `readOnlyHint` annotation is `true`, the server MUST decide every item the tool reads by the key's type map alone, whatever the key's mapping holds.
+
+**Reason:** a tool that only reads is a door for a person or an agent to look through, not the connector's own sync, so it answers as every door does that `plugins/reach-read-own` and `plugins/reach-list-own` do not name. A tool that writes keeps the mapping, as `plugins/reach-target-own-source` says of every door that writes an item.
+
+**Tests:** `compliance/connector-reach.test.ts › finds none of its own items of the mapped type through marfa_find, which GET /items lists`, `› reads no field of its own item of the mapped type through marfa_get, which answers it as an item it cannot read`.
 
 ### `plugins/reach-edges-own`
 

@@ -259,7 +259,18 @@ pub async fn call(
     let Value::Object(arguments) = arguments else {
         return None;
     };
-    Some(run(app, caller, tool.name, arguments, exact, visit).await)
+    // A tool that only reads reads by the type map; a write tool keeps a connector's mapping.
+    let only_reads = tool
+        .annotations
+        .get("readOnlyHint")
+        .and_then(Value::as_bool)
+        == Some(true);
+    let caller = if only_reads {
+        caller.by_type_map()
+    } else {
+        caller.clone()
+    };
+    Some(run(app, &caller, tool.name, arguments, exact, visit).await)
 }
 
 async fn run(
