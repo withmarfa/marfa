@@ -8294,25 +8294,26 @@ A refusal the CLI reports carries one `code`, a lowercase snake case word. The f
 | `not_answerable`       | The copy does not hold what a count needs, so only the server can answer it. No other failure carries it, so a caller that asks the server on it never repeats a request that failed for another reason.                                                                                                                |
 | `fault`                | The core itself failed, and a panic it caught ended the call.                                                                                                                                                                                                                                                           |
 
-| Code                     | Meaning                                                                                          |
-| ------------------------ | ------------------------------------------------------------------------------------------------ |
-| `usage`                  | The command line or the profile file was wrong.                                                  |
-| `watch`                  | The folder watch failed.                                                                         |
-| `instance_changed`       | A folder's server answers as another Marfa instance, which holds neither the folder nor its key. |
-| `install`                | The service manager, Docker, Tailscale or the server did not do what `marfa server` needs.       |
-| `no_store`               | The command names no working copy, or none is at the path it names.                              |
-| `no_credential`          | No credential is held for the server.                                                            |
-| `key_command`            | A profile's key command gave no key.                                                             |
-| `device_code_ended`      | The device code `login` waits on is no longer valid, and a new `login` replaces it.              |
-| `blobs_missing`          | An archive lacks blobs its manifest names.                                                       |
-| `docs_page_not_found`    | The docs site has no page at the path.                                                           |
-| `docs_section_not_found` | The docs page has no heading of that name.                                                       |
-| `docs_unreachable`       | The docs site cannot be read.                                                                    |
-| `conflict`               | A server answered `409` to a command.                                                            |
-| `too_large`              | A server answered `413` to a command.                                                            |
-| `plugins_unreachable`    | The plugins release, or the address `MARFA_PLUGINS_URL` names, could not be read.                |
-| `file_name_mismatch`     | A file in a plugin's source folder is not named after the id it defines.                         |
-| `cloud_link_failed`      | A Marfa Cloud link the command waited on ended as failed, or ended before it was made.           |
+| Code                     | Meaning                                                                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `usage`                  | The command line or the profile file was wrong.                                                                               |
+| `watch`                  | The folder watch failed.                                                                                                      |
+| `instance_changed`       | A folder's server answers as another Marfa instance, which holds neither the folder nor its key.                              |
+| `install`                | The service manager, Docker, Tailscale or the server did not do what `marfa server` needs.                                    |
+| `no_store`               | The command names no working copy, or none is at the path it names.                                                           |
+| `no_credential`          | No credential is held for the server.                                                                                         |
+| `key_command`            | A profile's key command gave no key.                                                                                          |
+| `device_code_ended`      | The device code `login` waits on is no longer valid, and a new `login` replaces it.                                           |
+| `sign_in_ended`          | The connector sign-in `plugins sign-in --wait` waits on failed, expired or was replaced by a later start, so it set no token. |
+| `blobs_missing`          | An archive lacks blobs its manifest names.                                                                                    |
+| `docs_page_not_found`    | The docs site has no page at the path.                                                                                        |
+| `docs_section_not_found` | The docs page has no heading of that name.                                                                                    |
+| `docs_unreachable`       | The docs site cannot be read.                                                                                                 |
+| `conflict`               | A server answered `409` to a command.                                                                                         |
+| `too_large`              | A server answered `413` to a command.                                                                                         |
+| `plugins_unreachable`    | The plugins release, or the address `MARFA_PLUGINS_URL` names, could not be read.                                             |
+| `file_name_mismatch`     | A file in a plugin's source folder is not named after the id it defines.                                                      |
+| `cloud_link_failed`      | A Marfa Cloud link the command waited on ended as failed, or ended before it was made.                                        |
 
 ### `device/error-codes-closed`
 

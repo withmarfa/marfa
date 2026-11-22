@@ -21,6 +21,10 @@ import { listEntries, readEntry } from "../../utils/archive.js";
 import { controlRequest } from "../../utils/control-request.js";
 import { ON_MACOS } from "../../utils/platform.js";
 import {
+  connectorBundle,
+  connectorSection,
+} from "../../utils/plugin-connector.js";
+import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   stopFreshServers,
@@ -259,6 +263,84 @@ describe("a server built without test hooks", () => {
       }
       // The socket itself answers, so the 404 is the route's.
       expect((await controlRequest(free.socket, "/health")).status).toBe(200);
+    } finally {
+      await stop(free);
+    }
+  });
+
+  it("starts a connector's sign-in at Google's own authorization address, where a hooked server's fault names another", async () => {
+    const name = "signs-in";
+    const bundle = connectorBundle(name, "signsin", name, {
+      connector: connectorSection("signsin.entry", name, {
+        settings: [
+          { name: "client_id", label: "ID", kind: "text", required: true },
+          {
+            name: "client_secret",
+            label: "Secret",
+            kind: "text",
+            secret: true,
+            required: true,
+          },
+          {
+            name: "token",
+            label: "Token",
+            kind: "text",
+            secret: true,
+            required: false,
+          },
+        ],
+        sign_in: {
+          kind: "oauth2",
+          provider: "google",
+          scopes: ["openid"],
+          client_id_setting: "client_id",
+          client_secret_setting: "client_secret",
+          token_setting: "token",
+        },
+      }),
+    });
+    const startAt = async (baseUrl: string, socket: string) => {
+      const local = new MarfaClient({ baseUrl, controlSocket: socket });
+      const minted = await local.createKey({
+        label: "signs in",
+        source: "hook-free-sign-in",
+        permissions: ["schema.write", "connectors.manage"],
+        type_permissions: { "*": "write" },
+      });
+      expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+      const owner = new MarfaClient({ baseUrl, apiKey: minted.data.key });
+      expect((await owner.installPlugin(bundle)).status).toBe(201);
+      const set = await owner.setConnectorSettings(name, {
+        client_id: "an-id.apps.googleusercontent.com",
+        client_secret: "a-secret",
+      });
+      expect(set.status, JSON.stringify(set.error)).toBe(200);
+      const started = await owner.startConnectorSignIn(name);
+      expect(started.status, JSON.stringify(started.error)).toBe(201);
+      const url = new URL(started.data.url as string);
+      return `${url.origin}${url.pathname}`;
+    };
+
+    // The witness: a hooked server's fault moves the address.
+    const hooked = await bootFreshServer("hook-free-sign-in-witness");
+    await hooked.setFault("sign-in-provider=http://127.0.0.1:9");
+    expect(await startAt(hooked.apiUrl, hooked.controlSocket)).toBe(
+      "http://127.0.0.1:9/authorize",
+    );
+
+    const free = start(folder("marfa-hf-data-"));
+    await listening(free);
+    try {
+      const port = /listening on port (\d+)/.exec(free.output())?.[1];
+      expect(port, free.output()).toBeDefined();
+      expect(await startAt(`http://127.0.0.1:${port}`, free.socket)).toBe(
+        "https://accounts.google.com/o/oauth2/v2/auth",
+      );
+      const fault = await controlRequest(free.socket, "/_control/test/faults", {
+        method: "PUT",
+        body: { name: "sign-in-provider", arg: "http://127.0.0.1:9" },
+      });
+      expect(fault.status).toBe(404);
     } finally {
       await stop(free);
     }

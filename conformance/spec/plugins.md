@@ -814,6 +814,320 @@ If the server cannot read the record or the declared settings of one plugin's co
 
 **Tests:** `compliance/connector-settings.test.ts › lists every other entry when the record or settings of one plugin's connector do not read, the unreadable secret of a connector that reads among them`.
 
+## A connector's sign-in
+
+A plugin's connector whose section declares `sign_in` gets its refresh token through the owner's browser. `POST /plugins/{name}/connector/sign-in` answers the provider's authorization address, the provider sends the browser back to `GET /connect/oauth/callback`, and the server exchanges the code at the provider's token address and seals the refresh token into the setting `token_setting` names. The client ID and client secret are the owner's own, held in the settings `client_id_setting` and `client_secret_setting` name. The one provider is `google`, whose authorization address is `https://accounts.google.com/o/oauth2/v2/auth` and whose token address is `https://oauth2.googleapis.com/token`. A sign-in is pending from its start until a callback ends it, a later start replaces it, or ten minutes pass. Each start answers an `id` naming its sign-in, so a caller that waits can tell its own sign-in from a later one. A sign-in that fails records one outcome word saying why, which the owner and an app read in the audit entry and the status; no text the provider wrote is kept or shown.
+
+`POST /plugins/{name}/connector/sign-in` judges the caller's permission, the body, the plugin, its connector, its `sign_in`, then the client settings. `GET /plugins/{name}/connector/sign-in` judges the caller's permission, the plugin, its connector, then its `sign_in`.
+
+### `plugins/sign-in-start`
+
+When a caller holding `connectors.manage` sends `POST /plugins/{name}/connector/sign-in` for a plugin whose connector declares `sign_in`, and the settings `client_id_setting` and `client_secret_setting` name hold values the server can read, the server MUST answer `201` with `id`, `url`, and `expires_at` ten minutes after the start.
+
+**Tests:** `compliance/connector-sign-in.test.ts › starts a sign-in answering the provider's address with every parameter, a state and an S256 challenge, ten minutes to finish`.
+
+### `plugins/sign-in-url`
+
+When the server answers `POST /plugins/{name}/connector/sign-in` with `201`, the server MUST answer `url` as the provider's authorization address with the query parameters `client_id` holding the value of the setting `client_id_setting` names, `redirect_uri` holding the origin of the server's sign-in address followed by `/connect/oauth/callback`, `response_type` `code`, `scope` holding the `scopes` of `sign_in` separated by spaces, `state`, `code_challenge`, `code_challenge_method` `S256`, `access_type` `offline` and `prompt` `consent`.
+
+**Reason:** `access_type` `offline` and `prompt` `consent` make Google answer a refresh token at every sign-in, not only the first.
+
+**Tests:** `compliance/connector-sign-in.test.ts › starts a sign-in answering the provider's address with every parameter, a state and an S256 challenge, ten minutes to finish`.
+
+### `plugins/sign-in-google-address`
+
+Where the server was built without test hooks, the server MUST answer the `url` of a sign-in whose `provider` is `google` at `https://accounts.google.com/o/oauth2/v2/auth`.
+
+**Reason:** no setting, request or fault moves a provider's addresses, so the owner's browser and client secret go only to the provider.
+
+**Tests:** `compliance/hook-free-server.test.ts › starts a connector's sign-in at Google's own authorization address, where a hooked server's fault names another`.
+
+### `plugins/sign-in-not-declared`
+
+If a caller sends `POST /plugins/{name}/connector/sign-in` or `GET /plugins/{name}/connector/sign-in` for a plugin whose connector declares no `sign_in`, then the server MUST answer `409 connector_sign_in_not_declared` with `details.plugin`.
+
+**Tests:** `compliance/connector-sign-in.test.ts › refuses 409 a start while the client ID or secret is unset, naming each, and for a connector that declares no sign-in`.
+
+### `plugins/sign-in-settings-missing`
+
+If a caller sends `POST /plugins/{name}/connector/sign-in` while the setting `client_id_setting` or `client_secret_setting` names holds no value the server can read, then the server MUST answer `409 connector_sign_in_settings_missing` with `details.settings` naming each such setting.
+
+**Tests:** `compliance/connector-sign-in.test.ts › refuses 409 a start while the client ID or secret is unset, naming each, and for a connector that declares no sign-in`.
+
+### `plugins/sign-in-return-to`
+
+If the body of `POST /plugins/{name}/connector/sign-in` gives a `return_to` that is not text of 1 to 2048 characters naming a path, an address on the origin of the server's sign-in address, or a redirect URI as `plugins/sign-in-return-to-app` allows, then the server MUST answer `400 validation_error` with `details.errors` holding an entry whose `path` is `return_to`.
+
+**Reason:** the callback sends the owner's browser to `return_to` with no credential, so it goes nowhere but the server's own pages and the calling app.
+
+**Tests:** `compliance/connector-sign-in.test.ts › refuses 400 a return_to off the server's own address and a body that is not an object, 403 a key without connectors.manage, and 404 a plugin not installed or with no connector`, `› accepts as return_to a redirect URI the calling app's own OAuth client registered, and refuses another app's, an unregistered one, and one from a caller that is no app`.
+
+### `plugins/sign-in-return-to-app`
+
+When an app's OAuth access token sends `POST /plugins/{name}/connector/sign-in` with a `return_to` equal, character for character, to one of the redirect URIs that app's OAuth client registered, the server MUST accept that `return_to`.
+
+**Reason:** a native app signs in through the system's web authentication sheet, which ends only on the app's own registered address, such as a private-use scheme.
+
+**Tests:** `compliance/connector-sign-in.test.ts › accepts as return_to a redirect URI the calling app's own OAuth client registered, and refuses another app's, an unregistered one, and one from a caller that is no app`.
+
+### `plugins/sign-in-body`
+
+If `POST /plugins/{name}/connector/sign-in` sends a body that is not a JSON object, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/connector-sign-in.test.ts › refuses 400 a return_to off the server's own address and a body that is not an object, 403 a key without connectors.manage, and 404 a plugin not installed or with no connector`.
+
+### `plugins/sign-in-permission`
+
+If a caller without `connectors.manage` sends `POST /plugins/{name}/connector/sign-in` or `GET /plugins/{name}/connector/sign-in`, then the server MUST answer `403 forbidden` with `details.required_scope` `connectors.manage`.
+
+**Tests:** `compliance/connector-sign-in.test.ts › refuses 400 a return_to off the server's own address and a body that is not an object, 403 a key without connectors.manage, and 404 a plugin not installed or with no connector`.
+
+### `plugins/sign-in-no-plugin`
+
+If a caller sends `POST /plugins/{name}/connector/sign-in` or `GET /plugins/{name}/connector/sign-in` for a plugin that is not installed, then the server MUST answer `404 plugin_not_found`.
+
+**Tests:** `compliance/connector-sign-in.test.ts › refuses 400 a return_to off the server's own address and a body that is not an object, 403 a key without connectors.manage, and 404 a plugin not installed or with no connector`.
+
+### `plugins/sign-in-no-connector`
+
+If a caller sends `POST /plugins/{name}/connector/sign-in` or `GET /plugins/{name}/connector/sign-in` for an installed plugin with no connector, then the server MUST answer `404 connector_not_found` with `details.plugin`.
+
+**Tests:** `compliance/connector-sign-in.test.ts › refuses 400 a return_to off the server's own address and a body that is not an object, 403 a key without connectors.manage, and 404 a plugin not installed or with no connector`.
+
+### `plugins/sign-in-replaces`
+
+When the server answers `POST /plugins/{name}/connector/sign-in` with `201` for a plugin with a pending sign-in, the server MUST end the earlier sign-in, so that a callback with its `state` is answered as `plugins/sign-in-state-unknown` says.
+
+**Tests:** `compliance/connector-sign-in.test.ts › finishes nothing for a wrong, replayed, expired or replaced state, showing each the page that says the sign-in did not finish, storing nothing and asking the provider nothing`.
+
+### `plugins/sign-in-status`
+
+When a caller holding `connectors.manage` sends `GET /plugins/{name}/connector/sign-in` for a plugin whose connector declares `sign_in`, the server MUST answer `200` with `plugin`, `status`, `reason`, and the `id`, `started_at`, `expires_at`, and `ended_at` of the latest sign-in started for the plugin's connector, each `null` when no sign-in was started, `id` as its start answered it.
+
+**Tests:** `compliance/connector-sign-in.test.ts › answers the latest sign-in's status: none, pending, signed in, failed and expired`.
+
+### `plugins/sign-in-status-words`
+
+When the server answers `GET /plugins/{name}/connector/sign-in`, the server MUST answer `status` as `none` when no sign-in was started for the plugin's connector, `pending` while the latest is pending, `signed_in` once its callback stored the refresh token, `expired` once its ten minutes passed with no callback ending it, and `failed` once it ended any other way.
+
+**Reason:** an app or the command line waiting on the owner's browser reads here whether this sign-in finished, which a token already set from an earlier sign-in cannot tell it.
+
+**Tests:** `compliance/connector-sign-in.test.ts › answers the latest sign-in's status: none, pending, signed in, failed and expired`.
+
+### `plugins/sign-in-status-reason`
+
+When the server answers `GET /plugins/{name}/connector/sign-in` with `status` `failed`, the server MUST answer `reason` as the outcome word the sign-in's `connector.sign_in_failed` audit entry records, and as `null` for every other `status`.
+
+**Reason:** the owner and an app tell a wrong client secret from a provider that did not answer without reading the audit log.
+
+**Tests:** `compliance/connector-sign-in.test.ts › answers the latest sign-in's status: none, pending, signed in, failed and expired`, `› records the provider's own word for each of the six token errors of RFC 6749, keeping none of the provider's text`.
+
+### `plugins/sign-in-exchange`
+
+When a browser sends `GET /connect/oauth/callback` with the `state` of a pending sign-in and a `code`, the server MUST send the provider's token address one `POST` with the form fields `grant_type` `authorization_code`, `code`, `redirect_uri` as the start's `url` gave it, `client_id`, `client_secret` and `code_verifier`, whose SHA-256 in unpadded base64url is the start's `code_challenge`.
+
+**Tests:** `compliance/connector-sign-in.test.ts › finishes at the callback: the provider gets the code, the verifier, the client ID and secret, the refresh token is sealed into the token setting, and the browser goes back to return_to with signed_in`.
+
+### `plugins/sign-in-token-stored`
+
+When the provider answers the token request `200` with a JSON object whose `refresh_token` is text, the server MUST store that text as the value of the secret setting `token_setting` names.
+
+**Tests:** `compliance/connector-sign-in.test.ts › finishes at the callback: the provider gets the code, the verifier, the client ID and secret, the refresh token is sealed into the token setting, and the browser goes back to return_to with signed_in`.
+
+### `plugins/sign-in-return`
+
+When the server stores the refresh token of a sign-in started with `return_to`, the server MUST answer the callback `303` with `Location` holding the `return_to` with the query parameter `signed_in` holding the plugin's name.
+
+**Tests:** `compliance/connector-sign-in.test.ts › finishes at the callback: the provider gets the code, the verifier, the client ID and secret, the refresh token is sealed into the token setting, and the browser goes back to return_to with signed_in`.
+
+### `plugins/sign-in-finished-page`
+
+When the server stores the refresh token of a sign-in started with no `return_to`, the server MUST answer the callback `200` with an HTML page.
+
+**Tests:** `compliance/connector-sign-in.test.ts › shows a page saying the owner can return to their app when the sign-in gave no return_to`.
+
+### `plugins/sign-in-ended`
+
+When the server answers `GET /connect/oauth/callback` with the `state` of a pending sign-in, the server MUST end that sign-in, so that a later callback with the same `state` is answered as `plugins/sign-in-state-unknown` says.
+
+**Tests:** `compliance/connector-sign-in.test.ts › finishes nothing for a wrong, replayed, expired or replaced state, showing each the page that says the sign-in did not finish, storing nothing and asking the provider nothing`, `› ends the sign-in on an error from the provider, showing the page that says it did not finish and storing nothing`.
+
+### `plugins/sign-in-state-unknown`
+
+If a browser sends `GET /connect/oauth/callback` whose `state` names no pending sign-in, being missing, one no start answered, one a callback already ended, one a later start replaced, or one whose ten minutes have passed, then the server MUST answer `400` with an HTML page.
+
+**Tests:** `compliance/connector-sign-in.test.ts › finishes nothing for a wrong, replayed, expired or replaced state, showing each the page that says the sign-in did not finish, storing nothing and asking the provider nothing`.
+
+### `plugins/sign-in-provider-error`
+
+If a browser sends `GET /connect/oauth/callback` with the `state` of a pending sign-in and an `error`, or with no `code`, then the server MUST answer `400` with an HTML page.
+
+**Tests:** `compliance/connector-sign-in.test.ts › ends the sign-in on an error from the provider, showing the page that says it did not finish and storing nothing`.
+
+### `plugins/sign-in-token-refused`
+
+If the provider answers the token request other than `200` with a JSON object whose `refresh_token` is text the token setting takes, then the server MUST answer the callback `502` with an HTML page.
+
+**Tests:** `compliance/connector-sign-in.test.ts › stores nothing when the provider answers without a refresh token, and shows a page saying the sign-in failed`.
+
+### `plugins/sign-in-provider-slow`
+
+If the provider's token address does not answer the token request within 15 seconds, then the server MUST answer the callback `502` with an HTML page.
+
+**Reason:** an owner whose browser waits on a provider that never answers is told so, and the sign-in ends rather than hang.
+
+**Tests:** `compliance/connector-sign-in.test.ts › ends the sign-in as failed when the provider does not answer within the bound`.
+
+### `plugins/sign-in-unfinished-nothing`
+
+If the server answers `GET /connect/oauth/callback` other than as `plugins/sign-in-return` or `plugins/sign-in-finished-page` says, then the server MUST NOT change the value of any setting.
+
+**Tests:** `compliance/connector-sign-in.test.ts › finishes nothing for a wrong, replayed, expired or replaced state, showing each the page that says the sign-in did not finish, storing nothing and asking the provider nothing`, `› ends the sign-in on an error from the provider, showing the page that says it did not finish and storing nothing`, `› stores nothing when the provider answers without a refresh token, and shows a page saying the sign-in failed`, `› ends the sign-in as failed when the provider does not answer within the bound`.
+
+### `plugins/sign-in-only-request`
+
+The server MUST NOT send a request to a provider's address other than the token request `plugins/sign-in-exchange` says.
+
+**Reason:** the token request leaves the owner's machine only because the owner started a sign-in, and nothing else does.
+
+**Tests:** `compliance/connector-sign-in.test.ts › starts a sign-in answering the provider's address with every parameter, a state and an S256 challenge, ten minutes to finish`, `› finishes nothing for a wrong, replayed, expired or replaced state, showing each the page that says the sign-in did not finish, storing nothing and asking the provider nothing`.
+
+### `plugins/sign-in-page-own`
+
+When the server answers `GET /connect/oauth/callback` with an HTML page, the server MUST send a `Content-Security-Policy` whose `default-src` is `'none'` and that names no other origin.
+
+**Reason:** the page's address holds the code the provider sent, and nothing on it loads from anywhere else.
+
+**Tests:** `compliance/connector-sign-in.test.ts › answers each of its pages with nothing from another origin`.
+
+### `plugins/sign-in-not-shown`
+
+The server MUST NOT include the code a provider sent, a token the provider answered or the client secret in any answer, page, `Location` or refusal.
+
+**Tests:** `compliance/connector-sign-in.test.ts › shows the code, the tokens and the client secret nowhere: no answer, page, redirect, audit entry or log line, where the connector's own key reads the refresh token`.
+
+### `plugins/sign-in-not-logged`
+
+The server MUST NOT write the code a provider sent, a token the provider answered or the client secret to its log or its standard error.
+
+**Tests:** `compliance/connector-sign-in.test.ts › shows the code, the tokens and the client secret nowhere: no answer, page, redirect, audit entry or log line, where the connector's own key reads the refresh token`.
+
+### `plugins/sign-in-not-audited`
+
+The server MUST NOT include the code a provider sent, a token the provider answered or the client secret in an audit entry.
+
+**Tests:** `compliance/connector-sign-in.test.ts › shows the code, the tokens and the client secret nowhere: no answer, page, redirect, audit entry or log line, where the connector's own key reads the refresh token`.
+
+### `plugins/sign-in-audited`
+
+When the server answers `POST /plugins/{name}/connector/sign-in` with `201`, the server MUST record one `connector.sign_in` audit entry against the plugin's name.
+
+**Tests:** `compliance/connector-sign-in.test.ts › audits the start and the end of each sign-in against the plugin's name`.
+
+### `plugins/sign-in-end-audited`
+
+When the server ends a pending sign-in at its callback, the server MUST record one audit entry against the plugin's name, `connector.signed_in` when it stored the refresh token and `connector.sign_in_failed` otherwise.
+
+**Tests:** `compliance/connector-sign-in.test.ts › audits the start and the end of each sign-in against the plugin's name`.
+
+### `plugins/sign-in-failed-outcome`
+
+When the server records `connector.sign_in_failed`, the server MUST record in `details.outcome` the one outcome word that a statement from `plugins/sign-in-outcome-token-error` to `plugins/sign-in-outcome-changed` names for how the sign-in failed.
+
+**Tests:** `compliance/connector-sign-in.test.ts › records the provider's own word for each of the six token errors of RFC 6749, keeping none of the provider's text`.
+
+### `plugins/sign-in-outcome-token-error`
+
+When the provider answers the token request with a status other than `200` and a JSON object whose `error` is `invalid_request`, `invalid_client`, `invalid_grant`, `unauthorized_client`, `unsupported_grant_type`, or `invalid_scope`, the server MUST record that `error` as the outcome.
+
+**Reason:** RFC 6749 section 5.2 fixes these words, so each says why the provider refused without carrying text the provider wrote. `invalid_client` tells the owner the client ID or secret is wrong.
+
+**Tests:** `compliance/connector-sign-in.test.ts › records the provider's own word for each of the six token errors of RFC 6749, keeping none of the provider's text`.
+
+### `plugins/sign-in-outcome-status`
+
+When the provider answers the token request with a status other than `200` and no `error` that `plugins/sign-in-outcome-token-error` names, the server MUST record `status_` followed by that status as the outcome.
+
+**Tests:** `compliance/connector-sign-in.test.ts › records status_ and the status for a refusal with no token error it names`.
+
+### `plugins/sign-in-outcome-timeout`
+
+If the provider does not answer the token request within the bound `plugins/sign-in-provider-slow` states, then the server MUST record `timeout` as the outcome.
+
+**Tests:** `compliance/connector-sign-in.test.ts › ends the sign-in as failed when the provider does not answer within the bound`.
+
+### `plugins/sign-in-outcome-unreachable`
+
+If the server cannot connect to the provider's token address, then the server MUST record `unreachable` as the outcome.
+
+**Tests:** `compliance/connector-sign-in.test.ts › records unreachable when nothing answers at the provider's token address`.
+
+### `plugins/sign-in-outcome-no-refresh-token`
+
+When the provider answers the token request `200` with a JSON object that has no `refresh_token`, the server MUST record `no_refresh_token` as the outcome.
+
+**Tests:** `compliance/connector-sign-in.test.ts › stores nothing when the provider answers without a refresh token, and shows a page saying the sign-in failed`.
+
+### `plugins/sign-in-outcome-unreadable`
+
+When the provider answers the token request `200` with a body that is not a JSON object of at most 64 KiB, or with a `refresh_token` that is not text the token setting takes, the server MUST record `unreadable_answer` as the outcome.
+
+**Tests:** `compliance/connector-sign-in.test.ts › stores nothing when the provider answers without a refresh token, and shows a page saying the sign-in failed`.
+
+### `plugins/sign-in-outcome-browser-error`
+
+When a browser sends `GET /connect/oauth/callback` with the `state` of a pending sign-in and an `error` that is `invalid_request`, `unauthorized_client`, `access_denied`, `unsupported_response_type`, `invalid_scope`, `server_error`, or `temporarily_unavailable`, the server MUST record that `error` as the outcome.
+
+**Reason:** RFC 6749 section 4.1.2.1 fixes these words. `access_denied` tells the owner they declined at the provider.
+
+**Tests:** `compliance/connector-sign-in.test.ts › ends the sign-in on an error from the provider, showing the page that says it did not finish and storing nothing`.
+
+### `plugins/sign-in-outcome-browser-other`
+
+When a browser sends `GET /connect/oauth/callback` with the `state` of a pending sign-in and an `error` that `plugins/sign-in-outcome-browser-error` does not name, the server MUST record `provider_error` as the outcome.
+
+**Tests:** `compliance/connector-sign-in.test.ts › ends the sign-in on an error from the provider, showing the page that says it did not finish and storing nothing`.
+
+### `plugins/sign-in-outcome-no-code`
+
+When a browser sends `GET /connect/oauth/callback` with the `state` of a pending sign-in and neither an `error` nor a `code`, the server MUST record `no_code` as the outcome.
+
+**Tests:** `compliance/connector-sign-in.test.ts › ends the sign-in on an error from the provider, showing the page that says it did not finish and storing nothing`.
+
+### `plugins/sign-in-outcome-changed`
+
+When a browser sends `GET /connect/oauth/callback` with the `state` and a `code` of a pending sign-in whose plugin's connector no longer declares `sign_in`, whose client ID or client secret setting no longer holds a value the server can read, or whose plugin was installed again since the start, the server MUST record `changed_since_start` as the outcome.
+
+**Tests:** `compliance/connector-sign-in.test.ts › records changed_since_start when the client secret was cleared between the start and the callback`.
+
+### `plugins/sign-in-provider-text`
+
+The server MUST NOT include text the provider sent in an answer, a page, a `Location`, an audit entry, or its log, other than an outcome word a statement from `plugins/sign-in-outcome-token-error` to `plugins/sign-in-outcome-changed` names.
+
+**Reason:** a provider's `error_description` and its other text are the provider's to write, so the owner reads only words Marfa fixes.
+
+**Tests:** `compliance/connector-sign-in.test.ts › records the provider's own word for each of the six token errors of RFC 6749, keeping none of the provider's text`, `› ends the sign-in on an error from the provider, showing the page that says it did not finish and storing nothing`, `› shows the code, the tokens and the client secret nowhere: no answer, page, redirect, audit entry or log line, where the connector's own key reads the refresh token`.
+
+### `plugins/sign-in-removed`
+
+When the server removes a plugin with a pending sign-in, the server MUST end the sign-in, so that a callback with its `state` is answered as `plugins/sign-in-state-unknown` says.
+
+**Tests:** `compliance/connector-sign-in.test.ts › ends a pending sign-in with its plugin's removal, and carries none in an archive`.
+
+### `plugins/sign-in-not-archived`
+
+The server MUST NOT put a sign-in, its `state` or its PKCE verifier in an archive or a backup.
+
+**Reason:** a pending sign-in holds what would finish it, and a restore onto another machine starts its own.
+
+**Tests:** `compliance/connector-sign-in.test.ts › ends a pending sign-in with its plugin's removal, and carries none in an archive`.
+
+### `plugins/sign-in-callback-limit`
+
+Where the limiter is on, when the requests to `GET /connect/oauth/callback` from one address pass 10 within 15 minutes, the server MUST answer each further request in that window `429 rate_limited`.
+
+**Tests:** `compliance/connector-sign-in.test.ts › refuses 429 rate_limited callbacks from one address past ten in fifteen minutes`.
+
 ## Removing a host
 
 ### `plugins/host-remove`

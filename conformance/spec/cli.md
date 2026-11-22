@@ -1822,6 +1822,34 @@ The CLI MUST NOT print the value of a connector's secret setting.
 
 **Tests:** `cli/connector-settings.test.ts › sets a secret from standard input without printing it, clears it with --clear, and refuses one given as an argument`.
 
+## A connector's sign-in
+
+### `cli/plugins-sign-in`
+
+When `marfa plugins sign-in` is given a plugin, the CLI MUST send `POST /plugins/{name}/connector/sign-in`, with `return_to` when `--return-to` gives it, and print the `url` it answers.
+
+**Tests:** `cli/connector-sign-in.test.ts › prints the address to open, and with --wait exits 0 once the owner's browser finishes the sign-in`.
+
+### `cli/plugins-sign-in-wait`
+
+Where `marfa plugins sign-in` is given `--wait`, when `GET /plugins/{name}/connector/sign-in` answers the `id` the CLI's start answered with `status` `signed_in`, the CLI MUST exit 0.
+
+**Tests:** `cli/connector-sign-in.test.ts › prints the address to open, and with --wait exits 0 once the owner's browser finishes the sign-in`.
+
+### `cli/plugins-sign-in-wait-ended`
+
+Where `marfa plugins sign-in` is given `--wait`, if `GET /plugins/{name}/connector/sign-in` answers the `id` the CLI's start answered with `status` `failed` or `expired`, then the CLI MUST exit 1 with `sign_in_ended`.
+
+**Tests:** `cli/connector-sign-in.test.ts › exits 1 with sign_in_ended when the sign-in it waits on expires`.
+
+### `cli/plugins-sign-in-wait-replaced`
+
+Where `marfa plugins sign-in` is given `--wait`, if `GET /plugins/{name}/connector/sign-in` answers an `id` other than the one the CLI's start answered, then the CLI MUST exit 1 with `sign_in_ended`, naming the sign-in it started `replaced`.
+
+**Reason:** another start for the same plugin replaces the sign-in the CLI waits on, and the browser that finishes the other one did not finish this one.
+
+**Tests:** `cli/connector-sign-in.test.ts › exits 1 with sign_in_ended, naming its sign-in replaced, when a later start replaces the one it waits on`.
+
 ## Type guidance
 
 To keep a type's guidance in a separate Markdown file, name it `PATH.md` and place it beside `PATH.json`.

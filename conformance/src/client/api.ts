@@ -725,6 +725,24 @@ export class MarfaClient {
     );
   }
 
+  async startConnectorSignIn(
+    plugin: string,
+    body: unknown = {},
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(
+      `/plugins/${plugin}/connector/sign-in`,
+      { method: "POST", body: body as object },
+    );
+  }
+
+  async getConnectorSignIn(
+    plugin: string,
+  ): Promise<ApiResponse<Record<string, any>>> {
+    return this.request<Record<string, any>>(
+      `/plugins/${plugin}/connector/sign-in`,
+    );
+  }
+
   /** The settings a plugin's connector reads, its secrets opened, by its registration. */
   async readOwnConnectorSettings(
     registration: string,
