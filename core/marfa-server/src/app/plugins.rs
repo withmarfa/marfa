@@ -11,7 +11,7 @@ use super::catalog::{self, Catalog, Origin, Snapshot};
 use super::clock::Stamp;
 use super::items::reading;
 use super::refusal::{Code, Refusal, Result};
-use super::{edge_types, instance, types};
+use super::{connector_hosts, edge_types, instance, types};
 
 #[derive(Clone, Debug)]
 pub struct Installed {
@@ -42,6 +42,11 @@ fn not_found(name: &str) -> Refusal {
         format!("No plugin named {name} is installed."),
     )
     .with_detail("name", name)
+}
+
+/// The plugin installed under `name`.
+pub(crate) fn installed(tx: &Transaction<'_>, name: &str) -> Result<Option<Installed>> {
+    row(tx, name)
 }
 
 fn row(tx: &Transaction<'_>, name: &str) -> Result<Option<Installed>> {
@@ -162,8 +167,8 @@ fn edge_types_held(installed: &Installed, catalog: &Catalog) -> Vec<String> {
         .collect()
 }
 
-fn presented(installed: &Installed, catalog: &Catalog) -> Value {
-    json!({
+fn presented(tx: &Transaction<'_>, installed: &Installed, catalog: &Catalog) -> Result<Value> {
+    Ok(json!({
         "name": installed.name,
         "version": installed.version,
         "title": installed.text("title"),
@@ -174,19 +179,56 @@ fn presented(installed: &Installed, catalog: &Catalog) -> Value {
         "types": types_from(catalog, &installed.name),
         "edge_types": edge_types_held(installed, catalog),
         "connector": installed.manifest.get("connector").cloned().unwrap_or(Value::Null),
+        "connector_host": connector_hosts::host_of(tx, &installed.name)?,
         "fingerprint": installed.fingerprint,
         "installed_at": installed.installed_at,
         "installed_by": installed.installed_by.clone().unwrap_or(Value::Null),
         "updated_at": installed.updated_at,
-    })
+    }))
+}
+
+fn connector_of(bundle: &Obj) -> Option<&Obj> {
+    bundle.get("connector").and_then(Value::as_object)
+}
+
+/// A later version keeps its connector and the connector's source.
+fn require_same_connector(held: &Installed, bundle: &Obj) -> Result<()> {
+    let Some(before) = connector_of(&held.manifest) else {
+        return Ok(());
+    };
+    let before = marfa_rules::plugin_connector::source(before);
+    let (path, message) = match connector_of(bundle) {
+        None => (
+            "connector",
+            "the newer version has no connector".to_string(),
+        ),
+        Some(after) if marfa_rules::plugin_connector::source(after) != before => (
+            "connector.source",
+            format!(
+                "the connector's source must stay {}",
+                before.unwrap_or_default()
+            ),
+        ),
+        Some(_) => return Ok(()),
+    };
+    Err(Refusal::new(
+        Code::PluginNarrows,
+        format!(
+            "A newer version of a plugin keeps its connector and the connector's source: {message}."
+        ),
+    )
+    .with_detail(
+        "changes",
+        vec![json!({ "type": null, "path": path, "message": message })],
+    ))
 }
 
 pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Value>> {
     reading(app, caller, |read| {
-        Ok(rows(read.tx)?
+        rows(read.tx)?
             .iter()
-            .map(|installed| presented(installed, &read.catalog))
-            .collect())
+            .map(|installed| presented(read.tx, installed, &read.catalog))
+            .collect()
     })
     .await
 }
@@ -194,7 +236,7 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<Value>> {
 pub async fn get(app: &App, caller: &Caller, name: String) -> Result<Value> {
     reading(app, caller, move |read| {
         let installed = row(read.tx, &name)?.ok_or_else(|| not_found(&name))?;
-        Ok(presented(&installed, &read.catalog))
+        presented(read.tx, &installed, &read.catalog)
     })
     .await
 }
@@ -299,7 +341,7 @@ fn require_install(caller: &Caller, bundle: &Obj, catalog: &Catalog) -> Result<(
     if guided && caller.app_made() {
         return Err(Refusal::new(
             Code::Forbidden,
-            "Installing a plugin whose types carry guidance is the owner's to do. An app, or a key an app made, can install it only without guidance.",
+            "Installing a plugin whose types carry guidance is the owner's to do. An app, or a key the owner did not make, can install it only without guidance.",
         )
         .with_detail("changes", vec!["guidance"]));
     }
@@ -345,7 +387,7 @@ pub async fn install(
                     Refusal::internal(&format!("the installed version of {name} does not read"))
                 })?;
                 if version == installed {
-                    return Ok((Outcome::Unchanged, presented(held, &catalog)));
+                    return Ok((Outcome::Unchanged, presented(unit.tx(), held, &catalog)?));
                 }
                 if version < installed {
                     return Err(Refusal::new(
@@ -357,6 +399,17 @@ pub async fn install(
                     .with_detail("installed", installed.to_string())
                     .with_detail("version", version.to_string()));
                 }
+            }
+            if let Some(held) = &held {
+                require_same_connector(held, &bundle)?;
+            }
+            let recorded = connector_hosts::record(unit.tx(), &name)?.is_some();
+            let new_source = connector_of(&bundle)
+                .and_then(marfa_rules::plugin_connector::source)
+                .filter(|_| !recorded)
+                .map(str::to_string);
+            if let Some(source) = &new_source {
+                connector_hosts::require_source_free(unit.tx(), source, &unit.at)?;
             }
             let definitions = bundle_objects(&bundle, "types");
             let origin = Origin::Plugin {
@@ -405,6 +458,9 @@ pub async fn install(
                     Value::from(brought).to_string(),
                 ],
             )?;
+            if let Some(source) = &new_source {
+                connector_hosts::add(unit.tx(), &name, source, &unit.at)?;
+            }
             unit.audit("plugin", &name, Some(json!({ "version": version.to_string() })))?;
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             let installed = row(unit.tx(), &name)?
@@ -414,7 +470,7 @@ pub async fn install(
             } else {
                 Outcome::Installed
             };
-            Ok((outcome, presented(&installed, &after)))
+            Ok((outcome, presented(unit.tx(), &installed, &after)?))
         })
         .await?;
     if answered.0 != Outcome::Unchanged {
@@ -428,15 +484,24 @@ pub async fn remove(app: &App, caller: &Caller, name: String) -> Result<Value> {
     app.write(caller, "plugin.remove", move |unit| {
         unit.caller.require(Permission::SchemaWrite)?;
         let held = row(unit.tx(), &name)?.ok_or_else(|| not_found(&name))?;
+        if connector_of(&held.manifest).is_some() {
+            unit.caller.require(Permission::ConnectorsManage)?;
+        }
+        let connector = connector_hosts::remove_for_plugin(unit, &name)?;
         unit.tx()
             .execute("DELETE FROM plugins WHERE name = ?1", [&name])?;
         unit.audit("plugin", &name, Some(json!({ "version": held.version })))?;
         let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
+        let (removed, kept) = match connector {
+            Some(stopped) => (stopped.removed, stopped.kept),
+            None => (Value::Null, Value::Null),
+        };
         Ok(json!({
-            "removed": { "name": held.name, "version": held.version },
+            "removed": { "name": held.name, "version": held.version, "connector": removed },
             "kept": {
                 "types": types_from(&catalog, &name),
                 "edge_types": edge_types_held(&held, &catalog),
+                "connector": kept,
             },
         }))
     })
@@ -580,8 +645,9 @@ pub fn judge_restored(
     Ok(())
 }
 
-pub fn restore(tx: &Transaction<'_>, archived: &[Archived]) -> Result<(usize, usize)> {
+pub fn restore(tx: &Transaction<'_>, archived: &[Archived], at: &str) -> Result<(usize, usize)> {
     let (mut added, mut held) = (0, 0);
+    let mut connectors = Vec::new();
     for line in archived {
         let installed = &line.line;
         if row(tx, &installed.name)?.is_some() {
@@ -608,7 +674,13 @@ pub fn restore(tx: &Transaction<'_>, archived: &[Archived]) -> Result<(usize, us
                 Value::from(installed.edge_types.clone()).to_string(),
             ],
         )?;
+        if let Some(source) =
+            connector_of(&installed.manifest).and_then(marfa_rules::plugin_connector::source)
+        {
+            connectors.push((installed.name.clone(), source.to_string()));
+        }
         added += 1;
     }
+    connector_hosts::restore(tx, &connectors, at)?;
     Ok((added, held))
 }

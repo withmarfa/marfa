@@ -15,8 +15,8 @@ use super::refusal::{Code, Refusal, Result};
 const MAKERS: &str = "SELECT substr(t.id, 1, instr(substr(t.id, 5), '.') + 3) AS vendor, \
             CASE json_extract(t.created_by, '$.kind') \
                 WHEN 'app' THEN coalesce(c.client_id, '') \
-                WHEN 'key' THEN CASE WHEN k.id IS NULL OR k.maker_unknown = 1 THEN '' \
-                    ELSE k.made_by_client END \
+                WHEN 'key' THEN CASE WHEN k.id IS NULL OR k.maker_unknown = 1 \
+                    OR k.made_by_host IS NOT NULL THEN '' ELSE k.made_by_client END \
                 WHEN 'local' THEN NULL WHEN 'browser' THEN NULL WHEN 'server' THEN NULL \
                 ELSE '' END AS maker, \
             t.created_at AS made_at \

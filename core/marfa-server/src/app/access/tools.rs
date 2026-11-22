@@ -80,11 +80,14 @@ mod tests {
         for permission in Permission::ALL {
             assert_eq!(
                 opening.contains(&permission),
-                permission != Permission::SchemaWrite,
+                !matches!(
+                    permission,
+                    Permission::SchemaWrite | Permission::ConnectorsHost
+                ),
                 "{}",
                 permission.word()
             );
         }
-        assert_eq!(opening.len(), Permission::ALL.len() - 1);
+        assert_eq!(opening.len(), Permission::ALL.len() - 2);
     }
 }

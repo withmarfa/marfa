@@ -36,6 +36,8 @@ pub enum Asks {
     Session,
     /// Nothing: a stranger may send the body, so it is read only to a small fixed cap.
     Nothing,
+    /// A connector host's own key, the only credential such a door answers.
+    Host,
 }
 
 /// The handlers of one path, each under its method.

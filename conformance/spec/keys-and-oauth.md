@@ -1,8 +1,8 @@
 # Keys and sign-in
 
-## The fourteen permissions
+## The fifteen permissions
 
-A credential holds any of these permissions, each a row of the table below, which is written from the server's own permission list and so cannot differ from it.
+A credential holds any of these permissions, each a row of the table below, which is written from the server's own permission list and so cannot differ from it. Only a connector host's own key holds `connectors.host` (`plugins/host-key-holds`).
 
 <!-- permissions-table:start -->
 
@@ -12,7 +12,8 @@ A credential holds any of these permissions, each a row of the table below, whic
 | `backups.manage`    | Listing the backups, taking one now, adopting the backup folder and restoring a backup or an archive.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `blobs.manage`      | Managing blob bytes and copies across the instance, without granting item content access.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `config.manage`     | Reading and replacing the instance configuration at `/config`: the enforcement levers, the cleanup-job retention overrides and the stored settings, such as the addresses, the object store, the backup destination, the heartbeat and the PostHog settings. A secret setting can be set or removed but is never read back. A `PUT` keeps unnamed secrets, except `object_store_secret_access_key` when its bucket or endpoint changes. Changing `backup_path` or an `object_store_` setting other than the access key ID and the secret needs a recent sign-in, as `allow_private_addresses` does. |
-| `connectors.manage` | Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state.                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `connectors.host`   | Reading the connector host's own record and minting the key of each connector assigned to it, at `GET /connector-hosts/self` and `POST /connector-hosts/self/connectors/{plugin}/key`.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `connectors.manage` | Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state, making, linking and removing connector hosts, and assigning a plugin's connector to a host.                                                                                                                                                                                                                                                                                                                                                 |
 | `grants.manage`     | Listing, narrowing and revoking other apps' access.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `instance.maintain` | Running housekeeping, canceling bulk jobs, updating the server and confirming the server's clock.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `instance.read`     | Reading detailed health, what needs the owner's attention, metrics, housekeeping status, blob storage diagnostics and bulk job status.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -37,7 +38,7 @@ When a credential holding named permissions and no content map reads or writes i
 
 ### `keys-and-oauth/direct-mint-everything`
 
-When local authority mints a key from a body naming no permission, map or `sources`, the server MUST give the key every permission, `*: write` in each of the five maps and no claimed source.
+When local authority mints a key from a body naming no permission, map or `sources`, the server MUST give the key every permission but `connectors.host`, `*: write` in each of the five maps and no claimed source.
 
 **Reason:** The owner holds no ceiling of their own, so a key minted with nothing named holds everything a key can.
 
@@ -106,6 +107,14 @@ When a key of unknown maker (`keys-and-oauth/unknown-maker`) mints a key, the se
 **Reason:** a key minted from one whose maker no record names is no more the owner's than its parent.
 
 **Tests:** waiting on #2802.
+
+### `keys-and-oauth/host-made-unknown`
+
+When a key a connector host minted, or a host's own key, sends a request the server refuses to a key of unknown maker (`keys-and-oauth/unknown-maker`), the server MUST refuse it as it refuses a key of unknown maker, whatever permissions the owner gave it.
+
+**Reason:** a host is a machine the owner linked to run connectors, not the owner, so a key it holds is no more the owner's than one whose maker no record names, even after the owner widens it.
+
+**Tests:** `compliance/connector-hosts.test.ts › refuses 403 a vendor move to a key a host minted, given grants.manage, which the owner's key gets past`.
 
 ### `keys-and-oauth/unknown-maker-reach`
 
@@ -989,11 +998,27 @@ If a mint names as the new key's own `source` one another key claims, and the ca
 
 ### `keys-and-oauth/claims-reserved`
 
-If a mint or an update names a claim or an own `source` that, after trimming whitespace and ignoring case, starts with `oauth:` or `restored:`, then the server MUST answer `400 validation_error`, whoever the caller is.
+If a mint or an update names a claim or an own `source` that, after trimming whitespace and ignoring case, starts with `oauth:`, `restored:` or `connector-host:`, then the server MUST answer `400 validation_error`, whoever the caller is.
 
-**Reason:** An OAuth source names an app's identity, which no key earns by naming it. A restored source records history without granting any credential authority over it.
+**Reason:** An OAuth source names an app's identity, which no key earns by naming it. A restored source records history without granting any credential authority over it. A connector host's source names the host whose key holds it (`plugins/host-key-holds`).
 
 **Tests:** `compliance/claimed-sources.test.ts › refuses a reserved prefix, even to the owner`, `compliance/owner-keys.test.ts › refuses a reserved prefix through keys.manage`.
+
+### `keys-and-oauth/host-permission-refused`
+
+If a mint or an update names `connectors.host` in `permissions`, then the server MUST answer `400 validation_error`, whoever the caller is.
+
+**Reason:** the permission is given only to a connector host's own key, when its one-time link is redeemed (`plugins/host-key-holds`), and a key holding it with no host would reach nothing.
+
+**Tests:** `compliance/connector-hosts.test.ts › refuses connectors.host to a key mint or update, from local authority too`.
+
+### `keys-and-oauth/plugin-source-held`
+
+If a mint names as its own `source`, or a mint or an update names as a claim, the source of an installed plugin's connector, then the server MUST answer `409 connector_source_held` with `details.source` and `details.plugin` naming the plugin, whoever the caller is.
+
+**Reason:** the source belongs to the plugin, so the only key that holds it is the one the connector's host mints (`plugins/host-mint-holds`).
+
+**Tests:** `compliance/plugin-connectors.test.ts › refuses a key mint or a claim of a source a plugin's connector holds, naming the plugin`.
 
 ### `keys-and-oauth/claims-case`
 
@@ -2913,9 +2938,9 @@ If a client asks `POST /oauth/device-authorization` for a scope the instance doe
 
 ### `keys-and-oauth/device-permission-scope-closed`
 
-If a client asks `POST /oauth/device-authorization` for a scope under one of the permission roots that is not a permission name, `<root>.*:read` and `<root>.*:write` included, then the server MUST answer `400 invalid_scope`.
+If a client asks `POST /oauth/device-authorization` for a scope under one of the permission roots that is not a permission name, `<root>.*:read`, `<root>.*:write` and `connectors.host` included, then the server MUST answer `400 invalid_scope`.
 
-**Reason:** The roots are reserved for the permissions, so a scope under one that no permission names asks for a power that does not exist, and cannot name a type.
+**Reason:** The roots are reserved for the permissions, so a scope under one that no permission names asks for a power that does not exist, and cannot name a type. `connectors.host` is given only to a connector host's key.
 
 **Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for a scope under a permission root that is not a permission, and issued for each permission`.
 

@@ -24,7 +24,7 @@ const BODY_LIMIT: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Subcommand)]
 pub enum PluginsCommand {
-    /// Install a plugin by name from the latest plugins release, from a bundle file, or from a source folder. Requires `schema.write` and write access to each type and each forward and reverse edge name. A bundle with a connector also requires `connectors.manage`. A newer version may only add to its types.
+    /// Install a plugin by name from the latest plugins release, from a bundle file, or from a source folder. Requires `schema.write` and write access to each type and each forward and reverse edge name. A bundle with a connector also requires `connectors.manage`, and `--host` assigns the connector to a connector host. A newer version may only add to its types and keeps its connector's source.
     Install(InstallArgs),
     /// Every installed plugin.
     List,
@@ -33,11 +33,13 @@ pub enum PluginsCommand {
         /// The plugin's name.
         name: String,
     },
-    /// Remove a plugin's install record. Its types, edge types and items stay, and keep saying which plugin they came from. Needs `schema.write`.
+    /// Remove a plugin's install record. Its types, edge types and items stay, and keep saying which plugin they came from. A connector stops: its key is revoked and its registrations go, and its source keeps its state and agreements. Needs `schema.write`, and `connectors.manage` for a plugin with a connector.
     Remove {
         /// The plugin's name.
         name: String,
     },
+    /// Assign a plugin's connector to a connector host, or to none. Moving it revokes the key its former host minted for it. Requires `connectors.manage`.
+    Assign(AssignArgs),
     /// Judge a plugin's source folder as installing it would, with no server: `common.*` types are taken, and the roots kept for Marfa, apps and the owner are refused.
     Check {
         /// The source folder, holding `plugin.json`, `types/` and `edge-types/`.
@@ -69,6 +71,22 @@ pub struct InstallArgs {
     /// The version a source folder is built at, such as `1.4.0`. A folder installs at `0.0.0` without it.
     #[arg(long)]
     pub version: Option<String>,
+    /// The connector host, by ID or name, to assign the plugin's connector to once it is installed.
+    #[arg(long)]
+    pub host: Option<String>,
+}
+
+#[derive(Debug, Args)]
+#[command(group = clap::ArgGroup::new("target").required(true))]
+pub struct AssignArgs {
+    /// The plugin's name.
+    pub name: String,
+    /// The connector host, by ID or name, to run the connector.
+    #[arg(long, group = "target")]
+    pub host: Option<String>,
+    /// Assign the connector to no host.
+    #[arg(long, group = "target")]
+    pub none: bool,
 }
 
 pub fn list_request() -> Request {
@@ -86,6 +104,10 @@ pub fn install_request(bundle: String) -> Request {
 
 pub fn remove_request(name: &str) -> Request {
     Request::delete(&["plugins", name])
+}
+
+pub fn assign_request(name: &str, host: Option<&str>) -> Request {
+    Request::put(&["plugins", name, "connector"]).json(serde_json::json!({ "host": host }))
 }
 
 impl PluginsCommand {
@@ -147,13 +169,75 @@ pub fn run(
         PluginsCommand::Get { name } => get_request(name),
         PluginsCommand::Remove { name } => remove_request(name),
         PluginsCommand::Install(args) => install_request(bundle_for(args)?),
+        PluginsCommand::Assign(args) => {
+            let remote = remote()?;
+            let host = match &args.host {
+                Some(host) if !args.none => Some(super::hosts::resolve(&remote, host)?),
+                _ => None,
+            };
+            let answer = remote.json(&assign_request(&args.name, host.as_deref()))?;
+            return out.report(&answer, assigned_words);
+        }
         _ => return run_offline(command, out),
     };
-    let answer = remote()?.json(&request)?;
+    let remote = remote()?;
+    let answer = remote.json(&request)?;
     match &command {
-        PluginsCommand::Install(_) => out.report(&answer, installed_words),
+        PluginsCommand::Install(args) => installed(&remote, args, answer, out),
         PluginsCommand::Remove { .. } => out.report(&answer, removed_words),
         _ => out.value(&answer),
+    }
+}
+
+/// After a plugin with a connector installs, `--host` assigns it; with no flag and one host
+/// on the instance, the CLI names that host and assigns nothing.
+fn installed(
+    remote: &Remote,
+    args: &InstallArgs,
+    mut answer: Value,
+    out: &Printer,
+) -> Result<(), CliError> {
+    let name = answer["name"].as_str().unwrap_or_default().to_string();
+    let has_connector = answer["connector"].is_object();
+    let mut also = None;
+    if let Some(host) = &args.host {
+        if !has_connector {
+            return Err(CliError::Invalid(format!(
+                "installed {name}, which has no connector to assign to a host"
+            )));
+        }
+        let id = super::hosts::resolve(remote, host)?;
+        let assigned = remote.json(&assign_request(&name, Some(&id)))?;
+        answer["connector_host"] = assigned["host"].clone();
+        also = Some(format!("its connector runs on host {host}"));
+    } else if has_connector && answer["connector_host"].is_null() {
+        let hosts = remote.json(&super::hosts::list_request())?;
+        if let [only] = hosts["data"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+        {
+            let host = only["name"].as_str().unwrap_or_default();
+            also = Some(format!(
+                "its connector runs on no host yet; host {host} could run it: marfa plugins assign {name} --host {host:?}"
+            ));
+        } else {
+            also = Some(format!(
+                "its connector runs on no host yet: marfa plugins assign {name} --host `host`"
+            ));
+        }
+    }
+    out.report(&answer, |answer| match &also {
+        Some(also) => format!("{}; {also}", installed_words(answer)),
+        None => installed_words(answer),
+    })
+}
+
+fn assigned_words(answer: &Value) -> String {
+    let name = answer["plugin"].as_str().unwrap_or_default();
+    match answer["host"].as_str() {
+        Some(host) => format!("{name}'s connector runs on host {host}"),
+        None => format!("{name}'s connector runs on no host"),
     }
 }
 
@@ -178,11 +262,42 @@ fn installed_words(answer: &Value) -> String {
 fn removed_words(answer: &Value) -> String {
     let name = answer["removed"]["name"].as_str().unwrap_or_default();
     let kept = answer["kept"]["types"].as_array().map_or(0, Vec::len);
-    format!(
+    let mut said = format!(
         "removed {}; its {kept} {} and their items stay",
         name,
         if kept == 1 { "type" } else { "types" }
-    )
+    );
+    let removed = &answer["removed"]["connector"];
+    if removed.is_object() {
+        let registrations = removed["registrations"].as_array().map_or(0, Vec::len);
+        let kept = &answer["kept"]["connector"];
+        let agreements = kept["agreements"].as_u64().unwrap_or_default();
+        said.push_str(&format!(
+            "; its connector stopped: {}, {registrations} {} removed; source {} keeps {} and {agreements} {}",
+            if removed["key_id"].is_string() {
+                "its key revoked"
+            } else {
+                "no key to revoke"
+            },
+            if registrations == 1 {
+                "registration"
+            } else {
+                "registrations"
+            },
+            removed["source"].as_str().unwrap_or_default(),
+            if kept["state"].as_bool() == Some(true) {
+                "its state"
+            } else {
+                "no state"
+            },
+            if agreements == 1 {
+                "agreement"
+            } else {
+                "agreements"
+            },
+        ));
+    }
+    said
 }
 
 fn write_json(path: &Path, value: &Value) -> Result<(), CliError> {

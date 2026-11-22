@@ -57,7 +57,7 @@ describe("the catalogues in the contract", () => {
       expect(rows("edge-types"), id).toContain(`| \`${id}\` `);
     }
     const permissions = permissionNames();
-    expect(permissions).toHaveLength(14);
+    expect(permissions).toHaveLength(15);
     for (const name of permissions) {
       expect(rows("permissions"), name).toContain(`| \`${name}\` `);
     }

@@ -490,7 +490,7 @@ impl App {
                             icons.skip("already_set");
                         }
                         let named = sources::restore(tx, &unit.at, &registrations.sources)?;
-                        let (plugins_added, plugins_skipped) = plugins::restore(tx, &registrations.plugins)?;
+                        let (plugins_added, plugins_skipped) = plugins::restore(tx, &registrations.plugins, &unit.at)?;
                         let restored_settings =
                             stored::restore(
                                 tx,

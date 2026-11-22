@@ -100,6 +100,7 @@ describe("the table of permissions", () => {
       "backups.manage",
       "blobs.manage",
       "config.manage",
+      "connectors.host",
       "connectors.manage",
       "grants.manage",
       "instance.maintain",
@@ -111,7 +112,7 @@ describe("the table of permissions", () => {
       "sign_ins.manage",
       "webhooks.manage",
     ]);
-    expect(all.split("\n")).toHaveLength(16);
+    expect(all.split("\n")).toHaveLength(17);
     expect(() => permissionsTable(["audit.read"])).toThrow(
       /wording for no permission/,
     );

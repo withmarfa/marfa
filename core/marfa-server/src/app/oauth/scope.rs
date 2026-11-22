@@ -171,7 +171,7 @@ impl Scope {
         if literal == OFFLINE_ACCESS {
             return Some(Scope::OfflineAccess);
         }
-        if let Some(permission) = Permission::from_word(literal) {
+        if let Some(permission) = Permission::from_word(literal).filter(|held| held.grantable()) {
             return Some(Scope::Permission(permission));
         }
         let (name, verb) = literal.rsplit_once(':')?;
@@ -872,17 +872,21 @@ mod tests {
             assert_eq!(scope.literal(), literal);
         }
         for permission in Permission::ALL {
-            assert_eq!(
-                Scope::parse(permission.word()),
-                Some(Scope::Permission(permission))
-            );
+            let parsed = permission
+                .grantable()
+                .then_some(Scope::Permission(permission));
+            assert_eq!(Scope::parse(permission.word()), parsed);
         }
     }
 
     #[test]
     fn the_order_of_the_permissions_lists_every_permission() {
         let listed: HashSet<&str> = PERMISSIONS.iter().map(|p| p.word()).collect();
-        let every: HashSet<&str> = Permission::ALL.iter().map(|p| p.word()).collect();
+        let every: HashSet<&str> = Permission::ALL
+            .iter()
+            .filter(|p| p.grantable())
+            .map(|p| p.word())
+            .collect();
         assert_eq!(listed, every);
     }
 

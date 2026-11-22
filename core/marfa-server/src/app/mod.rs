@@ -11,6 +11,7 @@ pub mod blobs;
 pub mod catalog;
 pub mod clock;
 pub mod config;
+pub mod connector_hosts;
 pub mod connectors;
 pub mod consequences;
 pub mod edge_types;

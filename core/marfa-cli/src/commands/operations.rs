@@ -70,6 +70,12 @@ pub const OPERATIONS: &[Operation] = &[
     reached("installPlugin", "plugins install"),
     reached("getPlugin", "plugins get"),
     reached("removePlugin", "plugins remove"),
+    reached("replacePluginConnectorHost", "plugins assign"),
+    reached("createConnectorHost", "hosts add"),
+    reached("listConnectorHosts", "hosts list"),
+    reached("getConnectorHost", "hosts get"),
+    reached("deleteConnectorHost", "hosts remove"),
+    reached("createConnectorHostLink", "hosts link"),
     reached("listTypes", "types list"),
     reached("registerType", "types register"),
     reached("normalizeType", "types normalize"),
@@ -183,10 +189,24 @@ pub const OPERATIONS: &[Operation] = &[
 
 /// Published operations no command sends, each with why.
 #[cfg(test)]
-pub const NO_COMMAND: &[(&str, &str)] = &[(
-    "authorizeApp",
-    "an app opens it in a person's browser; `login` signs in with a device code",
-)];
+pub const NO_COMMAND: &[(&str, &str)] = &[
+    (
+        "authorizeApp",
+        "an app opens it in a person's browser; `login` signs in with a device code",
+    ),
+    (
+        "redeemConnectorHostLink",
+        "the connector host program redeems its one-time link; `hosts add` prints the link",
+    ),
+    (
+        "getOwnConnectorHost",
+        "only a connector host's own key reads it, which the host program holds",
+    ),
+    (
+        "createConnectorKey",
+        "only a connector host's own key mints a connector's key, which the host program holds",
+    ),
+];
 
 pub fn run(out: &Printer) -> Result<(), CliError> {
     let rows: Vec<serde_json::Value> = OPERATIONS

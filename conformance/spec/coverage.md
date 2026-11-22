@@ -82,12 +82,26 @@ Fixture paths are under `src/suites/`.
 
 ## Plugins
 
-| Operation                | Status  | Fixture                      | Notes                                                                                                                  |
-| ------------------------ | ------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `GET /plugins`           | covered | `compliance/plugins.test.ts` |                                                                                                                        |
-| `POST /plugins`          | covered | `compliance/plugins.test.ts` | Install, one write, reserved roots, permission, provenance, guidance, a newer version that only adds, a child's clash. |
-| `GET /plugins/{name}`    | covered | `compliance/plugins.test.ts` | `plugin_not_found`.                                                                                                    |
-| `DELETE /plugins/{name}` | covered | `compliance/plugins.test.ts` | Removes the record and keeps the types.                                                                                |
+| Operation                       | Status  | Fixture                                                              | Notes                                                                                                                                                        |
+| ------------------------------- | ------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET /plugins`                  | covered | `compliance/plugins.test.ts`                                         |                                                                                                                                                              |
+| `POST /plugins`                 | covered | `compliance/plugins.test.ts`, `compliance/plugin-connectors.test.ts` | Install, one write, reserved roots, permission, provenance, guidance, a newer version that only adds, a child's clash, the connector section and its source. |
+| `GET /plugins/{name}`           | covered | `compliance/plugins.test.ts`                                         | `plugin_not_found`.                                                                                                                                          |
+| `DELETE /plugins/{name}`        | covered | `compliance/plugins.test.ts`, `compliance/plugin-connectors.test.ts` | Removes the record and keeps the types; stops a connector and keeps its source's state.                                                                      |
+| `PUT /plugins/{name}/connector` | covered | `compliance/connector-hosts.test.ts`                                 | Assigns to a host or none, revoking the former host's key.                                                                                                   |
+
+## Connector hosts
+
+| Operation                                            | Status  | Fixture                              | Notes                                                                                 |
+| ---------------------------------------------------- | ------- | ------------------------------------ | ------------------------------------------------------------------------------------- |
+| `POST /connector-hosts`                              | covered | `compliance/connector-hosts.test.ts` | The host and its one-time link.                                                       |
+| `GET /connector-hosts`                               | covered | `compliance/connector-hosts.test.ts` |                                                                                       |
+| `GET /connector-hosts/{id}`                          | covered | `compliance/connector-hosts.test.ts` | `connector_host_not_found`.                                                           |
+| `DELETE /connector-hosts/{id}`                       | covered | `compliance/connector-hosts.test.ts` | Revokes its key and the connector keys it minted.                                     |
+| `POST /connector-hosts/{id}/link`                    | covered | `compliance/connector-hosts.test.ts` | A fresh link replaces the unredeemed one.                                             |
+| `POST /connector-hosts/redeem`                       | covered | `compliance/connector-hosts.test.ts` | Once, within 15 minutes; one 404 for every code that does not redeem; the rate limit. |
+| `GET /connector-hosts/self`                          | covered | `compliance/connector-hosts.test.ts` | Only the host's own key.                                                              |
+| `POST /connector-hosts/self/connectors/{plugin}/key` | covered | `compliance/connector-hosts.test.ts` | The connector's key, revoking the one minted before.                                  |
 
 ## Types
 

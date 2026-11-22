@@ -2601,3 +2601,58 @@ async fn a_database_at_schema_version_4_names_each_keys_maker_from_its_records_t
         ]
     );
 }
+
+#[tokio::test]
+async fn a_database_at_schema_version_5_upgrades_through_6_keeping_its_keys_and_plugins_with_no_host()
+ {
+    let place = folder();
+    db_open(&options(&place.file, &MIGRATIONS[..5]), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+    Connection::open(&place.file)
+        .unwrap()
+        .execute_batch(&format!(
+            "INSERT INTO api_keys (id, hash, label, source, permissions, type_permissions, \
+             edge_permissions, extension_permissions, metadata_permissions, profile_permissions, \
+             created_at) VALUES ('rss-key', 'rss-key', 'RSS', 'rss', '[]', '{{}}', '{{}}', '{{}}', \
+             '{{}}', '{{}}', 'a'); \
+             INSERT INTO plugins (name, version, title, description, mark, maker, marfa, manifest, \
+             edge_types, installed_at, updated_at, fingerprint) VALUES ('rss', '1.0.0', 'RSS', \
+             'Feeds.', 'lucide:rss', 'Marfa', '0.0.1', '{{\"connector\":{{\"source\":\"rss\"}}}}', \
+             '[]', 'a', 'a', '{}');",
+            "0".repeat(64)
+        ))
+        .unwrap();
+
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
+        .map_err(|f| f.message)
+        .unwrap()
+        .close()
+        .await;
+
+    let conn = Connection::open(&place.file).unwrap();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 6);
+    let key: (String, Option<String>) = conn
+        .query_row(
+            "SELECT source, made_by_host FROM api_keys WHERE id = 'rss-key'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(key, ("rss".to_string(), None));
+    let counted = |table: &str| -> i64 {
+        conn.query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+            row.get(0)
+        })
+        .unwrap()
+    };
+    assert_eq!(counted("plugins"), 1);
+    assert_eq!(counted("plugin_connectors"), 0);
+    assert_eq!(counted("connector_hosts"), 0);
+    assert_eq!(counted("connector_host_links"), 0);
+}

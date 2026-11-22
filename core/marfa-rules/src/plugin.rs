@@ -6,6 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 use serde_json::{Map, Value, json};
 
 use crate::error::RuleError;
+use crate::plugin_connector::connector_faults;
 use crate::schema::{
     EdgeIssues, FolderVerdict, Judging, Obj, Problem, Registry, TypeFile, check_plugin_type_files,
     edge_id, edge_type_from_request, icon_issue, is_guidance_file, is_type_file, request_shape,
@@ -284,6 +285,9 @@ pub fn bundle_faults(bundle: &Obj) -> Vec<Problem> {
             ));
         }
     }
+    if let Some(Value::Object(connector)) = bundle.get(CONNECTOR) {
+        faults.extend(connector_faults(connector, Some(&seen)));
+    }
     let edge_types = list_of_objects(bundle, "edge_types", &mut faults);
     let mut seen = BTreeSet::new();
     for (at, definition) in edge_types.iter().enumerate() {
@@ -434,6 +438,9 @@ fn manifest_faults(manifest: &Obj) -> Vec<Problem> {
         })
         .collect();
     faults.extend(identity_faults(manifest));
+    if let Some(Value::Object(connector)) = manifest.get(CONNECTOR) {
+        faults.extend(connector_faults(connector, None));
+    }
     for held in &mut faults {
         held.path = format!("{MANIFEST}: {}", held.path);
     }
@@ -1220,9 +1227,24 @@ mod tests {
     }
 
     #[test]
-    fn a_bundle_with_an_unknown_key_or_a_reserved_type_is_faulted_and_connector_is_opaque() {
+    fn a_bundle_with_an_unknown_key_or_a_reserved_type_is_faulted_and_its_connector_is_judged() {
         let mut bundle = build_bundle(&folder(), "1.0.0").unwrap();
         bundle.insert("connector".into(), json!({ "anything": [1, 2] }));
+        let faults = bundle_faults(&bundle);
+        assert!(
+            faults.iter().any(|held| held.path == "connector.anything"),
+            "{faults:?}"
+        );
+        let id = bundle["types"][0]["id"].clone();
+        bundle.insert(
+            "connector".into(),
+            json!({
+                "source": "acme",
+                "source_name": "Acme",
+                "kinds": [{ "name": "ticket", "type": id, "direction": "in" }],
+                "runs": { "on": "host" },
+            }),
+        );
         assert!(bundle_faults(&bundle).is_empty());
         bundle.insert("extra".into(), json!(true));
         bundle["types"][0]["id"] = json!("app.acme.ticket");

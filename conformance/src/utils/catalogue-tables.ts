@@ -1,6 +1,6 @@
 /**
  * The catalogues in the contract: the shipped types, the shipped edge types,
- * the fourteen permissions and the event types, each a table between two
+ * the fifteen permissions and the event types, each a table between two
  * markers in the chapter where it belongs. The rows come in as data so that
  * nothing here reads the server: `scripts/catalogue-tables.ts` passes them in
  * and the repository's own check compares what comes out to the chapters.
@@ -62,7 +62,7 @@ export interface EventTypeRow {
 
 /**
  * What each permission lets a credential do, in the words of the first
- * sentence of its row in `GLOSSARY.md`, which fixes the fourteen.
+ * sentence of its row in `GLOSSARY.md`, which fixes the fifteen.
  */
 const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "audit.read": "Reading the audit log.",
@@ -72,8 +72,10 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
     "Managing blob bytes and copies across the instance, without granting item content access.",
   "config.manage":
     "Reading and replacing the instance configuration at `/config`: the enforcement levers, the cleanup-job retention overrides and the stored settings, such as the addresses, the object store, the backup destination, the heartbeat and the PostHog settings. A secret setting can be set or removed but is never read back. A `PUT` keeps unnamed secrets, except `object_store_secret_access_key` when its bucket or endpoint changes. Changing `backup_path` or an `object_store_` setting other than the access key ID and the secret needs a recent sign-in, as `allow_private_addresses` does.",
+  "connectors.host":
+    "Reading the connector host's own record and minting the key of each connector assigned to it, at `GET /connector-hosts/self` and `POST /connector-hosts/self/connectors/{plugin}/key`.",
   "connectors.manage":
-    "Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state.",
+    "Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state, making, linking and removing connector hosts, and assigning a plugin's connector to a host.",
   "grants.manage": "Listing, narrowing and revoking other apps' access.",
   "instance.maintain":
     "Running housekeeping, canceling bulk jobs, updating the server and confirming the server's clock.",

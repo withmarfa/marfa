@@ -12,6 +12,7 @@ pub mod events;
 pub mod export;
 pub mod extensions;
 pub mod folders;
+pub mod hosts;
 pub mod housekeeping;
 pub mod items;
 pub mod keys;

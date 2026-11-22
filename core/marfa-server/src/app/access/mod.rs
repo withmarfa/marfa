@@ -47,7 +47,7 @@ macro_rules! permissions {
         }
 
         impl Permission {
-            pub const ALL: [Permission; 14] = [$(Permission::$variant,)*];
+            pub const ALL: [Permission; 15] = [$(Permission::$variant,)*];
 
             pub const fn word(self) -> &'static str {
                 match self {
@@ -70,6 +70,7 @@ permissions! {
     BackupsManage = "backups.manage";
     BlobsManage = "blobs.manage";
     ConfigManage = "config.manage";
+    ConnectorsHost = "connectors.host";
     ConnectorsManage = "connectors.manage";
     GrantsManage = "grants.manage";
     InstanceMaintain = "instance.maintain";
@@ -116,10 +117,20 @@ fn source_refused(source: String) -> Refusal {
     .with_detail("source", source)
 }
 
+impl Permission {
+    /// Whether a key or an app may be given this: `connectors.host` is given only to a host's key.
+    pub const fn grantable(self) -> bool {
+        !matches!(self, Permission::ConnectorsHost)
+    }
+}
+
 impl Grants {
     pub fn everything() -> Grants {
         Grants {
-            permissions: Permission::ALL.to_vec(),
+            permissions: Permission::ALL
+                .into_iter()
+                .filter(|permission| permission.grantable())
+                .collect(),
             maps: std::array::from_fn(|_| Map::everything()),
             sources: Vec::new(),
         }

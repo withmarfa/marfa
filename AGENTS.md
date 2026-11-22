@@ -61,7 +61,7 @@ Guidance, not rules:
 - A change that a reader of the docs at docs.marfa.so would notice, or a fault found in them, opens an issue on `withmarfa/docs` saying what changed or is wrong, why and for whom, and which release carries it. Do not edit the docs: they are rewritten from those issues after each release.
 - A code comment stays only if it says what the code cannot: a constraint from outside, a reason that is not obvious, a trap. Never what the code does, history, removed code, an issue or a person. When in doubt, it goes.
 - An instruction file such as this one holds only what an agent cannot work out from the code. A procedure is a skill, and reference sits beside the code it describes.
-- `GLOSSARY.md` fixes the vocabulary and the fourteen permission names. A pull request is checked against it.
+- `GLOSSARY.md` fixes the vocabulary and the fifteen permission names. A pull request is checked against it.
 
 ## Versions
 

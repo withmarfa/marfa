@@ -65,9 +65,9 @@ const OPEN_ON_PURPOSE: readonly { pattern: RegExp; reason: string }[] = [
       "A plugin's type and edge type definitions, which installing judges with the registration doors' own rules and codes.",
   },
   {
-    pattern: /^(PluginBundle|Plugin|PluginInstalled)\.connector$/,
+    pattern: /^PluginConnectorKind\.default_mapping$/,
     reason:
-      "A plugin's connector, which installing keeps as the bundle gives it and does not read.",
+      "How the owner's mapping of a connector's kind starts, which the mapping doors judge, not installing.",
   },
   {
     pattern: /^AuditEntry\.details$/,

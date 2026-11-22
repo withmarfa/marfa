@@ -612,7 +612,7 @@ If `keys create` is given `--socket PATH` and no permission, no map entry, no cl
 
 ### `cli/keys-create-all-access`
 
-When `keys create` is given `--all-access`, the CLI MUST send every one of the fourteen permissions and `*` at `write` in each of the five maps.
+When `keys create` is given `--all-access`, the CLI MUST send every one of the fourteen permissions a key can be given and `*` at `write` in each of the five maps.
 
 **Reason:** a claim says which source the key writes as, not what it may reach, so a `--claim` given with `--all-access` is sent as usual.
 
@@ -1725,6 +1725,48 @@ When `marfa plugins bundle` is given a source folder, the CLI MUST write `<name>
 When `marfa plugins index` is given a folder of bundles, the CLI MUST write `plugins.json` in it listing each bundle by name with its identity fields, `version`, `has_connector`, `bundle` and the SHA-256 of its bytes.
 
 **Tests:** `device/plugins-check.test.ts › builds a source folder into a bundle stamped with its version, and writes an index naming its SHA-256`.
+
+## Connector hosts
+
+### `cli/hosts-link-printed`
+
+When `marfa hosts add` or `marfa hosts link` makes a one-time link, the CLI MUST print the link the server answers.
+
+**Reason:** the owner gives the link to the host program once, and the server does not show its code again.
+
+**Tests:** `cli/connector-hosts.test.ts › makes, lists, reads, links and removes a host, printing its one-time link`.
+
+### `cli/hosts-by-name`
+
+When a `marfa hosts` command or `--host` names a connector host by text that is not an ID, the CLI MUST act on the one host of that name, and refuse with code `invalid` when no host or more than one has it.
+
+**Tests:** `cli/connector-hosts.test.ts › makes, lists, reads, links and removes a host, printing its one-time link`, `› installs a plugin with a connector onto a host with --host, and names the one host it could use without it`.
+
+### `cli/plugins-install-host`
+
+When `marfa plugins install` is given `--host` for a plugin with a connector, the CLI MUST assign the connector to that host with `PUT /plugins/{name}/connector` once the plugin is installed.
+
+**Tests:** `cli/connector-hosts.test.ts › installs a plugin with a connector onto a host with --host, and names the one host it could use without it`.
+
+### `cli/plugins-install-one-host`
+
+When `marfa plugins install` installs a plugin whose connector no host runs, without `--host`, while the instance has exactly one connector host, the CLI MUST name that host in what it prints and assign nothing.
+
+**Reason:** a connector assigned to a machine starts running there, which the owner chooses.
+
+**Tests:** `cli/connector-hosts.test.ts › installs a plugin with a connector onto a host with --host, and names the one host it could use without it`.
+
+### `cli/plugins-assign`
+
+When `marfa plugins assign` is given a plugin and either `--host` or `--none`, the CLI MUST send `PUT /plugins/{name}/connector` naming that host or `null`.
+
+**Tests:** `cli/connector-hosts.test.ts › assigns a connector to a host and to none, and says what removing its plugin stops and keeps`.
+
+### `cli/plugins-remove-connector`
+
+When `marfa plugins remove` removes a plugin with a connector, the CLI MUST print that its connector stopped and what its source keeps.
+
+**Tests:** `cli/connector-hosts.test.ts › assigns a connector to a host and to none, and says what removing its plugin stops and keeps`.
 
 ## Type guidance
 

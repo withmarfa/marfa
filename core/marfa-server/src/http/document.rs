@@ -185,6 +185,14 @@ const OPEN: &[&str] = &["GET /", "GET /health", "POST /owner"];
 /// The doors behind a type map are not listed: `content` finds them.
 const REFUSES_LOCAL: &[(&str, &str)] = &[
     (
+        "GET /connector-hosts/self",
+        "a connector host's own key alone",
+    ),
+    (
+        "POST /connector-hosts/self/connectors/{plugin}/key",
+        "a connector host's own key alone",
+    ),
+    (
         "PUT /folders/{id}/status",
         "a report is kept under the sign-in that sent it",
     ),

@@ -253,6 +253,43 @@ pub(crate) fn remove_in(unit: &Unit<'_, '_>, id: &str) -> Result<i64> {
     Ok(runs)
 }
 
+/// The registrations whose source is `source`, newest first.
+pub(crate) fn of_source(tx: &Transaction<'_>, source: &str) -> Result<Vec<Registration>> {
+    Ok(store::newest_first(tx)?
+        .into_iter()
+        .filter(|registration| registration.source == source)
+        .collect())
+}
+
+/// Deletes every registration of `source` as `DELETE /connectors/{id}` deletes one.
+pub(crate) fn remove_of_source(unit: &Unit<'_, '_>, source: &str) -> Result<Vec<String>> {
+    let mut removed = Vec::new();
+    for registration in of_source(unit.tx(), source)? {
+        store::delete(unit.tx(), &registration.id)?;
+        unit.audit_also(
+            DELETED,
+            "connector",
+            &registration.id,
+            Some(json!({ "name": registration.name })),
+        )?;
+        removed.push(registration.id);
+    }
+    Ok(removed)
+}
+
+/// The id of the registration `key_id` made.
+pub(crate) fn registration_of_key(tx: &Transaction<'_>, key_id: &str) -> Result<Option<String>> {
+    Ok(store::by_key(tx, key_id)?.map(|registration| registration.id))
+}
+
+/// Whether `source` keeps a state document, and how many agreements it keeps.
+pub(crate) fn kept_of_source(tx: &Transaction<'_>, source: &str) -> Result<(bool, i64)> {
+    Ok((
+        store::document(tx, source)?.is_some(),
+        store::agreement_counts(tx, source)?.0,
+    ))
+}
+
 fn summary(registration: &Registration) -> Value {
     json!({
         "id": registration.id,

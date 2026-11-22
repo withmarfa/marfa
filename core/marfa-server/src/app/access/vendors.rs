@@ -35,7 +35,7 @@ pub fn reach_of(tx: &Connection, maker: &Maker, stored: &Grants) -> Result<Grant
     match maker {
         Maker::Owner => Ok(stored.clone()),
         Maker::App(client) => app_key_reach(tx, client, stored),
-        Maker::Unknown => Ok(unknown_maker_reach(stored, &vendors::app_held(tx)?)),
+        Maker::Unknown | Maker::Host(_) => Ok(unknown_maker_reach(stored, &vendors::app_held(tx)?)),
     }
 }
 
@@ -91,7 +91,7 @@ pub fn as_stored(key: &Key) -> Grants {
 pub fn named_by(maker: &Maker, stored: &Map) -> Map {
     match maker {
         Maker::Owner => stored.clone(),
-        Maker::App(_) | Maker::Unknown => stored.naming_apps(),
+        Maker::App(_) | Maker::Host(_) | Maker::Unknown => stored.naming_apps(),
     }
 }
 
@@ -134,7 +134,7 @@ pub(super) fn unknown_maker(action: &str) -> Refusal {
     Refusal::new(
         Code::Forbidden,
         format!(
-            "No record shows who made this key, so it cannot {action}. Mint a new key with an owner credential."
+            "No record shows the owner made this key, so it cannot {action}. Mint a new key with an owner credential."
         ),
     )
 }
@@ -168,9 +168,9 @@ impl Caller {
         }
     }
 
-    /// Whether the caller is a key no record names a maker for.
+    /// Whether the caller is a key no record shows the owner or an app made, a host's included.
     pub fn maker_unknown(&self) -> bool {
-        matches!(self, Caller::Key(key) if key.made_by == Maker::Unknown)
+        matches!(self, Caller::Key(key) if matches!(key.made_by, Maker::Unknown | Maker::Host(_)))
     }
 
     /// The registration needs the caller's new reach in the transaction that claims the vendor.
