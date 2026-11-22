@@ -24,6 +24,8 @@ interface Case {
   settings: Record<string, unknown>;
   /** The least a listing holds, so a pair of empty answers cannot agree. */
   atLeast: number;
+  /** What the device's group keys must be, for a view that groups. */
+  groupKeys?: (keys: unknown[]) => void;
 }
 
 const cases: Case[] = [];
@@ -195,13 +197,14 @@ beforeAll(async () => {
     name: string,
     settings: Record<string, unknown>,
     atLeast = 10,
+    groupKeys?: Case["groupKeys"],
   ) => {
     const query = {
       types: ["core.note", "core.entity", "core.media.book"],
       filter,
       ...((settings.query as Record<string, unknown> | undefined) ?? {}),
     };
-    cases.push({ name, settings: { ...settings, query }, atLeast });
+    cases.push({ name, settings: { ...settings, query }, atLeast, groupKeys });
   };
   add("no sort", {});
   add("title ascending", { sort: [asc("title")] });
@@ -266,6 +269,65 @@ beforeAll(async () => {
   add("no member equal", { query: words('neq "kitchen"') }, 4);
   add("a member holding text", { query: words('contains "kit"') }, 5);
   add("a member beginning with text", { query: words('starts_with "kit"') }, 5);
+
+  const presence = (by: string) => ({ group: { by, bucket: "presence" } });
+  const bothPresences = (keys: unknown[]) =>
+    expect(keys).toEqual([false, true]);
+  add(
+    "presence of a property",
+    presence("properties.probe"),
+    10,
+    bothPresences,
+  );
+  add("presence of tags", presence("tags"), 10, (keys) =>
+    expect(keys).toEqual([true]),
+  );
+  add("presence of an edge", presence("edge[parent-of]"), 10, bothPresences);
+  add(
+    "presence of a backref",
+    presence("backref[parent-of]"),
+    10,
+    bothPresences,
+  );
+  add(
+    "presence with a hidden group",
+    {
+      group: { by: "properties.probe", bucket: "presence", hidden: [false] },
+    },
+    10,
+    (keys) => expect(keys).toEqual([true]),
+  );
+  add("source", { group: { by: "source" } }, 10, (keys) =>
+    expect(keys).toEqual([ctx.source]),
+  );
+  add(
+    "status group, with an order and a hidden null group",
+    {
+      group: {
+        by: "status_group",
+        order: ["completed", "not_started"],
+        hidden: [null],
+      },
+    },
+    10,
+    (keys) => {
+      const closed = ["not_started", "in_progress", "completed", "canceled"];
+      expect(keys.every((key) => closed.includes(key as string))).toBe(true);
+    },
+  );
+  add("status group", { group: { by: "status_group" } }, 10, (keys) => {
+    const closed = [
+      "not_started",
+      "in_progress",
+      "completed",
+      "canceled",
+      null,
+    ];
+    expect(keys.every((key) => closed.includes(key as string | null))).toBe(
+      true,
+    );
+    expect(keys.length).toBeGreaterThan(0);
+  });
 
   for (const item of cases) {
     const saved = await client.createView({
@@ -332,5 +394,12 @@ it("lists a view's items in the order the server does, for each sort and query",
       local.push(...page.data.map((row) => row.id));
     }
     expect(local, item.name).toEqual(remote);
+
+    if (item.groupKeys) {
+      const answer = value(await device.attempt(["views", "groups", id])) as {
+        data: { key: unknown; count: number }[];
+      };
+      item.groupKeys(answer.data.map((group) => group.key));
+    }
   }
 });
