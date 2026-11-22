@@ -98,6 +98,7 @@ The instance draws no owner console, so each task an owner has is a command. Eac
 | Link the instance to Marfa Cloud, read the link and unlink | `marfa cloud link`, `marfa cloud status`, `marfa cloud unlink` |
 | List, narrow and revoke a connected app | `marfa apps list`, `marfa apps narrow`, `marfa apps revoke` |
 | List the app vendors, and give one to another app | `marfa apps vendors list`, `marfa apps vendors move` |
+| List and delete an app's own data | `marfa apps vendors data list`, `marfa apps vendors data delete` |
 | Manage the owner's passkeys | `marfa owner passkeys list`, `marfa owner passkeys add`, `marfa owner passkeys rename`, `marfa owner passkeys delete` |
 | Change the owner's password | `marfa owner password` |
 | Recover the owner's password | `marfa owner recover` |
@@ -393,7 +394,7 @@ marfa apps [OPTIONS] <COMMAND>
 
 ### marfa apps list
 
-List approved apps. Requires `grants.manage`.
+List approved apps, each with the `app.<vendor>` namespaces it holds. Requires `grants.manage`.
 
 ```text
 marfa apps list [OPTIONS]
@@ -418,7 +419,7 @@ marfa apps narrow [OPTIONS] <ID>
 
 ### marfa apps revoke
 
-End an app's grant. Requires `grants.manage`.
+End an app's grant. Its keys and its own data stay unless asked. Requires `grants.manage`, and `items.purge` with --remove-data.
 
 ```text
 marfa apps revoke [OPTIONS] <ID>
@@ -431,6 +432,8 @@ marfa apps revoke [OPTIONS] <ID>
 | Option | Description |
 | --- | --- |
 | `--revoke-keys` | Also revoke every key the app minted, and every key those keys minted, but an owner's key. |
+| `--remove-data` | Also delete for good, in the same write, every item and type of the `app.<vendor>` namespaces the app holds, as `marfa apps vendors data delete` does. Run `marfa backups run` first: only a backup taken before brings them back. Refused, ending nothing, above 1,000 items. |
+| `--confirm <WORD>` | Confirm --remove-data with `PURGE`. One of `PURGE`. |
 
 ### marfa apps vendors
 
@@ -460,6 +463,48 @@ marfa apps vendors move [OPTIONS] <VENDOR> <CLIENT_ID>
 | --- | --- |
 | `<VENDOR>` | The namespace, such as `app.acme`. |
 | `<CLIENT_ID>` | The client ID of the app to give it to, as `marfa apps list` shows it. |
+
+### marfa apps vendors data
+
+What an app keeps under one of its namespaces, hidden from ordinary listings: list it, or delete it for good. An app's sign-in or a key an app made reaches only its own namespaces.
+
+```text
+marfa apps vendors data [OPTIONS] <COMMAND>
+```
+
+### marfa apps vendors data list
+
+List the namespace's types, with how many items each holds by state, and its items in every state, the bin included.
+
+```text
+marfa apps vendors data list [OPTIONS] <VENDOR>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<VENDOR>` | The namespace, such as `app.acme`. |
+
+| Option | Description |
+| --- | --- |
+| `--limit <LIMIT>` | How many at most. |
+| `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
+
+### marfa apps vendors data delete
+
+Delete for good every item of the namespace in every state, the bin included, then its types, 1,000 items a request, saying how many have gone as it does. Run `marfa backups run` first: only a backup taken before brings them back, and `marfa items restore` cannot. Items of other types that link to them stay and lose the link. The namespace stays with the app that holds it. Requires `items.purge` as well.
+
+```text
+marfa apps vendors data delete [OPTIONS] --confirm <WORD> <VENDOR>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<VENDOR>` | The namespace, such as `app.acme`. |
+
+| Option | Description |
+| --- | --- |
+| `--confirm <WORD>` | Confirm permanent deletion with `PURGE`. One of `PURGE`. |
 
 ## sign-ins
 
@@ -494,7 +539,7 @@ marfa sign-ins rename [OPTIONS] <ID> <NAME>
 
 ### marfa sign-ins end
 
-End a sign-in at once: its next request is refused, and an app can't refresh its tokens. What it wrote stays, and so do the keys an app minted unless --revoke-keys is given. Requires `sign_ins.manage`.
+End a sign-in at once: its next request is refused, and an app can't refresh its tokens. What it wrote stays unless --remove-data is given, and so do the keys an app minted unless --revoke-keys is given. Requires `sign_ins.manage`, and `items.purge` with --remove-data.
 
 ```text
 marfa sign-ins end [OPTIONS] <ID>
@@ -507,6 +552,8 @@ marfa sign-ins end [OPTIONS] <ID>
 | Option | Description |
 | --- | --- |
 | `--revoke-keys` | For an app, also revoke every key it minted, and every key those keys minted, but an owner's key. Refused for a browser or a key. |
+| `--remove-data` | For an app, also delete for good, in the same write, every item and type of the `app.<vendor>` namespaces it holds. Run `marfa backups run` first: only a backup taken before brings them back. Refused for a browser or a key, and above 1,000 items. |
+| `--confirm <WORD>` | Confirm --remove-data with `PURGE`. One of `PURGE`. |
 
 ### marfa sign-ins end-all
 
