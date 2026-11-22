@@ -427,7 +427,7 @@ pub fn connector_faults(section: &Obj, types: Option<&BTreeSet<&str>>) -> Vec<Pr
 
 /// Each kind's `default_mapping` in a checked connector section, judged as a save of the mapping
 /// judges the kind's entry on its own type, against the types `catalog` holds. `may_write` says
-/// whether the caller may write a type.
+/// whether a type may be a target.
 pub fn default_faults(
     section: &Obj,
     catalog: &Catalog,

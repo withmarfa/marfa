@@ -512,7 +512,6 @@ impl App {
                             tx,
                             &registrations.plugins,
                             &unit.at,
-                            &unit.caller,
                             &catalog,
                         )?;
                         let plugins_added = plugins_recorded.len();

@@ -196,12 +196,11 @@ fn connector_of(bundle: &Obj) -> Option<&Obj> {
 }
 
 /// Each `default_mapping` of the bundle's connector a save of the mapping would refuse, judged on
-/// the types `catalog` holds and the caller's write.
-fn default_faults(caller: &Caller, catalog: &Catalog, bundle: &Obj) -> Vec<Problem> {
+/// the types `catalog` holds. A default lands only on the kind's own type, which the key's type
+/// map alone decides, so no caller's write is asked.
+fn default_faults(catalog: &Catalog, bundle: &Obj) -> Vec<Problem> {
     connector_of(bundle).map_or_else(Vec::new, |section| {
-        marfa_rules::plugin_connector::default_faults(section, &catalog.rules, |target| {
-            caller.require_type(target, Level::Write).is_ok()
-        })
+        marfa_rules::plugin_connector::default_faults(section, &catalog.rules, |_| true)
     })
 }
 
@@ -446,7 +445,7 @@ pub async fn install(
             let before = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
             types::write::write_install(unit, &cache, &before, plan, &origin)?;
             let after = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
-            let faults = default_faults(caller, &after, &bundle);
+            let faults = default_faults(&after, &bundle);
             if !faults.is_empty() {
                 return Err(Refusal::validation(format!(
                     "The plugin's connector holds a default mapping this server refuses: {}.",
@@ -698,13 +697,12 @@ pub(crate) fn connectors_restoring<'a>(
 }
 
 /// Restores each archived plugin the instance does not hold, refusing one whose connector holds a
-/// `default_mapping` installing would refuse, judged on the types as restored and `caller`'s write.
-/// Answers the name of each plugin it recorded, and how many it found recorded already.
+/// `default_mapping` installing would refuse, judged on the types as restored. Answers the name
+/// of each plugin it recorded, and how many it found recorded already.
 pub fn restore(
     tx: &Transaction<'_>,
     archived: &[Archived],
     at: &str,
-    caller: &Caller,
     catalog: &Catalog,
 ) -> Result<(Vec<String>, usize)> {
     let (mut added, mut held) = (Vec::new(), 0);
@@ -735,7 +733,7 @@ pub fn restore(
                 Value::from(installed.edge_types.clone()).to_string(),
             ],
         )?;
-        let faults = default_faults(caller, catalog, &installed.manifest);
+        let faults = default_faults(catalog, &installed.manifest);
         if !faults.is_empty() {
             return Err(Refusal::validation(format!(
                 "Line {} of instance.ndjson.gz holds plugin {} whose connector holds a default mapping this instance refuses: {}.",

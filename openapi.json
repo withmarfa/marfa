@@ -34074,7 +34074,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the bundle has a key it does not hold, a field of the wrong shape, an ID named twice, a connector section `PluginConnector` refuses, a `default_mapping` a save of the mapping would refuse, or an edge type the rules refuse. `details.errors` names each.\n- `missing_required_field`, `invalid_schema`, `inheritance_violation`, `property_shadows_field`: a type is refused as `POST /types` refuses it. `details.type_id` names it.",
+            "description": "- `validation_error`: the bundle has a key it does not hold, a field of the wrong shape, an ID named twice, a connector section `PluginConnector` or a mapping save refuses, or a refused edge type. `details.errors` names each.\n- `missing_required_field`, `invalid_schema`, `inheritance_violation`, `property_shadows_field`: a type is refused as `POST /types` refuses it. `details.type_id` names it.",
             "content": {
               "application/json": {
                 "schema": {
