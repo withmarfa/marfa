@@ -1314,6 +1314,56 @@ describe("an app's hidden data over MCP and the caller's type map", () => {
   });
 });
 
+describe("repeating a marfa_app_data confirmation", () => {
+  it("answers a repeated confirmation with what it removed, and no remaining_items once a type the key cannot read is registered under the vendor", async () => {
+    const vendor = freshVendor();
+    const signed = await signedIn(REGISTERS);
+    const setting = `${vendor}.setting`;
+    await registerType(signed.token, setting);
+    await createItem(signed.token, setting, "one");
+    const narrow = await mint(["grants.manage", "items.purge", "schema.write"], {
+      [setting]: "write",
+    });
+    const mcp = await connectMcp(
+      server.apiUrl,
+      narrow,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      const preview = toolResult(
+        await callTool(mcp, "marfa_app_data", { vendor }),
+      );
+      const confirm = preview.confirm as string;
+      const done = toolResult(
+        await callTool(mcp, "marfa_app_data", { vendor, confirm }),
+      );
+      expect(done.removed_items).toBe(1);
+      expect(done.remaining_items).toBe(0);
+
+      // The witness: a repeat while the key still reads the vendor counts what is left.
+      const again = toolResult(
+        await callTool(mcp, "marfa_app_data", { vendor, confirm }),
+      );
+      expect(again.already_done).toBe(true);
+      expect(again.removed_items).toBe(1);
+      expect(again.remaining_items).toBe(0);
+
+      await registerType(signed.token, `${vendor}.later`);
+      await createItem(signed.token, `${vendor}.later`, "later");
+      const repeated = toolResult(
+        await callTool(mcp, "marfa_app_data", { vendor, confirm }),
+      );
+      expect(repeated.already_done).toBe(true);
+      expect(repeated.removed_items).toBe(1);
+      expect(repeated.remaining_items).toBeUndefined();
+    } finally {
+      await mcp.close();
+    }
+    expect((await dataOf(owner, vendor)).data.length).toBe(1);
+  });
+});
+
 /** An app holding two vendors, where a table item of the second has a column naming a type of the first. */
 async function appWithTwoVendors(): Promise<{
   signed: Signed;
