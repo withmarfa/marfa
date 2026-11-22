@@ -348,12 +348,17 @@ pub async fn items(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Ans
     let params = Params::read(&uri, &ITEMS_QUERY, true)?;
     Ok(text_answer(
         StatusCode::OK,
-        items_from(&app, &caller, &params).await?,
+        items_from(&app, &caller, &params, true).await?,
     ))
 }
 
-/// The page of items `params` asks for, as the listing door answers it.
-pub(super) async fn items_from(app: &App, caller: &Caller, params: &Params) -> Result<String> {
+/// The page of items `params` asks for, as the listing door answers it; `mapped` as in `Listing`.
+pub(super) async fn items_from(
+    app: &App,
+    caller: &Caller,
+    params: &Params,
+    mapped: bool,
+) -> Result<String> {
     let mut ask = ask_of(params, active())?;
     let include = many_of(params)?;
     ask.hidden = include.hidden;
@@ -371,6 +376,7 @@ pub(super) async fn items_from(app: &App, caller: &Caller, params: &Params) -> R
         limit: capped_limit(params, ITEMS_PAGE, MAX_ITEMS_PAGE)?,
         cursor: params.one("cursor")?.map(str::to_string),
         include,
+        mapped,
     };
     list(app, caller, listing).await
 }

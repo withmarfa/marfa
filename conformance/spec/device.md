@@ -60,7 +60,7 @@ Where a slice names an edge type to hold whole, a device MUST hold every edge of
 
 When a device hydrates an edge type held whole, a device MUST read the edge listing for that type until a page answers no `next_cursor`, past a page that is short or empty.
 
-**Reason:** the listing leaves out an edge the key cannot read and leaves its page short (`edges/read-list-withheld` and `edges/read-list-short`), so only the cursor says the listing is done.
+**Reason:** the oldest server a device works with can answer a page short of the edges the key cannot read (`edges/read-list-withheld`), so only the cursor says the listing is done.
 
 **Tests:** `device/hydration.test.ts › walks every page of an edge type held whole`, `› walks past an empty edge page that still carries a cursor`, `device/fidelity.test.ts › matches the edge listing a hydration walks for a type held whole`.
 

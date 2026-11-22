@@ -1416,19 +1416,35 @@ If a plugin's connector key creates an item of an enabled kind's `target_type` t
 
 ### `plugins/reach-read-own`
 
-While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items/{id}` or `POST /items/lookup` for an item of that type whose `source` is its own, the server MUST answer it as it would were that type granted read in its type map.
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items/{id}`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs` or `POST /items/lookup` for an item of that type whose `source` is its own, the server MUST find the item as it would were that type granted read in its type map.
 
-**Reason:** a connector reads its own items back to update them. It also lists them (`plugins/reach-list-own`), follows their events (`plugins/reach-events-own`) and settles their tombstones (`plugins/reach-tombstones-own`). Every other door, among them search, the summaries, an export, a view's items, a folder, the MCP tools and the copy stream a working copy follows, answers the type as the key's type map reaches it.
+**Reason:** a connector reads its own items back to update them, with the edges it reads from them (`plugins/reach-edges-own`). It also lists them (`plugins/reach-list-own`), follows their events (`plugins/reach-events-own`) and settles their tombstones (`plugins/reach-tombstones-own`). Every other door, among them search, the summaries, an export, a view's items, a folder, the MCP tools and the copy stream a working copy follows, answers the type as the key's type map reaches it.
 
-**Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`.
+**Tests:** `compliance/connector-reach.test.ts › creates, updates, tags, links, fills the table of, trashes, restores and purges its own items on its mapped target type`, `› reads an edge from its own item of the mapped type on every edge door, and never one from the owner's item into its own`.
 
 ### `plugins/reach-list-own`
 
-While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items`, the server MUST answer it as it would were that type granted read in its type map, with no item of that type whose `source` is not its own in any page.
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key sends `GET /items`, the server MUST answer it as it would were that type granted read in its type map, whatever items that type holds, with no item of that type whose `source` is not its own in any page.
 
-**Reason:** a connector finds its rows by listing them, with any filter a listing takes, among them a relation to another item. The owner's items of the type stay out of every page and every cursor, as `plugins/reach-target-other-source` keeps them out of every other door.
+**Reason:** a connector finds its rows by listing them, with any filter a listing takes, among them a relation to another item. The owner's items of the type stay out of every page and every cursor, as `plugins/reach-target-other-source` keeps them out of every other door. A listing of the type or of a type above it answers an empty page while the type holds none of the key's items, so it says nothing of the owner's. The MCP tool `marfa_find` lists as the key's type map reaches.
 
-**Tests:** `compliance/connector-reach.test.ts › lists its own items of the mapped type page by page and none of the owner's, which the owner lists beside them, and lists, streams and settles none once the kind is off`.
+**Tests:** `compliance/connector-reach.test.ts › lists its own items of the mapped type page by page and none of the owner's, which the owner lists beside them, and lists, streams and settles none once the kind is off`, `› lists the mapped type and its parent as an empty page while it holds no items, and while it holds only the owner's`, `› finds none of its own items of the mapped type through marfa_find, which GET /items lists`.
+
+### `plugins/reach-edges-own`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, when the key reads an edge whose from item is of that type and has the key's own `source`, and whose edge type its edge map grants read on, the server MUST answer the edge as it would were that type granted read in its type map, on `GET /edges`, `GET /edges/{id}`, `GET /items/{id}/edges` and `GET /items/{id}/backrefs`, and in the `edges` and `backrefs` blocks that an item read, an item listing, `POST /items/lookup` and the answer to a write carry.
+
+**Reason:** a connector finds the links it wrote from its own items to settle them, as the event stream already carries them (`plugins/reach-events-own`). An edge is a statement its from item makes (`edges/to-named`), so the from item alone opens it.
+
+**Tests:** `compliance/connector-reach.test.ts › reads an edge from its own item of the mapped type on every edge door, and never one from the owner's item into its own`, `› fills each page of the edge listing and of an item's edges with the edges from its own items, between many from the owner's, and pages to the end`, `› reads no edge from its own item of an edge type its edge map does not read`.
+
+### `plugins/reach-edges-other-source`
+
+While a plugin's connector key's mapping holds an enabled kind whose `target_type` its type map does not grant read on, the server MUST NOT answer the key an edge whose from item is of that type and has a `source` other than its own, whatever its to item, on any door that `plugins/reach-edges-own` names.
+
+**Reason:** an owner's link into the connector's item is the owner's statement, and the key reads none of the owner's items of the type.
+
+**Tests:** `compliance/connector-reach.test.ts › reads an edge from its own item of the mapped type on every edge door, and never one from the owner's item into its own`, `› fills each page of the edge listing and of an item's edges with the edges from its own items, between many from the owner's, and pages to the end`.
 
 ### `plugins/reach-events-own`
 

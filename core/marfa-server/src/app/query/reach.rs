@@ -40,7 +40,11 @@ impl Reach {
     /// As `of`, adding a connector key's mapped types for its own items alone.
     pub fn of_own(read: &Reader<'_, '_>) -> Result<Reach> {
         read.caller.require_reach()?;
-        Reach::build(read.tx, &read.caller, &read.catalog, true)
+        Reach::within_own(read.tx, &read.caller, &read.catalog)
+    }
+
+    pub fn within_own(tx: &Transaction<'_>, caller: &Caller, catalog: &Catalog) -> Result<Reach> {
+        Reach::build(tx, caller, catalog, true)
     }
 
     pub fn within(tx: &Transaction<'_>, caller: &Caller, catalog: &Catalog) -> Result<Reach> {
@@ -127,17 +131,24 @@ impl Reach {
     /// Whether a type here is held to a source. `OR` across the lists
     /// takes the type index out of order, so such a reach walks the order.
     pub fn narrows_by_source(&self) -> bool {
-        !self.held.is_empty() || !self.own.is_empty()
+        !self.held.is_empty() || (!self.own.is_empty() && !self.open.is_empty())
     }
 
-    /// Whether this reach reads `type_id` for the key's own items alone.
-    pub fn reads_own(&self, type_id: &str) -> bool {
-        self.own.iter().any(|held| held == type_id)
+    fn own_alone(&self) -> bool {
+        self.open.is_empty() && self.held.is_empty() && !self.own.is_empty()
     }
 
     /// `unindexed` keeps the planner off the type index, for a query an order index serves better.
     pub fn clause(&self, sql: &mut Sql, alias: &str, unindexed: bool) {
         let mark = if unindexed { "+" } else { "" };
+        if self.own_alone() {
+            sql.push(&format!("({mark}{alias}.type IN ("));
+            sql.list(&self.own);
+            sql.push(&format!(") AND {mark}{alias}.source = "));
+            sql.bind(self.own_source.clone());
+            sql.push(")");
+            return;
+        }
         sql.push(&format!("({mark}{alias}.type IN ("));
         sql.list(&self.open);
         sql.push(")");

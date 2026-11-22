@@ -3,13 +3,17 @@ use crate::app::refusal::Result;
 
 impl Caller {
     pub fn may_read_edge(&self, edge_type: &str, from_type: &str) -> bool {
-        self.level_on(Axis::Edge, edge_type) >= Level::Read && self.may_read_type(from_type)
+        self.may_read_edge_type(edge_type) && self.may_read_type(from_type)
     }
 
     /// As `may_read_edge`, for an edge whose from item is under `from_source`.
     pub fn may_read_edge_from(&self, edge_type: &str, from_type: &str, from_source: &str) -> bool {
+        self.may_read_edge_type(edge_type) && self.may_read_item(from_type, from_source)
+    }
+
+    /// The edge map alone; an edge also takes a read of its from item.
+    pub fn may_read_edge_type(&self, edge_type: &str) -> bool {
         self.level_on(Axis::Edge, edge_type) >= Level::Read
-            && self.may_read_item(from_type, from_source)
     }
 
     /// A cascading edge puts its target in reach of every move of its source to the bin,

@@ -1,11 +1,12 @@
 //! Nothing outside `edges` reaches this module, so every write to the table goes through `write`.
 
 use marfa_rules::edges::{Graph, Link, OnDelete};
-use rusqlite::{OptionalExtension, Row, ToSql, Transaction, params, params_from_iter};
+use rusqlite::{OptionalExtension, Row, Transaction, params, params_from_iter};
 
 use super::Edge;
 use crate::app::blobs::references;
 use crate::app::catalog::Catalog;
+use crate::app::query::{Reach, Sql};
 use crate::app::refusal::{Refusal, Result};
 
 const EDGE: &str = "SELECT seq, id, from_id, to_id, edge_type, json(properties), version, \
@@ -188,36 +189,42 @@ pub(super) struct Page<'a> {
     pub limit: i64,
 }
 
+const EDGE_FROM: &str = "SELECT e.seq, e.id, e.from_id, e.to_id, e.edge_type, json(e.properties), \
+     e.version, e.created_at, e.updated_at FROM edges e JOIN items f ON f.id = e.from_id";
+
+/// `from` holds the from item to a reach in the query itself; `keeps` judges each edge type,
+/// before the limit, so a page comes back short only at its end.
 pub(super) fn page(
     tx: &Transaction<'_>,
     page: &Page<'_>,
-    keeps: impl Fn(&str, &str) -> bool,
+    from: Option<&Reach>,
+    keeps: impl Fn(&str) -> bool,
 ) -> Result<Vec<Edge>> {
-    let mut sql = format!("{EDGE} WHERE 1 = 1");
-    let mut values: Vec<&dyn ToSql> = Vec::new();
-    if let Some(from) = &page.from {
-        values.push(from);
-        sql.push_str(&format!(" AND from_id = ?{}", values.len()));
+    let mut sql = Sql::new(&format!("{EDGE_FROM} WHERE 1 = 1"));
+    if let Some(from) = page.from {
+        sql.push(" AND e.from_id = ");
+        sql.bind(from.to_string());
     }
-    if let Some(to) = &page.to {
-        values.push(to);
-        sql.push_str(&format!(" AND to_id = ?{}", values.len()));
+    if let Some(to) = page.to {
+        sql.push(" AND e.to_id = ");
+        sql.bind(to.to_string());
     }
     if !page.edge_types.is_empty() {
-        let mut marks = Vec::with_capacity(page.edge_types.len());
-        for edge_type in page.edge_types {
-            values.push(edge_type);
-            marks.push(format!("?{}", values.len()));
-        }
-        sql.push_str(&format!(" AND edge_type IN ({})", marks.join(", ")));
+        sql.push(" AND e.edge_type IN (");
+        sql.list(page.edge_types);
+        sql.push(")");
     }
-    if let Some(after) = &page.updated_after {
-        values.push(after);
-        sql.push_str(&format!(" AND updated_at >= ?{}", values.len()));
+    if let Some(after) = page.updated_after {
+        sql.push(" AND e.updated_at >= ");
+        sql.bind(after.to_string());
     }
-    if let Some(before) = &page.updated_before {
-        values.push(before);
-        sql.push_str(&format!(" AND updated_at < ?{}", values.len()));
+    if let Some(before) = page.updated_before {
+        sql.push(" AND e.updated_at < ");
+        sql.bind(before.to_string());
+    }
+    if let Some(reach) = from {
+        sql.push(" AND ");
+        reach.clause(&mut sql, "f", true);
     }
     let (column, sense, order) = if page.by_change {
         ("updated_at", ">", "ASC")
@@ -225,23 +232,19 @@ pub(super) fn page(
         ("created_at", "<", "DESC")
     };
     if let Some((at, id)) = page.after {
-        values.push(at);
-        values.push(id);
-        let count = values.len();
-        sql.push_str(&format!(
-            " AND ({column}, id) {sense} (?{}, ?{count})",
-            count - 1
-        ));
+        sql.push(&format!(" AND (e.{column}, e.id) {sense} ("));
+        sql.bind(at.clone());
+        sql.push(", ");
+        sql.bind(id.clone());
+        sql.push(")");
     }
-    sql.push_str(&format!(" ORDER BY {column} {order}, id {order}"));
-    let mut statement = tx.prepare(&sql)?;
-    let mut found = statement.query(params_from_iter(values))?;
+    sql.push(&format!(" ORDER BY e.{column} {order}, e.id {order}"));
+    let mut statement = tx.prepare(&sql.text)?;
+    let mut found = statement.query(params_from_iter(&sql.values))?;
     let mut kept = Vec::new();
-    let mut sources = SourceCache::new(tx);
     while let Some(row) = found.next()? {
         let edge = edge_of(row)?;
-        let held = sources.of(&edge.from_id)?;
-        if held.is_some_and(|(type_id, source)| keeps(type_id, source)) {
+        if keeps(&edge.edge_type) {
             kept.push(edge);
             if kept.len() as i64 >= page.limit {
                 break;
@@ -249,36 +252,6 @@ pub(super) fn page(
         }
     }
     Ok(kept)
-}
-
-struct SourceCache<'a, 'c> {
-    tx: &'a Transaction<'c>,
-    held: std::collections::HashMap<String, Option<(String, String)>>,
-}
-
-impl<'a, 'c> SourceCache<'a, 'c> {
-    fn new(tx: &'a Transaction<'c>) -> SourceCache<'a, 'c> {
-        SourceCache {
-            tx,
-            held: std::collections::HashMap::new(),
-        }
-    }
-
-    fn of(&mut self, id: &str) -> Result<Option<(&str, &str)>> {
-        if !self.held.contains_key(id) {
-            let found = self
-                .tx
-                .prepare_cached("SELECT type, source FROM items WHERE id = ?1")?
-                .query_row([id], |row| Ok((row.get(0)?, row.get(1)?)))
-                .optional()?;
-            self.held.insert(id.to_string(), found);
-        }
-        Ok(self
-            .held
-            .get(id)
-            .and_then(Option::as_ref)
-            .map(|(type_id, source)| (type_id.as_str(), source.as_str())))
-    }
 }
 
 pub(super) fn hosts_out_of_bin(
