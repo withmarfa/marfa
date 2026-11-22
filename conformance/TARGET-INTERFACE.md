@@ -115,6 +115,14 @@ stays because that thing is what it checks.
   newer build wrote, one whose tables, columns or indexes differ from the
   server's, and one a crash left holding some of its tables and no rows. Each is
   a state no door reaches, made in the file before the server starts.
+- `compliance/upgrade-from-release.test.ts` loads `fixtures/database-v0.0.90.sql`,
+  a text dump of the database the published v0.0.90 release wrote at schema
+  version 3, into a file before each start, and alters that file (a type origin
+  no migration carries over, a row that refers to one the file does not hold, a
+  marker row) and reads it and the files beside it afterwards. No operation
+  can make an earlier release's database, and the dump is frozen so that the
+  fixture holds a build to what a release wrote and not to the migrations the
+  build carries.
 - `compliance/device-grant.test.ts`, "is held by the server as something other
   than the code it issued", searches the database file and the log beside it for
   the issued device code, because the contract is about the bytes at rest.
