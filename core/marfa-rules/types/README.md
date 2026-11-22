@@ -11,7 +11,7 @@ The rules crate reads these JSON definitions and writes the shipped catalog. The
 - `../icons/icon-set-lucide.json`, `../icons/icon-set-simple-icons.json`: the icon sets a type's `display_hints.icon` is checked against, written by `scripts/icon-sets.sh`
 - `../src/builtin_catalog.json`: the catalog the core and the Rust server are built with, written by the rules crate
 
-The writer checks for unexpected folders directly under `types/` and requires every `.json` file it reads to contain an object.
+The writer refuses any folder under `types/` other than `system/` and `edges/`, and any folder inside those two. It requires every `.json` file it reads to contain an object. A refusal names a file in `system/` with its folder.
 
 ## Type definition
 

@@ -125,8 +125,26 @@ pub(super) fn shipped_sources(root: &Path) -> Result<(Vec<Source>, Vec<Source>),
             root.display()
         ));
     }
+    for folder in ["system", "edges"] {
+        let inner: Vec<String> = fs::read_dir(root.join(folder))
+            .map_err(|e| format!("{}: {e}", root.join(folder).display()))?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .map(|entry| format!("{folder}/{}", entry.file_name().to_string_lossy()))
+            .collect();
+        if !inner.is_empty() {
+            return Err(format!(
+                "{} holds folders {inner:?}; the writer reads only the files directly in {folder}",
+                root.display()
+            ));
+        }
+    }
     let mut types = read_folder(root)?;
-    types.extend(read_folder(&root.join("system"))?);
+    types.extend(
+        read_folder(&root.join("system"))?
+            .into_iter()
+            .map(|(name, row)| (format!("system/{name}"), row)),
+    );
     Ok((types, read_folder(&root.join("edges"))?))
 }
 
@@ -160,7 +178,7 @@ fn in_dependency_order(types: &[Source]) -> Result<Vec<&Source>, String> {
         holders.entry(id).or_default().push(file);
     }
     if let Some((id, files)) = holders.iter().find(|(_, files)| files.len() > 1) {
-        return Err(format!("{} all hold the type id {id}", files.join(", ")));
+        return Err(format!("{} hold the same type id {id}", files.join(", ")));
     }
     let known: BTreeSet<String> = ids.iter().cloned().collect();
     let mut waiting: Vec<(&Source, &str, BTreeSet<String>)> = types
@@ -921,6 +939,32 @@ mod tests {
         assert!(refused.contains("core.note"), "{refused}");
         assert!(refused.contains("note.json"), "{refused}");
         assert!(refused.contains("note-copy.json"), "{refused}");
+    }
+
+    #[test]
+    fn a_system_file_holding_a_core_type_id_is_named_with_its_folder() {
+        let copy = Copy::new();
+        fs::copy(
+            copy.0.join("note.json"),
+            copy.0.join("system").join("note.json"),
+        )
+        .unwrap();
+        let refused = write(&copy.0).err().unwrap().join("\n");
+        assert!(
+            refused.contains("note.json, system/note.json hold the same type id core.note"),
+            "{refused}"
+        );
+    }
+
+    #[test]
+    fn a_folder_inside_system_or_edges_is_refused() {
+        for folder in ["system", "edges"] {
+            let copy = Copy::new();
+            assert!(write(&copy.0).is_ok());
+            fs::create_dir(copy.0.join(folder).join("extra")).unwrap();
+            let refused = write(&copy.0).err().unwrap().join("\n");
+            assert!(refused.contains(&format!("{folder}/extra")), "{refused}");
+        }
     }
 
     #[test]
