@@ -1171,7 +1171,7 @@ describe("custom edge-type registration", () => {
     expect(r.ok).toBe(true);
     const names = Object.fromEntries(
       r.data.data
-        .filter((t) => !t.id.includes("."))
+        .filter((t) => t.shipped)
         .map((t) => [t.id, [t.label, t.reverse_label]]),
     );
     expect(names).toEqual({
@@ -1219,9 +1219,7 @@ describe("custom edge-type registration", () => {
 
     const r = await client.listEdgeTypes();
     expect(r.ok).toBe(true);
-    const shipped = r.data.data.filter(
-      (edgeType) => !edgeType.id.includes("."),
-    );
+    const shipped = r.data.data.filter((edgeType) => edgeType.shipped);
     expect(shipped).not.toHaveLength(0);
     const offenders = shipped.flatMap((edgeType) => {
       const bad: string[] = [];
