@@ -1148,6 +1148,66 @@ describe("a vendor's data and the caller's type map", () => {
       types.length,
     );
   });
+
+  it("refuses a key whose map reads but cannot write the vendor's types its removal and remove_data, and changes nothing", async () => {
+    const { vendor, signed, items, types } = await appWithData();
+    const reader = await mint(["grants.manage", "items.purge", "schema.write"], {
+      [`${vendor}.*`]: "read",
+    });
+    // The witness: the key reads every type under the vendor.
+    expect(ids(await dataOf(reader, vendor))).toEqual(items);
+
+    const removal = refused(await removeData(reader, vendor), 403);
+    expect(removal.code).toBe("type_not_permitted");
+    expect(removal.details?.grant).toEqual({
+      kind: "type",
+      name: `${vendor}.*`,
+      level: "write",
+    });
+    const grant = await grantOf(signed.app);
+    expect(
+      refused(
+        await answer(reader, `/grants/${grant.id}?remove_data=true`, {
+          method: "DELETE",
+        }),
+        403,
+      ).code,
+    ).toBe("type_not_permitted");
+    expect(await grantListed(signed.app)).toBe(true);
+    expect(ids(await dataOf(owner, vendor))).toEqual(items);
+    for (const type of types) expect(await typeExists(type)).toBe(true);
+  });
+
+  it("refuses remove_data at DELETE /grants/{id} to a key without schema.write, and ends nothing", async () => {
+    const { vendor, signed, items, types } = await appWithData();
+    const grant = await grantOf(signed.app);
+    const noSchema = await mint(["grants.manage", "items.purge"], {
+      [`${vendor}.*`]: "write",
+    });
+    const error = refused(
+      await answer(noSchema, `/grants/${grant.id}?remove_data=true`, {
+        method: "DELETE",
+      }),
+      403,
+    );
+    expect(error.details?.required_scope).toBe("schema.write");
+    expect(await grantListed(signed.app)).toBe(true);
+    expect(ids(await dataOf(owner, vendor))).toEqual(items);
+    for (const type of types) expect(await typeExists(type)).toBe(true);
+
+    // The witness: with schema.write the same map ends the app with its data.
+    const withSchema = await mint(
+      ["grants.manage", "items.purge", "schema.write"],
+      { [`${vendor}.*`]: "write" },
+    );
+    ok(
+      await answer(withSchema, `/grants/${grant.id}?remove_data=true`, {
+        method: "DELETE",
+      }),
+    );
+    expect(await grantListed(signed.app)).toBe(false);
+    expect((await dataOf(owner, vendor)).data).toEqual([]);
+  });
 });
 
 describe("an app's hidden data over MCP and the caller's type map", () => {
@@ -1189,6 +1249,128 @@ describe("an app's hidden data over MCP and the caller's type map", () => {
     expect(await grantListed(signed.app)).toBe(true);
     expect(ids(await dataOf(owner, vendor))).toEqual(items);
   });
+
+  it("gives no confirmation in a marfa_app_data preview to a key that reads but cannot write the vendor's types, or lacks schema.write, and refuses the first remove_data in marfa_end_sign_in", async () => {
+    const { vendor, signed, items } = await appWithData();
+    const grant = await grantOf(signed.app);
+    const purging = [
+      "grants.manage",
+      "items.purge",
+      "schema.write",
+      "sign_ins.manage",
+    ];
+    const preview = async (key: string) => {
+      const mcp = await connectMcp(
+        server.apiUrl,
+        key,
+        "2026-07-28",
+        "/mcp/admin",
+      );
+      try {
+        return toolResult(await callTool(mcp, "marfa_app_data", { vendor }));
+      } finally {
+        await mcp.close();
+      }
+    };
+
+    // The witness: write on the vendor's types and schema.write give a confirmation.
+    const writer = await mint(purging, { [`${vendor}.*`]: "write" });
+    expect(typeof (await preview(writer)).confirm).toBe("string");
+
+    const reader = await mint(purging, { [`${vendor}.*`]: "read" });
+    const read = await preview(reader);
+    expect(read.items).toBe(items.length);
+    expect(read.confirm).toBeUndefined();
+    expect(read.next).toContain("write");
+
+    const noSchema = await mint(
+      purging.filter((permission) => permission !== "schema.write"),
+      { [`${vendor}.*`]: "write" },
+    );
+    const unschema = await preview(noSchema);
+    expect(unschema.items).toBe(items.length);
+    expect(unschema.confirm).toBeUndefined();
+    expect(unschema.next).toContain("schema.write");
+
+    const mcp = await connectMcp(
+      server.apiUrl,
+      reader,
+      "2026-07-28",
+      "/mcp/admin",
+    );
+    try {
+      const ending = toolError(
+        await callTool(mcp, "marfa_end_sign_in", {
+          id: grant.id,
+          remove_data: true,
+        }),
+      );
+      expect(ending.code).toBe("type_not_permitted");
+    } finally {
+      await mcp.close();
+    }
+    expect(await grantListed(signed.app)).toBe(true);
+    expect(ids(await dataOf(owner, vendor))).toEqual(items);
+  });
+});
+
+/** An app holding two vendors, where a table item of the second has a column naming a type of the first. */
+async function appWithTwoVendors(): Promise<{
+  signed: Signed;
+  first: string;
+  second: string;
+  types: string[];
+}> {
+  const base = freshVendor();
+  const [first, second] = [`${base}a`, `${base}b`];
+  const signed = await signedIn(REGISTERS);
+  const contact = `${first}.contact`;
+  const sheet = `${second}.sheet`;
+  await registerType(signed.token, contact);
+  ok(
+    await answer(signed.token, "/types", {
+      method: "POST",
+      body: {
+        id: sheet,
+        version: 1,
+        parent: "core.table",
+        fields: { owner: { type: "string" } },
+      },
+    }),
+    201,
+  );
+  ok(
+    await answer(signed.token, "/items", {
+      method: "POST",
+      body: {
+        type: sheet,
+        properties: {
+          title: "people",
+          columns: { who: { type: "item", type_constraints: [contact] } },
+        },
+      },
+    }),
+    201,
+  );
+  await createItem(signed.token, contact, "someone");
+  return { signed, first, second, types: [contact, sheet] };
+}
+
+describe("removing the data of an app holding two vendors", () => {
+  it("ends an app with remove_data while a table column under one of its vendors names a type under another", async () => {
+    const { signed, first, second, types } = await appWithTwoVendors();
+    const grant = await grantOf(signed.app);
+    expect([...grant.vendors].sort()).toEqual([first, second]);
+    ok(
+      await answer(owner, `/grants/${grant.id}?remove_data=true`, {
+        method: "DELETE",
+      }),
+    );
+    expect(await grantListed(signed.app)).toBe(false);
+    expect((await dataOf(owner, first)).data).toEqual([]);
+    expect((await dataOf(owner, second)).data).toEqual([]);
+    for (const type of types) expect(await typeExists(type)).toBe(false);
+  });
 });
 
 describe("an app's hidden data from the owner's browser", () => {
@@ -1202,7 +1384,10 @@ describe("an app's hidden data from the owner's browser", () => {
     expect(listedByCookie.status, JSON.stringify(page)).toBe(200);
     expect(ids(page)).toEqual(items);
 
-    for (const headers of [{}, { origin: "http://elsewhere.invalid" }]) {
+    for (const headers of [
+      {},
+      { origin: "http://elsewhere.invalid" },
+    ] as Record<string, string>[]) {
       const refusedDelete = await browserDelete(vendor, headers);
       expect(refusedDelete.status, await refusedDelete.text()).toBe(403);
     }
