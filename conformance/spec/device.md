@@ -6224,7 +6224,7 @@ Where the copy holds the named edge type whole, when a caller reads a view group
 
 ### `device/view-group-edge-refusal`
 
-If a view groups by an edge type the copy does not hold whole, or groups with the `presence` bucket by an edge type the copy does not hold whole, then a device MUST refuse its groups with `invalid`, naming the edge type and the need to hold it whole.
+If a view groups by an edge type the copy does not hold whole, with or without the `presence` bucket, then a device MUST refuse its groups with `invalid`, naming the edge type and the need to hold it whole.
 
 **Tests:** `device/views.test.ts › groups by each %s other end only with the edge type held whole`, `› groups by presence of a property, tags, an edge and a backref, matching exists`.
 
