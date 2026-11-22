@@ -33,6 +33,8 @@ import { waitFor } from "./wait.js";
  * - `fail_token_read` answers the next `POST /link/token` with `503
  *   unavailable` and `Retry-After: 60`, as Marfa Cloud does when Cloudflare
  *   does not answer. The read counts against the link's token limit.
+ * - `unlink_after` answers each `POST /link/unlink` once `ms` milliseconds
+ *   have passed, as a slow Marfa Cloud does.
  * - `down` and `up` stop and start answering the link API.
  *
  * It holds the limits Marfa Cloud documents: each route answers `429
@@ -72,6 +74,8 @@ export interface FakeCloud {
   answerNextUse(status: number, code: string): void;
   failCancels(): void;
   failNextTokenRead(): void;
+  /** Answers each `POST /link/unlink` once `ms` milliseconds have passed. */
+  unlinkAfter(ms: number): void;
   /** Gives the latest link a new tunnel token and returns it. */
   rotateToken(): string;
   down(): void;
@@ -163,6 +167,7 @@ export async function fakeCloud(
   let loseApproved = false;
   let cancelsFail = false;
   let tokenReadFails = false;
+  let unlinkDelayMs = 0;
   const windows = new Map<string, { from: number; count: number }>();
   let nextUse: { status: number; code: string } | null = null;
 
@@ -213,6 +218,9 @@ export async function fakeCloud(
     },
     fail_token_read: () => {
       tokenReadFails = true;
+    },
+    unlink_after: (body) => {
+      unlinkDelayMs = Number(body?.ms ?? 0);
     },
     rotate_token: () => {
       latest().tunnelToken = `tunnel-${secret()}`;
@@ -505,6 +513,10 @@ export async function fakeCloud(
         route === "POST /link/token" ||
         route === "POST /link/unlink"
       ) {
+        if (route === "POST /link/unlink" && unlinkDelayMs > 0) {
+          setTimeout(() => credentialed(recorded, response), unlinkDelayMs);
+          return;
+        }
         return credentialed(recorded, response);
       }
       error(response, 404, "not_found", "Nothing is here.");
@@ -535,6 +547,7 @@ export async function fakeCloud(
     answerNextUse: (status, code) => control.answer_next_use!({ status, code }),
     failCancels: () => control.fail_cancels!(null),
     failNextTokenRead: () => control.fail_token_read!(null),
+    unlinkAfter: (ms) => control.unlink_after!({ ms }),
     rotateToken: () => {
       control.rotate_token!(null);
       return latest().tunnelToken;

@@ -1382,6 +1382,109 @@ describe("the tunnel listener", () => {
   );
 
   it(
+    "reports the tunnel listener's port as taken while linking and another program holds it, and listens there once it is free",
+    async () => {
+      const linked = await boot("connector-listener-taken-linking");
+      const started = await linked.call("POST", "/cloud/link", {
+        sign_in_address: "keep",
+      });
+      expect(started.status, JSON.stringify(started.body)).toBe(201);
+      expect(started.body.linking.port_taken).toBeUndefined();
+      const port = linked.cloud.latest().originPort;
+      const other = createServer((_, response) => response.end("other"));
+      await linked.server.restart(async () => {
+        await new Promise<void>((resolve, reject) => {
+          other.once("error", reject);
+          other.listen(port, "127.0.0.1", resolve);
+        });
+      });
+      try {
+        await linked.until(
+          "the tunnel listener's port to read as taken",
+          (s) => s.state === "linking" && s.linking.port_taken === true,
+        );
+      } finally {
+        await new Promise((resolve) => other.close(resolve));
+      }
+      await linked.until(
+        "the tunnel listener's port to read as free",
+        (s) => s.state === "linking" && s.linking.port_taken === undefined,
+      );
+      expect(await healthAt(tunnelOf(linked))).toBe(200);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "stops listening as soon as a link that is linking is denied, and as soon as one is refused",
+    async () => {
+      // Polls a minute apart, so only a step taken at once closes the listener in time.
+      const linked = await boot(
+        "connector-listener-failed",
+        {},
+        { interval: 60 },
+      );
+      for (const decide of [
+        () => linked.cloud.deny(),
+        () => linked.cloud.refuse(),
+      ]) {
+        const started = await linked.call("POST", "/cloud/link", {
+          sign_in_address: "keep",
+        });
+        expect(started.status, JSON.stringify(started.body)).toBe(201);
+        const tunnel = tunnelOf(linked);
+        expect(await healthAt(tunnel)).toBe(200);
+        decide();
+        await linked.server.advanceClock(61_000);
+        await linked.until("the link to fail", (s) => s.state === "failed");
+        await closedAt(tunnel);
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "tells Marfa Cloud of an unlink sent through the tunnel listener, though Marfa Cloud answers only after the listener has closed",
+    async () => {
+      const fake = fakeCloudflared();
+      fake.plan([{ ready: true }]);
+      const linked = await boot("connector-listener-unlink-through", {
+        MARFA_CLOUDFLARED: fake.path,
+      });
+      await linked.link();
+      await linked.connector("connected");
+      const tunnel = tunnelOf(linked);
+      linked.cloud.unlinkAfter(3_000);
+      // The answer can be cut as the listener closes; what Marfa Cloud is told cannot.
+      const sent = fetch(`${tunnel}/cloud/link`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${linked.server.managementKey}` },
+      }).then(
+        async (answer) => ({
+          status: answer.status,
+          body: await answer.json(),
+        }),
+        () => undefined,
+      );
+      await linked.cloud.waitFor("/link/unlink");
+      const untold = await linked.status();
+      expect(untold).toEqual({ state: "not_linked", service_told: false });
+      await closedAt(tunnel);
+      await linked.until(
+        "Marfa Cloud to be told of the unlink",
+        (s) => s.state === "not_linked" && s.service_told === undefined,
+      );
+      expect(linked.cloud.latest().unlinked).toBe(true);
+      const answered = await sent;
+      if (answered !== undefined) {
+        expect(answered.status, JSON.stringify(answered.body)).toBe(200);
+        expect(answered.body.service_told).toBe(true);
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "holds the tunnel listener's connections in the public listener's cap, and counts a loopback peer by its address on the public listener alone",
     async () => {
       const fake = fakeCloudflared();

@@ -32,6 +32,8 @@ struct Open {
 pub struct Tunnel {
     serve: OnceLock<Serve>,
     open: Mutex<Option<Open>>,
+    /// The port another program held when the listener was last to open there.
+    taken: Mutex<Option<u16>>,
 }
 
 /// A listener on 127.0.0.1 at `port`, where 0 asks for a free one.
@@ -50,6 +52,15 @@ impl Tunnel {
 
     fn held(&self) -> std::sync::MutexGuard<'_, Option<Open>> {
         self.open.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn set_taken(&self, port: Option<u16>) {
+        *self.taken.lock().unwrap_or_else(PoisonError::into_inner) = port;
+    }
+
+    /// Whether the listener could not be bound at `port` when it was last to open there.
+    pub fn taken(&self, port: u16) -> bool {
+        *self.taken.lock().unwrap_or_else(PoisonError::into_inner) == Some(port)
     }
 
     pub fn port(&self) -> Option<u16> {
@@ -86,9 +97,11 @@ impl Tunnel {
             Ok(listener) => listener,
             Err(error) => {
                 tracing::debug!(port, error = %error, "The tunnel listener could not be bound");
+                self.set_taken(Some(port));
                 return false;
             }
         };
+        self.set_taken(None);
         let (closing, closed) = watch::channel(false);
         let stop: Stop = Box::pin(stopped(app.stopping(), closed));
         let task = tokio::spawn(serve(listener, stop));
@@ -101,6 +114,7 @@ impl Tunnel {
     }
 
     pub fn close(&self) {
+        self.set_taken(None);
         if let Some(open) = self.held().take() {
             close(open);
         }

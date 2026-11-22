@@ -282,6 +282,14 @@ If Marfa Cloud cannot be reached when a caller unlinks, then the server MUST ans
 
 **Tests:** `compliance/cloud-link.test.ts › unlinks while Marfa Cloud cannot be reached, says it was not told, and tells it once it can be`.
 
+### `cloud/unlink-told-cut`
+
+If the connection that carried `DELETE /cloud/link` closes before the server answers it, then the server MUST still tell Marfa Cloud of the unlink as it would have for an answered request.
+
+**Reason:** an unlink sent through the tunnel listener closes that listener as the link ends, and Marfa Cloud must still hear of the unlink before the next scheduled try.
+
+**Tests:** `compliance/cloud-connector.test.ts › tells Marfa Cloud of an unlink sent through the tunnel listener, though Marfa Cloud answers only after the listener has closed`.
+
 ### `cloud/unlink-kept`
 
 While Marfa Cloud has not been told of an unlink, the server MUST keep trying to tell it, across restarts and however long it takes, until Marfa Cloud answers `200`, or `401` with `error.code` `unauthorized`.
@@ -432,11 +440,11 @@ While a link is linked, the server MUST ask Marfa Cloud whether it still stands 
 
 ## The tunnel listener
 
-While a link is linking or linked, the server listens on `127.0.0.1` at the port the start sent as `origin_port`, beside its public listener. This is the tunnel listener, which Marfa Cloud's connector reaches, and it serves the same API as the public listener.
+While a link is linking or linked, and no other program holds the port, the server listens on `127.0.0.1` at the port the start sent as `origin_port`, beside its public listener. This is the tunnel listener, which Marfa Cloud's connector reaches, and it serves the same API as the public listener.
 
 ### `cloud/tunnel-listener-open`
 
-While a link is linking or linked, the server MUST serve, on `127.0.0.1` at the link's `origin_port`, every request the public listener serves, event streams included.
+While a link is linking or linked and no other program holds the link's `origin_port` on `127.0.0.1`, the server MUST serve there every request the public listener serves, event streams included.
 
 **Reason:** Marfa Cloud's connector carries the instance's traffic to that port.
 
@@ -458,17 +466,35 @@ While a link is linked and another program holds the link's `origin_port` on `12
 
 **Tests:** `compliance/cloud-connector.test.ts › reports the connector as failed with reason port_taken while another program holds the tunnel listener's port, and runs it once the port is free`.
 
+### `cloud/tunnel-listener-port-taken-linking`
+
+While a link is linking and another program holds the link's `origin_port` on `127.0.0.1`, when a caller sends `GET /cloud/link`, the server MUST answer `linking.port_taken` `true`.
+
+**Reason:** the connector does not run until the link is linked, so the link has no `connector` to say the port is taken, and the owner can free the port before approving.
+
+**Tests:** `compliance/cloud-connector.test.ts › reports the tunnel listener's port as taken while linking and another program holds it, and listens there once it is free`.
+
 ### `cloud/tunnel-listener-port-freed`
 
-When the link's `origin_port` is free again after another program held it, the server MUST listen there and run the connector.
+When the link's `origin_port` is free again after another program held it, the server MUST listen there.
 
-**Tests:** `compliance/cloud-connector.test.ts › reports the connector as failed with reason port_taken while another program holds the tunnel listener's port, and runs it once the port is free`.
+**Reason:** while the link is linked, the connector then runs as `cloud/connector-setting` says.
+
+**Tests:** `compliance/cloud-connector.test.ts › reports the connector as failed with reason port_taken while another program holds the tunnel listener's port, and runs it once the port is free`, `compliance/cloud-connector.test.ts › reports the tunnel listener's port as taken while linking and another program holds it, and listens there once it is free`.
 
 ### `cloud/tunnel-listener-closed-unlink`
 
 When a link is unlinked, the server MUST stop listening at its `origin_port` once the connector has stopped.
 
 **Tests:** `compliance/cloud-connector.test.ts › stops listening once the connector has stopped, when the link is unlinked and when Marfa Cloud ends it`.
+
+### `cloud/tunnel-listener-closed-failed`
+
+When a link that is linking fails, the server MUST stop listening at its `origin_port` without waiting for the next time it would ask Marfa Cloud about a link.
+
+**Reason:** Marfa Cloud sends a failed link no traffic, and the next ask can be minutes away.
+
+**Tests:** `compliance/cloud-connector.test.ts › stops listening as soon as a link that is linking is denied, and as soon as one is refused`.
 
 ### `cloud/tunnel-listener-closed-ended`
 

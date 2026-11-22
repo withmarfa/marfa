@@ -9100,6 +9100,11 @@ export interface components {
                  * @example 2026-11-21T09:45:00.000Z
                  */
                 expires_at: string;
+                /**
+                 * @description `true` while another program holds the link's port on 127.0.0.1, where Marfa Cloud's connector reaches this instance. Present only then. Free the port, or unlink and link again for another.
+                 * @enum {boolean}
+                 */
+                port_taken?: true;
             };
             /**
              * @description The name Marfa Cloud gave this instance. Present while `state` is `linked`.

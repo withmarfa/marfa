@@ -13577,6 +13577,13 @@
                 "format": "date-time",
                 "description": "When the link stops waiting for approval, in UTC, timed on this instance's clock from when it started the link.",
                 "example": "2026-11-21T09:45:00.000Z"
+              },
+              "port_taken": {
+                "type": "boolean",
+                "enum": [
+                  true
+                ],
+                "description": "`true` while another program holds the link's port on 127.0.0.1, where Marfa Cloud's connector reaches this instance. Present only then. Free the port, or unlink and link again for another."
               }
             }
           },

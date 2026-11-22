@@ -4,6 +4,7 @@ use serde_json::{Map, Value, json};
 
 use super::connector::Connector;
 use super::store::{Link, Move, State};
+use super::tunnel::Tunnel;
 use crate::app::addresses::Address;
 use crate::app::clock::Stamp;
 
@@ -28,6 +29,7 @@ pub struct Seen<'a> {
     pub sign_in: &'a Address,
     pub now_ms: i64,
     pub connector: &'a Connector,
+    pub tunnel: &'a Tunnel,
     /// Whether Marfa Cloud has not been told of some unlink.
     pub untold: bool,
     /// Where putting back the sign-in address would move it, for a link that ended without.
@@ -141,14 +143,15 @@ impl Seen<'_> {
             }
             Standing::Linking => {
                 body.insert("state".into(), "linking".into());
-                body.insert(
-                    "linking".into(),
-                    json!({
-                        "user_code": link.user_code,
-                        "approval_url": link.approval_url,
-                        "expires_at": link.expires_at.text(),
-                    }),
-                );
+                let mut linking = json!({
+                    "user_code": link.user_code,
+                    "approval_url": link.approval_url,
+                    "expires_at": link.expires_at.text(),
+                });
+                if self.tunnel.taken(link.origin_port) {
+                    linking["port_taken"] = true.into();
+                }
+                body.insert("linking".into(), linking);
                 body.insert("sign_in_address".into(), self.sign_in_address(link, false));
             }
             Standing::Linked => {

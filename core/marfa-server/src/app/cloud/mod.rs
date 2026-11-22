@@ -184,6 +184,7 @@ fn seen<'a>(app: &'a App, link: Option<&'a Link>, sign_in: &'a Address, untold: 
         sign_in,
         now_ms: app.clock.now_ms(),
         connector: &app.cloud.connector,
+        tunnel: &app.cloud.tunnel,
         untold,
         put_back: None,
     }
@@ -565,7 +566,16 @@ fn end_link(
     })
 }
 
+/// Ends the link in a task of the server's own, which a request cut as the tunnel listener closes
+/// does not end before Marfa Cloud is told.
 pub async fn unlink(app: &Arc<App>, caller: &Caller, confirmed: bool) -> Result<Value> {
+    let (app, caller) = (app.clone(), caller.clone());
+    tokio::spawn(async move { unlink_owned(&app, &caller, confirmed).await })
+        .await
+        .unwrap_or_else(|_| Err(Refusal::internal("the unlink ended before it answered")))
+}
+
+async fn unlink_owned(app: &Arc<App>, caller: &Caller, confirmed: bool) -> Result<Value> {
     let _door = app.cloud.door.lock().await;
     let mut tries = 0;
     let ended = loop {
