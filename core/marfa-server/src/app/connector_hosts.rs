@@ -1,5 +1,4 @@
-//! Connector hosts, their one-time links, and the record of each plugin's connector: the source
-//! it holds, the host it is assigned to and the key that host minted for it.
+//! Connector hosts, their one-time links, and the record of each plugin's connector.
 
 use std::net::IpAddr;
 
@@ -660,8 +659,7 @@ pub async fn assign(
     .await
 }
 
-/// Each restored plugin's connector, recorded with no host and no key; refused where its source
-/// is held on this instance.
+/// Records each restored plugin's connector with no host and no key.
 pub(crate) fn restore(
     tx: &Transaction<'_>,
     connectors: &[(String, String)],

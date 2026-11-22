@@ -507,8 +507,7 @@ pub(crate) fn new_secret(app: &App) -> Result<(String, String)> {
     Ok((plain, hash))
 }
 
-/// A key the server gives rather than one a caller asks for: a connector host's own key, or
-/// a connector's key its host mints. It holds what `grants` says and nothing it inherits.
+/// A key the server gives rather than one a caller asks for, holding nothing it inherits.
 pub(crate) fn given(
     label: String,
     source: String,

@@ -261,8 +261,7 @@ pub(crate) fn of_source(tx: &Transaction<'_>, source: &str) -> Result<Vec<Regist
         .collect())
 }
 
-/// Deletes in the caller's write every registration of `source`, as `DELETE /connectors/{id}`
-/// deletes one, and answers their ids.
+/// Deletes every registration of `source` as `DELETE /connectors/{id}` deletes one.
 pub(crate) fn remove_of_source(unit: &Unit<'_, '_>, source: &str) -> Result<Vec<String>> {
     let mut removed = Vec::new();
     for registration in of_source(unit.tx(), source)? {

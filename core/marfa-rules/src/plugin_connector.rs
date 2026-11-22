@@ -1,5 +1,4 @@
-//! The `connector` section of a plugin's bundle: the source its connector writes under, the
-//! kinds it brings, the settings it reads, its sign-in and where it runs.
+//! The `connector` section of a plugin's bundle.
 
 use std::collections::BTreeSet;
 
@@ -52,8 +51,7 @@ fn fault(path: impl Into<String>, code: &'static str, message: impl Into<String>
     }
 }
 
-/// Whether `source` is one a key could hold as its own: no space at either end, 1 to 200
-/// characters, no dot segment and no prefix the server keeps.
+/// Whether `source` is one a key could hold as its own.
 pub fn is_source(source: &str) -> bool {
     let lowered = source.to_ascii_lowercase();
     !source.is_empty()
@@ -383,8 +381,7 @@ impl Judge {
     }
 }
 
-/// What is wrong with a `connector` section. `types` holds the bundle's own type ids, which a
-/// kind must name; `None` leaves that unjudged, as for a source folder's `plugin.json`.
+/// `types` holds the bundle's own type ids; `None` skips that check, as for a `plugin.json`.
 pub fn connector_faults(section: &Obj, types: Option<&BTreeSet<&str>>) -> Vec<Problem> {
     let mut judge = Judge { faults: Vec::new() };
     judge.unknown_keys(section, "connector", &SECTION_KEYS);
