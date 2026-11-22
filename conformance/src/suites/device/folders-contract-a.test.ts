@@ -903,7 +903,7 @@ describe("settings and folder reporting", () => {
       writeFileSync(join(replacement, "Owned.md"), "replacement body\n");
       const before = treeBytes(replacement);
       try {
-        const result = await withFault(fault, () =>
+        const result = await withFault(fault, (): Promise<{ ok: boolean }> =>
           fault.endsWith("cleanup")
             ? harness!.folder.remove()
             : harness!.folder.pull(),

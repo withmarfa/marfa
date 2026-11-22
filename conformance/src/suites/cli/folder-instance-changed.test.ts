@@ -5,6 +5,7 @@ import {
   readdirSync,
   readFileSync,
   renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -72,6 +73,7 @@ describe("a directory whose server is now another instance", () => {
     writeFileSync(join(dir, "Packing list.md"), note("Packing list", "socks"));
     writeFileSync(join(dir, "Plan.md"), note("Plan", "first"));
     writeFileSync(join(dir, "Unchanged.md"), note("Unchanged", "as it was"));
+    writeFileSync(join(dir, "Dropped.md"), note("Dropped", "not wanted"));
     expect((await first.run(["folders", "push", dir])).code).toBe(0);
     const backup = await (await everythingClient(origin!)).exportArchive();
     expect(backup.status).toBe(200);
@@ -89,6 +91,7 @@ describe("a directory whose server is now another instance", () => {
     writeFileSync(join(dir, "Packing list.md"), packing);
     writeFileSync(join(dir, "Plan.md"), "first\nand second\n");
     writeFileSync(join(dir, "New idea.md"), note("New idea", "brand new"));
+    rmSync(join(dir, "Dropped.md"));
     const unsent = await first.run(["folders", "push", dir]);
     expect(unsent.code, unsent.stderr).toBe(3);
 
@@ -122,7 +125,19 @@ describe("a directory whose server is now another instance", () => {
     const removed = await cli.run(["folders", "remove", dir]);
     expect(removed.code, removed.stderr).toBe(0);
     expect(removed.stdout).toMatch(/[1-9]\d* write\(s\) could not be sent/);
-    expect(removed.stdout).toContain(`the changes stay in the files in ${dir}`);
+    const lines = removed.stdout.split("\n");
+    for (const line of [
+      "  deleted  Dropped.md",
+      "  new      New idea.md",
+      "  changed  Packing list.md",
+      "  changed  Plan.md",
+    ]) {
+      expect(lines, removed.stdout).toContain(line);
+    }
+    expect(removed.stdout).not.toContain("Unchanged.md");
+    expect(removed.stdout).toContain(
+      `The changes to changed, new and moved files stay in the files in ${dir}`,
+    );
     const command = `marfa folders add ${dir} --folder ${folder}`;
     expect(removed.stdout).toContain(command);
     expect(existsSync(join(dir, ".marfa", "core.sqlite"))).toBe(false);
@@ -133,11 +148,18 @@ describe("a directory whose server is now another instance", () => {
     await cli.json(["folders", "add", dir, "--folder", folder, "--yes"]);
     const written = await cli.run(["folders", "push", dir]);
     expect(written.code, written.stderr).toBe(0);
+    // The witness: the backup brings back the file deleted while the server
+    // was down, which is why the removal names it.
+    expect(existsSync(join(dir, "Dropped.md"))).toBe(true);
+    rmSync(join(dir, "Dropped.md"));
     for (const name of ["Packing list.md", "Plan.md", "New idea.md"]) {
       cpSync(join(aside, name), join(dir, name));
     }
     const sent = await cli.run(["folders", "push", dir]);
     expect(sent.code, sent.stderr).toBe(0);
+    // A missing file's item is deleted once the folder's 5-second grace for a
+    // rename has passed.
+    await new Promise((done) => setTimeout(done, 7_000));
     const settled = await cli.run(["folders", "push", dir]);
     expect(settled.code, settled.stderr).toBe(0);
 

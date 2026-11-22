@@ -1833,7 +1833,7 @@ export class CliFolder {
   }
 
   /** Takes the folder off its machine, leaving its files. */
-  async remove(): Promise<Outcome<unknown>> {
+  async remove(): Promise<Outcome<FolderRemovalJson>> {
     return this.run(["folders", "remove", this.dir]);
   }
 
@@ -2015,6 +2015,21 @@ export class CliFolder {
     // `.marfa`, so it runs at the root, with no `--db` at all.
     return this.device().root<T>(args);
   }
+}
+
+/** What a folder's removal did (`folder-setup/remove-instance-changed-files`). */
+export interface FolderRemovalJson {
+  dir: string;
+  removed: boolean;
+  reason?: string | null;
+  folder?: string | null;
+  unsent?: number;
+  files?: Array<{
+    change: "changed" | "new" | "moved" | "deleted";
+    path?: string | null;
+    from?: string | null;
+    item?: string | null;
+  }>;
 }
 
 /** What a folder's first sync will do, or that it is confirmed (`folder-setup/first-sync-plan`). */

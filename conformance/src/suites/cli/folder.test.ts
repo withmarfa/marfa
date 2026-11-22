@@ -506,7 +506,13 @@ describe("a folder round trip", () => {
       "remove",
       resolved,
     ]);
-    expect(removed).toEqual({ dir: resolved, removed: true, unsent: 0 });
+    expect(removed).toEqual({
+      dir: resolved,
+      removed: true,
+      folder: settings.item.id,
+      unsent: 0,
+      files: [],
+    });
     expect(existsSync(join(resolved, ".marfa", "core.sqlite"))).toBe(false);
     expect(existsSync(join(resolved, "dropped.md"))).toBe(true);
   });
@@ -944,7 +950,13 @@ describe("a folder round trip", () => {
       "remove",
       moved,
     ]);
-    expect(removed).toEqual({ dir: moved, removed: true, unsent: 0 });
+    expect(removed).toEqual({
+      dir: moved,
+      removed: true,
+      folder: expect.any(String),
+      unsent: 0,
+      files: [],
+    });
     expect(existsSync(join(moved, ".marfa", "core.sqlite"))).toBe(false);
     expect(await listed(), "the old entry stayed listed").not.toContain(first);
   });

@@ -859,7 +859,7 @@ describe("a watch of every folder", () => {
         expect(stopped[0].reason).toContain("move the directory aside");
         expect(stopped[0].reason).toContain("`--folder` with the folder's ID");
         expect(stopped[0].reason).toContain(
-          "copy the files you changed back in",
+          "redo there the changes `marfa folders remove` names",
         );
         expect(stopped[0].reason).toContain("push again");
       }, WAIT);
